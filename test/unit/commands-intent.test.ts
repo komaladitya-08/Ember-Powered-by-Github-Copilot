@@ -248,3 +248,53 @@ describe("matchIntent: words that don't ask, and objects the words don't name ex
     expect(announce("git checkout HEAD~3 -- a.ts", "discard changes to a.ts")).toBeNull();
   });
 });
+
+describe("matchIntent: only a request counts (review #28)", () => {
+  const PUSH = "git push origin feature-x";
+  it.each([
+    // Questions, how-tos and explanations.
+    ["rm -r build", "should I delete build/ or keep it?"],
+    ["rm -r build", "how do I delete build/"],
+    ["rm -r build", "can you tell me how to delete the build folder"],
+    ["rm -r build", "what would delete build/?"],
+    ["rm -r build", "delete build/?"],
+    ["rm -r build", "explain how rm -r build works, should I delete build/?"],
+    [PUSH, "should I push my branch to GitHub?"],
+    [PUSH, "explain how to push my branch to GitHub"],
+    [PUSH, "tell me how to push feature-x to origin"],
+    [PUSH, "how to push feature-x to origin"],
+    // Hypotheticals, past tense and instructions about something else.
+    ["rm -r build", "I might delete build/ later, but first list the files"],
+    ["rm -r build", "maybe delete build/"],
+    ["rm -r build", "list build/ and tell me if I can delete it"],
+    ["rm -r build", "I deleted build/ yesterday"],
+    ["rm -r build", "the script that deletes build/ is broken, fix it"],
+    ["rm -r build", "fix the Makefile target that deletes build/"],
+    ["rm -r build", "deleting build/ is what the clean target does"],
+    [PUSH, "I pushed my branch to GitHub already"],
+    [PUSH, "I pushed feature-x to origin, now run the tests"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    ["rm -r build", "delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "Please delete build/.", "Deleting build, as you asked."],
+    ["rm -r build", "Ember, delete build/ now", "Deleting build, as you asked."],
+    ["rm -r build", "hey ember delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "can you delete build/?", "Deleting build, as you asked."],
+    ["rm -r build", "could you please delete the build folder", "Deleting build, as you asked."],
+    ["rm -r build", "I want you to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "go ahead and delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "fix line 12 in main.ts and delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "list the files, then delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "how big is build/? delete build/ if it is over 1 GB", "Deleting build, as you asked."],
+    ["rm -r build", "on the desktop delete build/", "Deleting build, as you asked."],
+    [PUSH, "push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
+    [PUSH, "commit and push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
+    [PUSH, "can you commit and push feature-x to origin?", "Pushing feature-x to origin, as you asked."],
+    [PUSH, "let's push feature-x to origin", "Pushing feature-x to origin, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+});

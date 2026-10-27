@@ -32,6 +32,8 @@ interface Words {
   list: string[];
   /** Whitespace tokens with edge punctuation trimmed, lower case (paths stay as written). */
   tokens: string[];
+  /** The plain words from each place a request's verb stands (requestStarts): only a verb there asks for anything. */
+  asked: string[][];
 }
 
 type Ctx = ClassifyContext & { git: GitFacts | null };
@@ -159,6 +161,90 @@ function pathToken(obj: CommandObject, w: Words, ctx: Ctx): number {
   });
 }
 
+/** Words before a request's verb that change nothing: "please", "now", "hey Ember", "go ahead and". */
+const FILLERS = new Set([
+  "please", "pls", "kindly", "now", "then", "and", "also", "just", "ok", "okay", "so", "first", "next", "finally", "lastly", "hey", "hi",
+  "ember", "go", "ahead", "quickly", "right", "alright", "yes", "yeah", "sure",
+]);
+/** Ways of asking Ember to do something (as plain words): "can you", "could you", "I want you to", "let's", "help me". */
+const POLITE: readonly (readonly string[])[] = [
+  ["can", "you"], ["could", "you"], ["would", "you"], ["will", "you"], ["can", "u"], ["could", "u"],
+  ["i", "want", "you", "to"], ["i", "need", "you", "to"], ["i", "d", "like", "you", "to"], ["i", "would", "like", "you", "to"],
+  ["let", "s"], ["let", "us"], ["lets"], ["help", "me"],
+];
+/** Words that make a clause a maybe rather than a request ("I might delete build/ later"). */
+const HYPOTHETICAL = new Set(["might", "maybe", "perhaps", "possibly", "later", "whether", "eventually", "someday"]);
+/** A leading place ("on the desktop delete build/") is skipped, unless it is really a question ("on what to delete"). */
+const PLACE_WORDS = new Set(["on", "in", "inside", "at", "from", "within", "for", "over"]);
+const NOT_A_PLACE = new Set(["what", "which", "how", "why", "whether", "when", "where", "who", "to", "if"]);
+/** Words that join two requests in one sentence ("commit and push", "list the files, then delete build/"). */
+const JOINERS = new Set(["and", "then", "but", "or", "so", "plus"]);
+
+/** Skips fillers from `k`; then, when `polite`, one way of asking and the fillers after it. Returns [index, polite?]. */
+function skipLead(c: readonly string[], k: number): [number, boolean] {
+  while (k < c.length && FILLERS.has(c[k])) k++;
+  const p = POLITE.find(ws => ws.every((x, j) => c[k + j] === x));
+  if (!p) return [k, false];
+  k += p.length;
+  while (k < c.length && FILLERS.has(c[k])) k++;
+  return [k, true];
+}
+
+/**
+ * Where a request's verb can stand in the user's words (review #28: "should I delete build/?", "how do I push my
+ * branch", "I deleted build/ yesterday" and "the script that deletes build/" ask for nothing). The words are cut into
+ * sentences and each sentence into clauses (at commas, colons and "and", "then", "but"…); a clause asks for something
+ * when, after fillers ("please", "Ember", "go ahead and") and a way of asking ("can you", "I want you to", "let's"), its
+ * next word is a verb, or the verb follows a short leading place ("on the desktop delete build/"). A question counts
+ * only when it is a way of asking ("can you delete build/?"); a clause with "might", "maybe" or "later" never counts.
+ * Each start is returned as the clause's words from the verb on; the rows compare their verbs' base forms with it.
+ */
+function requestStarts(raw: string): string[][] {
+  const out: string[][] = [];
+  for (const sentence of raw.split(/\r?\n+|(?<=[.!?;])\s+/)) {
+    if (sentence.trim() === "") continue;
+    const question = /\?["'”’)\]]*\s*$/.test(sentence);
+    const clauses: string[][] = [];
+    for (const part of sentence.split(/[,:;]\s+|\s+[-–—]\s+/)) {
+      let cur: string[] = [];
+      for (const word of userWordList(part)) {
+        if (JOINERS.has(word)) { if (cur.length) clauses.push(cur); cur = []; } else cur.push(word);
+      }
+      if (cur.length) clauses.push(cur);
+    }
+    let politeFirst = false;
+    clauses.forEach((c, n) => {
+      const [k, polite] = skipLead(c, 0);
+      if (n === 0) politeFirst = polite;
+      // A question asks for something only when it is a way of asking ("can you delete build/?").
+      if (question && !politeFirst) return;
+      if (c.some(x => HYPOTHETICAL.has(x))) return;
+      if (k < c.length) out.push(c.slice(k));
+      if (PLACE_WORDS.has(c[k] ?? "")) {
+        for (let j = k + 2; j <= k + 4 && j < c.length; j++) {
+          if (c.slice(k + 1, j).some(x => NOT_A_PLACE.has(x))) break;
+          out.push(c.slice(j));
+        }
+      }
+    });
+  }
+  return out;
+}
+
+/** Whether the user's words ask for one of these verbs (base form, multi-word verbs as consecutive words). */
+function asks(w: Words, verbs: readonly string[]): boolean {
+  return verbs.some(v => {
+    const parts = v.split(" ");
+    return w.asked.some(c => parts.every((p, j) => c[j] === p));
+  });
+}
+
+/** The user's words as the matcher reads them. */
+function wordsOf(userWords: string): Words {
+  const raw = userWords.normalize("NFKC");
+  return { raw, list: userWordList(userWords), tokens: userTokens(userWords), asked: requestStarts(raw) };
+}
+
 /** Words that turn a request around ("don't delete build", "never push to main"): nothing announces then. */
 const NEGATION = /(^|[^\p{L}\p{N}])(not|never|no|none|nothing|don['’]?t|doesn['’]?t|didn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t|mustn['’]?t|isn['’]?t|aren['’]?t|can['’]?t|cannot|without|except|avoid|neither|nor|unless)(?=$|[^\p{L}\p{N}])/iu;
 
@@ -173,7 +259,7 @@ const RECURSION = ["folder", "folders", "directory", "directories", "dir", "dirs
 function recursionNear(idx: number, w: Words): boolean {
   if (idx < 0) return false;
   const raw = w.raw.split(/\s+/).filter(t => t !== "");
-  if (/[\\/]$/.test(raw[idx] ?? "")) return true;
+  if (/[\\/][)"'`”’\]}>.,;:!?]*$/.test(raw[idx] ?? "")) return true;
   for (let k = Math.max(0, idx - 3); k <= Math.min(w.tokens.length - 1, idx + 3); k++) {
     if (k === idx) continue;
     const t = w.tokens[k];
@@ -197,7 +283,7 @@ function gitPush(force: boolean): RowFn {
     const branches: string[] = [];
     let remoteShown = "";
     for (const f of fs.filter(g => g.rule === "git.push")) {
-      if (!hasVerb(w.list, ["push"])) return null;
+      if (!asks(w, ["push", "force push"])) return null;
       if (force && !hasWord(w.list, ["force"])) return null;
       const forced = all.some(g => g.rule === "git.push.force" && g.at === f.at);
       if (forced !== force) return null;
@@ -259,38 +345,38 @@ const ROWS: Readonly<Record<string, RowFn>> = {
   "git.push": gitPush(false),
   "git.push.force": gitPush(true),
   "git.branch.delete": (fs, w) => {
-    if (!hasVerb(w.list, ["delete", "remove"]) || !hasWord(w.list, ["branch", "branches"])) return null;
+    if (!asks(w, ["delete", "remove"]) || !hasWord(w.list, ["branch", "branches"])) return null;
     const names = fs.flatMap(f => f.objects.map(o => o.text));
     if (names.length === 0 || names.some(n => !nameNamed(n, w.raw))) return null;
     return { intent: "git.branch.delete", announce: `Deleting the branch ${joinList(names)}, as you asked.` };
   },
   "git.reset.hard": (fs, w) => {
-    const said = (hasWord(w.list, ["reset"]) && hasWord(w.list, ["hard"])) || ((hasVerb(w.list, ["discard"]) || hasWord(w.list, ["throw away"])) && hasWord(w.list, ["changes"]));
+    const said = (asks(w, ["reset"]) && hasWord(w.list, ["hard"])) || (asks(w, ["discard", "throw away"]) && hasWord(w.list, ["changes"]));
     if (!said) return null;
     for (const f of fs) for (const o of f.objects) if (o.text !== "HEAD" && !nameNamed(o.text, w.raw) && !w.tokens.includes(o.text.toLowerCase())) return null;
     return { intent: "git.reset.hard", announce: "Throwing away uncommitted changes, as you asked." };
   },
   "git.discard": (fs, w, ctx) => {
-    if (!hasVerb(w.list, ["discard", "revert", "undo", "restore"]) && !hasWord(w.list, ["throw away"])) return null;
+    if (!asks(w, ["discard", "revert", "undo", "restore", "throw away"])) return null;
     const objs = fs.flatMap(f => f.objects);
     if (objs.length === 0 || fs.some(f => f.widening.some(x => x === "--source" || x === "real-path"))) return null;
     for (const o of objs) if (!o.resolved || pathToken(o, w, ctx) < 0) return null;
     return { intent: "git.discard", announce: `Discarding changes to ${joinList(objs.map(o => o.text))}, as you asked.` };
   },
   "git.clean": (fs, w, ctx) => {
-    if (!hasVerb(w.list, ["clean"]) || !(hasWord(w.list, ["untracked"]) || /\bgit clean\b/i.test(w.raw))) return null;
+    if (!asks(w, ["clean"]) || !(hasWord(w.list, ["untracked"]) || /\bgit clean\b/i.test(w.raw))) return null;
     if (fs.some(f => f.widening.some(x => x === "-x" || x === "-X")) && !hasWord(w.list, ["ignored"])) return null;
     if (fs.some(f => f.objects.some(o => !o.resolved || pathToken(o, w, ctx) < 0))) return null;
     return { intent: "git.clean", announce: "Deleting untracked files, as you asked." };
   },
   "git.stash.drop": (fs, w) => {
-    if (!hasVerb(w.list, ["drop", "delete", "clear"]) || !hasWord(w.list, ["stash", "stashes", "stashed"])) return null;
-    if (fs.some(f => f.rule === "git.stash.clear") && !(hasWord(w.list, ["all"]) || hasVerb(w.list, ["clear"]))) return null;
+    if (!asks(w, ["drop", "delete", "clear"]) || !hasWord(w.list, ["stash", "stashes", "stashed"])) return null;
+    if (fs.some(f => f.rule === "git.stash.clear") && !(hasWord(w.list, ["all"]) || asks(w, ["clear"]))) return null;
     if (fs.some(f => f.objects.some(o => !w.tokens.includes(o.text.toLowerCase())))) return null;
     return { intent: "git.stash.drop", announce: "Dropping the stash, as you asked." };
   },
   "delete.paths": (fs, w, ctx) => {
-    if (!hasVerb(w.list, ROW_VERBS["delete.paths"])) return null;
+    if (!asks(w, ROW_VERBS["delete.paths"])) return null;
     if (!ctx.cwd) return null;
     const env = envOf(ctx);
     const texts: string[] = [];
@@ -313,7 +399,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "delete.paths", announce: `Deleting ${joinList(texts)}, as you asked.` };
   },
   "overwrite.file": (fs, w, ctx) => {
-    if (!hasVerb(w.list, ROW_VERBS["overwrite.file"])) return null;
+    if (!asks(w, ROW_VERBS["overwrite.file"])) return null;
     const env = envOf(ctx);
     const texts: string[] = [];
     for (const f of fs) {
@@ -328,7 +414,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
   "p4.submit": p4Row("p4.submit", "submit", "Submitting", "to Perforce"),
   "p4.shelve": p4Row("p4.shelve", "shelve", "Shelving", "in Perforce"),
   "p4.revert": (fs, w) => {
-    if (!hasVerb(w.list, ["revert", "discard", "undo"])) return null;
+    if (!asks(w, ["revert", "discard", "undo"])) return null;
     const everything = hasWord(w.list, ["everything", "all my", "all"]);
     for (const f of fs) {
       if (f.widening.includes("...") && !everything) return null;
@@ -341,14 +427,14 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "p4.revert", announce: `Reverting ${what.length ? joinList(what) : "your opened files"} in Perforce, as you asked.` };
   },
   "gh.pr.create": (fs, w) => {
-    if (!(hasWord(w.list, ["pull request", "pr", "pull requests", "prs"]) && hasVerb(w.list, ROW_VERBS["gh.pr.create"]))) return null;
+    if (!(hasWord(w.list, ["pull request", "pr", "pull requests", "prs"]) && asks(w, ROW_VERBS["gh.pr.create"]))) return null;
     if (fs.some(f => f.widening.some(x => /^(-B|--base|-H|--head|-R|--repo|--web|-w)$/.test(x)))) return null;
     return { intent: "gh.pr.create", announce: "Opening a pull request, as you asked." };
   },
   "gh.pr.merge": (fs, w) => {
-    if (!hasVerb(w.list, ["merge"]) || !hasWord(w.list, ["pull request", "pr"])) return null;
+    if (!asks(w, ["merge"]) || !hasWord(w.list, ["pull request", "pr"])) return null;
     if (fs.some(f => f.widening.some(x => /^(--admin|-R|--repo)$/.test(x)))) return null;
-    if (fs.some(f => f.rule === "gh.pr.merge.delete-branch") && !(hasVerb(w.list, ["delete"]) && hasWord(w.list, ["branch"]))) return null;
+    if (fs.some(f => f.rule === "gh.pr.merge.delete-branch") && !(asks(w, ["delete"]) && hasWord(w.list, ["branch"]))) return null;
     const nums = [...new Set(fs.flatMap(f => f.objects.filter(o => o.kind === "other").map(o => o.text.replace(/^#/, ""))))];
     if (nums.some(n => !w.list.includes(n.toLowerCase()))) return null;
     // `gh pr merge` alone merges the current branch's pull request, which may not be the one the user numbered.
@@ -356,7 +442,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "gh.pr.merge", announce: `Merging pull request ${nums.length ? joinList(nums) : ""}, as you asked.`.replace("request ,", "request,") };
   },
   "pkg.publish": (fs, w) => {
-    if (!hasVerb(w.list, ["publish", "release", "upload"])) return null;
+    if (!asks(w, ["publish", "release", "upload"])) return null;
     for (const f of fs) {
       for (const x of f.widening) {
         if (x === "--registry") return null;
@@ -371,7 +457,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "pkg.publish", announce: `Publishing ${joinList(names)}, as you asked.` };
   },
   "docker.push": (fs, w) => {
-    if (!hasVerb(w.list, ["push"])) return null;
+    if (!asks(w, ["push"])) return null;
     const images: string[] = [];
     for (const f of fs) {
       if (f.widening.length) return null;
@@ -385,7 +471,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "docker.push", announce: `Pushing the image ${joinList(images)}, as you asked.` };
   },
   "pkg.install": (fs, w, ctx) => {
-    if (!hasVerb(w.list, ROW_VERBS["pkg.install"])) return null;
+    if (!asks(w, ROW_VERBS["pkg.install"])) return null;
     const pkgs: string[] = [];
     for (const f of fs) {
       if (f.widening.includes("--global") && !hasWord(w.list, ["global", "globally"])) return null;
@@ -404,7 +490,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     for (const f of fs) {
       const verb = f.widening[0] ?? "";
       if (!["start", "stop", "restart", "reload", "enable", "disable", "mask", "unmask", "try-restart", "reload-or-restart", "force-reload"].includes(verb)) return null;
-      if (!hasVerb(w.list, [verb.replace(/^(try-|force-)/, "").replace(/-or-restart$/, "")])) return null;
+      if (!asks(w, [verb.replace(/^(try-|force-)/, "").replace(/-or-restart$/, "")])) return null;
       if (f.objects.length !== 1) return null;
       const unit = f.objects[0].text.replace(/\.service$/, "");
       if (!nameNamed(unit, w.raw)) return null;
@@ -415,7 +501,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "service.restart", announce: `${ing} ${joinList(units)}, as you asked.` };
   },
   "upload.host": (fs, w, ctx) => {
-    if (!hasVerb(w.list, ROW_VERBS["upload.host"])) return null;
+    if (!asks(w, ROW_VERBS["upload.host"])) return null;
     let host = "";
     const files: string[] = [];
     for (const f of fs) {
@@ -431,7 +517,7 @@ const ROWS: Readonly<Record<string, RowFn>> = {
     return { intent: "upload.host", announce: `Copying ${joinList(files)} to ${host}, as you asked.` };
   },
   "kill.process": (fs, w) => {
-    if (!hasVerb(w.list, ROW_VERBS["kill.process"])) return null;
+    if (!asks(w, ROW_VERBS["kill.process"])) return null;
     const names: string[] = [];
     for (const f of fs) {
       if (f.objects.length === 0 || f.widening.length) return null;
@@ -451,7 +537,7 @@ function isAbsoluteText(p: string, os: OS): boolean {
 /** p4 submit and shelve: the changelist named (or "my|this|default changelist" for the default one). */
 function p4Row(intent: string, verb: string, ing: string, where: string): RowFn {
   return (fs, w) => {
-    if (!hasVerb(w.list, [verb])) return null;
+    if (!asks(w, [verb])) return null;
     const cls: string[] = [];
     for (const f of fs) {
       if (f.widening.some(x => x !== "-d" && !(intent === "p4.shelve" && x === "-f" && hasWord(w.list, ["force"])))) return null;
@@ -488,7 +574,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
     if (!row) return null;
     groups.set(row, [...(groups.get(row) ?? []), f]);
   }
-  const w: Words = { raw: userWords.normalize("NFKC"), list: userWordList(userWords), tokens: userTokens(userWords) };
+  const w = wordsOf(userWords);
   const parts: IntentMatch[] = [];
   for (const [row, fs] of groups) {
     const fn = ROWS[row];
@@ -508,7 +594,7 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
  */
 export function mentioned(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
-  const w: Words = { raw: userWords.normalize("NFKC"), list: userWordList(userWords), tokens: userTokens(userWords) };
+  const w = wordsOf(userWords);
   return findings.some(f => {
     const row = rowOf(f, findings);
     const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
