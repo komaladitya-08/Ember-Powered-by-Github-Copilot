@@ -88,6 +88,8 @@ export interface Check {
   detail: string;
   /** A fix Ember can apply itself (shown as a button): this OS's own, or one of the targets runtime's. */
   fix?: FixId | TargetFixId;
+  /** A second button, for when `fix` was used and didn't take (macOS: Reset Ember's permissions, review #99). */
+  alt?: FixId;
 }
 
 export interface EnvReport {
@@ -131,9 +133,16 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
 /** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
 export const LINUX_A11Y_RESTART = "restart apps that were already open (or log out and in)";
 
+/**
+ * The macOS fixes "Reset Ember's permissions" undoes: it takes Ember off the Accessibility, Screen Recording and Input
+ * Monitoring lists, so each of their buttons has to be pressed again.
+ */
+const RESET_UNDOES: readonly FixId[] = ["open-accessibility-settings", "open-screen-recording-settings", "open-input-monitoring-settings"];
+
 /** The fixes applied so far (EnvInputs.applied) once `fix` has been applied too. */
 export function afterFix(applied: readonly FixId[], fix: FixId): FixId[] {
-  return applied.includes(fix) ? [...applied] : [...applied, fix];
+  const kept = fix === "reset-permissions" ? applied.filter(f => !RESET_UNDOES.includes(f)) : [...applied];
+  return kept.includes(fix) ? kept : [...kept, fix];
 }
 
 export function inspectEnvironment(i: EnvInputs): EnvReport {
@@ -267,13 +276,20 @@ function inspectWindows(i: EnvInputs): EnvReport {
 
 /**
  * An ad-hoc signed Ember gets a new code identity with every build, so macOS can show it switched on while the
- * permission no longer applies: every macOS permission check ends with the way out (design R9).
+ * permission no longer applies (design R9). The way out is said once the row's own button has been pressed and the
+ * permission is still off (review #99): Reset Ember's permissions for the three it covers, this sentence for the
+ * microphone (and once in `ember doctor`, where there are no buttons).
  */
 export const MAC_REGRANT = "If Ember is already listed and switched on, remove it with − and add it again: macOS ties the permission to this exact copy of Ember.";
+/** A row's note once its System Settings button was pressed and the permission is still off: the Reset button beside it. */
+export const MAC_RESET_NOTE = "Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, then switch it on again.";
 
 function inspectMac(i: EnvInputs): EnvReport {
   const m = i.mac;
   const checks: Check[] = [];
+  /** A permission still off after its button was pressed: the detail gets the way out, and the Reset button where it helps. */
+  const stillOff = (fix: FixId, detail: string, reset: boolean): Pick<Check, "detail" | "fix" | "alt"> => (!i.applied?.includes(fix) ? { detail, fix }
+    : reset ? { detail: `${detail} ${MAC_RESET_NOTE}`, fix, alt: "reset-permissions" } : { detail: `${detail} ${MAC_REGRANT}`, fix });
   checks.push(i.arch === "arm64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Apple silicon" }
     : i.arch === "x64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Intel" }
       : { id: "platform", label: "Platform", status: "fail", detail: `macOS on ${i.arch} is not supported` });
@@ -284,23 +300,23 @@ function inspectMac(i: EnvInputs): EnvReport {
 
     checks.push(m.accessibility
       ? { id: "accessibility", label: "Reading and using apps", status: "ok", detail: "Accessibility is allowed" }
-      : { id: "accessibility", label: "Reading and using apps", status: "fail", detail: `Ember needs the Accessibility permission to read and use apps. ${MAC_REGRANT}`, fix: "open-accessibility-settings" });
+      : { id: "accessibility", label: "Reading and using apps", status: "fail", ...stillOff("open-accessibility-settings", "Ember needs the Accessibility permission to read and use apps.", true) });
 
     checks.push(m.screen === "granted"
       ? { id: "screen-recording", label: "Screen Recording", status: "ok", detail: "Allowed. macOS asks again about once a month; choose Allow." }
       : { id: "screen-recording", label: "Screen Recording", status: "warn",
-        detail: `Without Screen Recording, Ember can't take screenshots or see other apps' window titles. After you allow it, quit and reopen Ember. ${MAC_REGRANT}`, fix: "open-screen-recording-settings" });
+        ...stillOff("open-screen-recording-settings", "Without Screen Recording, Ember can't take screenshots or see other apps' window titles. After you allow it, quit and reopen Ember.", true) });
 
     if (m.inputMonitoring !== null) {
       checks.push(m.inputMonitoring
         ? { id: "input-monitoring", label: "Input Monitoring", status: "ok", detail: "Allowed" }
         : { id: "input-monitoring", label: "Input Monitoring", status: "warn",
-          detail: `Without Input Monitoring, Ember won't use the keyboard for you, because it couldn't notice you taking over. ${MAC_REGRANT}`, fix: "open-input-monitoring-settings" });
+          ...stillOff("open-input-monitoring-settings", "Without Input Monitoring, Ember won't use the keyboard for you, because it couldn't notice you taking over.", true) });
     }
 
     // Not asked yet is fine: macOS asks when the user turns on “Hey Ember”.
     if (m.microphone === "denied" || m.microphone === "restricted") {
-      checks.push({ id: "microphone", label: "Microphone", status: "warn", detail: `Microphone access is off for Ember, so “Hey Ember” can't hear you. ${MAC_REGRANT}`, fix: "open-microphone-settings" });
+      checks.push({ id: "microphone", label: "Microphone", status: "warn", ...stillOff("open-microphone-settings", "Microphone access is off for Ember, so “Hey Ember” can't hear you.", false) });
     }
 
     checks.push(m.inApplications

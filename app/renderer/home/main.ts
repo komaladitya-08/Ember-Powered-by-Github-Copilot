@@ -192,8 +192,10 @@ function renderChecks(environment: Status["environment"]): void {
     detail.className = "check-detail";
     detail.textContent = c.detail;
     li.append(pill, label, detail);
-    if (c.fix) {
-      const fix = c.fix;
+    // The row's fix, and a second one beside it for when that didn't take (macOS: Reset Ember's permissions).
+    const actions = Object.assign(document.createElement("span"), { className: "check-actions" });
+    for (const fix of [c.fix, c.alt]) {
+      if (!fix) continue;
       const btn = document.createElement("button");
       btn.className = "btn quiet check-fix";
       btn.textContent = platform?.fixLabels[fix] ?? "Turn on";
@@ -205,8 +207,9 @@ function renderChecks(environment: Status["environment"]): void {
           detail.textContent = `Couldn't change it: ${ipcErrorText(err)}`;
         });
       });
-      li.append(btn);
+      actions.append(btn);
     }
+    if (actions.childElementCount) li.append(actions);
     return li;
   }));
   if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();

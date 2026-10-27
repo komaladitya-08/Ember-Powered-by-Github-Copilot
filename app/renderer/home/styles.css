@@ -280,7 +280,7 @@ progress[hidden] { display: none; }
 .pill.fail { color: var(--red-text); background: color-mix(in srgb, var(--red) 18%, transparent); }
 .check-label { font-weight: 600; }
 .check-detail { color: var(--muted); overflow-wrap: anywhere; }
-.checks .check-fix { grid-column: 2; justify-self: start; margin-top: 8px; }
+.checks .check-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .facts { margin: 0; padding: 14px 16px; display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; font: 13px/20px var(--ember-mono); }

@@ -11,7 +11,9 @@ import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
-import { afterFix, inspectEnvironment, type EnvInputs } from "../../app/main/environment";
+import { MAC_REGRANT, MAC_RESET_NOTE, afterFix, inspectEnvironment, type EnvInputs, type MacEnvInputs } from "../../app/main/environment";
+import { darwinDoctorRows } from "../../app/main/platform/darwin/system/doctor";
+import type { PermissionDeps } from "../../app/main/platform/darwin/system/permissions";
 import { doctorChecks } from "../../app/main/doctor";
 import { AdminPolicySchema } from "../../app/main/admin";
 
@@ -273,5 +275,58 @@ describe("Linux's accessibility switch after Turn on", () => {
     const off = linux({ accessibility: { enabled: false, pyatspi: true } });
     expect(row(off, "accessibility")?.detail).toBe("Accessibility is off, so Ember can only see screenshots. Turn it on, then restart apps that were already open (or log out and in).");
     expect(doctorRow(off, "accessibility")?.fix).toBe("gsettings set org.gnome.desktop.interface toolkit-accessibility true, then restart apps that were already open (or log out and in)");
+  });
+});
+
+const macIn = (m: Partial<MacEnvInputs> = {}, more: Partial<EnvInputs> = {}): EnvInputs => ({
+  env: {}, osRelease: null, glibc: null, versions, platform: "darwin", arch: "arm64",
+  mac: { version: "14.6.1", accessibility: false, screen: "denied", microphone: "denied", inputMonitoring: false, inApplications: true, root: false, ...m }, ...more,
+});
+
+describe("macOS permissions that stay off", () => {
+  it("say nothing about removing and re-adding Ember until the user has pressed the row's button (review #99)", () => {
+    // A brand-new install: Ember isn't listed anywhere yet, so the advice about a listed copy is noise.
+    for (const id of ["accessibility", "screen-recording", "input-monitoring", "microphone"]) {
+      const c = row(macIn(), id)!;
+      expect(c.detail, id).not.toContain(MAC_REGRANT);
+      expect(c.detail, id).not.toContain(MAC_RESET_NOTE);
+      expect(c.alt, id).toBeUndefined();
+    }
+    expect(row(macIn(), "accessibility")?.detail).toBe("Ember needs the Accessibility permission to read and use apps.");
+  });
+
+  it("offer Reset Ember's permissions on a row whose System Settings button didn't take (review #99)", () => {
+    const pressed = macIn({}, { applied: ["open-accessibility-settings", "open-screen-recording-settings", "open-input-monitoring-settings", "open-microphone-settings"] });
+    expect(row(pressed, "accessibility")).toMatchObject({ status: "fail", fix: "open-accessibility-settings", alt: "reset-permissions",
+      detail: `Ember needs the Accessibility permission to read and use apps. ${MAC_RESET_NOTE}` });
+    expect(row(pressed, "screen-recording")).toMatchObject({ fix: "open-screen-recording-settings", alt: "reset-permissions" });
+    expect(row(pressed, "input-monitoring")).toMatchObject({ fix: "open-input-monitoring-settings", alt: "reset-permissions" });
+    // The reset doesn't cover the microphone: its row keeps the switch-it-again advice instead.
+    expect(row(pressed, "microphone")).toMatchObject({ fix: "open-microphone-settings", detail: expect.stringContaining(MAC_REGRANT) });
+    expect(row(pressed, "microphone")?.alt).toBeUndefined();
+    // Allowed after all: no note, no second button.
+    expect(row(macIn({ accessibility: true }, { applied: ["open-accessibility-settings"] }), "accessibility")).toEqual({ id: "accessibility", label: "Reading and using apps", status: "ok", detail: "Accessibility is allowed" });
+    expect(MAC_RESET_NOTE).toBe("Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, then switch it on again.");
+  });
+
+  it("start the advice again after a reset, which took Ember off every list (review #99)", () => {
+    const pressed = afterFix(afterFix(afterFix(["open-microphone-settings"], "open-accessibility-settings"), "open-screen-recording-settings"), "open-input-monitoring-settings");
+    expect(afterFix(pressed, "reset-permissions")).toEqual(["open-microphone-settings", "reset-permissions"]);
+  });
+
+  it("draw a second button for the row's other fix in the settings window (review #99)", () => {
+    expect(SCRIPT).toMatch(/for \(const fix of \[c\.fix, c\.alt\]\) \{\s*if \(!fix\) continue;/);
+  });
+
+  it("say the re-grant sentence once in ember doctor, not under every permission (review #99)", () => {
+    const d: PermissionDeps = {
+      app: { isInApplicationsFolder: () => true }, systemPreferences: { getMediaAccessStatus: () => "denied", isTrustedAccessibilityClient: () => false },
+      windows: () => null, uid: () => 501, systemVersion: () => "14.6.1",
+    };
+    const rows = darwinDoctorRows(d);
+    expect(rows.filter(r => r.status !== "ok").map(r => r.id)).toEqual(["accessibility-permission", "screen-recording", "microphone-permission"]);
+    expect(rows.filter(r => r.fix?.includes(MAC_REGRANT)).map(r => r.id)).toEqual(["accessibility-permission"]);
+    // Every one still says where to switch Ember on.
+    for (const r of rows.filter(x => x.status !== "ok")) expect(r.fix, r.id).toMatch(/^System Settings › Privacy & Security › .+: switch Ember on/);
   });
 });
