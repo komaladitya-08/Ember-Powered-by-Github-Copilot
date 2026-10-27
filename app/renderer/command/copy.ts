@@ -76,7 +76,8 @@ export function outsideText(s: unknown, max: number): string {
 }
 
 /** A reason in a sentence (shown as outsideText), without the full stop it may already end with. */
-const clause = (s: string | undefined) => outsideText(s, 300).replace(/[.!]+$/, "");
+/** One clause of outside text, its own closing full stop dropped (also inside a closing quote: "…Ember." becomes "…Ember"). */
+const clause = (s: string | undefined) => outsideText(s, 300).replace(/[.!]+(["'”’)\]]*)$/, "$1");
 
 /** "1 program it started is still running: make." / "2 programs it started are still running: a, b." */
 export function stragglerText(names: readonly string[]): string {

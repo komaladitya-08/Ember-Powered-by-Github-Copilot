@@ -4,6 +4,7 @@ import { commandHash, createRemoteRunner, type RemoteRunExit } from "../../app/m
 import { agentError, fakeLink, LINUX_FACTS, recordingLog, settle } from "./remote-target-fakes";
 import type { RunExit, RunSpec } from "../../app/main/commands/types";
 import type { OpResult } from "../../app/main/remote/protocol";
+import { statusLine } from "../../app/renderer/command/copy";
 
 const TARGET = "ssh:build-01" as const;
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -145,9 +146,16 @@ describe("RemoteRunner: gate 2's answers (§3.16, critique security-3)", () => {
     });
   });
 
-  it("ends a deny as refused-remote with the remote's reason", async () => {
+  it("ends a deny as refused-remote with the remote's reason only, naming the computer (review #215)", async () => {
     const { runner } = setup({ answer: () => ({ status: "deny", reason: "This computer's administrator has turned off commands from Ember." }) });
-    expect(await runner.start(specOf()).done).toEqual({ code: null, signal: null, ended: "refused-remote", ms: 0, error: "build-01 refused it: \"This computer's administrator has turned off commands from Ember.\"" });
+    const exit = await runner.start(specOf()).done;
+    expect(exit).toEqual({ code: null, signal: null, ended: "refused-remote", ms: 0, error: "build-01's administrator has turned off commands from Ember." });
+    // The tab's status line says "refused it" once, with one full stop.
+    expect(statusLine(exit, { label: "build-01", os: "linux" })).toBe("build-01 refused it: build-01's administrator has turned off commands from Ember.");
+    const silent = setup({ answer: () => ({ status: "deny", reason: "" }) });
+    const none = await silent.runner.start(specOf()).done;
+    expect(none.error).toBeUndefined();
+    expect(statusLine(none, { label: "build-01", os: "linux" })).toBe("build-01 refused it: it gave no reason.");
   });
 
   it("never takes a question or a refusal from an event: only the answer to the PC's own cmd.run carries one", async () => {
@@ -184,7 +192,9 @@ describe("RemoteRunner: gate 2's answers (§3.16, critique security-3)", () => {
     const odd = setup({ answer: () => ({ status: "started", channel: -1, interactive: true }) });
     expect((await odd.runner.start(specOf()).done).error).toBe("build-01 answered in a way Ember can't check");
     const denied = setup({ answer: () => { throw agentError("denied", "no commands here"); } });
-    expect(await denied.runner.start(specOf()).done).toMatchObject({ ended: "refused-remote", error: "build-01 refused it: \"no commands here\"" });
+    expect(await denied.runner.start(specOf()).done).toMatchObject({ ended: "refused-remote", error: "no commands here" });
+    const audit = setup({ answer: () => { throw agentError("denied", "This computer couldn't record the command, so Ember won't run it."); } });
+    expect((await audit.runner.start(specOf()).done).error).toBe("build-01 couldn't record the command, so Ember won't run it.");
   });
 });
 

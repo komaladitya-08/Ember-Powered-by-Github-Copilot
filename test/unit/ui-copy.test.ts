@@ -272,6 +272,8 @@ describe("the command window's words (§8.5)", () => {
     expect(say({ ended: "lost", code: null })).toBe("The connection to build-01 dropped; the command was stopped there.");
     expect(say({ ended: "failed-to-start", code: null, error: "bash isn't installed on build-01." })).toBe("Couldn't start: bash isn't installed on build-01.");
     expect(say({ ended: "refused-remote", code: null, error: "its policy turns commands off" })).toBe("build-01 refused it: its policy turns commands off.");
+    // A reason that ends in a quoted sentence gets no stray full stop inside and out (review #215).
+    expect(say({ ended: "refused-remote", code: null, error: "it said \"no commands.\"" })).toBe("build-01 refused it: it said \"no commands\".");
     expect(say({ ended: "stopped-task", code: null, ms: 900 })).toBe("Stopped with its task after 0.9 s. What it already changed stays.");
     expect(say({ ended: "exit", code: null, signal: "SIGKILL", ms: 61_000 })).toBe("Ended by SIGKILL after 1 min 1 s.");
     expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make.");
