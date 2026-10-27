@@ -373,7 +373,7 @@ html { scroll-padding-top: 16px; }
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
-  .models select, #text-size { appearance: auto; -webkit-appearance: menulist; }
+  .models select, #text-size { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }

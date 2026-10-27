@@ -226,6 +226,8 @@ describe("Windows contrast themes (forced colours)", () => {
     // The slider: a track and a thumb in system colours.
     expect(forced(css("home"), '.pick-row input[type="range"]::-webkit-slider-runnable-track')).toMatch(/Highlight .*CanvasText/);
     expect(forced(css("home"), '.pick-row input[type="range"]::-webkit-slider-thumb')).toContain("background: ButtonText;");
+    // Pop-ups: the system's own chevron, and not the painted one too (an image the system keeps).
+    expect(forced(css("home"), ".models select")).toMatch(/appearance: auto;.*background-image: none;/);
   });
 
   it("shows keyboard focus as a real outline in every window, the bubble included (WCAG 2.4.7; review #44, #151, #267)", () => {
