@@ -26,7 +26,7 @@ vi.mock("electron", async () => {
     ignoreMouse = false;
     setAlwaysOnTop() {}
     setIgnoreMouseEvents(on: boolean) { this.ignoreMouse = on; }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     showInactive() { this.visible = true; }
     hide() { this.visible = false; }
     focus() { this.focused = true; }

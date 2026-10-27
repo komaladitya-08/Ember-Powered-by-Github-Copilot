@@ -12,6 +12,7 @@ import { SHORTCUT_MODIFIERS, planKey } from "./keys";
 import type { DeskPlace } from "./place";
 import type { Logger } from "../logger";
 import { x11WindowId } from "../platform/linux/window-system";
+import { pageUrl } from "../page-url";
 
 const appDir = path.join(__dirname);
 const SMALL = { width: 340, height: 238 };
@@ -147,7 +148,7 @@ export class DeskView {
       this.win = win;
       win.setAlwaysOnTop(true, "screen-saver");
       if (this.driving) win.setIgnoreMouseEvents(true);
-      void win.loadFile(path.join(appDir, "renderer", "desk", "index.html"));
+      void win.loadURL(pageUrl(path.join(appDir, "renderer", "desk", "index.html")));
       // Shown without focus so it never takes the user's keys; it is focusable so
       // "Take over" can give it the keyboard (a non-focusable X window can't get it later).
       win.once("ready-to-show", () => { if (!win.isDestroyed()) win.showInactive(); });

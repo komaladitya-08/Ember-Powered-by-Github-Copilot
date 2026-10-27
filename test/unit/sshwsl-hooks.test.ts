@@ -30,7 +30,7 @@ vi.mock("electron", () => ({
     constructor(options: Record<string, unknown>) { electron.made.push({ options, calls: this.calls }); }
     setContentProtection(on: boolean) { this.calls.push(["setContentProtection", on]); }
     setAlwaysOnTop(on: boolean, level?: string) { this.calls.push(["setAlwaysOnTop", on, level]); }
-    loadFile(file: string) { this.calls.push(["loadFile", file]); return Promise.resolve(); }
+    loadURL(url: string) { this.calls.push(["loadURL", url]); return Promise.resolve(); }
     once() { /* not shown by the factories */ }
   },
 }));
@@ -601,7 +601,7 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       const { options, calls } = made();
       expect(options).toMatchObject({ width: 760, height: 480, minWidth: 480, minHeight: 280, title: "Ember commands", show: false, webPreferences: secure });
       expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "command.cjs"]);
-      expect(calls.find(c => c[0] === "loadFile")?.[1]).toMatch(/renderer[\\/]command[\\/]index\.html$/);
+      expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/command\/index\.html$/);
       if (os === "darwin") expect(options).toMatchObject({ type: "panel", acceptFirstMouse: true });
       else expect(options).not.toHaveProperty("type");
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
@@ -617,7 +617,7 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       expect(options).toMatchObject({ width: 440, height: 300, resizable: false, title: "Ember", show: false, alwaysOnTop: true, skipTaskbar: false, webPreferences: secure });
       expect(options).not.toHaveProperty("focusable");
       expect(String((options.webPreferences as { preload: string }).preload).split(path.sep).slice(-2)).toEqual(["preload", "prompt.cjs"]);
-      expect(calls.find(c => c[0] === "loadFile")?.[1]).toMatch(/renderer[\\/]prompt[\\/]index\.html$/);
+      expect(calls.find(c => c[0] === "loadURL")?.[1]).toMatch(/^file:\/\/.*\/renderer\/prompt\/index\.html$/);
       expect(calls).toContainEqual(["setAlwaysOnTop", true, "floating"]);
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
     }

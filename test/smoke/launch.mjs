@@ -8,31 +8,48 @@
 // and cleanup never fails the test. --forbid <event> (repeatable) fails the run when the first instance logged that
 // event by the time the second launch has handed over: CI's Windows job forbids "shortcut.unavailable", since the
 // runner has nothing else holding Ember's shortcuts (it proves Electron registers Super as the Windows key).
-// usage: node test/smoke/launch.mjs [--exe <path>] [--forbid <event>]...
+// --folder <name> starts the development build from a copy of dist/app in a folder of that name (the rest of the
+// repository linked beside it), and checks that the settings window's page loaded there, by its title on Chromium's
+// debugging port: a % in the name made every window blank once (review #200).
+// usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const argv = process.argv.slice(2);
-const USAGE = "usage: node test/smoke/launch.mjs [--exe <path>] [--forbid <event>]...";
+const USAGE = "usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...";
 const exeArg = argv.includes("--exe") ? argv[argv.indexOf("--exe") + 1] : process.env.EMBER_SMOKE_EXE;
 if (argv.includes("--exe") && !exeArg) { console.error(USAGE); process.exit(2); }
+const folder = argv.includes("--folder") ? argv[argv.indexOf("--folder") + 1] : null;
+if (argv.includes("--folder") && (!folder || folder.startsWith("--") || exeArg)) { console.error(USAGE); process.exit(2); }
 const forbidden = argv.flatMap((a, i) => (a === "--forbid" ? [argv[i + 1]] : []));
 if (forbidden.some(e => !e || e.startsWith("--"))) { console.error(USAGE); process.exit(2); }
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-// A packaged Ember loads its own resources/app; Electron in development is given the repository.
-const [command, appArgs] = exeArg ? [path.resolve(exeArg), []] : [createRequire(import.meta.url)("electron"), [root]];
 const userData = mkdtempSync(path.join(tmpdir(), "ember-smoke-"));
+/** --folder: <tmp>/<name>/ember holds a copy of dist/app, and links to everything else in the repository. */
+const copied = folder ? path.join(mkdtempSync(path.join(tmpdir(), "ember-smoke-app-")), folder, "ember") : null;
+if (copied) {
+  mkdirSync(path.join(copied, "dist"), { recursive: true });
+  cpSync(path.join(root, "dist", "app"), path.join(copied, "dist", "app"), { recursive: true });
+  for (const name of readdirSync(root).filter(n => n !== "dist" && n !== ".git")) {
+    const from = path.join(root, name);
+    if (statSync(from).isDirectory()) symlinkSync(from, path.join(copied, name), "junction");
+    else cpSync(from, path.join(copied, name));
+  }
+}
+// A packaged Ember loads its own resources/app; Electron in development is given the repository (or its copy).
+const [command, appArgs] = exeArg ? [path.resolve(exeArg), []] : [createRequire(import.meta.url)("electron"), [copied ?? root]];
 // Chromium refuses to run as root with its sandbox, and containers often block user namespaces (Linux).
 const flags = (process.platform === "linux" && process.getuid?.() === 0) || process.env.EMBER_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
 const env = { ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1" };
 const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform === "linux" ? 30_000 : 60_000);
 
 function launch(name) {
-  const child = spawn(command, [...appArgs, ...flags], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];
+  const child = spawn(command, [...appArgs, ...flags, ...debug], { env, stdio: ["ignore", "pipe", "pipe"] });
   const events = [];
   /** The log lines of forbidden events, as the app wrote them. */
   const forbiddenLines = [];
@@ -96,6 +113,14 @@ function cleanUp() {
   } catch (err) {
     console.log(`note couldn't remove ${userData}: ${err.message}`);
   }
+  // --folder's copy: its links first, so nothing removes what they point to (the repository).
+  if (!copied) return;
+  try {
+    for (const name of readdirSync(copied)) if (lstatSync(path.join(copied, name)).isSymbolicLink()) unlinkSync(path.join(copied, name));
+    rmSync(path.dirname(path.dirname(copied)), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (err) {
+    console.log(`note couldn't remove ${copied}: ${err.message}`);
+  }
 }
 
 const tail = (inst, stream) => inst.said[stream].trim()
@@ -108,6 +133,20 @@ try {
   first = launch("first");
   await waitFor(first, () => first.events.includes("window.home.shown"), windowMs, "home window");
   console.log("ok   first instance showed its window");
+  if (copied) {
+    // Chromium names the port on stderr; a page that failed to load has its URL's file name for a title.
+    await waitFor(first, () => /DevTools listening on ws:\/\/[^:]+:\d+\//.test(first.said.stderr), 10_000, "Chromium's debugging port");
+    const port = /DevTools listening on ws:\/\/[^:]+:(\d+)\//.exec(first.said.stderr)[1];
+    let title = null;
+    const t0 = Date.now();
+    while (title !== "Ember" && Date.now() - t0 < 10_000) {
+      const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json().catch(() => []);
+      title = pages.find(p => /\/renderer\/home\/index\.html/.test(p.url))?.title ?? null;
+      if (title !== "Ember") await new Promise(r => setTimeout(r, 250));
+    }
+    if (title !== "Ember") throw new Error(`the settings window's page didn't load from a folder named "${folder}" (its title is ${JSON.stringify(title)})`);
+    console.log(`ok   the settings window's page loaded from a folder named "${folder}"`);
+  }
 
   second = launch("second");
   await waitFor(second, () => exited(second), windowMs, "the second instance to exit", { exitOk: true });

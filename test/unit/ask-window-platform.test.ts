@@ -26,7 +26,7 @@ vi.mock("electron", () => {
     emit(e: string) { for (const fn of this.handlers.get(e) ?? []) fn(); }
     setAlwaysOnTop(...a: unknown[]) { this.calls.push(["setAlwaysOnTop", ...a]); }
     setVisibleOnAllWorkspaces(...a: unknown[]) { this.calls.push(["setVisibleOnAllWorkspaces", ...a]); }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     setBounds() {}
     show() { this.visible = true; }
     hide() { this.visible = false; }

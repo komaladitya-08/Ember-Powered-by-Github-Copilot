@@ -22,7 +22,7 @@ vi.mock("electron", () => {
     once(e: string, fn: () => void) { return this.on(e, fn); }
     emit(e: string) { for (const fn of this.handlers.get(e) ?? []) fn(); }
     setAlwaysOnTop() {}
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     setBounds() {}
     show() { this.shown++; this.visible = true; this.ignoreMouse = false; }
     hide() { this.visible = false; }

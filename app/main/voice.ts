@@ -20,6 +20,7 @@ import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import { VOICE, type MicState, type MicStatus } from "../shared/voice";
 import type { Logger } from "./logger";
+import { pageUrl } from "./page-url";
 
 const appDir = __dirname;
 /** A download that sends nothing for this long has stalled (ms). */
@@ -214,7 +215,7 @@ export class VoiceService {
     if (this.speaker && !this.speaker.win.isDestroyed()) return this.speaker;
     // The mic page without its audio port: it speaks, and never asks for the microphone.
     const win = hiddenWindow("Ember speech");
-    this.speaker = { win, wc: win.webContents, loaded: win.loadFile(path.join(appDir, "renderer", "mic", "index.html")), saying: false };
+    this.speaker = { win, wc: win.webContents, loaded: win.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))), saying: false };
     return this.speaker;
   }
 
@@ -260,7 +261,7 @@ export class VoiceService {
     mic.webContents.on("render-process-gone", (_e, d) => {
       if (this.mic === mic) { this.o.log.warn("voice.mic_gone", { reason: d.reason }); this.restartLater("The microphone page stopped."); }
     });
-    await mic.loadFile(path.join(appDir, "renderer", "mic", "index.html")).catch(() => undefined);
+    await mic.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))).catch(() => undefined);
     if (mic.isDestroyed() || this.mic !== mic) return;
     mic.webContents.postMessage(VOICE.port, null, [port2]);
   }

@@ -102,6 +102,8 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, &, brackets and non-ASCII in it (its pages must load there)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Zoë's [x]"
       - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields, a click that runs a modal dialog)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
@@ -371,6 +373,8 @@ jobs:
           done
       - name: Launch smoke test (development build)
         run: npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, & and brackets in it (its pages must load there)
+        run: node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Jo's [x]"
       - name: Desktop integration tests (window system and input, UI Automation bridge, accessibility host, system integration, vocabularies)
         run: >-
           node scripts/run-integration.mjs test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts
@@ -525,6 +529,9 @@ jobs:
       - name: Launch smoke test (development build)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, &, brackets and non-ASCII in it (its pages must load there)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Zoë's [x]"
       - name: Grant the processes that may be TCC's responsible one, and approve their screen capture
         id: grant
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

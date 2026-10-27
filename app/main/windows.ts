@@ -10,6 +10,7 @@ import { BrowserWindow } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
+import { pageUrl } from "./page-url";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -33,7 +34,7 @@ export function createHomeWindow(): BrowserWindow {
     },
   });
   win.once("ready-to-show", () => win.show());
-  void win.loadFile(path.join(appDir, "renderer", "home", "index.html"));
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "home", "index.html")));
   return win;
 }
 
@@ -65,7 +66,7 @@ export function createCommandWindow(os: OS): BrowserWindow {
     webPreferences: webPreferences("command"),
   });
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
-  void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "command", "index.html")));
   return win;
 }
 
@@ -91,7 +92,7 @@ export function createPromptWindow(os: OS): BrowserWindow {
   });
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
-  void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "prompt", "index.html")));
   return win;
 }
 
@@ -131,10 +132,10 @@ export function quitQuestion(tasks: number, busy: { commands: number; connection
 }
 
 /**
- * True when an IPC message comes from one of our own bundled pages. File URLs use "/" on every OS: path.sep is "\" on
- * Windows, which never appears in one, so testing for it refused every settings request there. The URL is read as it
- * is, never decoded: loadFile leaves a literal % in a folder name as it is ("100%%20Free"), which decodeURIComponent
- * throws on, and an encoded "/" (%2F) is no folder separator.
+ * True when an IPC message comes from one of our own bundled pages (loaded by pageUrl, page-url.ts). File URLs use "/"
+ * on every OS: path.sep is "\" on Windows, which never appears in one, so testing for it refused every settings request
+ * there. The URL is read as it is, never decoded: decoding throws on a stray % (loadFile wrote "100% Free" as
+ * "100%%20Free", which failed every settings request there), and an encoded "/" (%2F) is no folder separator.
  */
 export function isTrustedSender(url: string): boolean {
   return url.startsWith("file://") && url.includes("/renderer/");

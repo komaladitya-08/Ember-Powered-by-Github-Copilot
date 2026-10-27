@@ -30,7 +30,7 @@ vi.mock("electron", async () => {
     isVisible() { return false; }
     setAlwaysOnTop() {}
     setIgnoreMouseEvents() {}
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     showInactive() {}
     hide() {}
     focus() {}

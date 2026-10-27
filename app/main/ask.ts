@@ -9,6 +9,7 @@ import { IPC, type AskContext } from "../shared/ipc";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { x11WindowId } from "./platform/linux/window-system";
+import { pageUrl } from "./page-url";
 
 const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
@@ -121,7 +122,7 @@ export class AskWindow {
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
     // update and the first box opened from the menu never showed "Ember will see: …").
     win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
-    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { query: { opaque: "1" } } : {});
+    void win.loadURL(pageUrl(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { opaque: "1" } : {}));
     win.once("ready-to-show", () => {
       if (this.win !== win) return;
       this.loaded = true;

@@ -19,6 +19,7 @@ import type { Settings } from "./settings";
 import type { OverlayShaper } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
+import { pageUrl } from "./page-url";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
 
 const appDir = __dirname;
@@ -319,7 +320,7 @@ export class OverlayManager {
       if (!win.isDestroyed()) this.passThrough(win);
     });
     win.on("closed", () => this.overlays.delete(display.id));
-    void win.loadFile(path.join(appDir, "renderer", "overlay", "index.html"));
+    void win.loadURL(pageUrl(path.join(appDir, "renderer", "overlay", "index.html")));
   }
 
   private destroy(id: number): void {
