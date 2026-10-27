@@ -4,8 +4,8 @@
  * Order: a token Ember stored (encrypted with the OS keyring via safeStorage),
  * then COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN, then `gh auth token`.
  * New sign-ins use GitHub's device flow with Ember's own app (its client id is
- * built in from github-app.ts, and EMBER_GITHUB_CLIENT_ID overrides it); until the
- * app is registered (PLAN.md §7), sign-in goes through the GitHub CLI.
+ * built in from github-app.ts, and EMBER_GITHUB_CLIENT_ID overrides it); a build
+ * without a client id signs in through the GitHub CLI.
  * Classic `ghp_` tokens are refused: the Copilot runtime does not accept them.
  */
 

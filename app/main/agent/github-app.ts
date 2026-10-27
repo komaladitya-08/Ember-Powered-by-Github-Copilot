@@ -1,10 +1,10 @@
 /**
  * Ember's own GitHub App, for the device-flow sign-in ("Sign in with GitHub"), and what every sign-in message says
- * while there is none.
+ * in a build without one.
  *
  * GITHUB_CLIENT_ID is the one checked-in place for the app's public client id: the build bundles this file into
- * main.cjs, so filling it in is a one-line change. EMBER_GITHUB_CLIENT_ID overrides it at run time (any build). While
- * both are empty there is no device flow: Ember signs in through the GitHub CLI, and every message, the doctor row and
+ * main.cjs. EMBER_GITHUB_CLIENT_ID overrides it at run time (any build). A build where both are empty (a fork without
+ * an app of its own) has no device flow: Ember signs in through the GitHub CLI, and every message, the doctor row and
  * the README say that this needs a GitHub account with Copilot and the GitHub CLI, and how to install it on this OS.
  * Pure (no Electron), so the doctor and the unit tests use it too.
  */
@@ -12,8 +12,8 @@
 import type { OS } from "../../shared/shortcuts";
 import type { SignInProgress } from "../../shared/ipc";
 
-/** Ember's GitHub App's public client id (not a secret). Empty until the app is registered (PLAN.md §7). */
-export const GITHUB_CLIENT_ID = "";
+/** Ember's GitHub App's public client id (not a secret; owner decision S1). Empty: no device flow in this build. */
+export const GITHUB_CLIENT_ID = "Iv23liXa8A1wDXYg2jYw";
 
 /** How a client id looks (GitHub's are "Iv1.…", "Iv23…" or "Ov23…"): anything else is ignored rather than sent to GitHub. */
 const CLIENT_ID = /^[A-Za-z0-9._-]{1,100}$/;

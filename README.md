@@ -99,17 +99,24 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 ## Sign in to Copilot
 
 Ember needs a **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on
-the **Copilot CLI** policy). Until Ember has its own GitHub sign-in, it uses the sign-in of the **GitHub CLI**, so
-install that first and sign in with it:
+the **Copilot CLI** policy). Once you have agreed to how Ember works in its first window, press **Sign in with GitHub**
+in its Copilot section. Your browser opens GitHub's device page: enter the code Ember shows (**Copy** puts it on the
+clipboard) and approve. Ember connects within a few seconds, with no restart. It keeps the sign-in encrypted by your
+system (the GNOME keyring, Windows' own protection or the macOS Keychain); where it can't, you sign in again the next
+time Ember starts.
+
+Ember also uses a sign-in it finds on this computer: a `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` in its
+environment (classic `ghp_` tokens don't work), or the **GitHub CLI**'s (run `gh auth login`, then press
+**Check again**). Ember's own sign-in comes first, then the environment's, then the GitHub CLI's; one that Copilot refuses
+gives way to the next.
+
+A build without Ember's GitHub App (a fork, or a development build without a client id) signs in only through the
+GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect with GitHub CLI** in Ember's settings:
 
 - RHEL 8: `sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo`, then
   `sudo dnf install gh`
 - Windows: `winget install --id GitHub.cli` in PowerShell, or the installer from [cli.github.com](https://cli.github.com)
 - macOS: `brew install gh`, or the installer from [cli.github.com](https://cli.github.com)
-
-Then run `gh auth login` in a terminal and follow its steps. In Ember's settings, **Connect with GitHub CLI** waits
-for that sign-in and connects within a few seconds (no restart needed); **Check again** looks for it at once. A
-`COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` in Ember's environment works too (classic `ghp_` tokens don't).
 
 ## Shortcuts
 

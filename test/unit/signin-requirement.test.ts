@@ -22,9 +22,10 @@ import { PLATFORM_WORDS } from "../../app/shared/words";
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 
 describe("the GitHub App's client id", () => {
-  it("is checked in empty until the app is registered, so a build without it has no device flow", () => {
-    expect(GITHUB_CLIENT_ID).toBe("");
-    expect(githubClientId({})).toBeNull();
+  it("is Ember's own GitHub App's, checked in, so every build signs in with the device flow", () => {
+    // A GitHub App's client id: "Iv23" and 16 letters or digits (public by design, not a secret).
+    expect(GITHUB_CLIENT_ID).toMatch(/^Iv23[A-Za-z0-9]{16}$/);
+    expect(githubClientId({})).toBe(GITHUB_CLIENT_ID);
   });
 
   it("a build without one (a fork, a development build) has no device flow: sign-in goes through the GitHub CLI", () => {
