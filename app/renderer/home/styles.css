@@ -19,6 +19,9 @@ body { margin: 0; color: var(--fg); background: var(--bg); font: var(--type-body
 .home > * { min-width: 0; }
 section { display: grid; gap: 8px; }
 .stack { display: grid; gap: 8px; }
+/* What the page hides stays hidden, whatever display a rule gives it (a section, the SSH add form): the browser's own
+   [hidden] rule loses to any author rule that sets display. */
+[hidden] { display: none !important; }
 
 /* ───── Hero: the character on its tile (the app icon's tile), the name, and what Ember is doing ───── */
 .hero { display: flex; align-items: center; gap: 22px; }
