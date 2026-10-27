@@ -67,6 +67,23 @@ describe("visibleText", () => {
     expect(visibleText("ls \u0444\u0430\u0439\u043b_10.\u0442\u0435\u043a\u0441\u0442")).toEqual([seg("ls \u0444\u0430\u0439\u043b_10.\u0442\u0435\u043a\u0441\u0442", "plain")]);
   });
 
+  it("judges each word of a path on its own, so a user's own non-Latin folders mark nothing (review #266)", () => {
+    for (const s of ["C:\\Users\\\u0418\u0432\u0430\u043d", "/home/ana/\u0414\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u044b/\u043f\u0440\u043e\u0435\u043a\u0442",
+      "cp ~/\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0438/file.txt", "cd C:\\Users\\\u0391\u03bd\u03b4\u03c1\u03ad\u03b1\u03c2\\Desktop",
+      "git commit --author=\u0418\u0432\u0430\u043d", "scp a.txt \u0438\u0432\u0430\u043d@build-01:/srv", "ls 'C:\\\u05e7\u05d5\u05d1\u05e5',x"]) {
+      expect(visibleText(s).filter(x => x.kind === "mixed"), s).toEqual([]);
+    }
+  });
+
+  it("still marks a look-alike letter inside a word, in a path or a web address too", () => {
+    expect(visibleText("/home/ana/bu\u0456ld").filter(x => x.kind === "mixed")).toEqual([seg("\u0456", "mixed")]);
+    expect(visibleText("curl https://g\u0456thub.com/x").filter(x => x.kind === "mixed")).toEqual([seg("\u0456", "mixed")]);
+    // A whole label in another alphabet after a dot is still one word with the rest of the name.
+    expect(visibleText("curl https://github.\u0441\u043e\u043c/x").filter(x => x.kind === "mixed")).toEqual([seg("\u0441\u043e\u043c", "mixed")]);
+    expect(visibleText("C:\\Users\\\u0440m").filter(x => x.kind === "mixed")).toEqual([seg("\u0440", "mixed")]);
+    expect(visibleText("C:\\Users\\\u0440mdir").filter(x => x.kind === "mixed")).toEqual([seg("\u0440", "mixed")]);
+  });
+
   it("judges each token on its own", () => {
     expect(visibleText("ls \u043f\u0430\u043f\u043a\u0430 build")).toEqual([seg("ls \u043f\u0430\u043f\u043a\u0430 build", "plain")]);
   });

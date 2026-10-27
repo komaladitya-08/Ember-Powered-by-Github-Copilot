@@ -1,9 +1,11 @@
 /**
  * A command made visible character by character for the command card (design §3.9.1, R7, critique security-10): control
  * characters, direction overrides, zero-width and other invisible characters, tabs and non-breaking spaces become
- * visible tokens, and in every whitespace-separated token the letters from a script other than the token's main one
- * are marked "mixed" (a Cyrillic "і" in "buіld"), so what the user approves is what runs. Renderer-safe: no Node or
- * Electron import; the command window's page and main's tests both use it.
+ * visible tokens, and in every word the letters from a script other than the word's main one are marked "mixed" (a
+ * Cyrillic "і" in "buіld"), so what the user approves is what runs. A word ends at whitespace and at the characters
+ * that join names into paths, options and addresses (/ \ = : , ; @ and the like), so the user's own folder in their
+ * alphabet (C:\Users\Иван) marks nothing beside it, while a look-alike letter inside a word still is (review #266).
+ * Renderer-safe: no Node or Electron import; the command window's page and main's tests both use it.
  */
 
 /** One run of the command as the card shows it. */
@@ -61,6 +63,13 @@ function scriptOf(ch: string): string | null {
 
 const hex = (cp: number): string => `U+${cp.toString(16).toUpperCase().padStart(4, "0")}`;
 
+/**
+ * Characters that end a word as whitespace does: path separators, option and assignment marks, list separators, the
+ * at sign of user@host, brackets, pipes and quotes. Not "." "-" "_": they sit inside one name (buіld.sh, my-gіt), and a
+ * web address's label in another alphabet (github.сом) stays one word with the rest of the name, so it is marked.
+ */
+const WORD_BREAK = /[/\\=:,;@|&<>()[\]{}'"`]/u;
+
 /** How one character shows, or null when it shows as itself. */
 function special(ch: string): VisibleSegment | null {
   const cp = ch.codePointAt(0) ?? 0;
@@ -81,11 +90,11 @@ function special(ch: string): VisibleSegment | null {
 /**
  * The command as the card shows it: plain runs, visible tokens for controls (`⟨U+001B⟩`), bidi controls (`⟨RLO⟩`),
  * invisible characters (`⟨ZWSP⟩`), tabs (`→`) and non-breaking spaces (`⟨NBSP⟩`), and "mixed" runs for letters from a
- * script other than their token's main one (on a tie between Latin and another script, the other one is marked).
+ * script other than their word's main one (on a tie between Latin and another script, the other one is marked).
  */
 export function visibleText(s: string): VisibleSegment[] {
   const chars = Array.from(s);
-  // The main script of each whitespace-separated token.
+  // The main script of each word (whitespace, specials and WORD_BREAK end one).
   const main: (string | null)[] = new Array<string | null>(chars.length).fill(null);
   let start = 0;
   const closeToken = (end: number): void => {
@@ -102,7 +111,7 @@ export function visibleText(s: string): VisibleSegment[] {
     for (let k = start; k < end; k++) main[k] = best;
   };
   for (let k = 0; k <= chars.length; k++) {
-    if (k === chars.length || /\s/u.test(chars[k]) || special(chars[k]) !== null) {
+    if (k === chars.length || /\s/u.test(chars[k]) || WORD_BREAK.test(chars[k]) || special(chars[k]) !== null) {
       closeToken(k);
       start = k + 1;
     }

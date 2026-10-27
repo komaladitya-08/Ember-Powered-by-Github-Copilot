@@ -256,8 +256,11 @@ function buildTab(t: TabView): TabEls {
   panel.setAttribute("role", "tabpanel");
   panel.setAttribute("aria-labelledby", tab.id);
   panel.hidden = true;
-  const { block } = commandBlock(t.command, "The command");
+  const where = headerNode(t.header);
+  const { block, legend } = commandBlock(t.command, "The command");
   block.classList.add("small");
+  // What the marks in the header and the command mean, as on the card (review #266).
+  const legends = [...new Set([...where.legend, ...legend])].map(line => el("p", "legend", line));
   const host = el("div", "term");
   host.setAttribute("aria-roledescription", "terminal");
   host.setAttribute("aria-label", "What the command shows");
@@ -275,7 +278,7 @@ function buildTab(t: TabView): TabEls {
     else { action.disabled = true; api.stop(cur.runId); }
   });
   foot.append(status, action);
-  panel.append(headerNode(t.header).node, block, host, typing, foot);
+  panel.append(where.node, block, ...legends, host, typing, foot);
   const term = createRunTerminal({ cols: t.cols, rows: t.rows, interactive: t.interactive, onInput: data => api.input(t.runId, data) });
   return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
 }
