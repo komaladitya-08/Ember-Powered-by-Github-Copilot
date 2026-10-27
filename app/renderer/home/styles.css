@@ -283,6 +283,9 @@ progress[hidden] { display: none; }
 
 /* ── First run: only the welcome, the character picker and Start ── */
 body.first-run .after-setup { display: none !important; }
+/* Until the first status says which of the two layouts this is, nothing of the page shows (the window paints its
+   background), so a first run never flashes the full settings first; main.ts lifts it, after 1.5 s at the latest. */
+body.loading .home { visibility: hidden; }
 
 /* ── Section links. Narrow: one row of capsules that scrolls sideways and away with the page. ── */
 .jump {
