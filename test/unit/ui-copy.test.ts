@@ -253,6 +253,7 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.announceKeyText("darwin"))).toBe("Or press Control+Shift+Command+X to stop everything.");
     expect([commandCopy.ALLOW_LABEL, commandCopy.NOT_NOW_LABEL, commandCopy.STOP_LABEL, commandCopy.CLOSE_LABEL].map(keep)).toEqual(["Allow", "Not now", "Stop", "Close"]);
     expect(keep(commandCopy.READ_ALL_HINT)).toBe("Read the whole command to allow it.");
+    expect(keep(commandCopy.ANSWER_RETRY_HINT)).toBe("Ember couldn't take that answer just now. Try again.");
     expect(keep(commandCopy.LEGEND_TOKENS)).toBe("Characters you wouldn't see are shown in ⟨ ⟩.");
     expect(keep(commandCopy.LEGEND_MIXED)).toBe("Letters from another alphabet are underlined.");
     expect(keep(commandCopy.LEGEND_RTL)).toBe("Right-to-left text is shown in the order it runs.");

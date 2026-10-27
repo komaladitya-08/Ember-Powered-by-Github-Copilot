@@ -112,7 +112,7 @@ function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean 
   /** The page says the card's whole command is (or isn't) in view. */
   const seen = (n: number, inView = true, isSeen = true) => ipc.send(COMMANDS_IPC.cardSeen, page(), { n, inView, seen: isSeen });
   const answers: AnswerMsg[] = [];
-  ctl.onAnswer(a => answers.push(a));
+  ctl.onAnswer(a => { answers.push(a); });
   return { ipc, ctl, windows, win, page, seen, answers };
 }
 
@@ -775,5 +775,35 @@ describe("the announcement's time and keys (reviews #46, #269)", () => {
     void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
     expect(page().last().announce).not.toBeNull();
     expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+  });
+});
+
+describe("an answer the card's buttons sent that wasn't taken (review #271)", () => {
+  it("brings the card's buttons back: the state says so with a new retry count", () => {
+    const ipc = new FakeIpc();
+    const windows: FakeWindow[] = [];
+    const ctl = createCommandWindowController({ create: () => { const w = new FakeWindow(); windows.push(w); return w; }, ipc, log, os: "linux", keyHint: () => null });
+    let take = false;
+    ctl.onAnswer(() => take);
+    ctl.showCard(1, card());
+    const page = () => windows[0].webContents;
+    ipc.send(COMMANDS_IPC.cardSeen, page(), { n: 1, inView: true, seen: true });
+    vi.advanceTimersByTime(1000);
+    expect(page().last().card?.retry ?? 0).toBe(0);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().last().card?.retry).toBe(1);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "deny", sha256: SHA });
+    expect(page().last().card?.retry).toBe(2);
+    take = true;
+    const pushes = page().states().length;
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().states().length).toBe(pushes);
+  });
+
+  it("brings them back after an Allow that came too early too", () => {
+    const { ipc, ctl, page } = setup();
+    ctl.showCard(1, card());
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().last().card?.retry).toBe(1);
   });
 });

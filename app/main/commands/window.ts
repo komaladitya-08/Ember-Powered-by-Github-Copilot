@@ -42,8 +42,11 @@ export const ANNOUNCE_SCREEN_READER_MS = 15_000;
 
 /** What the controller adds to the port for the targets runtime (beyond the contract; see the package report). */
 export interface CommandWindowExtras {
-  /** Answers from the card's own buttons (already checked: this window, the card on screen, its sha256, armed and seen). */
-  onAnswer(fn: (a: AnswerMsg) => void): () => void;
+  /**
+   * Answers from the card's own buttons (already checked: this window, the card on screen, its sha256, armed and seen).
+   * `fn` returns false when the answer wasn't taken (the Confirmer refused it): the card's buttons come back.
+   */
+  onAnswer(fn: (a: AnswerMsg) => boolean | void): () => void;
   /** The terminal size new runs should start at (what the window's page says fits, else 100×30). */
   termSize(): { cols: number; rows: number };
   /** A note in a running tab's status line ("Starting Ubuntu…", the stalled-link countdown), or null to clear it. */
@@ -164,12 +167,13 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   let seqNext = 1;
   /** Newest first. */
   let tabs: Tab[] = [];
-  let card: { n: number; card: CommandCard; shownAt: number } | null = null;
+  /** The card on screen; `retry` counts the answers from its buttons that weren't taken (the page re-enables them). */
+  let card: { n: number; card: CommandCard; shownAt: number; retry: number } | null = null;
   let view: SeenMsg | null = null;
   const queue: Announcement[] = [];
   /** Tasks whose command has no tab yet, and the line each shows (insertion order). */
   const pendings = new Map<string, string>();
-  const answerFns = new Set<(a: AnswerMsg) => void>();
+  const answerFns = new Set<(a: AnswerMsg) => boolean | void>();
   let size: { cols: number; rows: number } | null = null;
 
   const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
@@ -230,7 +234,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     return {
       rev: ++rev,
       tabs: tabs.map(tabView),
-      card: card ? { ...card.card, n: card.n } : null,
+      card: card ? { ...card.card, n: card.n, ...(card.retry ? { retry: card.retry } : {}) } : null,
       announce: head && head.endsAt !== null ? { card: head.card, endsAt: head.endsAt } : null,
       ...(head && head.endsAt !== null ? { announceKeys: announceKeyText(o.os) } : {}),
       keyHint: card ? keyHint() : null,
@@ -370,13 +374,18 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       if (!isObj(raw) || !isN(raw.n) || (raw.answer !== "once" && raw.answer !== "deny") || !isSha(raw.sha256)) return;
       // Only the card on screen, with its own hash; Allow only once it was armed and its whole command was seen.
       if (!card || card.n !== raw.n || card.card.sha256 !== raw.sha256) return;
+      const shown = card;
+      // The page disabled its buttons when it sent this: one that isn't taken gives them back (review #271).
+      const notTaken = () => { shown.retry += 1; push(); };
       if (raw.answer === "once") {
-        const armed = Date.now() >= card.shownAt + card.card.armMs;
-        const seen = view?.n === card.n && view.seen;
-        if (!armed || !seen) { note("warn", "commands.allow_too_early", { n: card.n, armed, seen }); return; }
+        const armed = Date.now() >= shown.shownAt + shown.card.armMs;
+        const seen = view?.n === shown.n && view.seen;
+        if (!armed || !seen) { note("warn", "commands.allow_too_early", { n: shown.n, armed, seen }); notTaken(); return; }
       }
       const a: AnswerMsg = { n: raw.n, answer: raw.answer, sha256: raw.sha256 };
-      for (const fn of [...answerFns]) safe("answer", () => fn(a));
+      let taken = answerFns.size > 0;
+      for (const fn of [...answerFns]) safe("answer", () => { if (fn(a) === false) taken = false; });
+      if (!taken && card === shown) notTaken();
     });
 
     o.ipc.on(COMMANDS_IPC.cardSeen, (e, raw) => {
@@ -439,7 +448,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       // keeps its own state for the same card, so it wouldn't report "seen" again).
       if (card && card.n === n && card.card.sha256 === c.sha256) { reveal(); push(); return; }
       // One card at a time: a new question replaces the one shown (its "seen" doesn't carry over).
-      card = { n, card: c, shownAt: Date.now() };
+      card = { n, card: c, shownAt: Date.now(), retry: 0 };
       view = null;
       reveal();
       push();

@@ -22,6 +22,8 @@ export const STOP_LABEL = "Stop";
 export const CLOSE_LABEL = "Close";
 /** Under a disarmed Allow when the command must be scrolled through first. */
 export const READ_ALL_HINT = "Read the whole command to allow it.";
+/** Under the buttons when Ember couldn't take an answer just then (another task held the mouse): they work again. */
+export const ANSWER_RETRY_HINT = "Ember couldn't take that answer just now. Try again.";
 export const UNASKED_LINE = "You didn't ask for this.";
 export const LEGEND_TOKENS = "Characters you wouldn't see are shown in ⟨ ⟩.";
 export const LEGEND_MIXED = "Letters from another alphabet are underlined.";

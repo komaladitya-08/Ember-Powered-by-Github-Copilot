@@ -38,6 +38,8 @@ export interface PendingView { taskId: string; text: string }
 /** Everything the window draws, pushed whole on every change (the contract's state with richer tabs). */
 export interface WindowView extends CommandWindowState {
   tabs: TabView[];
+  /** The question's card; `retry` grows each time an answer from its buttons wasn't taken (its buttons come back). */
+  card: (CommandCard & { n: number; retry?: number }) | null;
   /** Grows with every push: the page ignores an older state that arrives late. */
   rev: number;
   /** Lines for tasks whose command has no tab yet, until the tab comes (absent: none). */

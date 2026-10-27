@@ -75,8 +75,11 @@ export interface PanelAnswer { n: number; answer: "once" | "deny"; sha256: strin
 /** UI's command window controller as the runtime uses it: the contract, plus its answer hook when it has one. */
 export type CommandWindow = CommandWindowPort & {
   show(): void; owns(sender: { readonly id: number }): boolean; dispose(): void;
-  /** The card's own buttons' answers (UI's extra; without it the runtime hears COMMANDS_IPC.answer itself). */
-  onAnswer?(fn: (a: PanelAnswer) => void): () => void;
+  /**
+   * The card's own buttons' answers (UI's extra; without it the runtime hears COMMANDS_IPC.answer itself); `fn` says
+   * whether the Confirmer took it, so the card can give its buttons back when it didn't (review #271).
+   */
+  onAnswer?(fn: (a: PanelAnswer) => boolean | void): () => void;
 };
 
 /** UI's prompt window as the runtime uses it: the contract, plus its consent-answer hook and show() when it has them. */
@@ -914,12 +917,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   // Each window answers only its own kind of question (R7: a command is allowed only from the command window's card, a
   // consent card only from the prompt window's): the Confirmer checks the hash, not which window sent it. "Not now"
   // passes from either (the Confirmer takes it from anywhere).
-  const confirmAnswer = (kind: "command" | "consent") => (a: PanelAnswer) => {
+  const confirmAnswer = (kind: "command" | "consent") => (a: PanelAnswer): boolean => {
     if (a.answer !== "deny" && (current?.n !== a.n || current.question.panel?.kind !== kind)) {
       log.warn("targets.panel_answer_refused", { kind });
-      return;
+      return false;
     }
-    try { deps.confirmer()?.answer(`q${a.n}:${a.answer}`, "panel", { sha256: a.sha256 }); } catch (err) { log.warn("targets.panel_answer_failed", { err }); }
+    try { return deps.confirmer()?.answer(`q${a.n}:${a.answer}`, "panel", { sha256: a.sha256 }) === true; } catch (err) { log.warn("targets.panel_answer_failed", { err }); return false; }
   };
   if (commandWindow.onAnswer) {
     commandWindow.onAnswer(confirmAnswer("command"));

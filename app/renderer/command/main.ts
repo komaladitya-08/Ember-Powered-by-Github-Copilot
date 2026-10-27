@@ -11,7 +11,7 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import {
-  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
+  ALLOW_LABEL, ANNOUNCE_HEADING, ANSWER_RETRY_HINT, ASK_HEADING, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
   NOT_NOW_LABEL, STOP_LABEL, cardLines, countdownText, headerLine, tabLabel,
 } from "./copy";
 import { shouldFocusTerminal } from "./keys";
@@ -101,11 +101,13 @@ function appendLines(root: HTMLElement, card: CommandCard): void {
 interface AskEls {
   key: string; root: HTMLElement; block: HTMLPreElement; allow: HTMLButtonElement; deny: HTMLButtonElement;
   hint: HTMLElement; keys: HTMLElement; actions: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
+  /** The card's retry count this page last saw: a higher one gives the buttons back (review #271). */
+  retry: number;
 }
 let ask: AskEls | null = null;
 let armTimer: ReturnType<typeof setTimeout> | null = null;
 
-function buildAsk(card: CommandCard & { n: number }): AskEls {
+function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
   const root = el("section", "card ask");
   root.setAttribute("aria-labelledby", "ask-h");
   const where = headerNode(headerLine(card));
@@ -135,7 +137,7 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
   const actions = el("div", "actions");
   actions.append(hint, row, keys);
   root.append(actions);
-  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, actions, card, sent: false };
+  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, actions, card, sent: false, retry: card.retry ?? 0 };
   allow.addEventListener("click", e => {
     if (!e.isTrusted || ask !== els || els.sent) return;
     const a = allowAnswer(els.card, model.card, Date.now());
@@ -202,7 +204,7 @@ function paintAllow(): void {
   const now = Date.now();
   const on = allowEnabled(model.card, now);
   if (!ask.sent) ask.allow.disabled = !on;
-  const hint = allowHint(model.card) ?? "";
+  const hint = allowHint(model.card) ?? (ask.retry > 0 && !ask.sent ? ANSWER_RETRY_HINT : "");
   if (ask.hint.textContent !== hint) ask.hint.textContent = hint;
   ask.hint.hidden = !hint;
   // The approve keys work only while the whole command is in view (R7): their hint shows only then.
@@ -371,6 +373,12 @@ function render(): void {
     }
   }
   $("cards").hidden = !announce && !ask;
+  // An answer the card sent that wasn't taken: its buttons work again (review #271).
+  if (ask && card && (card.retry ?? 0) > ask.retry) {
+    ask.retry = card.retry ?? 0;
+    ask.sent = false;
+    ask.deny.disabled = false;
+  }
   // Anything drawn may have moved the card: measure it again once laid out.
   if (ask) { paintAllow(); requestAnimationFrame(measureCard); }
 
