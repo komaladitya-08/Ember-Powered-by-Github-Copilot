@@ -566,6 +566,7 @@ Example for a fleet that allows SSH to build hosts, commands with questions on r
 | A policy without the new keys | available | available | **off** on every kind: the administrator never agreed to them |
 | `features.wsl: false` / `features.ssh: false` | off | off | that kind's commands off too |
 | `commands.<kind>: "ask"` | — | — | every command there asks; nothing runs on an announcement |
+| `confirmEveryAction: true` | — | — | every command asks, as with `"ask"`, on every kind whose commands are on |
 | `features.actions: false` | — | — | off (no task starts) |
 | A broken policy (Ember locks down) | off | off | off |
 | SSH, both computers | — | a remote's own `features.ssh: false` refuses Ember there | the stricter of both computers' `commands.ssh` |
