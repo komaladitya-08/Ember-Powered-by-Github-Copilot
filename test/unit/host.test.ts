@@ -2296,3 +2296,60 @@ describe("a passing problem while connecting (review #137)", () => {
     expect(sim.clients).toHaveLength(1);
   });
 });
+
+describe("a sign-in refused after connecting (review #138)", () => {
+  it("the conversation's 401: Copilot is asked, and a refused sign-in leaves Ready for the sign-in error with a way to settings", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    // The token was revoked: the next turn fails, and Copilot now says it isn't signed in.
+    sim.auth = async () => ({ isAuthenticated: false });
+    conductorSession().emit("session.error", { errorType: "authentication", message: "Unauthorized", statusCode: 401 });
+    await vi.advanceTimersByTimeAsync(50);
+    const s = host.getStatus();
+    expect(s).toMatchObject({ phase: "error", reason: "sign-in" });
+    expect(s.detail).toMatch(/didn't accept the GitHub sign-in Ember found \(Ember's saved sign-in\)/);
+    expect(idleWord(s)).toBe("Sign-in refused");
+    expect(screen().bubble?.actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    // The next question isn't sent into a sign-in that fails: Ember says why, with the button.
+    const sent = conductorSession().sent.length;
+    await host.ask("what time is it?");
+    expect(conductorSession().sent).toHaveLength(sent);
+    expect(screen().bubble).toMatchObject({ title: "Copilot didn't accept the sign-in", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
+  it("a 401 Copilot still signs in after (a passing one) changes nothing", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    conductorSession().emit("session.error", { errorType: "authentication", message: "Unauthorized", statusCode: 401 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a task that fails on a refused sign-in is checked the same way", async () => {
+    vi.useFakeTimers();
+    sim.onSend = (s, prompt) => { if (s.sessionId.startsWith("ember-task-") && prompt.startsWith("Task:")) setTimeout(() => { sim.auth = async () => ({ isAuthenticated: false }); s.emit("session.error", { message: "Request failed: 401 Unauthorized: bad credentials" }); }, 10); };
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "github-cli");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(host.tasks?.get(t.id)?.status ?? "failed").toBe("failed");
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "sign-in" });
+    expect(host.getStatus().detail).toMatch(/\(the GitHub CLI sign-in\)/);
+    await host.stop();
+  });
+
+  it("an organisation's own endpoint has no GitHub sign-in to check", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ provider: { type: "openai", baseUrl: "http://127.0.0.1:9/v1" } as never });
+    await host.start(null);
+    sim.auth = async () => ({ isAuthenticated: false });
+    conductorSession().emit("session.error", { errorType: "authentication", message: "Unauthorized", statusCode: 401 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+});

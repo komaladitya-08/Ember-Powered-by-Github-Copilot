@@ -32,6 +32,9 @@ export function plainText(s: string): string {
  * is configured (there is no GitHub sign-in to blame then). `settingsKey`: the settings
  * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E").
  */
+/** friendlyError's sentence for a sign-in Copilot refused (the host then asks Copilot whether the sign-in still holds). */
+export const SIGN_IN_REFUSED = "Copilot didn't accept the sign-in. Open settings to sign in again.";
+
 export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string } = {}): string {
   const m = `${errorType ?? ""} ${raw}`;
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
@@ -43,7 +46,7 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   }
   const refused = "Copilot refused this for your account (an organisation policy or a missing Copilot seat).";
   if (status === 403) return refused;
-  if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return "Copilot didn't accept the sign-in. Open settings to sign in again.";
+  if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return SIGN_IN_REFUSED;
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The AI endpoint's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
   if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one in settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;

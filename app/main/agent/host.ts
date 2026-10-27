@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, type PresenterEvent } from "./presenter";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type PresenterEvent } from "./presenter";
 import { chooseModels, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -521,6 +521,8 @@ export class AgentHost {
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
   private carried: string[] = [];
+  /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
+  private checkingSignIn = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
@@ -590,6 +592,8 @@ export class AgentHost {
    * takes none of their context.
    */
   private conversationEvent(e: PresenterEvent): void {
+    // Copilot refused the sign-in mid-session (revoked, expired, the seat removed): it is asked whether it still holds.
+    if (e.type === "session.error" && (e.data?.errorType === "authentication" || e.data?.statusCode === 401)) void this.checkSignIn(this.gen);
     if (e.type !== "user.message" || (e as { agentId?: string }).agentId) return;
     const said = typeof e.data?.content === "string" ? e.data.content.trimEnd() : "";
     const i = this.queued.findIndex(r => said.endsWith(r.words.trim()));
@@ -612,6 +616,30 @@ export class AgentHost {
     const bare = b.mood === "idle" && b.thought.length <= ANNOUNCEMENT_CHARS;
     // (At a task's end a reply already seen may still be on screen: it keeps its own time.)
     if (p.waiting ? bare : !task) p.drop();
+  }
+
+  /**
+   * A turn or a task failed on a refused sign-in (review #138): Copilot is asked whether the sign-in still holds. If it
+   * doesn't (the token was revoked or expired, or the account lost Copilot), Ember leaves Ready for the sign-in error:
+   * the handle says "Sign-in refused", settings offer Sign in and Check again, a question says why instead of failing
+   * the same way again, and the bubble gets its Open settings button. A passing 401 changes nothing.
+   */
+  private async checkSignIn(gen: number): Promise<void> {
+    const client = this.client;
+    if (this.o.provider || this.checkingSignIn || gen !== this.gen || this.status.phase !== "ready" || !client) return;
+    this.checkingSignIn = true;
+    try {
+      const auth = await within(client.getAuthStatus(), 10_000);
+      if (gen !== this.gen || this.status.phase !== "ready" || auth === "timeout" || auth.isAuthenticated) return;
+      this.o.log.warn("agent.sign_in_refused", { source: this.source });
+      const detail = explainStartError(new Error("not authenticated"), { source: this.source, sourceName: this.sourceName, proxy: this.proxy });
+      this.setStatus({ phase: "error", reason: "sign-in", detail });
+      this.presenter.notice({ title: NOTICE_TITLE["sign-in"], text: SIGN_IN_REFUSED, actions: [{ id: "ui:settings", label: "Open settings" }] });
+    } catch (err) {
+      this.o.log.warn("agent.sign_in_check_failed", { err });
+    } finally {
+      this.checkingSignIn = false;
+    }
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
@@ -928,6 +956,8 @@ export class AgentHost {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
           const summary = task.result?.summary ?? "";
+          // A task failed on a refused sign-in: is it still signed in (checkSignIn)?
+          if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
           const text = taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);

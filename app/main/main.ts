@@ -1539,6 +1539,8 @@ function start(): void {
         turnAnswer = "";
       },
       onStatus: status => {
+        // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
+        if (status.phase === "error" && status.reason === "sign-in" && currentToken) refusedTokens.add(currentToken);
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         showState({ idle: idleWord(status) });
