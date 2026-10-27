@@ -33,6 +33,11 @@ export interface WindowsEnvInputs {
   dpiMixed: boolean;
   /** Why the helper couldn't read apps (its own words), for "missing". */
   helperDetail?: string;
+  /**
+   * "Let desktop apps access your microphone" as Electron's getMediaAccessStatus("microphone") reads it ("denied" when
+   * it is off). Omitted when it can't be asked (no row).
+   */
+  microphone?: MediaAccess;
 }
 
 /** What the macOS platform finds out about this machine and Ember's permissions. */
@@ -210,6 +215,9 @@ function windowsName(build: number): string {
  */
 export const MIXED_SCALING_FIX = `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${ISSUES_URL}.`;
 
+/** Where the microphone's privacy switch is, on both supported Windows (Windows 10 22H2 calls the page "Privacy"). */
+export const WINDOWS_MIC_PATH = "Settings › Privacy & security › Microphone (Settings › Privacy › Microphone on Windows 10)";
+
 /** Windows 10 22H2 is the oldest Windows Ember is tested on; 1809 (17763) the oldest it may work on. */
 const WINDOWS_TESTED = 19045, WINDOWS_OLDEST = 17763;
 
@@ -247,6 +255,12 @@ function inspectWindows(i: EnvInputs): EnvReport {
         checks.push(screen("warn", w.helperDetail ? `Ember's accessibility helper didn't start: ${w.helperDetail}` : "Ember's accessibility helper didn't start."));
         break;
       case "unknown": break;
+    }
+
+    // Not asked yet is fine (Windows asks, or it is on); off, “Hey Ember” hears nothing, and the voice line points here.
+    if (w.microphone === "denied" || w.microphone === "restricted") {
+      checks.push({ id: "microphone", label: "Microphone", status: "warn", fix: "open-microphone-settings",
+        detail: `Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. Turn on “Let desktop apps access your microphone” in ${WINDOWS_MIC_PATH}.` });
     }
 
     if (w.dpiMixed) {

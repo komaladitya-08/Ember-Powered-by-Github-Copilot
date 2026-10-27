@@ -172,6 +172,21 @@ describe("the Windows environment inputs", () => {
     expect(make().e.environment({ windows: undefined, helper: helper({ dpi: "PerMonitorV2", processDpi: "PerMonitorV2" }) }).windows.dpiMixed).toBe(false);
   });
 
+  it("reads the microphone's privacy switch for the setup check, and leaves it out when it can't be asked (review #100)", () => {
+    const opened: string[] = [];
+    const api = fakeApi(undefined, { elevated: () => false, sessionId: () => 1 });
+    const ps = powershellFacts({ api: () => api, env: {}, dir: DIR, exists: () => false });
+    const withMic = (getMediaAccessStatus: () => string) => win32Environment({
+      env: { SESSIONNAME: "Console" }, api: () => api, powershell: ps, shell: { openExternal: async url => { opened.push(url); } },
+      systemPreferences: { getMediaAccessStatus: getMediaAccessStatus as never }, systemVersion: () => "10.0.19045",
+    }).environment({ windows: undefined }).windows;
+    expect(withMic(() => "denied").microphone).toBe("denied");
+    expect(withMic(() => "granted").microphone).toBe("granted");
+    // A read that throws can't tell: no warning Ember can't back up.
+    expect(withMic(() => { throw new Error("no"); }).microphone).toBe("unknown");
+    expect(make().e.environment({ windows: undefined }).windows.microphone).toBeUndefined();
+  });
+
   it("reports a service session", () => {
     expect(make({ session: 0 }).e.environment({ windows: undefined }).windows.session).toBe("service");
   });

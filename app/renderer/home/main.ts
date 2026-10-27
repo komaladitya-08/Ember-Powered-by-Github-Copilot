@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, type HomePatch, type Segment,
+  retryMessage, tagline, usageLine, voiceFix, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -173,8 +173,12 @@ function renderTagline(): void {
 let checksOpened = false;
 /** The checks on screen, to leave them alone when a fresh status brings the same ones. */
 let shownChecks = "";
+/** The setup check's rows as last shown: the voice line's fix button comes from its microphone row. */
+let checksNow: Status["environment"]["checks"] = [];
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
+  checksNow = environment.checks;
+  renderVoiceFix();
   const hadFocus = $("checks").contains(document.activeElement);
   $("checks").replaceChildren(...environment.checks.map(c => {
     const li = document.createElement("li");
@@ -789,8 +793,23 @@ let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, 
 let voice: VoiceStatus | null = null;
 /** Screen readers hear the voice line when it changes, and a download only every 25 %. */
 const voiceLive = (text: string) => { if ($("voice-live").textContent !== text) $("voice-live").textContent = text; };
+/** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
+function renderVoiceFix(): void {
+  const fix = voiceFix(voice?.state ?? "off", checksNow);
+  const btn = $("voice-fix") as HTMLButtonElement;
+  btn.hidden = !fix;
+  if (fix) btn.textContent = platform?.fixLabels[fix] ?? "Open Settings";
+}
+$("voice-fix").addEventListener("click", () => {
+  const fix = voiceFix(voice?.state ?? "off", checksNow);
+  if (!fix) return;
+  const btn = $("voice-fix") as HTMLButtonElement;
+  btn.disabled = true;
+  window.ember.applyFix(fix).then(renderChecks, () => undefined).finally(() => { btn.disabled = false; });
+});
 function renderVoice(v: VoiceStatus): void {
   voice = v;
+  renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
   $("voice-text").textContent = text;
   if (v.state !== "downloading") voiceLive(text);

@@ -90,6 +90,15 @@ export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {
   return `Microphone off (${muteLabel} to turn on)`;
 }
 
+/**
+ * The setup check's microphone fix while the voice line shows an error (review #100): the microphone's privacy switch
+ * (Windows) or permission (macOS) is off, so the button that turns it on sits beside the error too. null otherwise.
+ */
+export function voiceFix<F extends string>(state: string, checks: readonly { id: string; fix?: F }[]): F | null {
+  if (state !== "error") return null;
+  return checks.find(c => c.id === "microphone" && c.fix)?.fix ?? null;
+}
+
 /** Download progress for screen readers: only at 0, 25, 50, 75 and 100 %. */
 export function progressStep(fraction: number): number {
   return Math.min(100, Math.floor(Math.max(0, fraction) * 4) * 25);

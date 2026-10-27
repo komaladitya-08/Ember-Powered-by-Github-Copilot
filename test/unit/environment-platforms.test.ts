@@ -67,6 +67,13 @@ describe("Windows setup checks", () => {
     expect(check(win(), "display-scaling")).toBeUndefined();
   });
 
+  it("warn, with the button that opens the setting, when Windows keeps desktop apps from the microphone (review #100)", () => {
+    expect(check(win({ microphone: "denied" }), "microphone")).toEqual({ id: "microphone", label: "Microphone", status: "warn", fix: "open-microphone-settings",
+      detail: "Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. Turn on “Let desktop apps access your microphone” in Settings › Privacy & security › Microphone (Settings › Privacy › Microphone on Windows 10)." });
+    expect(check(win({ microphone: "restricted" }), "microphone")?.status).toBe("warn");
+    for (const m of ["granted", "not-determined", "unknown", undefined] as const) expect(check(win({ microphone: m }), "microphone")).toBeUndefined();
+  });
+
   it("give mixed display scaling a way out and a place to report it, not a dead end (review #223)", () => {
     const detail = check(win({ dpiMixed: true }), "display-scaling")!.detail;
     expect(detail).not.toMatch(/Tell the Ember team/);
