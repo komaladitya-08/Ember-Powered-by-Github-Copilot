@@ -169,6 +169,17 @@ export function auditRetentionDays(loaded: LoadedAdminPolicy): number | null {
   return loaded.policy.auditRetentionDays ?? DEFAULT_RETENTION_DAYS;
 }
 
+/**
+ * Why Ember uses no model service under `loaded`, or null when it may. A policy that can't be used may be one that
+ * requires the organisation's own endpoint (Ember then never uses a GitHub sign-in) or keeps windows out of sight:
+ * neither can be read from it, so a locked-down Ember sends what it reads nowhere, GitHub Copilot included (fail
+ * closed), until the policy is fixed.
+ */
+export function modelServiceRefusal(loaded: LoadedAdminPolicy): string | null {
+  if (loaded.error === undefined) return null;
+  return "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed.";
+}
+
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);

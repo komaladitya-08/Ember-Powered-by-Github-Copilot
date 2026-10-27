@@ -572,6 +572,9 @@ Example for a fleet that allows SSH to build hosts, commands with questions on r
 | SSH, both computers | — | a remote's own `features.ssh: false` refuses Ember there | the stricter of both computers' `commands.ssh` |
 | A WSL distro's own `/etc/ember/policy.json` | ignored: root inside a distro needs no password, so it isn't an administrator's file | — | — |
 
+A locked-down Ember (a broken policy) also connects to no model service, neither GitHub Copilot nor the organisation's
+own endpoint, and prunes nothing from the audit log, until the policy reads fine again.
+
 **An older Ember locks down when it reads a policy with these keys.** The policy schema is strict, so an Ember from
 before this release reads `commands`, `ssh`, `features.wsl` or `features.ssh` as a mistake and locks down (no actions,
 no listening) until the policy is fixed or Ember is updated. Update Ember everywhere before deploying a policy that
