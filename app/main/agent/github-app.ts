@@ -10,6 +10,7 @@
  */
 
 import type { OS } from "../../shared/shortcuts";
+import type { SignInProgress } from "../../shared/ipc";
 
 /** Ember's GitHub App's public client id (not a secret). Empty until the app is registered (PLAN.md §7). */
 export const GITHUB_CLIENT_ID = "";
@@ -56,6 +57,17 @@ export function cliSteps(os: OS, ghInstalled: boolean): string {
 /** What the Copilot section says while Ember waits for a GitHub CLI sign-in (no restart is needed). */
 export function cliWaitingMessage(os: OS, ghInstalled: boolean): string {
   return `${cliSteps(os, ghInstalled)} Ember will notice within a few seconds and connect; no restart needed.`;
+}
+
+/**
+ * How the wait for a GitHub CLI sign-in starts: what the Copilot section says and, while gh is missing, an Open button
+ * for its download page (`page`: the one page that button may open; null with gh installed).
+ */
+export function cliWaitStart(os: OS, ghInstalled: boolean): { progress: SignInProgress; page: string | null } {
+  const message = cliWaitingMessage(os, ghInstalled);
+  return ghInstalled
+    ? { progress: { state: "waiting", message }, page: null }
+    : { progress: { state: "waiting", message, link: "Open cli.github.com" }, page: GH_CLI_PAGE };
 }
 
 /** What it says when the wait for a GitHub CLI sign-in ran out. */

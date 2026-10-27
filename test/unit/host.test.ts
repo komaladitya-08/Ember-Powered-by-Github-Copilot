@@ -2363,7 +2363,7 @@ describe("a sign-in refused after connecting (review #138)", () => {
     await host.start(TOKEN, "github-cli");
     const t = host.tasks!.start("tidy my desktop");
     await vi.advanceTimersByTimeAsync(200);
-    expect(host.tasks?.get(t.id)?.status ?? "failed").toBe("failed");
+    expect(host.tasks?.get(t.id)?.status).toBe("failed");
     expect(host.getStatus()).toMatchObject({ phase: "error", reason: "sign-in" });
     expect(host.getStatus().detail).toMatch(/\(the GitHub CLI sign-in\)/);
     await host.stop();

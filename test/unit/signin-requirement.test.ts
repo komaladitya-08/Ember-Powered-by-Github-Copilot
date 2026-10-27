@@ -131,6 +131,20 @@ describe("the Copilot section without Ember's own GitHub App", () => {
 });
 
 describe("the GitHub CLI's download page (review #136)", () => {
+  it("the wait for a GitHub CLI sign-in offers it, with an Open button, only while gh is missing", async () => {
+    const { GH_CLI_PAGE, cliWaitStart, mayOpenSignInPage } = await import("../../app/main/agent/github-app");
+    const missing = cliWaitStart("win32", false);
+    expect(missing.progress).toEqual({ state: "waiting", message: cliWaitingMessage("win32", false), link: "Open cli.github.com" });
+    expect(missing.progress.message).toMatch(/GitHub CLI isn't installed[\s\S]*winget install --id GitHub\.cli/);
+    expect(missing.page).toBe(GH_CLI_PAGE);
+    expect(mayOpenSignInPage(missing.page)).toBe(true);
+    // Installed: only the sign-in step, no button and no page to open.
+    const present = cliWaitStart("darwin", true);
+    expect(present.progress).toEqual({ state: "waiting", message: cliWaitingMessage("darwin", true) });
+    expect(present.page).toBeNull();
+    expect(mayOpenSignInPage(present.page)).toBe(false);
+  });
+
   it("is the one page besides GitHub's own sign-in pages that the Open button may show", async () => {
     const { GH_CLI_PAGE, mayOpenSignInPage } = await import("../../app/main/agent/github-app");
     expect(GH_CLI_PAGE).toBe("https://cli.github.com/");

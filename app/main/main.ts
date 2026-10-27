@@ -46,7 +46,7 @@ import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceFlow, type ResolvedToken } from "./agent/auth";
-import { GH_CLI_PAGE, cliTimedOutMessage, cliWaitingMessage, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
+import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
@@ -984,10 +984,10 @@ function start(): void {
     if (!clientId) {
       // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart). The
       // message says what that needs (a GitHub account with Copilot and the GitHub CLI) and how to install gh here.
-      const gh = ghInstalled();
       // Without gh, an Open button shows where to get it (only that page, on request).
-      signInPage = gh ? null : GH_CLI_PAGE;
-      say({ state: "waiting", message: cliWaitingMessage(platform.os, gh), ...(gh ? {} : { link: "Open cli.github.com" }) });
+      const start = cliWaitStart(platform.os, ghInstalled());
+      signInPage = start.page;
+      say(start.progress);
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
         // (A refused token in the environment is passed over: the new GitHub CLI sign-in is found behind it.)
