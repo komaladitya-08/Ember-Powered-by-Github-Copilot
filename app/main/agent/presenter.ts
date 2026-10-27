@@ -18,6 +18,23 @@ const KEEP_CHARS = 600;
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
+/** About as many characters as one of the bubble's lines holds (300 px wide, 14 px Ember Sans), a little on the short side. */
+const LINE_CHARS = 36;
+/** The lines a finished answer shows before it is cut off (BUBBLE_CSS's .eb-thought). */
+const ANSWER_LINES = 6;
+
+/**
+ * How many of the bubble's lines `text` takes: each of its lines (the bubble keeps line breaks, so an empty one is a
+ * line too) wraps onto as many as its length needs.
+ */
+export function answerLines(text: string): number {
+  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.trim().length / LINE_CHARS)), 0);
+}
+
+/** A finished answer the bubble shows only the start of: it offers "Read all". */
+export function cutShort(text: string): boolean {
+  return text.length > LONG_ANSWER || answerLines(text) > ANSWER_LINES;
+}
 
 /**
  * Markdown the model may use anyway, removed so the bubble and speech read naturally. The bubble's rules
@@ -857,8 +874,9 @@ export class Presenter {
           // A newer question is owed its turn (asked after this answer's words came, before this message): its
           // "Thinking…" stays, the earlier answer isn't put back under it (it is kept for "Read the last answer").
           if (this.asked !== null && this.askedOverAnswer) break;
+          // By the lines it takes, not its characters: a short list or a few paragraphs fill the bubble's six lines too.
           this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
-            actions: full.length > LONG_ANSWER ? [{ id: "ui:more", label: "Read all" }] : [] } });
+            actions: cutShort(full) ? [{ id: "ui:more", label: "Read all" }] : [] } });
         }
         break;
       }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, NO_REPLY, Presenter, STILL_WAITING, expandedBubble, handStep, plainText, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, handStep, plainText, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -726,5 +726,30 @@ describe("Presenter.post: a bubble of Ember's own in the shared bubble (review #
     expect(notices.shownAt).toBe(5000);
     notices.clear();
     expect(notices.visible).toBe(false);
+  });
+});
+
+describe("Read all: by the lines an answer takes, not its characters (review #12)", () => {
+  const finished = (text: string) => {
+    const { p, last } = setup();
+    p.userPrompt("what can I do?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+    p.event({ type: "assistant.message", data: { content: text } });
+    return last().bubble!;
+  };
+
+  it("offers Read all for a short answer whose line breaks take more than the bubble's six lines", () => {
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    expect(options.length).toBeLessThan(LONG_ANSWER);
+    expect(answerLines(options)).toBe(9);
+    expect(finished(options).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
+    const list = "Here:\n- one\n- two\n- three\n- four\n- five\n- six\n- seven";
+    expect(finished(list).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
+  });
+
+  it("offers none for an answer that fits, and counts a long line as the lines it wraps onto", () => {
+    expect(finished("It's half past three.\nYour next meeting is at four.").actions).toEqual([]);
+    expect(answerLines("x".repeat(80))).toBe(3);
+    expect(answerLines("a\n\nb")).toBe(3);
   });
 });
