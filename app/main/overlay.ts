@@ -147,7 +147,7 @@ export class OverlayManager {
       // the cursor (where it would be now, not wherever it was on its way), so its buttons don't run away.
       // Otherwise it follows the cursor again.
       const c = this.cursor();
-      const here = () => followTarget(c, size, screen.getDisplayNearestPoint(c).workArea, this.keepOff());
+      const here = () => { const d = screen.getDisplayNearestPoint(c); return followTarget(c, size, d.workArea, this.keepOff(d)); };
       // ("Stay put": it answers where it already is.)
       this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? (this.paused ? this.follower.position : here()) : null);
     }
@@ -186,17 +186,24 @@ export class OverlayManager {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
   }
 
-  /** What Ember keeps off: its handle and the task cards stacked above it (one area: they touch). */
-  private keepOff(): Rect | null {
-    let r = this.avoid?.() ?? null;
-    for (const o of this.overlays.values()) {
-      const c = o.cards;
-      if (!c) continue;
-      if (!r) { r = c; continue; }
-      const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
-      r = { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
-    }
-    return r;
+  /**
+   * What Ember keeps off on `display`: its handle (when it is there) and that display's task cards stacked above it
+   * (one area: they touch), within the display's work area. Each display draws its own cards: one area round every
+   * display's would be a band across the desktop that Ember could not follow the cursor into.
+   */
+  private keepOff(display: Pick<Display, "id" | "workArea">): Rect | null {
+    const a = display.workArea;
+    const clip = (r: Rect | null | undefined): Rect | null => {
+      if (!r) return null;
+      const x = Math.max(r.x, a.x), y = Math.max(r.y, a.y);
+      const width = Math.min(r.x + r.width, a.x + a.width) - x, height = Math.min(r.y + r.height, a.y + a.height) - y;
+      return width > 0 && height > 0 ? { x, y, width, height } : null;
+    };
+    const r = clip(this.avoid?.());
+    const c = clip([...this.overlays.values()].find(o => o.display.id === display.id)?.cards);
+    if (!r || !c) return r ?? c;
+    const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
+    return { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
@@ -351,7 +358,7 @@ export class OverlayManager {
     const asking = this.state.bubble.visible && this.state.bubble.actions.length > 0;
     const ember = aside
       ? this.follower.step(aside, dt, true)
-      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff()), dt);
+      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff(display)), dt);
     const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;
