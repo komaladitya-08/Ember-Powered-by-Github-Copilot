@@ -19,7 +19,7 @@ vi.mock("electron", async () => {
     focused = false;
     bounds = { x: 0, y: 0, width: 0, height: 0 };
     sent: [string, unknown][] = [];
-    webContents = { send: (ch: string, v: unknown) => this.sent.push([ch, v]) };
+    webContents = { send: (ch: string, v: unknown) => this.sent.push([ch, v]), on: () => undefined };
     constructor(o: { width: number; height: number; x: number; y: number }) { super(); this.bounds = { x: o.x, y: o.y, width: o.width, height: o.height }; h.windows.push(this); }
     isDestroyed() { return this.destroyed; }
     isVisible() { return this.visible; }

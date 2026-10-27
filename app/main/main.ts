@@ -15,6 +15,7 @@ import path from "node:path";
 import { createLogger, logLevel } from "./logger";
 import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
+import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
@@ -115,6 +116,8 @@ if (wantedLevel.unknown !== undefined) log.warn("log.level_unknown", { value: wa
 
 process.on("uncaughtException", err => log.error("uncaught exception", { err }));
 process.on("unhandledRejection", reason => log.error("unhandled rejection", { reason }));
+// GPU, utility and page crashes reach the log too (review #91).
+watchCrashes(app, log);
 
 /** Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. */
 function startupFailed(err: unknown): void {
