@@ -75,14 +75,16 @@ export function createCommandWindow(os: OS): BrowserWindow {
  * takes the keyboard, as it takes typing: `takeKeyboard` is main's (as settings is brought to the front: macOS
  * activates Ember, Windows asks through the input backend), else show() and focus(); on macOS its first click counts
  * (review #235). On Windows and macOS it is left out of screen captures. Its controller fits it to each card (`fit`:
- * small for an SSH prompt, larger for a consent card, review #182, #270), centred where it is and inside its display's
- * work area; the user doesn't resize it.
+ * small for an SSH prompt, larger for a consent card, review #182, #270: sizes of the page, the frame comes on top),
+ * centred where it is and inside its display's work area; the user doesn't resize it.
  */
 export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: BrowserWindow) => void } = {}):
   BrowserWindow & { fit(size: { width: number; height: number }): void; takeKeyboard(): void } {
   const win = new BrowserWindow({
     width: PROMPT_SIZE.card.width,
     height: PROMPT_SIZE.card.height,
+    // The sizes are the page's own: the title bar and borders (Windows, macOS) come on top of them.
+    useContentSize: true,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -103,7 +105,10 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
   const fit = (size: { width: number; height: number }) => {
     if (win.isDestroyed()) return;
     const now = win.getBounds();
-    const next = fitBounds(now, size, screen.getDisplayMatching(now).workArea);
+    // `size` is the page's: the window is that plus its frame, and the whole of it is kept inside the work area.
+    const inner = win.getContentBounds();
+    const frame = { width: Math.max(0, now.width - inner.width), height: Math.max(0, now.height - inner.height) };
+    const next = fitBounds(now, { width: size.width + frame.width, height: size.height + frame.height }, screen.getDisplayMatching(now).workArea);
     // Left where it is when it already has that size there (a window the user moved stays put).
     if (next.x !== now.x || next.y !== now.y || next.width !== now.width || next.height !== now.height) win.setBounds(next);
   };

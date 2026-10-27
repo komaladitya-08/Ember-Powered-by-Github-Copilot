@@ -54,10 +54,10 @@ bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
 Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
 (WSL)**, **Run commands on build-01**. The first time you turn one on (or a task needs one), Ember shows the card "Let
 Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. It opens big enough to
-show the whole card, and names the stop chord in its first line. The card is answered with a click only, never with
-Ember's approve keys or by voice, and **Turn on** works only once the whole card has been in view (on a small screen,
-or with larger text, scroll to its end: "Scroll down to read it all first."). Under each switch, **Ask me before
-every command** makes every command on that computer ask. **Open the command window** shows it.
+show the whole card on most screens, and names the stop chord in its first line. The card is answered with a click
+only, never with Ember's approve keys or by voice, and **Turn on** works only once the whole card has been in view (on
+a small screen, or with larger text, scroll to its end: "Scroll down to read it all first."). Under each switch, **Ask
+me before every command** makes every command on that computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.

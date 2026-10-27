@@ -49,10 +49,10 @@ export type PromptWindowController = PromptUi & PromptWindowExtras & {
 export interface Rect { x: number; y: number; width: number; height: number }
 
 /**
- * The window's size for each kind of card (§8.6). An SSH prompt fits the small card; a consent card is two screens of
- * text in it, with what it can reach and the stop chord below the fold, so it gets a window that shows all of it (review
- * #182, #270), capped to the work area. Whatever still runs on below (a long key path, larger text) keeps the yes off
- * until it has been read (copy.ts readThrough).
+ * The page's size for each kind of card (§8.6), inside the window's title bar and borders. An SSH prompt fits the small
+ * card; a consent card is two screens of text in it, with what it can reach and the stop chord below the fold, so it
+ * gets a window that shows all of it (review #182, #270), capped to the work area. Whatever still runs on below (a long
+ * key path, larger text, a short screen) keeps the yes off until it has been read (copy.ts readThrough).
  */
 export const PROMPT_SIZE = { card: { width: 440, height: 300 }, consent: { width: 520, height: 600 } } as const;
 export type PromptSize = (typeof PROMPT_SIZE)[keyof typeof PROMPT_SIZE];
