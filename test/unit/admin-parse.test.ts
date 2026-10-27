@@ -73,3 +73,22 @@ describe("loadAdminPolicy (built on them)", () => {
     expect(r).toMatchObject({ policy: LOCKDOWN, source: dir, error: expect.stringMatching(new RegExp(`^can't read `)) });
   });
 });
+
+describe("parseAdminPolicy and what editors add (review #121)", () => {
+  it("reads a correct file saved with a UTF-8 byte-order mark", () => {
+    const r = parseAdminPolicy("\uFEFF" + JSON.stringify({ confirmEveryAction: true }), "/etc/ember/policy.json");
+    expect(r.error).toBeUndefined();
+    expect(r.policy.confirmEveryAction).toBe(true);
+    expect(parseAdminPolicy("\uFEFF{}", "S")).toEqual({ policy: AdminPolicySchema.parse({}), source: "S" });
+  });
+
+  it("names a key this Ember doesn't know, and says it may be older than the policy", () => {
+    const r = parseAdminPolicy(JSON.stringify({ auditRetentionDays: 365, futureKey: 1 }), "S");
+    expect(r.policy).toEqual(LOCKDOWN);
+    expect(r.error).toMatch(/^S: \(top\): .*"futureKey"/);
+    expect(r.error).toMatch(/older than the policy/);
+    expect(parseAdminPolicy(JSON.stringify({ features: { telnet: true } }), "S").error).toMatch(/^S: features: .*"telnet".*older than the policy/);
+    // Other mistakes say only what is wrong.
+    expect(parseAdminPolicy(JSON.stringify({ maxActionsPerMinute: 99 }), "S").error).not.toMatch(/older than the policy/);
+  });
+});

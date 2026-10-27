@@ -116,14 +116,16 @@ export function lockedDown(source: string, error: string): LoadedAdminPolicy {
 /**
  * The policy in `raw` (JSON text) from `source`, checked against AdminPolicySchema: anything that isn't valid JSON
  * or breaks the schema locks Ember down, naming `source`. Every OS's policy source ends here (the Linux and macOS
- * files, the Windows registry value).
+ * files, the Windows registry value). A byte-order mark some editors put first is no part of the JSON. A key the
+ * schema doesn't know is named, with the likely reason: a policy written for a newer Ember.
  */
 export function parseAdminPolicy(raw: string, source: string): LoadedAdminPolicy {
   try {
-    const parsed = AdminPolicySchema.safeParse(JSON.parse(raw));
+    const parsed = AdminPolicySchema.safeParse(JSON.parse(raw.replace(/^\uFEFF/, "")));
     if (parsed.success) return { policy: parsed.data, source };
     const issue = parsed.error.issues[0];
-    return lockedDown(source, `${source}: ${issue.path.join(".") || "(top)"}: ${issue.message}`);
+    const newer = issue.code === "unrecognized_keys" ? ` (this Ember doesn't know ${issue.keys.length > 1 ? "them" : "it"}: it may be older than the policy)` : "";
+    return lockedDown(source, `${source}: ${issue.path.join(".") || "(top)"}: ${issue.message}${newer}`);
   } catch (err) {
     return lockedDown(source, `${source} is not valid JSON: ${(err as Error).message}`);
   }
