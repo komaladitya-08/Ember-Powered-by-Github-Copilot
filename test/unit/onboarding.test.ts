@@ -18,6 +18,7 @@ import { speechWatch } from "../../app/renderer/mic/speech-watch";
 import { ISSUES_URL } from "../../app/shared/support";
 import { doctorChecks, type DoctorProbes } from "../../app/main/doctor";
 import { AdminPolicySchema } from "../../app/main/admin";
+import { NEVER_LOOK_DEFAULTS } from "../../app/shared/never-look";
 
 const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8");
 const PAGE = read("renderer/home/index.html");
@@ -106,8 +107,12 @@ describe("the first-run window", () => {
   it("doesn't point to sections that aren't shown before Start (review #104)", () => {
     const welcome = flat.slice(flat.indexOf("<section id=\"welcome\""), flat.indexOf("</section>", flat.indexOf("<section id=\"welcome\"")));
     expect(welcome).not.toMatch(/\bbelow\b/);
-    expect(welcome).not.toMatch(/your never-look list/);
-    expect(welcome).toContain("Password managers, password prompts and any app you add to the never-look list in settings are never read.");
+    // The list is in settings, and the sentence promises only what it does (review #104): password prompts, and the
+    // apps on the list, which starts with common password managers on every OS (not every one there is).
+    expect(welcome).toContain("App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.");
+    for (const os of ["linux", "win32", "darwin"] as const) expect(NEVER_LOOK_DEFAULTS[os], os).toEqual(expect.arrayContaining(["1password", "bitwarden"]));
+    // Settings' own pin (review #164) holds within it.
+    expect(welcome).toContain("App windows on your never-look list and password prompts are never read.");
     expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.");
   });
 });
