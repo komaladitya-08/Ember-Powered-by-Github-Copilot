@@ -39,6 +39,9 @@ import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/ma
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
 import { validConsent } from "../../app/main/remote/prompt-window";
 import type { IpcLike, TargetsDeps, WebContentsLike } from "../../app/main/targets/types";
+import { BubbleOwner, Presenter, type NoticeBoard } from "../../app/main/agent/presenter";
+import { guardWhileAsking } from "../../app/main/agent/confirm";
+import { IDLE_BUBBLE, type BubbleState, type EmberState } from "../../app/shared/overlay";
 
 const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
 const noPolicy: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -106,6 +109,9 @@ interface RigOptions {
   cursor?: boolean;
   /** Main passes its window system's active window (TargetsDepsExtra.activeWindow). */
   activeWindow?: boolean;
+  /** Main's setter (default: a mock that records), and the shared bubble's notice board (TargetsDepsExtra.bubbles). */
+  showState?: (patch: Partial<EmberState>) => void;
+  bubbles?: () => NoticeBoard | null;
 }
 
 /** The runtime over fakes, and every fake for the test to look at. */
@@ -207,7 +213,7 @@ function rig(o: RigOptions = {}) {
   const handlers = new Map<string, (e: { sender: WebContentsLike }, ...a: unknown[]) => unknown>();
   const ipc: IpcLike = { on: (c, fn) => { handlers.set(c, fn); }, handle: (c, fn) => { handlers.set(c, fn); } };
   const home = { id: 1, send: vi.fn() };
-  const showState = vi.fn();
+  const showState = vi.fn(o.showState ?? (() => undefined));
   const openSettings = vi.fn();
   const windowsMade = vi.fn(() => { throw new Error("no windows in unit tests"); });
   const sys = {
@@ -250,7 +256,7 @@ function rig(o: RigOptions = {}) {
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const stopTasksOn = vi.fn();
-  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}) }, parts);
+  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}), ...(o.bubbles ? { bubbles: o.bubbles } : {}) }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
@@ -1571,5 +1577,103 @@ describe("wslSwitchOn (the doctor's reading of the user's WSL switch)", () => {
     expect(wslSwitchOn(`${file(wsl(true, 1))}`.replace(/}$/, ",}"))).toBe(true);
     expect(wslSwitchOn(file(wsl(true, 1), { size: "huge" }))).toBe(true);
     for (const text of [null, "", "not json", "[]", "null", "{}", file({ wsl: "on" })]) expect(wslSwitchOn(text)).toBe(false);
+  });
+});
+
+/**
+ * The screen as main keeps it, with the shared bubble behind it: main's guarded setter (a question on screen holds the
+ * bubble), the conversation's presenter, and the notice board the runtime posts through, all on timers the test moves.
+ */
+function screenRig() {
+  let now = 0;
+  let screen: BubbleState = IDLE_BUBBLE;
+  const seen: string[] = [];
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  let id = 0;
+  const set = ((fn: () => void, ms?: number) => { timers.set(++id, { at: now + (ms ?? 0), fn }); return id; }) as unknown as typeof setTimeout;
+  const clear = ((t: number) => { timers.delete(t); }) as unknown as typeof clearTimeout;
+  const advance = (ms: number) => {
+    const end = now + ms;
+    for (;;) {
+      const next = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      timers.delete(next[0]);
+      now = next[1].at;
+      next[1].fn();
+    }
+    now = end;
+  };
+  const question = { up: false };
+  const answered: (() => void)[] = [];
+  const setState = guardWhileAsking(() => question.up, (patch: Partial<EmberState>) => {
+    if (!patch.bubble) return;
+    screen = patch.bubble;
+    seen.push(screen.visible ? `${screen.title} | ${screen.thought} [${screen.actions.map(a => a.label).join("/")}]` : "(hidden)");
+  });
+  const owner = new BubbleOwner({ up: () => question.up, answered: () => new Promise<void>(r => { answered.push(r); }) }, { set, clear }, () => now);
+  const presenter = () => new Presenter(setState, { set, clear }, () => "Ember", owner, undefined, false, { now: () => now });
+  const convo = presenter();
+  const notices = presenter();
+  return {
+    convo, notices, setState, advance, seen, question,
+    screen: () => screen,
+    /** A question goes up (main's Confirmer writes it past the guard), or is answered. */
+    ask: (title: string) => { question.up = true; screen = { ...IDLE_BUBBLE, visible: true, mood: "attention", title, actions: [{ id: "q1:once", label: "Allow" }] }; },
+    answer: async () => { question.up = false; for (const r of answered.splice(0)) r(); await flush(); },
+  };
+}
+
+/** The conversation answers `text` and its turn ends. */
+function answers(p: Presenter, text: string): void {
+  p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+  p.event({ type: "assistant.message", data: { content: text } });
+  p.event({ type: "session.idle", data: {} });
+}
+
+describe("the runtime's bubbles in the shared bubble", () => {
+  it("keeps offer_connect's Connect button up while the conversation's turn goes on and ends (review #9)", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    s.convo.userPrompt("open the logs on build-01");
+    s.convo.event({ type: "tool.execution_start", data: { toolName: "offer_connect" } });
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/Connect button/);
+    expect(s.screen().title).toBe("Connect to build-01?");
+    s.convo.event({ type: "tool.execution_complete", data: { success: true } });
+    answers(s.convo, "I've shown a Connect button for build-01.");
+    s.advance(10_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Connect to build-01?", actions: [{ label: "Connect" }, { label: "Not now" }] });
+    // Its Connect connects, and the connection says how it goes.
+    expect(r.t.bubbleAction(s.screen().actions[0].id)).toBe(true);
+    await flush(); await flush();
+    expect(r.conns.connect).toHaveBeenCalledWith(expect.objectContaining({ id: "build-01" }), expect.anything());
+    expect(s.screen().title).toBe("Ember is on build-01");
+  });
+
+  it("never lets the connected bubble's timer blank an answer the user asked for meanwhile (review #10)", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    await connected(r);
+    expect(s.screen().title).toBe("Ember is on build-01");
+    s.advance(3000);
+    s.convo.userPrompt("how many files are in /var/log?");
+    s.advance(2000);
+    answers(s.convo, "There are 12 files in /var/log.");
+    // The runtime's own timers (as it kept them before the shared bubble) and the shared bubble's run out.
+    for (const f of r.timers.splice(0)) f();
+    s.advance(2500);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Ember", thought: "There are 12 files in /var/log." });
+  });
+
+  it("never lets an earlier answer's timer blank a runtime bubble shown since (review #10)", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const l = await connected(r);
+    s.convo.userPrompt("what's on build-01?");
+    answers(s.convo, "Three terminals and a browser.");
+    expect(s.screen().thought).toBe("Three terminals and a browser.");
+    l.move("lost");
+    expect(s.screen().title).toBe("Lost build-01");
+    s.advance(60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
   });
 });

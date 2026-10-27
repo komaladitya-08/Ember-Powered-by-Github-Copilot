@@ -21,11 +21,12 @@ import pathPosix from "node:path/posix";
 import pathWin32 from "node:path/win32";
 import { COMMANDS_IPC } from "../../shared/commands";
 import type { ConsentPanel } from "../../shared/consent";
-import { IDLE_BUBBLE, type BubbleState } from "../../shared/overlay";
+import { IDLE_BUBBLE } from "../../shared/overlay";
 import type { OS } from "../../shared/shortcuts";
 import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type TargetId, type TargetSummary, type TargetsAct } from "../../shared/targets";
 import { commandMode, type LoadedAdminPolicy } from "../admin";
 import type { Question } from "../agent/confirm";
+import type { NoticeBoard, NoticeBubble, NoticeOptions } from "../agent/presenter";
 import type { WorkerSystem } from "../agent/worker";
 import { createLocalRunner } from "../commands/run/local";
 import type { CommandCapability, CommandRunner, CommandService, CommandWindowPort } from "../commands/types";
@@ -304,6 +305,13 @@ export interface TargetsDepsExtra {
    * hands' tier-3 view of it, when they have one; neither: no noticing.
    */
   activeWindow?(): { app: string; title: string } | null;
+  /**
+   * The shared bubble's writer for the runtime's own bubbles (AgentHost.notices): they take the bubble as the user's
+   * request does and hold it until they go, so the conversation's and the tasks' bubbles wait behind them (and they
+   * wait behind a question, then show), and nobody's timer hides one it didn't write. Absent, or null (tests, no agent
+   * yet): main's guarded setter, as before.
+   */
+  bubbles?(): NoticeBoard | null;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -541,18 +549,27 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     refresh();
   };
 
-  // ── Bubbles (main's guarded setter: a question on screen is never replaced) ──
+  // ── Bubbles: through the shared bubble's notice board (deps.bubbles), else main's guarded setter ──
+  // One runtime bubble at a time, by key ("connecting:build-01", "offer:3"): a newer one replaces it, and a hide by key
+  // only hides the one with that key. The board decides when it reaches the screen and keeps anything else from
+  // replacing or hiding it meanwhile (a question still holds it off, and it shows once that is answered).
   let bubbleSeq = 0;
   let shown: { key: string; seq: number } | null = null;
-  const bubble = (key: string, b: Pick<BubbleState, "title" | "thought" | "actions" | "mood">, hideMs?: number) => {
+  const board = (): NoticeBoard | null => { try { return deps.bubbles?.() ?? null; } catch { return null; } };
+  const bubble = (key: string, b: NoticeBubble, o: number | NoticeOptions = {}) => {
+    const opts: NoticeOptions = typeof o === "number" ? { ms: o } : o;
     const seq = ++bubbleSeq;
     shown = { key, seq };
+    const nb = board();
+    if (nb) { try { nb.post(b, opts); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
     try { deps.showState({ bubble: { ...IDLE_BUBBLE, visible: true, ...b } }); } catch (err) { log.warn("targets.bubble_failed", { err }); return; }
-    if (hideMs) parts.setTimeout(() => { if (shown?.seq === seq) hideBubble(key); }, hideMs);
+    if (opts.ms) parts.setTimeout(() => { if (shown?.seq === seq) hideBubble(key); }, opts.ms);
   };
   const hideBubble = (key?: string) => {
     if (key !== undefined && shown?.key !== key) return;
     shown = null;
+    const nb = board();
+    if (nb) { try { nb.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
     try { deps.showState({ bubble: IDLE_BUBBLE }); } catch { /* the overlay went with Ember */ }
   };
 
@@ -1496,6 +1513,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // (one awaiting a card, one SA just brought back) is told to stop too.
       const cs = connections;
       if (cs) call(() => cs.stopAll());
+      // Its bubble goes too: reconnects end, so a "Lost" that says it will try again would no longer hold. (Only through
+      // the board, which hides nothing it didn't write: main's own setter would blank the kill switch's message.)
+      const nb = board();
+      if (nb) { shown = null; try { nb.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } }
       const settled = await Promise.allSettled(waits);
       const failed = settled.filter(r => r.status === "rejected").length;
       if (failed) log.warn("targets.stop_parts_failed", { failed });

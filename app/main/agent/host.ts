@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, type PresenterEvent } from "./presenter";
+import { BubbleOwner, Presenter, type NoticeBoard, type PresenterEvent } from "./presenter";
 import { chooseModels, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -475,6 +475,8 @@ export class AgentHost {
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
+  /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
+  private readonly noticeBoard: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
@@ -509,6 +511,15 @@ export class AgentHost {
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts });
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, { shortcuts: this.sys.shortcuts });
+  }
+
+  /**
+   * Where the targets runtime's bubbles go (a connection, an offer, a loss): through the shared bubble, so the
+   * conversation's and the tasks' bubbles wait behind them as behind a question, and no presenter's timer hides them.
+   */
+  get notices(): NoticeBoard {
+    return this.noticeBoard;
   }
 
   /**
@@ -1389,6 +1400,8 @@ export class AgentHost {
     this.queued = [];
     this.claimBubble();
     this.presenter.quiet();
+    // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
+    this.noticeBoard.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();

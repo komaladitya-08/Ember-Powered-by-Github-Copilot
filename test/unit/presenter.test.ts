@@ -669,3 +669,62 @@ describe("a task's bubble shows its steps, never its model's thinking (live rete
     expect(states.at(-1)?.bubble).toMatchObject({ title: "Open Mousepad", thought: "Typing the list" });
   });
 });
+
+describe("Presenter.post: a bubble of Ember's own in the shared bubble (review #9, #10)", () => {
+  function board() {
+    vi.useFakeTimers();
+    const shown: string[] = [];
+    const owner = new BubbleOwner();
+    const push = (who: string) => (s: Partial<EmberState>) => { if (s.bubble) shown.push(`${who}:${s.bubble.visible ? s.bubble.title : "(hidden)"}`); };
+    const talk = new Presenter(push("ember"), undefined, () => "Ember", owner);
+    const notices = new Presenter(push("notice"), undefined, () => "Ember", owner);
+    return { owner, talk, notices, shown };
+  }
+  const offer = { title: "Connect to build-01?", thought: "You asked for build-01.", actions: [{ id: "offer:1:connect", label: "Connect" }], mood: "attention" as const };
+
+  it("holds the bubble until it is cleared: the conversation's answer waits behind it, then shows", () => {
+    const { talk, notices, shown } = board();
+    talk.userPrompt("open the logs on build-01");
+    notices.post(offer);
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Click Connect." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(60_000);
+    expect(shown.at(-1)).toBe("notice:Connect to build-01?");
+    notices.clear();
+    expect(shown.at(-1)).toBe("ember:Ember");
+  });
+
+  it("comes back after the user's next request is answered, until it is cleared", () => {
+    const { talk, notices, shown } = board();
+    notices.post(offer);
+    talk.userPrompt("what time is it?");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Half past three." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(30_000);
+    expect(shown.at(-1)).toBe("notice:Connect to build-01?");
+  });
+
+  it("with a time, goes that long after it reaches the screen, and never hides what covered it", () => {
+    const { talk, notices, shown } = board();
+    notices.post({ ...offer, title: "Ember is on build-01", actions: [], mood: "idle" }, { ms: 7000 });
+    vi.advanceTimersByTime(3000);
+    talk.userPrompt("how many files?");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Twelve." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(4500);
+    expect(shown.at(-1)).toBe("ember:Ember");
+  });
+
+  it("says when its bubble reached the screen, starting again with each post", () => {
+    const { notices } = board();
+    vi.setSystemTime(1000);
+    expect(notices.shownAt).toBeNull();
+    notices.post(offer);
+    expect(notices.shownAt).toBe(1000);
+    vi.setSystemTime(5000);
+    notices.post({ ...offer, title: "Connect to build-02?" });
+    expect(notices.shownAt).toBe(5000);
+    notices.clear();
+    expect(notices.visible).toBe(false);
+  });
+});

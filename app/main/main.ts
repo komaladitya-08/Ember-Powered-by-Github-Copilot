@@ -1503,6 +1503,8 @@ function start(): void {
       // A computer whose connection went or where someone pressed Stop: its tasks stop here too; whose screen locked or
       // session went inactive: those that used its desktop.
       stopTasksOn: (target, only) => { agent?.cancelTasksOn(target, only); },
+      // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
+      bubbles: () => agent?.notices ?? null,
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });

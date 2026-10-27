@@ -242,6 +242,40 @@ export interface PresenterOptions {
   where?: string;
   /** An announcement went up (D4.4): main speaks it when replies are spoken. */
   onAnnounce?: (text: string) => void;
+  /** The clock for when a bubble reached the screen (shownAt; default Date.now). */
+  now?: () => number;
+}
+
+/** A bubble of Ember's own that is no turn's or task's (the targets runtime's: a connection, an offer, a loss). */
+export type NoticeBubble = Pick<BubbleState, "title" | "thought" | "actions" | "mood"> & Partial<Pick<BubbleState, "step">>;
+
+/** How a NoticeBubble claims the shared bubble (Presenter.post). */
+export interface NoticeOptions {
+  /**
+   * "take" (the default): it shows now, over the conversation's and the tasks' bubbles, which wait behind it as they
+   * do behind a question. "reply": only once nobody else holds the bubble (an offer nobody asked for, or an update to
+   * a bubble something else has covered since).
+   */
+  claim?: "take" | "reply";
+  /** It goes this long after it reaches the screen. Absent: it stays until it is cleared or replaced. */
+  ms?: number;
+  /** Ember's face meanwhile (default neutral). */
+  emotion?: Emotion;
+}
+
+/**
+ * The shared bubble's writer for bubbles of Ember's own (AgentHost.notices; the targets runtime posts through it):
+ * one at a time, each replacing the last. Writing through the shared bubble keeps what the conversation and the tasks
+ * show from wiping its buttons, and keeps any presenter's timer (its own too) from hiding a bubble it didn't write.
+ */
+export interface NoticeBoard {
+  post(b: NoticeBubble, o?: NoticeOptions): void;
+  /** Its bubble goes (on screen or waiting); what waited behind it shows. Nothing happens when it has none. */
+  clear(): void;
+  /** It has a bubble up, or waiting to show. */
+  readonly visible: boolean;
+  /** When its bubble last reached the screen (the clock's ms), or null while it hasn't since it was posted. */
+  readonly shownAt: number | null;
 }
 
 export const TOOL_STEPS: Record<string, string> = {
@@ -368,6 +402,11 @@ export class Presenter {
   private produced = false;
   /** An announcement is up (announce): its Stop's id and the bubble it replaced, put back by endAnnouncement. */
   private beforeAnnounce: { stopId: string; bubble: BubbleState } | null = null;
+  /** A notice (post) that stays until it is answered or cleared: it waits its turn again when something covers it. */
+  private held = false;
+  /** When the latest bubble reached the screen (shownAt). */
+  private since: number | null = null;
+  private readonly now: () => number;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -389,6 +428,7 @@ export class Presenter {
     if (typeof opts.task === "string") this.taskId = opts.task;
     if (opts.where) this.where = opts.where;
     this.onAnnounce = opts.onAnnounce;
+    this.now = opts.now ?? Date.now;
   }
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
@@ -402,8 +442,10 @@ export class Presenter {
     }
     this.kind = claim;
     const ok = this.owner.allows(this, claim);
+    const was = this.owner.current === this && !this.unseen;
     this.unseen = !ok;
     if (ok) this.newStep = false;
+    if (ok && (!was || this.since === null)) this.since = this.now();
     this.owner.wrote(this, claim, ok);
     if (ok) this.push({ ...patch, bubble: this.state.bubble });
     // Its answer is complete on screen: a guide step waiting behind it may show soon.
@@ -421,9 +463,17 @@ export class Presenter {
     return this.state.bubble.streaming || this.state.emotion === "thinking" || this.state.emotion === "focused";
   }
 
-  /** Its turn or task is under way: busy, or a guide step waiting for the user's click. */
+  /**
+   * Its turn or task is under way, or it waits for the user's click: busy, a guide step, or a notice that stays until
+   * it is answered (what covers it for a while doesn't end it).
+   */
   get atWork(): boolean {
-    return this.busy || this.guiding;
+    return this.busy || this.guiding || (this.held && this.visible);
+  }
+
+  /** When its latest bubble reached the screen (NoticeBoard.shownAt). */
+  get shownAt(): number | null {
+    return this.since;
   }
 
   /** It has a bubble to show (on screen or waiting). */
@@ -470,6 +520,8 @@ export class Presenter {
     if (!this.owner.allows(this, claim)) return false;
     this.unseen = false;
     this.newStep = false;
+    // Its buttons are where they are only from now (NoticeBoard.shownAt).
+    this.since = this.now();
     this.owner.wrote(this, claim, true);
     this.push({ emotion: this.state.emotion, talking: this.state.talking, bubble: this.state.bubble });
     if (this.pendingHide !== null) this.hideLater(this.pendingHide);
@@ -483,6 +535,7 @@ export class Presenter {
   drop(): void {
     this.cancelHide();
     this.guiding = false;
+    this.held = false;
     this.unseen = false;
     this.state = { ...this.state, bubble: { ...IDLE_BUBBLE } };
     this.owner.forget(this);
@@ -492,6 +545,7 @@ export class Presenter {
   quiet(): void {
     this.cancelHide();
     this.guiding = false;
+    this.held = false;
     this.answering = false;
     this.asked = null;
     this.silent = true;
@@ -510,6 +564,7 @@ export class Presenter {
   private hide(): void {
     this.cancelHide();
     this.guiding = false;
+    this.held = false;
     const onScreen = this.owner.current === this && !this.unseen;
     this.unseen = false;
     this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } };
@@ -544,6 +599,32 @@ export class Presenter {
       bubble: { visible: true, mood: "error", title: n.title, thought: n.text, step: null, streaming: false, actions: n.actions ?? [] },
     }, "take");
     this.hideLater(n.ms ?? 12000);
+  }
+
+  /**
+   * A bubble of Ember's own (NoticeBoard.post): it replaces this presenter's last one and claims the shared bubble as
+   * `o.claim` says. With `o.ms` it goes that long after it reaches the screen; without, it stays until it is cleared
+   * (its buttons answered, what it said no longer holds), and comes back after anything that covers it meanwhile.
+   */
+  post(b: NoticeBubble, o: NoticeOptions = {}): void {
+    this.cancelHide();
+    this.guiding = false;
+    this.answering = false;
+    this.asked = null;
+    this.silent = false;
+    this.held = !o.ms;
+    this.since = null;
+    this.apply({
+      emotion: o.emotion ?? "neutral", talking: false,
+      bubble: { ...IDLE_BUBBLE, visible: true, step: b.step ?? null, title: b.title, thought: b.thought, actions: b.actions, mood: b.mood },
+    }, o.claim ?? "take");
+    if (o.ms) this.hideLater(o.ms);
+  }
+
+  /** Its bubble goes (NoticeBoard.clear): on screen, the one waiting behind it shows; nothing happens when it has none. */
+  clear(): void {
+    this.held = false;
+    if (this.visible) this.hide();
   }
 
   /** A notice still up that says `text` goes (what it said no longer holds: Copilot is back). Anything else stays. */

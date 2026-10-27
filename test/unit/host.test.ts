@@ -2243,3 +2243,16 @@ describe("live retest: 'Read all' stays open until it's closed", () => {
     });
   });
 });
+
+describe("the runtime's bubbles (AgentHost.notices, review #9, #10)", () => {
+  it("go through the shared bubble, and the kill switch takes them away for good", async () => {
+    const { host, screen } = makeHost();
+    host.notices.post({ title: "Lost build-01", thought: "The connection dropped.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect" }], mood: "error" });
+    expect(screen().bubble).toMatchObject({ visible: true, title: "Lost build-01" });
+    await host.abortAll();
+    expect(host.notices.visible).toBe(false);
+    // Main's hold on the bubble (its kill switch message) ends: nothing of anyone's comes back, main hides it itself.
+    expect(host.releaseBubble(null)).toBe(false);
+    await host.stop();
+  });
+});
