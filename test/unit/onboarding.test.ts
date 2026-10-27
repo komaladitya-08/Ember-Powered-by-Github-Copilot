@@ -63,21 +63,15 @@ describe("the microphone consent", () => {
   });
 });
 
-describe("WSL in the onboarding line and the Computers intro", () => {
+describe("WSL in the onboarding line", () => {
   it("is named only on Windows, the one OS that has it (review #221)", () => {
     // The page's own markup is Linux's: no WSL. Linux's and macOS's statuses keep it so; Windows' adds WSL.
-    const intro = /<p class="intro" id="computers-intro">([^<]*)<\/p>/.exec(PAGE)?.[1];
     const note = /<li data-icon="plug"><b>Other computers and commands<\/b><span id="targets-note">([^<]*)<\/span><\/li>/.exec(PAGE)?.[1];
-    expect(intro).toBe("Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.");
     expect(note).toBe(" are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
-    for (const os of ["linux", "darwin"] as const) {
-      const patches = homePatches(platformOf(os));
-      expect(patchedText(patches, "#computers-intro"), os).toBe(intro);
-      expect(patchedText(patches, "#targets-note"), os).toBe(note);
-    }
-    const win = homePatches(platformOf("win32"));
-    expect(patchedText(win, "#computers-intro")).toBe("Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.");
-    expect(patchedText(win, "#targets-note")).toBe(" are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    for (const os of ["linux", "darwin"] as const) expect(patchedText(homePatches(platformOf(os)), "#targets-note"), os).toBe(note);
+    expect(patchedText(homePatches(platformOf("win32")), "#targets-note")).toBe(" are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    // The Computers intro is the settings package's (review #198: computers.ts writes it from the status), not a patch.
+    for (const os of ["linux", "darwin", "win32"] as const) expect(homePatches(platformOf(os)).some(x => x.selector === "#computers-intro"), os).toBe(false);
   });
 
   it("leaves WSL out of what an organisation turned off, except on Windows (review #221)", () => {

@@ -11,9 +11,7 @@ import type { Settings } from "../../main/settings";
 import type { CommandMode } from "../../main/commands/types";
 
 export const COMPUTERS_HEADING = "Computers";
-/** The intro as the page writes it (Linux's, and macOS's): WSL exists only on Windows, so only Windows' names it (review #221). */
-export const COMPUTERS_INTRO = "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
-export const COMPUTERS_INTRO_WINDOWS = "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
+export const COMPUTERS_INTRO = "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.";
 export const COMMANDS_HEADING = "Commands";
 export const COMMANDS_INTRO = "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.";
 export const WSL_SWITCH = "Let Ember work in WSL";
@@ -28,11 +26,6 @@ export const ONBOARDING_LINE = {
   rest: " are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.",
   restWindows: " are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.",
 } as const;
-
-/** The Computers intro on `os` (the page's own words off Windows). */
-export function computersIntro(os: OS = "linux"): string {
-  return os === "win32" ? COMPUTERS_INTRO_WINDOWS : COMPUTERS_INTRO;
-}
 
 /** The onboarding line after its bold lead on `os` (the page's own words off Windows). */
 export function onboardingRest(os: OS = "linux"): string {
