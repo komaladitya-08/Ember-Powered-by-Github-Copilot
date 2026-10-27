@@ -90,10 +90,24 @@ describe("README.md", () => {
 
   it("says how to remove Ember on every OS, with the folders it leaves behind", () => {
     const linux = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"));
-    expect(linux).toMatch(/To remove Ember, turn off \*\*Start Ember when I log in\*\*/);
+    const removes = (text: string) => expect(text.split("To remove Ember")[1] ?? "").toMatch(/turn off \*\*Start Ember when I log in\*\*/);
+    removes(linux);
     expect(linux).toContain("sudo dnf remove ember");
     // Where Ember keeps things on Linux (DEVELOPING.md §5): its data folder, and the desk's folder.
     for (const p of ["~/.config/autostart/ember.desktop", "~/.config/ember", "~/Ember"]) expect(linux).toContain(p);
-    for (const os of ["Install on Windows", "Install on macOS"]) expect(flat(section(readme, os))).toMatch(/To remove Ember, turn off \*\*Start Ember when I log in\*\*/);
+    for (const os of ["Install on Windows", "Install on macOS"]) removes(flat(section(readme, os)));
+  });
+
+  it("tells whoever removes Ember to remove its helper from the computers it reached over SSH first", () => {
+    // Nothing on this computer can remove the helper once Ember is gone: only "Remove Ember from <computer>" or the
+    // uninstall.sh the helper leaves there (app/remote/parts/uninstall.sh).
+    expect(fs.existsSync(path.resolve("app/remote/parts/uninstall.sh"))).toBe(true);
+    for (const os of ["Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)", "Install on Windows", "Install on macOS"]) {
+      const removal = flat(section(readme, os)).split("To remove Ember")[1] ?? "";
+      expect(removal, os).toMatch(/computers you added over SSH/);
+    }
+    const ssh = flat(section(readme, "Commands, WSL and other computers"));
+    expect(ssh).toContain("**Remove Ember from build-01**");
+    expect(ssh).toContain("sh ~/.local/share/ember-remote/versions/*/uninstall.sh");
   });
 });

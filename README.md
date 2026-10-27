@@ -24,10 +24,11 @@ see docs/DEVELOPING.md). Without it, Ember offers to download the models (126 MB
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing.
 
-To update, install the new RPM the same way, then quit Ember and start it again. To remove Ember, turn off **Start
-Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
-`sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete `~/.config/ember` (its
-settings, logs, audit log, speech models and sign-in) and `~/Ember` (what it made on its desk).
+To update, install the new RPM the same way, then quit Ember and start it again. To remove Ember, first remove its
+helper from the computers you added over SSH (below). Then turn off **Start Ember when I log in** in its settings (or
+delete `~/.config/autostart/ember.desktop`), quit it, run `sudo dnf remove ember` (it removes `ember-voice-models`
+too) or delete the AppImage, and delete `~/.config/ember` (its settings, logs, audit log, speech models and sign-in)
+and `~/Ember` (what it made on its desk).
 
 ## Install on Windows
 
@@ -55,9 +56,9 @@ screenshots, because it can't tell what runs inside them.
 To check this computer, open a Command Prompt or PowerShell in the `Ember` folder and run `.\ember-doctor.cmd`.
 
 To update, quit Ember and replace the `Ember` folder with the new one, in the same place; your settings stay in
-`%LOCALAPPDATA%\ember`. To remove Ember, turn off **Start Ember when I log in** in its settings, quit it, and delete
-the `Ember` folder, `Ember.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember`
-(its settings, logs and sign-in).
+`%LOCALAPPDATA%\ember`. To remove Ember, first remove its helper from the computers you added over SSH (below), then
+turn off **Start Ember when I log in** in its settings, quit it, and delete the `Ember` folder, `Ember.lnk` in
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember` (its settings, logs and sign-in).
 
 ## Install on macOS
 
@@ -89,9 +90,9 @@ macOS ties each permission to the exact copy of Ember. After you install a new b
 without the permission working: remove Ember from each list with **−** and add it again.
 
 To update, quit Ember, drag the new Ember.app into Applications over the old one, and give the permissions again as
-above. To remove Ember, turn off **Start Ember when I log in** in its settings, quit it, remove it from each Privacy &
-Security list with **−**, and delete Ember.app from Applications and `~/Library/Application Support/ember` (its
-settings, logs and sign-in).
+above. To remove Ember, first remove its helper from the computers you added over SSH (below), then turn off **Start
+Ember when I log in** in its settings, quit it, remove it from each Privacy & Security list with **−**, and delete
+Ember.app from Applications and `~/Library/Application Support/ember` (its settings, logs and sign-in).
 
 To check this Mac, run Ember's check-up through `open`, so that macOS judges Ember's own permissions (run from
 Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's instead):
@@ -137,6 +138,16 @@ The same switches turn them off, and the stop shortcut stops every command at on
 or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`); an Ember
 older than this release locks down when its policy uses those keys. [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)
 has the details, including what Ember can't do yet.
+
+**Before you remove Ember from this computer**, choose **Remove Ember from build-01** in Settings › **Computers** for
+each computer you added: it removes the helper there and keeps that computer's record of what Ember did. Once Ember is
+gone from here, the helper can only be removed on that computer itself
+([docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md) §4.7):
+
+```bash
+sh ~/.local/share/ember-remote/versions/*/uninstall.sh                     # Linux
+sh ~/Library/Application\ Support/Ember\ Remote/versions/*/uninstall.sh    # macOS
+```
 
 ## Develop
 
