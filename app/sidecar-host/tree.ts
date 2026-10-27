@@ -3,7 +3,8 @@
  * doesn't show is never listed, nor anything inside it (invisible elements are a known prompt-injection channel);
  * unnamed grouping containers aren't listed but what they hold is, under the nearest listed ancestor; zero-size
  * elements aren't listed either; pre-order, `nodes[0]` the window itself; `depth` the real depth below the window;
- * at most `maxNodes` nodes (then cut "nodes") and `maxDepth` levels (something showing deeper: cut "depth"); nothing
+ * at most `maxNodes` nodes (then cut "nodes") and `maxDepth` levels (something showing deeper: cut "depth"), a page not
+ * handed over yet cut "loading" (see notHandedOver); nothing
  * inside a secret field. `shown` is the part of an element its scrolling container or window lets show. Secret fields
  * the read doesn't list (scrolled out of view, or past `maxNodes`) are still found, with what they hold, under the
  * listed element nearest them: Chromium names a cell or a section after its fields' values (Secrets.redact).
@@ -153,6 +154,7 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
     const clip = p >= 0 ? clipFor[p] : null;
     const web = p >= 0 ? webFor[p] : false;
     const page = DOCUMENT_ROLES.has(role);
+    if (notHandedOver(raw, i, role)) cutShort("loading");
     listedAt[i] = p >= 0 ? listedAt[p] : null;
     let secret = false;
     const listed = !SKIP_ROLES.has(role) || !!name;
@@ -223,6 +225,18 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
     }
   }
   return { nodes, hidden, indexOf, roles, ctx, cut, wanted, unlisted };
+}
+
+/**
+ * A page (snapshot index `i`, of `role`) that shows with neither contents nor size: its browser hasn't handed over what
+ * it holds yet (a very big page, or the first read after Chromium turns accessibility on), so a read says "loading"
+ * instead of passing for a window with nothing in it, and the secret-field scan can't check it. As the Python
+ * sidecar's not_ready.
+ */
+export function notHandedOver(raw: RawNode[], i: number, role: string): boolean {
+  if (!DOCUMENT_ROLES.has(role) || raw[i + 1]?.parent === i) return false;
+  const b = boundsOf(raw[i].bounds);
+  return !b || b.width <= 0 || b.height <= 0;
 }
 
 /** What an unlisted secret field holds, as the snapshot tells it (null: nothing told). */

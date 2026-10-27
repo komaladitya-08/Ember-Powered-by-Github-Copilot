@@ -88,8 +88,11 @@ export interface Seen {
   blocked: boolean;
   /** The app didn't answer in time, even when asked again (busy or hung): `nodes` are partial, or there is no window. */
   busy: boolean;
-  /** Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is nested deeper than a read goes. */
-  truncated: "nodes" | "time" | "depth" | null;
+  /**
+   * Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is
+   * nested deeper than a read goes, "loading" when a web page shows but the browser hasn't handed over what it holds.
+   */
+  truncated: "nodes" | "time" | "depth" | "loading" | null;
   /** The app's other windows the user is in or must answer first (an Open dialog); private ones left out. */
   others: OtherWindow[];
   ms: number;
@@ -195,7 +198,8 @@ export class Perception {
     const nodes = await this.withSecrets(scaleNodes(res.nodes, each ?? 1));
     return {
       window: { ...window, bounds: frame }, x11Window, nodes, blocked, busy: !!res.busy,
-      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
+      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.includes("loading") ? "loading"
+        : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
       others: (res.others ?? []).filter(w => !this.isPrivate(window.app, w.name, list)),
       ms: Date.now() - t0, axScale: k,
     };
@@ -827,5 +831,6 @@ function notes(seen: Seen): string {
   if (seen.truncated === "nodes") out.push(`(The window has more elements than Ember reads at once; only the first ${seen.nodes.length} are listed. Scroll to the part you need, open it, or work in a smaller window, then look again.)`);
   if (seen.truncated === "time") out.push("(Reading the window took too long, so only part of it is listed. Scroll to the part you need or close what you don't need, then look again.)");
   if (seen.truncated === "depth") out.push("(Part of the window is nested too deeply for Ember to read, so elements there are missing from this list. Use the screenshot for that part.)");
+  if (seen.truncated === "loading") out.push("(The page is still loading, so its content isn't listed yet. Try again in a moment.)");
   return out.length ? `\n${out.join("\n")}` : "";
 }

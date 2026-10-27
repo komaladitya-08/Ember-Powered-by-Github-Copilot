@@ -72,7 +72,10 @@ export interface ReadWindowResult {
   nodes: AxNode[];
   /** Cut short: at maxNodes elements, or because reading took too long. */
   truncated?: boolean;
-  /** What on screen was left out for want of room: "nodes" (the element limit), "depth" (nested deeper than a read goes). */
+  /**
+   * What on screen was left out for want of room: "nodes" (the element limit), "depth" (nested deeper than a read goes);
+   * or "loading": a web page shows but the browser hasn't handed over what it holds yet (none of it is listed).
+   */
   cut?: string[];
   /** It was the time (the app answered, slowly). */
   slow?: boolean;

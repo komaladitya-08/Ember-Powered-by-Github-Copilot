@@ -1619,6 +1619,11 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         count = acc.childCount
     except Exception:
         count = 0
+    if page and count == 0 and bounds is not None and (bounds["width"] <= 0 or bounds["height"] <= 0):
+        # Its page is painted, but the browser hasn't handed over what it holds yet (see not_ready): the read says so,
+        # instead of passing for a window with nothing in it.
+        budget.cut_short("loading")
+        return judged
     long_list = count > MAX_CHILDREN
     grid = grid_of(acc, count, states, clip) if long_list else None
     if grid is not None:

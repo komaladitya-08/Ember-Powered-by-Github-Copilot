@@ -466,3 +466,28 @@ describe("Perception without the screen-capture permission (macOS Screen Recordi
     expect(captures).toHaveLength(1);
   });
 });
+
+describe("Perception's read of a page the browser hasn't handed over yet (review #6)", () => {
+  // The sidecar says "loading" when a web document shows with neither contents nor size: the read must not pass for a
+  // complete window that has only a menu bar.
+  it("says the page is still loading, not that the window is complete or nested too deeply", async () => {
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "Big page - Browser", states: ["active"], bounds: { x: 10, y: 10, width: 100, height: 100 } },
+      { id: 2, parent: 1, depth: 1, role: "menu bar", name: "", states: [], bounds: { x: 10, y: 10, width: 100, height: 20 } },
+    ];
+    const sidecar = {
+      readWindow: async () => ({ window: gedit, nodes, truncated: true, cut: ["loading"], ms: 1 }),
+      listWindows: async () => ({ windows: [] }),
+      scaleElements: () => undefined,
+      markSecret: async () => undefined,
+      shellOverlays: async () => ({ overlays: [] }),
+    } as unknown as AtspiSidecar;
+    const p = new Perception({ sidecar, x11: null, log: recordingLog().log, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 300, height: 200 }), ownPid: 999 });
+    const seen = await p.read({ pid: 42 });
+    expect(seen.truncated).toBe("loading");
+    const text = (await p.perceive({ image: false, scope: "window", target: { pid: 42 } })).text;
+    expect(text).toContain("(The page is still loading, so its content isn't listed yet. Try again in a moment.)");
+    expect(text).not.toContain("nested too deeply");
+    expect(await p.describe()).toContain("(The page is still loading");
+  });
+});

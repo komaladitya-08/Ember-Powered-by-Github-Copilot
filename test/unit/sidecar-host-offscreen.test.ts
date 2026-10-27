@@ -152,3 +152,33 @@ describe("names that say what a secret field the read didn't list holds (review 
     expect(r.nodes.find(n => n.name === "Order 4111 1111")).toBeTruthy();
   });
 });
+
+describe("a page the browser hasn't handed over yet (review #6)", () => {
+  // A very big page, or the first read after a Chromium app turns accessibility on: its document shows with neither
+  // contents nor size until the browser has built its tree.
+  const browser = (doc: FakeElementSpec): FakeElementSpec[] => [
+    { role: "MenuBar", name: "", bounds: at(0, 0, 800, 24), children: [{ role: "MenuItem", name: "File", bounds: at(0, 0, 40, 24) }] },
+    doc,
+  ];
+
+  it("says the read is still loading, and the secret-field scan that it can't check the page yet", async () => {
+    const { call } = harness(browser({ role: "Document", name: "Big page", framework: "Chrome", bounds: at(0, 30, 0, 0) }));
+    const r = await read(call);
+    expect(r.truncated).toBe(true);
+    expect(r.cut).toContain("loading");
+    const scan = await call<{ complete: boolean; busy?: boolean }>("secret_fields", { pid: 30, path: r.window!.path });
+    expect(scan).toMatchObject({ complete: false, busy: true });
+  });
+
+  it("reads a page with its size, or with anything in it, as before", async () => {
+    for (const doc of [
+      { role: "Document", name: "Blank", framework: "Chrome", bounds: at(0, 30, 800, 570) },
+      { role: "Document", name: "Tiny", framework: "Chrome", bounds: at(0, 30, 0, 0), children: [{ role: "Hyperlink", name: "Home", bounds: at(10, 40, 40, 16) }] },
+    ] as FakeElementSpec[]) {
+      const { call } = harness(browser(doc));
+      const r = await read(call);
+      expect(r.cut ?? [], doc.name).not.toContain("loading");
+      expect((await call<{ complete: boolean }>("secret_fields", { pid: 30, path: r.window!.path })).complete, doc.name).toBe(true);
+    }
+  });
+});
