@@ -34,6 +34,29 @@ export const BUNDLED_LIBRARIES = [
   },
 ];
 
+/**
+ * Licence texts Ember supplies for bundled packages that ship no licence file of their own, as paths from the
+ * repository root: a text checked in under packaging/licences/, or the same project's file in another bundled package.
+ * stage.mjs puts them in THIRD_PARTY_NOTICES, and stops before staging anything for any other package without a
+ * licence file. `version`: the text also says what that release holds (sherpa-onnx's WebAssembly), so another release
+ * must be checked again before it ships.
+ */
+export const LICENCE_TEXTS = [
+  { package: /^@github\/copilot-sdk(-(linux|win32|darwin)-(x64|arm64))?$/, texts: ["packaging/licences/github-copilot-sdk.txt"] },
+  { package: /^@koromix\/koffi-(linux|win32|darwin)-(x64|arm64)$/, texts: ["node_modules/koffi/LICENSE.txt"] },
+  { package: /^sherpa-onnx$/, version: "1.13.8", texts: ["packaging/licences/sherpa-onnx.txt", "packaging/licences/espeak-ng-COPYING.txt"] },
+];
+
+/** The licence texts Ember supplies for a package that ships none (LICENCE_TEXTS), or why staging must stop. */
+export function suppliedLicence(name, version) {
+  const entry = LICENCE_TEXTS.find(e => e.package.test(name));
+  if (!entry) return { error: `${name} ${version} ships no licence file: add its licence text under packaging/licences/ and to LICENCE_TEXTS in scripts/package/licences.mjs` };
+  if (entry.version && entry.version !== version) {
+    return { error: `${name} ${version}: packaging/licences/ describes ${entry.version}; check what its WebAssembly holds, then update that text and LICENCE_TEXTS in scripts/package/licences.mjs` };
+  }
+  return { texts: [...entry.texts] };
+}
+
 /** The rows of a README's two-column licensing table: [library, terms]. */
 export function readmeLibraries(readme) {
   const rows = [];
