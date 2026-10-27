@@ -152,6 +152,35 @@ describe("VoiceService", () => {
     expect(running.kill).toHaveBeenCalledTimes(1);
   });
 
+  it("knows whether it can tell its own voice from the user's: listening, with the speakers' stream on (review #251)", async () => {
+    const { v } = service();
+    expect(v.rejectsSpeakers).toBe(false); // not listening
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    expect(v.rejectsSpeakers).toBe(false); // no speakers' stream (Windows, macOS, Linux without parec)
+    proc.emit("message", { type: "monitor", on: true });
+    expect(v.rejectsSpeakers).toBe(true);
+    proc.emit("message", { type: "monitor", on: false, reason: "parec stopped (exit 1)" });
+    expect(v.rejectsSpeakers).toBe(false);
+    proc.emit("message", { type: "monitor", on: true });
+    v.setMuted(true);
+    expect(v.rejectsSpeakers).toBe(false);
+  });
+
+  it("never says the wake or stop phrase while it listens without the speakers' stream (its own voice would trigger them) (review #251)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    v.speak("Say 'Ember, stop' to cancel.");
+    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say the stop phrase to cancel.");
+    proc.emit("message", { type: "monitor", on: true });
+    v.speak("Say 'Ember, stop' to cancel.");
+    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say 'Ember, stop' to cancel.");
+  });
+
   it("ignores a replaced voice process", async () => {
     const { v, states, events } = service();
     await v.setWanted(true);

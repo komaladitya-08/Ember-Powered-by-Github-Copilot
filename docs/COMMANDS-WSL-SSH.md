@@ -158,8 +158,12 @@ command runs without a question, after an announcement: "delete build/" covers `
 GitHub" covers `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the
 announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds." and **Stop**), the command
 window shows "Running this, as you asked" with the command and "Starts in 4 s.", and with **Speak replies, questions
-and results out loud** on, Ember says it and adds "Say 'Ember, stop' to cancel." **Stop** in either place, the stop
-chord or "Ember, stop" within those 4 seconds cancels it. The audit log records it as requested by you.
+and results out loud** on, Ember says it and adds how to cancel it: "Say 'Ember, stop' to cancel." only where Ember can
+tell its own voice from yours (Linux with speaker rejection on and parec installed); elsewhere it names the stop chord
+("Press Windows key, Alt, X to cancel."), because its own microphone would hear it say the phrase and stop everything.
+There it never says "Ember, stop" or "Hey Ember" out loud at all (it says "the stop phrase" and "the wake phrase";
+the bubble still shows them). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds cancels
+it. The audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. Anything broader than what you named asks: a force flag, a

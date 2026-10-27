@@ -1,7 +1,7 @@
 /** What Ember says out loud for an answer: the words, not the Markdown, code or addresses. */
 
 import { describe, expect, it } from "vitest";
-import { endsWithQuestion, spokenText } from "../../app/voice/spoken";
+import { cancelWords, endsWithQuestion, spokenText, withoutOwnPhrases } from "../../app/voice/spoken";
 
 describe("spokenText", () => {
   it.each([
@@ -27,6 +27,24 @@ describe("spokenText", () => {
     "2 ** 3 ** 2 is 512.",
     "Match _ or * on their own.",
   ])("%j keeps its stars and underscores (review #258)", text => expect(spokenText(text)).toBe(text));
+});
+
+describe("what Ember says where it can't tell its own voice from the user's (review #251)", () => {
+  it("names the kill phrase only where speaker rejection runs; otherwise the stop shortcut, or the Stop button", () => {
+    expect(cancelWords({ killPhrase: true, stopKey: "Windows key, Alt, X" })).toBe("Say 'Ember, stop' to cancel.");
+    expect(cancelWords({ killPhrase: false, stopKey: "Windows key, Alt, X" })).toBe("Press Windows key, Alt, X to cancel.");
+    expect(cancelWords({ killPhrase: false, stopKey: null })).toBe("Press Stop to cancel.");
+  });
+
+  it.each([
+    ["Pushing feature-x, as you asked. Say 'Ember, stop' to cancel.", "Pushing feature-x, as you asked. Say the stop phrase to cancel."],
+    ["You can say “Ember, stop” at any time, or “Hey Ember, stop.”", "You can say the stop phrase at any time, or the stop phrase."],
+    ["Say Hey Ember, then your request.", "Say the wake phrase, then your request."],
+    ["Just say \"OK Ember\" and ask.", "Just say the wake phrase and ask."],
+    ["Ember stop, ember please stop.", "the stop phrase, the stop phrase."],
+  ])("doesn't say the wake or stop phrase: %j", (said, safe) => expect(withoutOwnPhrases(said)).toBe(safe));
+
+  it.each(["Ember is listening.", "I stopped the timer.", "Members stop by at noon.", "Remember to stop the build."])("leaves %j as it is", t => expect(withoutOwnPhrases(t)).toBe(t));
 });
 
 describe("endsWithQuestion", () => {

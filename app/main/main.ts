@@ -46,7 +46,7 @@ import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
-import { endsWithQuestion, spokenText } from "../voice/spoken";
+import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
@@ -1543,6 +1543,8 @@ function start(): void {
       emberPids: () => targets?.emberPids() ?? [],
       // A command the user asked for is announced aloud too when replies are spoken (D4.4); its Stop is on screen.
       onAnnounce: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
+      // Its cancel words: the kill phrase only where Ember can tell its own voice from the user's (owner decision V1).
+      cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null }),
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)

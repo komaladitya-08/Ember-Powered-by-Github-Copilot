@@ -19,6 +19,7 @@ import { ensureModels, forgetModels, modelPaths, modelsReady, VOICE_MODELS_BYTES
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import { FrameWatchdog } from "../voice/watchdog";
+import { withoutOwnPhrases } from "../voice/spoken";
 import { VOICE, type MicState, type MicStatus } from "../shared/voice";
 import type { Logger } from "./logger";
 
@@ -98,6 +99,8 @@ export class VoiceService {
   private micLost = false;
   /** The microphone sends only digital silence (the voice line says so until sound comes back). */
   private micSilent = false;
+  /** The voice process hears the speakers' own stream (speaker rejection runs: Linux with parec). */
+  private monitorOn = false;
   /** Starting again after listening broke: the timer, how many times in a row, and when the current process got ready. */
   private retry: NodeJS.Timeout | null = null;
   private failures = 0;
@@ -130,6 +133,15 @@ export class VoiceService {
 
   get micState(): MicState {
     return this.state;
+  }
+
+  /**
+   * Ember listens and can tell its own voice (and the speakers') from the user's: the speakers' stream is arriving, so
+   * a wake or stop phrase it says itself is rejected. False while not listening, and wherever speaker rejection doesn't
+   * run (Windows, macOS, Linux without parec): Ember then never says those phrases (owner decision V1, review #251).
+   */
+  get rejectsSpeakers(): boolean {
+    return !!this.proc && this.monitorOn && (this.state === "waiting" || this.state === "active");
   }
 
   get modelsReady(): boolean {
@@ -210,6 +222,8 @@ export class VoiceService {
   }
 
   speak(text: string): void {
+    // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
+    if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + SPEECH_START_MS);
     if (this.mic && !this.mic.isDestroyed()) { this.mic.webContents.send(VOICE.speak, text); return; }
     // Listening is off: "Speak replies" still works, from a window that only speaks.
@@ -239,6 +253,7 @@ export class VoiceService {
     this.readyAt = 0;
     this.micLost = false;
     this.micSilent = false;
+    this.monitorOn = false;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
@@ -265,7 +280,7 @@ export class VoiceService {
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
-      if (m.type === "monitor") { this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "monitor") { this.monitorOn = m.on; this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
       if (m.type === "silent") {
         // Frames still arrive (the watchdog is content), but nothing can be heard in them: said, not restarted.
         this.o.log.warn("voice.silent", { on: m.on });
@@ -353,6 +368,7 @@ export class VoiceService {
     this.closeMic();
     this.dropFollowUp();
     this.stopWatchingAlive();
+    this.monitorOn = false;
     const p = this.proc;
     this.proc = null;
     if (!p) return;

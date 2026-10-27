@@ -40,3 +40,27 @@ export function endsWithQuestion(answer: string): boolean {
   for (let shown = [CODE, TABLE].find(p => said.endsWith(p)); shown; shown = [CODE, TABLE].find(p => said.endsWith(p))) said = said.slice(0, -shown.length).trimEnd();
   return /\?[\s"'”’)\]*_]*$/.test(said);
 }
+
+/**
+ * How an announced command (D4.4) says to cancel it (owner decision V1): with the kill phrase only where Ember can tell
+ * its own voice from the user's (speaker rejection runs), or hearing itself say it would pull the kill switch and stop
+ * everything (review #251); elsewhere with the stop shortcut as said aloud, when Ember holds it; else the Stop button.
+ */
+export function cancelWords(o: { killPhrase: boolean; stopKey: string | null }): string {
+  if (o.killPhrase) return "Say 'Ember, stop' to cancel.";
+  return o.stopKey ? `Press ${o.stopKey} to cancel.` : "Press Stop to cancel.";
+}
+
+/** "Ember, stop" in any of its forms, with its quotes (and a full stop inside them, which is kept). */
+const KILL_PHRASE = /["“‘']?\b(?:(?:hey|hi|ok|okay)[\s,]+)?embers?[\s,.!…-]*(?:please[\s,]+)?stop\b(?:([.!]?)["”’'])?/gi;
+/** "Hey Ember" (or "OK Ember"), with its quotes. */
+const WAKE_PHRASE = /["“‘']?\b(?:hey|hi|ok|okay)[\s,]+ember\b(?:([,.!]?)["”’'])?/gi;
+
+/**
+ * What Ember says, without the stop and wake phrases, where it can't tell its own voice from the user's: its
+ * microphone would hear it say them, and "Ember, stop" (or "Hey Ember, stop", "Hey Ember, cancel") stops everything
+ * (review #251). They are named instead ("the stop phrase"); the bubble still shows them.
+ */
+export function withoutOwnPhrases(text: string): string {
+  return text.replace(KILL_PHRASE, (_m, p?: string) => `the stop phrase${p ?? ""}`).replace(WAKE_PHRASE, (_m, p?: string) => `the wake phrase${p ?? ""}`);
+}
