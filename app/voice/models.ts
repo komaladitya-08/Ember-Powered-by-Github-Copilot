@@ -79,6 +79,24 @@ export function modelsReady(root: string): boolean {
   return VOICE_MODELS.every(m => verified(root, m));
 }
 
+/**
+ * The models in `root` turned out damaged (they wouldn't load): their markers go, so they count as missing and the
+ * download fetches them again (review #254). False when a marker couldn't be removed (a read-only folder, such as models
+ * installed with Ember).
+ */
+export function forgetModels(root: string): boolean {
+  let all = true;
+  for (const m of VOICE_MODELS) {
+    try {
+      fs.rmSync(marker(root, m), { force: true });
+    } catch {
+      // It stays (EACCES, EROFS): the caller says the models can't be replaced here.
+      all = false;
+    }
+  }
+  return all;
+}
+
 export async function sha256File(file: string): Promise<string> {
   const h = crypto.createHash("sha256");
   for await (const chunk of fs.createReadStream(file)) h.update(chunk as Buffer);

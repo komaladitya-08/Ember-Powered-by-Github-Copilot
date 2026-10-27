@@ -6,10 +6,11 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
-import { sherpaBackend } from "../../app/voice/sherpa";
+import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
 
 const dir = path.resolve(process.env.EMBER_VOICE_DIR ?? ".cache/voice");
@@ -214,6 +215,23 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
 
   it("hears nothing in under 0.1 s of audio instead of failing (the recognizer throws a bare number on it, review #253)", () => {
     for (const n of [0, 800, 1599]) expect(backend.transcribe(new Float32Array(n))).toBe("");
+  });
+
+  it("fails to load, with a ModelLoadError, when a model file is cut short or missing (review #254)", () => {
+    const models = modelPaths(path.join(dir, "models"));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-damaged-"));
+    try {
+      // The recognition model's folder, its encoder cut to 1000 bytes (as an antivirus or a disk error leaves it), then gone.
+      const asr = path.join(tmp, "asr");
+      fs.mkdirSync(asr);
+      for (const f of fs.readdirSync(models.asr)) if (f !== "encode.int8.onnx") fs.symlinkSync(path.join(models.asr, f), path.join(asr, f));
+      fs.writeFileSync(path.join(asr, "encode.int8.onnx"), fs.readFileSync(path.join(models.asr, "encode.int8.onnx")).subarray(0, 1000));
+      expect(() => sherpaBackend({ ...models, asr })).toThrow(ModelLoadError);
+      fs.rmSync(path.join(asr, "encode.int8.onnx"));
+      expect(() => sherpaBackend({ ...models, asr })).toThrow("The speech recognition model couldn't be loaded.");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("cuts in while a listening window is open, and the voice process carries on (review #253)", () => {

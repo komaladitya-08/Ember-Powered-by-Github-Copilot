@@ -53,13 +53,32 @@ const VAD_MAX_SPEECH_SECONDS = 30;
 const CHECK_MAX_SAMPLES = 10 * SAMPLE_RATE;
 
 /**
+ * A speech model couldn't be loaded: one of its files is missing (an antivirus quarantined it), cut short or damaged.
+ * Downloading the models again repairs it (review #254).
+ */
+export class ModelLoadError extends Error {}
+
+/**
  * `monitor`: also spot the speakers' stream. `onError`: the recognizer failed on some audio (WebAssembly throws bare
- * numbers): that audio is heard as nothing, and the voice process carries on (review #253).
+ * numbers): that audio is heard as nothing, and the voice process carries on (review #253). Throws ModelLoadError when
+ * a model can't be loaded.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- sherpa-onnx ships untyped JS */
 export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void } = {}): VoiceBackend & { free(): void } {
   const requireCjs = createRequire(__filename);
   const sherpa = requireCjs("sherpa-onnx") as any;
+  // A damaged file throws a bare number out of WebAssembly; a missing one only gives an empty handle (and a recognizer
+  // that hears nothing, ever).
+  const load = (what: string, make: () => any): any => {
+    let made: any;
+    try {
+      made = make();
+    } catch (err) {
+      throw new ModelLoadError(`The ${what} couldn't be loaded.`, { cause: err });
+    }
+    if (!made?.handle) throw new ModelLoadError(`The ${what} couldn't be loaded.`);
+    return made;
+  };
   const k = (f: string) => path.join(models.kws, f);
   const kwsConfig = {
     featConfig: { samplingRate: SAMPLE_RATE, featureDim: 80 },
@@ -73,28 +92,28 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     },
     maxActivePaths: 4, numTrailingBlanks: 1, keywordsScore: 1.0, keywordsThreshold: 0.25, keywords: KEYWORDS,
   };
-  const kws = sherpa.createKws(kwsConfig);
+  const kws = load("wake word model", () => sherpa.createKws(kwsConfig));
   let micStream = kws.createStream();
   let monStream: any = null;
-  const vad = sherpa.createVad({
+  const vad = load("voice activity model", () => sherpa.createVad({
     sileroVad: { model: models.vad, threshold: 0.5, minSilenceDuration: MIN_SILENCE, minSpeechDuration: 0.2, maxSpeechDuration: VAD_MAX_SPEECH_SECONDS, windowSize: 512 },
     sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
-  });
+  }));
   // The voice check for the idle spotter: a second Silero, eager (low threshold, a 64 ms onset), with its own state.
   // Its segments aren't needed: they're dropped as they come.
-  const check = sherpa.createVad({
+  const check = load("voice activity model", () => sherpa.createVad({
     sileroVad: { model: models.vad, threshold: CHECK_THRESHOLD, minSilenceDuration: 0.25, minSpeechDuration: 0.064, maxSpeechDuration: 30, windowSize: 512 },
     sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
-  });
+  }));
   const a = (f: string) => path.join(models.asr, f);
-  const asr = sherpa.createOfflineRecognizer({
+  const asr = load("speech recognition model", () => sherpa.createOfflineRecognizer({
     featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
     modelConfig: {
       moonshine: { preprocessor: a("preprocess.onnx"), encoder: a("encode.int8.onnx"), uncachedDecoder: a("uncached_decode.int8.onnx"), cachedDecoder: a("cached_decode.int8.onnx") },
       tokens: a("tokens.txt"), numThreads: 1, provider: "cpu", debug: 0,
     },
     decodingMethod: "greedy_search",
-  });
+  }));
 
   const spotIn = (stream: any, frame: Float32Array): string[] => {
     stream.acceptWaveform(SAMPLE_RATE, frame);

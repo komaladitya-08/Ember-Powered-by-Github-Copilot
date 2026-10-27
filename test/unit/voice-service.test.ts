@@ -302,6 +302,20 @@ describe("VoiceService keeps listening going", () => {
     }
   });
 
+  it("a model folder that won't load is forgotten, and the download is offered again (review #254)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    expect(v.modelsReady).toBe(true);
+    electron.procs[0].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(electron.procs).toHaveLength(1);
+    expect(electron.procs[0].kill).toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "The speech models look damaged. Download them again." });
+    expect(v.modelsReady).toBe(false); // so settings shows the download button
+    expect(fs.readdirSync(root).filter(f => f.endsWith(".ok"))).toEqual([]);
+  });
+
   it("a model that won't load is an error to show, not a restart loop", async () => {
     vi.useFakeTimers();
     const { v, states } = service();

@@ -7,8 +7,8 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { VoiceBackend } from "../../app/voice/engine";
 
-const sherpa = vi.hoisted(() => ({ make: null as null | ((o: { onError?: (err: unknown) => void }) => VoiceBackend) }));
-vi.mock("../../app/voice/sherpa", () => ({ sherpaBackend: (_models: unknown, o: { onError?: (err: unknown) => void }) => sherpa.make!(o) }));
+const sherpa = vi.hoisted(() => ({ make: null as null | ((o: { onError?: (err: unknown) => void }) => VoiceBackend), ModelLoadError: class extends Error {} }));
+vi.mock("../../app/voice/sherpa", () => ({ sherpaBackend: (_models: unknown, o: { onError?: (err: unknown) => void }) => sherpa.make!(o), ModelLoadError: sherpa.ModelLoadError }));
 
 /** A backend that hears nothing, unless `spot` is told otherwise. */
 function quiet(over: Partial<VoiceBackend> = {}): VoiceBackend {
@@ -56,5 +56,23 @@ describe("the voice process", () => {
     p.init();
     report?.(new Error("Invalid input shape"));
     expect(p.sent().filter(m => m.type === "engine-error")).toEqual([{ type: "engine-error", message: "Invalid input shape", count: 1 }]);
+  });
+
+  it("says the speech models couldn't be loaded, not a bare number, when loading throws one (review #254)", async () => {
+    const p = await voiceProcess(() => { throw 37825408; });
+    p.init();
+    expect(p.sent()).toEqual([{ type: "error", message: "The speech models couldn't be loaded.", models: true }]);
+  });
+
+  it("tells main when a model file is missing or damaged, so it can offer the download again (review #254)", async () => {
+    const p = await voiceProcess(() => { throw new sherpa.ModelLoadError("The speech recognition model couldn't be loaded."); });
+    p.init();
+    expect(p.sent()).toEqual([{ type: "error", message: "The speech recognition model couldn't be loaded.", models: true }]);
+  });
+
+  it("passes on other errors at start as they are", async () => {
+    const p = await voiceProcess(() => { throw new Error("Cannot find module 'sherpa-onnx'"); });
+    p.init();
+    expect(p.sent()).toEqual([{ type: "error", message: "Cannot find module 'sherpa-onnx'" }]);
   });
 });

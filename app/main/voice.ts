@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader } from "../voice/models";
+import { ensureModels, forgetModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader } from "../voice/models";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import { VOICE, type MicState, type MicStatus } from "../shared/voice";
@@ -235,7 +235,18 @@ export class VoiceService {
     proc.on("message", (m: VoiceProcessMessage) => {
       if (this.proc !== proc) return; // a process being replaced: only the current one speaks for the mic
       if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.setState("waiting"); return; }
-      if (m.type === "error") { this.o.log.error("voice.error", { message: m.message }); this.setState("error", m.message); this.teardown(); return; }
+      if (m.type === "error") {
+        this.o.log.error("voice.error", { message: m.message, models: !!m.models });
+        this.teardown();
+        // Models that won't load are damaged: they count as missing from now, and settings offers the download again.
+        if (m.models) {
+          if (forgetModels(this.o.modelsRoot)) this.setState("needs-models", "The speech models look damaged. Download them again.");
+          else this.setState("error", "The speech models look damaged, and Ember can't replace them. Reinstall Ember's speech models.");
+          return;
+        }
+        this.setState("error", m.message);
+        return;
+      }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }

@@ -8,7 +8,7 @@
 
 import fs from "node:fs";
 import { VoiceEngine, type VoiceEvent } from "./engine";
-import { sherpaBackend, type ModelPaths } from "./sherpa";
+import { ModelLoadError, sherpaBackend, type ModelPaths } from "./sherpa";
 import { SpeakerMonitor } from "./speakers";
 import { FrameWatchdog } from "./watchdog";
 
@@ -21,14 +21,15 @@ type FromMain =
   | { type: "cancel" };
 
 /**
- * Messages for main (VoiceService); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone frames
- * for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the process
- * carried on.
+ * Messages for main (VoiceService); `error`: listening couldn't start (`models`: the speech models couldn't be loaded,
+ * and downloading them again repairs it); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone
+ * frames for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the
+ * process carried on.
  */
 export type VoiceProcessMessage =
   | VoiceEvent
   | { type: "ready"; loadMs: number }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; models?: boolean }
   | { type: "engine-error"; message: string; count: number }
   | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
   | { type: "monitor"; on: boolean; reason?: string }
@@ -72,7 +73,10 @@ parent.on("message", e => {
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0 });
     } catch (err) {
-      send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      // What WebAssembly throws while loading a model is a bare number: the models are damaged (review #254).
+      if (err instanceof ModelLoadError) send({ type: "error", message: err.message, models: true });
+      else if (err instanceof Error) send({ type: "error", message: err.message });
+      else send({ type: "error", message: "The speech models couldn't be loaded.", models: true });
     }
     const watchdog = new FrameWatchdog(ms => send({ type: "stalled", ms }));
     setInterval(() => watchdog.check(), 1000);
