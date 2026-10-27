@@ -30,6 +30,14 @@ const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
 const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "preload/", "renderer/"];
 
 /**
+ * The SSH and command helpers Ember starts beside main.cjs, which fail only at first use when missing: the SSH link
+ * worker (remote-link.cjs) everywhere, the password helper ssh runs (askpass.cjs) on Linux and macOS (Windows compiles
+ * ember-askpass.exe instead), and Windows' command job host (job-host.cjs).
+ */
+const POSIX_HELPERS = ["askpass.cjs", "remote-link.cjs"];
+const WINDOWS_HELPERS = ["remote-link.cjs", "job-host.cjs"];
+
+/**
  * The layout of one target. Paths are POSIX-style; join them with path.join on the OS that stages.
  * @param {string} platform process.platform of the target ("linux", "win32" or "darwin")
  * @param {string} arch process.arch of the target ("x64" or "arm64")
@@ -56,7 +64,7 @@ export function layoutFor(platform, arch) {
       prune: [`${koffi}/musl_x64`, ...tools],
       sidecarFiles: [{ from: "sidecar/atspi/ember_atspi.py", to: "sidecar/atspi/ember_atspi.py" }],
       // The desk helper (run as plain Node beside main.cjs) is Linux-only, like the desk.
-      requiredDist: [...COMMON_DIST.slice(0, 1), "desk-agent.cjs", ...COMMON_DIST.slice(1)],
+      requiredDist: [...COMMON_DIST.slice(0, 1), "desk-agent.cjs", ...COMMON_DIST.slice(1), ...POSIX_HELPERS],
       sidecarDist: [],
       // The Windows/macOS accessibility host never runs here (the Python AT-SPI sidecar does).
       excludeDist: ["ax-sidecar.cjs"],
@@ -86,7 +94,7 @@ export function layoutFor(platform, arch) {
       ],
       // `ember --doctor` for a console: Ember.exe is a windowed program, which cmd.exe doesn't wait for (design §9.9).
       launchers: [{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }],
-      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs"],
+      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...WINDOWS_HELPERS],
       // The accessibility host, run as Ember's own binary in node mode (ELECTRON_RUN_AS_NODE).
       sidecarDist: ["ax-sidecar.cjs"],
       excludeDist: ["desk-agent.cjs"],
@@ -116,7 +124,7 @@ export function layoutFor(platform, arch) {
     // libvips's glib headers are for building against it.
     prune: [`@img/sharp-libvips-${target}/lib/glib-2.0`, ...tools],
     sidecarFiles: [],
-    requiredDist: [...COMMON_DIST, "ax-sidecar.cjs"],
+    requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...POSIX_HELPERS],
     sidecarDist: ["ax-sidecar.cjs"],
     excludeDist: ["desk-agent.cjs"],
     icon: { kind: "icns", file: "Contents/Resources/ember.icns", replaces: "Contents/Resources/electron.icns" },

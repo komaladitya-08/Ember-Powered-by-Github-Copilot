@@ -156,6 +156,20 @@ describe("every target", () => {
     }
   });
 
+  it("requires the SSH and command helpers each target starts, so a partial build can't be staged (review #209)", () => {
+    // askpass.cjs: the POSIX password helper (askpass-server.ts); remote-link.cjs: the SSH link worker (connections.ts);
+    // job-host.cjs: Windows' command job host (main.ts, wsl/router.ts). Windows asks through ember-askpass.exe instead.
+    const helpers: Record<string, string[]> = { linux: ["askpass.cjs", "remote-link.cjs"], darwin: ["askpass.cjs", "remote-link.cjs"], win32: ["remote-link.cjs", "job-host.cjs"] };
+    const build = fs.readFileSync(path.resolve("scripts/build-app.mjs"), "utf8");
+    for (const l of layouts) {
+      for (const f of helpers[l.platform]) {
+        expect(l.requiredDist, `${l.target}: ${f}`).toContain(f);
+        expect(l.excludeDist, `${l.target}: ${f}`).not.toContain(f);
+        expect(build, f).toContain(`"dist/app/${f}"`);
+      }
+    }
+  });
+
   it("names the archives by version, OS and architecture", () => {
     expect(artifactNames(layoutFor("win32", "x64"), "0.1.0")).toEqual(["Ember-0.1.0-win-x64.zip"]);
     expect(artifactNames(layoutFor("win32", "arm64"), "1.2.3")).toEqual(["Ember-1.2.3-win-arm64.zip"]);
