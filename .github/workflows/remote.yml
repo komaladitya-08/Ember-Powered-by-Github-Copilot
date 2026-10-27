@@ -360,9 +360,10 @@ jobs:
       - name: The distro's host key known to Win32-OpenSSH, and a batch connect as root with the runner's key
         shell: pwsh
         run: |
+          # The first connect records the host key (Win32-OpenSSH's ssh-keyscan prints none here: "unsupported KEX
+          # method sntrup761x25519-sha512"); every later connect, Ember's included, checks it strictly.
           $ssh = "$env:SystemRoot\System32\OpenSSH"
-          & "$ssh\ssh-keyscan.exe" -p 2222 127.0.0.1 | Add-Content -Path "$env:USERPROFILE\.ssh\known_hosts"
-          & "$ssh\ssh.exe" -o BatchMode=yes -o ConnectTimeout=10 -p 2222 127.0.0.1 'echo connected as $(id -un)'
+          & "$ssh\ssh.exe" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 2222 127.0.0.1 'echo connected as $(id -un)'
           if ($LASTEXITCODE -ne 0) { throw "ssh to the distro failed ($LASTEXITCODE)" }
       - name: What wsl.test.ts expects here (WSL1, setup-wsl's root default user, running for sshd)
         run: |
