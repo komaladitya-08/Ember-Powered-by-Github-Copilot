@@ -224,3 +224,17 @@ export function hostInput(s: string): string | null {
 export const ADD_INVALID = "Type a host name, or user@host.";
 /** When the targets runtime couldn't be reached for an action. */
 export const ACT_FAILED = "That didn't work. Try again.";
+
+/** What the add form says while its card or the connection is pending (review #188). */
+export function addPending(dest: string): string {
+  return `Connecting to ${dest}… If Ember asks, answer in the window that opens.`;
+}
+
+/**
+ * What an add's answer means for the form (review #159, #188): the field is cleared only once the host was added, so a
+ * typo stays to be fixed; the message is the runtime's own (or that it didn't work, when it gave no answer).
+ */
+export function addResult(r: unknown): { clear: boolean; message: string } {
+  const ok = !!r && typeof r === "object" && (r as { ok?: unknown }).ok === true;
+  return { clear: ok, message: actMessage(r) ?? (ok ? "" : ACT_FAILED) };
+}

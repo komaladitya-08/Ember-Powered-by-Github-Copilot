@@ -10,7 +10,8 @@ import type { Status, StatusPlatform } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, commandsView, computersView, hostInput, type ComputerRow, type EmberTargetsApi, type Switch, type TargetsAdmin,
+  ACT_FAILED, ADD_INVALID, actMessage, addPending, addResult, commandsView, computersView, hostInput, type ComputerRow, type EmberTargetsApi, type Switch,
+  type TargetsAdmin,
 } from "./computers-copy";
 
 declare global { interface Window { emberTargets?: EmberTargetsApi } }
@@ -43,6 +44,28 @@ async function act(a: TargetsAct, msg: string): Promise<void> {
     say(msg, actMessage(await api.act(a)) ?? "");
   } catch {
     say(msg, ACT_FAILED);
+  }
+}
+
+/** An add under way: the form says so, and a second Connect waits for it. */
+let adding = false;
+/** Adds a host: the field keeps what was typed until the host is added (a typo stays to be fixed). */
+async function add(dest: string, input: HTMLInputElement, button: HTMLElement): Promise<void> {
+  const api = window.emberTargets;
+  if (!api) return;
+  adding = true;
+  button.setAttribute("aria-disabled", "true");
+  say("computers-msg", addPending(dest));
+  try {
+    const r = addResult(await api.act({ kind: "add", dest }));
+    // Typed over meanwhile: what is there now is the user's.
+    if (r.clear && hostInput(input.value) === dest) input.value = "";
+    say("computers-msg", r.message);
+  } catch {
+    say("computers-msg", ACT_FAILED);
+  } finally {
+    adding = false;
+    button.removeAttribute("aria-disabled");
   }
 }
 
@@ -173,11 +196,11 @@ export function startTargets(): void {
   asks($("offer-ssh") as HTMLInputElement, on => void act({ kind: "offerSsh", on }, "computers-msg"));
   $("host-form").addEventListener("submit", e => {
     e.preventDefault();
+    if (adding) return;
     const input = $("host-add") as HTMLInputElement;
     const dest = hostInput(input.value);
     if (!dest) { say("computers-msg", ADD_INVALID); input.focus(); return; }
-    input.value = "";
-    void act({ kind: "add", dest }, "computers-msg");
+    void add(dest, input, $("host-form").querySelector("button")!);
   });
   $("open-commands").addEventListener("click", () => void act({ kind: "openCommands" }, "commands-msg"));
 }

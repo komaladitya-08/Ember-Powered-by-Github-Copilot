@@ -65,3 +65,18 @@ describe("each “Ask me before every command” switch names its computer (revi
     ]);
   });
 });
+
+describe("adding a computer keeps what was typed until it is added (review #159, #188)", () => {
+  it("clears the field only when the host was added, and says what failed otherwise", () => {
+    expect(cc.addResult({ ok: true })).toEqual({ clear: true, message: "" });
+    expect(cc.addResult({ ok: true, message: "build-01 is connected." })).toEqual({ clear: true, message: "build-01 is connected." });
+    expect(cc.addResult({ ok: false, message: "Ember can't find bild-01.example.com. Check the name, or add it to your SSH config." }))
+      .toEqual({ clear: false, message: "Ember can't find bild-01.example.com. Check the name, or add it to your SSH config." });
+    expect(cc.addResult({ ok: false, message: "Not now." })).toEqual({ clear: false, message: "Not now." });
+    expect(cc.addResult(undefined)).toEqual({ clear: false, message: cc.ACT_FAILED });
+  });
+
+  it("says something while the card or the connection is pending", () => {
+    expect(cc.addPending("bild-01.example.com")).toBe("Connecting to bild-01.example.com… If Ember asks, answer in the window that opens.");
+  });
+});
