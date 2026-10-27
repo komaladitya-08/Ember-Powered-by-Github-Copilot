@@ -54,6 +54,8 @@ export interface SignInProgress {
   userCode?: string;
   verificationUri?: string;
   message?: string;
+  /** "waiting" without the GitHub CLI: the label of a button that opens its download page (IPC.openSignInPage). */
+  link?: string;
 }
 
 export interface VoiceStatus {

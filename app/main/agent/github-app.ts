@@ -33,6 +33,14 @@ export const GH_INSTALL: Readonly<Record<OS, string>> = {
   darwin: "brew install gh, or the installer from cli.github.com",
 };
 
+/** Where to get the GitHub CLI: the Copilot section's Open button shows it while Ember waits and gh is missing. */
+export const GH_CLI_PAGE = "https://cli.github.com/";
+
+/** The pages the sign-in's Open button may show: GitHub's own (the device code page), and the GitHub CLI's download page. */
+export function mayOpenSignInPage(url: string | null): boolean {
+  return !!url && (/^https:\/\/github\.com\//.test(url) || url === GH_CLI_PAGE);
+}
+
 /** The requirement, in one sentence: a GitHub account with Copilot and the GitHub CLI, and how to install it here. */
 export function cliSignInNeeds(os: OS): string {
   return `Signing in needs a GitHub account with Copilot and the GitHub CLI (install it: ${GH_INSTALL[os]}).`;

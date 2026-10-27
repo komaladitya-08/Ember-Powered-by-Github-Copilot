@@ -129,3 +129,16 @@ describe("the Copilot section without Ember's own GitHub App", () => {
     expect(make().getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
   });
 });
+
+describe("the GitHub CLI's download page (review #136)", () => {
+  it("is the one page besides GitHub's own sign-in pages that the Open button may show", async () => {
+    const { GH_CLI_PAGE, mayOpenSignInPage } = await import("../../app/main/agent/github-app");
+    expect(GH_CLI_PAGE).toBe("https://cli.github.com/");
+    expect(mayOpenSignInPage(GH_CLI_PAGE)).toBe(true);
+    expect(mayOpenSignInPage("https://github.com/login/device")).toBe(true);
+    expect(mayOpenSignInPage("https://cli.github.com.evil.example/")).toBe(false);
+    expect(mayOpenSignInPage("http://cli.github.com/")).toBe(false);
+    expect(mayOpenSignInPage("https://example.com/")).toBe(false);
+    expect(mayOpenSignInPage(null)).toBe(false);
+  });
+});

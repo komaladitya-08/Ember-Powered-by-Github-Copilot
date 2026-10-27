@@ -565,9 +565,17 @@ function showCode(userCode: string, uri: string): void {
   const wait = Object.assign(document.createElement("span"), { className: "wait", textContent: "Your browser should have opened it. Waiting for you to approve…" });
   msg.replaceChildren(...parts, wait);
 }
+/** A button after the sign-in message that opens the page main offers (the GitHub CLI's download page). */
+function addOpenButton(label: string): void {
+  const open = (window.ember as EmberHomeApi & { openSignInPage?: () => Promise<void> }).openSignInPage;
+  if (typeof open !== "function") return;
+  const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: label });
+  btn.addEventListener("click", () => { void open(); });
+  $("sign-in-msg").append(" ", btn);
+}
 window.ember.onSignInProgress(p => {
   if (p.state === "code") { showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
-  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); return; }
+  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); if (p.link) addOpenButton(p.link); return; }
   setSigningIn(false);
   if (p.state === "cancelled") { signInMsg(""); return; }
   if (p.state === "done" && !p.message) { say("Signed in.", 3000); return; }

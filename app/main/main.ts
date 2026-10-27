@@ -46,7 +46,7 @@ import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceFlow, type ResolvedToken } from "./agent/auth";
-import { cliTimedOutMessage, cliWaitingMessage, githubClientId, noSignInMessage, type SignInWith } from "./agent/github-app";
+import { GH_CLI_PAGE, cliTimedOutMessage, cliWaitingMessage, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
@@ -948,9 +948,9 @@ function start(): void {
     await agent?.start(null);
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
-  /** The page of the sign-in under way, opened again on request (GitHub's own pages only). */
+  /** The page of the sign-in under way, opened again on request (GitHub's own pages, or the GitHub CLI's download page). */
   let signInPage: string | null = null;
-  const openSignInPage = () => { if (signInPage && /^https:\/\/github\.com\//.test(signInPage)) void shell.openExternal(signInPage); };
+  const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
   const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
@@ -984,7 +984,10 @@ function start(): void {
     if (!clientId) {
       // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart). The
       // message says what that needs (a GitHub account with Copilot and the GitHub CLI) and how to install gh here.
-      say({ state: "waiting", message: cliWaitingMessage(platform.os, ghInstalled()) });
+      const gh = ghInstalled();
+      // Without gh, an Open button shows where to get it (only that page, on request).
+      signInPage = gh ? null : GH_CLI_PAGE;
+      say({ state: "waiting", message: cliWaitingMessage(platform.os, gh), ...(gh ? {} : { link: "Open cli.github.com" }) });
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
         // (A refused token in the environment is passed over: the new GitHub CLI sign-in is found behind it.)
