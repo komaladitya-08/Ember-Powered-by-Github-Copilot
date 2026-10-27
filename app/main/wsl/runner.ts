@@ -556,7 +556,9 @@ export function createWslRunner(d: WslRunnerDeps): WslRunner {
       return []; // not a run id Ember made: nothing of it can be in the distro
     }
     const r = await d.exec.run(["-d", name, "--exec", "/bin/sh", "-s", "--", ...args], { stdin: scriptInput(SWEEP_SCRIPT), timeoutMs: SWEEP_TIMEOUT_MS, inDistro: true });
-    return sweptNames(r.stdout.toString("utf8"));
+    const names = sweptNames(r.stdout.toString("utf8"));
+    d.log.debug("wsl.sweep", { distro: name, signal, code: r.code, found: names.length, timedOut: r.timedOut, error: r.error });
+    return names;
   };
 
   const runner: WslRunner = {
@@ -942,7 +944,10 @@ class Run {
     // the distro still runs: a command that shut it down (`poweroff`, `wsl.exe --terminate` through interop) leaves
     // nothing behind, and a sweep would start it again.
     void (async () => {
-      if (!(await this.d.runningNow()).has(this.d.distro)) return this.setStragglers([]);
+      if (!(await this.d.runningNow()).has(this.d.distro)) {
+        this.d.log.debug("wsl.straggler_look_skipped", { distro: this.d.distro, why: "not running" });
+        return this.setStragglers([]);
+      }
       const names = await this.r.sweep("0", this.spec.runId);
       this.setStragglers(names);
       if (names.length) this.d.log.warn("commands.straggler", { distro: this.d.distro, runId: this.spec.runId, count: names.length });
