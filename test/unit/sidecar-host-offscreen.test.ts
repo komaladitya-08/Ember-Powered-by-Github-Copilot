@@ -145,6 +145,30 @@ describe("names that say what a secret field the read didn't list holds (review 
     }
   });
 
+  it("withholds such a name when the snapshot left the field out as offscreen past its limit, with nothing after it that shows", async () => {
+    // A checkout page scrolled so the card's row sits at the bottom edge: everything after it in the page is out of
+    // view. The window, the page, 1596 unnamed groups, the cell and its label fill the snapshot (1600 elements); the
+    // bridge then leaves the offscreen field out as "offscreen", not "nodes", and the read ends on the cell.
+    const groups = (n: number): FakeElementSpec[] => Array.from({ length: n }, (_, i) => ({ role: "Group", name: "", bounds: at(1 + (i % 700), 40 + (i % 20), 2, 2) }));
+    const cell = (): FakeElementSpec => ({ role: "DataItem", name: "Card number 4111 1111 1111 1111", bounds: at(10, 560, 400, 80), children: [
+      { role: "Text", name: "Card number", bounds: at(10, 562, 100, 16) },
+      field("Card number", "4111 1111 1111 1111", at(10, 610, 200, 24), { offscreen: true })] });
+    const page = (children: FakeElementSpec[]): FakeElementSpec => ({ role: "Document", name: "Checkout", framework: "Chrome", bounds: at(0, 30, 800, 570), children });
+    for (const [what, children] of [
+      ["the field cut as offscreen", [...groups(1596), cell()]],
+      ["a link that shows after it (cut nodes)", [...groups(1596), cell(), { role: "Hyperlink", name: "Help", bounds: at(500, 40, 40, 16) }]],
+      ["a page under the limit", [...groups(100), cell()]],
+    ] as const) {
+      const { call } = harness([page([...children])]);
+      const r = await read(call);
+      expect(JSON.stringify(r.nodes), what).not.toContain("4111");
+      expect(r.nodes.find(n => n.role === "table cell"), what).toMatchObject({ name: "", withheld: true });
+    }
+    // Nothing that shows is missing, so the read still says nothing was cut.
+    const { call } = harness([page([...groups(1596), cell()])]);
+    expect((await read(call)).truncated).toBe(false);
+  });
+
   it("leaves names alone outside a web page, and when the field isn't secret", async () => {
     const { call } = harness([{ role: "Group", name: "Order 4111 1111", bounds: at(10, 270, 280, 46), children: [
       field("Reference", "4111 1111", at(12, 296, 260, 20), { offscreen: true })] }]);
