@@ -7,7 +7,7 @@ import type { TargetSummary } from "../../shared/targets";
 import { targetChip } from "../handle/badge";
 import { AskHistory } from "./history";
 import { CUT_NOTE, FIELD, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "./field";
-import { seesView } from "./chips";
+import { liveWords, seesView } from "./chips";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
@@ -102,8 +102,8 @@ window.emberAsk.onContext(c => {
   seesText.textContent = view?.text ?? "";
   document.getElementById("sees-extra")!.textContent = view?.extra ?? "";
   // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
-  if (c.opened) { said = ""; seesLive.textContent = ""; }
-  else if (view && view.full !== said) { said = view.full; seesLive.textContent = view.full; }
+  const live = liveWords(said, c);
+  if (live !== null) seesLive.textContent = said = live;
   fitMeta();
   input.focus();
   // Opened again: what was left in it (after Esc, or a click away) is selected, so typing replaces it instead of

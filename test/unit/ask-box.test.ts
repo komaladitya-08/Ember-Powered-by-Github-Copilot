@@ -12,7 +12,7 @@ import { DARWIN_SETTINGS } from "../../app/main/platform/darwin/system/settings"
 import { win32Settings } from "../../app/main/platform/win32/system/settings";
 import { notificationBody } from "../../app/main/notification";
 import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "../../app/renderer/ask/field";
-import { seesView } from "../../app/renderer/ask/chips";
+import { liveWords, seesView } from "../../app/renderer/ask/chips";
 import { targetChip } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
 import { Perception, openWindowLines, quickContextText, type Seen } from "../../app/main/perception";
@@ -115,6 +115,22 @@ describe("what the ask box says Ember will see", () => {
     expect(targetChip(t({ state: "connecting" }))).toBe("On build-01 (connecting…)");
     expect(targetChip(t({ id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)" }))).toBe("In Ubuntu (WSL)");
     expect(targetChip(t({ id: "local", kind: "local", label: "This computer" }))).toBeNull();
+  });
+
+  it("says what Ember will see to screen readers once, when it arrives after the field has the keyboard", () => {
+    const late = { sees: "Firefox · Inbox", carries: { selection: false, fieldText: true, windows: 2 } };
+    const words = "Ember will see: Firefox · Inbox, with the start of the focused field's text and the titles of 2 other open windows.";
+    // An opening clears the region (the next late words are news again), whatever it already knows.
+    expect(liveWords(words, { ...late, opened: true })).toBe("");
+    expect(liveWords("", { sees: null, opened: true })).toBe("");
+    // The late update: the whole sentence, once.
+    expect(liveWords("", late)).toBe(words);
+    expect(liveWords(words, late)).toBeNull();
+    // Something else after all (the user switched windows meanwhile): said again.
+    expect(liveWords(words, { sees: "Firefox · Bank" })).toBe("Ember will see: Firefox · Bank.");
+    // Nothing to say (a remote with no window): left as it is.
+    expect(liveWords("", { sees: null })).toBeNull();
+    expect(liveWords("", { sees: null, privateWindow: true })).toBe("Ember won't look at this window.");
   });
 
   it("keeps the chip's line its full width from the start and gives the late words a live region", () => {

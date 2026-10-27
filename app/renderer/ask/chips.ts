@@ -32,3 +32,15 @@ export function seesView(c: Pick<AskContext, "sees" | "carries" | "privateWindow
     full: `Ember will see: ${c.sees}${joined ? `, with ${joined}` : ""}.`,
   };
 }
+
+/**
+ * What the box's live region says when a context arrives, given what it last said in this opening (`said`): "" when
+ * the box opens (cleared, so the late words are news again), the whole sentence once the late update brings it (the
+ * field had the keyboard first, so its description isn't read again), null to leave it as it is (said already, or
+ * nothing to say).
+ */
+export function liveWords(said: string, c: Pick<AskContext, "opened" | "sees" | "carries" | "privateWindow">): string | null {
+  if (c.opened) return "";
+  const view = seesView(c);
+  return view && view.full !== said ? view.full : null;
+}
