@@ -933,7 +933,7 @@ export class AgentHost {
       }
       if (runtimeDefault) this.o.log.info("agent.runtime_default_model");
       this.models = models;
-      // Sessions of tasks from an earlier run (Ember quit or restarted before their 10 minutes were up).
+      // Sessions of tasks from an earlier run (Ember crashed or was killed before it could delete them).
       // Housekeeping must not hold up the first answer: sweep alongside the session setup, not before it.
       void this.sweepTaskSessions(client);
 

@@ -60,3 +60,16 @@ describe("a worker that can't be made (review #145)", () => {
     }
   });
 });
+
+describe("a finished task's session (review #148)", () => {
+  it("is deleted as soon as the task ends: nothing resumes it, and it holds the screen text the task read", async () => {
+    const deleted: string[] = [];
+    const { tm } = manager({
+      keepMs: undefined, deleteSession: async id => { deleted.push(id); },
+      makeWorker: () => ({ run: async () => ({ success: true, summary: "Done." }), steer: async () => false, dispose: async () => undefined, sessionId: "ember-task-1" }) as unknown as Worker,
+    });
+    const t = tm.start("tidy the desktop");
+    await vi.waitFor(() => expect(tm.get(t.id)!.status).toBe("done"));
+    await vi.waitFor(() => expect(deleted).toEqual(["ember-task-1"]), { timeout: 500 });
+  });
+});

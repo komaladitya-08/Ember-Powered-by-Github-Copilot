@@ -2,8 +2,8 @@
  * TaskManager: runs workers in the background while the user keeps working.
  * Plain TypeScript (no model decides scheduling): at most `maxRunning` tasks
  * act at once, the rest queue (a guide runs beside them, one at a time); two tasks never act in the same window at the
- * same moment (window leases); finished worker sessions are deleted after
- * ten minutes (or at once when Ember stops); results wait for the conductor
+ * same moment (window leases); a finished worker's session is deleted as soon
+ * as it ends (nothing resumes it, and it holds what the task read); results wait for the conductor
  * to pick them up. Every finished card can be closed; a failure stays longer so
  * the user can read it, then it goes on its own too.
  */
@@ -62,7 +62,7 @@ export interface TaskManagerDeps {
   audit?: AuditLog;
   /** How many tasks that act run at once (default 2); guides don't count (one runs at a time beside them). */
   maxRunning?: number;
-  /** How long a finished worker session is kept for follow-up questions. */
+  /** How long a finished worker's session is kept before it is deleted (default 0: at once; no follow-up resumes it). */
   keepMs?: number;
   /** How long finished cards stay on screen. */
   cardMs?: number;
@@ -279,7 +279,7 @@ export class TaskManager {
       const timer = setTimeout(() => {
         this.toDelete.delete(sessionId);
         void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
-      }, this.d.keepMs ?? 10 * 60_000);
+      }, this.d.keepMs ?? 0);
       timer.unref?.();
       this.toDelete.set(sessionId, timer);
     }
