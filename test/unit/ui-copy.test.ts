@@ -9,6 +9,8 @@ import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
 import * as commandCopy from "../../app/renderer/command/copy";
+import { LINES } from "../../app/main/commands/decide";
+import { CARD_LINES, OUTPUT_TAINT_LINE } from "../../app/main/commands/flow";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import { targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
@@ -293,6 +295,14 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.tabLabel("git status")).toBe("git status");
     expect(commandCopy.tabLabel("x".repeat(41))).toBe(`${"x".repeat(40)}…`);
     expect(commandCopy.tabLabel("make\n  test")).toBe("make test");
+  });
+
+  it("speaks of Ember in the third person on every fixed line of the card (bubbles are first person, the card isn't)", () => {
+    const lines = [...Object.values(LINES), ...Object.values(CARD_LINES).filter((l): l is string => typeof l === "string"), OUTPUT_TAINT_LINE];
+    for (const l of lines) expect(l, l).not.toMatch(/(^|\s)I('m|'ll|'ve|'d)?\s/);
+    expect(keep(LINES.tainted)).toBe("Ember is checking each step: a step came up that you didn't ask for.");
+    expect(CARD_LINES.tainted).toBe(LINES.tainted);
+    expect(keep(OUTPUT_TAINT_LINE)).toBe("Ember is checking each step: an earlier command printed text that looked like instructions.");
   });
 
   it("puts \"You didn't ask for this.\" where §3.8.4 puts it, and the model's reason apart", () => {

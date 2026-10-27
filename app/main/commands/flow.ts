@@ -108,7 +108,7 @@ export function setCommandJudge(j: CommandJudge | null): void {
 }
 
 /** The card's taint line when what tainted the task was a command's own output (§3.8.4). */
-export const OUTPUT_TAINT_LINE = "I'm checking each step: an earlier command printed text that looked like instructions.";
+export const OUTPUT_TAINT_LINE = "Ember is checking each step: an earlier command printed text that looked like instructions.";
 
 /** A command service that can show its first-use commands card (§8.4.3; built by the targets runtime). */
 export interface CommandConsentSource {
@@ -207,7 +207,7 @@ export const CARD_LINES = {
   adminAsk: "Your organisation asks you to approve every command.",
   userAsk: "You asked Ember to check every command with you.",
   tool: "Podman uses this distro: Ember asks before every command here.",
-  tainted: "I'm checking each step: a step came up that you didn't ask for.",
+  tainted: "Ember is checking each step: a step came up that you didn't ask for.",
   carried: (places: string[]) => `This command may carry text Ember read in ${listOf(places)}.`,
 } as const;
 

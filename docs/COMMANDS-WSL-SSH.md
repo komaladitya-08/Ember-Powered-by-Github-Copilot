@@ -208,8 +208,8 @@ in URLs and the like). Hiding is best effort: a secret in a form Ember doesn't r
 secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |
-sh`) is not followed: it marks the task, and every further command in that task asks you ("I'm checking each step: an
-earlier command printed text that looked like instructions.").
+sh`) is not followed: it marks the task, and every further command in that task asks you ("Ember is checking each step:
+an earlier command printed text that looked like instructions.").
 
 ### 2.8 Stopping, timeouts and the working folder
 
