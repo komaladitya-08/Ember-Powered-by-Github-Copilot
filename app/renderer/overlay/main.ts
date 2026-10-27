@@ -12,7 +12,7 @@ import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, ty
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import { TASK_STOPPING, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, stackOrder, stopPending, underWay } from "./stack";
+import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { whereText } from "../handle/badge";
 import { bubbleHere, cardsCorner, pillBottom, pillSpot } from "./layout";
@@ -382,10 +382,63 @@ function pressedStop(c: CardEls): void {
   measureTasks();
 }
 
+// ── Cards that move or go: a card moved in the stack (a task that ended goes to the top) slides there, and one that
+// went fades where it was, so the user sees where the card they were reading went. Not in Calm mode or with the
+// desktop's reduced motion: then they move at once. ──
+
+/** How long a card slides to its new place, and how long one that went takes to fade. */
+const SLIDE_MS = 150;
+const MORE_KEY = "+more";
+
+/** The cards shown now, with the "+N more" line, by id. */
+function shownCards(): Map<string, HTMLLIElement> {
+  const els = new Map<string, HTMLLIElement>();
+  for (const [id, c] of cards) if (c.li.isConnected && !c.li.hidden) els.set(id, c.li);
+  if (more.li.isConnected && !more.li.hidden) els.set(MORE_KEY, more.li);
+  return els;
+}
+
+/** Each shown card's top edge, where it is drawn now (a card still sliding counts where it is on its way). */
+const cardTops = (): Map<string, number> => new Map([...shownCards()].map(([id, li]) => [id, li.getBoundingClientRect().top]));
+
+/** Cards that moved since `before` (their tops then) start where they were and slide into place. */
+function slideCards(before: Map<string, number>): void {
+  const els = shownCards();
+  // A slide still under way ends where it was going: the new place is measured without it.
+  for (const li of els.values()) { li.style.transition = ""; li.style.transform = ""; }
+  const moved = slides(before, cardTops());
+  if (!moved.size) return;
+  for (const [id, dy] of moved) Object.assign(els.get(id)!.style, { transition: "none", transform: `translateY(${dy}px)` });
+  void tasksEl.offsetHeight; // drawn where they were first
+  for (const id of moved.keys()) Object.assign(els.get(id)!.style, { transition: `transform ${SLIDE_MS}ms ease`, transform: "" });
+  // Their buttons are measured again where they come to rest.
+  setTimeout(() => {
+    for (const id of moved.keys()) if (!els.get(id)!.style.transform) els.get(id)!.style.transition = "";
+    measureTasks();
+  }, SLIDE_MS + 30);
+}
+
+/** A card that went fades out where it was: a copy of it, which takes no clicks and is read by no one. */
+function fadeCard(li: HTMLLIElement): void {
+  if (!li.isConnected || li.hidden) return;
+  const r = li.getBoundingClientRect();
+  const ghost = li.cloneNode(true) as HTMLLIElement;
+  ghost.removeAttribute("data-fresh");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.classList.add("gone");
+  Object.assign(ghost.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, transform: "", transition: `opacity ${SLIDE_MS}ms ease` });
+  document.body.append(ghost);
+  void ghost.offsetWidth; // shown before it fades
+  ghost.style.opacity = "0";
+  setTimeout(() => ghost.remove(), SLIDE_MS + 100);
+}
+
 function renderTasks(tasks: TaskCard[]): boolean {
   const key = JSON.stringify(tasks);
   if (key === tasksKey) return false;
   tasksKey = key;
+  const calm = reducedMotionQuery.matches || settings?.reduceMotion === true;
+  const before = calm ? null : cardTops();
   stacked = stackOrder(tasks);
   const items = stacked.map(t => {
     let c = cards.get(t.id);
@@ -445,12 +498,13 @@ function renderTasks(tasks: TaskCard[]): boolean {
     return c.li;
   });
   const ids = new Set(tasks.map(t => t.id));
-  for (const id of [...cards.keys()]) if (!ids.has(id)) cards.delete(id);
+  for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); }
   // The "+N more" line heads the stack whenever there are ended cards that could fold.
   const all = stacked.some(t => !underWay(t)) ? [more.li, ...items] : items;
   const same = all.length === tasksEl.children.length && all.every((li, i) => tasksEl.children[i] === li);
   if (!same) tasksEl.replaceChildren(...all);
   fitTasks();
+  if (before) slideCards(before);
   return true;
 }
 

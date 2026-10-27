@@ -25,8 +25,11 @@ body { font: var(--type-callout); color: var(--label); }
 .tasks {
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
-/* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
+/* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. The
+   scroller would cut the cards' outer shadows off at its edges (a hard-edged grey slab over a light app): while it
+   scrolls they keep only their sheen and rim, which it doesn't cut. */
 .tasks.scroll { overflow-y: auto; overscroll-behavior: contain; }
+.tasks.scroll .task { box-shadow: var(--glass-spec); }
 /* Its scrollbar is drawn over whatever app is behind: the thumb sits in a dark track, so it reads on a white app too. */
 .tasks.scroll::-webkit-scrollbar-track { border: 2px solid transparent; border-radius: var(--r-capsule); background: rgba(20, 17, 18, 0.85) padding-box; }
 .tasks.scroll::-webkit-scrollbar-thumb { border-width: 4px; }
@@ -38,8 +41,10 @@ body { font: var(--type-callout); color: var(--label); }
   transition: opacity 240ms ease;
 }
 /* A card that has just appeared fades in (opacity only: its buttons are measured where they stand). Cards moved
-   in the stack are not new, and don't blink. */
+   in the stack are not new, and don't blink: they slide to their new place, and a card that went fades where it was
+   (a copy of it, .gone, drawn by main.ts; neither in Calm mode or with reduced motion). */
 @starting-style { .task[data-fresh] { opacity: 0; } }
+.task.gone { position: fixed; z-index: 3; margin: 0; box-sizing: border-box; pointer-events: none; }
 .task b, .task span { overflow-wrap: anywhere; }
 .task b { font: var(--type-headline); letter-spacing: -0.006em; }
 .task span { color: var(--label-2); font: var(--type-callout); }

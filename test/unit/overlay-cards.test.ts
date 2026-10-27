@@ -1,12 +1,13 @@
 /**
  * The task cards over other apps: what a card says about its task (a task in line is not one that needs you), and
  * what the main process tells the cards (review #130); what the handle says while tasks run (review #131); a Stop
- * that says at once that it landed (review #132); a finished card's words kept to a card's size (review #134).
+ * that says at once that it landed (review #132); a finished card's words kept to a card's size (review #134); cards
+ * that slide to their new place in the stack instead of jumping (review #133).
  */
 
 import { describe, expect, it } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { STATE_WORD, busyLine, stackOrder, stopPending, underWay } from "../../app/renderer/overlay/stack";
+import { STATE_WORD, busyLine, slides, stackOrder, stopPending, underWay } from "../../app/renderer/overlay/stack";
 import { cardTask } from "../../app/renderer/handle/card";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import { TASK_STOPPING, type TaskCard } from "../../app/shared/overlay";
@@ -112,5 +113,14 @@ describe("a finished task's card", () => {
     tm.start("Turn on Night Light");
     done.resolve({ success: true, summary: "Night Light is on." });
     await expect.poll(() => cards.at(-1)![0].detail).toBe("Night Light is on.");
+  });
+});
+
+describe("cards that move in the stack", () => {
+  it("slide from where they were: each by how far it moved; a new card, or one that barely moved, doesn't", () => {
+    const before = new Map([["done", 600], ["run", 420], ["still", 300]]);
+    // "done" ended and went to the top; "run" moved down into its place; "still" stayed; "new" appeared.
+    const after = new Map([["done", 300.4], ["run", 600], ["still", 300.5], ["new", 700]]);
+    expect([...slides(before, after)]).toEqual([["done", 299.6], ["run", -180]]);
   });
 });

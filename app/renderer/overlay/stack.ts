@@ -64,3 +64,17 @@ export const STOP_ACK_MS = 3000;
 export function stopPending(pressedAt: number, now: number, detail: string): boolean {
   return detail === TASK_STOPPING || now - pressedAt < STOP_ACK_MS;
 }
+
+/**
+ * How far each card moved between two layouts (`before` and `after`: each card's top edge by id), so it slides from
+ * where it was instead of jumping there (a task that ended goes to the top of the stack). A new card fades in
+ * instead, and one that barely moved (under a pixel) stays put.
+ */
+export function slides(before: ReadonlyMap<string, number>, after: ReadonlyMap<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [id, top] of after) {
+    const was = before.get(id);
+    if (was !== undefined && Math.abs(was - top) >= 1) out.set(id, was - top);
+  }
+  return out;
+}
