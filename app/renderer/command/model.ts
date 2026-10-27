@@ -71,6 +71,15 @@ export function pendingLines(view: WindowView | null): string[] {
   return out;
 }
 
+/**
+ * Whether two status lines say the same thing but for their numbers ("This command stops in 14 s…" and "… 13 s…"): a
+ * screen reader is told a tab's status once, not every second of a countdown (review #276).
+ */
+export function sameAnnouncement(a: string, b: string): boolean {
+  const gist = (s: string) => s.replace(/\d+(?:[.,]\d+)?/g, "#");
+  return gist(a) === gist(b);
+}
+
 /** A run's output bytes from byte `at` of its output (offsets let the page drop what it already wrote). */
 export interface OutputMsg { runId: string; seq: number; at: number; bytes: Uint8Array }
 

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { INERT_LINKS, XTERM_OPTIONS, terminalOptions } from "../../app/renderer/command/terminal-options";
 import {
-  INITIAL_MODEL, MAX_PENDING_LINES, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
+  INITIAL_MODEL, MAX_PENDING_LINES, sameAnnouncement, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
   type TabView, type WindowView,
 } from "../../app/renderer/command/model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "../../app/renderer/command/visible";
@@ -419,7 +419,7 @@ describe("a run's terminal and the keyboard (reviews #42, #261, #264, #268)", ()
     expect(term).toMatch(/termKeyAction\(e, /);
     expect(term).toMatch(/tabIndex = interactive \? 0 : -1/);
     expect(main).toMatch(/panel\.append\(header\.node, block, \.\.\.legends, foot, host, typing\)/);
-    expect(main).toMatch(/foot\.append\(status, copy, action\)/);
+    expect(main).toMatch(/foot\.append\(status, live, copy, action\)/);
     expect(css).toMatch(/\.term:focus-within\s*\{[^}]*--focus-ring/);
   });
 });
@@ -442,5 +442,25 @@ describe("the question card's layout (review #265)", () => {
     const m = { scrollTop: 0, scrollHeight: 100, clientHeight: 100, scrollWidth: 500, clientWidth: 500, top: 200, bottom: 300, left: 12, right: 512, viewWidth: 760, viewHeight: 480, visible: true };
     expect(judgeMetrics({ ...m, clip: { top: 0, bottom: 280, left: 0, right: 760 } }).onScreen).toBe(false);
     expect(judgeMetrics({ ...m, clip: { top: 0, bottom: 320, left: 0, right: 760 } }).onScreen).toBe(true);
+  });
+});
+
+describe("a tab's status line and a screen reader (review #276)", () => {
+  it("announces a status once, not each second of a countdown", () => {
+    const stalled = (n: number) => `build-01 isn't answering. This command stops in ${n} s unless the link comes back.`;
+    expect(sameAnnouncement(stalled(14), stalled(13))).toBe(true);
+    expect(sameAnnouncement(stalled(1), stalled(0))).toBe(true);
+    expect(sameAnnouncement(stalled(5), "Running…")).toBe(false);
+    expect(sameAnnouncement("Running…", "Finished in 3.2 s.")).toBe(false);
+    expect(sameAnnouncement("Finished in 3.2 s.", "Ended with exit code 2 after 1.1 s.")).toBe(false);
+  });
+
+  it("keeps the visible status out of the live region; a hidden live line says each new status once", () => {
+    const main = read("main.ts");
+    const buildTab = /function buildTab[\s\S]*?\n}/.exec(main)?.[0] ?? "";
+    expect(buildTab).not.toMatch(/status\.setAttribute\("role", "status"\)/);
+    expect(buildTab).toMatch(/el\("p", "sr status-live"/);
+    expect(buildTab).toMatch(/setAttribute\("role", "status"\)/);
+    expect(main).toMatch(/sameAnnouncement\(/);
   });
 });

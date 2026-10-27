@@ -16,7 +16,7 @@ import {
 } from "./copy";
 import { shouldFocusTerminal } from "./keys";
 import {
-  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
+  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, sameAnnouncement, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
   type WindowView,
 } from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
@@ -270,6 +270,8 @@ function tickCountdown(): void {
 interface TabEls {
   seq: number; runId: string; command: string; tab: HTMLButtonElement; panel: HTMLElement; status: HTMLElement; typing: HTMLElement;
   action: HTMLButtonElement; host: HTMLElement; term: RunTerminal; ended: boolean;
+  /** The hidden live line: what a screen reader was last told of the status (review #276). */
+  live: HTMLElement;
 }
 const tabEls = new Map<number, TabEls>();
 const OUTCOME_WORD: Record<TabView["outcome"], string> = { running: "Running: ", done: "Finished: ", failed: "Ended: ", stopped: "Stopped: " };
@@ -302,8 +304,11 @@ function buildTab(t: TabView): TabEls {
   host.setAttribute("aria-label", "What the command shows");
   const typing = el("p", "typing", t.typing);
   const foot = el("div", "foot");
+  // The visible status counts down every second while a link is quiet; a screen reader hears each new status once,
+  // from a hidden live line updated only when the status says something new (review #276).
   const status = el("p", "status", t.status);
-  status.setAttribute("role", "status");
+  const live = el("p", "sr status-live", t.status);
+  live.setAttribute("role", "status");
   // What the terminal shows, to the clipboard (Ctrl+C copies a selection; this copies it all, review #268).
   const copy = el("button", "btn quiet copy", COPY_OUTPUT_LABEL);
   copy.type = "button";
@@ -325,7 +330,7 @@ function buildTab(t: TabView): TabEls {
     if (cur.ended) api.close(cur.runId);
     else { action.disabled = true; api.stop(cur.runId); }
   });
-  foot.append(status, copy, action);
+  foot.append(status, live, copy, action);
   // The status line and Stop come before the terminal, on screen and in the Tab order: they are reached without
   // passing through it (reviews #42, #261).
   panel.append(header.node, block, ...legends, foot, host, typing);
@@ -333,7 +338,7 @@ function buildTab(t: TabView): TabEls {
     cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", screenReader: model.view?.screenReader === true,
     onInput: data => api.input(t.runId, data),
   });
-  return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
+  return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended, live };
 }
 
 /** The tab list's keys: ←/→ move between tabs, Home/End to the ends (WAI-ARIA tabs). */
@@ -428,6 +433,7 @@ function render(): void {
     const sr = e.tab.querySelector(".sr")!; // the first .sr: how it is going
     if (sr.textContent !== OUTCOME_WORD[t.outcome]) sr.textContent = OUTCOME_WORD[t.outcome];
     if (e.status.textContent !== t.status) e.status.textContent = t.status;
+    if (!sameAnnouncement(e.live.textContent ?? "", t.status)) e.live.textContent = t.status;
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
     e.typing.hidden = !t.typing;
     e.term.setInteractive(t.interactive);
