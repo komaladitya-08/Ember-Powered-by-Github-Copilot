@@ -29,3 +29,16 @@ describe("setup check fix buttons (review #155, #49)", () => {
     expect(page).toMatch(/<ul class="checks" id="checks"><\/ul>\s*<p class="sr" id="checks-msg" role="status"><\/p>/);
   });
 });
+
+describe("the sidebar says what the sections are called (review #162)", () => {
+  it("names each link with its section's heading", () => {
+    const decode = (s: string) => s.replace(/&amp;/g, "&");
+    const links = [...page.matchAll(/<a href="#([\w-]+-h)"[^>]*>([^<]+)<\/a>/g)].map(m => [m[1], decode(m[2])] as const);
+    expect(links.length).toBe(11);
+    for (const [id, text] of links) {
+      const heading = decode(new RegExp(`<h2 id="${id}"[^>]*>([^<]+)</h2>`).exec(page)?.[1] ?? "");
+      // "About" opens "About this build": the heading may say more after the link's words, never something else.
+      expect(heading === text || heading.startsWith(`${text} `), `${text} → ${heading}`).toBe(true);
+    }
+  });
+});
