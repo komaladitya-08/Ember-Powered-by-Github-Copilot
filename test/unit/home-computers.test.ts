@@ -50,3 +50,18 @@ describe("a computer's status says what is true and what to do next (review #156
     expect(local.can).toBe("commands once you agree");
   });
 });
+
+describe("each “Ask me before every command” switch names its computer (review #158)", () => {
+  it("gives the sub-switch a name that starts with its words and ends with where", () => {
+    const on = { on: true, askEvery: false, consent: { version: 1, at: null } };
+    const v = cc.commandsView({
+      summaries: [summary({}), wsl({}), ssh({})], admin: noPolicy,
+      settings: settings({ commands: { local: on, "wsl:Ubuntu": on, "ssh:build-01": on } }),
+    });
+    expect(v.rows.map(r => [r.askEvery.label, r.askEvery.ariaLabel])).toEqual([
+      ["Ask me before every command", "Ask me before every command on this computer"],
+      ["Ask me before every command", "Ask me before every command in Ubuntu (WSL)"],
+      ["Ask me before every command", "Ask me before every command on build-01"],
+    ]);
+  });
+});

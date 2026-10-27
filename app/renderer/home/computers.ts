@@ -65,6 +65,7 @@ function switchRow(s: Switch, onWant: (on: boolean) => void, cls = "switch-row")
   const input = el("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
+  if (s.ariaLabel) input.setAttribute("aria-label", s.ariaLabel);
   setSwitch(input, s);
   asks(input, onWant);
   row.append(input, el("span", "", s.label));

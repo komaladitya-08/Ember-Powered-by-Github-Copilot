@@ -37,7 +37,8 @@ export interface TargetsAdmin {
 /** One button on a row: what it says, what it asks for, and the question it asks first (Remove Ember…). */
 export interface RowAction { label: string; act: TargetsAct; confirm?: string; ariaLabel?: string }
 export interface ComputerRow { id: TargetId; name: string; detail: string | null; status: string; note: string | null; actions: RowAction[] }
-export interface Switch { label: string; checked: boolean; disabled: boolean }
+/** A switch; `ariaLabel` when its words alone don't say which computer it is for (its words come first). */
+export interface Switch { label: string; checked: boolean; disabled: boolean; ariaLabel?: string }
 
 export interface ComputersView {
   local: ComputerRow;
@@ -75,9 +76,12 @@ export function modeFor(admin: TargetsAdmin, kind: TargetKind): CommandMode | nu
   return admin.source === null ? "on" : null;
 }
 
+/** "on this computer" / "in Ubuntu (WSL)" / "on build-01". */
+const placeWords = (kind: TargetKind, label: string): string => (kind === "local" ? "on this computer" : kind === "wsl" ? `in ${label}` : `on ${label}`);
+
 /** "Run commands on this computer" / "Run commands in Ubuntu (WSL)" / "Run commands on build-01". */
 export function runLabel(kind: TargetKind, label: string): string {
-  return kind === "local" ? "Run commands on this computer" : kind === "wsl" ? `Run commands in ${label}` : `Run commands on ${label}`;
+  return `Run commands ${placeWords(kind, label)}`;
 }
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -183,7 +187,8 @@ export function commandsView(i: { summaries: readonly TargetSummary[]; settings:
     return {
       id, kind,
       run: { label: runLabel(kind, label), checked: on, disabled: mode === "off" },
-      askEvery: { label: ASK_EVERY_SWITCH, checked: mode === "ask" || own?.askEvery === true, disabled: mode === "ask" || !on, shown: on },
+      // Each one names its computer for a screen reader: several read "Ask me before every command" (review #158).
+      askEvery: { label: ASK_EVERY_SWITCH, ariaLabel: `${ASK_EVERY_SWITCH} ${placeWords(kind, label)}`, checked: mode === "ask" || own?.askEvery === true, disabled: mode === "ask" || !on, shown: on },
       managed: mode === "ask" ? ASK_EVERY_MANAGED : null,
     };
   });
