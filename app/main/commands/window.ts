@@ -96,7 +96,7 @@ export function placeOnDisplay(bounds: Rect, area: Rect): Rect | null {
 /** How long an interactive run's output must sit at a prompt before the window says it waits for typing (review #263). */
 export const WAITING_MS = 2000;
 
-/** Terminal escape sequences, removed before a prompt is looked for (a coloured prompt is still a prompt). */
+/** Terminal escape sequences (prompts.ts's own pattern), removed before a prompt is looked for (a coloured prompt is still one). */
 // eslint-disable-next-line no-control-regex -- terminal escape sequences are exactly what this removes
 const ESCAPES = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_]|[ -/]+[0-~])|[\x9b][0-?]*[ -/]*[@-~]/g;
 
@@ -293,18 +293,24 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     if (disposed || closing || w !== live()) return false;
     const running = runningTabs();
     if (!running.length) return false;
-    if (closeAsk) { stopAllAndClose(); return true; }
+    // Pressed again while it asks: the commands stop and this close goes ahead (no second close from inside this one).
+    if (closeAsk) { stopAll(); closing = true; return false; }
     closeAsk = true;
     push();
     safe("close-ask", () => { w.show(); w.focus(); });
     return true;
   }
 
-  /** Stops every running command (the user's Stop) and every countdown, then closes the window. */
-  function stopAllAndClose(): void {
+  /** Stops every running command (the user's Stop) and every countdown. */
+  function stopAll(): void {
     closeAsk = false;
     for (const t of runningTabs()) safe("stop", () => t.run.stop("user"));
     cancelAnnouncements();
+  }
+
+  /** Stops every running command and countdown, then closes the window (the page's Stop and close). */
+  function stopAllAndClose(): void {
+    stopAll();
     const w = live();
     if (!w) return;
     closing = true;
