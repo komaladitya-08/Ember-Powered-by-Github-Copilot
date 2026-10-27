@@ -369,9 +369,12 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   why it changed.
 - **Not this computer.** Ember refuses to connect to this same computer ("build-01 is this computer. Ember already
   works here.") or to a WSL distro on it ("build-01 is WSL on this computer: use it as WSL instead.").
-- **Disconnect** from the handle menu or Settings. If the connection drops, everything there stops ("Lost build-01")
-  and Ember tries to reconnect for up to 10 minutes; a reconnect starts fresh: no task resumes and no approval carries
-  over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
+- **Disconnect** from the handle menu or Settings. If the connection drops, everything there stops ("Lost build-01";
+  each task stopped there says "build-01's connection dropped, so I stopped this.") and Ember tries to reconnect for up
+  to 10 minutes. If build-01 was where Ember worked, the bubble says it works on this computer until build-01 is back,
+  and stays until you answer it or the connection comes back. When Ember reconnects by itself it says "build-01 is
+  back" and works there again, unless you picked another computer meanwhile. A reconnect starts fresh: no task resumes
+  and no approval carries over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
   hold, a host key to accept) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect
   to sign in."; when it gives up for another reason (after 10 minutes, or a refusal), it says "Can't reconnect to
   build-01" with the reason. Both have **Reconnect**, which connects with Ember's sign-in window.

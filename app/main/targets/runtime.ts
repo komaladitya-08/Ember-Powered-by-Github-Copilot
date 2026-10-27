@@ -306,9 +306,9 @@ export interface TargetsDepsExtra {
    * Stops every task bound to `target` (queued or running): someone at that computer pressed Stop, or its connection
    * dropped or closed (§5.3.9, §5.1.11); with `only: "desktop"`, only the running tasks that used its desktop: its screen
    * locked or its session went inactive (§5.3.4 step 8), and a task running only commands there goes on. The runtime's
-   * bubble says which.
+   * bubble says which. `why`: what each stopped task's result says instead of "Stopped." (target-copy's stoppedTask).
    */
-  stopTasksOn?(target: TargetId, only?: "desktop"): void;
+  stopTasksOn?(target: TargetId, only?: "desktop", why?: string): void;
   /**
    * The window the user is in now (its program and title), from main's window system: what the ssh noticer looks at
    * (§2.7). It needs only a window system, never the input backend or the administrator's mouse borrowing. Absent: the
@@ -400,6 +400,8 @@ interface Conn {
   offs: (() => void)[];
   /** Make it the picker's choice once it is ready. */
   activate: boolean;
+  /** It was the picker's choice when its connection dropped: it is again if SA brings it back (and nothing else was picked). */
+  wasActive?: boolean;
 }
 
 /** An offer on screen: an ssh Ember saw the user run, or offer_connect's button. */
@@ -553,6 +555,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       try { deps.showState({ target: badge }); } catch (err) { log.warn("targets.badge_failed", { err }); }
     }
   }
+  /** The user picked where to work: a computer that comes back after a loss doesn't take that over (Conn.wasActive). */
+  const userPicked = () => { for (const c of conns.values()) c.wasActive = false; };
   const setActive = (id: TargetId) => {
     const own = settings.own().targets;
     if (own.active !== id) { try { settings.update({ targets: { ...own, active: id } }); } catch (err) { log.error("targets.active_failed", { err }); } }
@@ -605,11 +609,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!c) { c = { state: "closed", link: null, target: null, abort: null, offs: [], activate: false }; conns.set(hostId, c); }
     return c;
   };
-  /** The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on; `only`: those on its desktop. */
-  const stopTasks = (hostId: string, only?: "desktop") => {
+  /**
+   * The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on; `only`: those on its desktop.
+   * Each stopped task says why (`cause`) instead of a bare "Stopped.".
+   */
+  const stopTasks = (hostId: string, cause: words.StopCause, only?: "desktop") => {
     try {
-      if (only) deps.stopTasksOn?.(targetIdOf("ssh", hostId), only);
-      else deps.stopTasksOn?.(targetIdOf("ssh", hostId));
+      deps.stopTasksOn?.(targetIdOf("ssh", hostId), only, words.stoppedTask(hostId, cause));
     } catch (err) {
       log.warn("targets.stop_tasks_failed", { err });
     }
@@ -639,13 +645,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         onDesktopLost: locked => {
           // A screen that locks or a session that goes inactive mid-task stops the tasks using that desktop (§5.3.4 step
           // 8); tasks running only commands there go on (their window is on this PC). The next task asks for it again.
-          stopTasks(hostId, "desktop");
+          stopTasks(hostId, locked ? "locked" : "inactive", "desktop");
           if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, say(locked ? words.screenLocked(host.id) : words.sessionInactive(host.id), [], "attention"), INFO_MS);
           refresh();
         },
         onConsoleStop: () => {
           // Everything stopped there (§5.3.9): its tasks here too, or a worker would go on with commands after the Stop.
-          stopTasks(hostId);
+          stopTasks(hostId, "stopped-there");
           bubble(`console:${hostId}`, say(words.stoppedFromRemote(host.id), [], "attention"), INFO_MS);
         },
       });
@@ -675,13 +681,16 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     } else if (s === "lost") {
       dropTarget(c);
       c.state = "lost";
-      stopTasks(hostId);
-      if (settings.get().targets.active === targetIdOf("ssh", hostId)) setActive(LOCAL_TARGET);
-      bubble(`lost:${hostId}`, say(words.lost(hostId), [`conn:${hostId}:reconnect`, `conn:${hostId}:stop`], "error"));
+      stopTasks(hostId, "dropped");
+      // Work moves here until it is back (and back there if SA reconnects and nothing else was picked meanwhile).
+      c.wasActive = settings.get().targets.active === targetIdOf("ssh", hostId);
+      if (c.wasActive) setActive(LOCAL_TARGET);
+      // It stays until the user answers it or the connection comes back: the stopped tasks' results wait behind it.
+      bubble(`lost:${hostId}`, say(words.lost(hostId, c.wasActive), [`conn:${hostId}:reconnect`, `conn:${hostId}:stop`], "error"));
     } else {
       dropTarget(c);
       c.state = "closed";
-      stopTasks(hostId);
+      stopTasks(hostId, "closed");
       hideBubble(`stalled:${hostId}`);
       if (settings.get().targets.active === targetIdOf("ssh", hostId)) {
         setActive(LOCAL_TARGET);
@@ -701,6 +710,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     let host = hostOf(hostId);
     if (!host) return { ok: false, message: "Ember doesn't know that computer." };
     const c = connState(hostId);
+    // Connected again by the user's own choice: that choice (o.activate) says where to work, not the one before the loss.
+    c.wasActive = false;
     if (c.state === "connecting") { c.activate ||= o.activate; return { ok: true }; }
     if ((c.state === "ready" || c.state === "stalled") && c.target) { if (o.activate) setActive(targetIdOf("ssh", hostId)); return { ok: true }; }
     const label = host.id;
@@ -784,7 +795,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const c = conns.get(hostId);
     if (c?.abort) c.abort.abort();
     // Its link listener goes with the target: the tasks there stop here, as at any close.
-    if (c) { if (c.target) stopTasks(hostId); dropTarget(c); c.state = "closed"; }
+    if (c) { if (c.target) stopTasks(hostId, "closed"); dropTarget(c); c.state = "closed"; c.wasActive = false; }
     try { await connections?.disconnect(hostId); } catch (err) { log.warn("targets.disconnect_failed", { err }); }
     if (settings.get().targets.active === targetIdOf("ssh", hostId)) setActive(LOCAL_TARGET);
     refresh();
@@ -841,6 +852,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         rebuild();
         const e = entryOf(a.id);
         if (!e || e.listedOnly) return { ok: false, message: e?.why ?? "Ember doesn't know that computer." };
+        userPicked();
         if (e.kind === "ssh" && e.host && e.state !== "ready") return connect(e.host.id, { interactive: true, activate: true });
         setActive(a.id);
         return { ok: true };
@@ -1088,7 +1100,15 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
             refresh();
             return;
           }
-          if (adopt(hostId, link)) { hideBubble(`lost:${hostId}`); refresh(); }
+          if (adopt(hostId, link)) {
+            // Back where the user was working before it dropped, unless they picked somewhere else meanwhile; said so.
+            const again = c.wasActive === true && settings.get().targets.active === LOCAL_TARGET;
+            c.wasActive = false;
+            if (again) setActive(targetIdOf("ssh", hostId));
+            const lostUp = shown?.key === `lost:${hostId}`;
+            bubble(`back:${hostId}`, say(words.backThere(hostId, again), [], "idle"), lostUp ? INFO_MS : { ms: INFO_MS, claim: "reply" });
+            refresh();
+          }
           return;
         }
         if (p.step === "failed" && c?.state === "lost" && !p.retry) {
@@ -1408,6 +1428,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   function pick(id: TargetId): void {
     const e = entryOf(id);
     if (!e || e.listedOnly) return;
+    userPicked();
     if (e.kind === "ssh" && e.host && e.state !== "ready") { void connect(e.host.id, { interactive: true, activate: true }); return; }
     setActive(id);
   }

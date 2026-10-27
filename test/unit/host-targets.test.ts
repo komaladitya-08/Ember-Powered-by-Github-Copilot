@@ -219,6 +219,19 @@ describe("stopping the tasks on one computer (INT: §5.3.9, §5.1.11)", () => {
     expect(host.cancelTasksOn("ssh:build-01")).toBe(0);
     await host.stop();
   });
+
+  it("says why a task cut off with its computer stopped, not just \"Stopped.\" (review #11)", async () => {
+    const { t } = fakeTargets();
+    const { host, specs, tool, finished } = await started({ hands: hands(), targets: t });
+    await host.ask("on build-01, check the disk space");
+    await tool("start_task")({ goal: "check the disk space" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(host.cancelTasksOn("ssh:build-01", undefined, "build-01's connection dropped, so I stopped this.")).toBe(1);
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]).toMatchObject({ status: "cancelled", summary: "build-01's connection dropped, so I stopped this.", text: "On build-01: check the disk space: build-01's connection dropped, so I stopped this." });
+    expect(host.getTranscript().at(-1)).toMatchObject({ who: "task", text: "check the disk space: build-01's connection dropped, so I stopped this." });
+    await host.stop();
+  });
 });
 
 describe("a lock or an inactive session on a remote (§5.3.4 step 8, the lead's ruling on its scope)", () => {

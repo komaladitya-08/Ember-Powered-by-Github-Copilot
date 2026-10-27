@@ -74,11 +74,29 @@ export const stalled = (host: string, graceSeconds: number): BubbleWords => ({
   actions: [{ label: "Disconnect" }],
 });
 
-export const lost = (host: string): BubbleWords => ({
+/** The connection dropped (L10). `workHere`: it was where Ember worked, and Ember works on this computer until it's back. */
+export const lost = (host: string, workHere: boolean): BubbleWords => ({
   title: `Lost ${host}`,
-  text: "The connection dropped, so everything there stopped. I'll try to reconnect.",
+  text: `The connection dropped, so everything there stopped. I'll try to reconnect${workHere ? "; until then I'll work on this computer" : ""}.`,
   actions: [{ label: "Reconnect", primary: true }, { label: "Stop trying" }],
 });
+
+/** The connection came back by itself after a loss; `again`: Ember works there again (it did when it dropped). */
+export const backThere = (host: string, again: boolean): BubbleWords => ({
+  title: `${host} is back`, text: again ? "The connection came back, so I'll work there again." : "The connection came back.", actions: [],
+});
+
+/** Why a task stopped with its computer (what its result says instead of "Stopped."). */
+export type StopCause = "dropped" | "closed" | "stopped-there" | "locked" | "inactive";
+export function stoppedTask(host: string, cause: StopCause): string {
+  switch (cause) {
+    case "dropped": return `${host}'s connection dropped, so I stopped this.`;
+    case "closed": return `${host} isn't connected any more, so I stopped this.`;
+    case "stopped-there": return `Someone at ${host} pressed Stop.`;
+    case "locked": return `${host}'s screen locked, so I stopped this.`;
+    case "inactive": return `${host}'s desktop session isn't active any more, so I stopped this.`;
+  }
+}
 
 /** The connection came back by itself, from another computer under the same name: it isn't used (§7.4). */
 export const cameBackDifferent = (host: string): BubbleWords => ({

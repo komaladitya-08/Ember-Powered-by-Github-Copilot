@@ -1463,21 +1463,22 @@ describe("the remote and WSL seams (INT)", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);
     l.emit("console.stop", { at: SINCE });
-    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01");
+    // Each stopped task says why (review #11).
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", undefined, "Someone at build-01 pressed Stop.");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "Someone at build-01 pressed Stop." }) });
     // A lock stops only the tasks that used its desktop; the others are main's to judge (the host's cancelTasksOn).
     l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
-    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop", "build-01's screen locked, so I stopped this.");
     l.move("stalled");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
     l.move("lost");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(3);
-    expect(r.stopTasksOn.mock.calls[2]).toEqual(["ssh:build-01"]);
+    expect(r.stopTasksOn.mock.calls[2]).toEqual(["ssh:build-01", undefined, "build-01's connection dropped, so I stopped this."]);
     await connected(r);
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(4);
-    expect(r.stopTasksOn.mock.calls[3]).toEqual(["ssh:build-01"]);
+    expect(r.stopTasksOn.mock.calls[3]).toEqual(["ssh:build-01", undefined, "build-01 isn't connected any more, so I stopped this."]);
     expect(r.stopTasksOn.mock.calls.every(c => c[0] === "ssh:build-01")).toBe(true);
   });
 
@@ -1487,7 +1488,7 @@ describe("the remote and WSL seams (INT)", () => {
     // The agent reports an inactive session with access none and no session of its own.
     l.emit("desktop.changed", { access: "none", notice: "off" });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
-    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop", "build-01's desktop session isn't active any more, so I stopped this.");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's desktop session isn't active any more, so I stopped working on its screen." }) });
     // Nothing more to take away: said once.
     l.emit("desktop.changed", { access: "none", notice: "off" });
@@ -1615,7 +1616,7 @@ function screenRig() {
   const convo = presenter();
   const notices = presenter();
   return {
-    convo, notices, setState, advance, seen, question,
+    convo, notices, owner, setState, advance, seen, question,
     screen: () => screen,
     /** A question goes up (main's Confirmer writes it past the guard), or is answered. */
     ask: (title: string) => { question.up = true; screen = { ...IDLE_BUBBLE, visible: true, mood: "attention", title, actions: [{ id: "q1:once", label: "Allow" }] }; },
@@ -1629,6 +1630,42 @@ function answers(p: Presenter, text: string): void {
   p.event({ type: "assistant.message", data: { content: text } });
   p.event({ type: "session.idle", data: {} });
 }
+
+describe("a dropped connection (review #11, #185)", () => {
+  it("says work moves to this computer until it's back, and keeps its Reconnect over the stopped task's result", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const l = await connected(r);
+    expect(r.t.agent.active).toBe("ssh:build-01");
+    l.move("lost");
+    expect(r.t.agent.active).toBe("local");
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", thought: "The connection dropped, so everything there stopped. I'll try to reconnect; until then I'll work on this computer." });
+    // The task cut off there finishes a moment later: its result waits behind the loss.
+    const task = new Presenter(s.setState, undefined, () => "Check disk", s.owner, undefined, false, { task: true });
+    task.outcome({ title: "Check disk", text: "build-01's connection dropped, so I stopped this.", emotion: "neutral", gesture: "rest", mood: "idle" });
+    s.advance(60_000);
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
+  });
+
+  it("works there again when SA reconnects by itself, and says so; never over a computer the user picked meanwhile", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01"), hostRecord("build-02")]), showState: s.setState, bubbles: () => s.notices });
+    const l = await connected(r);
+    l.move("lost");
+    r.links.set("build-01", fakeLink("build-01"));
+    for (const p of r.progress) p("build-01", { step: "ready" });
+    expect(r.t.agent.active).toBe("ssh:build-01");
+    expect(s.screen()).toMatchObject({ visible: true, title: "build-01 is back", thought: "The connection came back, so I'll work there again.", actions: [] });
+    s.advance(7000);
+    expect(s.screen().visible).toBe(false);
+    // Lost again, and this time the user picks this computer meanwhile: it stays the user's choice.
+    r.links.get("build-01")!.move("lost");
+    r.t.bubbleAction("target:local");
+    r.links.set("build-01", fakeLink("build-01"));
+    for (const p of r.progress) p("build-01", { step: "ready" });
+    expect(r.t.agent.active).toBe("local");
+  });
+});
 
 describe("the runtime's bubbles in the shared bubble", () => {
   it("keeps offer_connect's Connect button up while the conversation's turn goes on and ends (review #9)", async () => {

@@ -594,7 +594,14 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
 
   it("says when a connection stalls, drops or ends, and when Ember is back here", () => {
     expect(all(bubbleCopy.stalled("build-01", 20))).toEqual(["build-01 isn't answering", "Its running commands stop in 20 s unless the link comes back. Nothing new is sent meanwhile.", "Disconnect"]);
-    expect(all(bubbleCopy.lost("build-01"))).toEqual(["Lost build-01", "The connection dropped, so everything there stopped. I'll try to reconnect.", "Reconnect", "Stop trying"]);
+    expect(all(bubbleCopy.lost("build-01", false))).toEqual(["Lost build-01", "The connection dropped, so everything there stopped. I'll try to reconnect.", "Reconnect", "Stop trying"]);
+    expect(keep(bubbleCopy.lost("build-01", true).text)).toBe("The connection dropped, so everything there stopped. I'll try to reconnect; until then I'll work on this computer.");
+    expect(all(bubbleCopy.backThere("build-01", true))).toEqual(["build-01 is back", "The connection came back, so I'll work there again."]);
+    expect(keep(bubbleCopy.backThere("build-01", false).text)).toBe("The connection came back.");
+    expect((["dropped", "closed", "stopped-there", "locked", "inactive"] as const).map(c => keep(bubbleCopy.stoppedTask("build-01", c)))).toEqual([
+      "build-01's connection dropped, so I stopped this.", "build-01 isn't connected any more, so I stopped this.", "Someone at build-01 pressed Stop.",
+      "build-01's screen locked, so I stopped this.", "build-01's desktop session isn't active any more, so I stopped this.",
+    ]);
     expect(all(bubbleCopy.signInAgain("build-01"))).toEqual(["build-01 needs you to sign in again", "Reconnect to sign in.", "Reconnect"]);
     expect(all(bubbleCopy.cameBackDifferent("build-01"))).toEqual(["Lost build-01", "build-01 came back as a different computer, so Ember didn't use it. Reconnect to check it.", "Reconnect"]);
     expect(all(bubbleCopy.cantReconnect("build-02", "Ember can't reach build-02 (no route)."))).toEqual(["Can't reconnect to build-02", "Ember can't reach build-02 (no route).", "Reconnect"]);

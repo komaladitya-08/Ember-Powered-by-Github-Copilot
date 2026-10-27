@@ -1502,7 +1502,7 @@ function start(): void {
       keyHint: () => heldKeys().map(k => k.hint).join(" · ") || null,
       // A computer whose connection went or where someone pressed Stop: its tasks stop here too; whose screen locked or
       // session went inactive: those that used its desktop.
-      stopTasksOn: (target, only) => { agent?.cancelTasksOn(target, only); },
+      stopTasksOn: (target, only, why) => { agent?.cancelTasksOn(target, only, why); },
       // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
       bubbles: () => agent?.notices ?? null,
     });

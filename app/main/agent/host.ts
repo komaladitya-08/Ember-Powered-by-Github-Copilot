@@ -481,6 +481,8 @@ export class AgentHost {
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
   private readonly stoppedByAll = new Set<string>();
+  /** Why tasks stopped with their computer (its connection dropped, someone there pressed Stop): said instead of "Stopped.". */
+  private readonly stoppedWhy = new Map<string, string>();
   /** Tasks the conversation's latest turn started (its reply announces them: "On it…"). */
   private readonly announced = new Set<string>();
   /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
@@ -865,8 +867,11 @@ export class AgentHost {
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
-          const summary = task.result?.summary ?? "";
-          const text = taskOutcome(task);
+          // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
+          const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
+          this.stoppedWhy.delete(task.id);
+          const summary = why ?? task.result?.summary ?? "";
+          const text = why ? `${task.title}: ${why}` : taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
           this.taskDesktop.delete(task.id);
@@ -1414,13 +1419,16 @@ export class AgentHost {
    * if it asked one): someone at that computer pressed Stop, or its connection went (§5.3.9, §5.1.11). With `only:
    * "desktop"` (its screen locked or its session went inactive, §5.3.4 step 8), only the running tasks that used its
    * desktop: one running only commands there goes on (its command window is on this PC), and a queued one hasn't used
-   * it; a running task that can't say counts as one that did. Tasks on other computers go on. Returns how many it stopped.
+   * it; a running task that can't say counts as one that did. Tasks on other computers go on. `why`: what each stopped
+   * task's result says instead of "Stopped." ("build-01's connection dropped, so I stopped this."). Returns how many it
+   * stopped.
    */
-  cancelTasksOn(target: TargetId, only?: "desktop"): number {
+  cancelTasksOn(target: TargetId, only?: "desktop", why?: string): number {
     let n = 0;
     for (const t of this.tasks?.list() ?? []) {
       if ((t.targetId ?? "local") !== target || (t.status !== "running" && t.status !== "queued")) continue;
       if (only === "desktop" && (t.status === "queued" || this.taskDesktop.get(t.id)?.() === false)) continue;
+      if (why) this.stoppedWhy.set(t.id, why);
       this.tasks?.cancel(t.id);
       n++;
     }
