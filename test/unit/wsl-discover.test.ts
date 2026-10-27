@@ -205,12 +205,12 @@ function pc(o: {
   }
   const registry = o.registry === undefined ? new FakeRegistry()
     .key(LXSS_KEY, { DefaultDistribution: "{u}" })
-    .key(`${LXSS_KEY}\\{u}`, { DistributionName: "Ubuntu", Version: 2, DefaultUid: 0, State: 1 })
-    .key(`${LXSS_KEY}\\{d}`, { DistributionName: "Debian", Version: 1, State: 1 })
-    .key(`${LXSS_KEY}\\{dd}`, { DistributionName: "docker-desktop", Version: 2, State: 1 })
-    .key(`${LXSS_KEY}\\{rd}`, { DistributionName: "rancher-desktop-data", Version: 2, State: 1 })
-    .key(`${LXSS_KEY}\\{p}`, { DistributionName: "podman-machine-default", Version: 2, State: 1 })
-    .key(`${LXSS_KEY}\\{n}`, { DistributionName: "Ubuntu-24.04", Version: 2, RunOOBE: 1, State: 1 }) : o.registry;
+    .key(`${LXSS_KEY}\\{u}`, { DistributionName: "Ubuntu", Version: 2, Flags: 15, DefaultUid: 0, State: 1 })
+    .key(`${LXSS_KEY}\\{d}`, { DistributionName: "Debian", Version: 2, Flags: 7, State: 1 })
+    .key(`${LXSS_KEY}\\{dd}`, { DistributionName: "docker-desktop", Version: 2, Flags: 15, State: 1 })
+    .key(`${LXSS_KEY}\\{rd}`, { DistributionName: "rancher-desktop-data", Version: 2, Flags: 15, State: 1 })
+    .key(`${LXSS_KEY}\\{p}`, { DistributionName: "podman-machine-default", Version: 2, Flags: 15, State: 1 })
+    .key(`${LXSS_KEY}\\{n}`, { DistributionName: "Ubuntu-24.04", Version: 2, Flags: 15, RunOOBE: 1, State: 1 }) : o.registry;
   const exes = o.exes ?? [EXE, INBOX];
   const deps: WslDeps = {
     spawn: fake.spawn,
@@ -296,7 +296,7 @@ describe("WslService.facts", () => {
 
   it("has no WSLg with the inbox WSL, with only WSL 1 distros, or when .wslconfig turns it off", async () => {
     expect((await pc({ version: null }).wsl.facts()).wslg).toEqual({ available: false, disabledByUser: false, version: null });
-    const v1 = new FakeRegistry().key(LXSS_KEY).key(`${LXSS_KEY}\\{d}`, { DistributionName: "Debian", Version: 1 });
+    const v1 = new FakeRegistry().key(LXSS_KEY).key(`${LXSS_KEY}\\{d}`, { DistributionName: "Debian", Version: 2, Flags: 7 });
     expect((await pc({ registry: v1 }).wsl.facts()).wslg.available).toBe(false);
     // PowerShell 5.1's Out-File writes UTF-16LE: still read.
     const off = await pc({ wslconfig: utf16("[wsl2]\r\nguiApplications=false\r\n", true) }).wsl.facts();
@@ -377,8 +377,8 @@ describe("a distro whose first-run set-up is pending", () => {
   it("is never started, and is looked at again once the user may have set it up", async () => {
     const reg = new FakeRegistry()
       .key(LXSS_KEY, { DefaultDistribution: "{u}" })
-      .key(`${LXSS_KEY}\\{u}`, { DistributionName: "Ubuntu", Version: 2, State: 1 })
-      .key(`${LXSS_KEY}\\{n}`, { DistributionName: "Ubuntu-24.04", Version: 2, RunOOBE: 1, State: 1 });
+      .key(`${LXSS_KEY}\\{u}`, { DistributionName: "Ubuntu", Version: 2, Flags: 15, State: 1 })
+      .key(`${LXSS_KEY}\\{n}`, { DistributionName: "Ubuntu-24.04", Version: 2, Flags: 15, RunOOBE: 1, State: 1 });
     const { wsl, calls, tick } = pc({ registry: reg });
     const r = wsl.runner("Ubuntu-24.04");
     await expect(r.facts()).rejects.toThrow("Set up Ubuntu-24.04 first: open it from the Start menu once");

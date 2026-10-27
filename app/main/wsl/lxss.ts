@@ -19,6 +19,12 @@ export const LXSS_KEY = "Software\\Microsoft\\Windows\\CurrentVersion\\Lxss";
 /** A distro's install state in the registry: only an installed one (1) is listed (3 installing, 4 uninstalling, …). */
 export const LXSS_STATE_INSTALLED = 1;
 
+/**
+ * The `Flags` bit of a distro WSL 2 runs in its VM (LXSS_DISTRO_FLAGS_VM_MODE). `Version` is something else: the
+ * distro's file-system layout (1 LxFs, 2 WslFs), which WSL 1 distros have as 2 too (CI's WSL1 runner showed it).
+ */
+export const LXSS_FLAG_VM_MODE = 0x8;
+
 /** One registry key, opened read-only. */
 export interface RegKeyReader {
   /** The key's subkey names, or null when they can't be listed. */
@@ -60,9 +66,9 @@ const MAX_DISTROS = 256;
 
 /**
  * The distros the Lxss key lists, or null when the key can't be read (absent: no distro was ever registered, or the
- * registry is unavailable): discovery then asks `wsl.exe --list --verbose`. A distro whose key lacks a name, has an
- * unknown WSL version or isn't in the installed state is left out (fail closed: Ember never targets it). A missing
- * `Version` is WSL 1 (WSL wrote none before WSL 2 existed); a missing `State` counts as installed.
+ * registry is unavailable): discovery then asks `wsl.exe --list --verbose`. A distro whose key lacks a name or
+ * isn't in the installed state is left out (fail closed: Ember never targets it). Which WSL runs a distro is the
+ * VM-mode bit of `Flags` (WSL 1 without it, and when `Flags` is missing); a missing `State` counts as installed.
  */
 export function readLxss(reg: RegistryReader): LxssListing | null {
   const root = reg.openUser(LXSS_KEY);
@@ -77,9 +83,10 @@ export function readLxss(reg: RegistryReader): LxssListing | null {
       if (!key) continue;
       try {
         const name = key.string("DistributionName");
-        const version = key.dword("Version") ?? 1;
+        const flags = key.dword("Flags");
+        const version: 1 | 2 = flags !== null && (flags & LXSS_FLAG_VM_MODE) !== 0 ? 2 : 1;
         const state = key.dword("State");
-        if (!name || (version !== 1 && version !== 2)) continue;
+        if (!name) continue;
         if (state !== null && state !== LXSS_STATE_INSTALLED) continue;
         distros.push({ guid, name, version, defaultUidHint: key.dword("DefaultUid"), needsSetup: key.dword("RunOOBE") === 1 });
       } finally {

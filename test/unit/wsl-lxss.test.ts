@@ -18,10 +18,10 @@ const INSTALLING = "{3e4f5a6b-7c8d-4e9f-a0b1-c2d3e4f5a6b7}";
 function lxss(): FakeRegistry {
   return new FakeRegistry()
     .key(LXSS_KEY, { DefaultDistribution: UBUNTU.toUpperCase() })
-    .key(`${LXSS_KEY}\\${UBUNTU}`, { DistributionName: "Ubuntu", Version: 2, DefaultUid: 1000, State: 1 })
+    .key(`${LXSS_KEY}\\${UBUNTU}`, { DistributionName: "Ubuntu", Version: 2, Flags: 15, DefaultUid: 1000, State: 1 })
     .key(`${LXSS_KEY}\\${DEBIAN}`, { DistributionName: "Debian", DefaultUid: 0 })
-    .key(`${LXSS_KEY}\\${FRESH}`, { DistributionName: "Ubuntu-24.04", Version: 2, RunOOBE: 1, State: 1 })
-    .key(`${LXSS_KEY}\\${INSTALLING}`, { DistributionName: "Fedora", Version: 2, State: 3 });
+    .key(`${LXSS_KEY}\\${FRESH}`, { DistributionName: "Ubuntu-24.04", Version: 2, Flags: 15, RunOOBE: 1, State: 1 })
+    .key(`${LXSS_KEY}\\${INSTALLING}`, { DistributionName: "Fedora", Version: 2, Flags: 15, State: 3 });
 }
 
 describe("readLxss", () => {
@@ -32,18 +32,25 @@ describe("readLxss", () => {
     expect(l!.defaultGuid?.toLowerCase()).toBe(UBUNTU);
     expect(l!.distros).toEqual([
       { guid: UBUNTU, name: "Ubuntu", version: 2, defaultUidHint: 1000, needsSetup: false },
-      // No Version value: WSL 1 (written before WSL 2 existed).
+      // No Flags value: no VM-mode bit, so WSL 1.
       { guid: DEBIAN, name: "Debian", version: 1, defaultUidHint: 0, needsSetup: false },
       // RunOOBE = 1: its user hasn't been created yet; Ember never starts it (critique wsl-19f).
       { guid: FRESH, name: "Ubuntu-24.04", version: 2, defaultUidHint: null, needsSetup: true },
     ]);
   });
 
-  it("leaves out a distro that is being installed or removed, has no name, or has an unknown WSL version", () => {
-    const reg = lxss()
-      .key(`${LXSS_KEY}\\{nameless}`, { Version: 2 })
-      .key(`${LXSS_KEY}\\{v3}`, { DistributionName: "Future", Version: 3 });
+  it("leaves out a distro that is being installed or removed, or has no name", () => {
+    const reg = lxss().key(`${LXSS_KEY}\\{nameless}`, { Version: 2, Flags: 15 });
     expect(readLxss(reg)!.distros.map(d => d.name)).toEqual(["Ubuntu", "Debian", "Ubuntu-24.04"]);
+  });
+
+  it("takes the WSL version from Flags' VM-mode bit, never from Version (the file-system layout, 2 on WSL 1 too)", () => {
+    // As CI's WSL 1 runner registered Ubuntu-22.04: Version 2 (WslFs), Flags 7 (interop, Windows PATH, drives; no VM).
+    const reg = new FakeRegistry()
+      .key(`${LXSS_KEY}\\{one}`, { DistributionName: "Ubuntu-22.04", Version: 2, Flags: 7, State: 1 })
+      .key(`${LXSS_KEY}\\{two}`, { DistributionName: "Debian", Version: 2, Flags: 15, State: 1 })
+      .key(`${LXSS_KEY}\\{old}`, { DistributionName: "Legacy", Version: 1, Flags: 7, State: 1 });
+    expect(readLxss(reg)!.distros.map(d => [d.name, d.version])).toEqual([["Ubuntu-22.04", 1], ["Debian", 2], ["Legacy", 1]]);
   });
 
   it("closes every key it opened", () => {
@@ -62,7 +69,7 @@ describe("readLxss", () => {
   });
 
   it("has no default when none is recorded", () => {
-    const reg = new FakeRegistry().key(`${LXSS_KEY}\\${UBUNTU}`, { DistributionName: "Ubuntu", Version: 2 });
+    const reg = new FakeRegistry().key(`${LXSS_KEY}\\${UBUNTU}`, { DistributionName: "Ubuntu", Version: 2, Flags: 15 });
     expect(readLxss(reg)).toEqual({ defaultGuid: null, distros: [{ guid: UBUNTU, name: "Ubuntu", version: 2, defaultUidHint: null, needsSetup: false }] });
   });
 });
@@ -80,12 +87,12 @@ function fakeAdvapi(o: { pointer?: number; grow?: boolean } = {}) {
   };
   keys.set(LXSS_KEY.toLowerCase(), { values: new Map([["defaultdistribution", sz(UBUNTU)]]), subkeys: [UBUNTU, DEBIAN] });
   keys.set(`${LXSS_KEY}\\${UBUNTU}`.toLowerCase(), {
-    values: new Map([["distributionname", sz("Ubuntu")], ["version", dword(2)], ["defaultuid", dword(1000)], ["runoobe", dword(0)], ["state", dword(1)]]),
+    values: new Map([["distributionname", sz("Ubuntu")], ["version", dword(2)], ["flags", dword(15)], ["defaultuid", dword(1000)], ["runoobe", dword(0)], ["state", dword(1)]]),
     subkeys: [],
   });
   keys.set(`${LXSS_KEY}\\${DEBIAN}`.toLowerCase(), {
     // A DWORD stored as a string is the wrong type: it reads as absent.
-    values: new Map([["distributionname", sz("Debian")], ["version", { type: 1, data: Buffer.from("1\0", "utf16le") }]]),
+    values: new Map([["distributionname", sz("Debian")], ["flags", { type: 1, data: Buffer.from("15\0", "utf16le") }]]),
     subkeys: [],
   });
   let grown = false;
@@ -163,7 +170,7 @@ describe("bindLxssRegistry", () => {
       defaultGuid: UBUNTU,
       distros: [
         { guid: UBUNTU, name: "Ubuntu", version: 2, defaultUidHint: 1000, needsSetup: false },
-        // Version of the wrong type reads as absent: WSL 1.
+        // Flags of the wrong type reads as absent: WSL 1.
         { guid: DEBIAN, name: "Debian", version: 1, defaultUidHint: null, needsSetup: false },
       ],
     });
