@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { CursorBorrow, type Hand } from "../../app/main/hands/borrow";
+import { KEYS } from "../../app/shared/shortcuts";
 import {
   ACCESSIBILITY_REASON, DOUBLE_CLICK_MS, INPUT_METHOD_REASON, INPUT_MONITORING_REASON, INPUT_SOURCE_UNKNOWN_REASON,
   SECURE_INPUT_UNKNOWN_REASON, createDarwinInput, type DarwinInputDeps,
@@ -543,6 +544,13 @@ describe("CursorBorrow on macOS input", () => {
       await expect(b.borrow(act, fast)).rejects.toThrow(INPUT_METHOD_REASON);
     }
     expect(log.filter(l => /^(key|text)/.test(l))).toEqual([]);
+  });
+
+  it("keeps the layout's Command-level answer for a digit shortcut (review #63 changes Windows and Linux only)", async () => {
+    // On this AZERTY "1" is the shifted level of key 0x12 with Command held too, so Command+1 takes Shift here.
+    const { log, input } = setup();
+    await new CursorBorrow(input, { keys: KEYS.darwin }).borrow(hand => hand.keys("cmd+1"), fast);
+    expect(log.filter(l => l.startsWith("key")).map(l => l.split(" ").slice(1, 3).join(" "))).toEqual(["55 down", "56 down", "18 down", "18 up", "56 up", "55 up"]);
   });
 
   it("refuses a shortcut whose key the layout doesn't have, pressing nothing", async () => {

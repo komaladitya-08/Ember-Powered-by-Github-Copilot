@@ -99,6 +99,8 @@ const MODIFIER_KEYS: Record<string, string> = {
 };
 /** Any mouse button held (Button1Mask … Button5Mask). */
 const BUTTONS_MASK = 0x1f00;
+/** Ctrl, Alt and the logo key (Super, Meta) by keysym, either side: with them a key is a shortcut, not typing. */
+const SHORTCUT_MODIFIERS: ReadonlySet<number> = new Set([0xffe3, 0xffe4, 0xffe7, 0xffe8, 0xffe9, 0xffea, 0xffeb, 0xffec]);
 const STEP_MS = 8;
 const TOLERANCE = 2;
 
@@ -421,7 +423,12 @@ export class CursorBorrow {
         const layout = x.layout?.() ?? null;
         const stroke = layout ? shortcutStroke(sym, layout) : null;
         if (layout && !stroke) throw new Error(`The keyboard layout in use can't press ${combo.trim()} (its key needs AltGr there, or isn't there), so Ember pressed nothing: any other key would be another shortcut. Switch the layout (for example to English) and try again.`);
-        if ((stroke ? stroke.shift : x.needsShift(sym)) && !mods.includes(SHIFT_L)) mods.push(SHIFT_L);
+        // A digit under Ctrl, Alt or the logo key is its key without Shift, also where typing the digit needs Shift
+        // (French, Belgian, Czech): that is what the layout's users press, Windows apps match the digit's virtual key
+        // whatever the layout, and Ctrl+Shift+1 is another shortcut (Excel's number format). macOS keeps its layout's
+        // own answer for Command shortcuts (the layout's shortcut level is read with Command held).
+        const digitShortcut = kc.os !== "darwin" && sym >= 0x30 && sym <= 0x39 && mods.some(m => SHORTCUT_MODIFIERS.has(m));
+        if (!digitShortcut && (stroke ? stroke.shift : x.needsShift(sym)) && !mods.includes(SHIFT_L)) mods.push(SHIFT_L);
         const tap = (down: boolean) => (stroke ? pressCode(stroke.code, sym, down) : press(sym, down));
         for (const m of mods) press(m, true);
         try {
