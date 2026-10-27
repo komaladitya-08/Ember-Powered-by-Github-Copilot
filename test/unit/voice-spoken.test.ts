@@ -14,7 +14,19 @@ describe("spokenText", () => {
     ["| App | Size |\n|---|---|\n| Files | 2 MB |\nThat's all.", "(table shown in the bubble)\nThat's all."],
     ["> Quoted\n\n---\n\nEnd ~~old~~ new", "Quoted\nEnd old new"],
     ["snake_case_name and 2*3*4 stay", "snake_case_name and 2*3*4 stay"],
+    ["Say it *softly*, **firmly** or _slowly_ (*really*).", "Say it softly, firmly or slowly (really)."],
+    ["**Ember**'s answer, in ***bold italics***.", "Ember's answer, in bold italics."],
   ])("%j", (markdown, said) => expect(spokenText(markdown)).toBe(said));
+
+  // Stars and underscores that aren't emphasis are said as they are shown: a marker with a space on its inner side is
+  // none (CommonMark's flanking rule), and neither is "__" inside a file name (review #258).
+  it.each([
+    "Delete *.tmp and *.log from the folder.",
+    "That is 6 * 7 * 1 = 42.",
+    "Use __init__.py and a * b * c.",
+    "2 ** 3 ** 2 is 512.",
+    "Match _ or * on their own.",
+  ])("%j keeps its stars and underscores (review #258)", text => expect(spokenText(text)).toBe(text));
 });
 
 describe("endsWithQuestion", () => {
