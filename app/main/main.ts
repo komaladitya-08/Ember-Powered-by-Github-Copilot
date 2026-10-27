@@ -32,7 +32,7 @@ import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
-import { KillSwitch } from "./agent/killswitch";
+import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { watchAdminPolicy } from "./policy/admin-watch";
@@ -804,7 +804,7 @@ function start(): void {
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu") => {
-    void killSwitch.pull(source);
+    const pulled = killSwitch.pull(source);
     // Failure cards stay until closed, and only a click closes them: Stop everything clears them too
     // (the keyboard's way, and the screen reader's).
     for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
@@ -812,6 +812,15 @@ function start(): void {
     statusBy.listen = statusBy.mic = null;
     setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble });
     hideIfStill(bubble, 3000);
+    // Parts still winding down after the kill switch's wait (a command's kill ladder, a slow remote link) are named.
+    void pulled.then(({ late }) => {
+      const computers = targets?.summaries().filter(t => t.kind === "ssh" && (t.state === "ready" || t.state === "connecting" || t.state === "lost")).map(t => t.label) ?? [];
+      const still = stillStoppingWords(late, computers);
+      if (!still || lastState.bubble !== bubble) return;
+      const stopping = { ...bubble, title: "Stopping", thought: still };
+      setState({ bubble: stopping });
+      hideIfStill(stopping, 6000);
+    });
   };
   let lastAskByVoice = false;
   /** This turn's answer: its follow-up takes "Okay." as the reply it is when the answer asked something. */
