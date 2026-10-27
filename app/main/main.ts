@@ -1647,6 +1647,7 @@ function start(): void {
         }
         if (stoppedWhileLocked) {
           const bubble = { visible: true, mood: "idle" as const, title: "Stopped while your screen was locked", thought: `Your screen locked, so I stopped ${stoppedWhileLocked === 1 ? "the task" : "the tasks"} working on it.`, step: null, streaming: false, actions: [] };
+          agent?.claimBubble();
           setState({ emotion: "neutral", bubble });
           hideIfStill(bubble, 8000);
         }
