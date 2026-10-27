@@ -68,6 +68,9 @@ export interface TaskCard {
   where?: string;
 }
 
+/** A running task's card detail from the moment its Stop is pressed until it has wound down. */
+export const TASK_STOPPING = "Stopping…";
+
 export interface EmberState {
   emotion: Emotion;
   talking: boolean;

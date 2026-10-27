@@ -1,14 +1,15 @@
 /**
  * The task cards over other apps: what a card says about its task (a task in line is not one that needs you), and
- * what the main process tells the cards (review #130); what the handle says while tasks run (review #131).
+ * what the main process tells the cards (review #130); what the handle says while tasks run (review #131); a Stop
+ * that says at once that it landed (review #132).
  */
 
 import { describe, expect, it } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { STATE_WORD, busyLine, stackOrder, underWay } from "../../app/renderer/overlay/stack";
+import { STATE_WORD, busyLine, stackOrder, stopPending, underWay } from "../../app/renderer/overlay/stack";
 import { cardTask } from "../../app/renderer/handle/card";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
-import type { TaskCard } from "../../app/shared/overlay";
+import { TASK_STOPPING, type TaskCard } from "../../app/shared/overlay";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
@@ -65,5 +66,29 @@ describe("the handle's line while tasks run", () => {
   it("says nothing of tasks when none is under way (the handle says Ready or why not)", () => {
     expect(busyLine([])).toBeNull();
     expect(busyLine([card("a", "done"), card("b", "failed"), card("c", "stopped")])).toBeNull();
+  });
+});
+
+describe("pressing Stop on a running task", () => {
+  it("says Stopping… at once, while the task winds down, and then how it ended", async () => {
+    const { tm, cards, done, progress } = manager();
+    const t = tm.start("Tidy the desktop");
+    await Promise.resolve();
+    expect(cards.at(-1)![0]).toMatchObject({ status: "running", detail: "Working…" });
+    tm.cancel(t.id);
+    expect(cards.at(-1)![0]).toMatchObject({ status: "running", detail: TASK_STOPPING });
+    expect(TASK_STOPPING).toBe("Stopping…");
+    // The worker reports a step on its way out: the card keeps saying it is stopping.
+    progress[0]("Closing the Files window");
+    expect(cards.at(-1)![0]).toMatchObject({ status: "running", detail: TASK_STOPPING });
+    done.resolve({ success: false, summary: "Stopped.", stopped: true });
+    await expect.poll(() => cards.at(-1)![0].status).toBe("stopped");
+    expect(cards.at(-1)![0].detail).toBe("Stopped.");
+  });
+
+  it("on the card, shows stopping until Ember says so, or for a few seconds if the press did not land", () => {
+    expect(stopPending(1000, 1500, "Working…")).toBe(true);
+    expect(stopPending(1000, 4500, "Working…")).toBe(false);
+    expect(stopPending(1000, 60_000, TASK_STOPPING)).toBe(true);
   });
 });

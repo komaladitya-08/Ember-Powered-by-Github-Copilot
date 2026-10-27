@@ -1,6 +1,6 @@
 /** The task cards' stack above the handle: their order and what folds away when they don't fit (pure, so it is unit-tested). */
 
-import type { TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 
 /** A task still under way (running, in line, or waiting for the user): its card has Stop. */
 export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "queued" || t.status === "waiting";
@@ -52,4 +52,15 @@ export function foldedLine(folded: readonly TaskCard[]): { title: string; detail
     detail: "Ended earlier",
     close: folded.flatMap(t => (t.actions ?? []).filter(a => /:dismiss$/.test(a.id)).map(a => a.id)),
   };
+}
+
+/** How long a pressed Stop shows as stopping with no word from Ember that it is (then the press didn't land: Stop works again). */
+export const STOP_ACK_MS = 3000;
+
+/**
+ * Whether a card whose Stop was pressed at `pressedAt` still shows as stopping (its detail "Stopping…", its Stop
+ * taking no second press): while Ember says it is stopping (`detail`), and for a few seconds before it has said so.
+ */
+export function stopPending(pressedAt: number, now: number, detail: string): boolean {
+  return detail === TASK_STOPPING || now - pressedAt < STOP_ACK_MS;
 }

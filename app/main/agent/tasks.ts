@@ -9,7 +9,7 @@
  */
 
 import crypto from "node:crypto";
-import type { TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
@@ -100,6 +100,8 @@ export class TaskManager {
   private closed = false;
   /** Why every task was stopped when the user didn't stop them (Copilot stopped under them): they end as failed. */
   private cutOff: string | null = null;
+  /** Running tasks told to stop that are still winding down: their cards say so at once (a press that shows nothing gets pressed again). */
+  private stopping = new Set<string>();
 
   constructor(private d: TaskManagerDeps) {}
 
@@ -142,7 +144,11 @@ export class TaskManager {
       else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
       return;
     }
-    this.running.get(id)?.abort.abort();
+    const r = this.running.get(id);
+    if (!r) return;
+    r.abort.abort();
+    this.stopping.add(id);
+    this.publish();
   }
 
   /** Stops every task. `failed`: why, when it wasn't the user (they end as failed with that, not as stopped). */
@@ -268,6 +274,7 @@ export class TaskManager {
   }
 
   private finish(task: Task, status: TaskStatus, result: WorkerResult): void {
+    this.stopping.delete(task.id);
     task.status = status;
     task.result = result;
     task.detail = result.summary;
@@ -290,7 +297,7 @@ export class TaskManager {
       id: t.id,
       title: t.title,
       status: t.status === "cancelled" ? "stopped" : t.status,
-      detail: t.detail,
+      detail: t.status === "running" && this.stopping.has(t.id) ? TASK_STOPPING : t.detail,
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
         : [{ id: `task:${t.id}:dismiss`, label: "Close" }],

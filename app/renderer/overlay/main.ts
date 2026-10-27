@@ -10,9 +10,9 @@
 
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
-import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { STATE_WORD, foldCount, foldedLine, stackOrder, underWay } from "./stack";
+import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { whereText } from "../handle/badge";
 
@@ -231,7 +231,8 @@ function measureTasks(): void {
   reportInteractive();
 }
 
-interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
+/** `said`: the detail Ember last sent; `stopAt`: when its Stop was pressed (0: not pressed, or it works again). */
+interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number }
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
 const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();
@@ -293,6 +294,43 @@ function fitTasks(): void {
   if (scrolls && !was) tasksEl.scrollTop = tasksEl.scrollHeight;
 }
 
+/** The card's detail: what Ember last said, or "Stopping…" from the moment its Stop is pressed. */
+function showDetail(c: CardEls): void {
+  const detail = c.stopAt ? TASK_STOPPING : c.said;
+  if (c.detail.textContent !== detail) c.detail.textContent = detail;
+  c.detail.hidden = !detail;
+}
+
+/** A Stop being carried out takes no second press (it says so to screen readers too). */
+function showStopping(c: CardEls): void {
+  c.li.toggleAttribute("data-stopping", c.stopAt > 0);
+  for (const b of c.actions.querySelectorAll<HTMLButtonElement>("button.stop")) {
+    if (c.stopAt) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled");
+  }
+}
+
+/**
+ * Stop was pressed: the card says so at once, before the task has wound down (a press that shows nothing gets
+ * pressed again, or the user reaches for the kill switch). If Ember never says it is stopping, Stop works again.
+ */
+function pressedStop(c: CardEls): void {
+  const at = performance.now();
+  c.stopAt = at;
+  showDetail(c);
+  showStopping(c);
+  setTimeout(() => {
+    if (c.stopAt !== at || stopPending(at, performance.now(), c.said)) return;
+    c.stopAt = 0;
+    showDetail(c);
+    showStopping(c);
+    fitTasks();
+    measureTasks();
+  }, STOP_ACK_MS + 50);
+  // The detail's height may have changed: the buttons are measured where they are now.
+  fitTasks();
+  measureTasks();
+}
+
 function renderTasks(tasks: TaskCard[]): boolean {
   const key = JSON.stringify(tasks);
   if (key === tasksKey) return false;
@@ -314,7 +352,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       actions.className = "task-actions";
       actions.hidden = true;
       li.append(state, where, title, detail, actions);
-      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0 };
+      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0 };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
@@ -323,12 +361,15 @@ function renderTasks(tasks: TaskCard[]): boolean {
     if (c.where.textContent !== where) c.where.textContent = where;
     c.where.hidden = !where;
     if (c.title.textContent !== t.title) c.title.textContent = t.title;
-    if (c.detail.textContent !== t.detail) c.detail.textContent = t.detail;
-    c.detail.hidden = !t.detail;
+    c.said = t.detail;
+    // A pressed Stop keeps saying so until Ember does (or the task has ended, or the press didn't land).
+    if (c.stopAt && (!underWay(t) || !stopPending(c.stopAt, performance.now(), t.detail))) c.stopAt = 0;
+    showDetail(c);
     const list = t.actions ?? [];
     const actionsKey = JSON.stringify([list, t.title]);
     if (actionsKey !== c.actionsKey) {
       c.actionsKey = actionsKey;
+      c.stopAt = 0;
       // New buttons take no press for a moment: the pointer may be resting where a card just appeared (the ask box
       // closed over it), and a Stop there must be a deliberate click.
       c.armedAt = performance.now() + TASK_ARM_MS;
@@ -339,10 +380,17 @@ function renderTasks(tasks: TaskCard[]): boolean {
         b.textContent = a.label;
         b.setAttribute("aria-label", `${a.label}: ${t.title}`);
         const card = c!;
-        onPress(b, () => { if (performance.now() >= card.armedAt) api.bubbleAction(a.id); });
+        const stop = /:stop$/.test(a.id);
+        if (stop) b.className = "stop";
+        onPress(b, () => {
+          if (performance.now() < card.armedAt || (stop && card.stopAt)) return;
+          if (stop) pressedStop(card);
+          api.bubbleAction(a.id);
+        });
         return b;
       }));
     }
+    showStopping(c);
     return c.li;
   });
   const ids = new Set(tasks.map(t => t.id));
