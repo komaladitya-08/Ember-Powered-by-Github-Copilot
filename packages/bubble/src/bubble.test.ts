@@ -249,6 +249,13 @@ describe("bubble styles", () => {
     expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
   });
 
+  it("lets a question's or a problem's title wrap onto a second line rather than lose its end (review #16)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\) \.eb-title \{[^}]*white-space: normal;[^}]*-webkit-line-clamp: 2;/);
+    // A title hidden because it repeats the chip stays hidden in those moods too (it comes after, as specific).
+    const wrap = BUBBLE_CSS.indexOf('.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-title {');
+    expect(BUBBLE_CSS.indexOf(".ember-bubble .eb-title[hidden] { display: none; }")).toBeGreaterThan(wrap);
+  });
+
   it("shows all of a problem as of a question: up to ten lines, then it scrolls (review #17)", () => {
     expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\):not\(\[data-streaming="true"\]\) \.eb-thought \{[^}]*max-height: calc\(20px \* 10\); overflow-y: auto;[^}]*pointer-events: auto;/);
     expect(thoughtScrolls({ mood: "error", expanded: false, streaming: false })).toBe(true);

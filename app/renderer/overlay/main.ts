@@ -14,7 +14,7 @@ import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard 
 import type { Settings } from "../../main/settings";
 import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
-import { whereText } from "../handle/badge";
+import { shortWhere, whereText } from "../handle/badge";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -162,9 +162,9 @@ const whereBadge = Object.assign(document.createElement("span"), { className: "w
 let whereShown = "";
 /** Puts (or takes away) the badge before the title; when only it changed, the bubble is told its size changed. */
 function showWhere(where: string | undefined, title: string): void {
-  const w = whereText(where) ?? "";
-  // Screen readers hear it too (the badge alone is only for the eye).
-  bubble.setWhere(w || undefined);
+  // Screen readers hear it whole too (the badge alone is only for the eye, shortened from the middle when long).
+  bubble.setWhere(whereText(where) ?? undefined);
+  const w = shortWhere(where) ?? "";
   if (w === whereShown || !bubbleHead) return;
   whereShown = w;
   whereBadge.textContent = w;

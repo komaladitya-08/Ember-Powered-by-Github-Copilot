@@ -11,7 +11,7 @@ import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/o
 import * as commandCopy from "../../app/renderer/command/copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
-import { cardBadge, targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
+import { cardBadge, shortWhere, targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
 import { radioLabel, targetMenu } from "../../app/renderer/handle/menu-copy";
 import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
@@ -541,6 +541,13 @@ describe("where Ember works, on the floating layer (§8.1, §2.4)", () => {
     expect(whereText("on  build-01 ")).toBe("on build-01");
     expect(whereText("")).toBeNull();
     expect(whereText(undefined)).toBeNull();
+  });
+
+  it("shortens a long place in the bubble's badge from the middle, keeping the host's start and end (review #16)", () => {
+    expect(shortWhere("on build-01")).toBe("on build-01");
+    expect(shortWhere("on ip-10-0-12-34.eu-west-1.compute.internal")).toBe("on ip-10-0-…internal");
+    expect(shortWhere("in Ubuntu-22.04 (WSL)")).toBe("in Ubuntu-2…04 (WSL)");
+    expect(shortWhere(undefined)).toBeNull();
   });
 
   it("badges the corner card with where the bubble's work is, before the picker's choice (review #13)", () => {

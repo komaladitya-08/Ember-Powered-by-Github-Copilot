@@ -46,3 +46,16 @@ export function whereText(where: unknown): string | null {
   const w = where.replace(/\s+/g, " ").trim();
   return w ? w.slice(0, 80) : null;
 }
+
+/** The longest place the bubble's badge shows whole (it then fits its capsule: overlay styles.css's .where). */
+const SHORT_WHERE = 20;
+
+/**
+ * The bubble's badge words, shortened from the middle when long, so a host's start and end both show ("on
+ * ip-10-0-…internal"): an ellipsis at the end hid the part that tells two hosts apart. Screen readers get whereText.
+ */
+export function shortWhere(where: unknown): string | null {
+  const w = whereText(where);
+  if (!w || w.length <= SHORT_WHERE) return w;
+  return `${w.slice(0, 11).trimEnd()}…${w.slice(-8).trimStart()}`;
+}

@@ -259,8 +259,13 @@ export const BUBBLE_CSS = `
   animation: eb-pulse 1.4s ease-in-out infinite;
 }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A question's or a problem's title carries the decision ("Pushing feature-x to origin, as you asked"): it wraps onto a
+   second line rather than lose its end under an ellipsis. */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-title {
+  white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
 /* A title that only repeats the chip's word ("Thinking…" beside Thinking) isn't shown twice. */
-.eb-title[hidden] { display: none; }
+.ember-bubble .eb-title[hidden] { display: none; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
   margin: 0; max-height: calc(20px * 6); overflow: hidden;
