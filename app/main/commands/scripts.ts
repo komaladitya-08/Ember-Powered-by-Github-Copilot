@@ -188,17 +188,32 @@ async function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
 }
 
 /**
- * The classifier reads a POSIX script's if, then, else, for, while, until, do, done and `[[ … ]]` as words it can't
- * follow, though it classifies every command in them (a condition, a loop's body, a substitution in its list) and
- * leaves a variable in a file argument unresolved (which asks): inside a script, these words alone don't make it ask
- * (review #27). case, functions, traps and select still do, and so do PowerShell's and cmd's if and for, whose blocks
- * the classifier doesn't read inside.
+ * The classifier reads an sh or bash script's if, then, else, for, while, until, do and done as words it can't follow,
+ * though it classifies every command in them (a condition, a loop's body, a substitution in its list) and leaves a
+ * variable in a file argument unresolved (which asks): inside such a script, these words alone don't make it ask
+ * (review #27). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
+ * (whose commands the classifier doesn't read) still ask, and so do zsh's flow words (its short forms run the command
+ * after the condition: `if [[ -n x ]] rm -rf ~`) and PowerShell's and cmd's if and for, whose blocks the classifier
+ * doesn't read inside.
  */
 const SCRIPT_FLOW = new Set([
   "unclear.if", "unclear.then", "unclear.elif", "unclear.else", "unclear.fi", "unclear.for", "unclear.while", "unclear.until",
-  "unclear.do", "unclear.done", "unclear.in", "unclear.keyword",
+  "unclear.do", "unclear.done", "unclear.in",
 ]);
-const POSIX_SCRIPT_SHELLS: ReadonlySet<ShellId> = new Set<ShellId>(["sh", "bash", "zsh"]);
+const FLOW_SHELLS: ReadonlySet<ShellId> = new Set<ShellId>(["sh", "bash"]);
+/** `[[ … ]]` operators whose operands bash evaluates as arithmetic or reads as a variable's name: a `$(…)` in a subscript runs. */
+const TEST_RUNS = new Set(["-eq", "-ne", "-lt", "-le", "-gt", "-ge", "-v", "-R"]);
+
+/**
+ * Whether a finding is only a `[[ … ]]` test that runs nothing: the whole test on one command, ending at its `]]`, with
+ * no operator that evaluates a value (`[[ $x -eq 0 ]]` with x='a[$(rm -rf ~)]' runs the rm). Ember can't see an
+ * operator in an unresolved word, but bash reads `[[`'s operators before expanding anything, so none can be there.
+ */
+function plainTest(f: Finding, got: Classification): boolean {
+  const c = got.commands[f.at];
+  if (f.rule !== "unclear.keyword" || f.program !== "[[" || c?.program !== "[[") return false;
+  return c.args.indexOf("]]") === c.args.length - 1 && !c.args.some(a => a !== null && TEST_RUNS.has(a));
+}
 
 /** The widening that names the script a finding came from (`script:build.sh`): the user's words may name it (intent.ts). */
 export const scriptTag = (name: string) => `script:${name}`;
@@ -337,7 +352,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       if (real.size) got = classify(text, shell, { ...sctx, real });
       refuse ??= got.refuse;
       for (const f of got.findings) {
-        if (POSIX_SCRIPT_SHELLS.has(shell) && SCRIPT_FLOW.has(f.rule)) continue;
+        if (FLOW_SHELLS.has(shell) && (SCRIPT_FLOW.has(f.rule) || plainTest(f, got))) continue;
         const says = f.cls === "unclear" ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
         if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)] });
       }

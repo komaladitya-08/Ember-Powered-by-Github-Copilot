@@ -382,6 +382,37 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     expect((await call(ps, { target: "this computer", command: "powershell -File t.ps1" })).resultType).toBe("denied");
   });
 
+  it("still asks for a brace group, `[[` arithmetic and zsh's short forms in a script, whose commands Ember can't see (review #27)", async () => {
+    const judged = async (script: string, command: string) => {
+      const h = scriptHarness(script);
+      const r = await call(h, { target: "this computer", command });
+      return `${r.resultType}: ${script}`;
+    };
+    const hidden = [
+      // A group's commands are never classified after then, if, else or do.
+      ["#!/bin/bash\nif true; then { rm -rf ~; }; fi\n", "./t.sh"],
+      ["#!/bin/bash\nif { git push --force origin main; }; then :; fi\n", "./t.sh"],
+      ["if false; then :; else { rm -rf /home/ana/proj; }; fi\n", "sh t.sh"],
+      ["for x in a b; do { rm -rf ~; }; done\n", "bash t.sh"],
+      // bash runs the `$(…)` in an array subscript when `[[` compares numbers or -v names a variable.
+      ["[[ 'a[$(rm -rf ~)]' -eq 0 ]]\n", "bash t.sh"],
+      ["x='a[$(rm -rf ~)]'; [[ $x -eq 0 ]]\n", "bash t.sh"],
+      ["[[ -v 'a[$(rm -rf ~)]' ]]\n", "bash t.sh"],
+      ["if [[ $1 -gt 3 ]]; then echo big; fi\n", "bash t.sh"],
+      // zsh runs the command after the condition in its short forms.
+      ["#!/bin/zsh\nif [[ -n x ]] rm -rf ~\n", "./t.zsh"],
+      ["#!/bin/zsh\nif [[ -n x ]] { rm -rf ~ }\n", "./t.zsh"],
+      ["#!/bin/zsh\nwhile [[ -n x ]] { rm -rf ~ }\n", "./t.zsh"],
+      ["#!/bin/zsh\nif [ -f Makefile ]; then\n  make\nfi\n", "./t.zsh"],
+    ];
+    const got: string[] = [];
+    for (const [script, command] of hidden) got.push(await judged(script, command));
+    expect(got).toEqual(hidden.map(([script]) => `denied: ${script}`));
+    // A plain `[[` test in a bash script is still read through.
+    const plain = "#!/bin/bash\nif [[ -d build ]]; then echo built; fi\nwhile [[ ! -f done.txt ]]; do sleep 1; done\n";
+    expect(await judged(plain, "./t.sh")).toBe(`success: ${plain}`);
+  });
+
   it("says plainly when it can't read all of a script, and not that the user didn't ask when they named it (review #27)", async () => {
     const named = scriptHarness("case $1 in\n  start) make ;;\nesac\n", "run the build script");
     await call(named, { target: "this computer", command: "./build.sh" });

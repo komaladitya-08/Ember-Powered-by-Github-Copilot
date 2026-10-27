@@ -122,9 +122,10 @@ Ember stops and asks before a command that:
 like), Ember reads the script first, on the computer that runs it, and judges its text as it judges a command: a
 script that deletes, publishes or reads secrets asks ("In t.sh: Deletes build and everything in it."), even when you
 asked for that kind of operation, and one that would touch Ember's own safety files is refused. A script also asks
-when Ember can't read all of it: a POSIX script's `if`, `for` and `while` are read (the commands inside them are
-judged), but `case`, functions, `trap`, a variable in a file name, more than 64 commands or more than 8,000
-characters ask, and so do PowerShell's and cmd's `if` and `for`; the card then says "Ember can't read all of build.sh
+when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
+(the commands inside them are judged), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
+uses `-v`, a variable in a file name, more than 64 commands or more than 8,000 characters ask, and so do zsh's `if`,
+`for` and `while` and PowerShell's and cmd's `if` and `for`; the card then says "Ember can't read all of build.sh
 (it has more commands than Ember can check one by one)." and, when you named the script, not "You didn't ask for
 this." Scripts it runs in
 turn are read too (four deep, sixteen in all; past that, it asks). A script whose `#!` line names another shell such
@@ -264,8 +265,8 @@ earlier command printed text that looked like instructions.").
 - **As root or administrator**, every command asks ("Commands here run as root (the administrator), so each one asks
   first." / "Ember is running as an administrator here, so each command asks first.").
 - **Ember judges the command line it can see, and the shell scripts it can read.** A shell script is read and judged
-  first (§2.4); one Ember can't read all of (`case`, functions, a variable in a file name, more than 64 commands or
-  8,000 characters, or PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. What a build file, a program, a script in another language, or a shell script too big to read
+  first (§2.4); one Ember can't read all of (`case`, functions, `{ … }` groups, a `[[` with arithmetic, a variable in
+  a file name, more than 64 commands or 8,000 characters, or zsh's, PowerShell's or cmd's `if` and `for`) asks, so most build and install scripts ask. What a build file, a program, a script in another language, or a shell script too big to read
   (more than 64 KB) does inside (`make`, `npm test`, `python build.py`) runs like a build, unless its name says deploy,
   publish, release, push, upload, delete, clean, wipe, prod, install or the like, which asks. A script this task
   downloaded always asks, and one it wrote asks when it can't be read in full.
@@ -667,7 +668,7 @@ Each item says what Ember can't do in this release and what happens instead.
 | L5 | Wayland remotes: no screenshots, no mouse or keyboard | Reading and controls only; commands only until Ember's Wayland test passes |
 | L6 | No desktop on Mac remotes; no Windows remotes | Commands only on a Mac (protected folders need full disk access for remote users); Windows remotes refused with a message |
 | L7 | No mouse or keyboard in WSLg Linux apps; X servers' Linux apps unusable | Ember uses their controls; X-server windows and unidentified ones are refused and blacked out |
-| L8 | Ember judges the command line and the shell scripts it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like; a shell script Ember can read but not follow in full (`case`, functions, `trap`, a variable in a file name, more than 64 commands or 8,000 characters, PowerShell's or cmd's `if` and `for`) asks, which most real scripts do; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
+| L8 | Ember judges the command line and the shell scripts it can read (up to 64 KB, read on the computer that runs them; over SSH by that computer's helper), not what a build file, a program or a script in another language does inside | Those run as ordinary unless their name says publish, delete, install and the like; a shell script Ember can read but not follow in full (`case`, functions, `trap`, `{ … }` groups, a `[[` with arithmetic, a variable in a file name, more than 64 commands or 8,000 characters, zsh's, PowerShell's or cmd's `if` and `for`) asks, which most real scripts do; a shell script this task downloaded always asks, one it wrote asks when it can't be read in full, and other scripts too big to read keep the name rule. Writes Ember can't see (`uudecode`, `split`, `base64 -o` on a Mac, a program that generates a script such as `python gen.py`) don't make a script the task's own, so its size alone doesn't ask; over SSH, the helper forgets what a task wrote or downloaded when it restarts on a reconnect, so a padded script written before the reconnect runs unread after it |
 | L9 | No shell profile | Aliases and tools set up in rc files are missing; use full paths; Homebrew is added on macOS |
 | L10 | Stop can miss programs that leave on purpose; over SSH a command outlives a silent link by up to 20 s | Ember asks before the forms it recognises (`nohup`, `setsid`, `&`, `docker run -d`…), not before a program that detaches by itself, and names stragglers; the administrator can lower the grace to 3 s; after an Ember crash, a command on this computer (Linux or macOS) runs on until it writes output or ends (`script` from util-linux 2.39 on doesn't end it when Ember goes), and Linux programs of a WSL command until they write output or the distro stops; a Windows command ends with Ember |
 | L11 | Another always-on-top window could cover the command card | The approve chord works only while the card says the whole command is in view; on Windows and macOS the card can't be captured |
