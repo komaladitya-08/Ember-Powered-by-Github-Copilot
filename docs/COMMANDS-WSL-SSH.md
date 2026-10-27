@@ -345,16 +345,18 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   `user@host:port` or `ssh://user@host:port` and press **Connect**. The handle menu's **Bring Ember to a computer…**
   opens that section. The same computer and login typed another way (an alias, or user@host with its full name) is the
   one Ember already has: it connects that one and says "Already added as build-01".
-- **Or let Ember notice your own `ssh`.** When the window you're in is a terminal and its title changes, Ember may
-  look (at most every 10 seconds) at your own `ssh` processes: their command lines (the host and a few options), never
-  your terminal's contents. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own
-  connection with your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). It offers each computer
-  once per run, and **Don't offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal
-  (git, `scp`, `rsync`, scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with **Offer to bring Ember along when I connect
-  with ssh**. Ember always opens its own connection; it never uses or types into yours. If it can't connect there
-  (your organisation doesn't allow that computer, its settings throw host keys away, it is this same computer…), the
-  bubble says so: "Can't connect to build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that
-  are running at that moment, and never starts one to look.
+- **Or let Ember notice your own `ssh`.** Once you've added a computer (and said yes to its card), when the window
+  you're in is a terminal and its title changes, Ember may look (at most every 10 seconds) at your own `ssh`
+  processes: their command lines (the host and a few options), never your terminal's contents. Until then it doesn't
+  look at all. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own connection with
+  your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). It offers each computer once per run, and
+  **Don't offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`,
+  `rsync`, scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with
+  **Offer to bring Ember along when I connect with ssh** (shown once a computer is added). Ember always opens its own
+  connection; it never uses or types into yours. If it can't connect there (your organisation doesn't allow that
+  computer, its settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to
+  build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that are running at that moment, and
+  never starts one to look.
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,
@@ -381,9 +383,9 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 - **Disconnect** from the handle menu or Settings. If the connection drops, everything there stops ("Lost build-01")
   and Ember tries to reconnect for up to 10 minutes; a reconnect starts fresh: no task resumes and no approval carries
   over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
-  hold) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect to sign in."; for a host
-  key to accept, "build-01 needs you to check its key again" — "Reconnect to check it."; when it gives up for another
-  reason (after 10 minutes, or a refusal), it says "Can't reconnect to build-01" with the reason. All have
+  hold) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect to sign in."; for a
+  host key to accept, "build-01 needs you to check its key again" — "Reconnect to check it."; when it gives up for
+  another reason (after 10 minutes, or a refusal), it says "Can't reconnect to build-01" with the reason. All have
   **Reconnect**, which connects with Ember's sign-in window.
 
 ### 4.2 What stays here

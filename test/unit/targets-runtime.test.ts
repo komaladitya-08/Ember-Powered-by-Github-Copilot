@@ -1274,9 +1274,26 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", "deploy@build-01"], via: "local" as const }]),
   };
 
+  // The noticer looks only once the user has added a computer (review #33): web-07 here.
+  const added = withHosts([hostRecord("web-07")]);
+
+  it("looks for nothing until the user has added a computer: no window read, no process list, no offer (review #33)", async () => {
+    const r = rig({ notice: { ...notice, userSshProcesses: vi.fn(notice.userSshProcesses) }, cursor: true });
+    r.activeWindow.mockClear();
+    r.ticks[0]();
+    await flush();
+    expect(r.activeWindow).not.toHaveBeenCalled();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
+    // Once one is added (its card accepted), it looks; the switch still turns it off.
+    r.settings.update(added);
+    r.ticks[0]();
+    await flush();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
+  });
+
   it("looks only with a way to see the user's window, offers Bring Ember, and connects after the card", async () => {
-    expect(rig({ notice }).ticks).toEqual([]);
-    const r = rig({ notice, cursor: true });
+    expect(rig({ notice, settings: added }).ticks).toEqual([]);
+    const r = rig({ notice, cursor: true, settings: added });
     expect(r.ticks).toHaveLength(1);
     r.ticks[0]();
     await flush();
@@ -1292,7 +1309,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 
   it("looks with main's window system alone: no mouse borrowing needed (an organisation's features.cursor: false)", async () => {
-    const r = rig({ notice, activeWindow: true });
+    const r = rig({ notice, activeWindow: true, settings: added });
     expect(r.hands?.cursor).toBeUndefined();
     expect(r.ticks).toHaveLength(1);
     r.ticks[0]();
@@ -1300,14 +1317,14 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.activeWindow).toHaveBeenCalled();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
     // Without a window system there is nothing to look at.
-    expect(rig({ notice, hands: null }).ticks).toEqual([]);
+    expect(rig({ notice, hands: null, settings: added }).ticks).toEqual([]);
   });
 
   it("reads the user's ssh in WSL only in distros running now (never booting one), through WA's runner", async () => {
     const seen = { sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async (_os: OS, _o?: unknown) => [] as { pid: number; argv: string[]; via: "local" }[]) };
     const make = (live: string[]) => {
       // Ubuntu ran when Ember last looked (its cached flag says running); WSL reports what runs now.
-      const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: wslOnSettings });
+      const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: { targets: { ...wslOnSettings.targets, hosts: [hostRecord("web-07")] } } });
       r.wsl.runningNow = async () => new Set(live);
       const runScript = vi.fn(async (_script: string, _o?: unknown) => ({ code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" }));
       for (const d of ["Ubuntu", "Debian"]) Object.assign(r.wsl.runner(d), { runScript });
@@ -1331,7 +1348,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 
   it("says why Bring Ember can't connect when the check before connecting refuses the host (never just a vanished offer)", async () => {
-    const r = rig({ notice, cursor: true });
+    const r = rig({ notice, cursor: true, settings: added });
     r.conns.resolve.mockRejectedValueOnce(new ConnectError("Your organisation doesn't allow Ember to connect to build-01.", "not-allowed"));
     r.ticks[0]();
     await flush();
@@ -1348,7 +1365,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     await flush(); await flush();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-02", thought: expect.stringContaining("throw host keys away") }) });
     // The user's own Not now on the card says nothing more.
-    const no = rig({ notice, cursor: true, consent: "no" });
+    const no = rig({ notice, cursor: true, consent: "no", settings: added });
     no.ticks[0]();
     await flush();
     no.t.bubbleAction("offer:1:bring");
@@ -1379,7 +1396,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {
-    const r = rig({ notice, cursor: true });
+    const r = rig({ notice, cursor: true, settings: added });
     r.ticks[0]();
     await flush();
     r.t.bubbleAction("offer:1:never");

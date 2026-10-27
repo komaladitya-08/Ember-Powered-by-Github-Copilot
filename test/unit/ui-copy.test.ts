@@ -466,6 +466,14 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(keep(linux.local.status)).toBe("Apps");
   });
 
+  it("shows the ssh offer switch only once a computer is added: Ember doesn't look for ssh before that (review #33)", () => {
+    const none = computersCopy.computersView({ os: "linux", settings: settings({ targets: { ...settings().targets, hosts: [] } }), admin: noPolicy, summaries: [summary({})] });
+    expect(none.ssh.offer).toBeNull();
+    expect(none.ssh.add).toBe(true);
+    const one = computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({})] });
+    expect(one.ssh.offer).toEqual({ label: "Offer to bring Ember along when I connect with ssh", checked: true, disabled: false });
+  });
+
   it("says what the organisation turned off, and offers nothing it doesn't allow", () => {
     const v = computersCopy.computersView({ os: "win32", settings: settings(), admin: { source: "/etc/ember/policy.json", features: { wsl: false, ssh: false } }, summaries: [summary({})] });
     expect(v.wsl).toEqual({ rows: [], toggle: null, managed: "Your organisation doesn't allow Ember to work in WSL." });

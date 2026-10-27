@@ -7,8 +7,8 @@
  *
  * Nothing new happens without a reason (critique integration-25): with nothing set up, or with the administrator
  * turning WSL, SSH and commands off, there is no menu item, no badge, no new window, no prompt change (caps all false)
- * and no process started; only the noticer's cheap look at the window the user is in runs, and only while SSH is allowed
- * and the offer switch is on. Every decision comes from local data: a remote's own reports only ever narrow what Ember
+ * and no process started; the noticer's cheap look at the window the user is in runs only once the user has added a
+ * computer, while SSH is allowed and the offer switch is on (review #33). Every decision comes from local data: a remote's own reports only ever narrow what Ember
  * does there, and the model can never connect, pick a computer the user didn't name, or approve anything. Plain Node
  * (L13): Electron reaches it only through TargetsDeps.
  */
@@ -1060,7 +1060,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   if (parts.notice && look) {
     noticer = createNoticer({
       os: deps.os, log, notice: noticeOf(parts.notice),
-      enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh,
+      // Only once the user has added a computer (said yes to its SSH card): until then nothing new runs at all, as the
+      // first-run screen and the docs promise ("off until you turn them on"; review #33). The switch turns it off.
+      enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh && settings.get().targets.hosts.length > 0,
       activeWindow: () => {
         const w = look();
         return w && typeof w.app === "string" && typeof w.title === "string" ? { app: w.app, title: w.title } : null;

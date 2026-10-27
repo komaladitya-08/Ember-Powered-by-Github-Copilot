@@ -142,7 +142,8 @@ export function computersView(i: { os: OS | undefined; summaries: readonly Targe
   return {
     local,
     wsl,
-    ssh: { rows, add: sshAllowed, offer: sshAllowed ? { label: OFFER_SWITCH, checked: i.settings.targets?.offerSsh !== false, disabled: false } : null, managed },
+    // The offer switch once a computer is added: Ember doesn't look for the user's ssh before that (review #33).
+    ssh: { rows, add: sshAllowed, offer: sshAllowed && rows.length > 0 ? { label: OFFER_SWITCH, checked: i.settings.targets?.offerSsh !== false, disabled: false } : null, managed },
   };
 }
 
