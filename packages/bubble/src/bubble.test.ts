@@ -37,6 +37,19 @@ describe("announcement", () => {
   });
 });
 
+describe("announcement: where it is, when not this computer (review #13)", () => {
+  const view = (v: Partial<BubbleView>): BubbleView => ({ visible: true, mood: "idle", title: "Ember", thought: "", streaming: false, ...v });
+
+  it("names the computer a question, a problem or an answer comes from", () => {
+    expect(announcement(view({ mood: "attention", title: "May I?", thought: "Click “Save” in gedit?", where: "on build-01" })))
+      .toBe("Ember needs you, on build-01: May I? Click “Save” in gedit?");
+    expect(announcement(view({ mood: "error", title: "Check disk", thought: "It didn't finish.", where: "in Ubuntu (WSL)" })))
+      .toBe("Ember has a problem, in Ubuntu (WSL): Check disk. It didn't finish.");
+    expect(announcement(view({ mood: "done", title: "Check disk", thought: "12 GB free.", where: "on build-01" }))).toBe("Ember says, on build-01: 12 GB free.");
+    expect(announcement(view({ mood: "attention", title: "May I?", thought: "Click “Save”?", where: "  " }))).toBe("Ember needs you: May I? Click “Save”?");
+  });
+});
+
 describe("bubblePosition", () => {
   const screen = { width: 1280, height: 800 };
   /** Ember's body and the emote over its head, as bubblePosition keeps clear of them. */

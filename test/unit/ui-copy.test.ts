@@ -11,7 +11,7 @@ import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/o
 import * as commandCopy from "../../app/renderer/command/copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
-import { targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
+import { cardBadge, targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
 import { radioLabel, targetMenu } from "../../app/renderer/handle/menu-copy";
 import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
@@ -538,6 +538,14 @@ describe("where Ember works, on the floating layer (§8.1, §2.4)", () => {
     expect(whereText("on  build-01 ")).toBe("on build-01");
     expect(whereText("")).toBeNull();
     expect(whereText(undefined)).toBeNull();
+  });
+
+  it("badges the corner card with where the bubble's work is, before the picker's choice (review #13)", () => {
+    expect(cardBadge({ where: "on build-01", task: true }, null)).toEqual({ text: "on build-01", state: "ready", label: "Working on build-01" });
+    // A task bound to this computer says nothing, whatever the picker's choice: never "build-01" beside a question about this PC.
+    expect(cardBadge({ task: true }, t({}))).toBeNull();
+    // The conversation's bubble (no task) keeps the picker's badge.
+    expect(cardBadge({ task: false }, t({}))).toEqual(targetBadge(t({})));
   });
 });
 

@@ -5,6 +5,7 @@
  * async app launch, a desktop step that wanted a confirmation) as tool results.
  */
 
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Worker, LINUX_WORKER_SYSTEM, type TaskSpec, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
@@ -364,6 +365,15 @@ describe("grants and questions by target", () => {
     await local.call("perceive_window", {});
     await local.call("click", { id: 1 });
     expect(local.asked[0]).not.toHaveProperty("where");
+  });
+
+  it("fill_cells' one question for all its cells carries where too (review #13)", () => {
+    // (Its spreadsheet path needs a borrowed keyboard and a sheet; the question it builds is checked in the source.)
+    const src = readFileSync(new URL("../../app/main/agent/worker.ts", import.meta.url), "utf8");
+    const batch = src.slice(src.indexOf("private async authorizeCells("), src.indexOf("private cellAddress("));
+    expect(batch).toContain("const where = this.d.target ? whereWords(this.d.target) : undefined;");
+    expect(batch).toMatch(/const question: WhereQuestion = \{ title: "May I\?", context, prompt, [^\n]*\.\.\.\(where \? \{ where \} : \{\}\) \};/);
+    expect(batch).toContain("this.d.confirmer.ask(question, this.overSignal)");
   });
 });
 

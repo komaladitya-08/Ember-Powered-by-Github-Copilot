@@ -42,7 +42,7 @@ import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainStartError, gitHubReachable, idleWord, type Hands } from "./agent/host";
-import { expandedBubble } from "./agent/presenter";
+import { expandedBubble, questionAloud } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -686,11 +686,10 @@ function start(): void {
     // A command is never read out or put in a notification (R7): only that Ember wants to run one, and where; the card
     // on screen shows it, and the keys work only there.
     const words = targets?.questionWords(q.question) ?? null;
-    if (maySpeak()) {
-      const keys = heldKeys().map(k => k.say);
-      voice?.speak(words ?? `Ember asks: ${spokenText(q.question.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
-    }
-    if (userAway()) notify("Ember needs your OK", words ?? q.question.prompt);
+    // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
+    const aloud = questionAloud(q.question, { keys: heldKeys().map(k => k.say), spoken: spokenText });
+    if (maySpeak()) voice?.speak(words ?? aloud.say);
+    if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
   const userAway = () => (overlay?.isHidden() ?? false) || powerMonitor.getSystemIdleTime() >= 30;

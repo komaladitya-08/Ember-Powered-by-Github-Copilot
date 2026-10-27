@@ -40,22 +40,26 @@ export interface BubbleView {
   title: string;
   thought: string;
   streaming: boolean;
+  /** Where its task acts when not on this computer ("on build-01"): the badge says it to the eye, this to the ear. */
+  where?: string;
 }
 
 /**
  * What a screen reader hears, once: finished answers and questions, never each
  * streamed token or the running commentary while Ember thinks or works.
- * "" means say nothing.
+ * "" means say nothing. A bubble from another computer says which first.
  */
 export function announcement(v: BubbleView, speaker = "Ember"): string {
   if (!v.visible || v.streaming) return "";
   const text = v.thought.trim();
   const title = v.title.trim();
   const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
+  const where = v.where?.replace(/\s+/g, " ").trim();
+  const at = where ? `, ${where}` : "";
   switch (v.mood) {
-    case "attention": return both ? `${speaker} needs you: ${both}` : "";
-    case "error": return both ? `${speaker} has a problem: ${both}` : "";
-    case "idle": case "done": case "guiding": return text || title ? `${speaker} says: ${text || title}` : "";
+    case "attention": return both ? `${speaker} needs you${at}: ${both}` : "";
+    case "error": return both ? `${speaker} has a problem${at}: ${both}` : "";
+    case "idle": case "done": case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
   }
 }
@@ -382,6 +386,7 @@ export class ReasoningBubble {
   private expanded = false;
   private visible = true;
   private speaker = "Ember";
+  private where: string | undefined;
   private announced = "";
   private announceQueued = false;
   /** Content changed since the bubble last measured itself. */
@@ -437,6 +442,13 @@ export class ReasoningBubble {
   /** Who is talking, for screen readers ("Cinder says: …"). */
   setSpeaker(name: string): void {
     this.speaker = name;
+  }
+
+  /** Where the bubble's task acts when not on this computer ("on build-01"), for screen readers (see `announcement`). */
+  setWhere(where: string | undefined): void {
+    if (where === this.where) return;
+    this.where = where;
+    this.queueAnnounce();
   }
 
   setMood(mood: BubbleMood): void {
@@ -639,7 +651,7 @@ export class ReasoningBubble {
     // Keep what was said while hidden: a hide/show flicker (Ember crossing a screen edge) doesn't repeat it.
     if (!this.visible) return;
     const text = announcement({
-      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming,
+      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming, where: this.where,
     }, this.speaker);
     if (text === this.announced) return;
     this.announced = text;

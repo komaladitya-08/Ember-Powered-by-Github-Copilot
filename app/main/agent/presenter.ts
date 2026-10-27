@@ -74,6 +74,20 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
 }
 
+/**
+ * A question as Ember says it aloud and puts it in a notification, naming where it comes from when that isn't this
+ * computer (§2.4): "Ember asks, on build-01: Click Save in gedit? Press …". `spoken` makes the prompt fit for speech;
+ * `keys` are the held keys that answer it, as they are said.
+ */
+export function questionAloud(q: { prompt: string; where?: string }, o: { keys?: readonly string[]; spoken?: (s: string) => string } = {}): { say: string; notify: string } {
+  const where = q.where?.replace(/\s+/g, " ").trim();
+  const keys = o.keys ?? [];
+  return {
+    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`,
+    notify: where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ${q.prompt}` : q.prompt,
+  };
+}
+
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
 const ACK_MS = 1500;
 /** A task whose work is in the bubble keeps it while it writes; this long without a word, another task's work may show. */

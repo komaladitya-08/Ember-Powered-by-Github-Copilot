@@ -45,7 +45,9 @@ own words choose: never text on a screen, in a file or in a command's output.
 
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
 a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
-bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
+bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)"): on screen, to a screen reader ("Ember needs
+you, on build-01: …"), aloud ("Ember asks, on build-01: …"), in the notification when you're away, and on the corner
+card without a compositor.
 
 ## 2. Commands
 

@@ -163,6 +163,8 @@ let whereShown = "";
 /** Puts (or takes away) the badge before the title; when only it changed, the bubble is told its size changed. */
 function showWhere(where: string | undefined, title: string): void {
   const w = whereText(where) ?? "";
+  // Screen readers hear it too (the badge alone is only for the eye).
+  bubble.setWhere(w || undefined);
   if (w === whereShown || !bubbleHead) return;
   whereShown = w;
   whereBadge.textContent = w;

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, handStep, plainText, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, handStep, plainText, questionAloud, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -751,5 +751,13 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
     expect(finished("It's half past three.\nYour next meeting is at four.").actions).toEqual([]);
     expect(answerLines("x".repeat(80))).toBe(3);
     expect(answerLines("a\n\nb")).toBe(3);
+  });
+});
+
+describe("a question said aloud and in a notification names where it comes from (review #13)", () => {
+  it("says the computer when it isn't this one, with the keys that answer it", () => {
+    const words = questionAloud({ prompt: "Click **Save** in gedit?", where: "on build-01" }, { keys: ["Control Alt Y to allow"], spoken: s => s.replace(/\*/g, "") });
+    expect(words).toEqual({ say: "Ember asks, on build-01: Click Save in gedit? Press Control Alt Y to allow.", notify: "On build-01: Click **Save** in gedit?" });
+    expect(questionAloud({ prompt: "Click Save?" })).toEqual({ say: "Ember asks: Click Save?", notify: "Click Save?" });
   });
 });

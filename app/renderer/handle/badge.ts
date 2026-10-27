@@ -29,6 +29,17 @@ export function targetChip(t: TargetSummary | null | undefined): string | null {
   return t.kind === "wsl" ? `In ${t.label}` : `On ${t.label}`;
 }
 
+/**
+ * The corner card's badge (no compositor), beside Ember's name: where the bubble's task acts when it says ("on
+ * build-01"), before the picker's choice. A task's bubble that says nothing is on this computer, so it gets no badge
+ * (never "build-01" beside a question about this PC); the conversation's bubble keeps the picker's badge.
+ */
+export function cardBadge(b: { where?: string; task: boolean }, t: TargetSummary | null | undefined): TargetBadge | null {
+  const w = whereText(b.where);
+  if (w) return { text: w, state: "ready", label: `Working ${w}` };
+  return b.task ? null : targetBadge(t);
+}
+
 /** A `where` badge's words ("on build-01", "in Ubuntu (WSL)"), trimmed; null when there are none. */
 export function whereText(where: unknown): string | null {
   if (typeof where !== "string") return null;
