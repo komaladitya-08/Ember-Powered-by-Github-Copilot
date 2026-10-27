@@ -1176,7 +1176,7 @@ function start(): void {
     session.defaultSession.on("spellcheck-dictionary-download-begin", (_e, lang) => log.warn("spellcheck.download", { lang }));
     // The application menu (macOS: its Quit, Command+Q, asks as the handle's Quit does, and its Edit menu makes
     // Command+C/V/X/A/Z work in fields; Windows and Linux: none, so no Ctrl+Q that skips the question and no
-    // DevTools), and DevTools locked in a packaged build (windows.ts).
+    // DevTools), dark native chrome, the windows' icon on Linux and DevTools locked in a packaged build (windows.ts).
     setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });
     // Windows: the Start Menu shortcut toasts need (made once, for the zip build).
     sys.lifecycle.ensureShortcut();

@@ -188,10 +188,10 @@ export interface ChromeElectron {
 /**
  * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
  * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, dark native chrome
- * on every OS, on Linux Ember's icon on every window made from then on, and in a packaged build DevTools locked on
- * every page made from then on. Every page is dark-only
- * (ember.css says color-scheme: dark), so title bars, native menus and dialogs follow it rather than a light system
- * theme around a near-black window (review #245); a light appearance would be a design of its own.
+ * on every OS, and from then on Ember's icon on every window on Linux and, in a packaged build, DevTools locked on
+ * every page. Every page is dark-only (ember.css says color-scheme: dark), so title bars, native menus and dialogs
+ * follow it rather than a light system theme around a near-black window (review #245); a light appearance would be a
+ * design of its own.
  */
 export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, nativeTheme, app }): void {
   e.nativeTheme.themeSource = "dark";
