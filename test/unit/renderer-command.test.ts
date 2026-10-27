@@ -423,3 +423,24 @@ describe("a run's terminal and the keyboard (reviews #42, #261, #264, #268)", ()
     expect(css).toMatch(/\.term:focus-within\s*\{[^}]*--focus-ring/);
   });
 });
+
+describe("the question card's layout (review #265)", () => {
+  it("keeps Allow and Not now in view at the bottom of the card area, and counts nothing under them as in view", () => {
+    const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const block = (sel: string) => css.split("}").find(b => b.split("{")[0].split(",").map(x => x.trim()).includes(sel)) ?? "";
+    expect(block(".card .actions")).toMatch(/position:\s*sticky/);
+    expect(block(".card .actions")).toMatch(/bottom:\s*0/);
+    expect(block(".window.cards-only .cards")).toMatch(/max-height:\s*none/);
+    const main = read("main.ts");
+    expect(main).toMatch(/actions\.append\(hint, row, keys\)/);
+    expect(main).toMatch(/clip\.bottom = Math\.min\(clip\.bottom, ask\.actions\.getBoundingClientRect\(\)\.top\)/);
+    expect(main).toMatch(/classList\.toggle\("cards-only"/);
+  });
+
+  it("judges a command block that runs under the buttons as not in view", () => {
+    // The block's bottom (300) is below the top of the buttons' bar (280): the clip says so.
+    const m = { scrollTop: 0, scrollHeight: 100, clientHeight: 100, scrollWidth: 500, clientWidth: 500, top: 200, bottom: 300, left: 12, right: 512, viewWidth: 760, viewHeight: 480, visible: true };
+    expect(judgeMetrics({ ...m, clip: { top: 0, bottom: 280, left: 0, right: 760 } }).onScreen).toBe(false);
+    expect(judgeMetrics({ ...m, clip: { top: 0, bottom: 320, left: 0, right: 760 } }).onScreen).toBe(true);
+  });
+});

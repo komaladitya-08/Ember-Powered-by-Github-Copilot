@@ -100,7 +100,7 @@ function appendLines(root: HTMLElement, card: CommandCard): void {
 // ───── The question card ─────
 interface AskEls {
   key: string; root: HTMLElement; block: HTMLPreElement; allow: HTMLButtonElement; deny: HTMLButtonElement;
-  hint: HTMLElement; keys: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
+  hint: HTMLElement; keys: HTMLElement; actions: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
 }
 let ask: AskEls | null = null;
 let armTimer: ReturnType<typeof setTimeout> | null = null;
@@ -131,8 +131,11 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
   row.append(allow, deny);
   const keys = el("p", "keys");
   keys.hidden = true;
-  root.append(hint, row, keys);
-  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, card, sent: false };
+  // Allow, Not now and their hints stay at the bottom of the card area while the rest scrolls (review #265).
+  const actions = el("div", "actions");
+  actions.append(hint, row, keys);
+  root.append(actions);
+  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, actions, card, sent: false };
   allow.addEventListener("click", e => {
     if (!e.isTrusted || ask !== els || els.sent) return;
     const a = allowAnswer(els.card, model.card, Date.now());
@@ -177,10 +180,13 @@ function measureCard(): void {
   if (!ask) return;
   const b = ask.block;
   const r = b.getBoundingClientRect();
+  // The card's buttons stay over the bottom of the card area: what they cover isn't in view.
+  const clip = clipOf(b);
+  clip.bottom = Math.min(clip.bottom, ask.actions.getBoundingClientRect().top);
   const metrics: CardMetrics = {
     scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight, scrollWidth: b.scrollWidth, clientWidth: b.clientWidth,
     top: r.top, bottom: r.bottom, left: r.left, right: r.right, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
-    clip: clipOf(b), visible: document.visibilityState === "visible",
+    clip, visible: document.visibilityState === "visible",
   };
   dispatch({ type: "card-metrics", n: ask.card.n, metrics });
   paintAllow();
@@ -427,6 +433,8 @@ function render(): void {
   });
   list.hidden = tabs.length === 0;
   $("empty").hidden = tabs.length > 0 || !!announce || !!ask || lines.length > 0;
+  // Nothing below the card area: it may take the whole window (review #265).
+  document.querySelector("main.window")?.classList.toggle("cards-only", tabs.length === 0 && lines.length === 0);
   focusTerminal();
   reportSize();
 }

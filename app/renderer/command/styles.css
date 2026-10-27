@@ -10,6 +10,14 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 
 /* ── The card: grouped on --surface-1, the command in a monospace block that wraps and scrolls (never cut) ── */
 .cards { flex: none; display: grid; gap: 10px; max-height: 72vh; overflow: auto; }
+/* With no tabs or pending lines below it, the card area takes the whole window (review #265). */
+.window.cards-only .cards { flex: 0 1 auto; min-height: 0; max-height: none; }
+/* Allow, Not now and their hints stay at the bottom of the card area while the command and its lines scroll under them:
+   never below the fold. What they cover doesn't count as in view (main.ts measureCard). */
+.card .actions {
+  position: sticky; bottom: 0; z-index: 1; display: grid; gap: 8px; margin: 0 -14px -12px; padding: 8px 14px 12px;
+  background: var(--surface-1); border-radius: 0 0 var(--r-lg) var(--r-lg); box-shadow: 0 -1px 0 var(--separator);
+}
 .card { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--surface-1); box-shadow: var(--group-edge); }
 .card.announce { box-shadow: var(--group-edge), inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
 .where { margin: 0; font: var(--type-footnote); color: var(--label-2); overflow-wrap: anywhere; }
