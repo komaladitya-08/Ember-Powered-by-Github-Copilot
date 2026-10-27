@@ -2369,6 +2369,29 @@ describe("a sign-in refused after connecting (review #138)", () => {
     await host.stop();
   });
 
+  it("says it is idle only when reconnecting with a renewed sign-in would cut nothing off", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ hands: hands() });
+    const starting = host.start(TOKEN, "stored");
+    expect(host.idle).toBe(false);
+    await starting;
+    expect(host.idle).toBe(true);
+    // An answer under way.
+    await host.ask("what time is it?");
+    expect(host.idle).toBe(false);
+    conductorSession().emit("assistant.message", { content: "It's noon." });
+    conductorSession().emit("session.idle", {});
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.idle).toBe(true);
+    // A task running.
+    host.tasks!.start("tidy my desktop");
+    expect(host.idle).toBe(false);
+    host.tasks!.cancelAll();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.idle).toBe(true);
+    await host.stop();
+  });
+
   it("an organisation's own endpoint has no GitHub sign-in to check", async () => {
     vi.useFakeTimers();
     const { host } = makeHost({ provider: { type: "openai", baseUrl: "http://127.0.0.1:9/v1" } as never });

@@ -45,7 +45,7 @@ import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } 
 import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
-import { TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceFlow, type ResolvedToken } from "./agent/auth";
+import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
@@ -919,14 +919,24 @@ function start(): void {
   let currentToken: string | null = null;
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
-  /** The sign-in to use: the first source whose token Copilot hasn't refused this run. */
-  const findToken = () => resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null);
+  /**
+   * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed an hour before, and Copilot
+   * reconnected with the new token once nothing is under way (review #138).
+   */
+  const keeper = new GrantKeeper({
+    fetch: (url, init) => net.fetch(url, init), store: () => tokens, inUse: () => currentToken, idle: () => agent?.idle ?? true,
+    reconnect: async token => { currentToken = token; await agent?.start(token, "stored"); },
+    log: (event, data) => log.info(event, data),
+  });
+  /** The sign-in to use: the first source whose token Copilot hasn't refused this run (a stored one that ran out renewed first). */
+  const findToken = async () => { await keeper.freshen(); return resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null); };
   /**
    * Connects with `found`, or the first sign-in after it that Copilot accepts: a refused token gives way to the next
    * source (a token in the environment comes before the GitHub CLI's). Resolves to the phase and the sign-in used.
    */
   const connectWith = (found: ResolvedToken | null, how: "user" | "auto" = "user") => connectFirstAccepted(findToken, async f => {
     currentToken = f?.token ?? null;
+    keeper.use(currentToken);
     const phase = await agent?.start(currentToken, f?.source, how, f?.name);
     return { phase, refused: phase === "error" && agent?.getStatus().reason === "sign-in" };
   }, refusedTokens, found);
@@ -944,6 +954,7 @@ function start(): void {
     await agent?.forgetConversation();
     tokens?.clear();
     currentToken = null;
+    keeper.use(null);
     // Refusals don't outlive the sign-in: the account may have Copilot now, so the next sign-in tries every source afresh.
     refusedTokens.clear();
     askHistory = [];
@@ -1012,13 +1023,16 @@ function start(): void {
       // Only GitHub's own page is ever opened.
       signInPage = code.verificationUri;
       openSignInPage();
-      const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal, onBlip: err => log.warn("auth.poll_blip", { err }) });
+      // With what renews it, when the app's tokens expire.
+      const grant = await pollDeviceGrant(fetch, clientId, code, { signal: ac.signal, onBlip: err => log.warn("auth.poll_blip", { err }) });
+      const token = grant.token;
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
       // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
-      const kept = tokens?.saveResult(token) ?? "no-keyring";
+      const kept = tokens?.saveResult(grant) ?? "no-keyring";
       if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
       currentToken = token;
+      keeper.use(token, grant);
       const why = kept === "write-failed" ? "Ember couldn't save the sign-in on this computer" : sys.words.keyringMissing;
       await connected(await agent?.start(token, "stored"), kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
     } catch (err) {
@@ -1584,13 +1598,14 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
+      if (!provider) await keeper.freshen();
       const found = provider ? null : await resolveToken(tokens, process.env, ghOptions());
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
       // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
       // the next source.
       const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto");
-      if (phase === "signed-out") currentToken = null;
+      if (phase === "signed-out") { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
     settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });
