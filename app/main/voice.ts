@@ -237,6 +237,8 @@ export class VoiceService {
       if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.setState("waiting"); return; }
       if (m.type === "error") { this.o.log.error("voice.error", { message: m.message }); this.setState("error", m.message); this.teardown(); return; }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
+      // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
+      if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
       if (m.type === "monitor") { this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
       if (m.type === "stalled") {
         // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.

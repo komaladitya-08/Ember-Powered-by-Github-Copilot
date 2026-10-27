@@ -1160,6 +1160,34 @@ describe("cutting in on Ember (VO9-2)", () => {
   it.each(["What's the weather tomorrow?", "Know the other file.", "Is there enough disk space?", "Turn the volume up a little, it's not quite loud enough for me.", "That's not quite right.", "Not quite what I asked."])("%j isn't", t => expect(heardStopWord(t)).toBe(false));
 });
 
+describe("cutting in while a listening window is open (review #253)", () => {
+  it("doesn't ask the recognizer about no audio (the window already heard its pre-roll), and still hears 'Hey Ember, stop'", () => {
+    // The real recognizer throws a bare number (out of WebAssembly) on less than about 0.1 s of audio.
+    const b = fake([]);
+    b.spotMonitor = () => [];
+    const lengths: number[] = [];
+    const said = ["", "Hey Ember, stop."];
+    b.transcribe = s => { lengths.push(s.length); if (s.length < 1600) throw 92691224; return said.shift() ?? ""; };
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    const step = (f: Float32Array) => { c.t += 32; e.feedMonitor(new Float32Array(512).fill(0.05)); e.feed(f); };
+    for (let i = 0; i < 30; i++) step(frame(0));
+    step(frame(1)); // "Hey Ember": the window opens once its check has heard the pre-roll
+    for (let i = 0; i < 20; i++) step(frame(0));
+    expect(e.listening).toBe(true);
+    e.selfSpeaking(true); // a finished task is announced while the window waits
+    for (let i = 0; i < 5; i++) step(frame(0));
+    step(frame(1)); // "Hey Ember, stop" over it, which the speakers didn't say
+    for (let i = 0; i < 60; i++) step(frame(0));
+    expect(events.filter(ev => ev.type !== "speech")).toEqual([
+      { type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" },
+      { type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" },
+      { type: "stop" }, { type: "listening", on: false, reason: "stop", window: "wake" }]);
+    expect(Math.min(...lengths)).toBeGreaterThanOrEqual(1600);
+  });
+});
+
 describe("follow-up windows", () => {
   it("send 'Okay.' when Ember's answer asked something, and still end on 'No, thanks.'", () => {
     const okay = run(fake(["Okay."]), (e, c) => { e.followUp(8000, { afterQuestion: true }); c.t += 32; e.feed(frame(0, true)); c.t += 32; e.feed(frame(0)); });

@@ -286,6 +286,22 @@ describe("VoiceService keeps listening going", () => {
     expect(states.at(-1)?.s).toBe("muted");
   });
 
+  it("logs the recognizers' failures on some audio and keeps listening (review #253)", async () => {
+    const { v, states, events } = service();
+    const warn = vi.spyOn(log, "warn");
+    try {
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+      electron.procs[0].emit("message", { type: "engine-error", message: "the speech recognizer failed (92691224)", count: 1 });
+      expect(warn).toHaveBeenCalledWith("voice.engine_error", { message: "the speech recognizer failed (92691224)", count: 1 });
+      expect(events).toEqual([]);
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+      expect(electron.procs[0].kill).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("a model that won't load is an error to show, not a restart loop", async () => {
     vi.useFakeTimers();
     const { v, states } = service();

@@ -20,11 +20,16 @@ type FromMain =
   | { type: "follow-up"; ms: number; afterQuestion?: boolean }
   | { type: "cancel" };
 
-/** Messages for main (VoiceService); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone frames for `ms`. */
+/**
+ * Messages for main (VoiceService); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone frames
+ * for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the process
+ * carried on.
+ */
 export type VoiceProcessMessage =
   | VoiceEvent
   | { type: "ready"; loadMs: number }
   | { type: "error"; message: string }
+  | { type: "engine-error"; message: string; count: number }
   | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
   | { type: "monitor"; on: boolean; reason?: string }
   | { type: "stalled"; ms: number };
@@ -34,10 +39,23 @@ const send = (m: VoiceProcessMessage) => parent.postMessage(m);
 
 let engine: VoiceEngine | null = null;
 let cpuMs = 0, audioMs = 0, peak = 0, reported = false;
+/**
+ * The recognizers failed on some audio (WebAssembly throws bare numbers): main is told, at most once a minute with how
+ * many times since, and listening carries on. Thrown out of a port's handler, it would end the process, and Ember would
+ * be deaf while the models load again (review #253).
+ */
+let failures = 0, failureReportedAt = Number.NEGATIVE_INFINITY;
+const failed = (err: unknown) => {
+  failures++;
+  if (Date.now() - failureReportedAt < 60_000) return;
+  send({ type: "engine-error", message: err instanceof Error ? err.message : `the speech recognizer failed (${String(err)})`, count: failures });
+  failures = 0;
+  failureReportedAt = Date.now();
+};
 /** The speakers' stream counts in the CPU report too (its spotter runs while a wake or stop is checked). */
 const speakers = new SpeakerMonitor(f => {
   const t0 = performance.now();
-  engine?.feedMonitor(f);
+  try { engine?.feedMonitor(f); } catch (err) { failed(err); }
   cpuMs += performance.now() - t0;
 }, (on, reason) => send({ type: "monitor", on, ...(reason ? { reason } : {}) }));
 /** Development builds only (installed Ember never keeps audio): EMBER_VOICE_DUMP=/path.f32 writes the received audio (raw float32). */
@@ -49,7 +67,7 @@ parent.on("message", e => {
     if (m.dev && process.env.EMBER_VOICE_DUMP) dump = fs.createWriteStream(process.env.EMBER_VOICE_DUMP);
     try {
       const t0 = Date.now();
-      const backend = sherpaBackend(m.models, { monitor: m.monitor });
+      const backend = sherpaBackend(m.models, { monitor: m.monitor, onError: failed });
       engine = new VoiceEngine(backend, send);
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0 });
@@ -65,7 +83,7 @@ parent.on("message", e => {
       const frame = ArrayBuffer.isView(d) ? new Float32Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) : new Float32Array(d);
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
       const t0 = performance.now();
-      engine?.feed(frame);
+      try { engine?.feed(frame); } catch (err) { failed(err); }
       cpuMs += performance.now() - t0;
       audioMs += frame.length / 16;
       for (let i = 0; i < frame.length; i++) peak = Math.max(peak, Math.abs(frame[i]));

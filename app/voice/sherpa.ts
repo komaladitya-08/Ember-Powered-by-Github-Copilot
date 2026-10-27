@@ -9,7 +9,7 @@
 
 import { createRequire } from "node:module";
 import path from "node:path";
-import { Ring, SAMPLE_RATE, type VoiceBackend } from "./engine";
+import { MIN_TRANSCRIBE_SAMPLES, Ring, SAMPLE_RATE, type VoiceBackend } from "./engine";
 
 export interface ModelPaths {
   kws: string;
@@ -52,8 +52,12 @@ const VAD_MAX_SAMPLES = 25 * SAMPLE_RATE;
 const VAD_MAX_SPEECH_SECONDS = 30;
 const CHECK_MAX_SAMPLES = 10 * SAMPLE_RATE;
 
+/**
+ * `monitor`: also spot the speakers' stream. `onError`: the recognizer failed on some audio (WebAssembly throws bare
+ * numbers): that audio is heard as nothing, and the voice process carries on (review #253).
+ */
 /* eslint-disable @typescript-eslint/no-explicit-any -- sherpa-onnx ships untyped JS */
-export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = {}): VoiceBackend & { free(): void } {
+export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void } = {}): VoiceBackend & { free(): void } {
   const requireCjs = createRequire(__filename);
   const sherpa = requireCjs("sherpa-onnx") as any;
   const k = (f: string) => path.join(models.kws, f);
@@ -211,13 +215,18 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean } = 
     flushVad: () => flush(),
     resetVad: () => reset(),
     transcribe(samples) {
-      const s = asr.createStream();
+      if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";
+      let s: any = null;
       try {
+        s = asr.createStream();
         s.acceptWaveform(SAMPLE_RATE, samples);
         asr.decode(s);
         return String(asr.getResult(s).text ?? "").trim();
+      } catch (err) {
+        opts.onError?.(err);
+        return "";
       } finally {
-        s.free();
+        s?.free();
       }
     },
     before: seg => before.get(seg) ?? null,

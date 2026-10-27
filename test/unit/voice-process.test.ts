@@ -1,0 +1,60 @@
+/**
+ * The voice utility process (app/voice/process.ts) with a stand-in for Electron's parent port and the recognizers:
+ * what it tells main when the recognizers fail on some audio or can't load.
+ */
+
+import { EventEmitter } from "node:events";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { VoiceBackend } from "../../app/voice/engine";
+
+const sherpa = vi.hoisted(() => ({ make: null as null | ((o: { onError?: (err: unknown) => void }) => VoiceBackend) }));
+vi.mock("../../app/voice/sherpa", () => ({ sherpaBackend: (_models: unknown, o: { onError?: (err: unknown) => void }) => sherpa.make!(o) }));
+
+/** A backend that hears nothing, unless `spot` is told otherwise. */
+function quiet(over: Partial<VoiceBackend> = {}): VoiceBackend {
+  return { spot: () => [], vad: () => [], speaking: () => false, flushVad: () => [], resetVad: () => undefined, transcribe: () => "", ...over };
+}
+
+/** A fresh voice process on a fake parent port; `backend` stands in for the recognizers (it may throw, as loading can). */
+async function voiceProcess(backend: (o: { onError?: (err: unknown) => void }) => VoiceBackend) {
+  vi.resetModules();
+  const parent = Object.assign(new EventEmitter(), { postMessage: vi.fn() });
+  (process as unknown as { parentPort: unknown }).parentPort = parent;
+  sherpa.make = backend;
+  await import("../../app/voice/process");
+  const port = Object.assign(new EventEmitter(), { start: vi.fn() });
+  return {
+    init: () => parent.emit("message", { data: { type: "init", models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false }, ports: [port] }),
+    frame: (f = new Float32Array(512).fill(0.01)) => port.emit("message", { data: f }),
+    sent: () => parent.postMessage.mock.calls.map(c => c[0] as { type: string }),
+  };
+}
+
+afterEach(() => { vi.useRealTimers(); });
+
+describe("the voice process", () => {
+  it("carries on when the recognizers fail on some audio, and tells main (at most once a minute) (review #253)", async () => {
+    vi.useFakeTimers();
+    let fail = true;
+    // WebAssembly throws bare numbers.
+    const p = await voiceProcess(() => quiet({ spot: () => { if (fail) throw 92691224; return []; } }));
+    p.init();
+    expect(p.sent()[0]).toMatchObject({ type: "ready" });
+    expect(() => { p.frame(); p.frame(); }).not.toThrow();
+    expect(p.sent().filter(m => m.type === "engine-error")).toEqual([{ type: "engine-error", message: "the speech recognizer failed (92691224)", count: 1 }]);
+    fail = false;
+    p.frame();
+    vi.advanceTimersByTime(61_000);
+    fail = true;
+    p.frame();
+    expect(p.sent().filter(m => m.type === "engine-error").at(-1)).toEqual({ type: "engine-error", message: "the speech recognizer failed (92691224)", count: 2 });
+  });
+
+  it("reports a failure the recognizer caught itself (the audio is heard as nothing) (review #253)", async () => {
+    let report: ((err: unknown) => void) | undefined;
+    const p = await voiceProcess(o => { report = o.onError; return quiet(); });
+    p.init();
+    report?.(new Error("Invalid input shape"));
+    expect(p.sent().filter(m => m.type === "engine-error")).toEqual([{ type: "engine-error", message: "Invalid input shape", count: 1 }]);
+  });
+});
