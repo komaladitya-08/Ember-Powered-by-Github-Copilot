@@ -602,7 +602,8 @@ the remote's policy before it copies anything, and the helper reads it again eve
 
 The helper keeps its own audit log on the remote (`~/.local/state/ember-remote/<machine>/audit/`, files readable by
 the user only; on Linux also copied to the system journal, with commands, titles and values as sizes only), kept for
-the remote policy's `auditRetentionDays` (default 30). The PC never deletes or rewrites it, and removing Ember's
+the remote policy's `auditRetentionDays` (default 30; while the remote's policy can't be read nothing is pruned, as on
+the PC). The PC never deletes or rewrites it, and removing Ember's
 helper keeps it. A user-space install can't stop the remote account itself (or root there) from changing the helper:
 the remote's policy binds an honest helper, and nothing from a remote can approve anything or run anything on the PC.
 

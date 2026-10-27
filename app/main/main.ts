@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
-import { commandMode, managedKeys } from "./admin";
+import { auditRetentionDays, commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -1346,7 +1346,9 @@ function start(): void {
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })));
-    try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
+    // Nothing is pruned while the policy can't be used: its retention can't be read then.
+    const keepDays = auditRetentionDays(admin);
+    try { if (keepDays !== null) audit.prune(keepDays); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState, {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.

@@ -154,6 +154,19 @@ export function loadAdminPolicy(file = ADMIN_POLICY_FILE, opts: { requireRootOwn
   return parseAdminPolicy(raw, file);
 }
 
+/** How long the audit log is kept when the policy doesn't say. */
+const DEFAULT_RETENTION_DAYS = 30;
+
+/**
+ * The days the audit log is kept under `loaded` (30 when it doesn't say), or null while the policy can't be used: then
+ * the administrator's retention can't be read (a typo, or a newer policy an older Ember doesn't understand), and a
+ * locked-down Ember never deletes evidence, so nothing is pruned until the policy reads fine again.
+ */
+export function auditRetentionDays(loaded: LoadedAdminPolicy): number | null {
+  if (loaded.error !== undefined) return null;
+  return loaded.policy.auditRetentionDays ?? DEFAULT_RETENTION_DAYS;
+}
+
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);

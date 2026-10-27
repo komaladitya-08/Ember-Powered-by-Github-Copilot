@@ -22,12 +22,15 @@ export interface RemoteAudit {
 /** Who the entries are from (set by hello; "" before). */
 export interface AuditSource { from: string; pcId: string }
 
-/** Opens the audit log in `dir` and prunes entries older than `retentionDays`. */
-export function createRemoteAudit(o: { dir: string; retentionDays: number; source: () => AuditSource; log: Logger; sink?: (line: string) => void; now?: () => Date }): RemoteAudit {
+/**
+ * Opens the audit log in `dir` and prunes entries older than `retentionDays` (null: prunes nothing, as while the remote's
+ * policy can't be read, so its retention isn't known: admin.ts auditRetentionDays).
+ */
+export function createRemoteAudit(o: { dir: string; retentionDays: number | null; source: () => AuditSource; log: Logger; sink?: (line: string) => void; now?: () => Date }): RemoteAudit {
   let audit: AuditLog | null = null;
   try {
     audit = new AuditLog(o.dir, o.now, o.sink);
-    audit.prune(o.retentionDays);
+    if (o.retentionDays !== null) audit.prune(o.retentionDays);
   } catch (err) {
     // A folder that can't be made: every write fails, so every step and command is refused.
     o.log.error("remote.audit_unavailable", { err });
