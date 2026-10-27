@@ -605,12 +605,19 @@ function shortcutFamily(k: string, kc: KeyConventions): boolean {
 }
 
 /**
+ * A key named in a script other than Latin (lower case, as canonicalKeys gives it): a character outside ASCII ("е"),
+ * or an X keysym of another script ("cyrillic_ie", "greek_tau", "hebrew_aleph", "kana_a", "hangul_a").
+ */
+const OTHER_SCRIPT_KEY = /\P{ASCII}|^(arabic|cyrillic|serbian|macedonia|ukrainian|ukranian|byelorussian|greek|hebrew|thai|hangul|korean|kana|armenian|georgian|sinh|farsi|lao|khmer|braille)_/u;
+
+/**
  * Keys only the user presses (`k` from canonicalKeys): the logo key with anything, power, media and
  * screenshot keys, virtual consoles, the run dialog, terminals, locking and logging out, switching
  * workspaces, and Ember's own shortcuts (Ctrl+Alt+Y/N/A/X/Space/E/M/End), so a task can never answer
  * its own question or stop, hide or reconfigure Ember. Shift doesn't change that. Off Linux also every combination in
  * the family of Ember's own shortcuts there (shortcutFamily) and the OS's own (kc.systemKeys: the app switcher, the
  * task manager, Spotlight, screenshots). On macOS ⌘ is the primary modifier, so the logo-key rule isn't applied there.
+ * On Linux also a key named in another script with Ctrl or Alt (OTHER_SCRIPT_KEY).
  */
 export function isSystemKey(k: string, kc: KeyConventions = KEYS.linux): boolean {
   const parts = keyFamily(k).split("+");
@@ -622,8 +629,10 @@ export function isSystemKey(k: string, kc: KeyConventions = KEYS.linux): boolean
   if (ctrlAlt && /^f\d{1,2}$/.test(key)) return true;
   if (mods.has("alt") && !mods.has("ctrl") && /^f[12]$/.test(key)) return true;
   if (ctrlAlt && /^(backspace|delete|tab|t|l|up|down|left|right|y|n|a|x|space|e|m|end)$/.test(key)) return true;
-  // Linux: the Ctrl+Alt rules above already cover Ember's own shortcuts, and nothing is added there.
-  if (kc.os === "linux") return false;
+  // Linux: the Ctrl+Alt rules above already cover Ember's own shortcuts, and nothing is added there but keys named in
+  // another script, which Ember's keyboard presses on another layout group's physical key (Ctrl+Alt+Cyrillic_ie is
+  // Ctrl+Alt+T on a us,ru keyboard): the rules above judge Latin names only, so with Ctrl or Alt those are refused.
+  if (kc.os === "linux") return (mods.has("ctrl") || mods.has("alt")) && OTHER_SCRIPT_KEY.test(key);
   return shortcutFamily(k, kc) || kc.systemKeys.includes(keyFamily(k));
 }
 
