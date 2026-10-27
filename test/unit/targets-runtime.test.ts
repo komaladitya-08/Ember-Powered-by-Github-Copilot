@@ -1285,7 +1285,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.activeWindow).not.toHaveBeenCalled();
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
     // Once one is added (its card accepted), it looks; the switch still turns it off.
-    r.settings.update(added);
+    r.settings.update({ targets: { ...r.settings.own().targets, hosts: [hostRecord("web-07")] } });
     r.ticks[0]();
     await flush();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
