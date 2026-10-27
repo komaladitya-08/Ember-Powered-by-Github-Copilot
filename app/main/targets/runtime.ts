@@ -402,7 +402,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   // The card's key hint: the keys main holds for the question up now (none when main doesn't say).
   const keyHint = (): string | null => { try { return deps.keyHint?.() ?? null; } catch { return null; } };
   const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint });
-  const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os });
+  // `notify`: a card that takes typing whose window didn't get the keyboard says so (review #235).
+  const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os, notify: deps.notify });
 
   // ── This computer's commands ──
   const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env });

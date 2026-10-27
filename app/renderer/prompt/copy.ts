@@ -51,6 +51,18 @@ export function readThrough(m: WordsMetrics): boolean {
 
 /** The words run on below what shows (the page fades their foot and says to scroll). */
 export const moreBelow = (m: WordsMetrics): boolean => !readThrough(m);
+
+/** On a card that takes typing whose window hasn't the keyboard (review #235): typing would go to another app. */
+export const KEYBOARD_ELSEWHERE_HINT = "Click here before you type: the keyboard is still in another app.";
+/** How long a card's window may take to get the keyboard before the page says it hasn't. */
+export const PROMPT_FOCUS_GRACE_MS = 600;
+
+/** The line above a card's buttons, or "" for none: a consent card not yet read through, or typing that would go astray. */
+export function promptHint(o: { consent: boolean; seen: boolean; field: boolean; focused: boolean; sinceShownMs: number }): string {
+  if (o.consent && !o.seen) return CONSENT_READ_HINT;
+  if (o.field && !o.focused && o.sinceShownMs >= PROMPT_FOCUS_GRACE_MS) return KEYBOARD_ELSEWHERE_HINT;
+  return "";
+}
 const NEVER_KEPT = " Ember hands it to SSH only: it's never saved, logged or sent to Copilot.";
 
 const ok = (label: string, o: Partial<ButtonView> = {}): ButtonView => ({ id: "ok", label, primary: true, isDefault: true, armed: false, ...o });

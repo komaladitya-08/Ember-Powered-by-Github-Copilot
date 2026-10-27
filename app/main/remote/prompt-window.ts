@@ -75,7 +75,19 @@ export function fitBounds(now: Rect, size: { width: number; height: number }, ar
 export interface PromptWindowLike extends BrowserWindowLike {
   /** Sizes the window for a card (fitBounds within its display's work area). */
   fit?(size: { width: number; height: number }): void;
+  /**
+   * Shows the window and gives it the keyboard as main brings settings to the front (review #235): macOS activates
+   * Ember (a hotkey or the ask box leaves the user's app active, so focus() alone doesn't make it the key window), and
+   * Windows asks through the input backend (foreground rules). Without it: show() and focus().
+   */
+  takeKeyboard?(): void;
 }
+
+/** How long after a card that takes typing shows the window must have the keyboard, or the user is told (review #235). */
+export const PROMPT_FOCUS_CHECK_MS = 800;
+
+/** What a card that takes typing asks for, in the notification that says the keyboard is elsewhere. */
+const ASKS_FOR = { password: "your password", passphrase: "your SSH key's passphrase", code: "a verification code", other: "an answer" } as const;
 
 /** A secret the page may send: one line, no NUL, at most this long (askpass hands it to ssh as one line). */
 const SECRET_MAX = 1024;
@@ -114,14 +126,23 @@ export function validPromptCard(c: unknown): c is PromptCard {
   }
 }
 
+/** What the prompt window is made from. `notify`: an OS notification (main's), for a card the keyboard didn't reach. */
+export interface PromptWindowOptions {
+  create: () => PromptWindowLike;
+  ipc: IpcLike;
+  log: Logger;
+  os: OS;
+  notify?: (title: string, body: string) => void;
+}
+
 /** The prompt window, as connections and the targets runtime use it. */
-export function createPromptWindow(o: { create: () => PromptWindowLike; ipc: IpcLike; log: Logger; os: OS }):
+export function createPromptWindow(o: PromptWindowOptions):
   PromptUi & { showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void } {
   return createPromptWindowController(o);
 }
 
 /** createPromptWindow with its extras typed: the same object (the targets runtime may call this name instead). */
-export function createPromptWindowController(o: { create: () => PromptWindowLike; ipc: IpcLike; log: Logger; os: OS }): PromptWindowController {
+export function createPromptWindowController(o: PromptWindowOptions): PromptWindowController {
   /** Logs, never letting a logger that fails stop the fail-closed path it reports. */
   const note = (level: "warn" | "error", msg: string, fields: Record<string, unknown>) => {
     try { o.log[level](msg, fields); } catch { /* nothing else to do: the caller goes on failing closed */ }
@@ -197,7 +218,36 @@ export function createPromptWindowController(o: { create: () => PromptWindowLike
     const size = promptSizeOf(queue[0].card);
     if (typeof w.fit === "function") safe("fit", () => w.fit?.(size));
     push();
-    safe("show", () => { w.show(); w.moveTop(); w.focus(); });
+    safe("show", () => {
+      w.show();
+      w.moveTop();
+      if (typeof w.takeKeyboard === "function") w.takeKeyboard();
+      else w.focus();
+    });
+    checkKeyboard(w, queue[0]);
+  }
+
+  /**
+   * A card that takes typing whose window didn't get the keyboard (macOS with another app active, Windows' foreground
+   * lock, a window manager that prevents focus stealing): a notification says so, once per card, so nobody types a
+   * secret into another app. The page says so on the card too.
+   */
+  let focusTimer: ReturnType<typeof setTimeout> | null = null;
+  const warned = new Set<string>();
+  function checkKeyboard(w: PromptWindowLike, e: Entry): void {
+    if (focusTimer) clearTimeout(focusTimer);
+    focusTimer = null;
+    const card = e.card;
+    if (card.kind !== "secret" || !o.notify || warned.has(card.id)) return;
+    focusTimer = setTimeout(() => {
+      focusTimer = null;
+      if (disposed || queue[0] !== e || live() !== w) return;
+      let has: boolean;
+      try { has = w.isFocused(); } catch { has = false; } // a window that can't say has to be clicked
+      if (has) return;
+      warned.add(card.id);
+      try { o.notify?.("Click Ember's window before you type", `Ember is asking for ${ASKS_FOR[card.secret]}, and the keyboard is still in another app.`); } catch (err) { note("warn", "prompt.notify_failed", { err }); }
+    }, PROMPT_FOCUS_CHECK_MS);
   }
 
   /** Answers a card (an `ask` card's promise) and moves to the next. */
@@ -205,6 +255,7 @@ export function createPromptWindowController(o: { create: () => PromptWindowLike
     const at = queue.indexOf(e);
     if (at < 0) return;
     queue.splice(at, 1);
+    warned.delete(e.card.id);
     e.resolve?.(a);
     if (at === 0) reveal();
   }
@@ -329,6 +380,8 @@ export function createPromptWindowController(o: { create: () => PromptWindowLike
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (focusTimer) clearTimeout(focusTimer);
+      focusTimer = null;
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
       consentFns.clear();
       consents.clear();

@@ -72,11 +72,14 @@ export function createCommandWindow(os: OS): BrowserWindow {
 
 /**
  * The prompt window ("Ember", §8.6): one card at a time (a host key, a password, a consent card), always on top. It
- * takes focus, as it takes typing. On Windows and macOS it is left out of screen captures. Its controller fits it to
- * each card (`fit`: small for an SSH prompt, larger for a consent card, review #182, #270), centred where it is and
- * inside its display's work area; the user doesn't resize it.
+ * takes the keyboard, as it takes typing: `takeKeyboard` is main's (as settings is brought to the front: macOS
+ * activates Ember, Windows asks through the input backend), else show() and focus(); on macOS its first click counts
+ * (review #235). On Windows and macOS it is left out of screen captures. Its controller fits it to each card (`fit`:
+ * small for an SSH prompt, larger for a consent card, review #182, #270), centred where it is and inside its display's
+ * work area; the user doesn't resize it.
  */
-export function createPromptWindow(os: OS): BrowserWindow & { fit(size: { width: number; height: number }): void } {
+export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: BrowserWindow) => void } = {}):
+  BrowserWindow & { fit(size: { width: number; height: number }): void; takeKeyboard(): void } {
   const win = new BrowserWindow({
     width: PROMPT_SIZE.card.width,
     height: PROMPT_SIZE.card.height,
@@ -90,6 +93,8 @@ export function createPromptWindow(os: OS): BrowserWindow & { fit(size: { width:
     skipTaskbar: false,
     backgroundColor: "#121011",
     autoHideMenuBar: true,
+    // A click on Allow or Connect while another app is active counts, rather than only activating Ember.
+    ...(os === "darwin" ? { acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("prompt"),
   });
   win.setAlwaysOnTop(true, "floating");
@@ -102,7 +107,12 @@ export function createPromptWindow(os: OS): BrowserWindow & { fit(size: { width:
     // Left where it is when it already has that size there (a window the user moved stays put).
     if (next.x !== now.x || next.y !== now.y || next.width !== now.width || next.height !== now.height) win.setBounds(next);
   };
-  return Object.assign(win, { fit });
+  const takeKeyboard = () => {
+    if (win.isDestroyed()) return;
+    if (hooks.takeKeyboard) hooks.takeKeyboard(win);
+    else { win.show(); win.focus(); }
+  };
+  return Object.assign(win, { fit, takeKeyboard });
 }
 
 /**

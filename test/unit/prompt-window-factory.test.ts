@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => ({
-  made: [] as { options: Record<string, unknown>; bounds: { x: number; y: number; width: number; height: number }; setBounds: unknown[] }[],
+  made: [] as { options: Record<string, unknown>; bounds: { x: number; y: number; width: number; height: number }; setBounds: unknown[]; calls: string[] }[],
   workArea: { x: 0, y: 0, width: 1920, height: 1040 },
 }));
 vi.mock("electron", () => ({
@@ -16,12 +16,14 @@ vi.mock("electron", () => ({
     destroyed = false;
     constructor(options: Record<string, unknown>) {
       const width = options.width as number, height = options.height as number;
-      this.rec = { options, bounds: { x: Math.round((1920 - width) / 2), y: Math.round((1040 - height) / 2), width, height }, setBounds: [] };
+      this.rec = { options, bounds: { x: Math.round((1920 - width) / 2), y: Math.round((1040 - height) / 2), width, height }, setBounds: [], calls: [] };
       electron.made.push(this.rec);
     }
     setContentProtection() { /* recorded elsewhere */ }
     setAlwaysOnTop() { /* recorded elsewhere */ }
     loadFile() { return Promise.resolve(); }
+    show() { this.rec.calls.push("show"); }
+    focus() { this.rec.calls.push("focus"); }
     once() { /* not shown by the factory */ }
     isDestroyed() { return this.destroyed; }
     getBounds() { return { ...this.rec.bounds }; }
@@ -62,5 +64,30 @@ describe("the prompt window's fit (review #182, #270)", () => {
     win.destroyed = true;
     win.fit(PROMPT_SIZE.consent);
     expect(electron.made[0].setBounds).toEqual([]);
+  });
+});
+
+describe("the prompt window and the keyboard (review #235)", () => {
+  it("counts the first click on macOS, where Ember is often not the active app", () => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      createPromptWindow(os);
+      const { options } = electron.made.at(-1)!;
+      if (os === "darwin") expect(options).toMatchObject({ acceptFirstMouse: true });
+      else expect(options).not.toHaveProperty("acceptFirstMouse");
+      // Still an ordinary window that takes the keyboard (a password is typed into it), not a panel.
+      expect(options).not.toHaveProperty("type");
+      expect(options).not.toHaveProperty("focusable");
+    }
+  });
+
+  it("takes the keyboard through main's hook (as settings is brought to the front), else shows and focuses itself", () => {
+    const given: unknown[] = [];
+    const win = createPromptWindow("darwin", { takeKeyboard: w => { given.push(w); } });
+    win.takeKeyboard();
+    expect(given).toEqual([win]);
+    expect(electron.made[0].calls).toEqual([]);
+    const plain = createPromptWindow("linux");
+    plain.takeKeyboard();
+    expect(electron.made[1].calls).toEqual(["show", "focus"]);
   });
 });

@@ -8,9 +8,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
 import {
-  PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
+  PROMPT_FOCUS_CHECK_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
 } from "../../app/main/remote/prompt-window";
-import { CONSENT_READ_HINT, PROMPT_ARM_MS, consentHashText, moreBelow, pressResult, promptView, readThrough } from "../../app/renderer/prompt/copy";
+import {
+  CONSENT_READ_HINT, KEYBOARD_ELSEWHERE_HINT, PROMPT_ARM_MS, consentHashText, moreBelow, pressResult, promptHint, promptView, readThrough,
+} from "../../app/renderer/prompt/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { Logger } from "../../app/main/logger";
 import type { ConsentPanel } from "../../app/shared/consent";
@@ -384,6 +386,90 @@ describe("the window's size", () => {
     expect(fitBounds({ x: -1000, y: 100, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: -1280, y: 0, width: 1280, height: 480 }))
       .toEqual({ x: -1000 + 220 - 260, y: 16, width: 520, height: 448 });
     expect(fitBounds({ x: 0, y: 0, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: 0, y: 0, width: 20, height: 20 })).toMatchObject({ width: 1, height: 1 });
+  });
+});
+
+describe("the keyboard (review #235)", () => {
+  /** A window whose keyboard hook and focus the test controls. */
+  function keyboardRig(o: { hook?: boolean; gets?: boolean } = {}) {
+    const ipc = new FakeIpc();
+    const notes: [string, string][] = [];
+    const windows: (FakeWindow & { takes: number })[] = [];
+    const ctl = createPromptWindowController({
+      create: () => {
+        const w = Object.assign(new FakeWindow(), { takes: 0 });
+        // focus() says it worked, but the OS may not give the keyboard (macOS: another app active; Windows: foreground lock).
+        w.focus = () => { w.focused = o.gets ?? false; };
+        windows.push(w);
+        return o.hook === false ? w : Object.assign(w, { takeKeyboard: () => { w.takes++; w.focused = o.gets ?? false; } });
+      },
+      ipc, log, os: "darwin", notify: (title: string, body: string) => { notes.push([title, body]); },
+    });
+    return { ctl, windows, notes, page: () => windows[0].webContents, ipc };
+  }
+
+  it("asks main to bring the window to the front with the keyboard, as settings does, for every card", () => {
+    const { ctl, windows } = keyboardRig({ gets: true });
+    void ctl.ask(password());
+    expect(windows[0].takes).toBe(1);
+    ctl.showConsent(1, commandsCard());
+    ctl.dismiss("p1");
+    expect(windows[0].shown()?.id).toBe("consent-1");
+    expect(windows[0].takes).toBe(2);
+  });
+
+  it("tells the user in a notification when a card that takes typing didn't get the keyboard, once", () => {
+    vi.useFakeTimers();
+    const { ctl, notes } = keyboardRig({ gets: false });
+    void ctl.ask(password());
+    expect(notes).toEqual([]);
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(notes).toEqual([["Click Ember's window before you type", "Ember is asking for your password, and the keyboard is still in another app."]]);
+    vi.advanceTimersByTime(10 * PROMPT_FOCUS_CHECK_MS);
+    expect(notes).toHaveLength(1);
+  });
+
+  it("stays quiet when the window got the keyboard, when the card went first, and for a card nothing is typed into", () => {
+    vi.useFakeTimers();
+    const got = keyboardRig({ gets: true });
+    void got.ctl.ask(password());
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(got.notes).toEqual([]);
+    const gone = keyboardRig({ gets: false });
+    void gone.ctl.ask(password());
+    gone.ctl.dismiss("p1");
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(gone.notes).toEqual([]);
+    const consent = keyboardRig({ gets: false });
+    consent.ctl.showConsent(1, commandsCard());
+    void consent.ctl.ask(hostKey());
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(consent.notes).toEqual([]);
+  });
+
+  it("names what each secret card asks for, and still shows and focuses a window without the hook", () => {
+    vi.useFakeTimers();
+    for (const [secret, what] of [["passphrase", "your SSH key's passphrase"], ["code", "a verification code"], ["other", "an answer"]] as const) {
+      const r = keyboardRig({ gets: false, hook: false });
+      void r.ctl.ask({ id: "s", kind: "secret", secret, host: "build-01", prompt: "Enter passphrase for key '/home/ana/.ssh/id_ed25519':" });
+      expect(r.windows[0].visible).toBe(true);
+      vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+      expect(r.notes).toEqual([["Click Ember's window before you type", `Ember is asking for ${what}, and the keyboard is still in another app.`]]);
+    }
+  });
+});
+
+describe("the page's hint line", () => {
+  it("says to read a consent card through first, and on a card that takes typing that the keyboard is elsewhere (review #182, #235)", () => {
+    const base = { consent: false, seen: false, field: false, focused: true, sinceShownMs: 5000 };
+    expect(promptHint({ ...base, consent: true })).toBe(CONSENT_READ_HINT);
+    expect(promptHint({ ...base, consent: true, seen: true })).toBe("");
+    expect(promptHint({ ...base, field: true, focused: false })).toBe(KEYBOARD_ELSEWHERE_HINT);
+    expect(KEYBOARD_ELSEWHERE_HINT).toBe("Click here before you type: the keyboard is still in another app.");
+    // Not while the window is still being given the keyboard, not once it has it, and not on a card nothing is typed into.
+    expect(promptHint({ ...base, field: true, focused: false, sinceShownMs: 100 })).toBe("");
+    expect(promptHint({ ...base, field: true, focused: true })).toBe("");
+    expect(promptHint({ ...base, focused: false })).toBe("");
   });
 });
 

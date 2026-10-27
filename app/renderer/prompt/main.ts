@@ -4,11 +4,15 @@
  * as text nodes from the card's fields (values from outside Ember with every character made visible); a secret goes
  * to main once, and the field is cleared the moment it is sent. A consent card's yes carries the hash of the very text
  * this page showed (computed here), so main can tell it was that text, and it can be pressed only once every word of
- * it has been in view (review #182, #270): words that run on below fade at their foot and say to scroll.
+ * it has been in view (review #182, #270): words that run on below fade at their foot and say to scroll. A card that
+ * takes typing says so when its window hasn't the keyboard, so nobody types a secret into another app (review #235).
  */
 
 import type { PromptCard } from "../../shared/remote-ui";
-import { CONSENT_READ_HINT, PROMPT_ARM_MS, consentHashText, isConsent, moreBelow, pressResult, promptView, readThrough, type Block, type ButtonView, type Part } from "./copy";
+import {
+  PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, consentHashText, isConsent, moreBelow, pressResult, promptHint, promptView, readThrough,
+  type Block, type ButtonView, type Part,
+} from "./copy";
 import type { PromptApi } from "./api";
 import { LEGEND_MIXED, LEGEND_TOKENS } from "../command/copy";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "../command/visible";
@@ -27,6 +31,7 @@ let armTimer: ReturnType<typeof setTimeout> | null = null;
 let sent = false;
 /** Every word of the card on screen has been in view since it came up. */
 let seen = false;
+let focusTimer: ReturnType<typeof setTimeout> | null = null;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -101,14 +106,17 @@ function judge(): void {
   // Words that scroll can be scrolled from the keyboard too (Tab to them, then the arrow keys or Page Down).
   if (m.scrollHeight > m.clientHeight + 1) words.tabIndex = 0;
   else words.removeAttribute("tabindex");
-  const h = isConsent(card) && !seen ? CONSENT_READ_HINT : "";
+  const h = promptHint({ consent: isConsent(card), seen, field: !$("form").hidden, focused: document.hasFocus(), sinceShownMs: Date.now() - shownAt });
   if (hint.textContent !== h) hint.textContent = h;
   hint.hidden = !h;
   paintArmed();
 }
-// Measured again when the words scroll, when the window is fitted to the card, and when their lines rewrap.
+// Measured again when the words scroll, when the window is fitted to the card, and when their lines rewrap; the
+// keyboard's line again when the window gets or loses it.
 words.addEventListener("scroll", judge, { passive: true });
 window.addEventListener("resize", judge);
+window.addEventListener("focus", judge);
+window.addEventListener("blur", judge);
 const rewrap = typeof ResizeObserver === "function" ? new ResizeObserver(() => judge()) : null;
 
 function show(next: PromptCard | null): void {
@@ -120,6 +128,8 @@ function show(next: PromptCard | null): void {
   field.value = "";
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;
+  if (focusTimer) clearTimeout(focusTimer);
+  focusTimer = null;
   rewrap?.disconnect();
   $("card").hidden = !next;
   if (!next) { buttons = []; return; }
@@ -148,6 +158,8 @@ function show(next: PromptCard | null): void {
   $("buttons").replaceChildren(...[...buttons].reverse().map(b => b.el));
   judge();
   for (const e of [words, ...words.children]) rewrap?.observe(e);
+  // The window has a moment to get the keyboard before the card says it hasn't.
+  if (view.field) focusTimer = setTimeout(() => { focusTimer = null; judge(); }, PROMPT_FOCUS_GRACE_MS + 5);
   // Where the keyboard starts: the field, else the button Enter presses, else the card's words (a consent card).
   const def = buttons.find(b => b.view.isDefault);
   if (view.field) field.focus();

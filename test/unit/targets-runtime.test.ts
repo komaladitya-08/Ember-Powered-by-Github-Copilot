@@ -217,12 +217,13 @@ function rig(o: RigOptions = {}) {
   } as unknown as SystemPlatform;
   let runnerOpts: Parameters<TargetsParts["localRunner"]>[0] | null = null;
   let cwOpts: Parameters<TargetsParts["commandWindow"]>[0] | null = null;
+  let pwOpts: Parameters<TargetsParts["promptWindow"]>[0] | null = null;
   const wslMade = vi.fn((_o: Parameters<TargetsParts["wsl"]>[0]) => wsl as unknown as WslService);
   const parts: TargetsParts = {
     env: { APPIMAGE: "/home/ana/Ember.AppImage" }, home: "/home/ana", user: "ana",
     localRunner: ro => { runnerOpts = ro; return local; },
     commandWindow: co => { cwOpts = co; return cw as unknown as CommandWindow; },
-    promptWindow: () => pw as unknown as PromptWindow,
+    promptWindow: po => { pwOpts = po; return pw as unknown as PromptWindow; },
     wsl: wslMade,
     connections: co => { Object.assign(connOpts, co); return conns as unknown as Connections; },
     remoteParts: remoteParts as unknown as TargetsParts["remoteParts"],
@@ -257,6 +258,7 @@ function rig(o: RigOptions = {}) {
     remoteDesktop, refreshes, reads,
     runnerOpts: () => runnerOpts!,
     cwOpts: () => cwOpts!,
+    pwOpts: () => pwOpts!,
     onAnswer: () => onAnswer, onConsent: () => onConsent,
     failConnect: (e: Error | null) => { connectFail = e; },
     holdConnect: () => { let release!: () => void; connectGate = new Promise(r => { release = r; }); return () => { connectGate = null; release(); }; },
@@ -855,6 +857,13 @@ describe("SSH targets", () => {
     await connected(r);
     expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
     expect(r.pw.dismiss).not.toHaveBeenCalled();
+  });
+
+  it("lets the prompt window tell the user, by main's notification, when a sign-in card didn't get the keyboard (review #235)", () => {
+    const r = rig();
+    expect(r.pwOpts()).toMatchObject({ os: "linux", ipc: r.deps.ipc });
+    expect(r.pwOpts().notify).toBe(r.deps.notify);
+    expect(r.pwOpts().create).toBe(r.deps.windows.prompt);
   });
 
   it("says nothing when the user cancels a password or passphrase card, as for the bubble's Cancel (review #193)", async () => {

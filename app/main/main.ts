@@ -1477,7 +1477,19 @@ function start(): void {
       ipc,
       // As the settings channels' guard: the settings window's own page only (critique integration-5).
       isHome: sender => !!home && !home.isDestroyed() && sender.id === home.webContents.id && isTrustedSender(home.webContents.getURL()),
-      windows: { command: () => createCommandWindow(platform.os), prompt: () => createPromptWindow(platform.os) },
+      windows: {
+        command: () => createCommandWindow(platform.os),
+        // The prompt window takes the keyboard as settings does, and its field the keys (an SSH password is typed into
+        // it; review #235): macOS activates Ember, Windows asks the input backend (foreground rules).
+        prompt: () => createPromptWindow(platform.os, {
+          takeKeyboard: win => {
+            bringToFront(win);
+            if (!sys.lifecycle.activateOwnWithInput) return;
+            const id = ownId(win);
+            try { if (id) inputRef?.focusInput?.(id); } catch { /* best effort, as bringToFront's activation */ }
+          },
+        }),
+      },
       fetch: (u, i) => net.fetch(u, i),
       devEnv,
       // Windows: the token's elevation, as the platform reads it (TokenElevation); elsewhere uid 0. It can't change while
