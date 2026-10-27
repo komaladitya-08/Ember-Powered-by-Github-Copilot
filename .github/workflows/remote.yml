@@ -379,6 +379,8 @@ jobs:
         run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
+      - name: The remote agent's parts (dist/remote-parts), so the connect-and-hello test runs too
+        run: node scripts/package/remote-parts.mjs
       - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA)
         run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-windows.test.ts
         env:
