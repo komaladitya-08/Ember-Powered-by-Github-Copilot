@@ -10,7 +10,7 @@ import fs from "node:fs";
 import { VoiceEngine, type VoiceEvent } from "./engine";
 import { ModelLoadError, sherpaBackend, type ModelPaths } from "./sherpa";
 import { SpeakerMonitor } from "./speakers";
-import { FrameWatchdog } from "./watchdog";
+import { FrameWatchdog, SilenceWatch } from "./watchdog";
 
 type FromMain =
   /** `dev`: an unpackaged (development) build. */
@@ -25,7 +25,8 @@ type FromMain =
  * and downloading them again repairs it); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone
  * frames for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the
  * process carried on; `alive`: every second once started (main restarts a process that goes quiet: it is stuck or
- * suspended, and can't say so itself).
+ * suspended, and can't say so itself); `silent`: the microphone has sent only digital silence for a minute (muted, or
+ * the wrong input), or sends sound again.
  */
 export type VoiceProcessMessage =
   | VoiceEvent
@@ -35,7 +36,8 @@ export type VoiceProcessMessage =
   | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
   | { type: "monitor"; on: boolean; reason?: string }
   | { type: "stalled"; ms: number }
-  | { type: "alive" };
+  | { type: "alive" }
+  | { type: "silent"; on: boolean };
 
 const parent = process.parentPort;
 const send = (m: VoiceProcessMessage) => parent.postMessage(m);
@@ -81,6 +83,7 @@ parent.on("message", e => {
       else send({ type: "error", message: "The speech models couldn't be loaded.", models: true });
     }
     const watchdog = new FrameWatchdog(ms => send({ type: "stalled", ms }));
+    const silence = new SilenceWatch(on => send({ type: "silent", on }));
     setInterval(() => { watchdog.check(); send({ type: "alive" }); }, 1000);
     const port = e.ports[0];
     port.on("message", ev => {
@@ -88,6 +91,7 @@ parent.on("message", e => {
       const d = ev.data as ArrayBuffer | ArrayBufferView;
       const frame = ArrayBuffer.isView(d) ? new Float32Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) : new Float32Array(d);
       dump?.write(Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength));
+      silence.frame(frame);
       const t0 = performance.now();
       try { engine?.feed(frame); } catch (err) { failed(err); }
       cpuMs += performance.now() - t0;

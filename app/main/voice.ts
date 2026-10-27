@@ -38,6 +38,8 @@ const RESTART_MS = [1000, 5000, 30_000];
  * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
  */
 const ALIVE_MS = 15_000;
+/** What the voice line says while the microphone sends only digital silence (review #255). */
+const SILENT_TEXT = "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.";
 
 export interface VoiceOptions {
   log: Logger;
@@ -94,6 +96,8 @@ export class VoiceService {
   private cancelledAt = Number.NEGATIVE_INFINITY;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
+  /** The microphone sends only digital silence (the voice line says so until sound comes back). */
+  private micSilent = false;
   /** Starting again after listening broke: the timer, how many times in a row, and when the current process got ready. */
   private retry: NodeJS.Timeout | null = null;
   private failures = 0;
@@ -234,6 +238,7 @@ export class VoiceService {
     this.setState("starting");
     this.readyAt = 0;
     this.micLost = false;
+    this.micSilent = false;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
@@ -261,6 +266,15 @@ export class VoiceService {
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
       if (m.type === "monitor") { this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "silent") {
+        // Frames still arrive (the watchdog is content), but nothing can be heard in them: said, not restarted.
+        this.o.log.warn("voice.silent", { on: m.on });
+        const was = this.micSilent;
+        this.micSilent = m.on;
+        if (m.on) this.setState("error", SILENT_TEXT);
+        else if (was && this.state === "error") this.setState("waiting"); // (not another error, such as a lost microphone)
+        return;
+      }
       if (m.type === "stalled") {
         // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.
         if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }

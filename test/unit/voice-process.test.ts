@@ -78,6 +78,19 @@ describe("the voice process", () => {
     expect(p.sent().filter(m => m.type === "alive")).toHaveLength(3);
   });
 
+  it("tells main when the microphone sends only digital silence for a minute, and when sound comes back (review #255)", async () => {
+    const p = await voiceProcess(() => quiet());
+    p.init();
+    const zeros = new Float32Array(512);
+    for (let i = 0; i < 1874; i++) p.frame(zeros); // just under 60 s
+    expect(p.sent().filter(m => m.type === "silent")).toEqual([]);
+    p.frame(zeros);
+    p.frame(zeros);
+    expect(p.sent().filter(m => m.type === "silent")).toEqual([{ type: "silent", on: true }]);
+    p.frame(new Float32Array(512).fill(0.0001)); // even a quiet room's noise is sound
+    expect(p.sent().filter(m => m.type === "silent")).toEqual([{ type: "silent", on: true }, { type: "silent", on: false }]);
+  });
+
   it("passes on other errors at start as they are", async () => {
     const p = await voiceProcess(() => { throw new Error("Cannot find module 'sherpa-onnx'"); });
     p.init();

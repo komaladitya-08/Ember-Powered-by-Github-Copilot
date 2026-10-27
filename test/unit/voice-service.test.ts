@@ -354,6 +354,18 @@ describe("VoiceService keeps listening going", () => {
     expect(proc.kill).not.toHaveBeenCalled();
   });
 
+  it("says when the microphone sends only silence (muted, or the wrong input), and keeps listening for it to come back (review #255)", async () => {
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    proc.emit("message", { type: "silent", on: true });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings." });
+    expect(proc.kill).not.toHaveBeenCalled();
+    proc.emit("message", { type: "silent", on: false });
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+  });
+
   it("a model folder that won't load is forgotten, and the download is offered again (review #254)", async () => {
     vi.useFakeTimers();
     const { v, states } = service();
