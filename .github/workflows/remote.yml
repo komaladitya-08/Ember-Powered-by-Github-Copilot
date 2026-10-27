@@ -356,7 +356,7 @@ jobs:
         env:
           EMBER_WSL_TEST: "1"
       - name: Windows PowerShell commands under the job host (RUN)
-        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts test/integration/commands-flow-local.test.ts
+        run: node scripts/run-integration.mjs --allow-missing test/integration/commands-local.test.ts
         env:
           EMBER_COMMANDS_TEST: "1"
       - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA)

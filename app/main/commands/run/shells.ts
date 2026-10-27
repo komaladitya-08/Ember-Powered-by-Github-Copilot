@@ -56,8 +56,12 @@ export const WSL_EVAL = "set -f; eval $EMBER_INNER";
  */
 export const WSL_CD = 'cd -- "$EMBER_CWD" || exit 97';
 
-/** PowerShell's fixed launcher (§3.3, critique integration-10). */
+/**
+ * PowerShell's fixed launcher (§3.3, critique integration-10). A cmdlet's non-terminating error ends the run with 1: it
+ * lands in $Error, while `$?` after `& $s` stays true (windows-2022, Windows PowerShell 5.1). $Error.Count, not a method
+ * call, so Constrained Language Mode allows it.
+ */
 export const PS_INNER =
   "if ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; $OutputEncoding = New-Object Text.UTF8Encoding $false }; " +
   "$s = [ScriptBlock]::Create($env:EMBER_CMD); Remove-Item Env:\\EMBER_CMD -ErrorAction SilentlyContinue; " +
-  "$global:LASTEXITCODE = 0; & $s; $ok = $?; $c = $LASTEXITCODE; if ($c) { exit $c } elseif (-not $ok) { exit 1 }";
+  "$global:LASTEXITCODE = 0; $n = $Error.Count; & $s; $ok = $?; $c = $LASTEXITCODE; if ($c) { exit $c } elseif (-not $ok -or $Error.Count -ne $n) { exit 1 }";

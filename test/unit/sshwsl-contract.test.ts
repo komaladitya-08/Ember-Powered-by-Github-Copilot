@@ -559,7 +559,7 @@ describe("the fixed launcher texts (§3.3)", () => {
     expect(PS_INNER).toBe(
       "if ($ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false; $OutputEncoding = New-Object Text.UTF8Encoding $false }; " +
       "$s = [ScriptBlock]::Create($env:EMBER_CMD); Remove-Item Env:\\EMBER_CMD -ErrorAction SilentlyContinue; " +
-      "$global:LASTEXITCODE = 0; & $s; $ok = $?; $c = $LASTEXITCODE; if ($c) { exit $c } elseif (-not $ok) { exit 1 }",
+      "$global:LASTEXITCODE = 0; $n = $Error.Count; & $s; $ok = $?; $c = $LASTEXITCODE; if ($c) { exit $c } elseif (-not $ok -or $Error.Count -ne $n) { exit 1 }",
     );
   });
 });
