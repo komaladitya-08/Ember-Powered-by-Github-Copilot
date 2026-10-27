@@ -189,7 +189,7 @@ export function consentText(i: ConsentInput): ConsentText {
       screen: `On ${label}'s screen it reads and uses apps only when ${s.login} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.`,
       headless: `${label} has no desktop, so Ember will only run commands there.`,
       "remote-session": `${label}'s desktop is a remote session: Ember will run commands only.`,
-      wsl: `${label} is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.`,
+      wsl: `${label} is WSL on another computer: its Linux apps show on that computer's screen, so Ember will run commands only.`,
       mac: "Ember can't use a Mac's screen over SSH yet; it will run commands there."
         + (s.tccBlocked ? " Commands there can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on (System Settings › General › Sharing › Remote Login › ⓘ)." : ""),
     }[s.desktop];

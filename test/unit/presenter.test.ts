@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, handStep, plainText, problemTitle, questionAloud, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 function setup() {
@@ -206,11 +206,11 @@ describe("Presenter: review round 2", () => {
     const { friendlyError } = await import("../../app/main/agent/presenter");
     const cases: [string, string | undefined, { statusCode?: number; provider?: boolean }, RegExp][] = [
       ["400 The response was filtered due to the prompt triggering Azure OpenAI's content management policy.", "query", { statusCode: 400 }, /content filter/],
-      ["Authentication failed with provider at http://x/v1 (HTTP 403).", "authentication", { statusCode: 403, provider: true }, /organisation's AI endpoint refused/],
-      ["Authentication failed with provider at http://x/v1 (HTTP 401).", "authentication", { statusCode: 401, provider: true }, /organisation's AI endpoint refused/],
+      ["Authentication failed with provider at http://x/v1 (HTTP 403).", "authentication", { statusCode: 403, provider: true }, /organisation's model service refused/],
+      ["Authentication failed with provider at http://x/v1 (HTTP 401).", "authentication", { statusCode: 401, provider: true }, /organisation's model service refused/],
       ["Request failed: 401 Unauthorized", undefined, {}, /sign in again/],
       ["Forbidden", undefined, { statusCode: 403 }, /organisation policy or a missing Copilot seat/],
-      ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's AI endpoint/],
+      ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's model service/],
       ["Failed to get response from the AI model; retried 5 times. Last error: 429 Rate limit reached", "rate_limit", { statusCode: 429 }, /usage limit/],
       ["400 This model's maximum context length is 8192 tokens.", "query", { statusCode: 400 }, /too much/],
       ["Resource not found on provider at http://x/v1 (HTTP 404).", "query", { statusCode: 404, provider: true }, /model I'm set to use/],
@@ -477,7 +477,7 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
     const { friendlyError } = await import("../../app/main/agent/presenter");
     expect(friendlyError("Pending response rejected since connection got disposed")).toMatch(/can't reach Copilot/);
     expect(friendlyError("Failed to get response from the AI model; retried 5 times (total retry wait time: 54.36 seconds) Last error: 502 Bad gateway")).toBe("Copilot had a problem on its side. Try again in a moment.");
-    expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's AI endpoint had a problem/);
+    expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's model service had a problem/);
   });
 });
 
@@ -837,5 +837,22 @@ describe("the bubble speaks in one voice, Ember's own (review #22)", () => {
     expect(last().bubble?.thought).toBe(`“${"x".repeat(119)}…”`);
     p.userPrompt("what's the time?");
     expect(last().bubble?.thought).toBe("“what's the time?”");
+  });
+});
+
+describe("one name for the organisation's own model service (review #228)", () => {
+  it("says model service in every problem from it, never AI endpoint or AI service", () => {
+    const raws: [string, string | undefined, { statusCode?: number; provider?: boolean }][] = [
+      ["Authentication failed (HTTP 401).", "authentication", { statusCode: 401, provider: true }], ["ECONNREFUSED", undefined, { provider: true }],
+      ["429", "rate_limit", { statusCode: 429, provider: true }], ["503 Service Unavailable", undefined, { provider: true }],
+      ["content_filter", undefined, { provider: true }], ["strange", undefined, { provider: true }],
+    ];
+    for (const [raw, type, ctx] of raws) {
+      const said = friendlyError(raw, type, ctx);
+      expect(said, raw).toMatch(/model service/);
+      expect(said, raw).not.toMatch(/AI (endpoint|service)/);
+    }
+    // Copilot's own content filter is Copilot's.
+    expect(friendlyError("content_filter")).toBe("Copilot's content filter blocked that request. Try asking in other words.");
   });
 });

@@ -387,7 +387,7 @@ describe("the macOS app bundle", () => {
     });
     expect(values.NSAppleEventsUsageDescription).toMatch(/appearance settings.*when you ask/);
     // macOS 15's Local Network prompt names SSH too: Ember's ssh reaches computers on the local network (§5.1.8).
-    expect(values.NSLocalNetworkUsageDescription).toBe("Ember connects to your organisation's AI service or proxy, and to computers you connect to over SSH, when they are on your local network.");
+    expect(values.NSLocalNetworkUsageDescription).toBe("Ember connects to your organisation's model service or proxy, and to computers you connect to over SSH, when they are on your local network.");
     // The executable stage.mjs renamed (layout.mjs), so that Electron's app.isPackaged is true.
     expect(values.CFBundleExecutable).toBe(EXECUTABLE);
     expect(layoutFor("darwin", "arm64").exe).toBe(`Contents/MacOS/${EXECUTABLE}`);

@@ -38,9 +38,9 @@ export function infoPlistValues(version) {
     ["NSMicrophoneUsageDescription", "string", "Ember listens for “Hey Ember” on this Mac only when you turn it on. Audio never leaves your Mac."],
     // Changing dark mode goes through System Events (osascript).
     ["NSAppleEventsUsageDescription", "string", "Ember changes appearance settings, such as dark mode, when you ask it to."],
-    // macOS 15 asks before an app reaches the local network: an organisation's AI service or proxy can be there, and
+    // macOS 15 asks before an app reaches the local network: an organisation's model service or proxy can be there, and
     // so can a computer Ember works on over SSH (design §5.1.8, critique remote-29).
-    ["NSLocalNetworkUsageDescription", "string", "Ember connects to your organisation's AI service or proxy, and to computers you connect to over SSH, when they are on your local network."],
+    ["NSLocalNetworkUsageDescription", "string", "Ember connects to your organisation's model service or proxy, and to computers you connect to over SSH, when they are on your local network."],
   ];
 }
 

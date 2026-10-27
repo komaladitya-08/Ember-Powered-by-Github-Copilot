@@ -209,7 +209,8 @@ function renderChecks(environment: Status["environment"]): void {
   failing = environment.checks.filter(c => c.status === "fail").length;
   const warn = environment.checks.filter(c => c.status === "warn").length;
   const note = $("checks-note");
-  note.textContent = failing ? `${failing} to fix` : warn ? `${warn} to look at` : "All good";
+  // As `ember doctor` says it ("worth a look").
+  note.textContent = failing ? `${failing} to fix` : warn ? `${warn} worth a look` : "All good";
   note.className = `fold-note${failing ? " fail" : warn ? " warn" : ""}`;
   // Something fails: the check opens by itself (once), and it shows even before Start.
   if (failing && !checksOpened) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }

@@ -47,31 +47,31 @@ export function plainText(s: string): string {
 
 /**
  * One plain sentence for an error from Copilot, instead of the raw SDK or HTTP text.
- * `raw` is kept for the log by the caller. `provider`: the organisation's own endpoint
+ * `raw` is kept for the log by the caller. `provider`: the organisation's own model service
  * is configured (there is no GitHub sign-in to blame then). `settingsKey`: the settings
  * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E").
  */
 export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string } = {}): string {
   const m = `${errorType ?? ""} ${raw}`;
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
-  const service = ctx.provider ? "your organisation's AI endpoint" : "Copilot";
+  const service = ctx.provider ? "your organisation's model service" : "Copilot";
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
-  if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return "The AI service's content filter blocked that request. Try asking in other words.";
+  if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;
   if (ctx.provider && (errorType === "authentication" || status === 401 || status === 403 || /authenticat|unauthori[sz]ed|forbidden/i.test(m))) {
-    return "Your organisation's AI endpoint refused the request. Ask your administrator to check Ember's endpoint settings.";
+    return "Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.";
   }
   const refused = "Copilot refused this for your account (an organisation policy or a missing Copilot seat).";
   if (status === 403) return refused;
   if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return "Copilot didn't accept the sign-in. Open settings to sign in again.";
-  if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The AI endpoint's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
+  if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
   if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one in settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
   if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
-  if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${ctx.provider ? "Your organisation's AI endpoint" : "Copilot"} had a problem on its side. Try again in a moment.`;
+  if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${ctx.provider ? "Your organisation's model service" : "Copilot"} had a problem on its side. Try again in a moment.`;
   const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
-  const who = ctx.provider ? "The AI endpoint" : "Copilot";
+  const who = ctx.provider ? "The model service" : "Copilot";
   return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
 }
 

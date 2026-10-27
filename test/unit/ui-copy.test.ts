@@ -43,7 +43,8 @@ describe("settings window words", () => {
     expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     expect(tagline({ ...base, hidden: true })).toMatch(/^Ember is hidden for now\./);
     expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
-    expect(tagline({ ...base, failing: 2 })).toMatch(/fixed/);
+    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs 1 thing fixed before it can work on this computer.");
     // Copilot stopped answering with tasks at work: no "connect" (signing in again isn't the fix).
     expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks running are done.");
   });
@@ -404,7 +405,7 @@ describe("the first-use consent cards (§8.4)", () => {
   it("says what Ember can do with each kind of remote screen", () => {
     expect(keep(ssh({ desktop: "headless" }).body[3])).toBe("build-01 has no desktop, so Ember will only run commands there.");
     expect(keep(ssh({ desktop: "remote-session" }).body[3])).toBe("build-01's desktop is a remote session: Ember will run commands only.");
-    expect(keep(ssh({ desktop: "wsl" }).body[3])).toBe("build-01 is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.");
+    expect(keep(ssh({ desktop: "wsl" }).body[3])).toBe("build-01 is WSL on another computer: its Linux apps show on that computer's screen, so Ember will run commands only.");
     expect(keep(ssh({ desktop: "mac" }).body[3])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there.");
     expect(keep(ssh({ desktop: "mac", tccBlocked: true }).body[3])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there. Commands there can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on (System Settings › General › Sharing › Remote Login › ⓘ).");
     expect(ssh({ graceSeconds: 45, bundleMB: 33, unpackedMB: 130 }).body[1]).toContain("about 33 MB, unpacked to about 130 MB");
