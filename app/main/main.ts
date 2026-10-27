@@ -20,6 +20,7 @@ import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSen
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
+import { applyPagePrefs, pagePrefs } from "./page-prefs";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
@@ -332,6 +333,8 @@ function start(): void {
   app.on("web-contents-created", (_e, contents) => {
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-navigate", e => e.preventDefault());
+    // Calm mode reaches every page of Ember's as it loads, those sent no settings too (page-prefs.ts).
+    contents.on("dom-ready", () => void applyPagePrefs(contents, pagePrefs(settings.get())));
   });
 
   // These channels change settings, sign in and out, and apply fixes: only the settings window may use them
@@ -401,6 +404,14 @@ function start(): void {
   }));
   settings.onChange(s => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
+  });
+  // And again when it changes (only then: the size slider changes the settings many times a second).
+  let pagePrefsKey = JSON.stringify(pagePrefs(settings.get()));
+  settings.onChange(s => {
+    const prefs = pagePrefs(s);
+    if (JSON.stringify(prefs) === pagePrefsKey) return;
+    pagePrefsKey = JSON.stringify(prefs);
+    for (const w of BrowserWindow.getAllWindows()) void applyPagePrefs(w.webContents, prefs);
   });
 
   // Ember keeps running without windows: the overlay and handle are its presence.
