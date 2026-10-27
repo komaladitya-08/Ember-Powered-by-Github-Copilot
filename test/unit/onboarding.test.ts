@@ -398,6 +398,25 @@ describe("speaking with no voice on the computer", () => {
     w.utterance().failed("synthesis-failed");
     expect(said).toEqual([false, true, false]);
   });
+
+  it("says no voice only for the synthesiser's no-voice errors; any other error tells nothing (review #101)", () => {
+    // Each case starts from "speech works", then one reply fails with that error.
+    const after = (error: string) => {
+      const t = timers();
+      const said: boolean[] = [];
+      const w = speechWatch({ timeoutMs: 8000, setTimer: t.setTimer, clearTimer: t.clearTimer, report: ok => said.push(ok) });
+      w.utterance().started();
+      w.utterance().failed(error);
+      // The failed reply's wait is over too: it doesn't turn into "no voice" 8 s later.
+      t.fire();
+      return said.slice(1);
+    };
+    for (const error of ["synthesis-unavailable", "synthesis-failed", "language-unavailable", "voice-unavailable"]) expect(after(error), error).toEqual([false]);
+    // A reply too long, a busy or broken sound device, a refused or bad request: the computer may well have a voice.
+    for (const error of ["text-too-long", "audio-busy", "audio-hardware", "not-allowed", "invalid-argument", "network", "interrupted", "canceled", "something-new"]) {
+      expect(after(error), error).toEqual([]);
+    }
+  });
 });
 
 describe("the settings window when no voice speaks", () => {
@@ -416,7 +435,12 @@ describe("the settings window when no voice speaks", () => {
 
   it("says so under the Speak switch, and reads the setup check again when it changes (review #101)", () => {
     expect(SPEAK_NO_VOICE).toBe("Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.");
-    expect(PAGE).toMatch(/<label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies, questions and results out loud<\/span><\/label>\s*<\/div>\s*<p class="hint" id="speak-note" role="status" hidden><\/p>/);
+    // Under the Speak control in the Voice section, whatever that control is (fix/voice makes it a <select>).
+    const at = PAGE.indexOf("aria-labelledby=\"voice-h\"");
+    const voice = PAGE.slice(at, PAGE.indexOf("</section>", at));
+    expect(voice.indexOf("id=\"speak-note\"")).toBeGreaterThan(voice.indexOf("id=\"speak\""));
+    expect(voice.indexOf("id=\"speak\"")).toBeGreaterThan(0);
+    expect(tagOf("speak-note")).toEqual({ tag: "p", attrs: { class: "hint", id: "speak-note", role: "status", hidden: "" } });
     expect(SCRIPT).toMatch(/const missing = v\.speechMissing === true;/);
   });
 
