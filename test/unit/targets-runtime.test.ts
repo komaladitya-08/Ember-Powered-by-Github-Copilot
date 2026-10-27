@@ -880,6 +880,26 @@ describe("SSH targets", () => {
     expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01", "build-01-2"]);
   });
 
+  it("says \"Already added\" from offer_connect's Connect when the ssh alias is a computer Ember is on, with no second record, card or connect (review #181)", async () => {
+    // The ssh config's "build-02" turns out to be deploy@build-01.example.com, the computer Ember is connected to as build-01.
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    await connected(r);
+    const cardsBefore = r.cards.length;
+    r.conns.resolve.mockResolvedValueOnce({ user: "deploy", hostname: "build-01.example.com", port: 22, jump: [], controlPath: null });
+    expect(r.t.agent.offerConnect("build-02", "connect to build-02 please")).toMatch(/Connect button for build-02/);
+    r.showState.mockClear();
+    expect(r.t.bubbleAction("offer:1:connect")).toBe(true);
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
+      title: "Already added as build-01", thought: "I'm on build-01 already, so I'll work there.", actions: [], mood: "done",
+    }) });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    expect(r.cards.length).toBe(cardsBefore);
+    expect(r.conns.connect).toHaveBeenCalledTimes(1);
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringMatching(/^Connecting to/) }) });
+    expect(r.t.agent.active).toBe("ssh:build-01");
+  });
+
   it("resets a remote picked last time to this computer at start (it isn't connected yet)", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")], { active: "ssh:build-01" }) });
     expect(r.t.agent.active).toBe("local");

@@ -832,7 +832,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (!r.ok) return r;
       // From a bubble's button, an already connected one has nothing else on screen to say where Ember is.
       if (o.bubble && (was === "ready" || was === "stalled")) {
-        bubble(`connected:${same.id}`, { title: `Already added as ${same.id}`, thought: `Ember is on ${same.id} already, so I'll work there.`, actions: [], mood: "done" }, INFO_MS);
+        bubble(`connected:${same.id}`, { title: `Already added as ${same.id}`, thought: `I'm on ${same.id} already, so I'll work there.`, actions: [], mood: "done" }, INFO_MS);
       }
       return { ok: true, message: `Already added as ${same.id}.` };
     }
