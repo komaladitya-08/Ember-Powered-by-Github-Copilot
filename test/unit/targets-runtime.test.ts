@@ -809,6 +809,32 @@ describe("SSH targets", () => {
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
   });
 
+  it("takes the host's card down when its connection is cancelled, forgotten or stopped while it is up (review #186)", async () => {
+    for (const how of ["cancel", "forget", "stop"] as const) {
+      const r = rig({ settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]) });
+      // The card waits for the user; dismissing it answers it no, as the prompt window does.
+      const open = new Map<string, (a: PromptAnswer) => void>();
+      r.pw.ask.mockImplementationOnce((card: { id: string }) => new Promise<PromptAnswer>(res => { open.set(card.id, res); }));
+      r.pw.dismiss.mockImplementation((id: string) => { open.get(id)?.({ id, ok: false }); open.delete(id); });
+      const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+      await flush();
+      expect(r.pw.ask).toHaveBeenCalledTimes(1);
+      const id = r.pw.ask.mock.calls[0][0].id;
+      if (how === "cancel") expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
+      else if (how === "forget") void r.invoke(TARGETS_IPC.act, r.home, { kind: "forget", hostId: "build-01" });
+      else void r.t.stopAll();
+      await expect(pending, how).resolves.toEqual({ ok: false, message: "Cancelled." });
+      expect(r.pw.dismiss, how).toHaveBeenCalledWith(id);
+      expect(open.size, how).toBe(0);
+      expect(r.conns.connect, how).not.toHaveBeenCalled();
+    }
+    // A card answered before anything cancels is never dismissed afterwards.
+    const r = rig({ settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]) });
+    await connected(r);
+    expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
+    expect(r.pw.dismiss).not.toHaveBeenCalled();
+  });
+
   it("says nothing when the user cancels a password or passphrase card, as for the bubble's Cancel (review #193)", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     // SA ends the attempt as cancelled when the user closes its sign-in card (connections.ts failureOf).

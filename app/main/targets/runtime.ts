@@ -562,13 +562,20 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
 
   // ── Consent cards asked directly (settings' switches, connecting) ──
   let cardSeq = 0;
-  const askCard = async (card: ConsentPanel): Promise<boolean> => {
+  /** `signal`: the connection the card belongs to; cancelled, forgotten or stopped, the card leaves the screen as a no. */
+  const askCard = async (card: ConsentPanel, signal?: AbortSignal): Promise<boolean> => {
+    const id = `consent-${++cardSeq}`;
+    if (signal?.aborted) return false;
+    const drop = () => { try { promptWindow.dismiss(id); } catch (err) { log.warn("targets.consent_dismiss_failed", { err }); } };
+    signal?.addEventListener("abort", drop, { once: true });
     try {
-      const a = await promptWindow.ask({ id: `consent-${++cardSeq}`, kind: "consent-direct", consent: card });
+      const a = await promptWindow.ask({ id, kind: "consent-direct", consent: card });
       return consentYes(card, a);
     } catch (err) {
       log.warn("targets.consent_failed", { feature: card.feature, err });
       return false;
+    } finally {
+      signal?.removeEventListener("abort", drop);
     }
   };
 
@@ -705,8 +712,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const resolved = { user: now.user, hostname: now.hostname, port: now.port, jump: [...now.jump] };
       if (sshNeedsConsent(host, resolved)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
-        if (!(await askCard(card))) return stopped("Not now.");
-        // Cancelled, forgotten or stopped by the kill switch while the card was up: nothing is saved or connected.
+        // Cancelled, forgotten or stopped by the kill switch while the card was up: the card goes; nothing is saved.
+        if (!(await askCard(card, abort.signal))) return stopped(abort.signal.aborted ? "Cancelled." : "Not now.");
         if (abort.signal.aborted) return stopped("Cancelled.");
         host = { ...host, resolved, consent: consentGiven("ssh", parts.now()) };
         saveHost(host);
@@ -719,7 +726,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // Another computer under the same name than the one the user said yes to: asked again (§7.4).
       if (machineChanged(host, link.welcome.machineIdHash)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card))) return letGo("Not now.");
+        if (!(await askCard(card, abort.signal))) return letGo(abort.signal.aborted ? "Cancelled." : "Not now.");
         if (abort.signal.aborted) return letGo("Cancelled.");
         host = { ...host, consent: consentGiven("ssh", parts.now()) };
       }
@@ -752,7 +759,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // (once), and on a yes the old machine is forgotten and Ember connects afresh (SA then remembers the new one).
       if (err instanceof ConnectError && err.kind === "machine-changed" && !o.again) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card))) return stopped("Not now.");
+        if (!(await askCard(card, abort.signal))) return stopped(abort.signal.aborted ? "Cancelled." : "Not now.");
         const now = hostOf(hostId);
         if (abort.signal.aborted || !now) return stopped("Cancelled.");
         const { machineIdHash: _was, ...rest } = now;
