@@ -24,6 +24,11 @@ export interface PlatformWords {
   readonly shellUnchecked: string;
   /** perception/index.ts:424 (an overview of every window is open). */
   readonly overviewOpen: string;
+  /**
+   * perception/index.ts: why there is no screenshot when the OS hasn't let Ember capture the screen (macOS's Screen
+   * Recording permission). Only macOS has such a permission: absent elsewhere.
+   */
+  readonly noScreenAccess?: string;
   /** main.ts:887-889: why a sign-in can't be kept ("No keyring is available"). */
   readonly keyringMissing: string;
   /** home/index.html:91 consent copy. */
@@ -61,6 +66,7 @@ export const PLATFORM_WORDS: Readonly<Record<OS, PlatformWords>> = {
     noScreen: "Ember doesn't have Accessibility permission", reinstall: "Install Ember again (drag a fresh Ember.app into Applications).",
     shellUnchecked: "macOS didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment",
     overviewOpen: "Mission Control or the app switcher is open (it shows every window), so Ember looks away until it's closed",
+    noScreenAccess: "Ember doesn't have the Screen Recording permission (System Settings › Privacy & Security › Screen Recording); once it's allowed there, quit and reopen Ember",
     keyringMissing: "Keychain access was denied",
     micIndicator: "macOS shows an orange dot in the menu bar while Ember listens.",
     // Input Monitoring too: keyboard borrowing needs it until CI shows key-state polling doesn't (design Q10).

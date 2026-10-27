@@ -29,7 +29,7 @@ export interface PerceptionOptions {
    * The window system: X11 on Linux (or the desk's remote X11), the Windows or macOS backend elsewhere; null without
    * one. The field keeps its old name so the desk and the tests keep compiling.
    */
-  x11: PerceptionWindows | null;
+  x11: (PerceptionWindows & ScreenAccess) | null;
   neverLook: () => string[];
   /** Full screen in native units (all displays): physical pixels on Linux and Windows, points on macOS. */
   screenBounds: () => Bounds;
@@ -41,7 +41,7 @@ export interface PerceptionOptions {
    */
   ownPid?: number;
   /** The OS's words for why there is no screenshot (default: Linux's, today's text). */
-  words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
+  words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
   /** Authentication and security windows on this OS (default: policy.ts's Linux vocabulary, today's check). */
   isSecurityWindow?: PrivacyVocabulary["isSecurityWindow"];
   /**
@@ -52,6 +52,13 @@ export interface PerceptionOptions {
   /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
   capture?: typeof captureRect;
 }
+
+/**
+ * What a window system may add for Perception: macOS's window system says whether Ember has the Screen Recording
+ * permission (DarwinWindowSystem.screenRecording), so a missing one is named instead of "off screen". Absent on Linux,
+ * Windows and the desk, which need no permission to capture.
+ */
+export interface ScreenAccess { screenRecording?(): boolean }
 
 /**
  * A window to read. `pid` with `path` (from an earlier read) names exactly one
@@ -111,7 +118,7 @@ export class Perception {
   private scales = new Map<string, { k: number; until: number }>();
   /** This OS's security-window check (one argument only: a second one would pick another OS's vocabulary). */
   private readonly isSecurity: PrivacyVocabulary["isSecurityWindow"];
-  private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
+  private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
 
   constructor(private o: PerceptionOptions) {
     this.isSecurity = o.isSecurityWindow ?? (w => linuxSecurityWindow(w));
@@ -412,6 +419,8 @@ export class Perception {
     if (opts.scope === "window" && !seen.window && !seen.x11Window) {
       return noShot(seen.ember ? "Ember takes no pictures of its own windows" : "the window can't be found (it may have closed, or its app isn't answering)");
     }
+    // macOS gives no picture without Screen Recording (never allowed, or taken back): say that, not "off screen".
+    if (this.noScreenAccess(x11)) return noShot(this.words.noScreenAccess ?? NO_SCREEN_ACCESS);
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
@@ -509,7 +518,11 @@ export class Perception {
       // No marks on what is blacked out (an element under another window can't be clicked either).
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
-    if (!capture) return noShot(dialogAfter ? SYSTEM_DIALOG : "the window is off screen, or the screen couldn't be captured safely");
+    if (!capture) {
+      return noShot(dialogAfter ? SYSTEM_DIALOG
+        : this.noScreenAccess(x11) ? this.words.noScreenAccess ?? NO_SCREEN_ACCESS
+        : "the window is off screen, or the screen couldn't be captured safely");
+    }
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
     return { ...seen, text: text + note, capture };
   }
@@ -557,6 +570,19 @@ export class Perception {
     } catch (err) {
       this.o.log.warn("perception.secret_scan_failed", { err });
       return "Ember couldn't check the whole window for password fields";
+    }
+  }
+
+  /**
+   * Has the OS refused Ember the screen (macOS without Screen Recording)? False where there is no such permission, and
+   * when the check fails: the capture then asks again itself and gives no picture without it (fail closed).
+   */
+  private noScreenAccess(ws: ScreenAccess): boolean {
+    try {
+      return ws.screenRecording?.() === false;
+    } catch (err) {
+      this.o.log.warn("perception.screen_access_check_failed", { err });
+      return false;
     }
   }
 
@@ -686,6 +712,8 @@ export class Perception {
 }
 
 const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
+/** Why there is no screenshot when the OS refuses the screen and its words don't say more (macOS's do). */
+const NO_SCREEN_ACCESS = "Ember isn't allowed to capture the screen";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
 const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
 

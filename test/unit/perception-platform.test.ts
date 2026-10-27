@@ -54,7 +54,7 @@ function desktop(o: {
   window?: AxWindow | null; nodes?: AxNode[]; listed?: AxWindow[];
   shell?: { overlays: ShellOverlay[]; complete?: boolean } | Error;
   stack?: StackedWindow[]; active?: Win | null; focus?: Win | null; clients?: Win[];
-  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean;
+  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean; screenRecording?: () => boolean;
   screen?: Bounds; neverLook?: string[];
 } & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay">) {
   const screen = o.screen ?? { x: 0, y: 0, width: 300, height: 200 };
@@ -73,7 +73,7 @@ function desktop(o: {
     },
     secretFields: async () => ({ fields: [], complete: true, ms: 1 }),
   } as unknown as AtspiSidecar;
-  const ws: PerceptionWindows = {
+  const ws: NonNullable<PerceptionOptions["x11"]> = {
     stack: () => o.stack ?? [],
     activeWindow: () => o.active ?? null,
     focusWindow: () => o.focus ?? null,
@@ -83,6 +83,7 @@ function desktop(o: {
       return (o.capture ?? ((cx, cy, cw, ch) => greyImage(screen, cx, cy, cw, ch)))(x, y, width, height);
     },
     ...(o.systemDialogOpen ? { systemDialogOpen: o.systemDialogOpen } : {}),
+    ...(o.screenRecording ? { screenRecording: o.screenRecording } : {}),
   };
   const { log, warnings } = recordingLog();
   const perception = new Perception({
@@ -419,5 +420,49 @@ describe("Perception's window screenshots when the window can't be found", () =>
     const p = await perception.perceive({ image: true, scope: "window" });
     expect(p.capture?.rect).toEqual({ x: 10, y: 10, width: 100, height: 100 });
     expect(captures).toEqual([[10, 10, 100, 100]]);
+  });
+});
+
+describe("Perception without the screen-capture permission (macOS Screen Recording)", () => {
+  // reviews #96, #237: macOS gives no picture without Screen Recording; the note must say so, not "off screen".
+  const NO_ACCESS = `(No screenshot: ${PLATFORM_WORDS.darwin.noScreenAccess}.)`;
+
+  it("says the permission is missing, names where to allow it, and captures nothing", async () => {
+    const { perception, captures } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, gedit.bounds!, "notes.txt", "gedit")], screenRecording: () => false, words: PLATFORM_WORDS.darwin });
+    for (const scope of ["window", "screen"] as const) {
+      const p = await perception.perceive({ image: true, scope });
+      expect(p.capture).toBeNull();
+      expect(p.text).toContain(NO_ACCESS);
+      expect(p.text).not.toContain("off screen");
+    }
+    expect(captures).toEqual([]);
+    expect(PLATFORM_WORDS.darwin.noScreenAccess).toContain("System Settings › Privacy & Security › Screen Recording");
+  });
+
+  it("says so when the permission goes while the picture is taken", async () => {
+    let allowed = true;
+    const { perception, captures } = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => allowed, words: PLATFORM_WORDS.darwin,
+      capture: () => { allowed = false; return null; },
+    });
+    const p = await perception.perceive({ image: true, scope: "screen" });
+    expect(captures).toHaveLength(1);
+    expect(p.text).toContain(NO_ACCESS);
+  });
+
+  it("captures as before when the permission is there, or the window system has no such permission (Linux, Windows)", async () => {
+    const mac = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => true, words: PLATFORM_WORDS.darwin });
+    expect((await mac.perception.perceive({ image: true, scope: "screen" })).capture).not.toBeNull();
+    const linux = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit") });
+    expect((await linux.perception.perceive({ image: true, scope: "screen" })).capture).not.toBeNull();
+    // A failed capture elsewhere keeps today's words.
+    const off = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), capture: () => null });
+    expect((await off.perception.perceive({ image: true, scope: "screen" })).text).toContain("(No screenshot: the window is off screen, or the screen couldn't be captured safely.)");
+  });
+
+  it("captures when the permission check itself fails: the capture asks again and fails closed", async () => {
+    const { perception, captures } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => { throw new Error("gone"); }, words: PLATFORM_WORDS.darwin });
+    await perception.perceive({ image: true, scope: "screen" });
+    expect(captures).toHaveLength(1);
   });
 });
