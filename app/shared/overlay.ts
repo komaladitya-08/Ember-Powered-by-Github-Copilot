@@ -26,6 +26,8 @@ export interface OverlayInit {
   displayId: number;
   /** This overlay's display bounds in global DIP. */
   bounds: Rect;
+  /** Its display's work area in global DIP (without the taskbar, Dock or top bar), when main says. */
+  workArea?: Rect;
   settings: Settings;
   /** True when this window is the small fallback buddy (no compositor). */
   fallback: boolean;

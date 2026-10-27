@@ -15,7 +15,7 @@ import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { whereText } from "../handle/badge";
-import { cardsCorner } from "./layout";
+import { cardsCorner, pillBottom, pillSpot } from "./layout";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -44,6 +44,8 @@ const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 let character: Character = characters.cinder;
 let settings: Settings | null = null;
 let bounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+/** This display's work area (global DIP; the taskbar or Dock is outside it), when main says. */
+let workArea: Rect | null = null;
 let viewport = { width: window.innerWidth, height: window.innerHeight };
 let frame: OverlayFrame | null = null;
 /** `avoid`: windows the bubble should keep off (global DIP), when main sends them. */
@@ -93,6 +95,7 @@ function applySettings(s: Settings): void {
 
 api.onInit((i: OverlayInit) => {
   bounds = i.bounds;
+  workArea = i.workArea ?? null;
   // The handle's place, when the main process says (`handle`, global DIP; null = on another display).
   // Otherwise it is where it always is: the bottom-right corner, 200×56, 12 px in.
   const given = (i as OverlayInit & { handle?: Rect | null }).handle;
@@ -100,6 +103,7 @@ api.onInit((i: OverlayInit) => {
     ? { x: i.bounds.width - 212, y: i.bounds.height - 68, width: 200, height: 56 }
     : given && { x: given.x - i.bounds.x, y: given.y - i.bounds.y, width: given.width, height: given.height };
   placeTasks();
+  placeStatus();
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
@@ -151,11 +155,26 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   } else if (statusText.textContent && !statusClear) {
     statusClear = setTimeout(() => { statusClear = null; if (statusEl.hidden) statusText.textContent = ""; }, 250);
   }
+  placeStatus();
   // Cards sit at a fixed place, so their buttons are measured only when the cards change (or change corner).
   const changed = renderTasks(s.tasks);
   if (!cornerTasks() && (changed || keepOffKey(s) !== avoidKey)) measureTasks();
   requestDraw();
 });
+
+/**
+ * The status pill keeps off the control Ember works on: at the top, or at the bottom (above the taskbar or Dock)
+ * while the control's ring is under it at the top (an address bar, a ribbon's tabs).
+ */
+function placeStatus(): void {
+  if (statusEl.hidden) return;
+  const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  const bottom = pillBottom(bounds, workArea, handleRect);
+  const low = !!f && pillSpot({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height },
+    { width: statusEl.offsetWidth, height: statusEl.offsetHeight }, viewport, bottom) === "bottom";
+  statusEl.classList.toggle("low", low);
+  statusEl.style.bottom = low ? `${bottom}px` : "";
+}
 
 // ── Where a task acts (§2.4): a badge before the bubble's title, "on build-01"; nothing for this computer ──
 const bubbleHead = document.querySelector<HTMLElement>("#bubble-host .eb-head");
@@ -445,6 +464,7 @@ function isHere(f: OverlayFrame | null): f is OverlayFrame {
 function fit(): void {
   viewport = { width: window.innerWidth, height: window.innerHeight };
   placeTasks();
+  placeStatus();
   interactiveDirty = true;
   requestDraw();
 }

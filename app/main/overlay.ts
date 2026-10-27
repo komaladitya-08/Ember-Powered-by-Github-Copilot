@@ -275,7 +275,7 @@ export class OverlayManager {
     const h = this.avoid?.() ?? null;
     const b = o.display.bounds;
     const here = !!h && h.x < b.x + b.width && h.x + h.width > b.x && h.y < b.y + b.height && h.y + h.height > b.y;
-    return { displayId: o.display.id, bounds: b, settings: this.settings(), fallback: false, handle: here ? h : null };
+    return { displayId: o.display.id, bounds: b, workArea: o.display.workArea, settings: this.settings(), fallback: false, handle: here ? h : null };
   }
 
   /** The handle moved (another screen layout): every overlay is told where it is now. */

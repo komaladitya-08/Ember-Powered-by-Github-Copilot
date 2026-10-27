@@ -5,8 +5,9 @@ body { font: var(--type-callout); color: var(--label); }
 #stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 
-/* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen. It fades in
-   from just above and out in place (main.ts keeps its words until it has gone). */
+/* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen (40 px down:
+   layout.ts's PILL_TOP), or at the bottom while the control Ember works on is under it at the top (main.ts sets
+   .low and how far up). It fades in from just above and out in place (main.ts keeps its words until it has gone). */
 .status {
   position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 9px; min-height: 34px; padding: 6px 16px 6px 13px; border-radius: var(--r-capsule);
@@ -15,6 +16,7 @@ body { font: var(--type-callout); color: var(--label); }
   transition: opacity 200ms ease, display 200ms allow-discrete, translate 420ms var(--spring-snappy);
 }
 @starting-style { .status { opacity: 0; translate: 0 -6px; } }
+.status.low { top: auto; }
 .status[hidden] { display: none; opacity: 0; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
 
