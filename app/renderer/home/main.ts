@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, type HomePatch, type Segment,
+  retryMessage, tagline, usageLine, withCommandShells, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -345,7 +345,7 @@ async function refreshActivity(): Promise<void> {
   let today = 0;
   const items: HTMLLIElement[] = [];
   const words = entryWords(platform);
-  for (const e of entries) {
+  for (const e of withCommandShells(entries)) {
     const d = describeEntry(e, words);
     if (!d) continue;
     if (items.length >= 80) break;

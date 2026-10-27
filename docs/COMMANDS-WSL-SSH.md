@@ -635,7 +635,9 @@ that the user requested it when it ran on an announcement), each answer, start a
 output, how many lines the user typed, never what), the folder, and connections and their losses. A command's text is
 recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal); a refused
 command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
-are never recorded anywhere.
+are never recorded anywhere. Settings › **What Ember did** shows a line for each command question, answer, refusal and
+end (where it ran, the shell and how it ended, never the command's text) and for each connection made, lost, ended or
+failed.
 
 ## 7. Known limits
 

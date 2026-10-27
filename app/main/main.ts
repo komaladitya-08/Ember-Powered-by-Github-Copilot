@@ -372,7 +372,8 @@ function start(): void {
       sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
   })));
-  ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
+  // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
+  ipcMain.handle(IPC.activity, guard(() => audit?.recent(500) ?? []));
   /** The administrator's never-look entries are applied on top; they never go into the user's own list. */
   const ownNeverLook = (patch: SettingsPatch): SettingsPatch => {
     if (!patch.privacy?.neverLook || !policy.neverLook.length) return patch;

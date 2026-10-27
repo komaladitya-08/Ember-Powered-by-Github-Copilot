@@ -101,7 +101,7 @@ describe("settings window words", () => {
       element: { role: "table cell", name: `A${at + 2}` }, app: "soffice", batch: 3, at, ...more });
     expect([cell(0), cell(1)]).toEqual([null, null]);
     expect(cell(2, { batchVerdict: "ask", batchReason: "Ember needs your mouse or keyboard for this" }))
-      .toEqual({ tag: "Asked you", cls: "ask", what: "Fill 3 cells (your keyboard) in LibreOffice", why: "Ember needs your mouse or keyboard for this" });
+      .toEqual({ tag: "Asked you", cls: "ask", what: "Fill 3 cells (your keyboard) in LibreOffice", why: "Ember needs your mouse or keyboard for this." });
     expect(cell(2, { batchVerdict: "deny", batchReason: "this app is read-only for Ember" })).toMatchObject({ tag: "Refused", cls: "no", what: "Fill 3 cells (your keyboard) in LibreOffice" });
     // No question for the batch (each cell is asked on its own, or none needed): those lines say it.
     expect(cell(2, { batchVerdict: "none" })).toBeNull();
@@ -223,7 +223,8 @@ describe("What Ember did, review round 11", () => {
     expect(failed("The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed. Call perceive_window and try again."))
       .toBe("The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed.");
     expect(failed("Ember typed into B2. A cell may still be being edited: press Escape, call perceive_window, and try again.")).toBe("Ember typed into B2. A cell may still be being edited.");
-    expect(failed("background_unavailable: this app takes no text this way")).toBe("this app takes no text this way");
+    // In the user's words (review #217): a capital first and a full stop.
+    expect(failed("background_unavailable: this app takes no text this way")).toBe("This app takes no text this way.");
     // A file name with underscores is the user's, and stays.
     expect(forUser("Couldn't open my_report.txt.")).toBe("Couldn't open my_report.txt.");
     expect(forUser("Call perceive_window and try again.")).toBeUndefined();

@@ -6,6 +6,7 @@
 
 import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
+import { parseTargetId } from "../../shared/targets";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
@@ -175,6 +176,139 @@ export function forUser(why: string | undefined): string | undefined {
   return out || undefined;
 }
 
+/** "The user …" in a reason is you: the verbs that change with it ("the user has" → "you have"). */
+const YOU_VERBS: Readonly<Record<string, string>> = {
+  has: "have", is: "are", was: "were", does: "do", "doesn't": "don't", "hasn't": "haven't", "isn't": "aren't", "wasn't": "weren't",
+  says: "say", wants: "want", asks: "ask", needs: "need",
+};
+/**
+ * A reason as the user reads it in "What Ember did" (review #217): the audit keeps the policy's and the helpers' own
+ * words, which call the user "the user" and often start in lower case. Here they say "you" and "your", start with a
+ * capital and end with a full stop. A first word that is a name ("build-01's") keeps its case.
+ */
+export function userWords(why: string | undefined): string | undefined {
+  const s = why?.trim();
+  if (!s) return undefined;
+  const you = s
+    .replace(/\b([Tt])he user's\b/g, (_m, t: string) => (t === "T" ? "Your" : "your"))
+    .replace(/\b([Tt])he user\b(?: (\S+))?/g, (_m, t: string, next: string | undefined) => {
+      const verb = next !== undefined ? YOU_VERBS[next] ?? next : undefined;
+      return `${t === "T" ? "You" : "you"}${verb !== undefined ? ` ${verb}` : ""}`;
+    });
+  const first = /^[a-z][a-z']*(?=[\s,;:.]|$)/.test(you) ? you[0].toUpperCase() + you.slice(1) : you;
+  return /[.!?…]$/.test(first) ? first : `${first}.`;
+}
+
+/** Shell names as people write them (the command window's own). */
+const SHELL_NAME: Readonly<Record<string, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };
+
+/** A target id as a place: "on this computer", "on build-01", "in Ubuntu (WSL)" (an id it can't read: no place). */
+function placeOf(target: unknown): string {
+  if (target === undefined || target === "local") return "on this computer";
+  const p = typeof target === "string" ? parseTargetId(target) : null;
+  return !p ? "" : p.kind === "local" ? "on this computer" : p.kind === "ssh" ? `on ${p.name}` : `in ${p.name} (WSL)`;
+}
+
+/** A computer's name, as a remote or WSL entry gives it. */
+function computerOf(e: ActivityEntry): string {
+  if (e.event === "wsl") return typeof e.distro === "string" && e.distro ? `${e.distro} (WSL)` : "WSL";
+  return typeof e.host === "string" && e.host ? e.host : "another computer";
+}
+
+/** How a run ended, as the end line says it (commands/types.ts' CommandExit.ended). */
+function commandEnd(e: ActivityEntry, what: string): EntryView {
+  switch (e.ended) {
+    case "exit":
+      if (e.code === 0) return { tag: "Done", cls: "ok", what };
+      return { tag: "Didn't work", cls: "no", what, why: typeof e.code === "number" ? `It ended with exit code ${e.code}.` : typeof e.signal === "string" ? `It was ended by ${e.signal}.` : undefined };
+    case "stopped-user": return { tag: "Stopped", cls: "no", what, why: "You stopped it." };
+    case "stopped-task": return { tag: "Stopped", cls: "no", what, why: "Its task stopped." };
+    case "killswitch": return { tag: "Stopped", cls: "no", what, why: "Everything was stopped." };
+    case "timeout": return { tag: "Didn't work", cls: "no", what, why: "It ran out of time." };
+    case "lost": return { tag: "Didn't work", cls: "no", what, why: "The connection dropped." };
+    case "failed-to-start": return { tag: "Didn't work", cls: "no", what, why: "It couldn't start." };
+    case "refused-remote": {
+      const host = typeof e.target === "string" ? parseTargetId(e.target) : null;
+      const own = host?.kind === "ssh" ? `${host.name}'s own check` : "The computer's own check";
+      return { tag: "Refused", cls: "no", what, why: e.needsConfirm === true ? `${own} asked first.` : `${own} refused it.` };
+    }
+    default: return { tag: "Didn't work", cls: "no", what };
+  }
+}
+
+/** An answer to one of Ember's questions: "You allowed", "You said no"… (the same tags as the confirm lines). */
+function answerTag(answer: unknown): Pick<EntryView, "tag" | "cls"> {
+  return answer === "once" || answer === "always" ? { tag: "You allowed", cls: "ok" }
+    : answer === "deny" ? { tag: "You said no", cls: "no" } : answer === "stopped" ? { tag: "Stopped", cls: "no" } : { tag: "No answer", cls: "no" };
+}
+
+/**
+ * A command's line (commands/flow.ts's audit, review #152 and #224): where it ran, in which shell when known, and how
+ * it went. Never the command's text: the audit folder keeps it (redacted), and the command window shows it in full.
+ */
+function commandLine(e: ActivityEntry): EntryView | null {
+  const place = placeOf(e.target);
+  const shell = typeof e.shell === "string" ? SHELL_NAME[e.shell] : undefined;
+  const run = [shell ? `Run a ${shell} command` : "Run a command", place].filter(Boolean).join(" ");
+  switch (e.phase) {
+    case "decided":
+      // An ordinary command runs without asking: its end line says it.
+      if (e.verdict === "refuse") return { tag: "Refused", cls: "no", what: run, why: userWords(e.reason) };
+      if (e.verdict === "ask") return { tag: "Asked you", cls: "ask", what: run, why: userWords(e.reason) };
+      if (e.verdict === "announce") return { tag: "Announced", cls: "ask", what: run, why: userWords(e.reason) };
+      return null;
+    case "answered":
+      if (e.q === "consent") return { ...answerTag(e.answer), what: ["Turn on commands", place].filter(Boolean).join(" ") };
+      // Stop pressed while an announcement counted down.
+      if (e.q === "announce") return { tag: "Stopped", cls: "no", what: run, why: "You stopped it before it started." };
+      return { ...answerTag(e.answer), what: run };
+    case "ended":
+      return commandEnd(e, run);
+    default:
+      return null;
+  }
+}
+
+/** Why a connection didn't work, by its kind (remote/ssh-errors.ts); kinds without plain words say nothing more. */
+const CONNECT_WHY: Readonly<Record<string, string>> = {
+  auth: "It needed you to sign in.", cancelled: "You cancelled it.", timeout: "It took too long.", dns: "Ember couldn't find it.",
+  network: "Ember couldn't reach it.", "unknown-host-key": "Its key wasn't checked.", "host-key-changed": "Its key has changed.",
+  "not-allowed": "Your organisation doesn't allow it.",
+};
+
+/** A connection's line (remote/connections.ts's audit; WSL's in the same steps): made, lost, ended, failed or removed. */
+function connectionLine(e: ActivityEntry): EntryView | null {
+  const name = computerOf(e);
+  const why = typeof e.kind === "string" ? CONNECT_WHY[e.kind] : undefined;
+  switch (e.step) {
+    case "connected": return { tag: "Connected", cls: "ok", what: name };
+    case "lost": return { tag: "Lost", cls: "no", what: name, why: "The connection dropped." };
+    case "disconnected": return { tag: "Disconnected", cls: "", what: name };
+    case "failed": return { tag: "Didn't work", cls: "no", what: e.uninstall === true ? `Remove Ember from ${name}` : `Connect to ${name}`, ...(why ? { why } : {}) };
+    case "uninstalled": return { tag: "Removed", cls: "ok", what: `Ember from ${name}` };
+    // A card shown, a connection starting: the line after it says how it went.
+    default: return null;
+  }
+}
+
+/**
+ * The entries with each command's shell carried from its decision to its answer and its end (newest first, as main
+ * sends them): only the decision says which shell, and an ordinary command's decision has no line of its own.
+ */
+export function withCommandShells(entries: readonly ActivityEntry[]): ActivityEntry[] {
+  const shells = new Map<string, string>();
+  const out = [...entries];
+  for (let i = out.length - 1; i >= 0; i--) {
+    const e = out[i];
+    if (e.event !== "command") continue;
+    const key = `${String(e.task)}|${String(e.target)}`;
+    const known = shells.get(key);
+    if (e.phase === "decided" && typeof e.shell === "string") shells.set(key, e.shell);
+    else if ((e.phase === "answered" || e.phase === "ended") && e.shell === undefined && known !== undefined) out[i] = { ...e, shell: known };
+  }
+  return out;
+}
+
 /** One line of "What Ember did", or null for entries that the next line already says. */
 export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_WORDS): EntryView | null {
   // A named control is called by its name ("Switch “Night Light”"); the role only when there is no name.
@@ -197,22 +331,27 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
     case "task":
       if (e.phase === "asked") return { tag: e.mode === "guide" ? "Guide" : "Task", cls: "", what: String(e.goal ?? "") };
       if (e.phase === "done") return { tag: "Finished", cls: "ok", what: String(e.summary ?? e.goal ?? "") };
-      return { tag: e.phase === "cancelled" ? "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? e.summary : undefined };
+      return { tag: e.phase === "cancelled" ? "Stopped" : "Failed", cls: "no", what: String(e.goal ?? ""), why: typeof e.summary === "string" ? userWords(e.summary) : undefined };
     case "decision":
       // Several cells filled with one question (fill_cells): one line for them all, on the last cell's decision.
       if (typeof e.batch === "number") {
         if (e.at !== e.batch - 1 || (e.batchVerdict !== "ask" && e.batchVerdict !== "deny")) return null;
         const fill = [deskless(`Fill ${e.batch} cells (your keyboard)`), where].filter(Boolean).join(" ");
-        return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? e.batchReason : undefined };
+        return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? userWords(e.batchReason) : undefined };
       }
       if (e.verdict === "allow") return null; // the action line that follows says it
-      return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: e.reason };
+      return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: userWords(e.reason) };
     case "confirm":
-      return { tag: e.answer === "once" || e.answer === "always" ? "You allowed" : e.answer === "deny" ? "You said no" : e.answer === "stopped" ? "Stopped" : "No answer", cls: e.answer === "once" || e.answer === "always" ? "ok" : "no", what };
+      return { ...answerTag(e.answer), what };
     case "action":
-      return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: forUser(e.error) };
+      return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: userWords(forUser(e.error)) };
     case "stop":
       return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : "menu"})` };
+    case "command":
+      return commandLine(e);
+    case "remote":
+    case "wsl":
+      return connectionLine(e);
     default:
       return null;
   }
