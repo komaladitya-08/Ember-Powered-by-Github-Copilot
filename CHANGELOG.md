@@ -48,11 +48,12 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   `ssh` somewhere ("You're connected to build-01"). Ember opens its own connection with your SSH settings, keys, agent
   and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before copying
   anything, then copies a small helper there (about 31 MB) that runs only while it is connected and leaves no service
-  or autostart behind. It works there on commands, and on the apps of that computer's screen when you are the person
-  logged in at it, asking before every step and showing a notice with **Stop** there. When that screen locks or its
-  session goes inactive, the tasks using the screen stop; a task only running commands there goes on (a **Stop** at
-  that computer, a lost connection, **Disconnect** and the stop chord stop everything there). Your voice, Copilot and
-  your GitHub sign-in stay on this computer. **Remove Ember from build-01** removes the helper again.
+  or autostart behind. It works there on commands, and on the apps of that computer's screen when it is a Linux
+  computer with an X11 desktop and you are the person logged in at it, asking before every step and showing a notice
+  with **Stop** there. When that screen locks or its session goes inactive, the tasks using the screen stop; a task
+  only running commands there goes on (a **Stop** at that computer, a lost connection, **Disconnect** and the stop
+  chord stop everything there). Your voice, Copilot and your GitHub sign-in stay on this computer. **Remove Ember from
+  build-01** removes the helper again.
 - **SSH connections, in detail**: with OpenSSH older than 8.5 on this computer (RHEL 8, Ubuntu 20.04, Debian 11),
   every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
   those clients can't mark a server's own questions. A silent connection shows "build-01 isn't answering" in the
@@ -123,8 +124,8 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
   or an answer.
 - On a remote Linux screen, every step is asked, Ember never borrows the mouse and keyboard, and you aren't shown the
   screen.
-- On a remote Wayland desktop, reading and using controls only, no screenshots; until Ember's Wayland test passes,
-  commands only.
+- A remote Linux computer with a Wayland desktop gets commands only for now; reading and using its controls (with no
+  screenshots) waits for Ember's Wayland test to pass.
 - A Mac reached over SSH gets commands only, and they can't open Desktop, Documents or Downloads without "Allow full
   disk access for remote users"; Windows computers can't be reached over SSH yet.
 - Ember doesn't use the mouse or keyboard in Linux apps under WSL yet (it uses their controls), and doesn't use Linux

@@ -46,3 +46,41 @@ describe("docs/DEVELOPING.md", () => {
     for (const l of win.launchers ?? []) expect(table).toContain(l.to);
   });
 });
+
+describe("docs/COMMANDS-WSL-SSH.md", () => {
+  const doc = read("docs/COMMANDS-WSL-SSH.md");
+
+  it("says a Wayland remote is commands only while packaged builds never use its desktop", () => {
+    // app/remote/main.ts: a packaged agent never reads a Wayland desktop (only a development run with the test switch).
+    const packagedNever = /waylandText: !o\.packaged/.test(read("app/remote/main.ts"));
+    const row = section(doc, "1. Choosing where Ember works").split("\n").find(l => /Wayland desktop/.test(l)) ?? "";
+    const apps = row.split("|")[2] ?? "";
+    expect(apps.trim()).not.toBe("");
+    expect(/commands only/.test(apps)).toBe(packagedNever);
+    // The release notes and the README say the same.
+    if (packagedNever) {
+      expect(flat(read("CHANGELOG.md"))).not.toMatch(/On a remote Wayland desktop, reading and using controls only/);
+      expect(flat(read("README.md"))).toMatch(/X11 desktop/);
+    }
+  });
+
+  it("says the commands card comes from the settings switch, as no task is offered commands while they are off", () => {
+    // worker.ts offers run_command only when the target's commands aren't "off", and "off" is what a switch that was
+    // never turned on gives (local-service.ts), so no task can bring up the first card.
+    expect(read("app/main/agent/worker.ts")).toMatch(/c\.capability\(\)\.state === "off"\) return null/);
+    expect(read("app/main/targets/local-service.ts")).toMatch(/if \(!o\.setting\?\.on\) return \{ state: "off"/);
+    const s21 = flat(section(doc, "2.1 Turning them on"));
+    expect(s21).not.toMatch(/or a task needs one/);
+    expect(s21).toMatch(/When you turn one on, Ember shows the card/);
+  });
+
+  it("says Ember offers WSL when a request names it while WSL is off, not when it first sees WSL", () => {
+    const runtime = read("app/main/targets/runtime.ts");
+    // offerWsl's one caller is the bind path for a request that said "WSL" while it is off.
+    expect(runtime.match(/\bofferWsl\(\)/g)?.length).toBe(2);
+    expect(runtime).toMatch(/targetsNamed\(words, \[\{ id: "wsl:WSL", names: \["WSL"\] \}\][^\n]*\n(?:[^\n]*\n){0,4}[^\n]*offerWsl\(\)/);
+    const s31 = flat(section(doc, "3.1 Turning it on"));
+    expect(s31).not.toMatch(/first sees WSL/);
+    expect(s31).toMatch(/When you ask for something in WSL while WSL is off for Ember/);
+  });
+});

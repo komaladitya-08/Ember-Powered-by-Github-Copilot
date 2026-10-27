@@ -22,7 +22,7 @@ there and the commands it runs.
 | This computer (Windows) | as always, plus Linux apps shown by WSL (§3) | Windows PowerShell 5.1, without typing (§2.9) |
 | A WSL distro (WSL 2 or WSL 1) | the Windows screen, Linux apps included | bash, zsh or sh inside the distro; WSL 1: commands only |
 | An SSH computer: Linux (x64 or arm64, glibc 2.28 or newer, kernel 4.18 or newer) with your own X11 desktop | reading, opening apps and using their controls, every step asked (§4.4) | bash, zsh or sh |
-| An SSH computer: Linux with a Wayland desktop | reading and using controls, no screenshots (§4.4) | yes |
+| An SSH computer: Linux with a Wayland desktop | none yet: commands only (§4.4) | yes |
 | An SSH computer: Linux without a desktop, or only a VNC or xrdp session | none | yes |
 | An SSH computer: macOS 13.5 or newer | none yet | zsh, bash or sh |
 | An SSH computer that is WSL on another PC | none | yes |
@@ -52,10 +52,12 @@ bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
 ### 2.1 Turning them on
 
 Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
-(WSL)**, **Run commands on build-01**. The first time you turn one on (or a task needs one), Ember shows the card "Let
-Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. The card is answered with
-a click only, never with Ember's approve keys or by voice. Under each switch, **Ask me before every command** makes
-every command on that computer ask. **Open the command window** shows it.
+(WSL)**, **Run commands on build-01**. When you turn one on, Ember shows the card "Let Ember run commands on this
+computer?" (or "on build-01?") with **Turn on** and **Not now**. The card is answered with a click only, never with
+Ember's approve keys or by voice. While a computer's switch is off, Ember runs no commands there and a task can't
+bring up the card: turn the switch on yourself. If a later Ember changes what the card says, the next command a task
+runs there shows the new card first. Under each switch, **Ask me before every command** makes every command on that
+computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
@@ -268,11 +270,13 @@ earlier command printed text that looked like instructions.").
 
 ### 3.1 Turning it on
 
-When Ember first sees WSL it offers "Ember can work in WSL" (**Open settings**, **Not now**). Settings › **Computers**
-› **Let Ember work in WSL** shows the card "Use Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a
-small helper inside each distro that has a Linux app open, only while one is open, and never starts a distro on its
-own to read it; what it reads goes to Copilot as for your other windows; and commands in WSL, once you turn them on
-for a distro, can reach your Windows files and programs.
+When you ask for something in WSL while WSL is off for Ember ("in WSL, list my files"), and Windows has a distro Ember
+could use, Ember offers "Ember can work in WSL" (**Open settings**, **Not now**), once each time it runs; the task
+itself goes on where Ember is set to work. Settings › **Computers** › **Let Ember work in WSL** shows the card "Use
+Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a small helper inside each distro that has a Linux
+app open, only while one is open, and never starts a distro on its own to read it; what it reads goes to Copilot as
+for your other windows; and commands in WSL, once you turn them on for a distro, can reach your Windows files and
+programs.
 
 Settings lists each distro as "Ubuntu (WSL)" with its state ("Running", "Stopped", "WSL 1: commands only").
 Docker Desktop's and Rancher Desktop's own distros are never listed. A Podman machine is commands only, and every
