@@ -81,6 +81,24 @@ export const SECURITY_TITLE: Readonly<Record<OS, RegExp | null>> = {
 };
 
 /**
+ * The system's own Settings apps, tested on the window's app (trimmed): their switches weaken protection or grant
+ * devices to apps (the screen lock, location, camera, microphone, developer mode, remote assistance, login items) with
+ * labels that say nothing of security, and a macOS privacy pane names only the app it grants something to ("Terminal"),
+ * so policy.ts asks about every setting changed in them. Linux: GNOME Settings. Windows: Settings and System
+ * Properties' pages (remote assistance and desktop, system protection, performance, the computer's name). macOS: System
+ * Settings (System Preferences before macOS 13), by its bundle id and its names in other languages.
+ */
+export const SETTINGS_APP: Readonly<Record<OS, RegExp | null>> = {
+  linux: /^(gnome-control-center|org\.gnome\.settings)$/i,
+  win32: exactly(["systemsettings", "systempropertiesremote", "systempropertiesprotection", "systempropertiesadvanced", "systempropertiesperformance",
+    "systempropertiescomputername", "systempropertieshardware", "systempropertiesdataexecutionprevention"], String.raw`(?:\.exe)?`),
+  darwin: exactly(["system settings", "system preferences", "com.apple.systempreferences", "com.apple.settings", "systemeinstellungen",
+    "réglages système", "préférences système", "ajustes del sistema", "preferencias del sistema", "impostazioni di sistema", "preferenze di sistema",
+    "ajustes do sistema", "definições do sistema", "preferências do sistema", "systeeminstellingen", "systeemvoorkeuren", "システム設定", "システム環境設定",
+    "系统设置", "系统偏好设置", "系統設定", "系統偏好設定", "시스템 설정", "시스템 환경설정"]),
+};
+
+/**
  * Window classes of security prompts (lower case, whole), for the backends that report one: perception passes a
  * window's class as its app (WM_CLASS's parts on Linux, the Win32 class on Windows), so it is matched where the app
  * is. Empty on Linux, whose prompts are known by their programs, and on macOS, which has no window classes.

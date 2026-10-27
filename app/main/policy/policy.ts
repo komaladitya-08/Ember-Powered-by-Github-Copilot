@@ -18,7 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP, TYPING_REFUSED, WEB_APP, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 
@@ -1919,6 +1919,9 @@ export class PolicyEngine {
     const secureTitle = !!r.dialog && securityTalk(r.dialog.name);
     const secureField = secureTitle || securityTalk(name);
     const secure = (what: string): Risk => ({ reason: SECURITY_SETTING, about: securityTalk(what) || !r.dialog ? what : `${what} ${r.dialog.name}`.trim() });
+    // The system's own Settings app (SETTINGS_APP): every setting changed there is asked about, whatever its label says.
+    const systemSettings = SETTINGS_APP[os]?.test(r.app.trim()) ?? false;
+    const system = (what: string): Risk => ({ reason: "this changes a system setting, which may weaken the computer's protection", about: what });
     // A dialog about a file someone else is using or has changed (LibreOffice's "Document in Use", "Document Has Been
     // Changed by Others"): going ahead anyway ("Open", "Save Anyway") is asked; backing off (Cancel, read-only) isn't.
     const conflict = ACTIVATING_ROLES.test(role) && FILE_CONFLICT.test(plainText(`${told} ${r.window}`)) && !BACKS_OFF.test(plainText(name));
@@ -1958,16 +1961,19 @@ export class PolicyEngine {
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (SETTING_ROLES.test(role) && (securitySetting(name) || secureDialog)) return secure(name);
+        if (SETTING_ROLES.test(role) && systemSettings) return system(name);
         if (answer) return answer;
         if (conflict) return goesAhead;
         return null;
       case "select": {
         const value = r.value ?? "";
         if (isRiskyLabel(value, os)) return { reason: "this choice may be hard to undo or visible to others", about: value };
-        return securitySetting(value) || securitySetting(name) || secureDialog ? secure(securityTalk(value) ? value : `${value} ${name}`) : null;
+        if (securitySetting(value) || securitySetting(name) || secureDialog) return secure(securityTalk(value) ? value : `${value} ${name}`);
+        return systemSettings ? system(`${value} ${name}`) : null;
       }
       case "value":
-        return r.element && (securitySetting(name) || secureDialog) ? secure(name) : null;
+        if (!r.element) return null;
+        return securitySetting(name) || secureDialog ? secure(name) : systemSettings ? system(name) : null;
       case "text": case "cursor_text": {
         // A formula that fetches from the internet or reads another file runs as it goes into the sheet: asked every time.
         if ((takesFormula(r.element) && reachesOut(r.value ?? "")) || (r.formula !== undefined && reachesOut(r.formula))) return REACHES_OUT;
@@ -2000,6 +2006,7 @@ export class PolicyEngine {
         // list), by its own name or the dialog's title.)
         const keyed = (TEXT_FIELD.test(role) ? secureField : SETTING_ROLES.test(role) ? secureDialog : secureTitle) || (SETTING_ROLES.test(role) && securitySetting(name));
         if (keyed && !/^(shift\+)?(tab|escape)$/.test(k)) return secure(name);
+        if (systemSettings && SETTING_ROLES.test(role) && !/^(shift\+)?(tab|escape)$/.test(k)) return system(name);
         // A key that types, Backspace, Delete, Ctrl+X or a paste replaces what is selected (after Ctrl+A, everything, as
         // type_text's "replace"): judged by the real selection where the screen reader tells it.
         const replaces = replacesSelection(k, kc) ? replacedBySelection(r, role, k, kc) : null;

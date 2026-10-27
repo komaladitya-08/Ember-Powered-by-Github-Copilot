@@ -678,11 +678,12 @@ describe("policy: review round 5", () => {
 
   it("questions, reasons and the grant name the app as people know it (grants stay by program name)", () => {
     const fresh = e({});
-    const d = fresh.decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "toggle button", name: "Night Light" } });
+    // (A page's button: a switch in Settings is asked about every time, review #111.)
+    const d = fresh.decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "push button", name: "Displays" } });
     expect(d).toMatchObject({ verdict: "confirm", needsGrant: true, reason: "first action in Settings" });
-    expect(d.prompt).toBe("Let me work in Settings? First step: click “Night Light” toggle button.");
+    expect(d.prompt).toBe("Let me work in Settings? First step: click “Displays” push button.");
     expect(fresh.decide({ taskId: "f", kind: "click", app: "soffice.bin", window: "report.odt", element: { role: "push button", name: "Delete" } }).prompt).toBe("Click “Delete” push button in LibreOffice?");
-    expect(e({ "gnome-control-center": "act" }).decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "toggle button", name: "Night Light" } }))
+    expect(e({ "gnome-control-center": "act" }).decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "push button", name: "Displays" } }))
       .toMatchObject({ verdict: "allow", reason: "Ember may act in Settings" });
   });
 });
