@@ -61,7 +61,7 @@ import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
-import { settingsSection } from "../shared/setup-attention";
+import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello } from "./hello";
 
 /**
@@ -367,7 +367,12 @@ function start(): void {
   // The setup check shows the other computers' and WSL's rows too, as ember --doctor does (§8.8): read through the
   // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).
   const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]), { keepMs: 15_000, waitMs: 3000, now: () => Date.now() });
-  const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(), await targetChecks(fresh));
+  const environmentNow = async (fresh = false) => {
+    const env = readEnvironment();
+    // The handle's "Setup needed" follows the setup check: it goes once the row holding Ember back is fixed (review #95).
+    sawSetup(env.checks);
+    return withTargetChecks(env, await targetChecks(fresh));
+  };
   ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
     appVersion: app.getVersion(),
     settings: settings.get(),
@@ -442,9 +447,20 @@ function start(): void {
   const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
+  /** The setup rows as last read (none until then), for the handle's word: a status change doesn't read them again. */
+  let setupSeen: EnvReport["checks"] = [];
+  /** The handle's word: "Setup needed" while Copilot is ready and a setup row holds Ember back (review #95), else the agent's. */
+  const idleNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen) ?? idleWord(status);
+  /** Setup rows just read: kept, and the handle's word follows them. */
+  const sawSetup = (rows: EnvReport["checks"]) => {
+    setupSeen = rows;
+    const status = agent?.getStatus();
+    const idle = status && idleNow(status);
+    if (idle && idle !== lastState.idle) showState({ idle });
+  };
   /** This OS's setup rows now, for the Start decision and the hello (none if they can't be read: words, never a gate). */
   const setupRows = (): EnvReport["checks"] => {
-    try { return readEnvironment().checks; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
+    try { const rows = readEnvironment().checks; sawSetup(rows); return rows; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
   };
   const greet = () => {
     const phase = agent?.getStatus().phase;
@@ -1535,7 +1551,8 @@ function start(): void {
       onStatus: status => {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
-        showState({ idle: idleWord(status) });
+        // Ready with a setup row holding Ember back: "Setup needed" (review #95).
+        showState({ idle: idleNow(status) });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).

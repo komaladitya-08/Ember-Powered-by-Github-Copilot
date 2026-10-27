@@ -1,6 +1,6 @@
 /**
  * Which setup-check rows need the user. Shared by the settings window (what shows before Start, the fold, the counts,
- * the sidebar's badge) and main (where settings opens, what Ember's hello says), so the two always agree.
+ * the sidebar's badge) and main (where settings opens, what Ember's hello and its handle say), so the two always agree.
  * Pure and renderer-safe. A warning about reading, seeing or using apps holds Ember back as much as a failure does,
  * and a row with a button that fixes it is worth the user's look, because one click settles it (review #94, #95, #161).
  */
@@ -38,6 +38,14 @@ export function needsUser(r: SetupRow): boolean {
 export function settingsSection(phase: string | undefined, rows: readonly SetupRow[]): "copilot" | "checks" | null {
   if (phase === "signed-out" || phase === "error") return "copilot";
   return rows.some(holdsBack) ? "checks" : null;
+}
+
+/**
+ * The word on Ember's handle while Copilot is ready but a row holds Ember back (review #95): "Ready" would say there is
+ * nothing to do. null: the agent's own word (idleWord), which says more while Copilot isn't ready.
+ */
+export function setupIdle(phase: string | undefined, rows: readonly SetupRow[]): string | null {
+  return phase === "ready" && rows.some(holdsBack) ? "Setup needed" : null;
 }
 
 /**

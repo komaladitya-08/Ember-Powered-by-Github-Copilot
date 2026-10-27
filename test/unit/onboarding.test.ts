@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { SPEAK_NO_VOICE, checksNote, homePatches, setupBadge, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
-import { holdsBack, needsUser, settingsSection, setupHello, type SetupRow } from "../../app/shared/setup-attention";
+import { holdsBack, needsUser, settingsSection, setupHello, setupIdle, type SetupRow } from "../../app/shared/setup-attention";
 import { hello, type HelloInputs } from "../../app/main/hello";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
@@ -274,6 +274,18 @@ describe("Ember's hello once it starts", () => {
   });
 });
 
+describe("Ember's handle while a setup row holds it back", () => {
+  it("says Setup needed instead of Ready, until the row is fixed (review #95)", () => {
+    expect(setupIdle("ready", MAC_FIRST)).toBe("Setup needed");
+    expect(setupIdle("ready", LINUX_A11Y_OFF)).toBe("Setup needed");
+    expect(setupIdle("ready", allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"))).toBeNull();
+    // A fix button for a nicety isn't "needed".
+    expect(setupIdle("ready", [{ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" }])).toBeNull();
+    // Copilot's own state says more while it isn't ready (Connecting…, Not connected, Offline…).
+    for (const phase of ["starting", "signed-out", "error", undefined]) expect(setupIdle(phase, MAC_FIRST), String(phase)).toBeNull();
+  });
+});
+
 describe("the settings window's setup badge and line", () => {
   it("badges the sidebar's Setup link and mentions what to look at in the tagline (review #95)", () => {
     expect(setupBadge(0)).toBeNull();
@@ -526,6 +538,8 @@ describe("the call sites", () => {
       "hello({", // greet (#95)
       "settingsSection(phase, setupRows())", // after Start (#95)
       "settingsSection(agent?.getStatus().phase, setupRows())", // Open settings (#95)
+      "idle: idleNow(status)", // the agent's status (#95)
+      "sawSetup(env.checks)", // every status the settings window reads, and the fix handler's (#95)
       "onSpeech: ok =>", // the speaking page's finding (#101)
       "speechMissing: speechHeard === false", // the voice status (#101)
     ]) expect(MAIN, call).toContain(call);
