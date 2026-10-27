@@ -84,7 +84,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   and the desktop's reduced motion stop all of them.
 - **Icon** (`assets/ember.svg`): Apple's icon grid (a 104 px continuous-corner tile on a 128 px
   canvas, with its shadow) in the app's warm graphite, lit from above, Cinder silhouetted against its
-  own glow.
+  own glow. At 32 px and below (`assets/ember-small.svg`) the tile fills the canvas (on Apple's grid in
+  the macOS icon), with a lighter graphite and rim that hold on a dark taskbar, and Cinder keeps only
+  the flame tufts, the coal's lit rim and the eyes. On Linux every window carries the icon too.
 
 ## Code
 

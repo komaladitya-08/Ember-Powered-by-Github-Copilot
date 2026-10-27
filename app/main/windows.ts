@@ -4,11 +4,12 @@
  * words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them. Also the app-wide
- * chrome main sets once Electron is ready: the application menu, the About panel, the native theme and DevTools
- * in a packaged build.
+ * chrome main sets once Electron is ready: the application menu, the About panel, the native theme, the windows' icon
+ * on Linux and DevTools in a packaged build.
  */
 
 import { app, BrowserWindow, Menu, nativeTheme, type MenuItemConstructorOptions } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
@@ -140,6 +141,20 @@ export function aboutPanel(version: string): AboutPanel {
   return { applicationName: "Ember", applicationVersion: version, version: "", copyright: "Copyright © 2026 komaladitya-08. Released under the MIT licence." };
 }
 
+/** The windows' icon on Linux: build-app.mjs renders it from assets/ember.svg beside main.cjs. */
+export const WINDOW_ICON = path.join(appDir, "ember.png");
+
+/**
+ * The icon Ember's windows carry, or null (review #247). Linux window managers take a window's icon from its
+ * _NET_WM_ICON, else from a .desktop entry matching its WM_CLASS: the RPM installs one, but an AppImage without desktop
+ * integration and a development run have none, and GNOME showed a generic icon in Alt-Tab and the dash. Windows takes
+ * the icon from Ember.exe and macOS from the bundle, so they are given none, as before; nor is Linux when the build
+ * couldn't render it.
+ */
+export function windowIconFor(os: OS, exists: (file: string) => boolean = fs.existsSync): string | null {
+  return os === "linux" && exists(WINDOW_ICON) ? WINDOW_ICON : null;
+}
+
 /** A page's webContents, as far as lockDevTools needs it. */
 export interface DevToolsHost {
   on(event: "devtools-opened", listener: () => void): unknown;
@@ -164,13 +179,17 @@ export interface ChromeElectron {
     getVersion(): string;
     setAboutPanelOptions(options: AboutPanel): void;
     on(event: "web-contents-created", listener: (event: unknown, contents: DevToolsHost) => void): unknown;
+    on(event: "browser-window-created", listener: (event: unknown, window: { setIcon(icon: string): void }) => void): unknown;
   };
+  /** fs.existsSync, for the window icon. */
+  exists?: (file: string) => boolean;
 }
 
 /**
  * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
  * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, dark native chrome
- * on every OS and, in a packaged build, DevTools locked on every page made from then on. Every page is dark-only
+ * on every OS, on Linux Ember's icon on every window made from then on, and in a packaged build DevTools locked on
+ * every page made from then on. Every page is dark-only
  * (ember.css says color-scheme: dark), so title bars, native menus and dialogs follow it rather than a light system
  * theme around a near-black window (review #245); a light appearance would be a design of its own.
  */
@@ -180,6 +199,8 @@ export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuAc
   const template = appMenuTemplate(o.appMenu, o.actions);
   e.Menu.setApplicationMenu(template ? e.Menu.buildFromTemplate(template) : null);
   if (e.app.isPackaged) e.app.on("web-contents-created", (_event, contents) => lockDevTools(contents));
+  const icon = windowIconFor(o.os, e.exists);
+  if (icon) e.app.on("browser-window-created", (_event, window) => window.setIcon(icon));
 }
 
 /**

@@ -1,6 +1,7 @@
 /**
- * Ember's app-wide chrome (windows.ts): the application menu, the About panel, the native theme and DevTools in a
- * packaged build (review #243, #176, #232, #245), and the quit question's words (review #226). Windows and Linux had
+ * Ember's app-wide chrome (windows.ts): the application menu, the About panel, the native theme, the window icon on
+ * Linux and DevTools in a packaged build (review #243, #176, #232, #245, #247), and the quit question's words (review
+ * #226). Windows and Linux had
  * Electron's default menu: Ctrl+Q quit with no "still working" question, Ctrl+Shift+I opened DevTools on the password
  * card, Ctrl+R reloaded a card, Ctrl+W closed the ask box and Alt showed a menu bar.
  * main.ts can't be loaded in a unit test (it is Electron's entry point), so its call is read from its source; the
@@ -15,7 +16,7 @@ import type { OS } from "../../app/shared/shortcuts";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, Menu: {}, nativeTheme: {}, app: {} }));
 
-const { aboutPanel, appMenuTemplate, lockDevTools, quitQuestion, setUpAppChrome } = await import("../../app/main/windows");
+const { WINDOW_ICON, aboutPanel, appMenuTemplate, lockDevTools, quitQuestion, setUpAppChrome, windowIconFor } = await import("../../app/main/windows");
 
 /** main.ts without its comments, every run of white space made one space. */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -26,7 +27,7 @@ const flat = (items: MenuItemConstructorOptions[]): MenuItemConstructorOptions[]
   items.flatMap(i => [i, ...(Array.isArray(i.submenu) ? flat(i.submenu) : [])]);
 
 /** A fake of the Electron objects setUpAppChrome touches, recording what it was told. */
-function fakeElectron(o: { packaged?: boolean } = {}) {
+function fakeElectron(o: { packaged?: boolean; iconThere?: boolean } = {}) {
   const calls: string[] = [];
   const handlers = new Map<string, (e: unknown, x: never) => void>();
   const built: MenuItemConstructorOptions[][] = [];
@@ -44,6 +45,7 @@ function fakeElectron(o: { packaged?: boolean } = {}) {
       setAboutPanelOptions: (p: unknown) => { about.push(p); },
       on: (event: string, fn: (e: unknown, x: never) => void) => { calls.push(event); handlers.set(event, fn); },
     },
+    exists: (file: string) => (o.iconThere ?? true) && file === WINDOW_ICON,
   };
   return { e, calls, handlers, built, menus, about };
 }
@@ -142,6 +144,36 @@ describe("the native theme (review #245)", () => {
       setUpAppChrome({ os, appMenu, actions: actions() }, f.e as never);
       expect(f.e.nativeTheme.themeSource).toBe("dark");
     }
+  });
+});
+
+describe("the window icon (review #247)", () => {
+  it("is the built PNG beside main.cjs, on Linux only and only when it was built", () => {
+    expect(path.basename(WINDOW_ICON)).toBe("ember.png");
+    expect(windowIconFor("linux", f => f === WINDOW_ICON)).toBe(WINDOW_ICON);
+    expect(windowIconFor("linux", () => false)).toBeNull();
+    // Windows takes Ember.exe's icon, macOS the bundle's.
+    expect(windowIconFor("win32", () => true)).toBeNull();
+    expect(windowIconFor("darwin", () => true)).toBeNull();
+  });
+
+  it("is given to every window made on Linux, so Alt-Tab and the dash show Ember without a .desktop entry", () => {
+    const f = fakeElectron();
+    setUpAppChrome({ os: "linux", appMenu: false, actions: actions() }, f.e as never);
+    const win = { setIcon: vi.fn() };
+    f.handlers.get("browser-window-created")!({}, win as never);
+    expect(win.setIcon).toHaveBeenCalledWith(WINDOW_ICON);
+    for (const [os, appMenu, iconThere] of [["win32", false, true], ["darwin", true, true], ["linux", false, false]] as [OS, boolean, boolean][]) {
+      const other = fakeElectron({ iconThere });
+      setUpAppChrome({ os, appMenu, actions: actions() }, other.e as never);
+      expect(other.calls).not.toContain("browser-window-created");
+    }
+  });
+
+  it("is rendered by the build from the same SVG, which goes on without it when sharp is missing", () => {
+    const build = fs.readFileSync(path.resolve("scripts/build-app.mjs"), "utf8");
+    expect(build).toContain('icon.writePng(fileURLToPath(new URL("assets/ember.svg", root)), fileURLToPath(new URL("ember.png", out)), 256)');
+    expect(build).toMatch(/\.catch\(err => console\.warn\(`warning: dist\/app\/ember\.png wasn't made/);
   });
 });
 

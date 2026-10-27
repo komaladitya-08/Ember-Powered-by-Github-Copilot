@@ -151,4 +151,9 @@ await cp(new URL("node_modules/@xterm/xterm/css/xterm.css", root), new URL("rend
   if (err.code !== "ENOENT") throw err;
   console.warn("warning: node_modules/@xterm/xterm/css/xterm.css is missing (run npm ci): the command window has no terminal styles");
 });
+// The icon Ember's windows carry on Linux (windows.ts WINDOW_ICON), from the same SVG as the packages' icons. Without
+// sharp the build goes on: only the windows lack an icon where no .desktop entry gives them one.
+await import("./package/icon.mjs")
+  .then(icon => icon.writePng(fileURLToPath(new URL("assets/ember.svg", root)), fileURLToPath(new URL("ember.png", out)), 256))
+  .catch(err => console.warn(`warning: dist/app/ember.png wasn't made (${err.message}): Ember's windows on Linux have no icon`));
 await writeFile(new URL("meta.json", remoteOut), JSON.stringify((await remote).metafile));
