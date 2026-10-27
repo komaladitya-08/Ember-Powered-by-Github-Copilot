@@ -274,6 +274,19 @@ export interface OpensPrograms {
    * access key or "…" may follow): the request doesn't say what is selected, so they are refused whatever it is.
    */
   readonly commands: readonly string[];
+  /** The roles that carry those commands (default: menus, menu items, buttons and links: Explorer's ribbon and command bar). */
+  readonly commandRoles?: RegExp;
+  /** Keys that open the focused item, as policy.ts keyFamily spells them (default: Enter, with Ctrl or Shift too: Explorer's). */
+  readonly openKey?: RegExp;
+  /** Keys that move the keyboard off the selection or add the focused item to it (default: Explorer's Ctrl+arrows, Ctrl+Space); null: none. */
+  readonly splitsSelection?: RegExp | null;
+  /**
+   * The app hides file types by default, so an item's name may hide a program's: one whose name shows no type ("setup",
+   * a shortcut) is refused, and one that shows a document's ("invoice.pdf", which may be invoice.pdf.exe) is asked about.
+   */
+  readonly hidesTypes?: boolean;
+  /** Roles whose items are only ever places (File Explorer's navigation pane: folders and drives): opened as any other. */
+  readonly places?: RegExp;
 }
 
 /**
@@ -287,10 +300,13 @@ const RUNS_WHEN_OPENED = /\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|hta|msi|
  * Apps where opening an item runs it when it is a program or script, with no dialog. Windows: File Explorer and the
  * desktop, on a double click, Enter, or their Open, Open with, Run as administrator, Run as different user and Run with
  * PowerShell commands, in Windows' display languages (and a script's Open with Command Prompt, which runs it in a console,
- * in English). An item is known by the extension its name shows: where Explorer
- * hides known extensions (its default) or never shows them (shortcuts: .lnk, .url, .pif, .appref-ms), the name says
- * nothing, and the request carries no file type (UI Automation's ItemType, "Application", "Shortcut"), so such an
- * item is judged as any other. None on Linux and macOS.
+ * in English). An item is known by the extension its name shows: where Explorer hides known extensions (its default) or
+ * never shows them (shortcuts: .lnk, .url, .pif, .appref-ms) the name says nothing, and the request carries no file type
+ * (UI Automation's ItemType, "Application", "Shortcut", isn't passed to the policy yet), so an item whose name shows no
+ * type is refused and one whose name shows a document's type is asked about (`hidesTypes`); the navigation pane's items
+ * are places. macOS: Finder, which runs apps, Terminal scripts (.command, .tool, .terminal), Java archives and file
+ * locations it opens, and hides types too (an app's .app always); Cmd+O and Cmd+Down open there (Return renames). None
+ * on Linux: its file manager asks first (RUN_FILE_DIALOG).
  */
 export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
   linux: [],
@@ -334,8 +350,20 @@ export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
       "เปิด", "เปิดด้วย", "เรียกใช้ในฐานะผู้ดูแลระบบ", "เรียกใช้ในฐานะผู้ใช้อื่น", "เรียกใช้ด้วย powershell",
       "executar como outro utilizador",
     ],
+    hidesTypes: true,
+    places: /^tree item$/,
   }],
-  darwin: [],
+  darwin: [{
+    app: /^(finder|com\.apple\.finder)$/i,
+    item: /\.(app|command|tool|terminal|jar|fileloc)$/i,
+    commands: ["open", "open with", "öffnen", "öffnen mit", "ouvrir", "ouvrir avec", "abrir", "abrir con", "abrir com", "apri", "apri con", "open met",
+      "開く", "このアプリケーションで開く", "打开", "打开方式", "打開", "打開檔案的應用程式", "열기", "다음으로 열기"],
+    // Its menus' Open and Open With (a dialog's Open button belongs to the dialog: Gatekeeper's runs-program rule, an Open panel's).
+    commandRoles: /^(menu|menu item)$/,
+    openKey: /^(alt\+)?(shift\+)?cmd\+(o|down)$/,
+    splitsSelection: null,
+    hidesTypes: true,
+  }],
 };
 
 /**

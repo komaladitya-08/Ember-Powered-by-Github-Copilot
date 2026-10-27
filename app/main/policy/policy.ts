@@ -1780,6 +1780,8 @@ const SPLITS_SELECTION = /^ctrl\+(up|down|left|right|home|end|prior|next|space)$
 const MENU_LETTER = /^(shift\+)?[a-z0-9]$/;
 /** Arrow keys that open a submenu (Right; Left where menus run right to left): Open with's entries run the item. */
 const SUBMENU_KEY = /^(right|left)$/;
+/** A name that shows a file type (an extension after its last dot: "invoice.pdf", "Budget v1.2"). */
+const SHOWS_TYPE = /\.[\p{L}\p{N}]{1,10}$/u;
 /**
  * A rule's commands as one expression on a folded label: the whole label (as written: an app's name may hold "(TM)"),
  * an access key ("(O)") or "…" ("...") after it.
@@ -1800,23 +1802,31 @@ const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
  * focused item to it (Ctrl and an arrow, Ctrl+Space). "command": a command that opens or runs whatever is selected
  * (Open, Run as administrator), clicked, pressed with Enter or Space, opened as a submenu with an arrow (Open with), or
  * picked in its menu by a letter (Open's "O"): what is selected isn't known. Selecting an item by accessibility, moving with the arrows, and reading stay allowed.
+ * Where the app hides file types (`hidesTypes`), an item opened whose name shows no type is "untyped" (it may be a
+ * program: refused) and one whose name shows another type is "unsure" (asked about, saying so).
  */
 export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects" | "afterSelectAll" | "afterSelecting">,
-  kc: KeyConventions = KEYS.linux): "item" | "selection" | "command" | null {
+  kc: KeyConventions = KEYS.linux): "item" | "untyped" | "unsure" | "selection" | "command" | null {
   const rule = r.element && rules.find(x => x.app.test(r.app.trim()));
   if (!rule || !r.element) return null;
   const { role, name } = r.element;
   const key = r.kind === "keys" ? keyFamily(canonicalKeys(r.value ?? "", kc) ?? "") : "";
   const item = CONTENT_ROLES.test(role);
+  const openKey = rule.openKey ?? OPEN_KEY;
+  const splits = rule.splitsSelection === undefined ? SPLITS_SELECTION : rule.splitsSelection;
   if (item || ITEM_VIEW_ROLES.test(role)) {
-    if (SPLITS_SELECTION.test(key) || (OPEN_KEY.test(key) && (!item || r.afterSelectAll || r.afterSelecting))) return "selection";
-    const opens = (r.kind === "click" && !r.clickSelects) || r.kind === "cursor_click" || OPEN_KEY.test(key);
-    return item && opens && rule.item.test(normalizeLabel(name).trim()) ? "item" : null;
+    if (splits?.test(key) || (openKey.test(key) && (!item || r.afterSelectAll || r.afterSelecting))) return "selection";
+    const opens = (r.kind === "click" && !r.clickSelects) || r.kind === "cursor_click" || openKey.test(key);
+    if (!item || !opens) return null;
+    const shown = normalizeLabel(name).trim();
+    if (rule.item.test(shown)) return "item";
+    if (!rule.hidesTypes || rule.places?.test(role)) return null;
+    return SHOWS_TYPE.test(shown) ? "unsure" : "untyped";
   }
   if (/menu/.test(role) && MENU_LETTER.test(key)) return "command";
   // Clicked, pressed with Enter or Space, or (Open with's submenu) opened with an arrow, where its entries run the item
   // with the app they name (a script with its interpreter).
-  if (!COMMAND_ROLES.test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key) || SUBMENU_KEY.test(key))) return null;
+  if (!(rule.commandRoles ?? COMMAND_ROLES).test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key) || SUBMENU_KEY.test(key))) return null;
   let commands = commandExpressions.get(rule);
   if (!commands) commandExpressions.set(rule, commands = commandsOf(rule));
   // As written too: plainText maps Cyrillic and Greek look-alikes to Latin ("Открыть" would never match its own label).
@@ -2088,13 +2098,17 @@ export class PolicyEngine {
     if (r.kind !== "read" && READ_ONLY_WINDOW[os].some(w => w.app.test(r.app.trim()) && w.title.test(r.window.trim()) && !(windowRole !== undefined && w.otherRole?.test(windowRole)))) {
       return never("Ember doesn't run programs, so it never acts in the Run dialog");
     }
-    // File Explorer runs a program or script it opens with no dialog (OPENS_PROGRAMS; none on Linux and macOS).
+    // File Explorer and Finder run a program or script they open with no dialog (OPENS_PROGRAMS; none on Linux).
     const opens = r.kind !== "read" ? opensProgram(OPENS_PROGRAMS[os], r, kc) : null;
-    if (opens === "item") return never("Ember doesn't run programs, so it never opens programs or scripts from File Explorer");
+    const manager = os === "darwin" ? "Finder" : "File Explorer";
+    if (opens === "item") return never(`Ember doesn't run programs, so it never opens programs or scripts from ${manager}`);
     if (opens === "selection") {
-      return never("Ember doesn't run programs, and Enter in File Explorer opens every item selected, so it never opens a selection it can't name or moves the keyboard off one");
+      return never(`Ember doesn't run programs, and ${os === "darwin" ? "opening in Finder" : "Enter in File Explorer"} opens every item selected, so it never opens a selection it can't name or moves the keyboard off one`);
     }
-    if (opens === "command") return never("Ember doesn't run programs, and File Explorer's Open and Run as commands may start one, so it never uses them");
+    if (opens === "command") return never(`Ember doesn't run programs, and ${manager}'s ${os === "darwin" ? "Open commands" : "Open and Run as commands"} may start one, so it never uses them`);
+    if (opens === "untyped") {
+      return never(`Ember doesn't run programs, and ${manager} hides file types, so it never opens an item whose name shows none (it may be a program): open a folder by its path instead`);
+    }
     if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog, os)) {
       return never("Ember doesn't run programs, so it never makes files executable or runs them");
     }
@@ -2116,7 +2130,13 @@ export class PolicyEngine {
 
     if (count && !this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain };
 
-    const risk = this.withCarried(r, this.riskOf(r));
+    // An item whose type the file manager may hide (it shows "invoice.pdf" for invoice.pdf.exe): asked about, saying so.
+    const own = this.riskOf(r);
+    const hidden: Risk | null = opens === "unsure" ? {
+      reason: `${os === "darwin" ? "Finder" : "File Explorer"} hides file types, so this item may be a program, and opening one starts it`,
+      note: `It could be a program: ${os === "darwin" ? "Finder" : "File Explorer"} hides file types, and opening a program starts it.`,
+    } : null;
+    const risk = this.withCarried(r, own && hidden ? { ...own, note: [own.note, hidden.note].filter(Boolean).join(" ") } : own ?? hidden);
     const prompt = risk?.note ? `${plain} ${risk.note}` : plain;
     if (r.onDesk) {
       // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
