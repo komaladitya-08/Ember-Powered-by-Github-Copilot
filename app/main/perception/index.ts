@@ -51,6 +51,11 @@ export interface PerceptionOptions {
   isRemoteSurface?: (app: string) => boolean;
   /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
   capture?: typeof captureRect;
+  /**
+   * The first time in a run a picture is refused because the OS refused Ember the screen (macOS without Screen
+   * Recording): Ember says so itself, with a way to the setting (main.ts). The worker's text says so every time.
+   */
+  onNoScreenAccess?: () => void;
 }
 
 /**
@@ -122,6 +127,8 @@ export class Perception {
   /** This OS's security-window check (one argument only: a second one would pick another OS's vocabulary). */
   private readonly isSecurity: PrivacyVocabulary["isSecurityWindow"];
   private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
+  /** onNoScreenAccess was called (once a run). */
+  private toldNoScreenAccess = false;
 
   constructor(private o: PerceptionOptions) {
     this.isSecurity = o.isSecurityWindow ?? (w => linuxSecurityWindow(w));
@@ -427,7 +434,7 @@ export class Perception {
       return { ...seen, text: WINDOW_NOT_FOUND, capture: null };
     }
     // macOS gives no picture without Screen Recording (never allowed, or taken back): say that, not "off screen".
-    if (this.noScreenAccess(x11)) return noShot(this.words.noScreenAccess ?? NO_SCREEN_ACCESS);
+    if (this.noScreenAccess(x11)) return noShot(this.screenRefused());
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
@@ -541,12 +548,12 @@ export class Perception {
     });
     if (!capture) {
       return noShot(dialogAfter ? SYSTEM_DIALOG
-        : this.noScreenAccess(x11) ? this.words.noScreenAccess ?? NO_SCREEN_ACCESS
+        : this.noScreenAccess(x11) ? this.screenRefused()
         : "the window is off screen, or the screen couldn't be captured safely");
     }
-    const note = (covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "")
-      + (popups.hidden ? "\n(Screenshot: a popup Ember couldn't check for password fields is hidden.)" : "");
-    return { ...seen, text: text + note, capture };
+    const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
+    const unchecked = popups.hidden ? "\n(Screenshot: a popup Ember couldn't check for password fields is hidden.)" : "";
+    return { ...seen, text: text + note + unchecked, capture };
   }
 
   /**
@@ -628,6 +635,19 @@ export class Perception {
       this.o.log.warn("perception.secret_scan_failed", { err });
       return "Ember couldn't check the whole window for password fields";
     }
+  }
+
+  /** Why there is no picture when the OS refused Ember the screen; the first time in a run, Ember is told (onNoScreenAccess). */
+  private screenRefused(): string {
+    if (!this.toldNoScreenAccess) {
+      this.toldNoScreenAccess = true;
+      try {
+        this.o.onNoScreenAccess?.();
+      } catch (err) {
+        this.o.log.warn("perception.no_screen_access_notice_failed", { err });
+      }
+    }
+    return this.words.noScreenAccess ?? NO_SCREEN_ACCESS;
   }
 
   /**

@@ -1050,6 +1050,7 @@ function start(): void {
     // click, not the user's: ignored.
     if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:")) { log.warn("bubble.action_while_borrowing", { id }); return; }
     if (id === "ui:settings") { openSettings(); return; }
+    if (id === "ui:screen-recording") { sys.fixes.apply("open-screen-recording-settings").catch(err => log.warn("fix.failed", { fix: "open-screen-recording-settings", err })); return; }
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
@@ -1335,6 +1336,15 @@ function start(): void {
       isSecurityWindow: privacy.isSecurityWindow,
       // Remote desktops' and WSLg apps' windows are blacked out of every screenshot (Windows only; undefined elsewhere).
       isRemoteSurface: remoteSurfaceCheck(platform.os),
+      // macOS refused Ember the screen (no Screen Recording): Ember says so once a run, with the way to the setting.
+      onNoScreenAccess: () => {
+        if (!sys.fixes.ids.includes("open-screen-recording-settings")) return;
+        const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "I can't take screenshots",
+          thought: "I don't have macOS's Screen Recording permission. Allow it in System Settings, then quit and reopen me.",
+          actions: [{ id: "ui:screen-recording", label: sys.fixes.label("open-screen-recording-settings") }] };
+        setState({ bubble });
+        hideIfStill(bubble, 15000);
+      },
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
         const hw = handle?.win && !handle.win.isDestroyed() ? handle.win : null;

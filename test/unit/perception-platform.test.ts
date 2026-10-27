@@ -58,7 +58,7 @@ function desktop(o: {
   screen?: Bounds; neverLook?: string[];
   screenRecording?: () => boolean;
   secretFields?: (w: { pid: number; path: string }) => { fields: { id: number; bounds: Bounds }[]; complete: boolean; busy?: boolean };
-} & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay">) {
+} & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay" | "onNoScreenAccess">) {
   const screen = o.screen ?? { x: 0, y: 0, width: 300, height: 200 };
   const captures: number[][] = [];
   let shellAsked = 0;
@@ -91,7 +91,7 @@ function desktop(o: {
   const perception = new Perception({
     sidecar, x11: ws, log, neverLook: () => o.neverLook ?? [], screenBounds: () => screen, ownPid: 999,
     ...(o.words ? { words: o.words } : {}), ...(o.isSecurityWindow ? { isSecurityWindow: o.isSecurityWindow } : {}),
-    ...(o.hideOverlay ? { hideOverlay: o.hideOverlay } : {}),
+    ...(o.hideOverlay ? { hideOverlay: o.hideOverlay } : {}), ...(o.onNoScreenAccess ? { onNoScreenAccess: o.onNoScreenAccess } : {}),
   });
   return { perception, captures, warnings, shellAsked: () => shellAsked };
 }
@@ -474,6 +474,34 @@ describe("Perception without the screen-capture permission (macOS Screen Recordi
     // A failed capture elsewhere keeps today's words.
     const off = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), capture: () => null });
     expect((await off.perception.perceive({ image: true, scope: "screen" })).text).toContain("(No screenshot: the window is off screen, or the screen couldn't be captured safely.)");
+  });
+
+  it("tells Ember the first time a run, so it can offer the setting (refused before the picture or while it was taken)", async () => {
+    let told = 0;
+    let allowed = false;
+    const { perception } = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => allowed, words: PLATFORM_WORDS.darwin,
+      capture: () => { allowed = false; return null; }, onNoScreenAccess: () => { told++; },
+    });
+    await perception.perceive({ image: true, scope: "screen" });
+    expect(told).toBe(1);
+    allowed = true; // taken back while the picture is taken: said in the text, but Ember was told already
+    expect((await perception.perceive({ image: true, scope: "screen" })).text).toContain(NO_ACCESS);
+    expect(told).toBe(1);
+    // Taken back while the picture is taken, first in a run; a failing notice changes nothing.
+    let once = 0;
+    allowed = true;
+    const late = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => allowed, words: PLATFORM_WORDS.darwin,
+      capture: () => { allowed = false; return null; }, onNoScreenAccess: () => { once++; throw new Error("no overlay"); },
+    });
+    expect((await late.perception.perceive({ image: true, scope: "screen" })).text).toContain(NO_ACCESS);
+    expect(once).toBe(1);
+    // A capture that fails with the permission there tells nothing.
+    let never = 0;
+    const off = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => true, capture: () => null, onNoScreenAccess: () => { never++; } });
+    await off.perception.perceive({ image: true, scope: "screen" });
+    expect(never).toBe(0);
   });
 
   it("captures when the permission check itself fails: the capture asks again and fails closed", async () => {
