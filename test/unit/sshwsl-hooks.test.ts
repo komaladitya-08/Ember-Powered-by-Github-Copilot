@@ -32,7 +32,11 @@ vi.mock("electron", () => ({
     setAlwaysOnTop(on: boolean, level?: string) { this.calls.push(["setAlwaysOnTop", on, level]); }
     loadFile(file: string) { this.calls.push(["loadFile", file]); return Promise.resolve(); }
     once() { /* not shown by the factories */ }
+    on(event: string) { this.calls.push(["on", event]); }
   },
+  // The command window's close guard listens for Ember quitting (review #262); its placement reads the screen (#272).
+  app: { on: () => undefined, removeListener: () => undefined },
+  screen: {},
 }));
 
 /** targetRules as main's policy calls it: S0a's stub, unless a test puts a rule of its own in. */
@@ -608,6 +612,8 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
       // Never shown by its factory: the controller shows it (inactive on Windows).
       expect(calls.some(c => c[0] === "show" || c[0] === "focus")).toBe(false);
+      // Its close button asks the controller first (review #262).
+      expect(calls).toContainEqual(["on", "close"]);
     }
   });
 
