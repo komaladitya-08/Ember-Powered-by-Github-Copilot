@@ -807,3 +807,33 @@ describe("an answer the card's buttons sent that wasn't taken (review #271)", ()
     expect(page().last().card?.retry).toBe(1);
   });
 });
+
+describe("a run the remote's own check sent back for the user's OK (review #274)", () => {
+  it("says it didn't run and waits for the OK, then gives way to the run the user allowed", async () => {
+    const { ctl, page } = setup();
+    const first = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), first);
+    first.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true, error: "build-01's own check wants the user's yes first" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs).toHaveLength(1);
+    expect(page().last().tabs[0]).toMatchObject({ outcome: "stopped", status: "Not run: build-01's own check asks for your OK first." });
+    // The retry: a new run of the same command for the same task takes its place.
+    ctl.attach(card({ runId: "fedcba9876543210" }), new FakeRun("fedcba9876543210"));
+    expect(page().last().tabs.map(t => t.runId)).toEqual(["fedcba9876543210"]);
+  });
+
+  it("keeps a refusal that needs no OK, and a waiting tab when another command comes", async () => {
+    const { ctl, page } = setup();
+    const refused = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), refused);
+    refused.finish({ ended: "refused-remote", code: null, ms: 40, error: "its policy turns commands off" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs[0].outcome).toBe("failed");
+    const waiting = new FakeRun("1111111111111111");
+    ctl.attach(card({ runId: "1111111111111111", command: "rm -r dist" }), waiting);
+    waiting.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    ctl.attach(card({ runId: "2222222222222222", command: "ls" }), new FakeRun("2222222222222222"));
+    expect(page().last().tabs.map(t => t.runId)).toEqual(["2222222222222222", "1111111111111111", "0123456789abcdef"]);
+  });
+});

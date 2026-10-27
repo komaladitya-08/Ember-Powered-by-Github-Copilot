@@ -125,6 +125,14 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
   return more ? `${line} ${more}` : line;
 }
 
+/**
+ * The status line of a run the remote's own check sent back for the user's OK (§3.16, review #274): it didn't run, and
+ * the question is up; the run the user then allows takes this tab's place.
+ */
+export function reaskText(label: string): string {
+  return `Not run: ${outsideText(label, 64)}'s own check asks for your OK first.`;
+}
+
 /** The approve keys' hint under the card (§8.5), in the PC's own labels: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now". */
 export function keyHintText(os: OS): string {
   return `${SHORTCUTS[os].allow.label} allow · ${SHORTCUTS[os].deny.label} not now`;

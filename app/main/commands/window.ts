@@ -17,7 +17,7 @@ import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, RunExit, RunningCommand } from "./types";
-import { RUNNING_STATUS, announceKeyText, headerLine, outsideText, statusLine, typingHint } from "../../renderer/command/copy";
+import { RUNNING_STATUS, announceKeyText, headerLine, outsideText, reaskText, statusLine, typingHint } from "../../renderer/command/copy";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
 /** Runs whose tabs are kept (the newest first; running ones are never dropped). */
@@ -87,6 +87,8 @@ interface Tab {
   pendingBytes: number;
   flush: ReturnType<typeof setTimeout> | null;
   unsubscribe: () => void;
+  /** The remote's own check sent it back for the user's OK (it never ran): the retry's run takes its place. */
+  reask?: boolean;
 }
 
 interface Announcement {
@@ -502,9 +504,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       if (!ensure()) { unseen("window"); return; }
       // The task's run has its tab now: its pending line ("Starting Ubuntu…") gives way to it.
       pendings.delete(c.taskId);
-      // The same run shown again (a retry after the remote asked): its old tab goes.
-      for (const old of tabs.filter(t => t.card.runId === c.runId)) dropTab(old);
-      tabs = tabs.filter(t => t.card.runId !== c.runId);
+      // The same run shown again, or the retry of a run the remote's own check sent back for the user's OK (the same
+      // command for the same task, under a new run id): the old tab goes (review #274).
+      const replaced = (t: Tab) => t.card.runId === c.runId || (t.reask === true && t.card.taskId === c.taskId && t.card.sha256 === c.sha256);
+      for (const old of tabs.filter(replaced)) dropTab(old);
+      tabs = tabs.filter(t => !replaced(t));
       const t: Tab = {
         seq: seqNext++, card: c, run, ended: false, outcome: "running", status: RUNNING_STATUS, note: null, size: size ?? { ...DEFAULT_TERM_SIZE },
         kept: [], keptBytes: 0, start: 0, total: 0, pending: [], pendingAt: 0, pendingBytes: 0, flush: null, unsubscribe: () => undefined,
@@ -522,6 +526,14 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
         if (t.ended || !tabs.includes(t)) return;
         flush(t);
         t.ended = true;
+        // The remote's own check wants the user's OK first: nothing ran, and the question comes up now (§3.16).
+        if (exit?.ended === "refused-remote" && exit.needsConfirm === true) {
+          t.reask = true;
+          t.outcome = "stopped";
+          t.status = reaskText(c.targetLabel);
+          push();
+          return;
+        }
         t.outcome = outcomeOf(exit);
         t.status = statusLine(exit ?? { code: null, signal: null, ended: "failed-to-start", ms: 0, error: "Ember lost track of it" }, { label: c.targetLabel, os: o.os });
         push();
