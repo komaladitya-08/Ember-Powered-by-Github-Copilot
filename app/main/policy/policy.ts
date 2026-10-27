@@ -18,7 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 
@@ -1829,7 +1829,8 @@ const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
  * (Open, Run as administrator), clicked, pressed with Enter or Space, opened as a submenu with an arrow (Open with), or
  * picked in its menu by a letter (Open's "O"): what is selected isn't known. Selecting an item by accessibility, moving with the arrows, and reading stay allowed.
  * Where the app hides file types (`hidesTypes`), an item opened whose name shows no type is "untyped" (it may be a
- * program: refused) and one whose name shows another type is "unsure" (asked about, saying so).
+ * program: refused) and one whose name shows another type is "unsure" (asked about, saying so), unless it is a place
+ * (`places`, `placeNames`: File Explorer's navigation pane, Finder's sidebar).
  */
 export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects" | "afterSelectAll" | "afterSelecting">,
   kc: KeyConventions = KEYS.linux): "item" | "untyped" | "unsure" | "selection" | "command" | null {
@@ -1846,7 +1847,7 @@ export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequ
     if (!item || !opens) return null;
     const shown = normalizeLabel(name).trim();
     if (rule.item.test(shown)) return "item";
-    if (!rule.hidesTypes || rule.places?.test(role)) return null;
+    if (!rule.hidesTypes || rule.places?.test(role) || (rule.placeNames?.roles.test(role) && rule.placeNames.names.has(placeName(name)))) return null;
     return SHOWS_TYPE.test(shown) ? "unsure" : "untyped";
   }
   if (/menu/.test(role) && MENU_LETTER.test(key)) return "command";

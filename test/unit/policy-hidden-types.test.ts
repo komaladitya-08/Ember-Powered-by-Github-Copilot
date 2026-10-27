@@ -67,6 +67,30 @@ describe("Finder", () => {
     expect(mac.decide(item("Finder", "report.pdf", { kind: "keys", value: "cmd+o", afterSelectAll: true })).verdict).toBe("deny");
   });
 
+  it("moves through its sidebar: a row named after one of the sidebar's places opens as any other item", () => {
+    // Finder's sidebar is an outline (AXOutline), so its rows are tree items, like the list view's.
+    const row = (name: string, more: Partial<ActionRequest> = {}) => mac.decide(item("Finder", name, { element: { role: "tree item", name }, ...more }));
+    for (const name of ["Documents", "Downloads", "Applications", "Desktop", "Recents", "AirDrop", "iCloud Drive", "Macintosh HD", "Network", "Movies", "Music", "Pictures",
+      "Dokumente", "Schreibtisch", "Téléchargements", "Descargas", "Documenti", "Bureaublad", "書類", "ダウンロード", "文稿", "下载", "문서", "다운로드", " documents "]) {
+      for (const more of [{}, { kind: "cursor_click" as const }, { kind: "keys" as const, value: "cmd+o" }, { kind: "keys" as const, value: "cmd+Down" }]) {
+        expect(row(name, more).tier, `${name} ${JSON.stringify(more)}`).not.toBe("never");
+      }
+    }
+    expect(row("Documents").verdict).toBe("allow");
+    expect(row("Documents", { kind: "cursor_click" }).verdict).toBe("confirm");
+  });
+
+  it("still refuses rows that aren't the sidebar's places (an untyped file or folder in the list view, an app)", () => {
+    const row = (name: string) => mac.decide(item("Finder", name, { element: { role: "tree item", name } }));
+    for (const name of ["setup", "Projects", "My Documents", "Documents.app", "Downloads.command", "Calculator", "Dоcuments", "Docu​ments"]) {
+      expect(row(name), name).toMatchObject({ tier: "never", verdict: "deny" });
+    }
+    // A sidebar place's name on an icon (not a tree item) is judged as before.
+    expect(mac.decide(item("Finder", "Documents")).tier).toBe("never");
+    // File Explorer's own rules are unchanged: its item view's "Documents" is untyped there.
+    expect(win.decide(item("explorer", "Documents")).tier).toBe("never");
+  });
+
   it("renames with Return as before (Finder's Return doesn't open), and leaves other apps alone", () => {
     expect(mac.decide(item("Finder", "setup", { kind: "keys", value: "Return" })).tier).not.toBe("never");
     expect(mac.decide(item("Finder", "", { element: { role: "menu item", name: "Get Info" } })).tier).not.toBe("never");

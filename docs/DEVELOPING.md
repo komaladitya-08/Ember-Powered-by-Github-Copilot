@@ -747,6 +747,7 @@ Ember team) and **Keyboard shortcuts**.
 | Ember won't borrow the mouse for a window | The window's program runs as administrator; Windows would drop Ember's input |
 | Ember can't open an app by name | Store (MSIX) apps that have no Start menu shortcut, such as the new Teams, can't be opened by name yet |
 | Ember refuses to act in a window | A Remote Desktop or WSL window (§10.8) |
+| Ember won't open a file or folder in File Explorer | File Explorer hides file types, so a program can show as "setup": Ember never opens an item whose name shows no type, and asks every time before opening one that shows a document's. Folders are opened by their path (the address box) or from the navigation pane |
 
 ## 11. macOS
 
@@ -950,6 +951,7 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 | Ember won't type, and says to switch to a keyboard layout | An input method (Japanese, Pinyin, Korean…) is selected, and it would compose from Ember's keys. Choose a keyboard layout; Ember can still fill fields directly |
 | **Start Ember when I log in** doesn't stick | Allow Ember in **System Settings › General › Login Items**; a copy outside Applications can't register |
 | Ember can't reach your organisation's AI service on the local network (macOS 15) | Allow Ember under **Privacy & Security › Local Network** |
+| Ember won't open a file or folder in Finder | Finder hides file types (an app's `.app` always), so Ember never opens an item whose name shows no type, and asks every time before opening one that shows a document's. It opens the sidebar's places by name (Recents, Applications, Desktop, Documents, Downloads, iCloud Drive, the startup disk, Network…); the home folder, other disks, servers, folders you added to the sidebar and folders in the window itself are opened by their path (**Go › Go to Folder**) |
 
 ## 12. Working on the platform layer
 

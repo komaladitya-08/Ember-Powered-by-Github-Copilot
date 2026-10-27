@@ -305,7 +305,36 @@ export interface OpensPrograms {
   readonly hidesTypes?: boolean;
   /** Roles whose items are only ever places (File Explorer's navigation pane: folders and drives): opened as any other. */
   readonly places?: RegExp;
+  /**
+   * Where the role can't tell a place from a file (Finder's sidebar and list view are both outlines, so both have tree
+   * items): an item of `roles` whose whole name, as written (case aside), is one of `names` (the sidebar's places as
+   * the system names them) is opened as any other.
+   */
+  readonly placeNames?: { readonly roles: RegExp; readonly names: ReadonlySet<string> };
 }
+
+/** A name as `OpensPrograms.placeNames` compares it: as written (no look-alike folding), composed, trimmed, lower case. */
+export const placeName = (s: string) => s.normalize("NFC").trim().toLowerCase();
+
+/**
+ * The places Finder's sidebar lists by name (Recents, AirDrop, Applications, Desktop, Documents, Downloads, Movies,
+ * Music, Pictures, iCloud Drive, Shared, the startup disk, Network) in the languages its commands are listed in. Best
+ * knowledge: a localized runner must confirm them. The home folder, other disks, servers and folders the user added
+ * there go by names of their own, so they are opened by path (Go ▸ Go to Folder) instead.
+ */
+const FINDER_PLACES = [
+  "recents", "airdrop", "applications", "desktop", "documents", "downloads", "movies", "music", "pictures", "icloud drive", "shared", "macintosh hd", "network",
+  "zuletzt benutzt", "programme", "schreibtisch", "dokumente", "filme", "musik", "bilder", "geteilt", "netzwerk",
+  "récents", "bureau", "téléchargements", "films", "musique", "images", "partagé", "réseau",
+  "recientes", "aplicaciones", "escritorio", "documentos", "descargas", "películas", "música", "imágenes", "compartido", "red",
+  "recenti", "applicazioni", "scrivania", "documenti", "download", "filmati", "musica", "immagini", "condivisi",
+  "recentes", "aplicativos", "mesa", "transferências", "filmes", "imagens", "compartilhado", "partilhado", "rede",
+  "recent", "apps", "programma's", "bureaublad", "documenten", "muziek", "afbeeldingen", "gedeeld", "netwerk",
+  "最近の項目", "アプリケーション", "デスクトップ", "書類", "ダウンロード", "ムービー", "ミュージック", "ピクチャ", "共有", "ネットワーク",
+  "最近使用", "隔空投送", "应用程序", "桌面", "文稿", "下载", "影片", "音乐", "图片", "icloud云盘", "网络",
+  "最近項目", "應用程式", "文件", "下載", "音樂", "圖片", "icloud 雲碟", "網路",
+  "최근 항목", "응용 프로그램", "데스크탑", "문서", "다운로드", "동영상", "음악", "사진", "공유됨", "네트워크",
+];
 
 /**
  * What File Explorer (and the desktop, also explorer.exe) runs with no dialog when it opens it: programs, scripts and
@@ -381,6 +410,9 @@ export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
     openKey: /^(alt\+)?(shift\+)?cmd\+(o|down)$/,
     splitsSelection: null,
     hidesTypes: true,
+    // Its sidebar's places. An app renamed to one of these names and opened from the list view would be taken for the
+    // folder (Gatekeeper still asks before one from the internet starts, and Ember refuses that question's Open).
+    placeNames: { roles: /^tree item$/, names: new Set(FINDER_PLACES.map(placeName)) },
   }],
 };
 
