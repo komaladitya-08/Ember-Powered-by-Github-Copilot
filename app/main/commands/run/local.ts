@@ -124,7 +124,7 @@ export function launchArgv(
   if (facts.script && !safeScript) throw new LaunchError("Ember can't start script(1): its path has characters Ember doesn't pass on.");
 
   if (o.wsl) {
-    if (!o.jobHost) throw new LaunchError("Ember's job host is missing, so it can't run commands in WSL safely.");
+    if (!o.jobHost) throw new LaunchError("Part of Ember's install is missing, so it can't run commands in WSL safely. Reinstall Ember.");
     if (!DISTRO_NAME.test(o.wsl.distro)) throw new LaunchError("Ember can't pass that distribution's name to WSL.");
     if (!WINDOWS_PROGRAM.test(o.wsl.exe)) throw new LaunchError("Ember can't find wsl.exe.");
     if (WSL_CWD_BAD.test(spec.cwd) || !spec.cwd.startsWith("/")) throw new LaunchError("Ember can't pass that folder to WSL.");
@@ -160,7 +160,7 @@ export function launchArgv(
 
   if (facts.os === "win32") {
     if (spec.shell !== "powershell") throw new LaunchError("On Windows, Ember runs commands in Windows PowerShell only.");
-    if (!o.jobHost) throw new LaunchError("Ember's job host is missing, so it can't run commands safely here.");
+    if (!o.jobHost) throw new LaunchError("Part of Ember's install is missing, so it can't run commands safely here. Reinstall Ember.");
     const ps = facts.shellPaths.powershell;
     if (!ps || !WINDOWS_PROGRAM.test(ps)) throw new LaunchError("Ember can't find Windows PowerShell.");
     const argv = jobHostArgv(o.jobHost, ps, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", PS_INNER], false);
@@ -780,7 +780,7 @@ class LocalRun implements KeptRun {
     if (this.stopWhy) return { ...base, ended: STOP_ENDED[this.stopWhy] };
     if (this.kind === "windows" && this.exitCode === JOB_FAILED && this.stderrText.startsWith(JOB_FAILED_PREFIX)) {
       const why = this.stderrText.slice(JOB_FAILED_PREFIX.length).split(/\r?\n/)[0].trim().slice(0, 300);
-      return { ...base, ended: "failed-to-start", error: `Ember's job host couldn't start the command, so it didn't run${why ? ` (${why})` : ""}.` };
+      return { ...base, ended: "failed-to-start", error: `Ember couldn't start the command safely, so it didn't run${why ? ` (${why})` : ""}.` };
     }
     if (this.kind !== "windows" && !this.markerSeen) return { ...base, ended: "failed-to-start", error: this.startFailure() };
     return { ...base, ended: "exit" };

@@ -44,9 +44,9 @@ describe("ember doctor on Linux", () => {
     expect(byId(doctorChecks(base({ microphones: [] })), "microphone")?.detail).toBe("No microphone found. Only needed for “Hey Ember”; typing (Ctrl+Alt+Space) always works.");
   });
 
-  it("keeps Linux's wording on Linux arm64, whose platform check reads 'not supported in v1' (the os field decides, not that text)", () => {
+  it("keeps Linux's wording on Linux arm64, whose platform check reads 'isn’t supported' (the os field decides, not that text)", () => {
     const checks = doctorChecks(base({ os: "linux", env: linuxEnv({ arch: "arm64" }), compositor: false, xtest: false, speechDispatcher: false, microphones: null }));
-    expect(byId(checks, "platform")).toMatchObject({ status: "fail", detail: "linux/arm64 is not supported in v1" });
+    expect(byId(checks, "platform")).toMatchObject({ status: "fail", detail: "linux/arm64 isn't supported" });
     expect(byId(checks, "xtest")?.fix).toBe("sudo dnf install libXtst");
     expect(byId(checks, "compositor")?.fix).toBe("Use GNOME on Xorg (its compositor is built in).");
     expect(byId(checks, "microphone")?.fix).toBe("sudo dnf install pulseaudio-utils");

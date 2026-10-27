@@ -703,7 +703,7 @@ class Run {
     const exe = d.exe();
     if (!exe) throw new Error("WSL isn't installed");
     // Fail closed: without the job host nothing could stop wsl.exe's interop children or survive Ember's crash.
-    if (!d.jobHost) throw new Error("Ember's job host is missing from this install, so it can't run commands in WSL");
+    if (!d.jobHost) throw new Error("Part of Ember's install is missing, so it can't run commands in WSL. Reinstall Ember.");
     const { facts, lines } = await this.r.factsAndLines();
     if (this.stopWhy || this.ended) return;
     if (!lines.base64) throw new Error(`Ember needs base64 (coreutils) in ${d.distro} to pass commands to it`);

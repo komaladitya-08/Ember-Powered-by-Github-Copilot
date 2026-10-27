@@ -405,7 +405,7 @@ describe("WSL runner: starting a command", () => {
 
   it("refuses to run without the job host (nothing could stop wsl.exe's children)", async () => {
     const w = distro({ jobHost: null });
-    expect((await w.runner.start(spec()).done).error).toMatch(/job host is missing/);
+    expect((await w.runner.start(spec()).done).error).toMatch(/Part of Ember's install is missing/);
     expect(w.calls).toHaveLength(0);
   });
 

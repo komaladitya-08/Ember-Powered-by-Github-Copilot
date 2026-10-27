@@ -133,7 +133,7 @@ export function createWslExec(o: { exe: () => string | null; env: NodeJS.Process
       const exe = o.exe();
       const refuse = (error: string): Promise<ExecResult> => Promise.resolve({ code: null, stdout: empty, stderr: empty, timedOut: false, error });
       if (!exe) return refuse("WSL isn't installed");
-      if (r.inDistro && !o.jobHost) return refuse("Ember's job host is missing from this install");
+      if (r.inDistro && !o.jobHost) return refuse("Part of Ember's install is missing (reinstall Ember)");
       const argv = o.jobHost ? jobHostArgv(o.jobHost, exe, args, r.stdin !== undefined) : [exe, ...args];
       return new Promise<ExecResult>(resolve => {
         let child: WslChild;

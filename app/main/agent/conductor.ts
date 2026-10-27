@@ -523,7 +523,7 @@ export class Conductor {
     // A turn that went silent is being ended: a request sent now would run (and show) only after it.
     if (this.endingTurn) await this.endingTurn;
     const session = this.session;
-    if (!session) throw new Error("Ember's brain is not connected yet.");
+    if (!session) throw new Error("Ember isn't connected to Copilot yet.");
     // A new request: an earlier Stop doesn't refuse what the user asks for now.
     this.stopping = false;
     this.deps.presenter.userPrompt(text);

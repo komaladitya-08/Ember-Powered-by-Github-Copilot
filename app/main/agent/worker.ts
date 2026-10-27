@@ -1353,7 +1353,7 @@ export class Worker {
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
-    const result = this.result ?? { success: false, summary: lastAnswer || "The worker stopped without a summary." };
+    const result = this.result ?? { success: false, summary: lastAnswer || "The task stopped without saying what happened." };
     return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
   }
 
