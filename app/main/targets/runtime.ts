@@ -59,7 +59,7 @@ import { targetMenu } from "./menu";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
 import {
-  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, sshAllowed, summaryOf, wslAllowed,
+  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, notConnectedWhy, sshAllowed, summaryOf, wslAllowed,
   type LinkState, type LinkView, type TargetEntry,
 } from "./registry";
 import { createRemoteTarget, type RemoteTarget } from "./remote-service";
@@ -1188,7 +1188,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (e.kind === "ssh") {
         const c = e.host ? conns.get(e.host.id) : undefined;
         const t = c?.target;
-        if (!t || !asking || c?.state !== "ready" || t.link.state !== "ready") return refuse(e.why ?? `${e.label} isn't connected. Connect it from Ember's menu first.`);
+        if (!t || !asking || c?.state !== "ready" || t.link.state !== "ready") return refuse(e.why ?? notConnectedWhy(e.label));
         const audit = deps.localHands?.audit ?? deps.audit();
         const confirmer = deps.localHands?.confirmer ?? deps.confirmer();
         if (!audit || !confirmer) return refuse("Ember can't keep its record of what it does, so it won't work there.");

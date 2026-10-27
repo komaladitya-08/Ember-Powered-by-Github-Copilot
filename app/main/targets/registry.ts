@@ -163,6 +163,14 @@ function wslEntries(i: RegistryInput): TargetEntry[] {
   return out;
 }
 
+/**
+ * Why a known computer that isn't connected can't take a task: offer_connect puts a Connect button in the bubble, as it
+ * does for a computer Ember doesn't know yet, so the model is pointed there, not at a menu (review #197).
+ */
+export function notConnectedWhy(label: string): string {
+  return `${label} isn't connected. Ember can offer a Connect button for it (offer_connect).`;
+}
+
 /** The SSH entries: one per host record, while the administrator allows SSH. */
 function sshEntries(i: RegistryInput): TargetEntry[] {
   if (!sshAllowed(i.admin)) return [];
@@ -175,7 +183,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
     const names = [...new Set([h.id, hostPart(h.dest), h.resolved.hostname, h.dest.includes("@") ? "" : h.dest].filter(Boolean))];
     const base = { id, kind: "ssh" as const, label, login: h.resolved.user, names, host: h, listedOnly: false };
     if (!link || link.state === "closed") {
-      out.push({ ...base, state: "off", can: "not connected", usable: false, why: `${label} isn't connected. Connect it from Ember's menu first.` });
+      out.push({ ...base, state: "off", can: "not connected", usable: false, why: notConnectedWhy(label) });
       continue;
     }
     if (link.state === "connecting") {
@@ -183,7 +191,9 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
       continue;
     }
     if (link.state === "lost") {
-      out.push({ ...base, state: "lost", can: "connection lost", usable: false, why: `The connection to ${label} dropped. Reconnect it from Ember's menu first.` });
+      // The menu's item is disabled while lost: the bubble's Reconnect, offer_connect's button or Settings (review #197).
+      out.push({ ...base, state: "lost", can: "connection lost", usable: false,
+        why: `The connection to ${label} dropped. Ember can offer a Connect button for it (offer_connect), or the user can reconnect it in Ember's settings (Computers).` });
       continue;
     }
     const cmd = link.commands ?? "off";
