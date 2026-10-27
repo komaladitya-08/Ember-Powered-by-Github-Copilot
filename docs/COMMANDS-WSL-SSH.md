@@ -43,6 +43,13 @@ report to Ana" names no computer, and neither does "build-01 restart the web ser
 goes to the computer Ember is set to work on (and nothing dangerous in it runs on an announcement: §2.5). Only your
 own words choose: never text on a screen, in a file or in a command's output.
 
+**Short names.** A computer added by its full name also answers to its first part when that has a digit or a hyphen
+("on build-01" for build-01.example.com; "in the app" never names app.example.com), and a WSL distro to its first word
+("in Ubuntu" for Ubuntu-22.04, "in kali" for kali-linux). The longest name you say wins ("on build-01-test" is
+build-01-test, not build-01). When two computers share the short name you said, Ember asks which one; when you name a
+version of a distro that isn't installed ("in Ubuntu 24.04" with only Ubuntu-22.04), Ember asks whether you meant the
+one you have.
+
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
 a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
 bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").

@@ -150,6 +150,51 @@ describe("SSH hosts (§2.2)", () => {
   });
 });
 
+describe("short names (reviews #179, #180)", () => {
+  const namesOf = (e: ReturnType<typeof buildRegistry>, id: string) => e.find(x => x.id === id)!.names;
+  const fqdn = (id: string, more: Partial<HostRecord> = {}): HostRecord =>
+    host(id, { dest: `deploy@${id}`, resolved: { user: "deploy", hostname: id, port: 22, jump: [] }, ...more });
+
+  it("gives a host added by its full name the first part of it, when that looks like a computer's name", () => {
+    const e = buildRegistry(input({ settings: settingsWith({ hosts: [fqdn("build-01.example.com"), fqdn("app.example.com"), fqdn("db.example.com")] }) }));
+    expect(namesOf(e, "ssh:build-01.example.com")).toContain("build-01");
+    // "in the app" or "on db" never names a computer: a first part needs a letter and a digit or a hyphen.
+    expect(namesOf(e, "ssh:app.example.com")).not.toContain("app");
+    expect(namesOf(e, "ssh:db.example.com")).not.toContain("db");
+    // Its resolved hostname's first part too ("deploy@build-02" that ssh -G resolves to web-02.internal).
+    const viaConfig = buildRegistry(input({ settings: settingsWith({ hosts: [host("build-02", { resolved: { user: "deploy", hostname: "web-02.internal", port: 22, jump: [] } })] }) }));
+    expect(namesOf(viaConfig, "ssh:build-02")).toContain("web-02");
+    // An address has no first part to say.
+    const ip = buildRegistry(input({ settings: settingsWith({ hosts: [host("lab", { dest: "10.0.0.5", resolved: { user: "deploy", hostname: "10.0.0.5", port: 22, jump: [] } })] }) }));
+    expect(namesOf(ip, "ssh:lab").filter(n => !/\./.test(n))).toEqual(["lab"]);
+  });
+
+  it("gives a short name two hosts share to both (so saying it asks which), and leaves one that is another computer's own name to it", () => {
+    const shared = buildRegistry(input({ settings: settingsWith({ hosts: [fqdn("build-01.a.com"), fqdn("build-01.b.com")] }) }));
+    expect(namesOf(shared, "ssh:build-01.a.com")).toContain("build-01");
+    expect(namesOf(shared, "ssh:build-01.b.com")).toContain("build-01");
+    const owned = buildRegistry(input({ settings: settingsWith({ hosts: [host("build-01"), fqdn("build-01.other.net")] }) }));
+    expect(namesOf(owned, "ssh:build-01.other.net")).not.toContain("build-01");
+  });
+
+  it("gives a distro its first word: \"in Ubuntu\" names Ubuntu-22.04 (and the wrong-target guard hears it)", () => {
+    const e = buildRegistry(input({
+      os: "win32", settings: settingsWith({ wslOn: true }),
+      wsl: facts([distro("Ubuntu-22.04", { isDefault: true }), distro("kali-linux"), distro("openSUSE-Leap-15.5"), distro("Debian")]),
+    }));
+    expect(namesOf(e, "wsl:Ubuntu-22.04")).toContain("Ubuntu");
+    expect(namesOf(e, "wsl:kali-linux")).toContain("kali");
+    expect(namesOf(e, "wsl:openSUSE-Leap-15.5")).toContain("openSUSE");
+    expect(namesOf(e, "wsl:Debian")).toEqual(["Debian", "Debian (WSL)"]);
+    // Listed for settings while WSL is off, with the same names (the guard counts them then too).
+    const off = buildRegistry(input({ os: "win32", wsl: facts([distro("Ubuntu-22.04")]) }));
+    expect(namesOf(off, "wsl:Ubuntu-22.04")).toContain("Ubuntu");
+    // A distro called just Ubuntu keeps its name to itself.
+    const both = buildRegistry(input({ os: "win32", settings: settingsWith({ wslOn: true }), wsl: facts([distro("Ubuntu"), distro("Ubuntu-22.04")]) }));
+    expect(namesOf(both, "wsl:Ubuntu-22.04")).not.toContain("Ubuntu");
+  });
+});
+
 describe("the picker's choice", () => {
   it("stays on a target a task can bind to, and falls back to this computer otherwise", () => {
     const e = buildRegistry(input({ settings: settingsWith({ hosts: [host("build-01")] }) }));

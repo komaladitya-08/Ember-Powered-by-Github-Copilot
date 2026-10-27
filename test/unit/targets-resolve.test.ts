@@ -164,6 +164,36 @@ describe("bindTarget (§2.3)", () => {
   });
 });
 
+describe("names that begin another's, and short names two computers share (reviews #179, #180)", () => {
+  const short: NamedTarget = { id: "ssh:build-01.example.com", names: ["build-01.example.com", "build-01"] };
+  const test: NamedTarget = { id: "ssh:build-01-test", names: ["build-01-test"] };
+  const other: NamedTarget = { id: "ssh:build-01.other.net", names: ["build-01.other.net", "build-01"] };
+  const u22: NamedTarget = { id: "wsl:Ubuntu-22.04", names: ["Ubuntu-22.04", "Ubuntu-22.04 (WSL)", "Ubuntu"] };
+  const u24: NamedTarget = { id: "wsl:Ubuntu-24.04", names: ["Ubuntu-24.04", "Ubuntu-24.04 (WSL)", "Ubuntu"] };
+  const bindIn = (targets: NamedTarget[], userWords: string, choice?: string) =>
+    bindTarget({ userWords, ...(choice !== undefined ? { choice } : {}), targets: [local, ...targets], active: "local", os: "win32" });
+
+  it("names only the target whose name covers more of the words: the longest run wins", () => {
+    expect(targetsNamed("on build-01-test, check the disk", [local, short, test])).toEqual(["ssh:build-01-test"]);
+    expect(targetsNamed("on build-01, check the disk", [local, short, test])).toEqual(["ssh:build-01.example.com"]);
+    expect(targetsNamed("restart nginx on build-01.other.net", [local, short, other])).toEqual(["ssh:build-01.other.net"]);
+    expect(targetsNamed("in Ubuntu 24.04, list my home folder", [local, u22, u24])).toEqual(["wsl:Ubuntu-24.04"]);
+  });
+
+  it("asks which one when the user says only a short name two computers share", () => {
+    expect(bindIn([short, other], "on build-01, check the disk")).toEqual({ ok: false, why: TWO_NAMED });
+    expect(bindIn([u22, u24], "in Ubuntu, list my home folder")).toEqual({ ok: false, why: TWO_NAMED });
+    // The model's name for one of them is no better.
+    expect(bindIn([u22, u24], "what's in Ubuntu's home folder?", "Ubuntu")).toEqual({ ok: false, why: TWO_NAMED });
+    expect(bindIn([u22, u24], "in Ubuntu 22.04, list my home folder")).toEqual({ ok: true, id: "wsl:Ubuntu-22.04" });
+  });
+
+  it("takes the model's name only for the computer the user's words name, not one whose name begins it", () => {
+    expect(bindIn([short, test], "send build-01-test's report to Ana", "build-01")).toEqual({ ok: false, why: NOT_NAMED });
+    expect(bindIn([short, test], "send build-01-test's report to Ana", "build-01-test")).toEqual({ ok: true, id: "ssh:build-01-test" });
+  });
+});
+
 describe("otherTargetsNamed (D4.4's wrong-target guard)", () => {
   it("finds every other computer the words name anywhere, place word or not", () => {
     expect(otherTargetsNamed("build-01 delete build/", all, "local")).toEqual(["ssh:build-01"]);

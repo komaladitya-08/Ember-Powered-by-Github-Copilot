@@ -16,7 +16,7 @@ import type { DesktopState } from "../remote/protocol";
 import type { Settings } from "../settings";
 import type { WslDistro, WslFacts } from "../wsl/types";
 import type { DesktopAccess } from "./types";
-import { WSL_WORDS, type NamedTarget } from "./resolve";
+import { MIN_NAME, WSL_WORDS, normaliseName, type NamedTarget } from "./resolve";
 
 /** This computer's label everywhere a target is named (§8.1). */
 export const LOCAL_LABEL = "This computer";
@@ -103,6 +103,70 @@ export function hostPart(dest: string): string {
   if (h.startsWith("[")) h = h.slice(1, h.indexOf("]") > 0 ? h.indexOf("]") : undefined);
   else if (h.split(":").length === 2) h = h.split(":")[0];
   return h;
+}
+
+/**
+ * The first part of a host name ("build-01" of "build-01.example.com"), as a short name the user may say for it (review
+ * #179), or null: only for a dotted name that isn't an address, and only a part with a letter and a digit or a hyphen
+ * (what looks like a computer's name said alone, as the lead ruled for places) of at least MIN_NAME characters, so "on
+ * build-01" names build-01.example.com while "in the app" never names app.example.com.
+ */
+export function shortHostName(name: string): string | null {
+  const dot = name.indexOf(".");
+  if (dot <= 0 || name.includes(":") || /^[\d.]+$/.test(name)) return null;
+  const first = name.slice(0, dot);
+  return /[a-z]/i.test(first) && /[\d-]/.test(first) && normaliseName(first).length >= MIN_NAME ? first : null;
+}
+
+/**
+ * A distro's first word, before its first "-", "_", "." or digit ("Ubuntu" of "Ubuntu-22.04", "kali" of "kali-linux",
+ * "openSUSE" of "openSUSE-Leap-15.5"), as a short name for "in Ubuntu" (review #180); null when that is its whole name.
+ */
+export function shortDistroName(name: string): string | null {
+  const m = /^[A-Za-z]+/.exec(name);
+  return m && m[0] !== name && m[0].length >= MIN_NAME ? m[0] : null;
+}
+
+/**
+ * The distro's first word when the user's words give it with a version the distro doesn't have ("in Ubuntu 24.04" where
+ * Ubuntu-22.04 is installed), so Ember asks "did they mean Ubuntu-22.04 (WSL)?" instead of working in another version
+ * (review #180); null when the words give no version with it, or this one's (or the start of it: "Ubuntu 22").
+ */
+export function otherVersionNamed(words: string, e: TargetEntry): string | null {
+  const short = e.kind === "wsl" && e.distro ? shortDistroName(e.distro.name) : null;
+  if (!short || !e.distro) return null;
+  const full = normaliseName(e.distro.name);
+  // `short` is letters only (shortDistroName), so it is safe in the pattern.
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${short}[\\s_-]*(\\d+(?:[.,_-]\\d+)*)`, "giu");
+  for (const m of String(words ?? "").normalize("NFKC").matchAll(re)) {
+    if (!full.startsWith(normaliseName(`${short}${m[1]}`))) return short;
+  }
+  return null;
+}
+
+/**
+ * Each SSH host's and WSL distro's short names added to its names (reviews #179, #180), except one that is another
+ * target's own name (that one keeps it: the alias "build-01" over build-01.other.net's first part). Two that share a
+ * short name both get it, so saying only that asks which one (TWO_NAMED), while a longer name said in full still wins
+ * (targetsNamed's longest run). The wrong-target guard and offer_connect read the same names.
+ */
+function withShortNames(entries: TargetEntry[]): TargetEntry[] {
+  const owners = new Map<string, Set<TargetId>>();
+  for (const e of entries) {
+    for (const n of e.names) {
+      const k = normaliseName(n);
+      if (!k) continue;
+      const set = owners.get(k) ?? new Set<TargetId>();
+      set.add(e.id);
+      owners.set(k, set);
+    }
+  }
+  return entries.map(e => {
+    const shorts = e.kind === "ssh" && e.host ? [e.host.id, hostPart(e.host.dest), e.host.resolved.hostname].map(shortHostName)
+      : e.kind === "wsl" && e.distro ? [shortDistroName(e.distro.name)] : [];
+    const add = shorts.filter((n): n is string => !!n && ![...(owners.get(normaliseName(n)) ?? [])].some(id => id !== e.id));
+    return add.length ? { ...e, names: [...new Set([...e.names, ...add])] } : e;
+  });
 }
 
 /** What "can" says for commands of one state. */
@@ -211,7 +275,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
 
 /** Every target Ember knows now: "local" first, then WSL distros, then SSH hosts (§2.2). */
 export function buildRegistry(i: RegistryInput): TargetEntry[] {
-  return [localEntry(i), ...wslEntries(i), ...sshEntries(i)];
+  return withShortNames([localEntry(i), ...wslEntries(i), ...sshEntries(i)]);
 }
 
 /** The targets a task can bind to (listed-only rows left out). */

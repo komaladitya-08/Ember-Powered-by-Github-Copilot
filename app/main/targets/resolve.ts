@@ -30,7 +30,7 @@ const DETERMINER = new Set(["the", "my", "our"]);
 /** What may follow "<name>'s" for the name to be a place ("build-01's desktop"). */
 const POSSESSIVE = /^['’]s\s+(?:desktop|screen|machine|server|computer|box|shell|terminal)(?![\p{L}\p{N}])/u;
 /** A name shorter than this, normalised, is never matched (too easy to say by accident). */
-const MIN_NAME = 3;
+export const MIN_NAME = 3;
 
 /** NFKC and lower case: the form every rule reads (positions refer to it). */
 function fold(s: string): string {
@@ -69,6 +69,23 @@ function runsOf(words: readonly Word[], name: string, min = MIN_NAME): [number, 
     }
   }
   return out;
+}
+
+/** A run of the request's words that spells one of a target's names: [first word, last word]. */
+interface Run { id: TargetId; i: number; j: number }
+
+/**
+ * Every run of `ws` that spells a name of one of `targets` ("local" aside), except a run inside a longer run of another
+ * target's name (the longest wins): "on build-01-test" names build-01-test, not also build-01, and "in Ubuntu 24.04"
+ * names Ubuntu-24.04, not also another distro that answers to "Ubuntu" (a short name; reviews #179, #180).
+ */
+function runsNaming(ws: readonly Word[], targets: readonly NamedTarget[]): Run[] {
+  const runs: Run[] = [];
+  for (const t of targets) {
+    if (t.id === "local") continue;
+    for (const n of t.names) for (const [i, j] of runsOf(ws, normaliseName(n))) runs.push({ id: t.id, i, j });
+  }
+  return runs.filter(r => !runs.some(o => o.id !== r.id && o.i <= r.i && r.j <= o.j && o.j - o.i > r.j - r.i));
 }
 
 /** Rule 3: the run [i, j] stands where a place is named. */
@@ -114,20 +131,11 @@ export function targetsNamed(words: string, targets: readonly NamedTarget[], os:
   const folded = fold(String(words ?? ""));
   const ws = wordsOf(folded);
   const found: { id: TargetId; at: number }[] = [];
-  for (const t of targets) {
-    if (t.id === "local") {
-      const at = localAt(ws, os);
-      if (at >= 0) found.push({ id: t.id, at });
-      continue;
-    }
-    let first = -1;
-    for (const n of t.names) {
-      for (const [i, j] of runsOf(ws, normaliseName(n))) {
-        if (isPlace(folded, ws, i, j) && (first < 0 || i < first)) first = i;
-      }
-    }
-    if (first >= 0) found.push({ id: t.id, at: first });
+  if (targets.some(t => t.id === "local")) {
+    const at = localAt(ws, os);
+    if (at >= 0) found.push({ id: "local", at });
   }
+  for (const r of runsNaming(ws, targets)) if (isPlace(folded, ws, r.i, r.j)) found.push({ id: r.id, at: r.i });
   found.sort((a, b) => a.at - b.at);
   return [...new Set(found.map(f => f.id))];
 }
@@ -277,6 +285,9 @@ export function bindTarget(o: { userWords: string; choice?: string; targets: rea
   if (named.length === 1) return { ok: true, id: named[0] };
   const choice = typeof o.choice === "string" ? o.choice.trim() : "";
   if (!choice) return { ok: true, id: o.active };
+  // A short name two computers share ("Ubuntu" for Ubuntu-22.04 and Ubuntu-24.04) picks neither: ask (review #180).
+  const c = normaliseName(choice);
+  if (o.targets.filter(t => t.id !== "local" && t.names.some(n => normaliseName(n) === c)).length > 1) return { ok: false, why: TWO_NAMED };
   const id = targetOfChoice(choice, o.targets, o.os);
   if (id === null) {
     // A computer the user did name, but Ember has no record of: the model may offer a connection, never make one.
@@ -285,7 +296,9 @@ export function bindTarget(o: { userWords: string; choice?: string; targets: rea
   }
   if (id === o.active) return { ok: true, id };
   const t = o.targets.find(x => x.id === id);
-  return t && namedAnywhere(o.userWords, t, o.os) ? { ok: true, id } : { ok: false, why: NOT_NAMED };
+  // Named anywhere, and not only as the start of another computer's name ("build-01" in "build-01-test's report").
+  const said = id === "local" ? !!t && namedAnywhere(o.userWords, t, o.os) : runsNaming(wordsOf(fold(String(o.userWords ?? ""))), o.targets).some(r => r.id === id);
+  return said ? { ok: true, id } : { ok: false, why: NOT_NAMED };
 }
 
 /** The words that name WSL itself on a Windows PC (rule 5), as names subject to rule 3: "in WSL", "on the Linux side". */

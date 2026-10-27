@@ -59,7 +59,7 @@ import { targetMenu } from "./menu";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
 import {
-  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, notConnectedWhy, sshAllowed, summaryOf, wslAllowed,
+  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, notConnectedWhy, otherVersionNamed, sshAllowed, summaryOf, wslAllowed,
   type LinkState, type LinkView, type TargetEntry,
 } from "./registry";
 import { createRemoteTarget, type RemoteTarget } from "./remote-service";
@@ -1253,6 +1253,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
    * user's ssh config ("delete build/ on prod-db"): no command of that task announces either (the lead's ruling).
    */
   const unknownPlaces = (words: string): string[] => placesNamed(words, knownNamed().known);
+  /** The distros listed while WSL is off for Ember, by their own names (not WSL's words: "Linux" alone never offers). */
+  const wslListedNames = (): NamedTarget[] =>
+    entries.filter(e => e.kind === "wsl" && e.listedOnly && !e.distro?.needsSetup).map(e => ({ id: e.id, names: e.names.filter(n => !WSL_WORDS.includes(n)) }));
   const bind = (o: { userWords: string; choice?: string }): { ok: true; binding: TargetBinding } | { ok: false; why: string } => {
     try {
       rebuild();
@@ -1274,15 +1277,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           void refreshWsl();
           return refuse("Ember is still finding WSL's distros. Try again in a moment.");
         }
-      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }], deps.os).length) {
-        // The user said "in WSL" while it is off for Ember: the task goes on where Ember is set to work, and "Ember can
-        // work in WSL" is offered (once a run), only once discovery shows a distro to work in (it reads the registry;
-        // nothing starts). Never for "Linux" alone, which is as often what a request is about as where it should run.
+      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }, ...wslListedNames()], deps.os).length) {
+        // The user said "in WSL" (or "in Ubuntu", a distro discovery already listed) while it is off for Ember: the task
+        // goes on where Ember is set to work, and "Ember can work in WSL" is offered (once a run), only once discovery
+        // shows a distro to work in (it reads the registry; nothing starts). Never for "Linux" alone, which is as often
+        // what a request is about as where it should run.
         void refreshWsl().then(() => { if (!wslOn() && defaultDistro(wslFacts)) offerWsl(); });
       }
       const r = bindTarget({ userWords: words, ...(o.choice !== undefined ? { choice: o.choice } : {}), targets: namedTargets(entries), active: activeId(), os: deps.os });
       if (!r.ok) return r;
       const e = entryOf(r.id);
+      // "In Ubuntu 24.04" where only Ubuntu-22.04 is installed: asked, never done in another version (review #180).
+      const short = e?.kind === "wsl" && usableNamed.includes(e.id) ? otherVersionNamed(words, e) : null;
+      if (short && e) return refuse(`The user named a version of ${short} that isn't on this computer. Ask them: did they mean ${e.label}?`);
       return e ? { ok: true, binding: bindingOf(e) } : refuse(NOT_NAMED);
     } catch (err) {
       log.error("targets.bind_failed", { err });
@@ -1374,7 +1381,17 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         return "The user didn't name that computer, so Ember won't offer to connect to it.";
       }
       const key = normaliseName(n);
-      const host = settings.get().targets.hosts.find(h => [h.id, hostPart(h.dest), h.resolved.hostname].some(x => normaliseName(x) === key));
+      // The registry's names: a host's id, host part and resolved hostname, and the short names (reviews #179, #180).
+      rebuild();
+      const named = entries.filter(e => e.kind !== "local" && e.names.some(x => normaliseName(x) === key));
+      const distro = named.find(e => e.kind === "wsl");
+      if (distro) {
+        return distro.listedOnly || !distro.usable ? (distro.why ?? `Ember can't work in ${distro.label} now. Tell the user.`)
+          : `${distro.label} is WSL on this computer, not a computer to connect to: start the task with target ${distro.label}.`;
+      }
+      const hosts = named.filter(e => e.kind === "ssh" && e.host);
+      if (hosts.length > 1) return `More than one computer Ember knows answers to ${n} (${hosts.map(e => e.label).join(", ")}). Ask the user which one.`;
+      const host = hosts[0]?.host ?? null;
       const state = host ? conns.get(host.id)?.state : undefined;
       if (host && state === "ready") return `Ember is already connected to ${host.id}: start the task with target ${host.id}.`;
       if (host && state === "connecting") return `Ember is connecting to ${host.id} now. Start the task once it is connected.`;

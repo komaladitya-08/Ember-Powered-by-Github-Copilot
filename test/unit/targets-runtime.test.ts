@@ -1002,6 +1002,62 @@ describe("WSL targets", () => {
   });
 });
 
+describe("naming a computer by a short name (reviews #179, #180)", () => {
+  const fqdn = { user: "deploy", hostname: "build-01.example.com", port: 22, jump: [] };
+
+  it("binds 'on build-01' to a host added by its full name, whatever name the model passes, and offer_connect finds it", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01.example.com", { dest: "deploy@build-01.example.com", resolved: fqdn })]), resolved: fqdn });
+    // Not connected yet: offer_connect knows it by its short name and shows its Connect button.
+    expect(r.t.agent.offerConnect("build-01", "on build-01, check the disk")).toMatch(/Connect button for build-01\.example\.com/);
+    await connected(r, "build-01.example.com");
+    r.t.bubbleAction("target:local");
+    expect(r.t.agent.active).toBe("local");
+    for (const choice of [undefined, "build-01", "build-01.example.com"]) {
+      const b = r.t.agent.bind({ userWords: "on build-01, check the disk", ...(choice ? { choice } : {}) });
+      expect(b.ok && b.binding.id, String(choice)).toBe("ssh:build-01.example.com");
+    }
+    expect(r.t.agent.offerConnect("build-01", "on build-01, check the disk")).toBe("Ember is already connected to build-01.example.com: start the task with target build-01.example.com.");
+  });
+
+  it("asks which one when two hosts share the short name the user said, and offer_connect says so", async () => {
+    const r = rig({ settings: withHosts([
+      hostRecord("build-01.a.com", { dest: "build-01.a.com", resolved: { ...fqdn, hostname: "build-01.a.com" } }),
+      hostRecord("build-01.b.com", { dest: "build-01.b.com", resolved: { ...fqdn, hostname: "build-01.b.com" } }),
+    ]) });
+    expect(r.t.agent.bind({ userWords: "on build-01, check the disk" })).toEqual({ ok: false, why: "Ember works on one computer per task. Ask the user which one." });
+    expect(r.t.agent.offerConnect("build-01", "on build-01, check the disk")).toBe("More than one computer Ember knows answers to build-01 (build-01.a.com, build-01.b.com). Ask the user which one.");
+  });
+
+  it("binds 'in Ubuntu' to Ubuntu-22.04, never to Windows, and the wrong-target guard hears it", async () => {
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ name: "Ubuntu-22.04" })]), settings: { ...wslOnSettings, ...commandsOn("local") } });
+    await flush();
+    for (const choice of [undefined, "Ubuntu"]) {
+      const b = r.t.agent.bind({ userWords: "in Ubuntu, list my home folder", ...(choice ? { choice } : {}) });
+      expect(b.ok && b.binding.id, String(choice)).toBe("wsl:Ubuntu-22.04");
+    }
+    expect(r.t.agent.offerConnect("Ubuntu", "in Ubuntu, list my home folder")).toBe("Ubuntu-22.04 (WSL) is WSL on this computer, not a computer to connect to: start the task with target Ubuntu-22.04 (WSL).");
+    expect(r.t.agent.othersNamed!("local", "in Ubuntu, delete build/")).toEqual(["Ubuntu-22.04 (WSL)"]);
+    // Another version than the one installed: asked, never run in this one.
+    const other = r.t.agent.bind({ userWords: "in Ubuntu 24.04, list my home folder" });
+    expect(other).toEqual({ ok: false, why: "The user named a version of Ubuntu that isn't on this computer. Ask them: did they mean Ubuntu-22.04 (WSL)?" });
+    expect(r.t.agent.bind({ userWords: "in Ubuntu 22.04, list my home folder" })).toMatchObject({ ok: true, binding: { id: "wsl:Ubuntu-22.04" } });
+  });
+
+  it("while WSL is off, still binds here for 'in Ubuntu' but counts it for the guard and offers to turn WSL on (review #195)", async () => {
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ name: "Ubuntu-22.04" })]), settings: commandsOn("local") });
+    // The settings window looked for distros (nothing is offered for that alone).
+    await r.invoke(TARGETS_IPC.list, r.home);
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.t.agent.bind({ userWords: "in Ubuntu, list my home folder" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    expect((got.hands.commands as unknown as { othersNamed(words: string): string[] }).othersNamed("in Ubuntu, delete build/")).toEqual(["Ubuntu-22.04 (WSL)"]);
+  });
+});
+
 describe("the kill switch's part and quitting", () => {
   it("tells every runner and every link to stop at once, before waiting for any", async () => {
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: { targets: { ...wslOnSettings.targets, hosts: [hostRecord("build-01")] }, ...commandsOn("wsl:Ubuntu") } });
