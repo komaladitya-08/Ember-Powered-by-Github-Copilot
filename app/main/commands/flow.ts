@@ -860,6 +860,8 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   }
   // What the runner says while the run starts ("Starting Ubuntu…": a WSL distro that has to boot) shows on its tab.
   const offStatus = followStatus(svc, o.runId);
+  // A run waiting at a prompt for the user's typing says so in the task's bubble too (review #263).
+  const offWaiting = followWaiting(svc, o.runId, ctx.presenter);
   // The task's stop stops the run; the tool returns once it ended, or STOP_GRACE_MS later whatever the runner does.
   let onStop = () => undefined as void;
   const stopped = new Promise<RunExit | null>(resolve => {
@@ -883,6 +885,28 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     ctx.signal.removeEventListener("abort", onStop);
     unsubscribe();
     offStatus();
+    offWaiting();
+  }
+}
+
+/** The task's bubble while its command waits at a prompt for the user to type (review #263). */
+export const WAITING_BUBBLE = "A command is waiting for you to type in the command window.";
+
+/**
+ * The command window's word that run `runId` waits for the user's typing (UI's onWaiting), said in the task's bubble;
+ * nothing when the window doesn't have it. Returns the unsubscribe.
+ */
+function followWaiting(svc: CommandService, runId: string, presenter: Presenter): () => void {
+  const window = svc.window as CommandService["window"] & { onWaiting?: (fn: (runId: string, waiting: boolean) => void) => () => void };
+  if (typeof window.onWaiting !== "function") return () => undefined;
+  try {
+    const off = window.onWaiting((id, waiting) => {
+      if (id !== runId || !waiting) return;
+      try { presenter.progress(WAITING_BUBBLE); } catch { /* the bubble is only a pointer: the window says it too */ }
+    });
+    return () => { try { off(); } catch { /* already gone */ } };
+  } catch {
+    return () => undefined;
   }
 }
 

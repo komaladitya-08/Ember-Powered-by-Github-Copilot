@@ -304,6 +304,7 @@ interface TabEls {
 }
 const tabEls = new Map<number, TabEls>();
 const OUTCOME_WORD: Record<TabView["outcome"], string> = { running: "Running: ", done: "Finished: ", failed: "Ended: ", stopped: "Stopped: " };
+const WAITING_WORD = "Waiting for you: ";
 
 function buildTab(t: TabView): TabEls {
   const tab = el("button", "tab");
@@ -467,9 +468,11 @@ function render(): void {
     const on = t.runId === model.selected;
     e.tab.setAttribute("aria-selected", String(on));
     e.tab.tabIndex = on ? 0 : -1;
-    e.tab.dataset.status = t.outcome === "running" ? "running" : t.outcome;
+    // A run waiting at a prompt for the user's typing shows the waiting symbol and says so (review #263).
+    e.tab.dataset.status = t.waiting ? "waiting" : t.outcome;
+    const word = t.waiting ? WAITING_WORD : OUTCOME_WORD[t.outcome];
     const sr = e.tab.querySelector(".sr")!; // the first .sr: how it is going
-    if (sr.textContent !== OUTCOME_WORD[t.outcome]) sr.textContent = OUTCOME_WORD[t.outcome];
+    if (sr.textContent !== word) sr.textContent = word;
     if (e.status.textContent !== t.status) e.status.textContent = t.status;
     if (!sameAnnouncement(e.live.textContent ?? "", t.status)) e.live.textContent = t.status;
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;

@@ -60,6 +60,10 @@ export const KEEP_OPEN_LABEL = "Keep it open";
 export const COPY_OUTPUT_LABEL = "Copy output";
 export const COPIED_LABEL = "Copied";
 export const RUNNING_STATUS = "Running…";
+/** A run whose output has sat at a prompt (a password, a user name, a yes/no) for a moment (review #263). */
+export const WAITING_STATUS = "Waiting for you to type in this window.";
+/** The status line of a run that hit its time limit while it waited at such a prompt. */
+export const waitingTimeoutText = (ms: number) => `Stopped after ${durationText(ms)}: it was waiting for you to type, and took too long.`;
 
 /** How a shell is named in the header. */
 const SHELL_NAME: Readonly<Record<ShellId, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };

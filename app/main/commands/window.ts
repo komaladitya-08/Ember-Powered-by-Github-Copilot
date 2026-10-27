@@ -17,7 +17,8 @@ import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, DangerClass, RunExit, RunningCommand } from "./types";
-import { RUNNING_STATUS, announceKeyText, headerLine, outsideText, reaskText, statusLine, typingHint } from "../../renderer/command/copy";
+import { RUNNING_STATUS, WAITING_STATUS, announceKeyText, headerLine, outsideText, reaskText, statusLine, typingHint, waitingTimeoutText } from "../../renderer/command/copy";
+import { SECRET_PROMPT } from "./prompts";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
 /** Runs whose tabs are kept (the newest first; running ones are never dropped). */
@@ -59,6 +60,11 @@ export interface CommandWindowExtras {
   pending(taskId: string, text: string | null): void;
   /** How long an announcement should count down, given the flow's usual `base`: longer while a screen reader runs. */
   announceMs(base: number): number;
+  /**
+   * Calls `fn` when a run starts or stops waiting at a prompt for the user to type (review #263): the flow says so in
+   * the task's bubble. Returns the unsubscribe.
+   */
+  onWaiting(fn: (runId: string, waiting: boolean) => void): () => void;
 }
 
 /**
@@ -66,6 +72,26 @@ export interface CommandWindowExtras {
  * keeps the window when it returns true. Ember quitting or the session ending never asks it.
  */
 export interface CloseGuarded { setCloseGuard(fn: () => boolean): void }
+
+/** How long an interactive run's output must sit at a prompt before the window says it waits for typing (review #263). */
+export const WAITING_MS = 2000;
+
+/** Terminal escape sequences, removed before a prompt is looked for (a coloured prompt is still a prompt). */
+// eslint-disable-next-line no-control-regex -- terminal escape sequences are exactly what this removes
+const ESCAPES = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-Z\\-_]|[ -/]+[0-~])|[\x9b][0-?]*[ -/]*[@-~]/g;
+
+/**
+ * Whether output that stopped here leaves the program waiting for the user to type: its last line (escape sequences
+ * aside) is a short question or prompt with words in it, ending in ":", "?", ">" or a bracketed choice ("[y/N]"), or a
+ * password-like prompt (prompts.ts). A progress line ("Downloading 45%") or a finished line is not.
+ */
+export function awaitsTyping(text: string): boolean {
+  const plain = text.replace(ESCAPES, "");
+  const last = plain.slice(Math.max(plain.lastIndexOf("\n"), plain.lastIndexOf("\r")) + 1);
+  if (SECRET_PROMPT.test(last)) return true;
+  const line = last.trim();
+  return line.length > 0 && line.length <= 200 && /\p{L}/u.test(line) && /([:?>]|\[[^\]]{1,20}\])$/.test(line);
+}
 
 /** At most this many pending lines are kept (one per task; a task past it isn't shown). */
 export const MAX_PENDING = 8;
@@ -95,6 +121,12 @@ interface Tab {
   unsubscribe: () => void;
   /** The remote's own check sent it back for the user's OK (it never ran): the retry's run takes its place. */
   reask?: boolean;
+  /** The end of its decoded output (an interactive run's), and the timer that looks for a prompt there (review #263). */
+  tail: string;
+  decoder: TextDecoder;
+  waitTimer: ReturnType<typeof setTimeout> | null;
+  /** Its output has sat at a prompt: it waits for the user to type. */
+  waiting: boolean;
 }
 
 interface Announcement {
@@ -185,6 +217,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   /** Tasks whose command has no tab yet, and the line each shows (insertion order). */
   const pendings = new Map<string, string>();
   const answerFns = new Set<(a: AnswerMsg) => boolean | void>();
+  const waitingFns = new Set<(runId: string, waiting: boolean) => void>();
   /** The user closed the window while commands ran: the page asks whether to stop them (review #262). */
   let closeAsk = false;
   /** The window is closing because the user said so (or Ember closes it): the guard lets it go. */
@@ -277,7 +310,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       runId: t.card.runId, seq: t.seq, header: headerLine(t.card), command: t.card.command,
       // The tab names the computer when it isn't this one (review #275).
       ...(kind && kind !== "local" ? { where: outsideText(t.card.targetLabel, 40) } : {}),
-      status: t.note && !t.ended ? t.note : t.status, interactive, ended: t.ended, title: t.card.taskTitle,
+      status: t.note && !t.ended ? t.note : t.waiting && !t.ended ? WAITING_STATUS : t.status, interactive, ended: t.ended, title: t.card.taskTitle,
+      ...(t.waiting && !t.ended ? { waiting: true } : {}),
       typing: typingHint({ interactive, ended: t.ended }, o.os), cols: t.size.cols, rows: t.size.rows, outcome: t.outcome,
     };
   }
@@ -304,16 +338,35 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     safe("send-state", () => w.webContents.send(COMMANDS_IPC.state, stateNow()));
   }
 
-  /** Brings the window up without taking the keyboard from the user's app; on top while a card or countdown is up. */
-  function reveal(): void {
+  /**
+   * Brings the window up without taking the keyboard from the user's app; on top while a card or countdown is up.
+   * `raise`: above the user's other windows even when nothing asks (a new run, a run waiting for typing: review #263).
+   */
+  function reveal(raise = false): void {
     const w = ensure();
     if (!w) return;
     const onTop = !!card || queue.length > 0;
     safe("reveal", () => {
       if (onTop) w.setAlwaysOnTop(true, "floating");
       if (!w.isVisible() || w.isMinimized()) w.showInactive();
-      if (onTop) w.moveTop();
+      if (onTop || raise) w.moveTop();
     });
+  }
+
+  /** The window asks for attention (the taskbar or dock flashes) while a run waits for typing, or stops asking. */
+  function flash(on: boolean): void {
+    const w = live() as (BrowserWindowLike & { flashFrame?: (flag: boolean) => void }) | null;
+    if (w && typeof w.flashFrame === "function") safe("flash", () => w.flashFrame!(on));
+  }
+
+  /** Run `t` starts or stops waiting for the user to type: its tab, the window and the listeners hear it. */
+  function setWaiting(t: Tab, on: boolean): void {
+    if (t.waiting === on) return;
+    t.waiting = on;
+    push();
+    if (on) reveal(true);
+    if (on || !tabs.some(x => x.waiting)) flash(on);
+    for (const fn of [...waitingFns]) safe("waiting", () => fn(t.card.runId, on));
   }
 
   /** A card or countdown went: no longer on top; hidden again when there is nothing else to show. */
@@ -342,6 +395,16 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   function onOutput(t: Tab, chunk: Uint8Array): void {
     if (disposed || !tabs.includes(t) || !(chunk instanceof Uint8Array) || !chunk.length) return;
     const copy = chunk.slice();
+    // An interactive run whose output then sits at a prompt for WAITING_MS waits for the user to type (review #263).
+    if (t.run.interactive === true && !t.ended) {
+      t.tail = (t.tail + t.decoder.decode(copy, { stream: true })).slice(-1024);
+      if (t.waiting) setWaiting(t, false);
+      if (t.waitTimer) clearTimeout(t.waitTimer);
+      t.waitTimer = setTimeout(() => {
+        t.waitTimer = null;
+        if (!disposed && tabs.includes(t) && !t.ended && awaitsTyping(t.tail)) setWaiting(t, true);
+      }, WAITING_MS);
+    }
     // Kept for a page that loads later: the newest REPLAY_BYTES.
     t.kept.push(copy);
     t.keptBytes += copy.length;
@@ -366,6 +429,9 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   function dropTab(t: Tab): void {
     if (t.flush) clearTimeout(t.flush);
     t.flush = null;
+    if (t.waitTimer) clearTimeout(t.waitTimer);
+    t.waitTimer = null;
+    if (t.waiting) { t.waiting = false; if (!tabs.some(x => x !== t && x.waiting)) flash(false); }
     safe("unsubscribe", t.unsubscribe);
   }
 
@@ -469,6 +535,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       const t = tabs.find(x => x.card.runId === raw.runId);
       if (!t || t.ended || t.run.interactive !== true) return;
       for (const piece of typedPieces(raw.data)) safe("input", () => t.run.input(piece));
+      // The user is answering: the run no longer waits on them.
+      setWaiting(t, false);
     });
 
     o.ipc.on(COMMANDS_IPC.close, (e, raw) => {
@@ -572,6 +640,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       const t: Tab = {
         seq: seqNext++, card: c, run, ended: false, outcome: "running", status: RUNNING_STATUS, note: null, size: size ?? { ...DEFAULT_TERM_SIZE },
         kept: [], keptBytes: 0, start: 0, total: 0, pending: [], pendingAt: 0, pendingBytes: 0, flush: null, unsubscribe: () => undefined,
+        tail: "", decoder: new TextDecoder(), waitTimer: null, waiting: false,
       };
       tabs.unshift(t);
       // Keep the newest MAX_TABS: the oldest finished ones go first; a run still going is never dropped.
@@ -585,6 +654,10 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       const finish = (exit: RunExit | null) => {
         if (t.ended || !tabs.includes(t)) return;
         flush(t);
+        const waited = t.waiting;
+        if (t.waitTimer) clearTimeout(t.waitTimer);
+        t.waitTimer = null;
+        setWaiting(t, false);
         t.ended = true;
         // The last run ended while the window asked whether to stop it: nothing left to ask about.
         if (closeAsk && !runningTabs().length) closeAsk = false;
@@ -597,7 +670,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
           return;
         }
         t.outcome = outcomeOf(exit);
-        t.status = statusLine(exit ?? { code: null, signal: null, ended: "failed-to-start", ms: 0, error: "Ember lost track of it" }, { label: c.targetLabel, os: o.os });
+        t.status = exit?.ended === "timeout" && waited ? waitingTimeoutText(exit.ms)
+          : statusLine(exit ?? { code: null, signal: null, ended: "failed-to-start", ms: 0, error: "Ember lost track of it" }, { label: c.targetLabel, os: o.os });
         push();
         // What the run left running carrying its marker, once its runner has looked (§3.13): named on the status line.
         const left = exit ? stragglersOf(run) : null;
@@ -610,7 +684,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
         }
       };
       Promise.resolve(run.done).then(finish, () => finish(null));
-      reveal();
+      // Every run brings the window above the user's others, without the keyboard (R1: where they can watch it).
+      reveal(true);
       push();
     },
 
@@ -631,6 +706,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     termSize: () => ({ ...(size ?? DEFAULT_TERM_SIZE) }),
 
     announceMs: base => (screenReader() ? Math.max(base, ANNOUNCE_SCREEN_READER_MS) : base),
+
+    onWaiting(fn) {
+      waitingFns.add(fn);
+      return () => { waitingFns.delete(fn); };
+    },
 
     note(runId, text) {
       const t = tabs.find(x => x.card.runId === runId);
@@ -666,6 +746,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       view = null;
       pendings.clear();
       answerFns.clear();
+      waitingFns.clear();
       const w = live();
       win = null;
       if (w) safe("close", () => w.close());

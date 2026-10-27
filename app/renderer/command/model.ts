@@ -36,6 +36,8 @@ export interface TabView extends CommandTabView {
   outcome: "running" | "done" | "failed" | "stopped";
   /** The computer it runs on when it isn't this one ("build-01", "Ubuntu (WSL)"): a badge on the tab (review #275). */
   where?: string;
+  /** Its output has sat at a prompt for a moment: it waits for the user to type (review #263). */
+  waiting?: boolean;
 }
 
 /** A task whose command has no tab yet, and its line ("Starting Ubuntu…"). */

@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
-import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
 import { statusLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
@@ -59,6 +59,7 @@ class FakeWindow implements BrowserWindowLike {
   setContentProtection() { /* windows.ts sets it */ }
   on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
   emit(event: string) { for (const fn of this.handlers.get(event) ?? []) fn(); }
+  flashFrame(flag: boolean) { this.calls.push(`flash:${flag}`); }
   /** createCommandWindow's guard on the window's close button (review #262). */
   guard: (() => boolean) | null = null;
   setCloseGuard(fn: () => boolean) { this.guard = fn; }
@@ -916,5 +917,69 @@ describe("closing the window while a command runs (review #262)", () => {
     ipc.send(COMMANDS_EXTRA_IPC.closeWindow, new FakeContents(9999), { stop: true });
     expect(run.stops).toEqual([]);
     expect(win().destroyed).toBe(false);
+  });
+});
+
+describe("a command waiting for the user to type (review #263)", () => {
+  it("knows a prompt from ordinary output", () => {
+    for (const t of ["[sudo] password for ana: ", "Username for 'https://github.com': ", "Password:", "Proceed ([y]/n)? ",
+      "Are you sure you want to continue connecting (yes/no/[fingerprint])? ", "Enter passphrase (empty for no passphrase): ", "\x1b[1mPassword:\x1b[0m ", "Overwrite x? [y/N] "]) {
+      expect(awaitsTyping(`some output\n${t}`), t).toBe(true);
+    }
+    for (const t of ["Downloading 45%", "Compiling src/foo.ts", "done.\n", "", "Building...", "line\n\n", "x".repeat(300) + ":"]) expect(awaitsTyping(t), t).toBe(false);
+  });
+
+  it("raises the window on every run, without taking the keyboard", () => {
+    const { ctl, win } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    win().calls.length = 0;
+    ctl.attach(card({ runId: "1111111111111111" }), new FakeRun("1111111111111111"));
+    expect(win().calls).toContain("moveTop");
+    expect(win().calls).not.toContain("focus");
+    expect(win().calls).not.toContain("show");
+  });
+
+  it("says so on the tab, raises and flashes the window, and tells who listens; typing clears it", () => {
+    const { ipc, ctl, win, page } = setup();
+    const heard: [string, boolean][] = [];
+    ctl.onWaiting((runId, waiting) => heard.push([runId, waiting]));
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("Cloning into 'private'...\nUsername for 'https://github.com': ");
+    vi.advanceTimersByTime(WAITING_MS - 100);
+    expect(page().last().tabs[0].waiting ?? false).toBe(false);
+    win().calls.length = 0;
+    vi.advanceTimersByTime(200);
+    expect(page().last().tabs[0]).toMatchObject({ waiting: true, status: "Waiting for you to type in this window." });
+    expect(win().calls).toEqual(expect.arrayContaining(["moveTop", "flash:true"]));
+    expect(heard).toEqual([["0123456789abcdef", true]]);
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "ana\r" });
+    expect(page().last().tabs[0].waiting ?? false).toBe(false);
+    expect(page().last().tabs[0].status).toBe("Running…");
+    expect(win().calls).toContain("flash:false");
+    expect(heard).toEqual([["0123456789abcdef", true], ["0123456789abcdef", false]]);
+  });
+
+  it("doesn't wait on a run that can't take typing, or on output that isn't a prompt", () => {
+    const { ctl, page } = setup();
+    const piped = new FakeRun("0123456789abcdef", false);
+    ctl.attach(card(), piped);
+    piped.emit("Password: ");
+    const busy = new FakeRun("1111111111111111");
+    ctl.attach(card({ runId: "1111111111111111" }), busy);
+    busy.emit("Downloading 45%");
+    vi.advanceTimersByTime(WAITING_MS * 3);
+    expect(page().last().tabs.map(t => t.waiting ?? false)).toEqual([false, false]);
+  });
+
+  it("says a run that hit its time limit while waiting was waiting for the user", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("Password: ");
+    vi.advanceTimersByTime(WAITING_MS + 10);
+    run.finish({ ended: "timeout", code: null, ms: 120_000 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs[0].status).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
   });
 });

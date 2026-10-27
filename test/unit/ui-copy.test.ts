@@ -10,7 +10,7 @@ import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
 import * as commandCopy from "../../app/renderer/command/copy";
 import { LINES } from "../../app/main/commands/decide";
-import { CARD_LINES, OUTPUT_TAINT_LINE } from "../../app/main/commands/flow";
+import { CARD_LINES, OUTPUT_TAINT_LINE, WAITING_BUBBLE } from "../../app/main/commands/flow";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import { targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
@@ -283,6 +283,9 @@ describe("the command window's words (§8.5)", () => {
 
   it("says how a run ended in its status line", () => {
     expect(keep(commandCopy.RUNNING_STATUS)).toBe("Running…");
+    expect(keep(commandCopy.WAITING_STATUS)).toBe("Waiting for you to type in this window.");
+    expect(keep(commandCopy.waitingTimeoutText(120_000))).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
+    expect(keep(WAITING_BUBBLE)).toBe("A command is waiting for you to type in the command window.");
     expect(say({ ms: 3200 })).toBe("Finished in 3.2 s.");
     expect(say({ code: 2, ms: 1100 })).toBe("Ended with exit code 2 after 1.1 s.");
     expect(say({ ended: "stopped-user", code: null, ms: 12_000 })).toBe("You stopped it after 12 s. What it already changed stays.");

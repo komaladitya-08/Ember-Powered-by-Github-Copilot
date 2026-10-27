@@ -1005,6 +1005,22 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ requested: "user", intent: "git.push" });
   });
 
+  it("says in the task's bubble when its command waits for the user to type (review #263)", async () => {
+    let tell: ((runId: string, waiting: boolean) => void) | null = null;
+    const h = harness({ run: () => ({ hang: true }) });
+    (h.ctx.service.window as unknown as { onWaiting: (fn: (runId: string, waiting: boolean) => void) => () => void }).onWaiting = fn => { tell = fn; return () => { tell = null; }; };
+    const progress: string[] = [];
+    (h.ctx.presenter as unknown as { progress: (t: string) => void }).progress = t => progress.push(t);
+    const done = call(h, { command: "git clone https://github.com/acme/private" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    tell!(h.starts[0].runId, true);
+    tell!("ffffffffffffffff", true);
+    expect(progress).toEqual(["A command is waiting for you to type in the command window."]);
+    h.abort.abort();
+    await done;
+    expect(tell).toBeNull();
+  });
+
   it("tells the card what kind of danger it asks about, for its marker (review #275)", async () => {
     makeJudge({ decide: () => decision({ verdict: "ask", classes: ["destroy"], rules: ["rm.recursive"], says: ["Deletes build and everything in it."] }) });
     const h = harness();
