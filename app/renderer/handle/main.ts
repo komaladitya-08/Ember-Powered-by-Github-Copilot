@@ -63,7 +63,7 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
 }
 
 /** The task row's state in words, for screen readers (its symbol says it to the eye). */
-const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
+const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", queued: "Queued: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 
 const thoughtEl = $("thought");
 let wasStreaming = false;

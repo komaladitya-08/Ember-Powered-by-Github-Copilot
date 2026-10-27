@@ -59,7 +59,8 @@ export interface BubbleState {
 export interface TaskCard {
   id: string;
   title: string;
-  status: "running" | "waiting" | "done" | "failed" | "stopped";
+  /** "queued": waiting its turn (two run at once); "waiting": waiting for the user. */
+  status: "running" | "queued" | "waiting" | "done" | "failed" | "stopped";
   detail: string;
   /** Buttons on the card ("Stop" while it works, "Close" on a failure); clicks come back as bubble actions with these ids. */
   actions?: { id: string; label: string }[];

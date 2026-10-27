@@ -59,6 +59,17 @@ describe("TaskManager", () => {
     expect(tm.get(b.id)!.status).toBe("failed");
   });
 
+  it("shows a task waiting its turn as queued, never as needing the user (review #19)", async () => {
+    const gates = [deferred<WorkerResult>(), deferred<WorkerResult>(), deferred<WorkerResult>()];
+    let n = 0;
+    const { tm, cards } = setup(() => { const g = gates[n++]; return fakeWorker(() => g.promise); });
+    const c = (tm.start("a"), tm.start("b"), tm.start("c"));
+    await vi.waitFor(() => expect(tm.get(c.id)!.status).toBe("queued"));
+    expect(cards.at(-1)!.find(x => x.id === c.id)).toMatchObject({ status: "queued", actions: [{ id: `task:${c.id}:stop`, label: "Stop" }] });
+    for (const g of gates) g.resolve({ success: true, summary: "done" });
+    await vi.waitFor(() => expect(tm.get(c.id)!.status).toBe("done"));
+  });
+
   it("cancels running and queued tasks", async () => {
     const { tm } = setup(() => fakeWorker(signal => new Promise(resolve => signal.addEventListener("abort", () => resolve({ success: false, summary: "Stopped." })))), { maxRunning: 1 });
     const a = tm.start("a"), b = tm.start("b");
