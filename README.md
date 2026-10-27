@@ -96,6 +96,21 @@ Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Termin
 open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --doctor; cat ~/ember-doctor.txt
 ```
 
+## Sign in to Copilot
+
+Ember needs a **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on
+the **Copilot CLI** policy). Until Ember has its own GitHub sign-in, it uses the sign-in of the **GitHub CLI**, so
+install that first and sign in with it:
+
+- RHEL 8: `sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo`, then
+  `sudo dnf install gh`
+- Windows: `winget install --id GitHub.cli` in PowerShell, or the installer from [cli.github.com](https://cli.github.com)
+- macOS: `brew install gh`, or the installer from [cli.github.com](https://cli.github.com)
+
+Then run `gh auth login` in a terminal and follow its steps. In Ember's settings, **Connect with GitHub CLI** waits
+for that sign-in and connects within a few seconds (no restart needed); **Check again** looks for it at once. A
+`COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` in Ember's environment works too (classic `ghp_` tokens don't).
+
 ## Shortcuts
 
 | | Linux | Windows | macOS |

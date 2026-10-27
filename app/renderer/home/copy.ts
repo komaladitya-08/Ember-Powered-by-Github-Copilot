@@ -51,10 +51,19 @@ const SOURCE_TEXT: Record<string, string> = {
   "github-cli": "your GitHub CLI sign-in",
 };
 
-export function retryMessage(r: { found: boolean; source: string | null }, connected = false): string {
-  if (!r.found) return "No GitHub sign-in found on this computer. Run “gh auth login” in a terminal, then press Check again.";
+/**
+ * What "Check again" says. `hint`: main's words when nothing was found (what signing in needs in this build: the GitHub
+ * CLI, and how to install it here, until Ember has its own GitHub App); a main that sends none gets today's sentence.
+ */
+export function retryMessage(r: { found: boolean; source: string | null; hint?: string }, connected = false): string {
+  if (!r.found) return r.hint || "No GitHub sign-in found on this computer. Run “gh auth login” in a terminal, then press Check again.";
   const what = SOURCE_TEXT[r.source ?? ""] ?? "a GitHub sign-in";
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;
+}
+
+/** The Copilot section's sign-in button: Ember's own GitHub App signs in with the browser; without it, the GitHub CLI. */
+export function signInLabel(signInWith?: string): string {
+  return signInWith === "github-cli" ? "Connect with GitHub CLI" : "Sign in with GitHub";
 }
 
 /** The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. */

@@ -46,6 +46,7 @@ import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
+import { cliTimedOutMessage, cliWaitingMessage, githubClientId, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
@@ -159,6 +160,10 @@ function voiceModelsRoot(): { root: string; bundled: boolean } {
 
 /** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
 const ghOptions = () => ({ path: sys.ghCliPath() ?? undefined, spawn: sys.spawnDefaults });
+/** Whether the GitHub CLI is installed (the platform's own path for it, else on PATH): sign-in messages say how to get it. */
+const ghInstalled = () => !!(sys.ghCliPath() ?? sys.which("gh"));
+/** How this build signs in: Ember's own GitHub App when it has a client id (github-app.ts), else the GitHub CLI. */
+const signInWith = (): SignInWith => githubClientId() ? "github" : "github-cli";
 
 // Packaged builds ship the sidecar under resources/; development runs it from the repo.
 const sidecarScript = () => app.isPackaged
@@ -217,6 +222,7 @@ async function runDoctor(): Promise<void> {
     const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
     if (t && !ignored) auth = { kind: "github", source: t.source };
   }
+  const signIn = { with: signInWith(), ghInstalled: ghInstalled() };
   const models = voiceModelsRoot();
   const probes = await sys.doctorProbes();
   // Input that can't reach apps counts as missing. Asked about the window the user is in, not window 0: macOS answers
@@ -228,7 +234,7 @@ async function runDoctor(): Promise<void> {
     xtest: ws ? !!input && !blocked : null,
     speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
-    runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
+    runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
     // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
     extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
@@ -939,13 +945,16 @@ function start(): void {
     if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
     return explainStartError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   };
-  /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
-  const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
+  /**
+   * "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. Nothing found: `hint`
+   * says what signing in needs in this build (the GitHub CLI, and how to install it here, without Ember's own app).
+   */
+  const retrySignIn = async (): Promise<{ found: boolean; source: string | null; hint?: string }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
     const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
     currentToken = found?.token ?? null;
     await agent?.start(currentToken, found?.source);
-    return { found: !!found, source: found?.source ?? null };
+    return { found: !!found, source: found?.source ?? null, ...(found ? {} : { hint: noSignInMessage({ os: platform.os, with: signInWith(), ghInstalled: ghInstalled() }) }) };
   };
   ipcMain.handle(IPC.agentRetry, guard(retrySignIn));
   ipcMain.handle(IPC.signIn, guard(async () => {
@@ -961,10 +970,12 @@ function start(): void {
       if (phase === "ready") say({ state: "done", message: note });
       else say({ state: "error", message: agent?.getStatus().detail ?? "Copilot didn't connect." });
     };
-    const clientId = process.env.EMBER_GITHUB_CLIENT_ID;
+    // Ember's own GitHub App (its client id is built in, or EMBER_GITHUB_CLIENT_ID overrides it): the device flow.
+    const clientId = githubClientId();
     if (!clientId) {
-      // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart).
-      say({ state: "waiting", message: "In a terminal, run “gh auth login”. Ember will notice within a few seconds and connect; no restart needed." });
+      // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart). The
+      // message says what that needs (a GitHub account with Copilot and the GitHub CLI) and how to install gh here.
+      say({ state: "waiting", message: cliWaitingMessage(platform.os, ghInstalled()) });
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
         const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
@@ -976,7 +987,7 @@ function start(): void {
         }
         await new Promise(r => setTimeout(r, 3000));
       }
-      if (!ac.signal.aborted) say({ state: "error", message: "Ember didn't see a new GitHub sign-in. Run “gh auth login”, then press Check again." });
+      if (!ac.signal.aborted) say({ state: "error", message: cliTimedOutMessage(platform.os, ghInstalled()) });
       return;
     }
     const fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => net.fetch(url, init);
@@ -1507,7 +1518,7 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
-      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
+      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
       describeScreen: () => seeing.describe(), hands,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
       onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },

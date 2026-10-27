@@ -34,6 +34,7 @@ import type { TargetBinding, PromptCaps } from "../targets/types";
 import type { TargetId } from "../../shared/targets";
 import { placeName, whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
+import type { SignInWith } from "./github-app";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -96,6 +97,8 @@ export interface AgentStatus {
   login?: string;
   /** Where the sign-in came from: Ember's own, the environment, or the GitHub CLI. */
   source?: string;
+  /** How this build signs in (HostOptions.signInWith): the settings window labels its button by it. */
+  signInWith?: SignInWith;
   models: { id: string; name: string; vision: boolean }[];
   conductorModel: string | null;
   workerModel: string | null;
@@ -169,6 +172,11 @@ export interface HostOptions {
   emberPids?: () => number[];
   /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
   onAnnounce?: (text: string) => void;
+  /**
+   * How this build signs in (github-app.ts): with Ember's own GitHub App (default, "Sign in with GitHub"), or, while it
+   * has none, through the GitHub CLI: the signed-out line then says so, and the status tells the settings window.
+   */
+  signInWith?: SignInWith;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -223,6 +231,8 @@ export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
 
 const NETWORK = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network is unreachable|fetch failed|socket hang up|net::ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|CONNECTION_\w+|ADDRESS_UNREACHABLE|NETWORK_\w+|TIMED_OUT|PROXY_\w+|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE)/i;
 const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
+/** The same without Ember's own GitHub App: the sign-in is the GitHub CLI's (S1). */
+const SIGNED_OUT_CLI = "Not connected to Copilot. Signing in needs a GitHub account with Copilot and the GitHub CLI: see below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
 const RUNTIME_WAIT_MS = 5000;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
@@ -412,10 +422,7 @@ export class AgentHost {
   private client: CopilotClient | null = null;
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
-  private status: AgentStatus = {
-    phase: "signed-out", detail: SIGNED_OUT, models: [], conductorModel: null, workerModel: null,
-    usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
-  };
+  private status: AgentStatus;
   /** Bumped by every start() and stop(): an older start gives up at its next step. */
   private gen = 0;
   /** Starts and stops run one after another. */
@@ -502,7 +509,14 @@ export class AgentHost {
   /** The Confirmer tasks ask with: the hands', or without them (no window system) the task base's (§2.6). */
   private get confirmer(): Confirmer | undefined { return this.o.hands?.confirmer ?? this.o.taskBase?.confirmer; }
 
+  /** The signed-out line for how this build signs in. */
+  private get signedOut(): string { return this.o.signInWith === "github-cli" ? SIGNED_OUT_CLI : SIGNED_OUT; }
+
   constructor(private o: HostOptions) {
+    this.status = {
+      phase: "signed-out", detail: this.signedOut, models: [], conductorModel: null, workerModel: null,
+      usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, ...(o.signInWith ? { signInWith: o.signInWith } : {}),
+    };
     this.stateFile = path.join(o.userData, "agent.json");
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
@@ -749,7 +763,7 @@ export class AgentHost {
     await this.doStop();
     if (gen !== this.gen) return;
     if (!token && !this.o.provider) {
-      this.setStatus({ phase: "signed-out", detail: SIGNED_OUT, login: undefined, source: undefined });
+      this.setStatus({ phase: "signed-out", detail: this.signedOut, login: undefined, source: undefined });
       return;
     }
     this.setStatus({ phase: "starting", detail: "Connecting to Copilot…", source: this.source });

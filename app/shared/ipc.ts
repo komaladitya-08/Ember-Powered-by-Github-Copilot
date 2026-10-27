@@ -159,7 +159,7 @@ export interface EmberHomeApi {
   /** The newest audit entries, newest first. */
   activity(): Promise<ActivityEntry[]>;
   /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */
-  retrySignIn(): Promise<{ found: boolean; source: string | null }>;
+  retrySignIn(): Promise<{ found: boolean; source: string | null; hint?: string }>;
   /** Ember beside the cursor or hidden, following or staying put (`overlay` false: no compositor, Ember lives in the corner card). */
   presence(): Promise<Presence>;
   setPresence(p: Partial<Pick<Presence, "hidden" | "paused">>): Promise<Presence>;

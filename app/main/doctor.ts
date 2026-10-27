@@ -12,6 +12,7 @@ import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
 import { VOICE_MODELS_BYTES } from "../voice/models";
+import { cliSteps, type SignInWith } from "./agent/github-app";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -39,6 +40,11 @@ export interface DoctorProbes {
   runtime: boolean;
   /** How Ember will reach a model: an organisation endpoint, a GitHub sign-in, or nothing yet. */
   auth: { kind: "provider"; host: string } | { kind: "github"; source: string } | null;
+  /**
+   * How this build signs in (github-app.ts), and whether the GitHub CLI is installed: without Ember's own GitHub App the
+   * fix says sign-in needs a GitHub account with Copilot and the GitHub CLI. Absent: the fix offers "Sign in with GitHub".
+   */
+  signIn?: { with: SignInWith; ghInstalled: boolean };
   admin: LoadedAdminPolicy;
   /** Ember's desk (Linux); null where there is none (the row is left out). */
   desk: { ok: boolean; missing: string[] } | null;
@@ -165,7 +171,9 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
       ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's endpoint (${p.auth.host}).` }
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
-        : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: `Open Ember's settings (${sc.settings.label}) and choose “Sign in with GitHub”, or run “gh auth login”.` };
+        : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"
+          ? `${cliSteps(os, p.signIn.ghInstalled)} Then open Ember's settings (${sc.settings.label}) and press Check again.`
+          : `Open Ember's settings (${sc.settings.label}) and choose “Sign in with GitHub”, or run “gh auth login”.` };
   out.push(copilot);
 
   if (p.admin.error) out.push({ id: "policy", status: "fail", label: "Organisation policy", detail: `Ember is locked down: ${p.admin.error}`, fix: `Ask your administrator to fix ${p.admin.source}.` });

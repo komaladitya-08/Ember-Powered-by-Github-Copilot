@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, tagline, usageLine, type HomePatch, type Segment,
+  retryMessage, signInLabel, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -462,6 +462,8 @@ function renderAgent(a: AgentStatus | null): void {
   // fix, and reconnecting now stops the tasks: the button says so.
   const waiting = a.waitingForTasks === true;
   $("sign-in").hidden = !notConnected || signingIn || waiting;
+  // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
+  $("sign-in").textContent = signInLabel(a.signInWith);
   $("retry").hidden = !notConnected || signingIn;
   $("retry").textContent = waiting ? "Reconnect now (stops the tasks running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
@@ -529,7 +531,7 @@ $("sign-in").addEventListener("click", () => {
   });
 });
 /** What "Check again" found, while its message shows (it changes to "connected" when Copilot is ready). */
-let retryFound: { found: boolean; source: string | null } | null = null;
+let retryFound: { found: boolean; source: string | null; hint?: string } | null = null;
 $("retry").addEventListener("click", () => {
   signInMsg("Checking…");
   window.ember.retrySignIn().then(r => {
