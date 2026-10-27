@@ -153,7 +153,8 @@ shows the whole command; **Not now** and the deny chord always work. There is ne
 with how to get to the command window from the keyboard ("press Alt+Tab to go there" on Linux and Windows); screen
 readers hear that too, and a question's key hint ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody
 answers counts as "no" after 2 minutes (6 with **More time to read and answer** in Settings › Comfort & access).
-Your yes covers exactly that command, on that computer, in that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+Your yes covers exactly that command, on that computer, in that folder, for that task: any change asks again. After a
+"no", Ember doesn't try again or work around it.
 
 ### 2.5 When you asked for exactly that
 
@@ -348,11 +349,11 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   you've finished reading what the bubble shows, ignores a press in its first half second, and goes after 25 seconds
   unanswered (as **Not now**). Its buttons, like those of "Lost build-01" and "Can't connect", take only the mouse;
   under them the bubble says where the same buttons are from the keyboard (Settings › **Computers**, with the settings
-  shortcut). It offers each computer once per run, and **Don't offer again** sticks. Turn the offers off with **Offer to bring Ember along when I connect
-  with ssh**. Ember always opens its own connection; it never uses or types into yours. If it can't connect there
-  (your organisation doesn't allow that computer, its settings throw host keys away, it is this same computer…), the
-  bubble says so: "Can't connect to build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that
-  are running at that moment, and never starts one to look.
+  shortcut). It offers each computer once per run, and **Don't offer again** sticks. Turn the offers off with
+  **Offer to bring Ember along when I connect with ssh**. Ember always opens its own connection; it never uses or types
+  into yours. If it can't connect there (your organisation doesn't allow that computer, its settings throw host keys
+  away, it is this same computer…), the bubble says so: "Can't connect to build-01" with the reason. Ember looks at
+  your `ssh` in WSL only in distros that are running at that moment, and never starts one to look.
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,
@@ -381,10 +382,10 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   to 10 minutes. If build-01 was where Ember worked, the bubble says it works on this computer until build-01 is back,
   and stays until you answer it or the connection comes back. When Ember reconnects by itself it says "build-01 is
   back" and works there again, unless you picked another computer meanwhile. A reconnect starts fresh: no task resumes
-  and no approval carries over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
-  hold, a host key to accept) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect
-  to sign in."; when it gives up for another reason (after 10 minutes, or a refusal), it says "Can't reconnect to
-  build-01" with the reason. Both have **Reconnect**, which connects with Ember's sign-in window.
+  and no approval carries over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase
+  your SSH agent doesn't hold, a host key to accept) it stops trying and the bubble says "build-01 needs you to sign in
+  again" — "Reconnect to sign in."; when it gives up for another reason (after 10 minutes, or a refusal), it says
+  "Can't reconnect to build-01" with the reason. Both have **Reconnect**, which connects with Ember's sign-in window.
 
 ### 4.2 What stays here
 
@@ -456,10 +457,10 @@ downloads, so a command that runs one by name still asks) (§7, L8).
 
 If the connection goes silent for 5 seconds, the bubble says "build-01 isn't answering" — "Commands running there
 stop in 15 seconds unless it answers again. I'll send nothing new until then.", and each running command's tab counts
-down ("build-01 isn't answering. This command stops in 12 seconds unless it answers again.") until the link comes back or is
-lost; so a network blip doesn't kill a long build. The stop chord ends Ember's own connection at once, but while the
-network is down a command on build-01 ends only when build-01 notices, within 20 seconds of the last thing it heard
-(an administrator can set 3 to 120; the bubble and the tab say what is left of it).
+down ("build-01 isn't answering. This command stops in 12 seconds unless it answers again.") until the link comes
+back or is lost; so a network blip doesn't kill a long build. The stop chord ends Ember's own connection at once, but
+while the network is down a command on build-01 ends only when build-01 notices, within 20 seconds of the last thing
+it heard (an administrator can set 3 to 120; the bubble and the tab say what is left of it).
 
 A command that prints faster than the connection can carry waits for it: once about 1 MB of its output is waiting to
 be sent, build-01's helper holds the command's output back (the command pauses as it would on a slow terminal) until
