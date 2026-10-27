@@ -1105,7 +1105,7 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
             const place = await this.d.desk!();
             // Stopped while the desk started: nothing is opened (and the desk view isn't shown for a task that is gone).
@@ -1134,7 +1134,7 @@ export class Worker {
           const apps = this.sys.apps;
           const app = apps.find(apps.list(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           // Another computer's app list is that computer's words: its names are quoted as screen text is (§7.2 item 4).
           const shownApp = this.d.target?.kind === "ssh" ? q(app.name, 100) : app.name;
           return this.system("open_app", app.name, async () => {

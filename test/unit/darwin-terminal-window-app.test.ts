@@ -78,7 +78,7 @@ describe("the policy's terminal check on macOS, by bundle id", () => {
       isTerminalApp: name => isTerminalWindowApp(name, catalogue, "darwin"),
     });
     const click = (app: string) => policy.decide({ taskId: "t", kind: "click", app, window: "Default", element: { role: "menu item", name: "Paste" } });
-    expect(click("Shell Window")).toMatchObject({ tier: "never", reason: "Ember doesn't run commands, so it never acts in terminals or apps with a shell built in" });
+    expect(click("Shell Window")).toMatchObject({ tier: "never", reason: "Ember doesn't act in terminal windows or apps with a shell built in; it runs commands in its own command window when Commands is on" });
     expect(click("Notes").tier).not.toBe("never");
     expect(policy.decide({ taskId: "t", kind: "open_app", app: "Warp Preview", window: "" }).tier).toBe("never");
   });

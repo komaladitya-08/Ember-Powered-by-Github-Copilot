@@ -23,6 +23,21 @@ describe("PolicyEngine", () => {
     expect(e.decide(req({ app: "polkit-gnome-authentication-agent-1", window: "Authentication Required", element: { role: "push button", name: "Authenticate" } })).verdict).toBe("deny");
   });
 
+  it("says terminal refusals truthfully now that Ember runs commands in its own window (review #216)", () => {
+    const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ xterm: "act" }), now: () => 0, rateLimit: 3, isTerminalApp: app => /^xterm$/i.test(app) });
+    const reasons = [
+      e.decide(req({ kind: "text", element: { role: "terminal", name: "" }, value: "ls" })).reason,
+      e.decide(req({ kind: "open_app", app: "", value: "XTerm" })).reason,
+      e.decide(req({ app: "XTerm", element: { role: "menu item", name: "Paste" } })).reason,
+    ];
+    expect(reasons).toEqual([
+      "Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on",
+      "Ember doesn't open terminal windows; it runs commands in its own command window when Commands is on",
+      "Ember doesn't act in terminal windows or apps with a shell built in; it runs commands in its own command window when Commands is on",
+    ]);
+    for (const r of reasons) expect(r).not.toMatch(/doesn't run commands/);
+  });
+
   it("asks before the first action in an app, then not once granted", () => {
     const first = engine().decide(req({ element: { role: "push button", name: "Bold" } }));
     expect(first).toMatchObject({ verdict: "confirm", needsGrant: true });
