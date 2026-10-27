@@ -31,7 +31,7 @@ export const RUNNING_STATUS = "Running…";
 /** How a shell is named in the header. */
 const SHELL_NAME: Readonly<Record<ShellId, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };
 
-/** Between a number and its unit: a no-break space, so "3.2 s" never wraps into "3.2" and "s" (review #227). */
+/** Between a number and its unit: a no-break space, so "3.2 s" never wraps into "3.2" and "s". */
 const NB = "\u00a0";
 
 /** A duration as the window says it: "3.2 s" under 10 s, "12 s" under a minute, then "2 min" or "2 min 5 s". */

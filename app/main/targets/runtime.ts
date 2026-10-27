@@ -620,7 +620,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   let shown: { key: string; seq: number } | null = null;
   /**
    * The keyboard's way to what a bubble's buttons do (they take only the mouse: the overlay never takes the keyboard):
-   * the same buttons in settings, Computers (review #47).
+   * the same buttons in settings, Computers.
    */
   const keyboard = (section?: "Computers" | "Commands"): string => {
     let key: string | null = null;
