@@ -50,13 +50,20 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The AI endpoint's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
   if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one in settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
+  // The whole conversation (not this request) went over the model's limit: a new conversation starts when Ember restarts.
+  if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return "That's more than the model can take in at once: this conversation may have got too long. Try a shorter request, or quit and reopen Ember to start a new conversation.";
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
   if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
   if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${ctx.provider ? "Your organisation's AI endpoint" : "Copilot"} had a problem on its side. Try again in a moment.`;
+  // A request that timed out (not the network's ETIMEDOUT, which is above).
+  if (/timed? ?out|timeout|took too long/i.test(m)) return `${ctx.provider ? "The AI endpoint" : "Copilot"} took too long to answer. Try again in a moment.`;
   const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
   const who = ctx.provider ? "The AI endpoint" : "Copilot";
-  return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
+  // Only a status code is left (a JSON body said nothing more): a refused request.
+  if (/^\(?4\d\d\)?$/.test(short)) return `${who} refused that request (${short.replace(/[()]/g, "")}). Try asking in other words.`;
+  // Anything else: no raw text (it reads as a code error, and is spoken when speech is on); the caller logs it.
+  return `${who} reported a problem. Try again; if it keeps happening, check ${ctx.provider ? "the model service" : "Copilot"} in Ember's settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
 }
 
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */

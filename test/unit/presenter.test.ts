@@ -147,7 +147,7 @@ describe("friendlyError", () => {
     expect(friendlyError("Request failed: 401 Unauthorized")).toMatch(/sign-in/);
     expect(friendlyError("Connection is disposed.")).toMatch(/can't reach Copilot/);
     expect(friendlyError("ECONNREFUSED 127.0.0.1:54013")).toMatch(/can't reach Copilot/);
-    expect(friendlyError("Something odd {\"x\":1}")).toBe("Copilot reported a problem: Something odd");
+    expect(friendlyError("Something odd {\"x\":1}")).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Ctrl+Alt+E).");
   });
 });
 

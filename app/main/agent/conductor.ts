@@ -501,7 +501,12 @@ export class Conductor {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
         if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
       }
-      if (e.type === "session.error") this.busy = false;
+      if (e.type === "session.error") {
+        this.busy = false;
+        // The bubble says it in plain words (friendlyError); the raw error is kept here for whoever reads the log.
+        const err = e.data as { errorType?: unknown; statusCode?: unknown; message?: unknown };
+        d.log.warn("conductor.session_error", { errorType: err.errorType, statusCode: err.statusCode, message: String(err.message ?? "").slice(0, 300) });
+      }
       if (e.type === "session.idle") { this.busy = false; this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
     });
   }
