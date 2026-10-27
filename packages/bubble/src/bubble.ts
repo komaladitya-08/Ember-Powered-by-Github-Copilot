@@ -127,7 +127,11 @@ function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid:
     const slides = avoid.flatMap(r => [r.x - w - GAP, r.x + r.width + GAP]).filter(fitsX).sort((a, b) => Math.abs(a - p.x) - Math.abs(b - p.x));
     for (const sx of slides) tries.push({ x: sx, y: p.y });
   }
-  tries.push(fallback);
+  // The fallback ignores Ember (it is clamped to the screen only): never taken over Ember's body and its emote, so a
+  // bubble too big for any clear place (an answer opened in full) goes beside Ember over the cards instead (the usual
+  // placement), not over Ember's face.
+  const e = size > 0 ? { x: anchor.x - size * 0.75, y: anchor.y - size * 1.5, width: size * 1.5, height: size * 1.7 } : null;
+  if (!e || !(fallback.x < e.x + e.width && fallback.x + w > e.x && fallback.y < e.y + e.height && fallback.y + h > e.y)) tries.push(fallback);
   const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
   return tries.find(clear) ?? null;
 }

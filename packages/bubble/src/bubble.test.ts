@@ -124,6 +124,20 @@ describe("bubblePosition", () => {
     }
   });
 
+  it("an answer opened in full that fits nowhere clear goes beside Ember over the cards, never over Ember (review #25)", () => {
+    const view = { width: 1280, height: 720 };
+    const size = 64;
+    const c = { x: 1100, y: 360 };
+    const anchor = { x: c.x, y: c.y + size * 0.4 };
+    const cards = { x: 920, y: 520, width: 348, height: 124 };
+    const handle = { x: 1068, y: 652, width: 200, height: 56 };
+    const box = { width: 410, height: 391 };
+    const p = bubblePosition(anchor, box, view, size, [cards, handle]);
+    const e = emberBox(c, size);
+    expect(p.x < e.right && p.x + box.width > e.left && p.y < e.bottom && p.y + box.height > e.top, JSON.stringify(p)).toBe(false);
+    expect(bubbleFit(anchor, box, view, size, [cards, handle], () => box.height)).toBeNull();
+  });
+
   describe("keeping off the handle and the task cards", () => {
     const handle = { x: 1068, y: 732, width: 200, height: 56 };
     const hits = (p: { x: number; y: number }, box: { width: number; height: number }, r: typeof handle) =>
