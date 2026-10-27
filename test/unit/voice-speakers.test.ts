@@ -6,17 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpeakerMonitor } from "../../app/voice/speakers";
 import { FrameWatchdog } from "../../app/voice/watchdog";
 
+/** `children`: parec's runs; `watchers`: pactl's (what it is asked is in `watched`). */
 function setup() {
-  const children: (EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> })[] = [];
+  type Child = EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> };
+  const children: Child[] = [], watchers: Child[] = [];
+  const watched: string[][] = [];
   const states: [boolean, string?][] = [];
   const frames: Float32Array[] = [];
-  const spawn = () => {
+  const spawn = (cmd: string, args: string[]) => {
     const p = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), kill: vi.fn() });
-    children.push(p);
+    if (cmd === "pactl") { watchers.push(p); watched.push(args); } else children.push(p);
     return p as unknown as ChildProcess;
   };
   const monitor = new SpeakerMonitor(f => frames.push(f), (on, reason) => states.push(reason ? [on, reason] : [on]), spawn);
-  return { monitor, children, states, frames };
+  return { monitor, children, watchers, watched, states, frames };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -68,12 +71,36 @@ describe("speakers' stream", () => {
     expect(s.states).toEqual([[false, "parec isn't installed (pulseaudio-utils)"]]);
   });
 
+  it("starts parec again on the new default output when it changes (headphones, a Bluetooth speaker) (review #260)", () => {
+    const s = setup();
+    s.monitor.start();
+    s.children[0].emit("spawn");
+    expect(s.watched).toEqual([["subscribe"]]);
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'new' on sink-input #12\nEvent 'change' on sink #1\n"));
+    vi.advanceTimersByTime(1000);
+    expect(s.children).toHaveLength(1); // something played: the default output is the same
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on ser"));
+    s.watchers[0].stdout.emit("data", Buffer.from("ver #4294967295\n"));
+    vi.advanceTimersByTime(499);
+    expect(s.children[0].kill).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(s.children[0].kill).toHaveBeenCalled();
+    expect(s.children).toHaveLength(2); // at once, on the new default's monitor
+    s.children[0].emit("exit", null, "SIGTERM");
+    s.children[1].emit("spawn");
+    expect(s.states).toEqual([[true], [true]]); // never reported off meanwhile
+    vi.advanceTimersByTime(60_000);
+    expect(s.children).toHaveLength(2); // nor started again after the old one's end
+    expect(s.watchers).toHaveLength(1);
+  });
+
   it("stop() ends it for good", () => {
     const s = setup();
     s.monitor.start();
     s.children[0].emit("spawn");
     s.monitor.stop();
     expect(s.children[0].kill).toHaveBeenCalled();
+    expect(s.watchers[0].kill).toHaveBeenCalled();
     s.children[0].emit("exit", null, "SIGTERM");
     vi.advanceTimersByTime(60_000);
     expect(s.children).toHaveLength(1);
