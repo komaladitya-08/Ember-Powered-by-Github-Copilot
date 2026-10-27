@@ -16,7 +16,7 @@ import { darwinDoctorRows } from "../../app/main/platform/darwin/system/doctor";
 import type { PermissionDeps } from "../../app/main/platform/darwin/system/permissions";
 import { speechWatch } from "../../app/renderer/mic/speech-watch";
 import { ISSUES_URL } from "../../app/shared/support";
-import { doctorChecks } from "../../app/main/doctor";
+import { doctorChecks, type DoctorProbes } from "../../app/main/doctor";
 import { AdminPolicySchema } from "../../app/main/admin";
 
 const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8");
@@ -420,6 +420,32 @@ describe("the settings window when no voice speaks", () => {
 });
 
 describe("setup check and doctor wording", () => {
+  const doctorWith = (over: Partial<DoctorProbes>) => doctorChecks({
+    env: inspectEnvironment(linux()), compositor: true, xtest: true, speechDispatcher: true, microphones: ["mic"], voiceModels: "bundled", runtime: true,
+    auth: { kind: "github", source: "stored" }, admin: { policy: AdminPolicySchema.parse({}), source: null }, desk: null, sandbox: null, ...over,
+  });
+
+  it("names the doctor's own rows in plain words, not Compositor, Sandbox or File watchers (review #105)", () => {
+    const label = (checks: ReturnType<typeof doctorChecks>, id: string) => checks.find(c => c.id === id)?.label;
+    const linuxRows = doctorWith({ sandbox: { userNamespaces: false, suidHelper: true }, fileWatchers: { used: 3, max: 128 } });
+    expect(label(linuxRows, "compositor")).toBe("Transparent windows");
+    expect(label(linuxRows, "sandbox")).toBe("Window sandbox");
+    expect(label(linuxRows, "file-watchers")).toBe("Copilot's file watchers");
+    // Every state of each row, and Windows' and macOS' compositor row, use the same name.
+    const states = [
+      doctorWith({ compositor: false, sandbox: { userNamespaces: false, suidHelper: false }, fileWatchers: { used: 128, max: 128 } }),
+      doctorWith({ compositor: null, fileWatchers: { used: 125, max: 128 } }),
+      doctorWith({ os: "win32", env: inspectEnvironment({ env: {}, osRelease: null, glibc: null, versions, platform: "win32", arch: "x64" }), microphones: null }),
+      doctorWith({ os: "darwin", env: inspectEnvironment(macIn()), compositor: null, microphones: null }),
+    ];
+    for (const checks of [linuxRows, ...states]) {
+      expect(checks.map(c => c.label)).not.toEqual(expect.arrayContaining([expect.stringMatching(/^(Compositor|Sandbox|File watchers)$/)]));
+    }
+    expect(states.map(c => label(c, "compositor"))).toEqual(["Transparent windows", "Transparent windows", "Transparent windows", "Transparent windows"]);
+    expect(label(states[0], "sandbox")).toBe("Window sandbox");
+    expect(states.slice(0, 2).map(c => label(c, "file-watchers"))).toEqual(["Copilot's file watchers", "Copilot's file watchers"]);
+  });
+
   it("says why another Linux is only a warning (review #105)", () => {
     const ubuntu = linux({ osRelease: 'ID="ubuntu"\nVERSION_ID="22.04"\nPRETTY_NAME="Ubuntu 22.04.4 LTS"' });
     expect(row(ubuntu, "os")).toEqual({ id: "os", label: "Operating system", status: "warn",

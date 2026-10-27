@@ -406,7 +406,7 @@ jobs:
           cat "$report"
           echo "exit status $status"
           if [ "$EMBER_CI_ELEVATED" = 1 ]; then admin=warn; else admin=ok; fi
-          node scripts/package/doctor-rows.mjs "$report" "Compositor=ok" "Accessibility helper=ok" "Mouse and keyboard=ok" "PowerShell=ok" "Helper command line=ok" "Administrator=$admin" "Copilot=warn" "Organisation policy=ok" || { cat "$RUNNER_TEMP/doctor.err"; exit 1; }
+          node scripts/package/doctor-rows.mjs "$report" "Transparent windows=ok" "Accessibility helper=ok" "Mouse and keyboard=ok" "PowerShell=ok" "Helper command line=ok" "Administrator=$admin" "Copilot=warn" "Organisation policy=ok" || { cat "$RUNNER_TEMP/doctor.err"; exit 1; }
           # ember-doctor.cmd, what a user runs in a console: cmd.exe waits for Ember.exe and keeps its exit code. (Its
           # report goes to the console cmd.exe has, which this runner's pipes aren't: only the line count is shown.)
           launcher=dist/package/Ember/ember-doctor.cmd

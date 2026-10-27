@@ -726,7 +726,7 @@ Ember can't work.
 | Platform | Not x64 or Arm (fails) | Use a 64-bit Windows |
 | Operating system | Windows 10 before 22H2 (warns), before 1809 (fails) | Update Windows |
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
-| Compositor, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
+| Transparent windows, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
 | Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
 | Microphone privacy | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** |
 | Administrator | Ember runs as administrator | Start it from the Start menu, not with **Run as administrator** |
@@ -931,7 +931,7 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 | Check-up row | When it warns or fails | What to do |
 |---|---|---|
 | Operating system | Older than macOS 13 | Update macOS |
-| Compositor | macOS's window functions didn't load | Reinstall Ember |
+| Transparent windows | macOS's window functions didn't load | Reinstall Ember |
 | Accessibility helper | The helper didn't answer, or can't read apps | Allow Ember under Accessibility, then run the check-up again |
 | Mouse and keyboard | No Accessibility permission, or an app holds secure input | Allow Ember under Accessibility; see Secure input |
 | Accessibility | Not allowed | **System Settings › Privacy & Security › Accessibility**: switch Ember on (after an update: remove it with **−** and add it again) |
