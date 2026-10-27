@@ -15,13 +15,15 @@ import type { SignInProgress } from "../../shared/ipc";
 /** Ember's GitHub App's public client id (not a secret). Empty until the app is registered (PLAN.md §7). */
 export const GITHUB_CLIENT_ID = "";
 
-/** How a client id looks (GitHub's are "Iv1.…" or "Ov23…"): anything else is ignored rather than sent to GitHub. */
+/** How a client id looks (GitHub's are "Iv1.…", "Iv23…" or "Ov23…"): anything else is ignored rather than sent to GitHub. */
 const CLIENT_ID = /^[A-Za-z0-9._-]{1,100}$/;
 
-/** The client id the device flow uses: EMBER_GITHUB_CLIENT_ID, else the built-in one; null when neither is usable. */
+/**
+ * The client id the device flow uses: EMBER_GITHUB_CLIENT_ID, else the built-in one (also when the variable holds
+ * something that isn't a client id); null when neither is usable.
+ */
 export function githubClientId(env: NodeJS.ProcessEnv = process.env, builtIn: string = GITHUB_CLIENT_ID): string | null {
-  const id = (env.EMBER_GITHUB_CLIENT_ID ?? "").trim() || builtIn.trim();
-  return CLIENT_ID.test(id) ? id : null;
+  return [(env.EMBER_GITHUB_CLIENT_ID ?? "").trim(), builtIn.trim()].find(id => CLIENT_ID.test(id)) ?? null;
 }
 
 /** How sign-in works in this build: Ember's own GitHub App (device flow), or the GitHub CLI's sign-in. */

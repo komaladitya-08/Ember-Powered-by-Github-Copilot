@@ -1,6 +1,6 @@
 /**
- * Sign-in while Ember has no GitHub App of its own (review #93, #136, #199, #213; owner decision S1): one checked-in
- * place for the client id, EMBER_GITHUB_CLIENT_ID overriding it, and every sign-in message, the doctor row and the
+ * Sign-in (review #93, #136, #199, #213; owner decision S1): Ember's GitHub App's client id in one checked-in place,
+ * EMBER_GITHUB_CLIENT_ID overriding it; and in a build without one, every sign-in message, the doctor row and the
  * settings window saying that signing in needs a GitHub account with Copilot and the GitHub CLI (and how to install it).
  */
 
@@ -27,14 +27,21 @@ describe("the GitHub App's client id", () => {
     expect(githubClientId({})).toBeNull();
   });
 
-  it("is the built-in one once it is filled in, and EMBER_GITHUB_CLIENT_ID overrides it at run time", () => {
+  it("a build without one (a fork, a development build) has no device flow: sign-in goes through the GitHub CLI", () => {
+    expect(githubClientId({}, "")).toBeNull();
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "  " }, "")).toBeNull();
+  });
+
+  it("EMBER_GITHUB_CLIENT_ID overrides the built-in one at run time", () => {
     expect(githubClientId({}, "Iv1.0123456789abcdef")).toBe("Iv1.0123456789abcdef");
     expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: " Ov23liABCDEF " }, "Iv1.0123456789abcdef")).toBe("Ov23liABCDEF");
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "Ov23liABCDEF" }, "")).toBe("Ov23liABCDEF");
     expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "" }, "Iv1.0123456789abcdef")).toBe("Iv1.0123456789abcdef");
   });
 
-  it("ignores something that isn't a client id rather than sending it to GitHub", () => {
-    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "a b&scope=repo" })).toBeNull();
+  it("ignores an override that isn't a client id rather than sending it to GitHub (the built-in one stays)", () => {
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "a b&scope=repo" }, "")).toBeNull();
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "a b&scope=repo" }, "Iv1.0123456789abcdef")).toBe("Iv1.0123456789abcdef");
   });
 });
 
