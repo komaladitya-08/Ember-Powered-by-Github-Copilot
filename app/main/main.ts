@@ -440,9 +440,10 @@ function start(): void {
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
     const waiting = phase === "error" && (agent?.waitingForNetwork ?? false);
+    // Shortcuts another app holds: the handle for a pointer, and settings' Ask Ember… for the keyboard.
     const keys = hasKey(sc.ask.accel) && hasKey(sc.stop.accel)
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
-      : "Click my handle in the corner to ask me something or to stop me.";
+      : `Click my handle in the corner to ask me something or to stop me, or use Ask Ember… in settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""}.`;
     const settingsOpen = homeOpen();
     const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
@@ -768,7 +769,7 @@ function start(): void {
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
    * `over` is the window it had the keyboard.
    */
-  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "test" } = {}) => {
+  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "test" } = {}) => {
     // Every opening says where it came from (an ask box that opened by itself would show up here).
     log.info("ask.open", { source });
     if (!consented()) { showHome(); return; }
@@ -1017,6 +1018,9 @@ function start(): void {
     return presence();
   }));
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
+  // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
+  ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
+  ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("menu"); }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;

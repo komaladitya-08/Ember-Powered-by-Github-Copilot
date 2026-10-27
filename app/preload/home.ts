@@ -38,6 +38,8 @@ const api: EmberHomeApi = {
   onSettingsNotice: fn => listen<string | null>(IPC.settingsNotice, fn),
   onVisibility: fn => listen<boolean>(IPC.homeVisibility, v => fn(v !== false)),
   quit: () => ipcRenderer.invoke(IPC.quit),
+  openAsk: () => ipcRenderer.invoke(IPC.openAsk),
+  stopEverything: () => ipcRenderer.invoke(IPC.stopEverything),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

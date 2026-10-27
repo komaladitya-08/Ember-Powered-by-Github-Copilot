@@ -7,7 +7,7 @@
  */
 
 import type { FixId } from "./platform/types";
-import { SHORTCUTS, type ShortcutTable } from "../shared/shortcuts";
+import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 
 export type { FixId };
 
@@ -113,13 +113,23 @@ const versionAtLeast = (v: string, min: string) => {
   return true;
 };
 
-/** The keyboard shortcuts check: the table's labels for those Ember holds, or which ones another app took. */
-function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
+/** Where the user opens Ember again on each OS: a second start shows its settings window, which has Ask Ember…. */
+const OPEN_AGAIN: Readonly<Record<OS, string>> = { linux: "from your apps", win32: "from the Start menu", darwin: "from Applications" };
+
+/**
+ * The keyboard shortcuts check: the table's labels for those Ember holds, or which ones another app took and what to use
+ * meanwhile, for the mouse (the handle) and for the keyboard (Ask Ember… in the settings window, which opening Ember
+ * again brings up), since the handle can't be reached without a pointer.
+ */
+function shortcutsCheck(taken: string[], sc: ShortcutTable, os: OS): Check {
   // An accelerator as the copy writes it (on Linux the table's label is exactly "Control" → "Ctrl").
   const label = (accel: string) => Object.values(sc).find(d => d.accel === accel)?.label ?? accel.replace(/Control/g, "Ctrl");
   const named = taken.map(label);
   return named.length
-    ? { id: "shortcuts", label: "Keyboard shortcuts", status: "warn", detail: `Another app already uses ${named.join(", ")}. Use Ember's handle in the bottom-right corner instead (it has Ask, Stop everything and Settings); Ember keeps trying to get them.` }
+    ? {
+      id: "shortcuts", label: "Keyboard shortcuts", status: "warn",
+      detail: `Another app already uses ${named.join(", ")}. Ember keeps trying to get ${named.length === 1 ? "it" : "them"}; meanwhile, click Ember's handle in the corner (it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again ${OPEN_AGAIN[os]} and choose Ask Ember… in its settings.`,
+    }
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
 }
 
@@ -179,7 +189,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     }
   }
 
-  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux));
+  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux, "linux"));
 
   return {
     os: os.PRETTY_NAME ?? "unknown",
@@ -245,7 +255,7 @@ function inspectWindows(i: EnvInputs): EnvReport {
       checks.push({ id: "elevated", label: "Administrator", status: "warn", detail: "Ember is running as administrator: start it normally so it can't act with administrator rights by mistake." });
     }
   }
-  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.win32));
+  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.win32, "win32"));
   return { os: osName, sessionType: w?.session ?? "unknown", desktop: "Windows", display: "", glibc: "unknown", versions: i.versions, checks };
 }
 
@@ -293,6 +303,6 @@ function inspectMac(i: EnvInputs): EnvReport {
 
     if (m.root) checks.push({ id: "elevated", label: "Root", status: "warn", detail: "Ember is running as root. Start it as yourself." });
   }
-  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.darwin));
+  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.darwin, "darwin"));
   return { os: m?.version ? `macOS ${m.version}` : "macOS", sessionType: "macos", desktop: "macOS", display: "", glibc: "unknown", versions: i.versions, checks };
 }

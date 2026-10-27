@@ -777,7 +777,7 @@ $("never-look-defaults").addEventListener("click", () => {
   $("never-look-add").focus();
 });
 
-// ───── Ember on screen (the handle menu's Hide / Stay put / Quit, reachable by keyboard) ─────
+// ───── Ember on screen (the handle menu's Ask / Stop everything / Hide / Stay put / Quit, reachable by keyboard) ─────
 let presence: Presence | null = null;
 function renderPresence(p: Presence): void {
   presence = p;
@@ -795,6 +795,8 @@ function renderPresence(p: Presence): void {
 $("p-hide").addEventListener("click", () => { void window.ember.setPresence({ hidden: !(presence?.hidden ?? false) }).then(renderPresence); });
 $("p-follow").addEventListener("click", () => { void window.ember.setPresence({ paused: !(presence?.paused ?? false) }).then(renderPresence); });
 $("p-quit").addEventListener("click", () => { void window.ember.quit(); });
+$("p-ask").addEventListener("click", () => { void window.ember.openAsk(); });
+$("p-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
 void window.ember.presence().then(renderPresence);
 window.ember.onPresence(renderPresence);
 

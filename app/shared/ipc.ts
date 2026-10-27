@@ -51,6 +51,9 @@ export const IPC = {
   /** Main tells the settings window whether it can be seen (minimised or hidden: false), as X11 doesn't say. */
   homeVisibility: "ember:home-visibility",
   quit: "ember:quit",
+  /** The handle menu's Ask Ember… and Stop everything, from the settings window (a keyboard's way to them). */
+  openAsk: "ember:open-ask",
+  stopEverything: "ember:stop-everything",
 } as const;
 
 export interface SignInProgress {
@@ -172,6 +175,10 @@ export interface EmberHomeApi {
   onSettingsNotice(fn: (notice: string | null) => void): () => void;
   /** Quit Ember (asks first while tasks are running). */
   quit(): Promise<void>;
+  /** Opens the ask box, as the handle menu's Ask Ember… does (the keyboard's way when another app has the shortcut). */
+  openAsk(): Promise<void>;
+  /** Stops everything, as the handle menu's Stop everything does. */
+  stopEverything(): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;
