@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { checksNote, homePatches, setupBadge, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
+import { SPEAK_NO_VOICE, checksNote, homePatches, setupBadge, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
 import { holdsBack, needsUser, setupHello, whereAfterStart, type SetupRow } from "../../app/shared/setup-attention";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
@@ -14,6 +14,7 @@ import { PLATFORM_WORDS } from "../../app/shared/words";
 import { MAC_REGRANT, MAC_RESET_NOTE, afterFix, inspectEnvironment, type EnvInputs, type MacEnvInputs } from "../../app/main/environment";
 import { darwinDoctorRows } from "../../app/main/platform/darwin/system/doctor";
 import type { PermissionDeps } from "../../app/main/platform/darwin/system/permissions";
+import { speechWatch } from "../../app/renderer/mic/speech-watch";
 import { doctorChecks } from "../../app/main/doctor";
 import { AdminPolicySchema } from "../../app/main/admin";
 
@@ -22,6 +23,8 @@ const PAGE = read("renderer/home/index.html");
 const STYLES = read("renderer/home/styles.css");
 const SCRIPT = read("renderer/home/main.ts");
 const MAIN = read("main/main.ts");
+const MIC = read("renderer/mic/main.ts");
+const VOICE_MAIN = read("main/voice.ts");
 
 /** A status's OS words as main builds them (only what these tests need differs by OS). */
 const platformOf = (os: OS): StatusPlatform => ({
@@ -328,5 +331,88 @@ describe("macOS permissions that stay off", () => {
     expect(rows.filter(r => r.fix?.includes(MAC_REGRANT)).map(r => r.id)).toEqual(["accessibility-permission"]);
     // Every one still says where to switch Ember on.
     for (const r of rows.filter(x => x.status !== "ok")) expect(r.fix, r.id).toMatch(/^System Settings › Privacy & Security › .+: switch Ember on/);
+  });
+});
+
+describe("speaking with no voice on the computer", () => {
+  /** Fake timers: what is pending, and a way to fire them. */
+  const timers = () => {
+    let next = 1;
+    const pending = new Map<number, () => void>();
+    return {
+      setTimer: (fn: () => void) => { const id = next++; pending.set(id, fn); return id; },
+      clearTimer: (id: unknown) => { pending.delete(id as number); },
+      fire: () => { for (const [id, fn] of [...pending]) { pending.delete(id); fn(); } },
+      get count() { return pending.size; },
+    };
+  };
+
+  it("tells main when speech never starts, and when it works again (review #101)", () => {
+    const t = timers();
+    const said: boolean[] = [];
+    const w = speechWatch({ timeoutMs: 8000, setTimer: t.setTimer, clearTimer: t.clearTimer, report: ok => said.push(ok) });
+    // No voice: the utterance never starts.
+    w.utterance();
+    t.fire();
+    expect(said).toEqual([false]);
+    // The next one doesn't start either: said once.
+    w.utterance();
+    t.fire();
+    expect(said).toEqual([false]);
+    // A voice was added: speech starts, and main hears it works.
+    w.utterance().started();
+    expect(said).toEqual([false, true]);
+    expect(t.count).toBe(0);
+  });
+
+  it("counts a start after the wait, and ignores replies cut off by the next one or by a stop (review #101)", () => {
+    const t = timers();
+    const said: boolean[] = [];
+    const w = speechWatch({ timeoutMs: 8000, setTimer: t.setTimer, clearTimer: t.clearTimer, report: ok => said.push(ok) });
+    const slow = w.utterance();
+    t.fire();
+    slow.started();
+    expect(said).toEqual([false, true]);
+    // Replaced or hushed: nothing is known about the voice.
+    const cut = w.utterance();
+    cut.failed("interrupted");
+    w.utterance().failed("canceled");
+    w.utterance().cancelled();
+    expect(t.count).toBe(0);
+    expect(said).toEqual([false, true]);
+    // The synthesiser itself failed: that counts.
+    w.utterance().failed("synthesis-failed");
+    expect(said).toEqual([false, true, false]);
+  });
+});
+
+describe("the settings window when no voice speaks", () => {
+  const win = (more: Partial<EnvInputs> = {}): EnvInputs => ({ env: {}, osRelease: null, glibc: null, versions, platform: "win32", arch: "x64",
+    windows: { build: 22631, elevated: false, session: "console", powershell: "full", dpiMixed: false }, ...more });
+
+  it("adds a Speaking row with the OS's way to add a voice, only once Ember has found none (review #101)", () => {
+    expect(row(linux(), "speech")).toBeUndefined();
+    expect(row(linux({ speech: true }), "speech")).toBeUndefined();
+    expect(row(linux({ speech: false }), "speech")).toEqual({ id: "speech", label: "Speaking", status: "warn",
+      detail: "Ember couldn't speak: this computer has no speech voice. Install one with sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng, then restart Ember." });
+    expect(row(win({ speech: false }), "speech")?.detail).toBe("Ember couldn't speak: Windows has no voice it can use. Add one in Settings › Time & language › Speech, then restart Ember.");
+    expect(row(macIn({ accessibility: true, screen: "granted", inputMonitoring: true, microphone: "granted" }, { speech: false }), "speech")?.detail)
+      .toBe("Ember couldn't speak: macOS has no voice it can use. Choose one in System Settings › Accessibility › Spoken Content, then restart Ember.");
+  });
+
+  it("says so under the Speak switch, and reads the setup check again when it changes (review #101)", () => {
+    expect(SPEAK_NO_VOICE).toBe("Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.");
+    expect(PAGE).toMatch(/<label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies, questions and results out loud<\/span><\/label>\s*<\/div>\s*<p class="hint" id="speak-note" role="status" hidden><\/p>/);
+    expect(SCRIPT).toMatch(/const missing = v\.speechMissing === true;/);
+  });
+
+  it("is wired from the speaking page through main (review #101)", () => {
+    // The page watches every reply and tells main; main keeps it for the setup check and the voice status.
+    expect(MIC).toMatch(/const watch = speechWatch\(\{/);
+    expect(MIC).toContain("report: ok => api.speech(ok)");
+    expect(VOICE_MAIN).toMatch(/ipcMain\.on\(VOICE\.speech, \(e, ok: unknown\) => \{\s*if \(!\(this\.mic && e\.sender === this\.mic\.webContents\) && e\.sender !== this\.speaker\?\.wc\) return;\s*this\.o\.onSpeech\?\.\(ok === true\);/);
+    expect(MAIN).toContain("applied: fixesApplied, speech: speechHeard");
+    expect(MAIN).toMatch(/onSpeech: ok => \{\s*if \(speechHeard === ok\) return;\s*speechHeard = ok;/);
+    expect(MAIN).toContain("speechMissing: speechHeard === false");
   });
 });

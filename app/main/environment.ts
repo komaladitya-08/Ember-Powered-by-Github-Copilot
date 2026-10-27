@@ -74,6 +74,8 @@ export interface EnvInputs {
    * what comes next, such as restarting apps that were already open (review #98).
    */
   applied?: readonly FixId[];
+  /** false: Ember tried to speak and no voice started (the speaking page's watch, review #101); else no row. */
+  speech?: boolean | null;
 }
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -128,6 +130,18 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
   return named.length
     ? { id: "shortcuts", label: "Keyboard shortcuts", status: "warn", detail: `Another app already uses ${named.join(", ")}. Use Ember's handle in the bottom-right corner instead (it has Ask, Stop everything and Settings); Ember keeps trying to get them.` }
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
+}
+
+/** Each OS's way to get a voice, for the Speaking row Ember adds once it found none (review #101). */
+const NO_VOICE: Record<"linux" | "win32" | "darwin", string> = {
+  linux: "Ember couldn't speak: this computer has no speech voice. Install one with sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng, then restart Ember.",
+  win32: "Ember couldn't speak: Windows has no voice it can use. Add one in Settings › Time & language › Speech, then restart Ember.",
+  darwin: "Ember couldn't speak: macOS has no voice it can use. Choose one in System Settings › Accessibility › Spoken Content, then restart Ember.",
+};
+
+/** The Speaking row, once Ember tried to speak and no voice started; nothing until then. */
+function speechCheck(i: EnvInputs, os: keyof typeof NO_VOICE): Check[] {
+  return i.speech === false ? [{ id: "speech", label: "Speaking", status: "warn", detail: NO_VOICE[os] }] : [];
 }
 
 /** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
@@ -205,6 +219,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
   }
 
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux));
+  checks.push(...speechCheck(i, "linux"));
 
   return {
     os: os.PRETTY_NAME ?? "unknown",
@@ -271,6 +286,7 @@ function inspectWindows(i: EnvInputs): EnvReport {
     }
   }
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.win32));
+  checks.push(...speechCheck(i, "win32"));
   return { os: osName, sessionType: w?.session ?? "unknown", desktop: "Windows", display: "", glibc: "unknown", versions: i.versions, checks };
 }
 
@@ -326,5 +342,6 @@ function inspectMac(i: EnvInputs): EnvReport {
     if (m.root) checks.push({ id: "elevated", label: "Root", status: "warn", detail: "Ember is running as root. Start it as yourself." });
   }
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.darwin));
+  checks.push(...speechCheck(i, "darwin"));
   return { os: m?.version ? `macOS ${m.version}` : "macOS", sessionType: "macos", desktop: "macOS", display: "", glibc: "unknown", versions: i.versions, checks };
 }

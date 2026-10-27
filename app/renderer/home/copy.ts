@@ -133,6 +133,9 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
   return `Nothing yet. Press ${askLabel} and ask Ember something.`;
 }
 
+/** Under "Speak replies" once Ember tried to speak and no voice started (review #101); the setup check says how to add one. */
+export const SPEAK_NO_VOICE = "Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.";
+
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut as this OS writes it. */
 export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {
   return `Microphone off (${muteLabel} to turn on)`;

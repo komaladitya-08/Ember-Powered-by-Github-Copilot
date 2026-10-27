@@ -145,10 +145,12 @@ let helper: HelperStatus | null | undefined;
 
 /** The setup-check fixes the user applied while Ember runs (some rows then say what comes next, review #98). */
 let fixesApplied: readonly FixId[] = [];
+/** Whether Ember's spoken replies are heard: null until it has tried, false when no voice spoke (review #101). */
+let speechHeard: boolean | null = null;
 
 /** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper, fixes). */
 function readEnvironment(): EnvReport {
-  return inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied });
+  return inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied, speech: speechHeard });
 }
 
 /**
@@ -863,8 +865,10 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
-    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES,
+    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES, speechMissing: speechHeard === false,
   });
+  /** The detail of the microphone's current state, so a status sent for something else keeps it. */
+  let voiceDetail: string | undefined;
   /** What Ember does with what it hears. */
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
@@ -1599,7 +1603,14 @@ function start(): void {
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
+      onSpeech: ok => {
+        if (speechHeard === ok) return;
+        speechHeard = ok;
+        log.info("voice.speech", { ok });
+        broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+      },
       onState: (state, detail) => {
+        voiceDetail = detail;
         setState({ mic: state });
         // The microphone went off (muted, listening turned off, the voice process died): nothing more will be
         // heard, so "Listening…" goes (the bubble is given back), and so do a follow-up window's status line and

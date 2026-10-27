@@ -11,7 +11,7 @@ import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
+  SPEAK_NO_VOICE, dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
   retryMessage, setupBadge, setupView, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -813,6 +813,8 @@ const VOICE_TEXT: Record<string, string> = {
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;
+/** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
+let speechMissing = false;
 /** Screen readers hear the voice line when it changes, and a download only every 25 %. */
 const voiceLive = (text: string) => { if ($("voice-live").textContent !== text) $("voice-live").textContent = text; };
 function renderVoice(v: VoiceStatus): void {
@@ -828,6 +830,15 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  const missing = v.speechMissing === true;
+  if (missing !== speechMissing) {
+    speechMissing = missing;
+    const note = $("speak-note");
+    note.hidden = !missing;
+    note.textContent = missing ? SPEAK_NO_VOICE : "";
+    // The setup check gains (or loses) its Speaking row.
+    window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
+  }
 }
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
