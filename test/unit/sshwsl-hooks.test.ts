@@ -27,6 +27,7 @@ const electron = vi.hoisted(() => ({ made: [] as { options: Record<string, unkno
 vi.mock("electron", () => ({
   BrowserWindow: class {
     calls: [string, ...unknown[]][] = [];
+    webContents = { on() { /* a crashed page closes its window (review #91): not exercised here */ } };
     constructor(options: Record<string, unknown>) { electron.made.push({ options, calls: this.calls }); }
     setContentProtection(on: boolean) { this.calls.push(["setContentProtection", on]); }
     setAlwaysOnTop(on: boolean, level?: string) { this.calls.push(["setAlwaysOnTop", on, level]); }
