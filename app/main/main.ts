@@ -15,7 +15,7 @@ import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
-import { inspectEnvironment, type EnvReport } from "./environment";
+import { afterFix, inspectEnvironment, type EnvReport, type FixId } from "./environment";
 import { holdsBack, setupHello, whereAfterStart } from "../shared/setup-attention";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -143,9 +143,12 @@ let shortcutsTaken: string[] | undefined;
 /** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
 let helper: HelperStatus | null | undefined;
 
-/** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper). */
+/** The setup-check fixes the user applied while Ember runs (some rows then say what comes next, review #98). */
+let fixesApplied: readonly FixId[] = [];
+
+/** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper, fixes). */
 function readEnvironment(): EnvReport {
-  return inspectEnvironment(sys.environment({ windows: wsState, shortcutsTaken, helper }));
+  return inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied });
 }
 
 /**
@@ -396,6 +399,7 @@ function start(): void {
     const t = targets;
     const done = await applySetupFix(fix, { osFixes: sys.fixes.ids, applyOs: id => sys.fixes.apply(id), applyTarget: t ? id => t.applyFix(id) : null });
     log.info("fix.applied", { fix: done ? "wsl-a11y" : fix });
+    if (!done) fixesApplied = afterFix(fixesApplied, fix as FixId);
     const env = await environmentNow(true);
     return done ? afterTargetFix(env, done.target, done.message) : env;
   }));

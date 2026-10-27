@@ -69,6 +69,11 @@ export interface EnvInputs {
   windows?: WindowsEnvInputs;
   /** macOS only. */
   mac?: MacEnvInputs;
+  /**
+   * The setup-check fixes the user applied (pressed) while this Ember runs (afterFix): a row whose fix was used says
+   * what comes next, such as restarting apps that were already open (review #98).
+   */
+  applied?: readonly FixId[];
 }
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -123,6 +128,14 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
 }
 
+/** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
+export const LINUX_A11Y_RESTART = "restart apps that were already open (or log out and in)";
+
+/** The fixes applied so far (EnvInputs.applied) once `fix` has been applied too. */
+export function afterFix(applied: readonly FixId[], fix: FixId): FixId[] {
+  return applied.includes(fix) ? [...applied] : [...applied, fix];
+}
+
 export function inspectEnvironment(i: EnvInputs): EnvReport {
   if (i.platform === "win32") return inspectWindows(i);
   if (i.platform === "darwin") return inspectMac(i);
@@ -173,7 +186,10 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     if (!a.pyatspi) {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi" });
     } else if (a.enabled === false) {
-      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Accessibility is off, so Ember can only see screenshots. Turn it on, then restart open apps.", fix: "enable-accessibility" });
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: `Accessibility is off, so Ember can only see screenshots. Turn it on, then ${LINUX_A11Y_RESTART}.`, fix: "enable-accessibility" });
+    } else if (a.enabled && i.applied?.includes("enable-accessibility")) {
+      // Turned on from this setup check: apps opened before still can't be read until they restart (Qt, Chromium, Firefox).
+      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
     } else {
       checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: a.enabled ? "Accessibility is on" : "Accessibility bus available" });
     }

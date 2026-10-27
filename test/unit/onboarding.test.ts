@@ -11,6 +11,9 @@ import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS } from "../../app/shared/shortcuts";
 import { PLATFORM_WORDS } from "../../app/shared/words";
+import { afterFix, inspectEnvironment, type EnvInputs } from "../../app/main/environment";
+import { doctorChecks } from "../../app/main/doctor";
+import { AdminPolicySchema } from "../../app/main/admin";
 
 const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8");
 const PAGE = read("renderer/home/index.html");
@@ -237,5 +240,38 @@ describe("pressing Start while something holds Ember back", () => {
     expect(tagline({ ...base, look: 0 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     // Before Start the instruction stays (review #160).
     expect(tagline({ ...base, onboarded: false, look: 2 })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
+  });
+});
+
+// ───── The setup check's inputs on each OS (environment.ts) ─────
+const versions = { electron: "44.5.0", chrome: "152", node: "24" };
+const RHEL84 = 'NAME="Red Hat Enterprise Linux"\nVERSION_ID="8.4"\nID="rhel"\nPRETTY_NAME="Red Hat Enterprise Linux 8.4 (Ootpa)"\n';
+const linux = (more: Partial<EnvInputs> = {}): EnvInputs => ({
+  env: { XDG_SESSION_TYPE: "x11", DISPLAY: ":0", XDG_CURRENT_DESKTOP: "GNOME" }, osRelease: RHEL84, glibc: "2.28", versions, platform: "linux", arch: "x64",
+  accessibility: { enabled: true, pyatspi: true }, ...more,
+});
+const row = (i: EnvInputs, id: string) => inspectEnvironment(i).checks.find(c => c.id === id);
+const doctorRow = (i: EnvInputs, id: string) => doctorChecks({
+  env: inspectEnvironment(i), compositor: true, xtest: true, speechDispatcher: true, microphones: ["mic"], voiceModels: "bundled", runtime: true,
+  auth: { kind: "github", source: "stored" }, admin: { policy: AdminPolicySchema.parse({}), source: null }, desk: null, sandbox: null,
+}).find(c => c.id === id);
+
+describe("Linux's accessibility switch after Turn on", () => {
+  it("keeps saying that apps already open need a restart, for as long as this Ember runs (review #98)", () => {
+    const on = linux({ applied: ["enable-accessibility"] });
+    expect(row(on, "accessibility")).toMatchObject({ status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
+    // Switched on before Ember started (or by hand): nothing to restart for Ember's sake.
+    expect(row(linux(), "accessibility")?.detail).toBe("Accessibility is on");
+    expect(afterFix([], "enable-accessibility")).toEqual(["enable-accessibility"]);
+    expect(afterFix(["enable-accessibility"], "enable-accessibility")).toEqual(["enable-accessibility"]);
+    // main.ts records each fix applied through the setup check and passes them to every read.
+    expect(MAIN).toMatch(/if \(!done\) fixesApplied = afterFix\(fixesApplied, fix as FixId\);/);
+    expect(MAIN).toContain("inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied");
+  });
+
+  it("gives the same advice in the setup check and in ember doctor (review #98)", () => {
+    const off = linux({ accessibility: { enabled: false, pyatspi: true } });
+    expect(row(off, "accessibility")?.detail).toBe("Accessibility is off, so Ember can only see screenshots. Turn it on, then restart apps that were already open (or log out and in).");
+    expect(doctorRow(off, "accessibility")?.fix).toBe("gsettings set org.gnome.desktop.interface toolkit-accessibility true, then restart apps that were already open (or log out and in)");
   });
 });
