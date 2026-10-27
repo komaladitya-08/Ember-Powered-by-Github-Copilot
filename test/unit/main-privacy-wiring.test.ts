@@ -116,7 +116,7 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     ["5: the kill switch's part", ['{ name: "targets", stop: () => targets?.stopAll() },']],
     ["6: panel questions", ["panelReady: n => targets?.panelReady(n) ?? false,", "targets?.questionChanged(q);", "targets?.questionWords(q.question)"]],
     ["7: bubble actions", ['!id.startsWith("ui:cmdstop:")', "if (targets?.bubbleAction(id)) return;", 'confirmer?.answer(id, "bubble")']],
-    ["8: the menu", ["...toMenu(targets?.menuItems() ?? [], () => { opens = true; }),"]],
+    ["8: the menu", ["...menuOptions(targets?.menuItems() ?? [], () => { opens = true; }),"]],
     ["9: a remote's quick context first", ["const remote = targets?.quickContext();"]],
     ["10: the quit words", ["quitQuestion(busyTasks(), targets?.busy() ?? { commands: 0, connections: 0 },"]],
     ["11: dispose at quit", ['app.on("will-quit", () => { void targets?.dispose(); });']],

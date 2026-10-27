@@ -57,7 +57,8 @@ import { extraBinDirs } from "./platform/darwin/system";
 import { deskProcesses } from "./desk/desk";
 import { createTargets, targetDoctorRows, wslSwitchOn, type TargetsRuntimeExtra } from "./targets/runtime";
 import { afterTargetFix, applySetupFix, targetChecksSource, withTargetChecks } from "./targets/setup-check";
-import type { IpcLike, MenuItemLike, TargetsRuntime } from "./targets/types";
+import type { IpcLike, TargetsRuntime } from "./targets/types";
+import { menuOptions } from "./targets/menu";
 import { wrapForWsl } from "./wsl/routed-sidecar";
 import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
@@ -539,7 +540,8 @@ function start(): void {
       { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
       { ...keyed("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       // "Work on" (which computer requests go to), when there is more than this one.
-      ...toMenu(targets?.menuItems() ?? [], () => { opens = true; }),
+      // An item that opens settings ("Bring Ember to a computer…") marks it before its click (targets/menu.ts).
+      ...menuOptions(targets?.menuItems() ?? [], () => { opens = true; }),
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ ...keyed(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
@@ -608,20 +610,6 @@ function start(): void {
     win.focus();
     if (inputRef?.focusInput) inputRef.focusInput(xid);
   };
-  /**
-   * The targets runtime's menu items as Electron's (the same fields; submenus too). `opened`: told before the click of
-   * an item that opens one of Ember's windows ("Bring Ember to a computer…" opens settings), so the menu doesn't give
-   * the keyboard back to the user's app over it.
-   */
-  const toMenu = (items: MenuItemLike[], opened: () => void): Electron.MenuItemConstructorOptions[] => items.map(i => {
-    const click = i.click;
-    return {
-      ...(i.label !== undefined ? { label: i.label } : {}), ...(i.type ? { type: i.type } : {}),
-      ...(i.checked !== undefined ? { checked: i.checked } : {}), ...(i.enabled !== undefined ? { enabled: i.enabled } : {}),
-      ...(i.submenu ? { submenu: toMenu(i.submenu, opened) } : {}),
-      ...(click ? { click: i.opens ? () => { opened(); click(); } : click } : {}),
-    };
-  });
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
   /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */

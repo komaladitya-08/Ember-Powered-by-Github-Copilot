@@ -58,3 +58,23 @@ export function targetMenu(i: MenuInput): MenuItemLike[] {
   }
   return items;
 }
+
+/** A menu item as Electron's Menu.buildFromTemplate takes it: MenuItemLike without main's `opens` mark. */
+export type MenuItemOptions = Omit<MenuItemLike, "opens" | "submenu"> & { submenu?: MenuItemOptions[] };
+
+/**
+ * The items as the handle's menu takes them (submenus too). `opened` is told just before the click of an item that
+ * opens one of Ember's windows ("Bring Ember to a computer…" opens settings), so the menu doesn't hand the keyboard
+ * back to the user's app over it; no other item tells it. Fields an item lacks stay out (Electron's defaults apply).
+ */
+export function menuOptions(items: readonly MenuItemLike[], opened: () => void): MenuItemOptions[] {
+  return items.map(i => {
+    const click = i.click;
+    return {
+      ...(i.label !== undefined ? { label: i.label } : {}), ...(i.type ? { type: i.type } : {}),
+      ...(i.checked !== undefined ? { checked: i.checked } : {}), ...(i.enabled !== undefined ? { enabled: i.enabled } : {}),
+      ...(i.submenu ? { submenu: menuOptions(i.submenu, opened) } : {}),
+      ...(click ? { click: i.opens ? () => { opened(); click(); } : click } : {}),
+    };
+  });
+}
