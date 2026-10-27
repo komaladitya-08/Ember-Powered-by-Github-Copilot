@@ -201,4 +201,25 @@ describe("CHANGELOG.md", () => {
     // A first release has nothing earlier to have changed from.
     expect(first).not.toMatch(/### Changed/);
   });
+
+  it("names the same best-effort computers as the README", () => {
+    const readme = flat(read("README.md"));
+    const where = /- \*\*Where it runs\*\*: ([^]*?)(?= - \*\*)/.exec(flat(changelog))?.[1] ?? "";
+    expect(where).not.toBe("");
+    // Each "(…: best effort…)" of the README's platform list is in the release notes' line, as the same words.
+    const efforts = [...readme.matchAll(/\(([^():]+): best effort/g)].map(m => m[1]);
+    expect(efforts).toEqual(["Windows on Arm", "Intel Macs and macOS 13"]);
+    for (const e of efforts) expect(where).toContain(`(${e}: best effort)`);
+  });
+
+  it("says spoken words count for a dangerous command only where Ember can tell the user's voice from the speakers", () => {
+    // The owner's decision V1: where speaker rejection doesn't run (Windows, macOS, Linux without parec), a dangerous
+    // command asked for by voice asks with the card; typed words still count.
+    const notes = flat(changelog);
+    expect(notes).not.toMatch(/typed or spoken words count/);
+    const rule = /Only your own words count[^]*?asks with the card/.exec(notes)?.[0] ?? "";
+    expect(rule).toMatch(/Typed words count everywhere/);
+    expect(rule).toMatch(/spoken[^.]*only where Ember can tell your voice from what your speakers play \(Linux with parec\)/);
+    expect(notes).toMatch(/On Windows, on macOS and on Linux without parec, a dangerous command you asked for by voice asks/);
+  });
 });

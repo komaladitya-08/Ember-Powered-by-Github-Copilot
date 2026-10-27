@@ -10,7 +10,7 @@ the work in your real apps where you can watch, without taking over your mouse. 
 
 - **Where it runs**: RHEL 8 and its family (Rocky, Alma, Oracle Linux 8) on GNOME with Xorg, as an RPM or an
   AppImage; Windows 10 22H2 and Windows 11 on x64, as a zip (Windows on Arm: best effort); macOS 13 or later on Apple
-  silicon, as a dmg or a zip (Intel Macs: best effort).
+  silicon, as a dmg or a zip (Intel Macs and macOS 13: best effort).
 - **In your real apps**: Ember reads apps through the system's accessibility (AT-SPI on Linux, UI Automation on
   Windows, the accessibility API on a Mac) and screenshots, and uses their controls in the background, so your mouse
   and keyboard stay yours. When an app can't be used that way, it asks to borrow the mouse, and gives it back the
@@ -53,8 +53,11 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   really runs it (beside the link's target), and asks ("Ember can't tell which script this runs.") when the computer
   can't say where that is; any other path with `..` is judged where it really leads too.
 - **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
-  ("Pushing feature-x to origin, as you asked."). Only your own typed or spoken words count, and only for what they
-  name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks.
+  ("Pushing feature-x to origin, as you asked."). Only your own words count, and only for what they name: "delete
+  build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks. Typed words
+  count everywhere, spoken ones only where Ember can tell your voice from what your speakers play (Linux with parec).
+  On Windows, on macOS and on Linux without parec, a dangerous command you asked for by voice asks with the card, as a
+  call, a video or Ember's own voice could say the same words.
   Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask. If your
   words also name another computer, or a place that looks like one Ember doesn't know ("delete build/ on prod-db",
   "from the server web-2", "at deploy@10.0.0.5", "prod-db: …"), nothing in that task runs on an announcement: every
