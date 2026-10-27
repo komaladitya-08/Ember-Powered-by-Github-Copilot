@@ -10,9 +10,11 @@ export const spdxIds = expr => String(expr ?? "").split(/[()\s]+/).filter(t => t
 export const specLicenceIds = spec => spdxIds(/^License:\s*(.+)$/m.exec(spec)?.[1]);
 
 /**
- * Libraries bundled inside a package, as the licensing table in its README.md names them ("| library | terms |"),
- * with the SPDX ids their terms come to. A library the table names that isn't listed here stops staging: an
- * update bundled something new, so check its licence, then add it here and to the spec.
+ * Libraries bundled inside a package, with the SPDX ids their terms come to. `libraries`: as the licensing table in
+ * its README.md names them ("| library | terms |"); a library the table names that isn't listed here stops staging:
+ * an update bundled something new, so check its licence, then add it here and to the spec. `embedded`: libraries
+ * built into the package's binaries that no table lists, found by reading the binary (LICENCE_TEXTS pins the
+ * version they were read from).
  */
 export const BUNDLED_LIBRARIES = [
   {
@@ -30,6 +32,16 @@ export const BUNDLED_LIBRARIES = [
       libpng: ["libpng-2.0"], librsvg: ["LGPL-3.0-or-later"], libtiff: ["libtiff"], libultrahdr: ["MIT"],
       libvips: ["LGPL-3.0-or-later"], libwebp: ["BSD-3-Clause"], libxml2: ["MIT"], mozjpeg: ["IJG", "BSD-3-Clause", "Zlib"],
       pango: ["LGPL-3.0-or-later"], pixman: ["MIT"], "proxy-libintl": ["LGPL-3.0-or-later"], "zlib-ng": ["Zlib"],
+    },
+  },
+  {
+    // sherpa-onnx-wasm-nodejs.wasm 1.13.8, as the names and messages in it show (packaging/licences/sherpa-onnx.txt).
+    // eSpeak NG is part of its text-to-speech, which Ember never calls, but it is in the object code Ember ships.
+    package: /^sherpa-onnx$/,
+    embedded: {
+      "ONNX Runtime": ["MIT"], ONNX: ["Apache-2.0"], Abseil: ["Apache-2.0"], FlatBuffers: ["Apache-2.0"],
+      "Protocol Buffers": ["BSD-3-Clause"], RE2: ["BSD-3-Clause"], "kaldi-decoder": ["Apache-2.0"], kaldifst: ["Apache-2.0"],
+      OpenFst: ["Apache-2.0"], "simple-sentencepiece": ["Apache-2.0"], "piper-phonemize": ["MIT"], "eSpeak NG": ["GPL-3.0-or-later"],
     },
   },
 ];
@@ -79,6 +91,10 @@ export function uncoveredLicences(packages, specIds) {
     for (const id of ids.length ? ids : ["(none)"]) if (!specIds.includes(id)) missing.push(`${p.name} (${id})`);
     const bundled = BUNDLED_LIBRARIES.find(b => b.package.test(p.name));
     if (!bundled) continue;
+    for (const [library, known] of Object.entries(bundled.embedded ?? {})) {
+      for (const id of known) if (!specIds.includes(id)) missing.push(`${p.name}'s ${library} (${id})`);
+    }
+    if (!bundled.libraries) continue;
     const libraries = readmeLibraries(p.readme);
     if (!libraries.length) { missing.push(`${p.name} (no licensing table in its README.md to check the libraries it bundles)`); continue; }
     for (const [library, terms] of libraries) {

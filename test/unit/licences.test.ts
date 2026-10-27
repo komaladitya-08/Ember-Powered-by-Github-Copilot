@@ -48,6 +48,16 @@ describe("the licence check before staging", () => {
     expect(uncoveredLicences([{ name: "@img/sharp-darwin-arm64", license: "Apache-2.0", readme: null }], ids)).toEqual([]);
   });
 
+  it("checks the libraries sherpa-onnx's WebAssembly holds, eSpeak NG's GPL among them (review #211)", () => {
+    const sherpa = [{ name: "sherpa-onnx", license: "Apache-2.0", readme: null }];
+    expect(uncoveredLicences(sherpa, ["Apache-2.0", "MIT", "BSD-3-Clause"])).toEqual(["sherpa-onnx's eSpeak NG (GPL-3.0-or-later)"]);
+    expect(uncoveredLicences(sherpa, ["Apache-2.0", "GPL-3.0-or-later"])).toEqual(expect.arrayContaining(["sherpa-onnx's ONNX Runtime (MIT)", "sherpa-onnx's RE2 (BSD-3-Clause)"]));
+    expect(uncoveredLicences(sherpa, ["Apache-2.0", "MIT", "BSD-3-Clause", "GPL-3.0-or-later"])).toEqual([]);
+    // The real spec's tag covers it, and says so in its comment.
+    expect(uncoveredLicences(sherpa, specLicenceIds(spec))).toEqual([]);
+    expect(spec).toMatch(/eSpeak NG[^\n]*\n?[^\n]*GPL-3\.0-or-later/);
+  });
+
   it.skipIf(!libvipsReadme || !fs.existsSync(libvipsReadme))("passes for what Ember bundles today (the spec names every library's licence)", () => {
     const readme = fs.readFileSync(libvipsReadme, "utf8");
     const { license } = JSON.parse(fs.readFileSync(path.resolve("node_modules", libvipsPackage!, "package.json"), "utf8")) as { license: string };
