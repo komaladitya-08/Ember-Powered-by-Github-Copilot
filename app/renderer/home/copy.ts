@@ -68,6 +68,8 @@ const things = (n: number) => (n === 1 ? "one thing" : `${n} things`);
  */
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
+  /** Setup rows that don't fail but need the user (a warning that holds Ember back, or one with a button). */
+  look?: number;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer: see the setup check.`;
@@ -75,7 +77,14 @@ export function tagline(t: {
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
-  return `${where} Press ${askLabel} to ask it anything.`;
+  // Ready, with setup rows still to look at: said, so a warning isn't left in a closed fold (review #95).
+  return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} to look at.` : ""}`;
+}
+
+/** The badge on the sidebar's Setup link: the count shown, the words a screen reader adds, and its tone (null: none). */
+export function setupBadge(needing: number, failing = false): { text: string; label: string; tone: "fail" | "warn" } | null {
+  if (!needing) return null;
+  return { text: String(needing), label: `, ${needing} ${needing === 1 ? "thing" : "things"} to ${failing ? "fix" : "look at"}`, tone: failing ? "fail" : "warn" };
 }
 
 /** The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160). */

@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, setupView, tagline, usageLine, type HomePatch, type Segment,
+  retryMessage, setupBadge, setupView, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
@@ -161,9 +161,11 @@ function focusAgree(): void {
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
 let failing = 0;
+/** Setup rows that don't fail but need the user: the tagline mentions them once Ember has started. */
+let toLook = 0;
 function renderTagline(): void {
   const text = tagline({
-    failing, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
+    failing, look: toLook, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
@@ -210,6 +212,8 @@ function renderChecks(environment: Status["environment"]): void {
   if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
   failing = view.failing;
+  toLook = view.needing - view.failing;
+  renderSetupBadge(view.needing, view.failing > 0);
   const note = $("checks-note");
   note.textContent = view.note;
   note.className = `fold-note${view.failing ? " fail" : view.warn ? " warn" : ""}`;
@@ -219,6 +223,21 @@ function renderChecks(environment: Status["environment"]): void {
   checksBeforeStart = view.beforeStart;
   $("checks-fold").closest("section")!.classList.toggle("after-setup", !checksBeforeStart);
   renderTagline();
+}
+
+/** The sidebar's Setup link carries how many rows need the user, so a warning is seen from anywhere (review #95). */
+function renderSetupBadge(needing: number, fails: boolean): void {
+  const link = document.querySelector<HTMLAnchorElement>("#jump a[href=\"#checks-h\"]");
+  if (!link) return;
+  const b = setupBadge(needing, fails);
+  let el = link.querySelector<HTMLElement>(".jump-badge");
+  if (!b) { el?.remove(); return; }
+  if (!el) el = link.appendChild(document.createElement("span"));
+  el.className = `jump-badge ${b.tone}`;
+  // The number is for the eye; a screen reader hears the words after the link's name instead.
+  const shown = Object.assign(document.createElement("span"), { textContent: b.text });
+  shown.setAttribute("aria-hidden", "true");
+  el.replaceChildren(shown, Object.assign(document.createElement("span"), { className: "sr", textContent: b.label }));
 }
 
 function render(status: Status): void {

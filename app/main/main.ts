@@ -16,6 +16,7 @@ import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
+import { holdsBack, setupHello, whereAfterStart } from "../shared/setup-attention";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
@@ -433,6 +434,10 @@ function start(): void {
   const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
+  /** This OS's setup rows now, for the Start decision and the hello (none if they can't be read: words, never a gate). */
+  const setupRows = (): EnvReport["checks"] => {
+    try { return readEnvironment().checks; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
+  };
   const greet = () => {
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
@@ -442,16 +447,19 @@ function start(): void {
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
+    // Connected, but a setup row holds Ember back (a permission, screen reading): the hello names it (review #95).
+    const gaps = connected && !waiting ? setupHello(setupRows(), settingsOpen) : null;
+    const where = overlay ? "I'll stay by your cursor." : "This session can't show me beside your cursor, so I'll wait here.";
     const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
-      : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
-      actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+      : `${where}${gaps ? ` ${gaps}` : ""} ${keys}`;
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected && !gaps ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
+      actions: (connected && !gaps) || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
-    greetTimer = hideIfStill(bubble, connected ? 7000 : 15000);
+    greetTimer = hideIfStill(bubble, connected && !gaps ? 7000 : 15000);
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
@@ -640,6 +648,7 @@ function start(): void {
     showHome();
     const phase = agent?.getStatus().phase;
     if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
+    else if (setupRows().some(holdsBack)) sendToHome(IPC.focusSection, "checks");
   };
 
   const sendToHome = (channel: string, value: unknown) => {
@@ -1102,12 +1111,14 @@ function start(): void {
   };
   settings.onChange(s => {
     if (s.onboarded && !wasOnboarded) {
-      // Setup finished: get out of the way so the user sees Ember say hello. If Copilot isn't
-      // connected, the window stays and shows how to connect (asking would only say "not connected").
+      // Setup finished: get out of the way so the user sees Ember say hello. If Copilot isn't connected, the window
+      // stays and shows how to connect (asking would only say "not connected"); if a setup row holds Ember back (a
+      // permission, screen reading), it stays at the setup check (review #95).
       void settledPhase().then(phase => {
-        if (phase === "signed-out" || phase === "error") {
-          // Settings stays open at Copilot; Ember says hello once it closes, not over it.
-          sendToHome(IPC.focusSection, "copilot");
+        const where = whereAfterStart(phase, setupRows());
+        if (where) {
+          // Settings stays open there; Ember says hello once it closes, not over it.
+          sendToHome(IPC.focusSection, where);
           if (homeOpen()) { greetOnClose = true; return; }
         } else if (home && !home.isDestroyed()) {
           // Hello once the window has gone (Ember is still waiting beside it until then).

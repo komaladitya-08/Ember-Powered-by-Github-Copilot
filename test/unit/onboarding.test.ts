@@ -5,8 +5,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { checksNote, homePatches, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
-import { holdsBack, needsUser, type SetupRow } from "../../app/shared/setup-attention";
+import { checksNote, homePatches, setupBadge, setupView, tagline, type HomePatch } from "../../app/renderer/home/copy";
+import { holdsBack, needsUser, setupHello, whereAfterStart, type SetupRow } from "../../app/shared/setup-attention";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS } from "../../app/shared/shortcuts";
@@ -16,6 +16,7 @@ const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.u
 const PAGE = read("renderer/home/index.html");
 const STYLES = read("renderer/home/styles.css");
 const SCRIPT = read("renderer/home/main.ts");
+const MAIN = read("main/main.ts");
 
 /** A status's OS words as main builds them (only what these tests need differs by OS). */
 const platformOf = (os: OS): StatusPlatform => ({
@@ -194,5 +195,47 @@ describe("the line under the title in first run", () => {
   it("counts what fails once Ember has started, and says computer (review #160)", () => {
     expect(tagline({ ...base, failing: 1 })).toBe("Ember needs one thing fixed before it can work on this computer: see the setup check.");
     expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer: see the setup check.");
+  });
+});
+
+describe("pressing Start while something holds Ember back", () => {
+  it("keeps settings open at the setup check instead of closing it and greeting as if ready (review #95)", () => {
+    expect(whereAfterStart("ready", MAC_FIRST)).toBe("checks");
+    expect(whereAfterStart("ready", LINUX_A11Y_OFF)).toBe("checks");
+    expect(whereAfterStart("ready", [{ id: "session", label: "Desktop session", status: "fail" }])).toBe("checks");
+    // Copilot isn't connected: its sign-in comes first, as before.
+    expect(whereAfterStart("signed-out", MAC_FIRST)).toBe("copilot");
+    expect(whereAfterStart("error", [])).toBe("copilot");
+    // Nothing holds Ember back (a fix button for a nicety doesn't count): the window closes and Ember says hello.
+    expect(whereAfterStart("ready", allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"))).toBeNull();
+    expect(whereAfterStart("ready", [{ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" }])).toBeNull();
+    expect(whereAfterStart(undefined, [])).toBeNull();
+    // main.ts decides with it, and sends the window to that section.
+    expect(MAIN).toMatch(/const where = whereAfterStart\(phase, setupRows\(\)\);\s*if \(where\) \{[^}]*sendToHome\(IPC\.focusSection, where\);/);
+  });
+
+  it("has Ember's hello name what isn't set up, and settings open at the setup check (review #95)", () => {
+    expect(setupHello(MAC_FIRST, false)).toBe("Still to set up: “Reading and using apps”, “Screen Recording” and “Input Monitoring”. The setup check in settings shows how.");
+    expect(setupHello(LINUX_A11Y_OFF, true)).toBe("Still to set up: “Screen reading”. The setup check in this window shows how.");
+    const four = [...MAC_FIRST, { id: "session", label: "Desktop session", status: "fail" as const }];
+    expect(setupHello(four, false)).toBe("Still to set up: “Reading and using apps”, “Screen Recording” and 2 more. The setup check in settings shows how.");
+    expect(setupHello(allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"), false)).toBeNull();
+    // The hello says it, offers Open settings while settings is closed, and Open settings goes to the setup check.
+    expect(MAIN).toMatch(/const gaps = connected && !waiting \? setupHello\(setupRows\(\), settingsOpen\) : null;/);
+    expect(MAIN).toMatch(/actions: \(connected && !gaps\) \|\| settingsOpen \|\| waiting \? \[\] : \[\{ id: "ui:settings", label: "Open settings" \}\]/);
+    expect(MAIN).toMatch(/else if \(setupRows\(\)\.some\(holdsBack\)\) sendToHome\(IPC\.focusSection, "checks"\);/);
+  });
+
+  it("badges the sidebar's Setup link and mentions what to look at in the tagline (review #95)", () => {
+    expect(setupBadge(0)).toBeNull();
+    expect(setupBadge(1, true)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
+    expect(setupBadge(2, false)).toEqual({ text: "2", label: ", 2 things to look at", tone: "warn" });
+    expect(SCRIPT).toMatch(/renderSetupBadge\(view\.needing, view\.failing > 0\);/);
+    const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
+    expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has one thing to look at.");
+    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things to look at.");
+    expect(tagline({ ...base, look: 0 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
+    // Before Start the instruction stays (review #160).
+    expect(tagline({ ...base, onboarded: false, look: 2 })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
   });
 });
