@@ -411,7 +411,8 @@ export class Perception {
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
     // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
-    // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next).
+    // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next), but in
+    // a Wayland session, where XWayland shows Ember only X11 apps, the check is always on.
     if (this.platformDialog()) return noShot(this.platformDialogWords());
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
@@ -600,8 +601,8 @@ export class Perception {
 
   /**
    * The window system's own answer (Windows: the secure desktop or a credential prompt; macOS: SecurityAgent or secure
-   * keyboard entry). False where it has none (Linux, the desk) or there is no window system; true when the check
-   * throws (fail closed).
+   * keyboard entry; Linux: a Wayland session). False where it has none (Linux on Xorg, the desk) or there is no window
+   * system; true when the check throws (fail closed).
    */
   private platformDialog(): boolean {
     try {
