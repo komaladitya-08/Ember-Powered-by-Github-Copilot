@@ -277,6 +277,8 @@ export interface NoticeBoard {
   readonly visible: boolean;
   /** When its bubble last reached the screen (the clock's ms), or null while it hasn't since it was posted. */
   readonly shownAt: number | null;
+  /** How long its bubble has been on screen (since shownAt), or null while it hasn't shown. */
+  readonly shownFor: number | null;
 }
 
 export const TOOL_STEPS: Record<string, string> = {
@@ -475,6 +477,11 @@ export class Presenter {
   /** When its latest bubble reached the screen (NoticeBoard.shownAt). */
   get shownAt(): number | null {
     return this.since;
+  }
+
+  /** How long its latest bubble has been on screen (NoticeBoard.shownFor). */
+  get shownFor(): number | null {
+    return this.since === null ? null : this.now() - this.since;
   }
 
   /** It has a bubble to show (on screen or waiting). */

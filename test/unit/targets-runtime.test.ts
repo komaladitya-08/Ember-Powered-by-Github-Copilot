@@ -1283,6 +1283,58 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 });
 
+describe("offers in the bubble (review #14)", () => {
+  const notice = {
+    sshDestination: (argv: readonly string[]) => ({ dest: argv[argv.length - 1] }),
+    userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", "deploy@build-01"], via: "local" as const }]),
+  };
+  const offered = async () => {
+    const s = screenRig();
+    const r = rig({ notice, cursor: true, showState: s.setState, bubbles: () => s.notices });
+    r.ticks[0]();
+    await flush();
+    return { s, r };
+  };
+
+  it("go 25 seconds after they show, as a Not now (never as Don't offer again)", async () => {
+    const { s, r } = await offered();
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(24_900);
+    expect(s.screen().visible).toBe(true);
+    s.advance(100);
+    expect(s.screen().visible).toBe(false);
+    expect(r.settings.get().targets.dismissedOffers).toEqual([]);
+    expect(r.conns.connect).not.toHaveBeenCalled();
+  });
+
+  it("take no press in their first half second (a click already on its way lands on nothing)", async () => {
+    const { s, r } = await offered();
+    expect(r.t.bubbleAction("offer:1:never")).toBe(true);
+    expect(r.settings.get().targets.dismissedOffers).toEqual([]);
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(500);
+    expect(r.t.bubbleAction("offer:1:never")).toBe(true);
+    expect(r.settings.get().targets.dismissedOffers).toEqual(["deploy@build-01"]);
+    expect(s.screen().visible).toBe(false);
+  });
+
+  it("that nobody asked for wait behind an answer being read, and their time starts when they show", async () => {
+    const s = screenRig();
+    const r = rig({ notice, cursor: true, showState: s.setState, bubbles: () => s.notices });
+    s.convo.userPrompt("what's the time?");
+    answers(s.convo, "Half past three.");
+    r.ticks[0]();
+    await flush();
+    expect(s.screen().thought).toBe("Half past three.");
+    s.advance(6000 + 16 * 50);
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(24_000);
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(1000);
+    expect(s.screen().visible).toBe(false);
+  });
+});
+
 describe("offer_connect (§2.6)", () => {
   it("shows a Connect button only for a computer the user's words named that Ember knows", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });

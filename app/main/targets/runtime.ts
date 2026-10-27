@@ -409,6 +409,13 @@ type Offer = { kind: "seen"; seen: SshSeen } | { kind: "connect"; hostId: string
 
 /** How long an informational bubble stays (only if nothing of the runtime's replaced it). */
 const INFO_MS = 7000;
+/** How long an offer stays on screen unanswered: then it goes as a Not now (never as Don't offer again). */
+export const OFFER_MS = 25_000;
+/**
+ * A press on a button of the runtime's this soon after it reached the screen is ignored, as the Confirmer ignores one on
+ * a question's: an offer appears unasked, under a pointer that may already be on its way to click something else.
+ */
+export const ARM_MS = 500;
 
 /** The runtime from its parts (createTargets with the real ones; tests with fakes). */
 export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: TargetsParts): TargetsRuntime & TargetsRuntimeExtra {
@@ -989,11 +996,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const k = ++offerSeq;
     offers.set(k, { kind: "seen", seen: s });
     const label = hostPart(s.dest);
+    // Nobody asked for it: it waits for the bubble to be free (an answer being read stays), and goes unanswered.
+    const unasked: NoticeOptions = { ms: OFFER_MS, claim: "reply" };
     if (s.via && s.via !== "local" && !WSL_SSH_PROVEN) {
-      bubble(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "attention"));
+      bubble(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "attention"), unasked);
       return;
     }
-    bubble(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "attention"));
+    bubble(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "attention"), unasked);
   }
   const bringSeen = (s: SshSeen) => {
     const extra: HostRecord["extra"] = {
@@ -1070,7 +1079,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   function offerWsl(): void {
     if (wslOffered || questionUp()) return;
     wslOffered = true;
-    bubble("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "attention"));
+    bubble("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "attention"), { ms: OFFER_MS, claim: "reply" });
   }
 
   // ── Start ──
@@ -1409,7 +1418,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (questionUp()) return `Ember can't show the button while a question is waiting. Tell the user to connect ${label} from Ember's menu.`;
       const k = ++offerSeq;
       offers.set(k, { kind: "connect", hostId: host?.id ?? null, alias: label });
-      bubble(`offer:${k}`, say(words.offerConnect(label), [`offer:${k}:connect`, `offer:${k}:later`], "attention"));
+      bubble(`offer:${k}`, say(words.offerConnect(label), [`offer:${k}:connect`, `offer:${k}:later`], "attention"), OFFER_MS);
       return `Ember showed the user a Connect button for ${label}. Tell them to click it; once it is connected, start the task there.`;
     } catch (err) {
       log.warn("targets.offer_connect_failed", { err });
@@ -1442,9 +1451,16 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (e.kind === "ssh" && e.host && e.state !== "ready") { void connect(e.host.id, { interactive: true, activate: true }); return; }
     setActive(id);
   }
+  /** A button of the runtime's bubble was pressed too soon after it showed (ARM_MS; only the board can tell). */
+  const tooSoon = (): boolean => {
+    const shownFor = board()?.shownFor;
+    return typeof shownFor === "number" && shownFor < ARM_MS;
+  };
   const bubbleAction = (id: string): boolean => {
     if (typeof id !== "string") return false;
     try {
+      // Handled (never passed on as a question's answer), and nothing done: the press came before it could be meant.
+      if (/^(offer|conn):/.test(id) && tooSoon()) { log.info("targets.press_too_soon", {}); return true; }
       let m = /^ui:cmdstop:([0-9a-f]{16})$/.exec(id);
       if (m) { commandWindow.cancelAnnounce(m[1]); return true; }
       m = /^ui:panel:(\d+)$/.exec(id);
