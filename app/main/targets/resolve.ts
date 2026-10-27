@@ -1,10 +1,11 @@
 /**
  * Which computer the user's own words name (§2.3): pure and deterministic, run only on the user's typed or spoken words
  * (never the model's text, screen text, a file or command output). A target is named by its label, alias, hostname or
- * distro name after one normalisation (NFKC, lower case, spoken numbers zero to twenty as digits, nothing but letters
- * and digits), as a run of whole words, and only after a place word ("on build-01", "in Ubuntu"), as the request's
- * first words before ":" or ",", or before "'s desktop" and the like. So "Send build-01's report to Ana" names nothing,
- * and a model that lost track can't move a task by repeating a name the user never used as a place.
+ * distro name (or the registry's short names for them) after one normalisation (NFKC, lower case, spoken numbers zero
+ * to twenty as digits, nothing but letters and digits), as a run of whole words, the longest name said winning, and
+ * only after a place word ("on build-01", "in Ubuntu"), as the request's first words before ":" or ",", or before
+ * "'s desktop" and the like. So "Send build-01's report to Ana" names nothing, and a model that lost track can't move
+ * a task by repeating a name the user never used as a place.
  */
 
 import type { OS } from "../../shared/shortcuts";
