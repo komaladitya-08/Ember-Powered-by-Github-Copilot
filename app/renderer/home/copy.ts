@@ -81,10 +81,14 @@ export function tagline(t: {
   return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} to look at.` : ""}`;
 }
 
-/** The badge on the sidebar's Setup link: the count shown, the words a screen reader adds, and its tone (null: none). */
-export function setupBadge(needing: number, failing = false): { text: string; label: string; tone: "fail" | "warn" } | null {
-  if (!needing) return null;
-  return { text: String(needing), label: `, ${needing} ${needing === 1 ? "thing" : "things"} to ${failing ? "fix" : "look at"}`, tone: failing ? "fail" : "warn" };
+/**
+ * The badge on the sidebar's Setup link: the count shown, the words a screen reader adds, and its tone (null: none).
+ * Failing rows are counted as the heading's note counts them; else the rows that need the user (setupView's `needing`).
+ */
+export function setupBadge(needing: number, failing = 0): { text: string; label: string; tone: "fail" | "warn" } | null {
+  const n = failing || needing;
+  if (!n) return null;
+  return { text: String(n), label: `, ${n} ${n === 1 ? "thing" : "things"} to ${failing ? "fix" : "look at"}`, tone: failing ? "fail" : "warn" };
 }
 
 /** The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160). */

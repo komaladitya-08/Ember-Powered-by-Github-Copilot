@@ -238,9 +238,10 @@ describe("pressing Start while something holds Ember back", () => {
 
   it("badges the sidebar's Setup link and mentions what to look at in the tagline (review #95)", () => {
     expect(setupBadge(0)).toBeNull();
-    expect(setupBadge(1, true)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
-    expect(setupBadge(2, false)).toEqual({ text: "2", label: ", 2 things to look at", tone: "warn" });
-    expect(SCRIPT).toMatch(/renderSetupBadge\(view\.needing, view\.failing > 0\);/);
+    // Failing rows are counted as the heading counts them; else the rows that need a look.
+    expect(setupBadge(3, 1)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
+    expect(setupBadge(2, 0)).toEqual({ text: "2", label: ", 2 things to look at", tone: "warn" });
+    expect(SCRIPT).toMatch(/renderSetupBadge\(view\.needing, view\.failing\);/);
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has one thing to look at.");
     expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things to look at.");

@@ -217,7 +217,7 @@ function renderChecks(environment: Status["environment"]): void {
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
   failing = view.failing;
   toLook = view.needing - view.failing;
-  renderSetupBadge(view.needing, view.failing > 0);
+  renderSetupBadge(view.needing, view.failing);
   const note = $("checks-note");
   note.textContent = view.note;
   note.className = `fold-note${view.failing ? " fail" : view.warn ? " warn" : ""}`;
@@ -230,7 +230,7 @@ function renderChecks(environment: Status["environment"]): void {
 }
 
 /** The sidebar's Setup link carries how many rows need the user, so a warning is seen from anywhere (review #95). */
-function renderSetupBadge(needing: number, fails: boolean): void {
+function renderSetupBadge(needing: number, fails: number): void {
   const link = document.querySelector<HTMLAnchorElement>("#jump a[href=\"#checks-h\"]");
   if (!link) return;
   const b = setupBadge(needing, fails);
