@@ -3,10 +3,11 @@
  * message comes from one of Ember's own bundled pages, what the settings page may change, and the quit question's
  * words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
- * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them.
+ * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them. Also the app-wide
+ * chrome main sets once Electron is ready: the application menu and DevTools in a packaged build.
  */
 
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
@@ -93,6 +94,70 @@ export function createPromptWindow(os: OS): BrowserWindow {
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
   return win;
+}
+
+/** What the application menu's own items do: main's closures. */
+export interface AppMenuActions {
+  /** Settings… (Command+,). */
+  showSettings(): void;
+  /** Quit Ember (Command+Q): main's quitEmber, which asks first when quitting would stop something. */
+  quit(): void;
+}
+
+/**
+ * The application menu (review #243, #176). macOS (`appMenu`, from the platform's lifecycle): Settings…, the hide
+ * items and a Quit that asks as the handle's Quit does, with the Edit menu that makes Command+C/V/X/A/Z work in fields
+ * and the Window menu. Windows and Linux: none. Electron's default menu stayed there otherwise, with Ctrl+Q quitting
+ * at once (no "still working" question), Ctrl+R reloading a card, Ctrl+Shift+I opening DevTools on the password card,
+ * Ctrl+W closing the ask box, F11, and the bar Alt showed. Chromium itself still cuts, copies, pastes and undoes in
+ * fields there.
+ */
+export function appMenuTemplate(appMenu: boolean, actions: AppMenuActions): MenuItemConstructorOptions[] | null {
+  if (!appMenu) return null;
+  return [
+    { label: "Ember", submenu: [
+      { label: "Settings…", accelerator: "Command+,", click: () => actions.showSettings() },
+      { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" },
+      { label: "Quit Ember", accelerator: "Command+Q", click: () => actions.quit() },
+    ] },
+    { role: "editMenu" },
+    { role: "windowMenu" },
+  ];
+}
+
+/** A page's webContents, as far as lockDevTools needs it. */
+export interface DevToolsHost {
+  on(event: "devtools-opened", listener: () => void): unknown;
+  closeDevTools(): void;
+}
+
+/**
+ * DevTools close as soon as anything opens them on this page (review #176): from their console a page's preload
+ * bridges could be called, and they show what is typed in the password card. Nothing in Ember opens them and no menu
+ * offers them any more; this is for a packaged build, whatever still might (a development run keeps them).
+ */
+export function lockDevTools(contents: DevToolsHost): void {
+  contents.on("devtools-opened", () => contents.closeDevTools());
+}
+
+/** The parts of Electron setUpAppChrome uses (tests pass fakes). */
+export interface ChromeElectron {
+  Menu: { buildFromTemplate(template: MenuItemConstructorOptions[]): Menu; setApplicationMenu(menu: Menu | null): void };
+  app: {
+    readonly isPackaged: boolean;
+    on(event: "web-contents-created", listener: (event: unknown, contents: DevToolsHost) => void): unknown;
+  };
+}
+
+/**
+ * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
+ * Windows and Linux, so Electron's default one goes, with its bar) and, in a packaged build, DevTools locked on every
+ * page made from then on.
+ */
+export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, app }): void {
+  const template = appMenuTemplate(o.appMenu, o.actions);
+  e.Menu.setApplicationMenu(template ? e.Menu.buildFromTemplate(template) : null);
+  if (e.app.isPackaged) e.app.on("web-contents-created", (_event, contents) => lockDevTools(contents));
 }
 
 /**
