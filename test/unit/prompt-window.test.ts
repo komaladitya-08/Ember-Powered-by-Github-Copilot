@@ -319,3 +319,20 @@ describe("the contract's factory", () => {
     return expect(answer).resolves.toEqual({ id: "p1", ok: false });
   });
 });
+
+describe("the page's semantics", () => {
+  const html = readFileSync(new URL("../../app/renderer/prompt/index.html", import.meta.url), "utf8");
+
+  it("keeps the main landmark and puts the dialog inside it, named by its title and described by its words (review #60)", () => {
+    const main = /<main\b[^>]*>/.exec(html)?.[0] ?? "";
+    expect(main).not.toBe("");
+    expect(main).not.toMatch(/\brole=/);
+    const dialog = /<(\w+)\b[^>]*\brole="dialog"[^>]*>/.exec(html);
+    expect(dialog?.[1]).toBe("div");
+    expect(dialog?.[0]).toMatch(/\bid="card"/);
+    expect(dialog?.[0]).toMatch(/aria-labelledby="title"/);
+    expect(dialog?.[0]).toMatch(/aria-describedby="body"/);
+    expect(html.indexOf(main)).toBeLessThan(html.indexOf(dialog![0]));
+    expect(html.indexOf(dialog![0])).toBeLessThan(html.indexOf("</main>"));
+  });
+});
