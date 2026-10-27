@@ -80,6 +80,8 @@ export const SettingsSchema = z.object({
   size: z.number().int().min(36).max(110).default(60),
   /** Speak replies aloud (text always shows in the bubble). */
   speak: z.boolean().default(false),
+  /** Speak them while a screen reader runs, even with `speak` off; off with it, Ember never speaks (app/shared/speech.ts). */
+  speakWithScreenReader: z.boolean().default(true),
   /** Listen for "Hey Ember". */
   wakeWord: z.boolean().default(true),
   voice: z.object({

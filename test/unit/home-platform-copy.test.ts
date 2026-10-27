@@ -126,8 +126,8 @@ const CHORD_SENTENCES: Record<ShortcutId, string> = {
   settings: "Press Ctrl+Alt+E any time to come back here, or click Ember's handle in the bottom-right corner.",
   ask: "Ask Ember anything with Ctrl+Alt+Space.",
   mute: TODAY["mic-indicator"],
-  allow: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.",
-  deny: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.",
+  allow: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.",
+  deny: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.",
 };
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
 const t = "2026-10-22T09:00:00.000Z";

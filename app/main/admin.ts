@@ -158,7 +158,7 @@ export function loadAdminPolicy(file = ADMIN_POLICY_FILE, opts: { requireRootOwn
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);
   if (admin.features.voice === false) s.wakeWord = false;
-  if (admin.features.speak === false) s.speak = false;
+  if (admin.features.speak === false) { s.speak = false; s.speakWithScreenReader = false; }
   if (admin.neverLook.length) {
     const have = new Set(s.privacy.neverLook.map(x => x.toLowerCase()));
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };

@@ -9,6 +9,7 @@ import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
+import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
@@ -806,7 +807,7 @@ function renderVoice(v: VoiceStatus): void {
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
-  ($("speak") as HTMLInputElement).checked = s.speak;
+  ($("speak") as HTMLSelectElement).value = speakChoice(s);
   if (voice) renderVoice(voice);
 }
 $("wake").addEventListener("change", e => {
@@ -823,7 +824,7 @@ $("consent-yes").addEventListener("click", () => {
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
-$("speak").addEventListener("change", e => { void window.ember.updateSettings({ speak: (e.target as HTMLInputElement).checked }); });
+$("speak").addEventListener("change", e => { void window.ember.updateSettings(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
   // The button goes while it downloads: focus stays in the section.

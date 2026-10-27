@@ -47,6 +47,7 @@ import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
+import { speaksAloud } from "../shared/speech";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
@@ -698,8 +699,11 @@ function start(): void {
     try { if (Notification.isSupported()) new Notification({ title, body: body.slice(0, 240), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
   };
   let askHistory: string[] = [];
-  /** Speak replies (or a screen reader runs: Orca, Narrator, VoiceOver), unless the organisation turned speaking off. */
-  const maySpeak = () => policy.features.speak !== false && (settings.get().speak || sys.a11y.screenReaderOn());
+  /**
+   * Speak replies: always, or while a screen reader runs (Orca, Narrator, VoiceOver; the default), or never, as the user
+   * chose (review #55); never when the organisation turned speaking off.
+   */
+  const maySpeak = () => policy.features.speak !== false && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
 
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */

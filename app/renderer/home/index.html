@@ -97,7 +97,10 @@
         <p class="sr" id="voice-live" role="status"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
-        <label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies, questions and results out loud</span></label>
+        <div class="choice">
+          <label for="speak">Speak replies, questions and results out loud</label>
+          <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
+        </div>
       </div>
       <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
     </section>
@@ -167,7 +170,7 @@
         <div class="group">
           <label class="switch-row"><input type="checkbox" id="reduce-motion" role="switch"><span>Calm mode: no hops, bounces or fidgets</span></label>
         </div>
-        <p class="hint">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.</p>
+        <p class="hint">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.</p>
       </div>
     </section>
 
