@@ -28,11 +28,11 @@
     <section id="welcome" class="welcome" aria-labelledby="welcome-h" hidden>
       <h2 id="welcome-h">Before Ember starts</h2>
       <ul class="terms">
-        <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read. <span id="permissions-note" hidden></span></li>
+        <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. Password managers, password prompts and any app you add to the never-look list in settings are never read. <span id="permissions-note" hidden></span></li>
         <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
         <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</li>
         <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every action it took (kept <span id="retention">30</span> days) in <code id="data-dir">~/.config/ember</code>. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.</li>
-        <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” below.</li>
+        <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.</li>
         <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
       </ul>
     </section>
@@ -48,11 +48,6 @@
         <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
       </div>
       <p class="hint after-setup" id="autostart-note" hidden></p>
-      <div class="start-row" id="start-row" hidden>
-        <label class="switch-row" id="agree-row"><input type="checkbox" id="agree"><span>I've read how Ember works and I agree</span></label>
-        <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
-        <p class="hint" id="start-hint">Agree first, then start.</p>
-      </div>
       <p class="hint after-setup">Press <span class="chord" data-shortcut="settings"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
     </section>
 
@@ -192,6 +187,12 @@
         <dl class="facts" id="facts"></dl>
       </details>
     </section>
+
+    <div class="start-row" id="start-row" hidden>
+      <label class="switch-row" id="agree-row"><input type="checkbox" id="agree"><span>I've read how Ember works and I agree</span></label>
+      <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
+      <p class="hint" id="start-hint">Agree first, then start.</p>
+    </div>
   </main>
   <script src="main.js"></script>
 </body>

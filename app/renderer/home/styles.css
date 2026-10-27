@@ -103,6 +103,10 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* The first-run Start: agreement and the one prominent button (a large capsule). */
 .start-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 6px; padding: 16px; }
 .start-row[hidden], .switch-row[hidden], .hint[hidden] { display: none; }
+/* It is the page's last part, and in first run it stays at the window's foot while the terms scroll, so agreeing and
+   Start are never below the fold (review #104); focus scrolls clear of it (WCAG 2.4.11). */
+body.first-run .start-row { position: sticky; bottom: 12px; z-index: 1; box-shadow: var(--group-edge), 0 10px 30px rgba(0, 0, 0, 0.55); }
+html:has(> body.first-run) { scroll-padding-bottom: 150px; }
 .start-row .hint { margin: 0; flex-basis: 100%; }
 #agree-row { min-height: 28px; }
 .start {

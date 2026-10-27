@@ -79,3 +79,30 @@ describe("WSL in the onboarding line and the Computers intro", () => {
     expect(SCRIPT).toMatch(/\.filter\(\(\[k, v\]\) => v === false && targetFeatureApplies\(k, platform\?\.os\)\)/);
   });
 });
+
+describe("the first-run window", () => {
+  /** The page's markup with comments and white space between tags taken out, so the order of its parts is plain. */
+  const flat = PAGE.replace(/>\s+</g, "><");
+
+  it("keeps agreeing and Start in view at the window's foot, after everything first run shows (review #104, #160)", () => {
+    // The start row is the page's last part, after the setup check (whose rows can show before Start), not inside the
+    // character picker, so it can stay at the window's foot while the terms scroll.
+    const start = flat.indexOf("<div class=\"start-row\" id=\"start-row\" hidden>");
+    expect(start).toBeGreaterThan(flat.indexOf("<details class=\"fold\" id=\"checks-fold\""));
+    expect(start).toBeGreaterThan(flat.indexOf("<details class=\"fold\" id=\"about-fold\""));
+    expect(flat.slice(start)).toMatch(/^<div class="start-row" id="start-row" hidden>.*?<\/div><\/main>/);
+    const pick = flat.slice(flat.indexOf("<section class=\"pick\""), flat.indexOf("</section>", flat.indexOf("<section class=\"pick\"")));
+    expect(pick).not.toContain("start-row");
+    // In first run it sticks to the window's foot, and focus scrolls clear of it (WCAG 2.4.11).
+    expect(STYLES).toMatch(/body\.first-run \.start-row \{[^}]*position: sticky; bottom: \d+px;/);
+    expect(STYLES).toMatch(/html:has\(> body\.first-run\) \{ scroll-padding-bottom: \d+px; \}/);
+  });
+
+  it("doesn't point to sections that aren't shown before Start (review #104)", () => {
+    const welcome = flat.slice(flat.indexOf("<section id=\"welcome\""), flat.indexOf("</section>", flat.indexOf("<section id=\"welcome\"")));
+    expect(welcome).not.toMatch(/\bbelow\b/);
+    expect(welcome).not.toMatch(/your never-look list/);
+    expect(welcome).toContain("Password managers, password prompts and any app you add to the never-look list in settings are never read.");
+    expect(welcome).toContain("<b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.");
+  });
+});
