@@ -422,7 +422,10 @@ function start(): void {
     if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
+    syncHandle();
   };
+  /** Hidden, Ember's handle shrinks to its face in the corner (the way back to Show Ember); shown, it is the pill again. */
+  const syncHandle = () => { if (handle?.setCompact(overlay?.isHidden() ?? false)) deskViewRef?.handleMoved(); };
   // While Ember is asking the user something, nothing else may replace the question
   // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
@@ -544,7 +547,7 @@ function start(): void {
       { type: "separator" },
       { ...keyed("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
-      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
+      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); syncHandle(); presenceChanged(); } },
       { type: "separator" },
       { label: "Quit Ember", click: () => { opens = quitWords() !== null; void quitEmber(); } },
     ]);
@@ -1012,7 +1015,7 @@ function start(): void {
   ipcMain.handle(IPC.presence, guard(presence));
   ipcMain.handle(IPC.setPresence, guard((p: unknown) => {
     const want = (p && typeof p === "object" ? p : {}) as { hidden?: unknown; paused?: unknown };
-    if (typeof want.hidden === "boolean") { shownForAnswer = false; keptHidden = want.hidden; overlay?.setHidden(want.hidden); }
+    if (typeof want.hidden === "boolean") { shownForAnswer = false; keptHidden = want.hidden; overlay?.setHidden(want.hidden); syncHandle(); }
     if (typeof want.paused === "boolean") { followPaused = want.paused; overlay?.setPaused(followPaused); }
     broadcast(IPC.presenceChanged, presence());
     return presence();
@@ -1243,6 +1246,7 @@ function start(): void {
       const old = handle;
       handle = new HandleWindow(() => settings.get(), !overlay, { floating: platform.overlay.floating("handle"), forward: platform.overlay.forward });
       handle.sendState(lastState);
+      handle.setCompact(overlay?.isHidden() ?? false);
       old?.destroy();
       deskViewRef?.handleMoved();
     };

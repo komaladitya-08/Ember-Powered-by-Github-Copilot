@@ -110,6 +110,20 @@ describe("the handle window", () => {
     expect((pill.win as unknown as FakeWin).bounds).toEqual({ x: 1168, y: 782, width: 200, height: 56 });
   });
 
+  it("shrinks the pill to a tab with Ember's face while Ember is hidden, in the same corner, and never the card (review #75)", () => {
+    const pill = new HandleWindow(() => settings, false);
+    const win = pill.win as unknown as FakeWin;
+    expect(pill.setCompact(true)).toBe(true);
+    expect(win.bounds).toEqual({ x: 1312, y: 782, width: 56, height: 56 });
+    expect(pill.setCompact(true)).toBe(false);
+    expect(pill.setCompact(false)).toBe(true);
+    expect(win.bounds).toEqual({ x: 1168, y: 782, width: 200, height: 56 });
+
+    const card = new HandleWindow(() => settings, true);
+    expect(card.setCompact(true)).toBe(false);
+    expect((card.win as unknown as FakeWin).bounds).toEqual({ x: 1008, y: 688, width: 360, height: 150 });
+  });
+
   it("replays a state sent before the page loaded, then shows the window without taking focus", () => {
     const handle = new HandleWindow(() => settings, false);
     const win = handle.win as unknown as FakeWin;

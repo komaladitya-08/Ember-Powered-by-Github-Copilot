@@ -20,6 +20,8 @@ import { applyAllWorkspaces } from "./platform/compose";
 
 const appDir = __dirname;
 const PILL = { width: 200, height: 56 };
+/** While Ember is hidden: the pill shrinks to a tab with just Ember's face (still the way back to Show Ember). */
+const TAB = { width: 56, height: 56 };
 const CARD = { width: 360, height: 150 };
 /** The card's height follows what it shows (a question with its buttons, a task with Stop), within these limits. */
 const CARD_MIN = 120, CARD_MAX = 360;
@@ -80,6 +82,21 @@ export class HandleWindow {
 
   private last: EmberState | null = null;
 
+  /** Ember is hidden: the pill is a tab with only its face (the page drops its words at that width). */
+  private compact = false;
+
+  /**
+   * Ember was hidden (true) or shown again (false): the pill shrinks to its face in the same corner, or grows back, so
+   * "Hide Ember" leaves only what is needed to show it again. The card (no compositor) never shrinks. Returns whether the
+   * handle's place changed.
+   */
+  setCompact(on: boolean): boolean {
+    if (this.fallback || on === this.compact || this.win.isDestroyed()) return false;
+    this.compact = on;
+    this.reposition();
+    return true;
+  }
+
   private cardHeight = CARD.height;
 
   sendState(state: EmberState): void {
@@ -127,7 +144,7 @@ export class HandleWindow {
 
   private reposition = (): void => {
     if (this.win.isDestroyed()) return;
-    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : PILL;
+    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : this.compact ? TAB : PILL;
     this.win.setBounds({ ...size, ...this.corner(size) });
   };
 }
