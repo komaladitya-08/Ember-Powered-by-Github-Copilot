@@ -239,9 +239,11 @@ function windowsName(build: number): string {
 
 /**
  * The way out of mixed display scaling (the helper and Ember disagree on DPI awareness): with every monitor at the same
- * scale the two agree on every coordinate. The same words in the setup check and the doctor.
+ * scale the two agree on every coordinate. The note itself stays after that (it compares the helper's thread with its
+ * process, which no scale changes), so the words ask for a report only if clicks still miss. The same words in the
+ * setup check and the doctor.
  */
-export const MIXED_SCALING_FIX = `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${ISSUES_URL}.`;
+export const MIXED_SCALING_FIX = `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If it still clicks in the wrong place, report it at ${ISSUES_URL}.`;
 
 /** Where the microphone's privacy switch is, on both supported Windows (Windows 10 22H2 calls the page "Privacy"). */
 export const WINDOWS_MIC_PATH = "Settings › Privacy & security › Microphone (Settings › Privacy › Microphone on Windows 10)";

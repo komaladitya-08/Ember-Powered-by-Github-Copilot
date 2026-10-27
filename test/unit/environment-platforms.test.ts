@@ -78,7 +78,9 @@ describe("Windows setup checks", () => {
     const detail = check(win({ dpiMixed: true }), "display-scaling")!.detail;
     expect(detail).not.toMatch(/Tell the Ember team/);
     expect(detail).toBe("Windows reports mixed display scaling to Ember's accessibility helper, so it may click in the wrong place on some monitors. "
-      + `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at ${ISSUES_URL}.`);
+      + `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If it still clicks in the wrong place, report it at ${ISSUES_URL}.`);
+    // The row can stay after the user did that (the helper's thread and process differ), so it never reads as failed advice.
+    expect(detail).not.toMatch(/If you can't/);
     expect(ISSUES_URL).toBe("https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues");
   });
 

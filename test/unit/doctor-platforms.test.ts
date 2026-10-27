@@ -112,7 +112,7 @@ describe("ember doctor on Windows", () => {
       .toMatchObject({ status: "warn", detail: "Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors (DPI awareness PerMonitorV2, Ember's DPI awareness SystemAware)." });
     // A way out and a place to report it (review #223), never "Tell the Ember team." with no address.
     expect(byId(doctorChecks(windows({ helper: { toolkitAccessibility: true, dpi: "PerMonitorV2", processDpi: "SystemAware" } })), "accessibility-helper")?.fix)
-      .toBe("Set every monitor to the same scale in Settings › System › Display, then restart Ember. If you can't, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues.");
+      .toBe("Set every monitor to the same scale in Settings › System › Display, then restart Ember. If it still clicks in the wrong place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues.");
     expect(byId(doctorChecks(windows({ helper: undefined })), "accessibility-helper")).toBeUndefined();
   });
 
