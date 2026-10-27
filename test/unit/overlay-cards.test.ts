@@ -1,7 +1,7 @@
 /**
  * The task cards over other apps: what a card says about its task (a task in line is not one that needs you), and
  * what the main process tells the cards (review #130); what the handle says while tasks run (review #131); a Stop
- * that says at once that it landed (review #132).
+ * that says at once that it landed (review #132); a finished card's words kept to a card's size (review #134).
  */
 
 import { describe, expect, it } from "vitest";
@@ -90,5 +90,27 @@ describe("pressing Stop on a running task", () => {
     expect(stopPending(1000, 1500, "Working…")).toBe(true);
     expect(stopPending(1000, 4500, "Working…")).toBe(false);
     expect(stopPending(1000, 60_000, TASK_STOPPING)).toBe(true);
+  });
+});
+
+describe("a finished task's card", () => {
+  it("keeps its words to a card's size; the whole summary still goes to the conversation", async () => {
+    const { tm, cards, done } = manager();
+    const t = tm.start("Summarise the report");
+    const summary = "The report says ".concat("a great deal, ".repeat(150)).trim();
+    done.resolve({ success: true, summary });
+    await expect.poll(() => cards.at(-1)![0].status).toBe("done");
+    const detail = cards.at(-1)![0].detail;
+    expect(detail.length).toBeLessThanOrEqual(400);
+    expect(detail.endsWith("…")).toBe(true);
+    expect(summary.startsWith(detail.slice(0, -1))).toBe(true);
+    expect(tm.get(t.id)!.result!.summary).toBe(summary);
+  });
+
+  it("keeps a short summary as it is", async () => {
+    const { tm, cards, done } = manager();
+    tm.start("Turn on Night Light");
+    done.resolve({ success: true, summary: "Night Light is on." });
+    await expect.poll(() => cards.at(-1)![0].detail).toBe("Night Light is on.");
   });
 });

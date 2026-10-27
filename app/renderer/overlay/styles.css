@@ -41,6 +41,9 @@ body { font: var(--type-callout); color: var(--label); }
 .task b { font: var(--type-headline); letter-spacing: -0.006em; }
 .task span { color: var(--label-2); font: var(--type-callout); }
 .task span[hidden] { display: none; }
+/* A long result is kept to four lines, so one card never folds the others away (the whole text stays for screen
+   readers, and goes to the conversation). */
+.task .detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
 /* Where a task acts when it isn't this computer (§2.4): a small capsule before the title, on the bubble and the cards. */
 .where {
   display: inline-block; max-width: 160px; margin-right: 6px; padding: 0 6px; border-radius: var(--r-capsule); vertical-align: 1px;
@@ -74,6 +77,9 @@ body { font: var(--type-callout); color: var(--label); }
   transition: background-color 140ms ease, transform 220ms var(--spring-snappy);
 }
 @media (hover: hover) { .task-actions button:hover { background: rgba(255, 255, 255, 0.15); } }
+/* Stop, the safety control on a task under way: the larger capsule (28 px) with a red tint, never mistaken for Close. */
+.task-actions button.stop { min-height: 28px; padding: 5px 14px; font-size: 13px; background: color-mix(in srgb, var(--red) 26%, transparent); }
+@media (hover: hover) { .task-actions button.stop:hover { background: color-mix(in srgb, var(--red) 38%, transparent); } }
 .task-actions button:active { transform: scale(0.97); }
 /* A Stop being carried out ("Stopping…" on its card): it takes no second press. */
 .task-actions button[aria-disabled="true"] { opacity: 0.5; cursor: default; }

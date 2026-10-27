@@ -347,7 +347,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       const state = Object.assign(document.createElement("span"), { className: "sr" });
       const where = Object.assign(document.createElement("span"), { className: "where", hidden: true });
       const title = document.createElement("b");
-      const detail = document.createElement("span");
+      const detail = Object.assign(document.createElement("span"), { className: "detail" });
       const actions = document.createElement("div");
       actions.className = "task-actions";
       actions.hidden = true;

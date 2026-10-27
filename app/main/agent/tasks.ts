@@ -75,6 +75,9 @@ export const titleOf = (goal: string) => {
   return t.length > 40 ? t.slice(0, 39) + "…" : t;
 };
 
+/** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
+const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
+
 /** How a finished task went, in the user's words: "stopped", never "cancelled". */
 export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
 
@@ -277,7 +280,8 @@ export class TaskManager {
     this.stopping.delete(task.id);
     task.status = status;
     task.result = result;
-    task.detail = result.summary;
+    // The card shows a card's worth; the whole summary goes to the conversation (task.result).
+    task.detail = detailOf(result.summary);
     task.finished = Date.now();
     this.unreported.push(task);
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
