@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import { TaskManager } from "../../app/main/agent/tasks";
-import { STATE_WORD, busyLine, slides, stackOrder, stopPending, underWay } from "../../app/renderer/overlay/stack";
+import { STATE_WORD, busyLine, idleLine, slides, stackOrder, stopPending, underWay } from "../../app/renderer/overlay/stack";
 import { cardTask } from "../../app/renderer/handle/card";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import { TASK_STOPPING, type TaskCard } from "../../app/shared/overlay";
@@ -67,6 +67,22 @@ describe("the handle's line while tasks run", () => {
   it("says nothing of tasks when none is under way (the handle says Ready or why not)", () => {
     expect(busyLine([])).toBeNull();
     expect(busyLine([card("a", "done"), card("b", "failed"), card("c", "stopped")])).toBeNull();
+  });
+
+  it("takes the place of Ready only: a word that says why Ember can't answer stays while tasks run", () => {
+    const one = [card("a", "running")];
+    // While tasks are at work Ember can't answer the user (it waits for them, then reconnects): that word says so.
+    expect(idleLine("Waiting for tasks", one)).toBe("Waiting for tasks");
+    expect(idleLine("Reconnecting…", one)).toBe("Reconnecting…");
+    expect(idleLine("Copilot problem", [card("a", "running"), card("b", "queued")])).toBe("Copilot problem");
+    expect(idleLine("Ready", one)).toBe("Working on 1 task…");
+    expect(idleLine(undefined, [card("a", "running"), card("b", "queued")])).toBe("Working on 2 tasks…");
+  });
+
+  it("says Ready, or why not, when no task is under way", () => {
+    expect(idleLine("Ready", [card("a", "done")])).toBe("Ready");
+    expect(idleLine("Waiting for tasks", [])).toBe("Waiting for tasks");
+    expect(idleLine(undefined, [])).toBeNull();
   });
 });
 

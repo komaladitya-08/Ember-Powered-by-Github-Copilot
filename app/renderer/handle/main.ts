@@ -6,7 +6,7 @@ import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
 import { targetBadge } from "./badge";
-import { busyLine } from "../overlay/stack";
+import { idleLine } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -121,13 +121,13 @@ api.onState(s => {
   if (!fallback) {
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || busyLine(s.tasks) || s.idle || "Ready");
+    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idleLine(s.idle, s.tasks) || "Ready");
     return;
   }
   announce(b, s.status ?? null);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
-  const text = cardText(b, name, s.status ?? busyLine(s.tasks) ?? s.idle ?? null, task?.title);
+  const text = cardText(b, name, s.status ?? idleLine(s.idle, s.tasks), task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;

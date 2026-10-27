@@ -20,6 +20,14 @@ export function busyLine(tasks: readonly TaskCard[]): string | null {
 }
 
 /**
+ * The handle's line when nothing else is to be said: `idle` (what main says: "Ready", or why Ember can't answer yet,
+ * such as "Waiting for tasks"), with the tasks' count in place of Ready only, so the reason is never hidden.
+ */
+export function idleLine(idle: string | undefined, tasks: readonly TaskCard[]): string | null {
+  return idle && idle !== "Ready" ? idle : busyLine(tasks) ?? idle ?? null;
+}
+
+/**
  * The cards from the top of the stack down: the tasks that ended (oldest first), then those under way, so
  * every Stop is nearest the handle and stays in view however many failures wait to be closed.
  */
