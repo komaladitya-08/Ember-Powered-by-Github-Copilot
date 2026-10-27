@@ -110,7 +110,7 @@ jobs:
     steps:
       - name: System packages (build tools, util-linux's script, procps for the sweep, file and binutils for the binary check)
         run: |
-          dnf -y -q install git tar xz which sudo findutils procps-ng util-linux gcc-c++ make python3 file binutils
+          dnf -y -q --nobest install git tar xz which sudo findutils procps-ng util-linux gcc-c++ make python3 file binutils
           useradd -m ci
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -225,7 +225,7 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519
           docker run -d --name el8 rockylinux:8 sleep infinity
-          docker exec el8 dnf -y -q install openssh-server python3-pyatspi util-linux xz tar procps-ng which findutils
+          docker exec el8 dnf -y -q --nobest install openssh-server python3-pyatspi util-linux xz tar procps-ng which findutils
           docker exec el8 useradd -m deploy
           docker exec el8 install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
           docker cp ~/.ssh/id_ed25519.pub el8:/home/deploy/.ssh/authorized_keys
