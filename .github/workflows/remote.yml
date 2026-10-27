@@ -331,6 +331,13 @@ jobs:
           ssh-keygen -A
           mkdir -p /run/sshd
           setsid /usr/sbin/sshd -p 2222 < /dev/null > /dev/null 2>&1 &
+      - name: The distro's Lxss values, for the log
+        shell: pwsh
+        run: |
+          Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' | ForEach-Object {
+            $v = Get-ItemProperty $_.PSPath
+            "{0}: Version={1} Flags={2} DefaultUid={3} RunOOBE={4} State={5}" -f $v.DistributionName, $v.Version, $v.Flags, $v.DefaultUid, $v.RunOOBE, $v.State
+          }
       - name: What wsl.test.ts expects here (WSL1, setup-wsl's root default user, running for sshd)
         run: |
           printf '%s\n' "EMBER_WSL_TEST_DISTRO=Ubuntu-22.04" "EMBER_WSL_EXPECT_VERSION=1" "EMBER_WSL_EXPECT_ROOT=1" >> "$GITHUB_ENV"
@@ -385,6 +392,17 @@ jobs:
           additional-packages: util-linux python3 git
       - name: The distro restarts so its default user (ember, not root) and systemd apply; it stays stopped
         run: wsl.exe --terminate Ubuntu-22.04
+      # setup-wsl installs with --root and makes its user by script, so the distro's first-run set-up (OOBE) never runs
+      # and RunOOBE stays 1; Ember rightly never starts such a distro. Mark it done, as the launcher does after OOBE.
+      - name: The distro's first-run set-up counts as done (RunOOBE 0), and its Lxss values for the log
+        shell: pwsh
+        run: |
+          Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss' | ForEach-Object {
+            $v = Get-ItemProperty $_.PSPath
+            if ($v.DistributionName -eq 'Ubuntu-22.04') { Set-ItemProperty $_.PSPath -Name RunOOBE -Value 0 -Type DWord }
+            $v = Get-ItemProperty $_.PSPath
+            "{0}: Version={1} Flags={2} DefaultUid={3} RunOOBE={4} State={5}" -f $v.DistributionName, $v.Version, $v.Flags, $v.DefaultUid, $v.RunOOBE, $v.State
+          }
       - name: What wsl.test.ts expects here (WSL2, a non-root default user the registry doesn't know, stopped at start)
         run: |
           printf '%s\n' "EMBER_WSL_TEST_DISTRO=Ubuntu-22.04" "EMBER_WSL_EXPECT_VERSION=2" "EMBER_WSL_EXPECT_ROOT=0" \
