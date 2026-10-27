@@ -16,6 +16,7 @@ export interface XInput {
   /** Pointer position plus button/modifier mask (Button1Mask = 256). */
   pointerState(): { x: number; y: number; mask: number } | null;
   move(x: number, y: number): void;
+  /** Presses or releases a logical button (1 left, 2 middle, 3 right, 4–7 wheel), whatever the pointer map. */
   button(button: number, down: boolean): void;
   /** Presses or releases an X keysym; false if the keyboard has no key for it. */
   keysym(sym: number, down: boolean): boolean;
@@ -96,6 +97,17 @@ const RAW_KEY_PRESS = 13, RAW_BUTTON_PRESS = 15;
 const WINDOW_TYPES = ["NORMAL", "DIALOG", "UTILITY", "TOOLBAR", "MENU", "DROPDOWN_MENU", "POPUP_MENU", "COMBO", "TOOLTIP", "NOTIFICATION", "SPLASH", "DND", "DOCK", "DESKTOP"];
 const MENU_TYPES = new Set(["MENU", "DROPDOWN_MENU", "POPUP_MENU", "COMBO"]);
 
+/**
+ * The physical button to send through XTest for a logical one. X maps XTest's buttons through the core pointer map
+ * (`map[i]`: what physical button i + 1 gives) like the hardware's, so with a left-handed map (xmodmap "pointer =
+ * 3 2 1") button 1 would arrive as a right click. The first physical button that gives `logical`, else `logical`
+ * itself (nothing gives it, or the map couldn't be read). The wheel is mapped too: scrolling down stays down.
+ */
+export function physicalButton(map: readonly number[], logical: number): number {
+  const i = map.indexOf(logical);
+  return i >= 0 ? i + 1 : logical;
+}
+
 export function openXInput(displayName?: string): XInput | null {
   try {
     const koffi = requireCjs("koffi") as typeof import("koffi");
@@ -126,6 +138,7 @@ export function openXInput(displayName?: string): XInput | null {
     const XDefaultScreen = x11.func("int XDefaultScreen(void *dpy)");
     const XGetInputFocus = x11.func("int XGetInputFocus(void *dpy, _Out_ unsigned long *focus, _Out_ int *revertTo)");
     const XGetWindowAttributes = x11.func("int XGetWindowAttributes(void *dpy, unsigned long w, _Out_ uint8_t *attrs)");
+    const XGetPointerMapping = x11.func("int XGetPointerMapping(void *dpy, _Out_ uint8_t *map, int n)");
     const XTestFakeMotionEvent = xtst.func("int XTestFakeMotionEvent(void *dpy, int screen, int x, int y, unsigned long delay)");
     const XTestFakeButtonEvent = xtst.func("int XTestFakeButtonEvent(void *dpy, unsigned int button, int isPress, unsigned long delay)");
     const XTestFakeKeyEvent = xtst.func("int XTestFakeKeyEvent(void *dpy, unsigned int keycode, int isPress, unsigned long delay)");
@@ -146,7 +159,8 @@ export function openXInput(displayName?: string): XInput | null {
     const root = XDefaultRootWindow(dpy);
     let open = true;
     // What Ember holds down right now: let go of before the connection closes, or the server keeps them down.
-    const keysHeld = new Set<number>(), buttonsHeld = new Set<number>();
+    // Buttons: logical button → the physical one that went down (the pointer map may change while it is held).
+    const keysHeld = new Set<number>(), buttonsHeld = new Map<number, number>();
     const ScreenSaverOn = 1, XkbUseCoreKbd = 0x100, ShiftMask = 1, LockMask = 2;
     const atoms = new Map<string, number>();
     const atom = (name: string): number => {
@@ -275,6 +289,12 @@ export function openXInput(displayName?: string): XInput | null {
     const watch = xi ? openWatch(koffi, x11, xi, displayName, dpy) : null;
     let watchers = 0;
 
+    /** The core pointer map, read per press: the user can swap the buttons while Ember runs. */
+    const pointerMap = (): number[] => {
+      const map = Buffer.alloc(256);
+      const n = XGetPointerMapping(dpy, map, map.length);
+      return n > 0 ? [...map.subarray(0, Math.min(n, map.length))] : [];
+    };
     const keycode = (code: number, down: boolean) => {
       if (!open || code < 8 || code > 255) return;
       if (down) watch?.sent("keys");
@@ -285,7 +305,7 @@ export function openXInput(displayName?: string): XInput | null {
     const releaseAll = () => {
       if (!open) return;
       for (const code of keysHeld) XTestFakeKeyEvent(dpy, code, 0, 0);
-      for (const b of buttonsHeld) XTestFakeButtonEvent(dpy, b, 0, 0);
+      for (const b of buttonsHeld.values()) XTestFakeButtonEvent(dpy, b, 0, 0);
       keysHeld.clear();
       buttonsHeld.clear();
       XSync(dpy, 0);
@@ -310,9 +330,11 @@ export function openXInput(displayName?: string): XInput | null {
       button(button, down) {
         if (!open) return;
         if (down) watch?.sent("pointer");
-        XTestFakeButtonEvent(dpy, button, down ? 1 : 0, 0);
+        // The physical button the pointer map turns into this one; a release lets go of the one that went down.
+        const sent = (!down && buttonsHeld.get(button)) || physicalButton(pointerMap(), button);
+        XTestFakeButtonEvent(dpy, sent, down ? 1 : 0, 0);
         XFlush(dpy);
-        if (down) buttonsHeld.add(button); else buttonsHeld.delete(button);
+        if (down) buttonsHeld.set(button, sent); else buttonsHeld.delete(button);
       },
       keysym(sym, down) {
         if (!open) return false;
