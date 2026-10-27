@@ -94,6 +94,51 @@ describe("TokenStore.load when the keyring refuses (review #241)", () => {
   });
 });
 
+describe("TokenStore.firstReadSinceUpdate (review #241)", () => {
+  const stamp = (f: string) => path.join(path.dirname(f), "token-read-version");
+
+  it("is true only until this version of Ember has read the saved sign-in: the keychain asks after an update, not every start", () => {
+    const f = file();
+    expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
+    // Saved by an earlier Ember that kept no stamp: the first read of this version may ask.
+    fs.rmSync(stamp(f), { force: true });
+    const v1 = new TokenStore(f, box(), { version: "1.0.0" });
+    expect(v1.firstReadSinceUpdate()).toBe(true);
+    expect(v1.load()).toBe("gho_abc");
+    expect(fs.readFileSync(stamp(f), "utf8")).toBe("1.0.0");
+    expect(v1.firstReadSinceUpdate()).toBe(false);
+    // The next start of the same version: no pause, no keychain words.
+    expect(new TokenStore(f, box(), { version: "1.0.0" }).firstReadSinceUpdate()).toBe(false);
+    // An update: once more.
+    expect(new TokenStore(f, box(), { version: "1.1.0" }).firstReadSinceUpdate()).toBe(true);
+  });
+
+  it("stays true after a refused read, and is false with nothing saved", () => {
+    const f = file();
+    expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
+    fs.rmSync(stamp(f), { force: true });
+    const refused = new TokenStore(f, box({ decryptString: () => { throw new Error("denied"); } }), { version: "1.0.0" });
+    expect(refused.load()).toBeNull();
+    expect(refused.firstReadSinceUpdate()).toBe(true);
+    expect(fs.existsSync(stamp(f))).toBe(false);
+    expect(new TokenStore(file(), box(), { version: "1.0.0" }).firstReadSinceUpdate()).toBe(false);
+  });
+
+  it("is stamped by a sign-in this version saved (the keychain let it in), and asks no stamp of a store without a version", () => {
+    const f = file();
+    const store = new TokenStore(f, box(), { version: "2.0.0" });
+    expect(store.save("gho_abc")).toBe(true);
+    expect(store.firstReadSinceUpdate()).toBe(false);
+    // The doctor's store has no version: it writes no stamp, and can't tell, so says it may ask.
+    const g = file();
+    const doctor = new TokenStore(g, box());
+    expect(doctor.save("gho_abc")).toBe(true);
+    expect(doctor.load()).toBe("gho_abc");
+    expect(fs.existsSync(stamp(g))).toBe(false);
+    expect(doctor.firstReadSinceUpdate()).toBe(true);
+  });
+});
+
 describe("ghCliToken", () => {
   const answer = (stdout: string, err: Error | null = null) => execFile.mockImplementationOnce((_cmd, _args, _opts, cb: (e: Error | null, out: string) => void) => cb(err, stdout));
 

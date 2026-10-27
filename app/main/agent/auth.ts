@@ -10,6 +10,7 @@
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 export type TokenSource = "stored" | "environment" | "github-cli";
 export interface ResolvedToken { token: string; source: TokenSource }
@@ -33,7 +34,8 @@ export class TokenStore {
    */
   unreadable = false;
 
-  constructor(private file: string, private box: SecretBox) {}
+  /** `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate). */
+  constructor(private file: string, private box: SecretBox, private opts: { version?: string } = {}) {}
 
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
@@ -43,6 +45,33 @@ export class TokenStore {
   /** Is a sign-in saved (whether or not the keyring will open it)? Reads no secret. */
   hasSaved(): boolean {
     return fs.existsSync(this.file);
+  }
+
+  /** The version of Ember that last opened or saved the sign-in, beside it. */
+  private get readStamp(): string {
+    return path.join(path.dirname(this.file), "token-read-version");
+  }
+
+  /**
+   * Is a sign-in saved that this version of Ember hasn't opened yet? macOS's keychain asks only after an
+   * ad-hoc-signed Ember's identity changed, which is an update: then reading it may ask first. Reads no secret.
+   */
+  firstReadSinceUpdate(): boolean {
+    if (!this.hasSaved()) return false;
+    try {
+      return fs.readFileSync(this.readStamp, "utf8") !== this.opts.version;
+    } catch {
+      return true; // no stamp yet (saved by an earlier Ember)
+    }
+  }
+
+  /** The keyring let this version in: noted, so its next start reads without the keychain words. */
+  private stamp(): void {
+    if (!this.opts.version) return;
+    try {
+      if (!this.firstReadSinceUpdate()) return;
+      fs.writeFileSync(this.readStamp, this.opts.version, { mode: 0o600 });
+    } catch { /* only the keychain words come once more */ }
   }
 
   load(): string | null {
@@ -56,6 +85,7 @@ export class TokenStore {
     try {
       const t = this.box.decryptString(raw);
       this.unreadable = false;
+      this.stamp();
       return isUsableToken(t) ? t : null;
     } catch {
       this.unreadable = true;
@@ -77,6 +107,7 @@ export class TokenStore {
     }
     fs.writeFileSync(this.file, sealed, { mode: 0o600 });
     this.unreadable = false;
+    this.stamp();
     return true;
   }
 

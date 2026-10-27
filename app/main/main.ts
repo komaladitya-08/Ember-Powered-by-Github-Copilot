@@ -1302,7 +1302,7 @@ function start(): void {
     }
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
-    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage);
+    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion() });
     // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
     let adminKey: string | undefined;
     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
@@ -1564,8 +1564,9 @@ function start(): void {
       brainStarted = true;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember), and the read holds the main process until that is answered: Ember's windows come up
-      // first, and its status says what the prompt is for (review #241).
-      const keychain = !provider && platform.os === "darwin" && !!tokens?.hasSaved();
+      // first, and its status says what the prompt is for (review #241). Only on the first start of a new version:
+      // other starts read at once, without the keychain words.
+      const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
       if (keychain) {
         setStatus("keychain", "Reading your saved sign-in from the keychain…");
         await new Promise(r => setTimeout(r, KEYCHAIN_PAUSE_MS));
