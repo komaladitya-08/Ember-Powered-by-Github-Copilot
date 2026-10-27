@@ -114,7 +114,9 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 - If another app already holds one of Ember's shortcuts, the **Setup check** says which, Ember keeps trying to get
   it, and the handle menu does the same things.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
-  animations are off or the desktop asks for reduced motion.
+  animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the
+  text in settings, Ember's bubble, task cards and handle, the command window and Ember's password and consent cards;
+  the Ask box keeps its size.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead; it grows to show a whole question.
 
