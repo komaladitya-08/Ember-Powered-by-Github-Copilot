@@ -59,10 +59,18 @@ function headerNode(header: string): { node: HTMLElement; legend: string[] } {
   return { node: p, legend: v.legend };
 }
 
-/** A command block: the whole command, wrapping, scrolling when long (never cut). */
-function commandBlock(command: string, label: string): { block: HTMLPreElement; legend: string[] } {
+/**
+ * A command block: the whole command, wrapping, scrolling when long (never cut). It is focusable (so it can be scrolled
+ * from the keyboard) and exposed as a read-only text box named `label`, so a screen reader reads the command itself as
+ * its value, every visible token included, rather than only the label (a named generic, review #48).
+ */
+function commandBlock(command: string, label: string, id?: string): { block: HTMLPreElement; legend: string[] } {
   const block = el("pre", "command");
+  if (id) block.id = id;
   block.tabIndex = 0;
+  block.setAttribute("role", "textbox");
+  block.setAttribute("aria-readonly", "true");
+  block.setAttribute("aria-multiline", "true");
   block.setAttribute("aria-label", label);
   const v = visibleNodes(command);
   block.append(...v.nodes);
@@ -85,7 +93,7 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
   const h = el("h1", "heading", ASK_HEADING);
   h.id = "ask-h";
   root.append(h);
-  const { block, legend } = commandBlock(card.command, "The command, every character shown");
+  const { block, legend } = commandBlock(card.command, "The command, every character shown", "ask-cmd");
   root.append(block);
   for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
   const { lines, why } = cardLines(card);
@@ -110,6 +118,8 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
   const allow = el("button", "btn", ALLOW_LABEL);
   allow.type = "button";
   allow.disabled = true;
+  // Allow says what it allows: the command is its description.
+  allow.setAttribute("aria-describedby", "ask-cmd");
   const deny = el("button", "btn quiet", NOT_NOW_LABEL);
   deny.type = "button";
   row.append(allow, deny);
@@ -208,7 +218,7 @@ function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
   const h = el("h1", "heading", ANNOUNCE_HEADING);
   h.id = "announce-h";
   root.append(h);
-  const { block, legend } = commandBlock(card.command, "The command, every character shown");
+  const { block, legend } = commandBlock(card.command, "The command, every character shown", "announce-cmd");
   root.append(block);
   for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
   const count = el("p", "count", countdownText(endsAt, Date.now()));
@@ -216,6 +226,7 @@ function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
   const row = el("div", "buttons");
   const stop = el("button", "btn quiet", STOP_LABEL);
   stop.type = "button";
+  stop.setAttribute("aria-describedby", "announce-cmd");
   stop.addEventListener("click", e => {
     if (!e.isTrusted) return;
     stop.disabled = true;

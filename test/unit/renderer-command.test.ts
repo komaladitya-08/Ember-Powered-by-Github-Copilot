@@ -348,3 +348,16 @@ describe("right-to-left letters in a command (review #273)", () => {
     }
   });
 });
+
+describe("the command block's semantics (review #48)", () => {
+  it("is a read-only text box whose value is the command, and Allow and Stop are described by it", () => {
+    const main = read("main.ts");
+    const block = /function commandBlock[\s\S]*?\n}/.exec(main)?.[0] ?? "";
+    expect(block).toMatch(/setAttribute\("role", "textbox"\)/);
+    expect(block).toMatch(/setAttribute\("aria-readonly", "true"\)/);
+    expect(block).toMatch(/setAttribute\("aria-multiline", "true"\)/);
+    expect(main).toMatch(/allow\.setAttribute\("aria-describedby", "ask-cmd"\)/);
+    expect(main).toMatch(/commandBlock\(card\.command, "[^"]+", "ask-cmd"\)/);
+    expect(main).toMatch(/stop\.setAttribute\("aria-describedby", "announce-cmd"\)/);
+  });
+});
