@@ -1,8 +1,9 @@
 /**
  * An in-memory desktop for the sidecar host's tests: windows of elements described as plain objects (or JSON, for a
  * test that runs the built host as its own process: EMBER_AX_FAKE_DESKTOP), behaving as a platform's accessibility
- * does where the host relies on it. A snapshot is pre-order with the bridge's caps and cut reasons, and leaves out
- * elements that are off screen with no bounds; every look is live (a test changes an element between calls); actions
+ * does where the host relies on it. A snapshot is pre-order with the bridge's caps and cut reasons, leaves out
+ * elements that are off screen with no bounds, lists what shows before what doesn't, and reads nothing inside an
+ * offscreen element (but a combo box's drop-down); every look is live (a test changes an element between calls); actions
  * change the elements (a toggle flips, a select selects alone in a single-choice list, a value is set) and are logged;
  * an element can be slow (its app "busy"), go away, or open a modal dialog when invoked. Every call hands out a new
  * handle, as a naive bridge would, so tests see the host give them all back. Never used outside tests and development
@@ -242,21 +243,32 @@ export class FakeProvider implements AxProvider {
     const cut: string[] = [];
     const until = Date.now() + o.deadlineMs;
     let busy = false;
-    const visit = async (el: FakeElement, parent: number, depth: number): Promise<boolean> => {
+    const cutShort = (why: string) => { if (!cut.includes(why)) cut.push(why); };
+    // As the bridge walks (PROTOCOL.md, snapshot): what shows first, nothing inside an offscreen element (but a combo
+    // box's closed drop-down), and an offscreen element left out past maxNodes is cut "offscreen", not "nodes".
+    const visit = async (el: FakeElement, parent: number, depth: number, inCombo: boolean): Promise<boolean> => {
       if (el.spec.offscreen && empty(el.spec.bounds)) return true; // the bridge leaves these out, with what they hold
-      if (depth > o.maxDepth) { if (!cut.includes("depth")) cut.push("depth"); return true; }
-      if (nodes.length >= o.maxNodes) { if (!cut.includes("nodes")) cut.push("nodes"); return false; }
-      if (Date.now() >= until) { if (!cut.includes("time")) cut.push("time"); return false; }
+      const offscreen = depth > 0 && !!el.spec.offscreen;
+      if (depth > o.maxDepth) { cutShort("depth"); return true; }
+      if (nodes.length >= o.maxNodes) {
+        if (offscreen) { cutShort("offscreen"); return true; }
+        cutShort("nodes");
+        return false;
+      }
+      if (Date.now() >= until) { cutShort("time"); return false; }
       if (el.spec.slowMs) {
         await sleep(Math.min(el.spec.slowMs, Math.max(0, until - Date.now())));
         if (this.o.deadlineMs !== undefined && el.spec.slowMs > this.o.deadlineMs) { busy = true; return false; }
       }
       const index = nodes.length;
       nodes.push(this.raw(el, parent, depth));
-      for (const c of el.children) if (!await visit(c, index, depth + 1)) return false;
+      const combo = inCombo || el.spec.role === "ComboBox" || el.spec.role === "AXComboBox";
+      if (offscreen && !combo) return true;
+      const kids = [...el.children.filter(c => !c.spec.offscreen), ...el.children.filter(c => c.spec.offscreen)];
+      for (const c of kids) if (!await visit(c, index, depth + 1, combo)) return false;
       return true;
     };
-    await visit(w, -1, 0);
+    await visit(w, -1, 0, false);
     return { nodes, truncated: cut.length > 0, cut, ...(busy ? { busy } : {}) };
   }
 

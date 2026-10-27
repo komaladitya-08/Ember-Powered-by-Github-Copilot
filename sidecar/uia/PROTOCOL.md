@@ -300,10 +300,19 @@ Result: `{"nodes": RawNode[], "truncated": boolean, "cut": string[], "busy": boo
 - An element that is offscreen **and** has no area (empty or zero-size bounds) is left out together with everything
   under it. Every other element is listed with its `isOffscreen` and `bounds`, so the host decides what counts as
   shown.
-- Under one element with more than `maxChildren` children, the on-screen ones are kept first (in order) up to
-  `maxChildren`; that node gets `childCount` and `childrenCut`, and `cut` gets `"nodes"`.
-- `cut` lists, in this order, `"nodes"` (`maxNodes` reached or children left out), `"depth"` (something lies below
-  `maxDepth`) and `"time"` (the walk stopped at its deadline). `truncated` is true when `cut` isn't empty.
+- Nothing under an offscreen element (other than the root) is read: the element itself is listed, its subtree isn't
+  (the host lists neither). A long web page scrolled down has thousands of elements above the viewport, and walking
+  them spent `maxNodes` before the part on screen was reached. The exception is a combo box's subtree, read whole: its
+  closed drop-down is offscreen, and the host tells an editable combo box's choice from the list's selected item.
+- Each element's children are visited on-screen ones first (in their order), then offscreen ones (in theirs). Under
+  one element with more than `maxChildren` children, the first `maxChildren` of that order are kept; that node gets
+  `childCount` and `childrenCut`.
+- Past `maxNodes`, an offscreen element is left out without ending the walk, which goes on through the children it
+  already has (cached flags, no calls) until an element that shows would be left out.
+- `cut` lists, in this order, `"nodes"` (an element that shows was left out: `maxNodes` reached, or more than
+  `maxChildren` children that show), `"depth"` (something lies below `maxDepth`), `"time"` (the walk stopped at its
+  deadline) and `"offscreen"` (only offscreen elements were left out, for either limit: nothing that shows is
+  missing). `truncated` is true when `cut` isn't empty.
 - `busy: true` when an app call didn't return by the deadline: the answer then holds the nodes read so far, `cut`
   includes `"time"`, and the process is marked busy until the call returns.
 - Errors: `gone` (the window or element doesn't exist, or no window of `pid` is named `name`), `busy` (the process is
