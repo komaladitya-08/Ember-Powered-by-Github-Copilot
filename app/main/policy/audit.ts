@@ -1,8 +1,9 @@
 /**
- * Append-only audit log of every decision and action (JSON lines, 0600).
- * Kept for 30 days by default (the administrator can change that); rotated by
- * month. Each line can also go to the systemd journal (tag "ember-audit"), so
- * administrators see it with the rest of the machine's logs.
+ * Append-only audit log of every decision and action (JSON lines, 0600), one
+ * file per month. Each entry is kept for 30 days by default (the administrator
+ * can change that), pruned at start and once a day. Each line can also go to the
+ * systemd journal (tag "ember-audit"), so administrators see it with the rest of
+ * the machine's logs.
  */
 
 import fs from "node:fs";
@@ -98,16 +99,60 @@ export class AuditLog {
     return out;
   }
 
-  /** Deletes month files older than `days`. */
+  /**
+   * Deletes entries older than `days`, by each entry's own time (review #86): a month whose end is older goes whole, a
+   * month that straddles the cutoff is trimmed in place (a torn line goes with the old ones), and a newer one isn't
+   * read at all.
+   */
   prune(days = 30): void {
     const cutoff = this.now().getTime() - days * 86_400_000;
     for (const f of fs.readdirSync(this.dir)) {
       const m = MONTH_FILE.exec(f);
       if (!m) continue;
+      const file = path.join(this.dir, f);
+      const start = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1);
       const end = Date.UTC(Number(m[1]), Number(m[2]), 1); // first day of the following month
-      if (end < cutoff) fs.rmSync(path.join(this.dir, f));
+      if (end <= cutoff) fs.rmSync(file);
+      else if (start < cutoff) this.trim(file, cutoff);
     }
     this.latest = null;
+  }
+
+  /** Keeps the lines of `file` written at `cutoff` or later; rewrites it (0600, atomically) only when some go. */
+  private trim(file: string, cutoff: number): void {
+    const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
+    const keep = lines.filter(l => {
+      try {
+        const t = Date.parse((JSON.parse(l) as { t?: unknown }).t as string);
+        return Number.isFinite(t) && t >= cutoff;
+      } catch {
+        return false; // a torn line
+      }
+    });
+    if (keep.length === lines.length) return;
+    if (!keep.length) { fs.rmSync(file); return; }
+    const tmp = `${file}.tmp-${process.pid}`;
+    try {
+      fs.writeFileSync(tmp, keep.join("\n") + "\n", { mode: 0o600 });
+      fs.renameSync(tmp, file);
+    } catch (err) {
+      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing left to tidy */ }
+      throw err;
+    }
+  }
+
+  private pruneTimer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * Prunes once a day as well as at start (an Ember that runs for weeks keeps nothing past `days()`), without keeping
+   * the process alive; returns a function that stops it. `onError`: a prune that failed (tried again the next day).
+   */
+  pruneDaily(days: () => number, onError: (err: unknown) => void = () => undefined): () => void {
+    if (this.pruneTimer) clearInterval(this.pruneTimer);
+    const timer = setInterval(() => { try { this.prune(days()); } catch (err) { onError(err); } }, 86_400_000);
+    timer.unref?.();
+    this.pruneTimer = timer;
+    return () => { clearInterval(timer); if (this.pruneTimer === timer) this.pruneTimer = null; };
   }
 }
 

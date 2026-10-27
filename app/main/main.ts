@@ -1353,6 +1353,8 @@ function start(): void {
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
       err => log.warn("audit.write_failed", { err }));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
+    // And once a day: an Ember that runs for weeks keeps nothing past the retention (review #86).
+    audit.pruneDaily(() => policy.auditRetentionDays ?? 30, err => log.warn("audit.prune_failed", { err }));
     confirmer = new Confirmer(showState, {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
