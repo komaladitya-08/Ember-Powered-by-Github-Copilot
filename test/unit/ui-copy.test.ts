@@ -298,7 +298,7 @@ describe("the command window's words (§8.5)", () => {
   });
 
   it("speaks of Ember in the third person on every fixed line of the card (bubbles are first person, the card isn't)", () => {
-    const lines = [...Object.values(LINES), ...Object.values(CARD_LINES).filter((l): l is string => typeof l === "string"), OUTPUT_TAINT_LINE];
+    const lines: string[] = [...Object.values(LINES), ...Object.values(CARD_LINES as Record<string, unknown>).filter((l): l is string => typeof l === "string"), OUTPUT_TAINT_LINE];
     for (const l of lines) expect(l, l).not.toMatch(/(^|\s)I('m|'ll|'ve|'d)?\s/);
     expect(keep(LINES.tainted)).toBe("Ember is checking each step: a step came up that you didn't ask for.");
     expect(CARD_LINES.tainted).toBe(LINES.tainted);
