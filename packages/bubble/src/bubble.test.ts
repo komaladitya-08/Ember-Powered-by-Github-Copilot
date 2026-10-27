@@ -50,6 +50,19 @@ describe("announcement: where it is, when not this computer (review #13)", () =>
   });
 });
 
+describe("announcement: how to answer a question (review #52)", () => {
+  const view = (v: Partial<BubbleView>): BubbleView => ({ visible: true, mood: "attention", title: "May I?", thought: "Click “Save” in gedit?", streaming: false, ...v });
+
+  it("reads a question's key hint after it, as its step row shows it", () => {
+    expect(announcement(view({ step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" })))
+      .toBe("Ember needs you: May I? Click “Save” in gedit? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+    expect(announcement(view({ title: "May I run a command?", thought: "On build-01: Deletes build", step: "The command is in Ember's command window: press Alt+Tab to go there." })))
+      .toBe("Ember needs you: May I run a command? On build-01: Deletes build. The command is in Ember's command window: press Alt+Tab to go there.");
+    // Only a question's step: a task's step while it works is never read out.
+    expect(announcement(view({ mood: "idle", title: "Ember", thought: "Done.", step: "Clicking" }))).toBe("Ember says: Done.");
+  });
+});
+
 describe("bubblePosition", () => {
   const screen = { width: 1280, height: 800 };
   /** Ember's body and the emote over its head, as bubblePosition keeps clear of them. */

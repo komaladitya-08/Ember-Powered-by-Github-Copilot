@@ -149,7 +149,9 @@ everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.", "
 then the model's reason, quoted. **Allow** stays off until the whole command has been in view ("Read the whole
 command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works only while that card
 shows the whole command; **Not now** and the deny chord always work. There is never an "Always" for commands, a voice
-"yes" never approves one, and a notification only says "Ember wants to run a command on build-01." A question nobody
+"yes" never approves one, and a notification (and Ember's speech) only says "Ember wants to run a command on build-01."
+with how to get to the command window from the keyboard ("press Alt+Tab to go there" on Linux and Windows); screen
+readers hear that too, and a question's key hint ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody
 answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that computer, in that folder, for
 that task: any change asks again. After a "no", Ember doesn't try again or work around it.
 

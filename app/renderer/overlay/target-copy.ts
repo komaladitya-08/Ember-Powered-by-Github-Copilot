@@ -5,6 +5,7 @@
  * (A command's question and the commands card's question are the command flow's own, pinned by its tests.)
  */
 
+import type { OS } from "../../shared/shortcuts";
 import type { TargetKind } from "../../shared/targets";
 
 /** A bubble's words: its title, its text, and its buttons (the first marked primary, when it is). */
@@ -136,6 +137,13 @@ export const wslFirstSeen = (): BubbleWords => ({
   text: "It can read and use your Linux apps and run commands there. Turn it on in settings?",
   actions: [{ label: "Open settings", primary: true }, { label: "Not now" }],
 });
+
+/**
+ * How to reach the window that shows a question whole (the command window, the window a consent card opened in) from
+ * the keyboard: Alt+Tab reaches it on Linux and Windows; on macOS the command window is a panel Command+Tab doesn't list.
+ */
+export const panelHint = (kind: "command" | "consent", os: OS): string =>
+  `${kind === "command" ? "The command is in Ember's command window" : "It's in the window that opened"}${os === "darwin" ? "." : ": press Alt+Tab to go there."}`;
 
 /** What is spoken and put in a notification for a command question (R7: only this, never the command; §3.9.1). */
 export const commandSpoken = (kind: TargetKind, label: string): string => `Ember wants to run a command on ${kind === "local" ? "this computer" : label}.`;

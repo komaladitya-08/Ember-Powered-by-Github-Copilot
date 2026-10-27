@@ -74,6 +74,8 @@ export interface ConfirmerTiming {
    * approve key allow a panel question. Absent (tests, the eval): panel questions can't be allowed at all.
    */
   panelReady?: (n: number) => boolean;
+  /** Under a panel question, how to reach its window from the keyboard (main wires the targets runtime's panelHint). */
+  panelHint?: (panel: QuestionPanel) => string | undefined;
 }
 
 export class Confirmer {
@@ -89,6 +91,7 @@ export class Confirmer {
   private onChange: ConfirmerTiming["onChange"];
   private keyHint: ConfirmerTiming["keyHint"];
   private panelReady: ConfirmerTiming["panelReady"];
+  private panelHint: ConfirmerTiming["panelHint"];
   /** Waiting for no question to be up or queued (settled()). */
   private settledWaiters: (() => void)[] = [];
 
@@ -102,6 +105,7 @@ export class Confirmer {
     this.onChange = t.onChange;
     this.keyHint = t.keyHint;
     this.panelReady = t.panelReady;
+    this.panelHint = t.panelHint;
   }
 
   /**
@@ -180,6 +184,11 @@ export class Confirmer {
     }
   }
 
+  /** How to reach a panel question's window from the keyboard, or null when main doesn't say (a hint that throws says nothing). */
+  private panelHintFor(panel: QuestionPanel): string | null {
+    try { return this.panelHint?.(panel) || null; } catch { return null; }
+  }
+
   /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
   private armOf(q: Question): number {
     return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
@@ -213,8 +222,9 @@ export class Confirmer {
     const bubble: BubbleState = {
       visible: true, mood: "attention", title: p.q.title,
       thought: task && task !== p.q.prompt ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
-      // A panel question is answered in its window, which names the keys while they work there.
-      step: panel ? null : this.keyHint?.() || null, streaming: false,
+      // A panel question is answered in its window, which names the keys while they work there; its step says how to
+      // get there from the keyboard (the bubble's own buttons are mouse-only).
+      step: panel ? this.panelHintFor(panel) : this.keyHint?.() || null, streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]

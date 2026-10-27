@@ -1102,10 +1102,12 @@ describe("question panels (§3.9)", () => {
 
   it("speaks only that Ember wants to run a command (never the command), and gives words for consent cards", () => {
     const r = rig();
-    expect(r.t.questionWords(commandQ)).toBe("Ember wants to run a command on build-01.");
-    expect(r.t.questionWords({ ...commandQ, panel: { kind: "command", card: { ...card, target: "local", targetLabel: "This computer" } } })).toBe("Ember wants to run a command on this computer.");
-    expect(r.t.questionWords(consentQ)).toBe("Ember needs your OK to run commands on this computer. Read what it means in the window that opened.");
-    expect(r.t.questionWords({ ...consentQ, panel: { kind: "consent", consent: wslConsent({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }) } })).toBe("Use Ember with WSL? Read what it means in the window that opened.");
+    // Each with how to get to its window from the keyboard (review #52).
+    const go = " The command is in Ember's command window: press Alt+Tab to go there.";
+    expect(r.t.questionWords(commandQ)).toBe(`Ember wants to run a command on build-01.${go}`);
+    expect(r.t.questionWords({ ...commandQ, panel: { kind: "command", card: { ...card, target: "local", targetLabel: "This computer" } } })).toBe(`Ember wants to run a command on this computer.${go}`);
+    expect(r.t.questionWords(consentQ)).toBe("Ember needs your OK to run commands on this computer. It's in the window that opened: press Alt+Tab to go there.");
+    expect(r.t.questionWords({ ...consentQ, panel: { kind: "consent", consent: wslConsent({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }) } })).toBe("Use Ember with WSL? It's in the window that opened: press Alt+Tab to go there.");
   });
 
   it("passes the card's own answers to the Confirmer as panel answers with their hash", () => {
@@ -1280,6 +1282,20 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.settings.get().targets.dismissedOffers).toEqual(["deploy@build-01"]);
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "offerSsh", on: false });
     expect(r.settings.get().targets.offerSsh).toBe(false);
+  });
+});
+
+describe("how a question shown in a window is reached from the keyboard (review #52)", () => {
+  it("says it aloud and gives the Confirmer the same words for the bubble", async () => {
+    const r = rig();
+    const card = { target: "local", targetLabel: "This computer" } as unknown as CommandCard;
+    const consent = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false } });
+    expect(r.t.questionWords({ title: "May I run a command?", prompt: "x", options: [], panel: { kind: "command", card } }))
+      .toBe("Ember wants to run a command on this computer. The command is in Ember's command window: press Alt+Tab to go there.");
+    expect(r.t.questionWords({ title: "Turn on commands?", prompt: "x", options: [], panel: { kind: "consent", consent } }))
+      .toBe("Ember needs your OK to run commands on this computer. It's in the window that opened: press Alt+Tab to go there.");
+    expect(r.t.panelHint({ kind: "command", card })).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
+    expect(rig({ os: "darwin" }).t.panelHint({ kind: "consent", consent })).toBe("It's in the window that opened.");
   });
 });
 

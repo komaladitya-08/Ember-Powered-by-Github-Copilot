@@ -235,7 +235,7 @@ describe("What Ember did, review round 11", () => {
 const NEW_STRINGS: string[] = [];
 const keep = <T extends string>(s: T): T => { NEW_STRINGS.push(s); return s; };
 /** Words that keep their capital inside a sentence. */
-const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
+const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|Alt\+Tab|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
 
 describe("the command window's words (§8.5)", () => {
   const exit = (e: Partial<Parameters<typeof commandCopy.statusLine>[0]>) => ({ code: 0, signal: null, ended: "exit" as const, ms: 3200, ...e });
@@ -629,6 +629,10 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
     expect(bubbleCopy.announcement("Pushing to GitHub, as you asked", undefined, 4).text).toBe("On this computer. It starts in 4 seconds.");
     expect(all(bubbleCopy.wslFirstSeen())).toEqual(["Ember can work in WSL", "It can read and use your Linux apps and run commands there. Turn it on in settings?", "Open settings", "Not now"]);
     expect(keep(bubbleCopy.commandSpoken("ssh", "build-01"))).toBe("Ember wants to run a command on build-01.");
+    // How to get to the window that shows it whole, from the keyboard (review #52): Alt+Tab where that reaches it.
+    expect(keep(bubbleCopy.panelHint("command", "linux"))).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
+    expect(keep(bubbleCopy.panelHint("consent", "win32"))).toBe("It's in the window that opened: press Alt+Tab to go there.");
+    expect(keep(bubbleCopy.panelHint("command", "darwin"))).toBe("The command is in Ember's command window.");
     expect(bubbleCopy.commandSpoken("local", "This computer")).toBe("Ember wants to run a command on this computer.");
   });
 });

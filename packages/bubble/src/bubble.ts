@@ -42,6 +42,8 @@ export interface BubbleView {
   streaming: boolean;
   /** Where its task acts when not on this computer ("on build-01"): the badge says it to the eye, this to the ear. */
   where?: string;
+  /** Its step row: under a question, how to answer it ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"), read after it. */
+  step?: string | null;
 }
 
 /**
@@ -56,8 +58,11 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
   const where = v.where?.replace(/\s+/g, " ").trim();
   const at = where ? `, ${where}` : "";
+  // A question's step row says how to answer it (or where it is shown whole): heard after it, as it is seen under it.
+  const hint = v.step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim();
+  const end = (s: string) => (/[.!?…:]$/.test(s) ? s : `${s}.`);
   switch (v.mood) {
-    case "attention": return both ? `${speaker} needs you${at}: ${both}` : "";
+    case "attention": return both ? `${speaker} needs you${at}: ${hint ? `${end(both)} ${end(hint)}` : both}` : "";
     case "error": return both ? `${speaker} has a problem${at}: ${both}` : "";
     case "idle": case "done": case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
@@ -652,6 +657,7 @@ export class ReasoningBubble {
     if (!this.visible) return;
     const text = announcement({
       visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming, where: this.where,
+      step: this.step.hidden ? null : this.stepText.textContent,
     }, this.speaker);
     if (text === this.announced) return;
     this.announced = text;

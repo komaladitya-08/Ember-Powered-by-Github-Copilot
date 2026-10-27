@@ -81,7 +81,7 @@ function announce(b: BubbleState, status: string | null): void {
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where }, name);
+    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step }, name);
     if (text && text !== announced) { announced = text; parts.push(text); }
   }
   if ((status ?? "") !== announcedStatus) {

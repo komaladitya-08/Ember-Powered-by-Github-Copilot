@@ -352,6 +352,8 @@ export interface TargetsDepsExtra {
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
 export interface TargetsRuntimeExtra {
+  /** Under a question shown in a window of Ember's own, how to reach that window from the keyboard (target-copy's panelHint). */
+  panelHint(panel: NonNullable<Question["panel"]>): string;
   /**
    * Applies a fix a target doctor row offers (§8.8): `wsl-a11y:<distro>` turns on toolkit accessibility in that running
    * distro with WB's fixed command, through its own command runner. Refused (with why) for anything else, with WSL off
@@ -1671,14 +1673,17 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       try {
         const p = q?.panel;
         if (!p) return null;
-        if (p.kind === "command") return words.commandSpoken(p.card.target === LOCAL_TARGET ? "local" : "ssh", p.card.targetLabel);
+        // Said with how to get to the window from the keyboard (only where, never the command: R7).
+        const hint = words.panelHint(p.kind, deps.os);
+        if (p.kind === "command") return `${words.commandSpoken(p.card.target === LOCAL_TARGET ? "local" : "ssh", p.card.targetLabel)} ${hint}`;
         const c = p.consent;
-        if (c.feature === "commands") return `Ember needs your OK to run commands on ${c.target === LOCAL_TARGET ? "this computer" : c.targetLabel}. Read what it means in the window that opened.`;
-        return `${c.title} Read what it means in the window that opened.`;
+        if (c.feature === "commands") return `Ember needs your OK to run commands on ${c.target === LOCAL_TARGET ? "this computer" : c.targetLabel}. ${hint}`;
+        return `${c.title} ${hint}`;
       } catch {
         return "Ember needs your OK. Read it in the window that opened.";
       }
     },
+    panelHint: p => words.panelHint(p?.kind === "command" ? "command" : "consent", deps.os),
     doctorRows: async () => {
       const rows = await doctorRowsWith({ os: deps.os, admin, packaged: deps.packaged }, parts.doctor).catch(() => [] as PlatformDoctorRow[]);
       if (wsl) {

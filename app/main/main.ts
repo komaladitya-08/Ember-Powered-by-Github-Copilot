@@ -1355,6 +1355,8 @@ function start(): void {
       // A question shown in a window of Ember's own (a command, a consent card): the keys allow it only while that window
       // shows all of it (R7).
       panelReady: n => targets?.panelReady(n) ?? false,
+      // And how to reach that window from the keyboard (the bubble's buttons are mouse-only).
+      panelHint: p => targets?.panelHint(p),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);

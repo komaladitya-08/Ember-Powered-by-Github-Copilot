@@ -235,6 +235,17 @@ describe("the Confirmer's panel questions (§3.9.1, R7)", () => {
     await expect(q).resolves.toBe("once");
   });
 
+  it("says under a panel question how to reach its window from the keyboard, never the keys that answer elsewhere (review #52)", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(p => shown.push(p), {
+      armMs: 0, gapMs: 0, keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", panelReady: () => true,
+      panelHint: p => (p.kind === "command" ? "The command is in Ember's command window: press Alt+Tab to go there." : undefined),
+    });
+    void c.ask(commandQuestion());
+    expect(shown.at(-1)?.bubble?.step).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
+    c.cancelAll();
+  });
+
   it("shows a panel question's bubble with its where badge, a button that brings the window up, and Not now (no key hint)", async () => {
     const { c, shown } = confirmer({ ready: () => true });
     void c.ask(commandQuestion());
