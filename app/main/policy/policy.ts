@@ -605,10 +605,19 @@ function shortcutFamily(k: string, kc: KeyConventions): boolean {
 }
 
 /**
- * A key named in a script other than Latin (lower case, as canonicalKeys gives it): a character outside ASCII ("е"),
- * or an X keysym of another script ("cyrillic_ie", "greek_tau", "hebrew_aleph", "kana_a", "hangul_a").
+ * The keys the Ctrl+Alt rules below can judge by name (as keyFamily spells them): an ASCII letter or digit, and the named
+ * keys whose keysym sits on its own physical key in every layout: moving and editing keys, function keys, ASCII
+ * punctuation (X's names for it) and the modifier and lock keys. Anything else ("cyrillic_ie", "gbreve", "é") Ember's
+ * keyboard may press on whichever physical key another layout group puts it (ğ is on E on a us,tr(f) keyboard).
  */
-const OTHER_SCRIPT_KEY = /\P{ASCII}|^(arabic|cyrillic|serbian|macedonia|ukrainian|ukranian|byelorussian|greek|hebrew|thai|hangul|korean|kana|armenian|georgian|sinh|farsi|lao|khmer|braille)_/u;
+const NAMED_BY_LATIN = new RegExp(`^([a-z0-9]|f\\d{1,2}|${[
+  "up", "down", "left", "right", "home", "end", "prior", "next", "insert", "delete", "backspace", "tab", "return", "escape",
+  "space", "menu", "pause", "break", "begin", "clear", "cancel", "help", "undo", "redo", "find",
+  "minus", "plus", "equal", "comma", "period", "slash", "backslash", "semicolon", "apostrophe", "grave", "bracketleft",
+  "bracketright", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "parenleft", "parenright",
+  "asterisk", "colon", "less", "greater", "question", "at", "asciicircum", "underscore", "braceleft", "bar", "braceright",
+  "asciitilde", "(control|shift|alt)_[lr]", "caps_lock", "num_lock", "scroll_lock", "shift_lock",
+].join("|")})$`);
 
 /**
  * Keys only the user presses (`k` from canonicalKeys): the logo key with anything, power, media and
@@ -617,7 +626,7 @@ const OTHER_SCRIPT_KEY = /\P{ASCII}|^(arabic|cyrillic|serbian|macedonia|ukrainia
  * its own question or stop, hide or reconfigure Ember. Shift doesn't change that. Off Linux also every combination in
  * the family of Ember's own shortcuts there (shortcutFamily) and the OS's own (kc.systemKeys: the app switcher, the
  * task manager, Spotlight, screenshots). On macOS ⌘ is the primary modifier, so the logo-key rule isn't applied there.
- * On Linux also a key named in another script with Ctrl or Alt (OTHER_SCRIPT_KEY).
+ * On Linux also Ctrl+Alt with a key those rules can't judge by its name (NAMED_BY_LATIN).
  */
 export function isSystemKey(k: string, kc: KeyConventions = KEYS.linux): boolean {
   const parts = keyFamily(k).split("+");
@@ -629,10 +638,11 @@ export function isSystemKey(k: string, kc: KeyConventions = KEYS.linux): boolean
   if (ctrlAlt && /^f\d{1,2}$/.test(key)) return true;
   if (mods.has("alt") && !mods.has("ctrl") && /^f[12]$/.test(key)) return true;
   if (ctrlAlt && /^(backspace|delete|tab|t|l|up|down|left|right|y|n|a|x|space|e|m|end)$/.test(key)) return true;
-  // Linux: the Ctrl+Alt rules above already cover Ember's own shortcuts, and nothing is added there but keys named in
-  // another script, which Ember's keyboard presses on another layout group's physical key (Ctrl+Alt+Cyrillic_ie is
-  // Ctrl+Alt+T on a us,ru keyboard): the rules above judge Latin names only, so with Ctrl or Alt those are refused.
-  if (kc.os === "linux") return (mods.has("ctrl") || mods.has("alt")) && OTHER_SCRIPT_KEY.test(key);
+  // Linux: the Ctrl+Alt rules above already cover Ember's own shortcuts, and nothing is added there but Ctrl+Alt with a
+  // key they can't judge by name, which Ember's keyboard may press on another layout group's physical key
+  // (Ctrl+Alt+Cyrillic_ie is Ctrl+Alt+T on a us,ru keyboard, Ctrl+Alt+gbreve Ctrl+Alt+E on a us,tr(f) one). Ctrl or Alt
+  // alone reach no system key but F1 and F2 (above), so those are judged as any other key.
+  if (kc.os === "linux") return ctrlAlt && !NAMED_BY_LATIN.test(key);
   return shortcutFamily(k, kc) || kc.systemKeys.includes(keyFamily(k));
 }
 
