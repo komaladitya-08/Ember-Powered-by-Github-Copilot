@@ -40,6 +40,8 @@ export const IPC = {
   askContext: "agent:ask-context",
   /** What was typed while the ask box was opening (Ember held the keyboard meanwhile). */
   askTyped: "agent:ask-typed",
+  /** The ask box's field needs this many lines (1 to 4) for its text: the box grows to fit. */
+  askFit: "agent:ask-fit",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
   presence: "ember:presence",
   setPresence: "ember:set-presence",
@@ -200,4 +202,6 @@ export interface EmberAskApi {
   onContext(fn: (c: AskContext) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
+  /** The field needs `lines` lines (1 to 4) for its text: the box grows to fit. */
+  fit?(lines: number): void;
 }

@@ -12,6 +12,8 @@ import { x11WindowId } from "./platform/linux/window-system";
 
 const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
+/** The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines. */
+const LINE = 24, MAX_LINES = 4;
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
@@ -46,10 +48,21 @@ export function askBounds(near: { x: number; y: number; size?: number } | null, 
 /** `b` moved off `keepOff` when over it: up above it (Ember is under the box, so this keeps clear of it too), else to its left. */
 function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
   if (!keepOff || !overlap(b, keepOff)) return b;
-  const up = Math.round(keepOff.y - SIZE.height - GAP);
+  const up = Math.round(keepOff.y - b.height - GAP);
   if (up >= wa.y + GAP) return { ...b, y: up };
-  const aside = Math.round(keepOff.x - SIZE.width - GAP);
+  const aside = Math.round(keepOff.x - b.width - GAP);
   return aside >= wa.x + GAP ? { ...b, x: aside } : b;
+}
+
+/**
+ * `b` (the box now) as tall as a field of `lines` lines (1 to MAX_LINES): growing upward when the box is above Ember
+ * (`up`, its hint row stays put beside Ember's head), else downward; always inside the work area and clear of `keepOff`.
+ */
+export function grownBounds(b: Box, lines: number, wa: Box, up: boolean, keepOff?: Box | null): Box {
+  const height = SIZE.height + (Math.min(MAX_LINES, Math.max(1, Math.round(lines))) - 1) * LINE;
+  const top = wa.y + GAP, bottom = wa.y + wa.height - height - GAP;
+  const y = up ? b.y + b.height - height : b.y;
+  return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
 }
 
 export class AskWindow {
@@ -70,6 +83,8 @@ export class AskWindow {
   private wantedAt = 0;
   /** Who asked for the box (hotkey, menu, test): logged when it is actually shown. */
   private source = "unknown";
+  /** The box sits above Ember (or low in the middle of the screen): a taller field grows it upward. */
+  private up = true;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -116,6 +131,8 @@ export class AskWindow {
     if (this.o.floating) applyAllWorkspaces(win, this.o.floating.allWorkspaces);
     try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
     win.on("blur", () => { if (this.win === win) this.hide(); });
+    // The field asks for the lines its text needs (Shift+Enter, a pasted traceback): only this box's page is heard here.
+    win.webContents.ipc.on(IPC.askFit, (_e, lines: unknown) => { if (this.win === win && typeof lines === "number" && Number.isFinite(lines)) this.fit(lines); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
@@ -160,11 +177,20 @@ export class AskWindow {
     this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     const bounds = askBounds(near, display.workArea, this.keepOff());
+    this.up = !near || bounds.y + bounds.height <= near.y;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
     this.win.setBounds(bounds);
     if (this.loaded) this.reveal(this.win);
+  }
+
+  /** The field needs `lines` lines (1 to 4) for its text: the box grows or shrinks to fit, away from Ember. */
+  fit(lines: number): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const b = this.win.getBounds();
+    const next = grownBounds(b, lines, screen.getDisplayMatching(b).workArea, this.up, this.keepOff());
+    if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
   }
 
   /** Ember's handle changed (the compositor came or went): a box open over the new one moves off it. */

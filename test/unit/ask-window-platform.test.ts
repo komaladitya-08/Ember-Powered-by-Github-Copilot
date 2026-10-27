@@ -19,7 +19,7 @@ vi.mock("electron", () => {
     visible = false;
     handlers = new Map<string, (() => void)[]>();
     handle = () => { const b = Buffer.alloc(8); b.writeUInt32LE(0x3a00007, 0); return b; };
-    webContents = { on() {}, send() {}, isLoading: () => false };
+    webContents = { on() {}, send() {}, isLoading: () => false, ipc: { on() {} } };
     constructor(readonly options: Record<string, unknown>) { made.push(this); }
     on(e: string, fn: () => void) { this.handlers.set(e, [...(this.handlers.get(e) ?? []), fn]); return this; }
     once(e: string, fn: () => void) { return this.on(e, fn); }

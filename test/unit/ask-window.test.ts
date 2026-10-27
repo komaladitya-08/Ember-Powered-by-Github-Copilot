@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const made = vi.hoisted(() => [] as FakeWindow[]);
 interface FakeWindow {
   shown: number; focused: number; visible: boolean; ignoreMouse: boolean; handlers: Map<string, (() => void)[]>;
+  bounds: { x: number; y: number; width: number; height: number }; heard: Map<string, (e: unknown, ...a: unknown[]) => void>;
   webContents: { on(): void; send(ch: string, t: unknown): void; isLoading(): boolean };
   emit(e: string): void;
 }
@@ -16,14 +17,17 @@ vi.mock("electron", () => {
   const display = { workArea: { x: 0, y: 0, width: 1280, height: 800 } };
   class BrowserWindow implements FakeWindow {
     shown = 0; focused = 0; visible = false; handlers = new Map<string, (() => void)[]>();
-    webContents = { on() {}, send() {}, isLoading: () => false };
-    constructor() { made.push(this); }
+    bounds = { x: 0, y: 0, width: 560, height: 92 };
+    heard = new Map<string, (e: unknown, ...a: unknown[]) => void>();
+    webContents = { on() {}, send() {}, isLoading: () => false, ipc: { on: (ch: string, fn: (e: unknown, ...a: unknown[]) => void) => { this.heard.set(ch, fn); } } };
+    constructor(o: { x: number; y: number; width: number; height: number }) { made.push(this); this.bounds = { x: o.x, y: o.y, width: o.width, height: o.height }; }
     on(e: string, fn: () => void) { this.handlers.set(e, [...(this.handlers.get(e) ?? []), fn]); return this; }
     once(e: string, fn: () => void) { return this.on(e, fn); }
     emit(e: string) { for (const fn of this.handlers.get(e) ?? []) fn(); }
     setAlwaysOnTop() {}
     loadFile() { return Promise.resolve(); }
-    setBounds() {}
+    setBounds(b: { x: number; y: number; width: number; height: number }) { this.bounds = b; }
+    getBounds() { return this.bounds; }
     show() { this.shown++; this.visible = true; this.ignoreMouse = false; }
     hide() { this.visible = false; }
     focus() { this.focused++; }
@@ -128,5 +132,22 @@ describe("the ask box", () => {
     // A focus on the hidden box must not map it again.
     ask.focus();
     expect(win.visible).toBe(false);
+  });
+
+  it("grows with its field as lines are added or pasted, upward above Ember, and opens one line tall again (review #70)", () => {
+    const ask = new AskWindow();
+    ask.show({ x: 400, y: 500 });
+    const [win] = made;
+    win.emit("ready-to-show");
+    const one = { ...win.bounds };
+    expect(one.height).toBe(92);
+    win.heard.get("agent:ask-fit")!({}, 3);
+    expect(win.bounds).toEqual({ ...one, height: 140, y: one.y - 48 });
+    // Nothing from the page that isn't a number of lines.
+    win.heard.get("agent:ask-fit")!({}, "9");
+    expect(win.bounds.height).toBe(140);
+    ask.hide();
+    ask.show({ x: 400, y: 500 });
+    expect(win.bounds).toEqual(one);
   });
 });
