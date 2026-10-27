@@ -35,6 +35,22 @@ export interface PromptView {
 
 /** How long the affirmative button of a host-key or consent card ignores presses. */
 export const PROMPT_ARM_MS = 900;
+/** Under a consent card's yes while its words run on below what shows (as the command card's "Read the whole command"). */
+export const CONSENT_READ_HINT = "Scroll down to read it all first.";
+/** One CSS pixel of slack for sub-pixel layout. */
+const SLACK = 1;
+
+/** A card's words as the page measures them (the scrolling block's own numbers, CSS pixels). */
+export interface WordsMetrics { scrollTop: number; scrollHeight: number; clientHeight: number }
+
+/** Every word is in view now: nothing to scroll, or scrolled to the end. An empty or unmeasurable block isn't. */
+export function readThrough(m: WordsMetrics): boolean {
+  const ok = [m.scrollTop, m.scrollHeight, m.clientHeight].every(Number.isFinite) && m.clientHeight > 0;
+  return ok && m.scrollTop + m.clientHeight >= m.scrollHeight - SLACK;
+}
+
+/** The words run on below what shows (the page fades their foot and says to scroll). */
+export const moreBelow = (m: WordsMetrics): boolean => !readThrough(m);
 const NEVER_KEPT = " Ember hands it to SSH only: it's never saved, logged or sent to Copilot.";
 
 const ok = (label: string, o: Partial<ButtonView> = {}): ButtonView => ({ id: "ok", label, primary: true, isDefault: true, armed: false, ...o });
@@ -195,11 +211,12 @@ export function consentText(i: ConsentInput): ConsentText {
     }[s.desktop];
     return {
       title: `Bring Ember to ${label}?`,
+      // What it can reach there and what stays here come before what it copies (review #270).
       body: [
         first,
-        `It copies a small helper there: about ${s.bundleMB ?? 31} MB, unpacked to about ${s.unpackedMB ?? 125} MB in ${s.installDir ?? "its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
-        `Your voice and your GitHub sign-in stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
         desktop,
+        `Your voice and your GitHub sign-in stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.`,
+        `It copies a small helper there: about ${s.bundleMB ?? 31} MB, unpacked to about ${s.unpackedMB ?? 125} MB in ${s.installDir ?? "its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
         `${label} keeps its own record of what Ember does there.`,
       ],
       yes: "Connect",
@@ -209,15 +226,15 @@ export function consentText(i: ConsentInput): ConsentText {
   const c = i.commands ?? {};
   return {
     title: i.target === "local" ? "Let Ember run commands on this computer?" : `Let Ember run commands on ${label}?`,
+    // How to stop it and what it can reach come first (review #270).
     body: [
-      "Ember runs commands in its own command window, where you can watch them and stop them. It never types into your own terminal windows.",
-      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
-      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
+      `Ember runs commands in its own command window, where you can watch them and stop them. ${stop} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
       ...(c.wsl ? ["Commands in WSL can also reach your Windows files and programs."] : []),
       ...(c.privileged ? ["Commands here run as the administrator, so Ember asks before every one."] : []),
       ...(c.windows ? ["Commands here run in Windows PowerShell and can't ask you for answers or passwords."] : []),
       ...(c.podman ? ["Podman uses this distro, so Ember asks before every command here."] : []),
-      `${stop} stops everything at once. What a command already changed stays changed.`,
+      "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
+      "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
     ],
     yes: "Turn on",
     no: "Not now",
@@ -234,14 +251,19 @@ export type PressResult =
   | { kind: "consent"; id: string; title: string; body: string[]; sha256: string }
   | { kind: "wait"; focusField: boolean };
 
+/** A consent card's yes counts only once all its words have been in view (`seen`), as the command card's Allow. */
+export const isConsent = (card: PromptCard): boolean => card.kind === "consent" || card.kind === "consent-direct";
+
 /**
  * A button press on the card on screen (pure, so the tests hold the page to it): Cancel always answers; an armed button
- * waits out PROMPT_ARM_MS; a secret needs something typed, and the field is emptied the moment its value is taken.
+ * waits out PROMPT_ARM_MS; a consent card's yes waits until every word of it has been in view (`seen`: review #182,
+ * #270); a secret needs something typed, and the field is emptied the moment its value is taken.
  */
-export function pressResult(card: PromptCard, button: ButtonView, field: { value: string }, now: number, shownAt: number): PressResult {
+export function pressResult(card: PromptCard, button: ButtonView, field: { value: string }, now: number, shownAt: number, seen: boolean): PressResult {
   if (button.id === "cancel") return { kind: "cancel", id: card.id };
   if (button.armed && now < shownAt + PROMPT_ARM_MS) return { kind: "wait", focusField: false };
   if (card.kind === "consent" || card.kind === "consent-direct") {
+    if (!seen) return { kind: "wait", focusField: false };
     return { kind: "consent", id: card.id, title: card.consent.title, body: [...card.consent.body], sha256: card.consent.sha256 };
   }
   if (card.kind === "secret") {

@@ -6,9 +6,10 @@
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them.
  */
 
-import { BrowserWindow } from "electron";
+import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
+import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
 import type { SettingsPatch } from "./settings";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
@@ -70,13 +71,15 @@ export function createCommandWindow(os: OS): BrowserWindow {
 }
 
 /**
- * The prompt window ("Ember", §8.6): one small card at a time (a host key, a password, a consent card), always on top.
- * It takes focus, as it takes typing. On Windows and macOS it is left out of screen captures.
+ * The prompt window ("Ember", §8.6): one card at a time (a host key, a password, a consent card), always on top. It
+ * takes focus, as it takes typing. On Windows and macOS it is left out of screen captures. Its controller fits it to
+ * each card (`fit`: small for an SSH prompt, larger for a consent card, review #182, #270), centred where it is and
+ * inside its display's work area; the user doesn't resize it.
  */
-export function createPromptWindow(os: OS): BrowserWindow {
+export function createPromptWindow(os: OS): BrowserWindow & { fit(size: { width: number; height: number }): void } {
   const win = new BrowserWindow({
-    width: 440,
-    height: 300,
+    width: PROMPT_SIZE.card.width,
+    height: PROMPT_SIZE.card.height,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -92,7 +95,14 @@ export function createPromptWindow(os: OS): BrowserWindow {
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
-  return win;
+  const fit = (size: { width: number; height: number }) => {
+    if (win.isDestroyed()) return;
+    const now = win.getBounds();
+    const next = fitBounds(now, size, screen.getDisplayMatching(now).workArea);
+    // Left where it is when it already has that size there (a window the user moved stays put).
+    if (next.x !== now.x || next.y !== now.y || next.width !== now.width || next.height !== now.height) win.setBounds(next);
+  };
+  return Object.assign(win, { fit });
 }
 
 /**

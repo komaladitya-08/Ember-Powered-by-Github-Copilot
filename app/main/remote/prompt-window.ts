@@ -45,6 +45,38 @@ export type PromptWindowController = PromptUi & PromptWindowExtras & {
   showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
 };
 
+/** A rectangle in DIP: a window's bounds, a display's work area. */
+export interface Rect { x: number; y: number; width: number; height: number }
+
+/**
+ * The window's size for each kind of card (§8.6). An SSH prompt fits the small card; a consent card is two screens of
+ * text in it, with what it can reach and the stop chord below the fold, so it gets a window that shows all of it (review
+ * #182, #270), capped to the work area. Whatever still runs on below (a long key path, larger text) keeps the yes off
+ * until it has been read (copy.ts readThrough).
+ */
+export const PROMPT_SIZE = { card: { width: 440, height: 300 }, consent: { width: 520, height: 600 } } as const;
+export type PromptSize = (typeof PROMPT_SIZE)[keyof typeof PROMPT_SIZE];
+
+/** The size a card's window takes. */
+export const promptSizeOf = (card: PromptCard): PromptSize =>
+  (card.kind === "consent" || card.kind === "consent-direct" ? PROMPT_SIZE.consent : PROMPT_SIZE.card);
+
+/** Bounds for a window of `size`, centred where the window is now, inside `area` (with `margin` where there is room). */
+export function fitBounds(now: Rect, size: { width: number; height: number }, area: Rect, margin = 16): Rect {
+  const width = Math.max(1, Math.min(size.width, area.width - 2 * margin));
+  const height = Math.max(1, Math.min(size.height, area.height - 2 * margin));
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  const x = clamp(Math.round(now.x + now.width / 2 - width / 2), area.x + margin, area.x + area.width - margin - width);
+  const y = clamp(Math.round(now.y + now.height / 2 - height / 2), area.y + margin, area.y + area.height - margin - height);
+  return { x, y, width, height };
+}
+
+/** The prompt window as windows.ts makes it: the contract's window, plus the hooks the controller uses when present. */
+export interface PromptWindowLike extends BrowserWindowLike {
+  /** Sizes the window for a card (fitBounds within its display's work area). */
+  fit?(size: { width: number; height: number }): void;
+}
+
 /** A secret the page may send: one line, no NUL, at most this long (askpass hands it to ssh as one line). */
 const SECRET_MAX = 1024;
 
@@ -83,18 +115,18 @@ export function validPromptCard(c: unknown): c is PromptCard {
 }
 
 /** The prompt window, as connections and the targets runtime use it. */
-export function createPromptWindow(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS }):
+export function createPromptWindow(o: { create: () => PromptWindowLike; ipc: IpcLike; log: Logger; os: OS }):
   PromptUi & { showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void } {
   return createPromptWindowController(o);
 }
 
 /** createPromptWindow with its extras typed: the same object (the targets runtime may call this name instead). */
-export function createPromptWindowController(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS }): PromptWindowController {
+export function createPromptWindowController(o: { create: () => PromptWindowLike; ipc: IpcLike; log: Logger; os: OS }): PromptWindowController {
   /** Logs, never letting a logger that fails stop the fail-closed path it reports. */
   const note = (level: "warn" | "error", msg: string, fields: Record<string, unknown>) => {
     try { o.log[level](msg, fields); } catch { /* nothing else to do: the caller goes on failing closed */ }
   };
-  let win: BrowserWindowLike | null = null;
+  let win: PromptWindowLike | null = null;
   let disposed = false;
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
@@ -107,7 +139,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
    */
   const consents = new Map<number, ConsentPanel>();
 
-  const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
+  const live = (): PromptWindowLike | null => (win && !win.isDestroyed() ? win : null);
   const owns = (sender: WebContentsLike | undefined): boolean => {
     const w = live();
     return !!w && !!sender && typeof sender.id === "number" && sender.id === w.webContents.id;
@@ -116,11 +148,11 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     try { f(); } catch (err) { note("warn", "prompt.window_call_failed", { what, err }); }
   };
 
-  function ensure(): BrowserWindowLike | null {
+  function ensure(): PromptWindowLike | null {
     if (disposed) return null;
     const w0 = live();
     if (w0) return w0;
-    let w: BrowserWindowLike;
+    let w: PromptWindowLike;
     try { w = o.create(); } catch (err) {
       note("error", "prompt.window_failed", { err });
       return null;
@@ -161,6 +193,9 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
       if (head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false });
       return;
     }
+    // Sized for the card before it is drawn and shown (review #182, #270).
+    const size = promptSizeOf(queue[0].card);
+    if (typeof w.fit === "function") safe("fit", () => w.fit?.(size));
     push();
     safe("show", () => { w.show(); w.moveTop(); w.focus(); });
   }

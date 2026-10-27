@@ -485,7 +485,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: true })).resolves.toEqual({ ok: true });
     expect(r.cards).toHaveLength(1);
     expect(r.cards[0].title).toBe("Let Ember run commands on this computer?");
-    expect(r.cards[0].body.at(-1)).toBe("Ctrl+Alt+X stops everything at once. What a command already changed stays changed.");
+    expect(r.cards[0].body[0]).toContain(" Ctrl+Alt+X stops everything at once; what a command already changed stays changed.");
     expect(r.settings.get().commands.local).toMatchObject({ on: true, consent: { version: 1 } });
     // Already accepted: switching off and on again asks nothing.
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: false });
@@ -518,7 +518,8 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     const mac = commandsConsent({ os: "darwin", target: "local", targetLabel: "This computer", facts });
     expect(new Set([linux.sha256, win.sha256, mac.sha256]).size).toBe(3);
     for (const [c, osName] of [[linux, "linux"], [win, "win32"], [mac, "darwin"]] as const) {
-      expect(c.body.at(-1)!.startsWith(SHORTCUTS[osName].stop.label)).toBe(true);
+      // The stop chord comes first, before what the card goes on to say (review #270).
+      expect(c.body[0]).toContain(`${SHORTCUTS[osName].stop.label} stops everything at once`);
       expect(c.sha256).toBe(consentSha256(c));
     }
     expect(win.body).toEqual(expect.arrayContaining(["Commands here run as the administrator, so Ember asks before every one.", "Commands here run in Windows PowerShell and can't ask you for answers or passwords."]));

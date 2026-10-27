@@ -377,9 +377,9 @@ describe("the first-use consent cards (§8.4)", () => {
     expect(keep(c.title)).toBe("Bring Ember to build-01?");
     expect(c.body.map(keep)).toEqual([
       "Ember will connect to build-01 as deploy (deploy@build-01.example.com, port 22, through jump-host) with your own SSH settings and keys.",
-      "It copies a small helper there: about 31 MB, unpacked to about 125 MB in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press Ctrl+Alt+X. If the connection drops, a command running there stops within 20 seconds.",
-      "Your voice and your GitHub sign-in stay on this computer. Ember sends build-01 only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.",
       "On build-01's screen it reads and uses apps only when deploy is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.",
+      "Your voice and your GitHub sign-in stay on this computer. Ember sends build-01 only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.",
+      "It copies a small helper there: about 31 MB, unpacked to about 125 MB in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press Ctrl+Alt+X. If the connection drops, a command running there stops within 20 seconds.",
       "build-01 keeps its own record of what Ember does there.",
     ]);
     expect([c.yes, c.no]).toEqual(["Connect", "Not now"]);
@@ -393,28 +393,28 @@ describe("the first-use consent cards (§8.4)", () => {
   });
 
   it("says what Ember can do with each kind of remote screen", () => {
-    expect(keep(ssh({ desktop: "headless" }).body[3])).toBe("build-01 has no desktop, so Ember will only run commands there.");
-    expect(keep(ssh({ desktop: "remote-session" }).body[3])).toBe("build-01's desktop is a remote session: Ember will run commands only.");
-    expect(keep(ssh({ desktop: "wsl" }).body[3])).toBe("build-01 is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.");
-    expect(keep(ssh({ desktop: "mac" }).body[3])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there.");
-    expect(keep(ssh({ desktop: "mac", tccBlocked: true }).body[3])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there. Commands there can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on (System Settings › General › Sharing › Remote Login › ⓘ).");
-    expect(ssh({ graceSeconds: 45, bundleMB: 33, unpackedMB: 130 }).body[1]).toContain("about 33 MB, unpacked to about 130 MB");
-    expect(ssh({ graceSeconds: 45 }).body[1]).toMatch(/stops within 45 seconds\.$/);
+    expect(keep(ssh({ desktop: "headless" }).body[1])).toBe("build-01 has no desktop, so Ember will only run commands there.");
+    expect(keep(ssh({ desktop: "remote-session" }).body[1])).toBe("build-01's desktop is a remote session: Ember will run commands only.");
+    expect(keep(ssh({ desktop: "wsl" }).body[1])).toBe("build-01 is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.");
+    expect(keep(ssh({ desktop: "mac" }).body[1])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there.");
+    expect(keep(ssh({ desktop: "mac", tccBlocked: true }).body[1])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there. Commands there can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on (System Settings › General › Sharing › Remote Login › ⓘ).");
+    expect(ssh({ graceSeconds: 45, bundleMB: 33, unpackedMB: 130 }).body[3]).toContain("about 33 MB, unpacked to about 130 MB");
+    expect(ssh({ graceSeconds: 45 }).body[3]).toMatch(/stops within 45 seconds\.$/);
   });
 
   it("asks to turn on commands, with the extra lines only where they apply", () => {
     const local = promptCopy.consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer" });
     expect(keep(local.title)).toBe("Let Ember run commands on this computer?");
     expect(local.body.map(keep)).toEqual([
-      "Ember runs commands in its own command window, where you can watch them and stop them. It never types into your own terminal windows.",
+      "Ember runs commands in its own command window, where you can watch them and stop them. Ctrl+Alt+X stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.",
       "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
       "What a command prints goes to GitHub Copilot as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.",
-      "Ctrl+Alt+X stops everything at once. What a command already changed stays changed.",
     ]);
     expect([local.yes, local.no]).toEqual(["Turn on", "Not now"]);
     const all = promptCopy.consentText({ feature: "commands", os: "win32", target: "wsl:podman-machine-default", targetLabel: "podman-machine-default (WSL)", commands: { wsl: true, privileged: true, windows: true, podman: true } });
     expect(keep(all.title)).toBe("Let Ember run commands on podman-machine-default (WSL)?");
-    expect(all.body.slice(3, 7).map(keep)).toEqual([
+    // What the computer's commands can reach comes right after how to stop them (review #270).
+    expect(all.body.slice(1, 5).map(keep)).toEqual([
       "Commands in WSL can also reach your Windows files and programs.",
       "Commands here run as the administrator, so Ember asks before every one.",
       "Commands here run in Windows PowerShell and can't ask you for answers or passwords.",

@@ -7,8 +7,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
-import { consentHash, consentPanel, createPromptWindow, createPromptWindowController, validConsent, validPromptCard, type ConsentAnswer } from "../../app/main/remote/prompt-window";
-import { PROMPT_ARM_MS, consentHashText, pressResult, promptView } from "../../app/renderer/prompt/copy";
+import {
+  PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
+} from "../../app/main/remote/prompt-window";
+import { CONSENT_READ_HINT, PROMPT_ARM_MS, consentHashText, moreBelow, pressResult, promptView, readThrough } from "../../app/renderer/prompt/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { Logger } from "../../app/main/logger";
 import type { ConsentPanel } from "../../app/shared/consent";
@@ -280,21 +282,47 @@ describe("the page's buttons (pure press logic)", () => {
 
   it("empties the field the moment a secret is sent, and waits for one to be typed", () => {
     const field = { value: "" };
-    expect(pressResult(password(), ok(password()), field, 0, 0)).toEqual({ kind: "wait", focusField: true });
+    expect(pressResult(password(), ok(password()), field, 0, 0, true)).toEqual({ kind: "wait", focusField: true });
     field.value = "hunter2";
-    expect(pressResult(password(), ok(password()), field, 0, 0)).toEqual({ kind: "answer", answer: { id: "p1", ok: true, value: "hunter2" } });
+    expect(pressResult(password(), ok(password()), field, 0, 0, true)).toEqual({ kind: "answer", answer: { id: "p1", ok: true, value: "hunter2" } });
     expect(field.value).toBe("");
   });
 
   it("cancels at once, and arms Trust and connect and a consent yes for a moment", () => {
     const field = { value: "keep" };
-    expect(pressResult(hostKey(), cancel(hostKey()), field, 0, 0)).toEqual({ kind: "cancel", id: "h1" });
-    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS - 1, 0)).toEqual({ kind: "wait", focusField: false });
-    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS, 0)).toEqual({ kind: "answer", answer: { id: "h1", ok: true } });
+    expect(pressResult(hostKey(), cancel(hostKey()), field, 0, 0, true)).toEqual({ kind: "cancel", id: "h1" });
+    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS - 1, 0, true)).toEqual({ kind: "wait", focusField: false });
+    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS, 0, true)).toEqual({ kind: "answer", answer: { id: "h1", ok: true } });
     expect(field.value).toBe("keep");
     const consent: PromptCard = { id: "consent-1", kind: "consent", n: 1, consent: commandsCard() };
-    expect(pressResult(consent, ok(consent), field, 10, 0).kind).toBe("wait");
-    expect(pressResult(consent, ok(consent), field, PROMPT_ARM_MS, 0)).toMatchObject({ kind: "consent", id: "consent-1", sha256: commandsCard().sha256 });
+    expect(pressResult(consent, ok(consent), field, 10, 0, true).kind).toBe("wait");
+    expect(pressResult(consent, ok(consent), field, PROMPT_ARM_MS, 0, true)).toMatchObject({ kind: "consent", id: "consent-1", sha256: commandsCard().sha256 });
+  });
+
+  it("keeps a consent card's yes off until every word of it has been in view, and Not now on (review #182, #270)", () => {
+    const field = { value: "" };
+    const consent: PromptCard = { id: "consent-1", kind: "consent", n: 1, consent: commandsCard() };
+    const direct: PromptCard = { id: "d", kind: "consent-direct", consent: commandsCard() };
+    for (const c of [consent, direct]) {
+      expect(pressResult(c, ok(c), field, 60_000, 0, false)).toEqual({ kind: "wait", focusField: false });
+      expect(pressResult(c, ok(c), field, 60_000, 0, true).kind).toBe("consent");
+      expect(pressResult(c, cancel(c), field, 0, 0, false)).toEqual({ kind: "cancel", id: c.id });
+    }
+    // Other cards don't wait on it (their words are short, and a secret must not wait on a scroll).
+    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS, 0, false).kind).toBe("answer");
+    field.value = "x";
+    expect(pressResult(password(), ok(password()), field, 0, 0, false).kind).toBe("answer");
+  });
+
+  it("judges every word in view only with nothing left below, and never for a block it can't measure", () => {
+    expect(readThrough({ scrollTop: 0, scrollHeight: 198, clientHeight: 198 })).toBe(true);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 })).toBe(false);
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 })).toBe(true);
+    expect(readThrough({ scrollTop: 183.5, scrollHeight: 382, clientHeight: 198 })).toBe(true);
+    expect(readThrough({ scrollTop: 100, scrollHeight: 382, clientHeight: 198 })).toBe(false);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 })).toBe(false);
+    expect(readThrough({ scrollTop: Number.NaN, scrollHeight: 10, clientHeight: 10 })).toBe(false);
+    expect(CONSENT_READ_HINT).toBe("Scroll down to read it all first.");
   });
 
   it("keeps the window's title \"Ember\" and builds nothing from HTML (read from the page's source)", () => {
@@ -317,6 +345,45 @@ describe("the contract's factory", () => {
     const answer: Promise<PromptAnswer> = p.ask(password());
     p.dispose();
     return expect(answer).resolves.toEqual({ id: "p1", ok: false });
+  });
+});
+
+describe("the window's size", () => {
+  it("is fitted to each card before it shows: large for a consent card, small for an SSH prompt (review #182, #270)", async () => {
+    const ipc = new FakeIpc();
+    const windows: (FakeWindow & { fits: { width: number; height: number }[] })[] = [];
+    const ctl = createPromptWindowController({
+      create: () => { const w = Object.assign(new FakeWindow(), { fits: [] as { width: number; height: number }[] }); windows.push(w); return Object.assign(w, { fit: (s: { width: number; height: number }) => { w.fits.push(s); } }); },
+      ipc, log, os: "linux",
+    });
+    ctl.showConsent(1, commandsCard());
+    const pw = ctl.ask(password());
+    expect(windows[0].fits).toEqual([PROMPT_SIZE.consent]);
+    ctl.hideConsent(1);
+    expect(windows[0].fits).toEqual([PROMPT_SIZE.consent, PROMPT_SIZE.card]);
+    expect(windows[0].shown()?.id).toBe("p1");
+    ctl.dismiss("p1");
+    await pw;
+    expect(PROMPT_SIZE.card).toEqual({ width: 440, height: 300 });
+    expect(PROMPT_SIZE.consent.height).toBeGreaterThanOrEqual(520);
+    expect(promptSizeOf({ id: "d", kind: "consent-direct", consent: commandsCard() })).toBe(PROMPT_SIZE.consent);
+    expect(promptSizeOf(hostKey())).toBe(PROMPT_SIZE.card);
+    // A window without the hook (tests, an older factory) is shown as before.
+    const plain = setup();
+    plain.ctl.showConsent(2, commandsCard());
+    expect(plain.win().visible).toBe(true);
+  });
+
+  it("keeps the window's centre and stays inside the work area, with a margin where there is room", () => {
+    const area = { x: 0, y: 0, width: 1920, height: 1040 };
+    // Centred 440×300 grows to 520×600 around the same centre.
+    expect(fitBounds({ x: 740, y: 370, width: 440, height: 300 }, PROMPT_SIZE.consent, area)).toEqual({ x: 700, y: 220, width: 520, height: 600 });
+    // Near the bottom edge: moved up into the area.
+    expect(fitBounds({ x: 100, y: 900, width: 440, height: 300 }, PROMPT_SIZE.consent, area)).toEqual({ x: 60, y: 424, width: 520, height: 600 });
+    // A small screen (or a display left of the primary): capped to it, never off it.
+    expect(fitBounds({ x: -1000, y: 100, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: -1280, y: 0, width: 1280, height: 480 }))
+      .toEqual({ x: -1000 + 220 - 260, y: 16, width: 520, height: 448 });
+    expect(fitBounds({ x: 0, y: 0, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: 0, y: 0, width: 20, height: 20 })).toMatchObject({ width: 1, height: 1 });
   });
 });
 
