@@ -15100,6 +15100,86 @@
    "rules": [
     "unclear.stdin-code"
    ]
+  },
+  {
+   "cmd": "ed <<< $'r /home/ana/.ssh/id_rsa\\n,p'",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "ed -s <<< $'e /home/ana/.ssh/id_rsa\\n,p'",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "ed x.txt <<< 'w /home/ana/.bashrc'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "ex -s x.txt <<< 'w ~/.bashrc'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "ed -s <<< $'f /home/ana/.bashrc\\na\\nexport X=1\\n.\\nw'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "ex -s <<< $'e ~/.bashrc\\n$a\\nexport X=1\\n.\\nwq'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "ed x.txt <<< $'1d\\nw'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ed -s x.txt <<< $',s/a/b/g\\nw'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ed -s x.txt <<< $'r notes.txt\\nw'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ed -s x.txt <<< $'a\\nw /home/ana/.bashrc\\n.\\nw'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ex -s x.txt <<< $'%s/a/b/g\\nwq'",
+   "verdict": "run"
   }
  ]
 }

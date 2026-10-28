@@ -1885,13 +1885,21 @@ function interactive(h: H): void {
     case "mongo": case "mongosh": if (!(has(p, "eval", "version") || ops.some(o => o?.endsWith(".js")) || stdin)) add(); return;
     case "redis-cli": if (!(ops.length >= 1 || stdin || has(p, "version", "v"))) add(); return;
     case "bc": case "dc": if (!(ops.length >= 1 || stdin || has(p, "version", "v"))) add(); return;
-    case "ed": case "ex":
+    case "ed": case "ex": {
       // Script fed on stdin or a here-document: a `!` line, or `r !`/`w !`, runs a shell command (review #166).
       if (!stdin) { add(); return; }
-      fromStdin(h, t => { if (/!/.test(t)) h.e.unclear("unclear.ed-shell", "It can run a shell command from the editor."); });
+      const edited = parseOpts(a, { shortValue: "p" }).operands;
+      fromStdin(h, t => {
+        if (/!/.test(t)) h.e.unclear("unclear.ed-shell", "It can run a shell command from the editor.");
+        // The files its commands name (`r FILE`, `e FILE`, `w FILE`) are read or written, by §3.6's rules (review #166).
+        const named = edFiles(t, edited.length > 0);
+        for (const f of named.read) h.e.usePath(lit(f), "read", h.sc);
+        for (const f of named.write) h.e.usePath(lit(f), "write", h.sc);
+      });
       // The file the script edits: written (a `w` saves it), so §3.6's rules meet it (review #169).
-      for (const f of parseOpts(a, { shortValue: "p" }).operands) h.e.usePath(f, "write", h.sc);
+      for (const f of edited) h.e.usePath(f, "write", h.sc);
       return;
+    }
     case "gdb": case "lldb": if (!has(p, "batch", "x", "version", "v")) add(); return;
     case "emacs": if (!has(p, "batch", "version", "script")) add(); else if (has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return;
     case "watch": {
@@ -1906,6 +1914,36 @@ function interactive(h: H): void {
     case "passwd": add(); return;
     default: add();
   }
+}
+
+/**
+ * The files an ed or ex script reads and writes (review #166): `e`/`r FILE` read it, `w FILE` (and ex's `wq`, `x`,
+ * `sav`) write it, and a bare `w` writes the remembered name, which `e`, `f`, and a first `r` or `w` set when the
+ * command line named no file. Text added with `a`, `i` or `c` up to a `.` line is not commands. A name starting with
+ * `!` is a shell command (asked for already).
+ */
+function edFiles(text: string, fileGiven: boolean): { read: string[]; write: string[] } {
+  const read: string[] = [];
+  const write: string[] = [];
+  let remembered: string | null = null;
+  let adding = false;
+  for (const line of text.split("\n")) {
+    if (adding) { if (line === ".") adding = false; continue; }
+    const m = /^[\s:]*(?:[\d.$,;%+\s-]|'[a-z]|\/(?:\\.|[^/\\])*\/|\?(?:\\.|[^?\\])*\?)*([A-Za-z]+)!?\s*(?:>>\s*)?(.*)$/.exec(line);
+    if (!m) continue;
+    const [, cmd, rest] = m;
+    const name = rest.trim() !== "" && !rest.trim().startsWith("!") ? rest.trim() : null;
+    if (/^(a|i|c|append|insert|change)$/.test(cmd)) { adding = true; continue; }
+    if (/^(e|E|ed|edi|edit|r|re|rea|read)$/.test(cmd) && name !== null) {
+      read.push(name);
+      if (!/^r/.test(cmd) || (remembered === null && !fileGiven)) remembered = name;
+    } else if (/^(f|fi|fil|file)$/.test(cmd) && name !== null) remembered = name;
+    else if (/^(w|W|wq|x|xi|xit|exi|exit|wr|wri|writ|write|sav|save|savea|saveas|up|upd|upda|updat|update)$/.test(cmd)) {
+      if (name !== null) { write.push(name); if (remembered === null && !fileGiven) remembered = name; }
+      else if (remembered !== null) write.push(remembered);
+    }
+  }
+  return { read, write };
 }
 
 /** Launchers that hand work to the desktop or a daemon (§3.4.7, critique wsl-6): class f. */
