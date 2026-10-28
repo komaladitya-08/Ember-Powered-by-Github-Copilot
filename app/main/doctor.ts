@@ -168,7 +168,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const copilot: DoctorCheck = !p.runtime
     ? { id: "copilot", status: "fail", label: "Copilot", detail: "Ember's Copilot runtime is missing from the installation.", fix: reinstall }
     : p.auth?.kind === "provider"
-      ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's endpoint (${p.auth.host}).` }
+      ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's model service (${p.auth.host}).` }
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
         : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"

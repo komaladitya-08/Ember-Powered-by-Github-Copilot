@@ -13,7 +13,7 @@ import { LINES } from "../../app/main/commands/decide";
 import { CARD_LINES, OUTPUT_TAINT_LINE, WAITING_BUBBLE } from "../../app/main/commands/flow";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
-import { targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
+import { cardBadge, shortWhere, targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
 import { radioLabel, targetMenu } from "../../app/renderer/handle/menu-copy";
 import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
@@ -37,6 +37,12 @@ describe("settings window words", () => {
     expect(retryMessage({ found: true, source: "stored" })).toBe("Found Ember's saved sign-in; connecting…");
   });
 
+  it("offers more time to read and answer, beside Calm mode (review #51)", () => {
+    const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+    expect(page).toContain('<label class="switch-row"><input type="checkbox" id="more-time" role="switch"><span>More time to read and answer: messages stay ten times as long, and questions wait 20 minutes</span></label>');
+    expect(DEFAULT_SETTINGS.moreTime).toBe(false);
+  });
+
   it("keeps the tagline in step with setup, Copilot and where Ember is", () => {
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
     expect(tagline({ ...base, onboarded: false, phase: "signed-out" })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
@@ -45,7 +51,8 @@ describe("settings window words", () => {
     expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     expect(tagline({ ...base, hidden: true })).toMatch(/^Ember is hidden for now\./);
     expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
-    expect(tagline({ ...base, failing: 2 })).toMatch(/fixed/);
+    expect(tagline({ ...base, failing: 2 })).toBe("Ember needs 2 things fixed before it can work on this computer.");
+    expect(tagline({ ...base, failing: 1 })).toBe("Ember needs 1 thing fixed before it can work on this computer.");
     // Copilot stopped answering with tasks at work: no "connect" (signing in again isn't the fix).
     expect(tagline({ ...base, phase: "error", waitingForTasks: true })).toBe("Ember is beside your cursor. Copilot isn't answering: Ember reconnects once the tasks running are done.");
   });
@@ -237,7 +244,7 @@ describe("What Ember did, review round 11", () => {
 const NEW_STRINGS: string[] = [];
 const keep = <T extends string>(s: T): T => { NEW_STRINGS.push(s); return s; };
 /** Words that keep their capital inside a sentence. */
-const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Support\/Ember|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|Ctrl\+V\.?|Command\+V\.?|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
+const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Support\/Ember|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|Ctrl\+Alt\+E|Alt\+Tab|Computers\.?|Commands\.?|Ctrl\+V\.?|Command\+V\.?|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
 
 describe("the command window's words (§8.5)", () => {
   const exit = (e: Partial<Parameters<typeof commandCopy.statusLine>[0]>) => ({ code: 0, signal: null, ended: "exit" as const, ms: 3200, ...e });
@@ -269,9 +276,10 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.LEGEND_TOKENS)).toBe("Characters you wouldn't see are shown in ⟨ ⟩.");
     expect(keep(commandCopy.LEGEND_MIXED)).toBe("Letters from another alphabet are underlined.");
     expect(keep(commandCopy.LEGEND_RTL)).toBe("Right-to-left text is shown in the order it runs.");
-    expect(keep(commandCopy.countdownText(10_000, 6_000))).toBe("Starts in 4 s.");
-    expect(commandCopy.countdownText(10_000, 9_001)).toBe("Starts in 1 s.");
-    expect(commandCopy.countdownText(10_000, 12_000)).toBe("Starts in 0 s.");
+    // A unit never wraps away from its number (review #227).
+    expect(keep(commandCopy.countdownText(10_000, 6_000))).toBe("Starts in 4\u00a0s.");
+    expect(commandCopy.countdownText(10_000, 9_001)).toBe("Starts in 1\u00a0s.");
+    expect(commandCopy.countdownText(10_000, 12_000)).toBe("Starts in 0\u00a0s.");
   });
 
   it("says where a command runs in the header", () => {
@@ -284,28 +292,28 @@ describe("the command window's words (§8.5)", () => {
   it("says how a run ended in its status line", () => {
     expect(keep(commandCopy.RUNNING_STATUS)).toBe("Running…");
     expect(keep(commandCopy.WAITING_STATUS)).toBe("Waiting for you to type in this window.");
-    expect(keep(commandCopy.waitingTimeoutText(120_000))).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
+    expect(keep(commandCopy.waitingTimeoutText(120_000))).toBe("Stopped after 2\u00a0min: it was waiting for you to type, and took too long.");
     expect(keep(WAITING_BUBBLE)).toBe("A command is waiting for you to type in the command window.");
-    expect(say({ ms: 3200 })).toBe("Finished in 3.2 s.");
-    expect(say({ code: 2, ms: 1100 })).toBe("Ended with exit code 2 after 1.1 s.");
-    expect(say({ ended: "stopped-user", code: null, ms: 12_000 })).toBe("You stopped it after 12 s. What it already changed stays.");
-    expect(say({ ended: "killswitch", code: null, ms: 2000 })).toBe("Stopped by Ctrl+Alt+X after 2 s. What it already changed stays.");
-    expect(say({ ended: "timeout", code: null, ms: 120_000 })).toBe("Stopped after 2 min: it took too long.");
+    expect(say({ ms: 3200 })).toBe("Finished in 3.2\u00a0s.");
+    expect(say({ code: 2, ms: 1100 })).toBe("Ended with exit code 2 after 1.1\u00a0s.");
+    expect(say({ ended: "stopped-user", code: null, ms: 12_000 })).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
+    expect(say({ ended: "killswitch", code: null, ms: 2000 })).toBe("Stopped by Ctrl+Alt+X after 2\u00a0s. What it already changed stays.");
+    expect(say({ ended: "timeout", code: null, ms: 120_000 })).toBe("Stopped after 2\u00a0min: it took too long.");
     expect(say({ ended: "lost", code: null })).toBe("The connection to build-01 dropped; the command was stopped there.");
     expect(say({ ended: "failed-to-start", code: null, error: "bash isn't installed on build-01." })).toBe("Couldn't start: bash isn't installed on build-01.");
     expect(say({ ended: "refused-remote", code: null, error: "its policy turns commands off" })).toBe("build-01 refused it: its policy turns commands off.");
     // A reason that ends in a quoted sentence gets no stray full stop inside and out (review #215).
     expect(say({ ended: "refused-remote", code: null, error: "it said \"no commands.\"" })).toBe("build-01 refused it: it said \"no commands\".");
-    expect(say({ ended: "stopped-task", code: null, ms: 900 })).toBe("Stopped with its task after 0.9 s. What it already changed stays.");
-    expect(say({ ended: "exit", code: null, signal: "SIGKILL", ms: 61_000 })).toBe("Ended by SIGKILL after 1 min 1 s.");
-    expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make. Ask Ember to stop it, or end it yourself.");
+    expect(say({ ended: "stopped-task", code: null, ms: 900 })).toBe("Stopped with its task after 0.9\u00a0s. What it already changed stays.");
+    expect(say({ ended: "exit", code: null, signal: "SIGKILL", ms: 61_000 })).toBe("Ended by SIGKILL after 1\u00a0min 1\u00a0s.");
+    expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5\u00a0s. 1 program it started is still running: make. Ask Ember to stop it, or end it yourself.");
     expect(keep(commandCopy.stragglerText(["a", "b"]))).toBe("2 programs it started are still running: a, b. Ask Ember to stop them, or end them yourself.");
     expect(keep(commandCopy.reaskText("build-01"))).toBe("Not run: build-01's own check asks for your OK first.");
     expect(keep(commandCopy.reaskEndText("no"))).toBe("Not run: you didn't allow it.");
     expect(keep(commandCopy.reaskEndText("stopped"))).toBe("Not run: the task was stopped.");
-    expect(commandCopy.durationText(9_960)).toBe("10 s");
-    expect(commandCopy.durationText(59_600)).toBe("1 min");
-    expect(commandCopy.durationText(2_000)).toBe("2 s");
+    expect(commandCopy.durationText(9_960)).toBe("10\u00a0s");
+    expect(commandCopy.durationText(59_600)).toBe("1\u00a0min");
+    expect(commandCopy.durationText(2_000)).toBe("2\u00a0s");
   });
 
   it("says whether typing reaches the command, and what it waits for", () => {
@@ -316,7 +324,9 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.typingHint({ interactive: false, ended: false }))).toBe("This command can't take typing here.");
     expect(commandCopy.typingHint({ interactive: true, ended: true })).toBe("");
     expect(keep(commandCopy.startingText("Ubuntu"))).toBe("Starting Ubuntu…");
-    expect(keep(commandCopy.stalledText("build-01", 20))).toBe("build-01 isn't answering. This command stops in 20 s unless the link comes back.");
+    // In a sentence the unit is a word (review #227).
+    expect(keep(commandCopy.stalledText("build-01", 20))).toBe("build-01 isn't answering. This command stops in 20 seconds unless it answers again.");
+    expect(commandCopy.stalledText("build-01", 1)).toBe("build-01 isn't answering. This command stops in 1 second unless it answers again.");
   });
 
   it("labels a tab with the first 40 characters of its command", () => {
@@ -433,7 +443,7 @@ describe("the first-use consent cards (§8.4)", () => {
   it("says what Ember can do with each kind of remote screen", () => {
     expect(keep(ssh({ desktop: "headless" }).body[1])).toBe("build-01 has no desktop, so Ember will only run commands there.");
     expect(keep(ssh({ desktop: "remote-session" }).body[1])).toBe("build-01's desktop is a remote session: Ember will run commands only.");
-    expect(keep(ssh({ desktop: "wsl" }).body[1])).toBe("build-01 is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only.");
+    expect(keep(ssh({ desktop: "wsl" }).body[1])).toBe("build-01 is WSL on another computer: its Linux apps show on that computer's screen, so Ember will run commands only.");
     expect(keep(ssh({ desktop: "mac" }).body[1])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there.");
     expect(keep(ssh({ desktop: "mac", tccBlocked: true }).body[1])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there. Commands there can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on (System Settings › General › Sharing › Remote Login › ⓘ).");
     expect(ssh({ graceSeconds: 45, bundleMB: 33, unpackedMB: 130 }).body[3]).toContain("about 33 MB, unpacked to about 130 MB");
@@ -499,6 +509,10 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     const statusOf = (state: TargetSummary["state"]) => computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({ id: "ssh:build-01", kind: "ssh", label: "build-01", state, can: "commands only" })] }).ssh.rows[0].status;
     expect(["connecting", "lost", "off"].map(s => keep(statusOf(s as TargetSummary["state"])))).toEqual(["Connecting…", "Lost: trying again", "Not connected"]);
     expect(statusOf("ready")).toBe("Connected: commands only");
+    // Why the last connection failed stays on the row once the bubble has gone (review #183).
+    const failed = (state: TargetSummary["state"]) => computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({ id: "ssh:build-01", kind: "ssh", label: "build-01", state, can: "", problem: "Ember can't find build-01." })] }).ssh.rows[0].note;
+    expect(failed("off")).toBe("Ember can't find build-01.");
+    expect(failed("ready")).toBeNull();
     const linux = computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({})] });
     expect(linux.wsl).toBeNull();
     expect(keep(linux.local.status)).toBe("Apps");
@@ -589,6 +603,21 @@ describe("where Ember works, on the floating layer (§8.1, §2.4)", () => {
     expect(whereText("")).toBeNull();
     expect(whereText(undefined)).toBeNull();
   });
+
+  it("shortens a long place in the bubble's badge from the middle, keeping the host's start and end (review #16)", () => {
+    expect(shortWhere("on build-01")).toBe("on build-01");
+    expect(shortWhere("on ip-10-0-12-34.eu-west-1.compute.internal")).toBe("on ip-10-0-…internal");
+    expect(shortWhere("in Ubuntu-22.04 (WSL)")).toBe("in Ubuntu-2…04 (WSL)");
+    expect(shortWhere(undefined)).toBeNull();
+  });
+
+  it("badges the corner card with where the bubble's work is, before the picker's choice (review #13)", () => {
+    expect(cardBadge({ where: "on build-01", task: true }, null)).toEqual({ text: "on build-01", state: "ready", label: "Working on build-01" });
+    // A task bound to this computer says nothing, whatever the picker's choice: never "build-01" beside a question about this PC.
+    expect(cardBadge({ task: true }, t({}))).toBeNull();
+    // The conversation's bubble (no task) keeps the picker's badge.
+    expect(cardBadge({ task: false }, t({}))).toEqual(targetBadge(t({})));
+  });
 });
 
 describe("the handle menu's computers (§8.1)", () => {
@@ -618,38 +647,75 @@ describe("the handle menu's computers (§8.1)", () => {
 describe("the bubble's words for computers and commands (§8.2)", () => {
   const all = (w: bubbleCopy.BubbleWords) => [keep(w.title), keep(w.text), ...w.actions.map(a => keep(a.label))].filter(Boolean);
 
+  it("holds only words the app shows: the targets runtime and the presenter build their bubbles from every one (review #24)", () => {
+    const [runtime, presenter] = ["main/targets/runtime.ts", "main/agent/presenter.ts"].map(f => readFileSync(new URL(`../../app/${f}`, import.meta.url), "utf8"));
+    const imported = /import \{([^}]*)\} from "\.\.\/\.\.\/renderer\/overlay\/target-copy"/.exec(presenter)?.[1] ?? "";
+    expect(runtime).toContain('import * as words from "../../renderer/overlay/target-copy"');
+    for (const name of Object.keys(bubbleCopy)) {
+      expect(runtime.includes(`words.${name}(`) || (new RegExp(`\\b${name}\\b`).test(imported) && presenter.includes(`${name}(`)), name).toBe(true);
+    }
+  });
+
   it("offers to bring Ember along, and says how connecting goes", () => {
-    expect(all(bubbleCopy.sshSeen("build-01"))).toEqual(["You're connected to build-01", "Bring Ember there too? It will open its own connection with your SSH settings.", "Bring Ember", "Not now", "Don't offer again"]);
+    expect(all(bubbleCopy.sshSeen("build-01"))).toEqual(["You're connected to build-01", "Bring me there too? I'll open my own connection with your SSH settings.", "Bring Ember", "Not now", "Don't offer again"]);
     expect(bubbleCopy.sshSeen("build-01").actions[0].primary).toBe(true);
-    expect(all(bubbleCopy.sshSeenInWsl("build-01", "Ubuntu"))).toEqual(["You're connected to build-01 from Ubuntu", "Ember connects with Windows' SSH. Add your key to Windows' ssh-agent, or connect once from PowerShell, then bring Ember there.", "Not now", "Don't offer again"]);
-    expect(all(bubbleCopy.offerConnect("build-01"))).toEqual(["Connect to build-01?", "You asked for build-01. Ember isn't connected to it yet.", "Connect", "Not now"]);
+    expect(all(bubbleCopy.sshSeenInWsl("build-01", "Ubuntu"))).toEqual(["You're connected to build-01 from Ubuntu", "I connect with Windows' SSH. Add your key to Windows' ssh-agent, or connect once from PowerShell, then bring me there.", "Not now", "Don't offer again"]);
+    expect(all(bubbleCopy.offerConnect("build-01"))).toEqual(["Connect to build-01?", "You asked for build-01. I'm not connected to it yet.", "Connect", "Not now"]);
     expect(all(bubbleCopy.connecting("build-01", { step: "checking" }))).toEqual(["Connecting to build-01…", "Checking build-01…", "Cancel"]);
-    expect(keep(bubbleCopy.connecting("build-01", { step: "downloading", doneMB: 12, totalMB: 29 }).text)).toBe("Downloading what Ember needs for build-01 (12 of 29 MB)…");
-    expect(keep(bubbleCopy.connecting("build-01", { step: "copying", doneMB: 5.2, totalMB: 31 }).text)).toBe("Copying Ember's helper to build-01 (5 of 31 MB)…");
-    expect(keep(bubbleCopy.connecting("build-01", { step: "starting" }).text)).toBe("Starting Ember on build-01…");
-    expect(all(bubbleCopy.connected("build-01", false))).toEqual(["Ember is on build-01", "Ask away: I'll work there. Your voice and your sign-in stay on this computer."]);
-    expect(keep(bubbleCopy.connected("build-01", true).text)).toBe("build-01 has no desktop, so I'll run commands there.");
+    expect(keep(bubbleCopy.connecting("build-01", { step: "downloading", doneMB: 12, totalMB: 29 }).text)).toBe("Downloading what I need for build-01 (12 of 29 MB)…");
+    expect(keep(bubbleCopy.connecting("build-01", { step: "copying", doneMB: 5.2, totalMB: 31 }).text)).toBe("Copying what I need to build-01 (5 of 31 MB)…");
+    expect(keep(bubbleCopy.connecting("build-01", { step: "starting" }).text)).toBe("Starting up on build-01…");
+    expect(all(bubbleCopy.connected("build-01", "desktop"))).toEqual(["I'm on build-01", "Ask away: I'll work there. Your voice and your sign-in stay on this computer."]);
+    expect(keep(bubbleCopy.connected("build-01", "commands").text)).toBe("build-01 has no desktop, so I'll run commands there.");
+    expect(all(bubbleCopy.connected("build-01", "commands-off"))).toEqual(["I'm on build-01", "build-01 has no desktop, and commands are off there. Turn them on so I can work there.", "Turn on commands"]);
+    expect(keep(bubbleCopy.connected("build-01", "commands-off-by-admin").text)).toBe("build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.");
+    expect(all(bubbleCopy.commandsOn("build-01"))).toEqual(["Commands are on for build-01", "Ask away: I'll run commands there."]);
+    expect(all(bubbleCopy.commandsStayOff("build-01", "Not allowed."))).toEqual(["Commands stay off on build-01", "Not allowed."]);
+    expect(all(bubbleCopy.cantConnect("build-01", "Ember can't reach build-01.", true))).toEqual(["Can't connect to build-01", "Ember can't reach build-01.", "Try again", "Close"]);
+    expect(bubbleCopy.cantConnect("build-01", "x", false).actions).toEqual([{ label: "Close" }]);
+    expect(keep(bubbleCopy.identityChanged("build-01"))).toBe("build-01's identity changed, so I won't connect. The window that opened says what to do.");
   });
 
   it("says when a connection stalls, drops or ends, and when Ember is back here", () => {
-    expect(all(bubbleCopy.stalled("build-01", 20))).toEqual(["build-01 isn't answering", "Its running commands stop in 20 s unless the link comes back. Nothing new is sent meanwhile.", "Disconnect"]);
-    expect(all(bubbleCopy.lost("build-01"))).toEqual(["Lost build-01", "The connection dropped, so everything there stopped. I'll try to reconnect.", "Reconnect", "Stop trying"]);
+    expect(all(bubbleCopy.stalled("build-01", 15))).toEqual(["build-01 isn't answering", "Commands running there stop in 15 seconds unless it answers again. I'll send nothing new until then.", "Disconnect"]);
+    expect(keep(bubbleCopy.stalled("build-01", 1).text)).toBe("Commands running there stop in 1 second unless it answers again. I'll send nothing new until then.");
+    expect(all(bubbleCopy.lost("build-01", false))).toEqual(["Lost build-01", "The connection dropped, so everything there stopped. I'll try to reconnect.", "Reconnect", "Stop trying"]);
+    expect(keep(bubbleCopy.lost("build-01", true).text)).toBe("The connection dropped, so everything there stopped. I'll try to reconnect; until then I'll work on this computer.");
+    expect(all(bubbleCopy.backThere("build-01", true))).toEqual(["build-01 is back", "The connection came back, so I'll work there again."]);
+    expect(keep(bubbleCopy.backThere("build-01", false).text)).toBe("The connection came back.");
+    expect((["dropped", "closed", "stopped-there", "locked", "inactive"] as const).map(c => keep(bubbleCopy.stoppedTask("build-01", c)))).toEqual([
+      "build-01's connection dropped, so I stopped this.", "build-01 isn't connected any more, so I stopped this.", "Someone at build-01 pressed Stop.",
+      "build-01's screen locked, so I stopped this.", "build-01's desktop session isn't active any more, so I stopped this.",
+    ]);
     expect(all(bubbleCopy.signInAgain("build-01"))).toEqual(["build-01 needs you to sign in again", "Reconnect to sign in.", "Reconnect"]);
+    expect(all(bubbleCopy.checkKeyAgain("build-01"))).toEqual(["build-01 needs you to check its key again", "Reconnect to check it.", "Reconnect"]);
+    expect(all(bubbleCopy.cameBackDifferent("build-01"))).toEqual(["Lost build-01", "build-01 came back as a different computer, so I didn't use it. Reconnect to check it.", "Reconnect"]);
+    expect(all(bubbleCopy.cantReconnect("build-02", "Ember can't reach build-02 (no route)."))).toEqual(["Can't reconnect to build-02", "Ember can't reach build-02 (no route).", "Reconnect"]);
     expect(all(bubbleCopy.stoppedFromRemote("build-01"))).toEqual(["Stopped on build-01", "Someone at build-01 pressed Stop."]);
     expect(all(bubbleCopy.screenLocked("build-01"))).toEqual(["Stopped on build-01", "build-01's screen locked, so I stopped working on its screen."]);
     expect(all(bubbleCopy.sessionInactive("build-01"))).toEqual(["Stopped on build-01", "build-01's desktop session isn't active any more, so I stopped working on its screen."]);
     expect(all(bubbleCopy.backHere("build-01"))).toEqual(["Back on this computer", "build-01 isn't connected any more, so I'll work here."]);
+    expect(all(bubbleCopy.alreadyAdded("build-01"))).toEqual(["Already added as build-01", "I'm on build-01 already, so I'll work there."]);
   });
 
-  it("points a command question at the command window, never showing the command, and counts an announcement down", () => {
-    expect(all(bubbleCopy.commandQuestion("ssh", "build-01"))).toEqual(["May I run a command?", "On build-01. It's shown in full in Ember's command window.", "Show the command", "Not now"]);
-    expect(bubbleCopy.commandQuestion("local", "This computer").text).toBe("On this computer. It's shown in full in Ember's command window.");
-    expect(bubbleCopy.commandQuestion("wsl", "Ubuntu (WSL)").text).toBe("In Ubuntu (WSL). It's shown in full in Ember's command window.");
-    expect(all(bubbleCopy.announcement("Pushing to GitHub, as you asked", "ssh", "build-01", 4))).toEqual(["Pushing to GitHub, as you asked", "On build-01. It starts in 4 seconds.", "Stop"]);
-    expect(all(bubbleCopy.commandsCardQuestion("ssh", "build-01"))).toEqual(["Turn on commands on build-01?", "Ember needs your OK first. Read what it means in the window that opened.", "Read it", "Not now"]);
-    expect(keep(bubbleCopy.commandsCardQuestion("local", "This computer").title)).toBe("Turn on commands on this computer?");
-    expect(all(bubbleCopy.wslFirstSeen())).toEqual(["Ember can work in WSL", "It can read and use your Linux apps and run commands there. Turn it on in settings?", "Open settings", "Not now"]);
+  it("says a command never in the bubble, only where it runs, and counts an announcement down", () => {
+    // The badge says where (and screen readers hear it): only this computer, which has none, is said. Then the time it
+    // is given and the stop chord (review #46).
+    expect(all(bubbleCopy.announcement("Pushing to GitHub, as you asked.", "on build-01", 4, "Ctrl+Alt+X"))).toEqual(["Pushing to GitHub, as you asked", "It starts in 4 seconds. Ctrl+Alt+X stops everything at once.", "Stop"]);
+    expect(bubbleCopy.announcement("Pushing to GitHub, as you asked", undefined, 15, "Win+Alt+X").text).toBe("On this computer. It starts in 15 seconds. Win+Alt+X stops everything at once.");
+    expect(all(bubbleCopy.wslFirstSeen())).toEqual(["I can work in WSL", "I can read and use your Linux apps and run commands there. Turn this on in settings?", "Open settings", "Not now"]);
     expect(keep(bubbleCopy.commandSpoken("ssh", "build-01"))).toBe("Ember wants to run a command on build-01.");
+    // One voice in the bubble (review #22): a connection's or the settings window's "Ember can't…" is said as Ember.
+    expect(bubbleCopy.firstPerson("Ember can't reach build-01 (no route). Check you're on the right network or VPN.")).toBe("I can't reach build-01 (no route). Check you're on the right network or VPN.");
+    expect(bubbleCopy.firstPerson("The key changed. Ember won't connect.")).toBe("The key changed. I won't connect.");
+    expect(bubbleCopy.firstPerson("Your organisation doesn't allow Ember to connect to build-01.")).toBe("Your organisation doesn't allow Ember to connect to build-01.");
+    // The keyboard's way to what the floating layer's buttons do (review #47).
+    expect(keep(bubbleCopy.keyboardRoute("Ctrl+Alt+E"))).toBe("Or press Ctrl+Alt+E and go to Computers.");
+    expect(keep(bubbleCopy.keyboardRoute(null, "Commands"))).toBe("Or open Ember's settings and go to Commands.");
+    // How to get to the window that shows it whole, from the keyboard (review #52): Alt+Tab where that reaches it.
+    expect(keep(bubbleCopy.panelHint("command", "linux"))).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
+    expect(keep(bubbleCopy.panelHint("consent", "win32"))).toBe("It's in the window that opened: press Alt+Tab to go there.");
+    expect(keep(bubbleCopy.panelHint("command", "darwin"))).toBe("The command is in Ember's command window.");
     expect(bubbleCopy.commandSpoken("local", "This computer")).toBe("Ember wants to run a command on this computer.");
   });
 });

@@ -380,6 +380,22 @@ describe("grants and questions by target", () => {
     await local.call("click", { id: 1 });
     expect(local.asked[0]).not.toHaveProperty("where");
   });
+
+  it("fill_cells' one question for all its cells carries where too (review #13)", async () => {
+    // (Its spreadsheet path needs a borrowed keyboard and a sheet: its one question is asked here as fill_cells asks it,
+    // for the cells it was given, by a policy that asks about every step.)
+    const cells = [{ cell: "B5", place: { col: 1, row: 5 }, text: "42", seenKey: "B5" }, { cell: "B6", place: { col: 1, row: 6 }, text: "43", seenKey: "B6" }];
+    const askOf = async (target?: TargetBinding) => {
+      const rig = makeWorker({ ...(target ? { target } : {}), grants: {}, confirmEvery: true });
+      await rig.call("perceive_window", {});
+      const verdict = await (rig.w as unknown as { authorizeCells(jobs: typeof cells): Promise<unknown> }).authorizeCells(cells);
+      expect(verdict).toBeNull();
+      expect(rig.asked).toHaveLength(1);
+      return rig.asked[0];
+    };
+    expect(await askOf({ ...REMOTE, desktop: "screen" })).toMatchObject({ title: "May I?", where: "on build-01", prompt: expect.stringMatching(/^Borrow your keyboard to fill 2 cells in .*: B5 “42”, B6 “43”\?/) });
+    expect(await askOf()).not.toHaveProperty("where");
+  });
 });
 
 describe("a no to a command is the task's no", () => {

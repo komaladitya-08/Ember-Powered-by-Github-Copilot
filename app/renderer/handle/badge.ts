@@ -31,9 +31,33 @@ export function targetChip(t: TargetSummary | null | undefined): string | null {
   return t.kind === "wsl" ? `In ${t.label}` : `On ${t.label}`;
 }
 
+/**
+ * The corner card's badge (no compositor), beside Ember's name: where the bubble's task acts when it says ("on
+ * build-01"), before the picker's choice. A task's bubble that says nothing is on this computer, so it gets no badge
+ * (never "build-01" beside a question about this PC); the conversation's bubble keeps the picker's badge.
+ */
+export function cardBadge(b: { where?: string; task: boolean }, t: TargetSummary | null | undefined): TargetBadge | null {
+  const w = whereText(b.where);
+  if (w) return { text: w, state: "ready", label: `Working ${w}` };
+  return b.task ? null : targetBadge(t);
+}
+
 /** A `where` badge's words ("on build-01", "in Ubuntu (WSL)"), trimmed; null when there are none. */
 export function whereText(where: unknown): string | null {
   if (typeof where !== "string") return null;
   const w = where.replace(/\s+/g, " ").trim();
   return w ? w.slice(0, 80) : null;
+}
+
+/** The longest place the bubble's badge shows whole (it then fits its capsule: overlay styles.css's .where). */
+const SHORT_WHERE = 20;
+
+/**
+ * The bubble's badge words, shortened from the middle when long, so a host's start and end both show ("on
+ * ip-10-0-…internal"): an ellipsis at the end hid the part that tells two hosts apart. Screen readers get whereText.
+ */
+export function shortWhere(where: unknown): string | null {
+  const w = whereText(where);
+  if (!w || w.length <= SHORT_WHERE) return w;
+  return `${w.slice(0, 11).trimEnd()}…${w.slice(-8).trimStart()}`;
 }

@@ -241,7 +241,7 @@ function wslEntries(i: RegistryInput): TargetEntry[] {
  * read it too (a queued task's card when its computer drops), so it names no tool and speaks to both.
  */
 export function notConnectedWhy(label: string): string {
-  return `${label} isn't connected. Ember can show a Connect button for it.`;
+  return `${label} isn't connected. Ember can show a Connect button for it, or it can be connected in Ember's settings (Computers).`;
 }
 
 /** The SSH entries: one per host record, while the administrator allows SSH. */

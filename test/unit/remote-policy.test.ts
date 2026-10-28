@@ -89,7 +89,7 @@ describe("the remote desktop the PC lets Ember use (§2.5)", () => {
   it("lowers it for what the PC knows itself: a Mac, WSL, root, either administrator, a lock, no session", () => {
     const why = (o: Partial<typeof base>) => { const d = remoteDesktop({ ...base, ...o }); return [d.desktop, d.why]; };
     expect(why({ welcome: { ...base.welcome, os: "darwin" } })).toEqual(["none", "Ember can't use a Mac's screen over SSH yet; it can run commands there."]);
-    expect(why({ welcome: { ...base.welcome, isWsl: true } })).toEqual(["none", "build-01 is WSL on another PC: its Linux apps show on that PC's screen, so Ember will run commands only."]);
+    expect(why({ welcome: { ...base.welcome, isWsl: true } })).toEqual(["none", "build-01 is WSL on another computer: its Linux apps show on that computer's screen, so Ember will run commands only."]);
     expect(why({ welcome: { ...base.welcome, uid: 0 } })).toEqual(["none", "Ember doesn't use a desktop as root."]);
     expect(why({ combined: remoteAdmin({ ssh: { desktop: false } }) })).toEqual(["none", "An administrator turned off Ember's use of build-01's desktop."]);
     expect(why({ state: { ...screen, session: { type: "x11", locked: true, active: true } } })).toEqual(["none", "build-01's screen is locked."]);

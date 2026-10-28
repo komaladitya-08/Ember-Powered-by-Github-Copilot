@@ -101,6 +101,25 @@ function confirmer(o: { ready?: (n: number) => boolean; armMs?: number; blocked?
   return { c, shown, tick: (ms: number) => { now += ms; } };
 }
 
+describe("the Confirmer's time for an answer (review #51)", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("waits as long as the user's setting says, read when each question shows", async () => {
+    vi.useFakeTimers();
+    let ms = 360_000;
+    const c = new Confirmer(() => undefined, { armMs: 0, gapMs: 0, timeoutMs: () => ms });
+    const q = c.ask({ title: "May I?", prompt: "x", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    vi.advanceTimersByTime(120_000);
+    expect(c.waiting).toBe(true);
+    vi.advanceTimersByTime(240_000);
+    await expect(q).resolves.toBeNull();
+    ms = 120_000;
+    const r = c.ask({ title: "May I?", prompt: "y", options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }] });
+    vi.advanceTimersByTime(120_000);
+    await expect(r).resolves.toBeNull();
+  });
+});
+
 describe("the Confirmer's panel questions (§3.9.1, R7)", () => {
   afterEach(() => vi.useRealTimers());
 
@@ -239,6 +258,17 @@ describe("the Confirmer's panel questions (§3.9.1, R7)", () => {
     expect(c.answerKey("primary")).toBe(false);
     expect(c.answer("q1:once")).toBe(true);
     await expect(q).resolves.toBe("once");
+  });
+
+  it("says under a panel question how to reach its window from the keyboard, never the keys that answer elsewhere (review #52)", async () => {
+    const shown: Partial<EmberState>[] = [];
+    const c = new Confirmer(p => shown.push(p), {
+      armMs: 0, gapMs: 0, keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", panelReady: () => true,
+      panelHint: p => (p.kind === "command" ? "The command is in Ember's command window: press Alt+Tab to go there." : undefined),
+    });
+    void c.ask(commandQuestion());
+    expect(shown.at(-1)?.bubble?.step).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
+    c.cancelAll();
   });
 
   it("shows a panel question's bubble with its where badge, a button that brings the window up, and Not now (no key hint)", async () => {

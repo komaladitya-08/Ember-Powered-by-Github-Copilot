@@ -68,18 +68,21 @@ export const waitingTimeoutText = (ms: number) => `Stopped after ${durationText(
 /** How a shell is named in the header. */
 const SHELL_NAME: Readonly<Record<ShellId, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };
 
+/** Between a number and its unit: a no-break space, so "3.2 s" never wraps into "3.2" and "s". */
+const NB = "\u00a0";
+
 /** A duration as the window says it: "3.2 s" under 10 s, "12 s" under a minute, then "2 min" or "2 min 5 s". */
 export function durationText(ms: number): string {
   const s = Math.max(0, Number.isFinite(ms) ? ms : 0) / 1000;
   if (s < 9.95) {
     const t = Math.round(s * 10) / 10;
-    return `${Number.isInteger(t) ? t.toFixed(0) : t.toFixed(1)} s`;
+    return `${Number.isInteger(t) ? t.toFixed(0) : t.toFixed(1)}${NB}s`;
   }
-  if (s < 59.5) return `${Math.round(s)} s`;
+  if (s < 59.5) return `${Math.round(s)}${NB}s`;
   let m = Math.floor(s / 60);
   let r = Math.round(s - m * 60);
   if (r === 60) { m += 1; r = 0; }
-  return r === 0 ? `${m} min` : `${m} min ${r} s`;
+  return r === 0 ? `${m}${NB}min` : `${m}${NB}min ${r}${NB}s`;
 }
 
 /**
@@ -188,8 +191,10 @@ export function typingHint(t: { interactive: boolean; ended: boolean }, os: OS =
 /** While a WSL distro boots for its first command (the status line). */
 export const startingText = (distro: string) => `Starting ${distro}…`;
 /** A silent SSH link (the status line, counting down). */
-export const stalledText = (label: string, seconds: number) =>
-  `${label} isn't answering. This command stops in ${Math.max(0, Math.ceil(seconds))} s unless the link comes back.`;
+export const stalledText = (label: string, seconds: number) => {
+  const n = Math.max(0, Math.ceil(seconds));
+  return `${label} isn't answering. This command stops in ${n} second${n === 1 ? "" : "s"} unless it answers again.`;
+};
 
 /** Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269). */
 export function announceKeyText(os: OS): string {
@@ -198,7 +203,7 @@ export function announceKeyText(os: OS): string {
 
 /** The announcement's countdown: "Starts in 4 s." */
 export function countdownText(endsAt: number, now: number): string {
-  return `Starts in ${Math.max(0, Math.ceil((endsAt - now) / 1000))} s.`;
+  return `Starts in ${Math.max(0, Math.ceil((endsAt - now) / 1000))}${NB}s.`;
 }
 
 /**

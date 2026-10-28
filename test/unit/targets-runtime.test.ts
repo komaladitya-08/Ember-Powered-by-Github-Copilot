@@ -39,6 +39,9 @@ import { stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../../app/ma
 import { A11Y_FIX_COMMAND } from "../../app/main/wsl/launch-sidecar";
 import { validConsent } from "../../app/main/remote/prompt-window";
 import type { IpcLike, TargetsDeps, WebContentsLike } from "../../app/main/targets/types";
+import { BubbleOwner, Presenter, type NoticeBoard } from "../../app/main/agent/presenter";
+import { guardWhileAsking } from "../../app/main/agent/confirm";
+import { IDLE_BUBBLE, type BubbleState, type EmberState } from "../../app/shared/overlay";
 
 const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
 const noPolicy: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -106,6 +109,11 @@ interface RigOptions {
   cursor?: boolean;
   /** Main passes its window system's active window (TargetsDepsExtra.activeWindow). */
   activeWindow?: boolean;
+  /** Main's setter (default: a mock that records), and the shared bubble's notice board (TargetsDepsExtra.bubbles). */
+  showState?: (patch: Partial<EmberState>) => void;
+  bubbles?: () => NoticeBoard | null;
+  /** The settings shortcut while Ember holds it (TargetsDepsExtra.settingsKey). */
+  settingsKey?: () => string | null;
 }
 
 /** The runtime over fakes, and every fake for the test to look at. */
@@ -207,7 +215,7 @@ function rig(o: RigOptions = {}) {
   const handlers = new Map<string, (e: { sender: WebContentsLike }, ...a: unknown[]) => unknown>();
   const ipc: IpcLike = { on: (c, fn) => { handlers.set(c, fn); }, handle: (c, fn) => { handlers.set(c, fn); } };
   const home = { id: 1, send: vi.fn() };
-  const showState = vi.fn();
+  const showState = vi.fn(o.showState ?? (() => undefined));
   const openSettings = vi.fn();
   const windowsMade = vi.fn(() => { throw new Error("no windows in unit tests"); });
   const sys = {
@@ -251,7 +259,7 @@ function rig(o: RigOptions = {}) {
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const stopTasksOn = vi.fn();
-  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}) }, parts);
+  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}), ...(o.bubbles ? { bubbles: o.bubbles } : {}), ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}) }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
@@ -675,7 +683,7 @@ describe("SSH targets", () => {
     expect(off.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Your organisation has turned off commands on computers reached over SSH." });
     // The connected bubble says so, with nothing to turn on.
     expect(off.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
-      title: "Ember is on build-01", thought: "build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.", actions: [],
+      title: "I'm on build-01", thought: "build-01 has no desktop, and your organisation has turned off commands there, so I can't work on it.", actions: [],
     }) });
   });
 
@@ -683,7 +691,7 @@ describe("SSH targets", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]), welcome: welcome({ desktop: { access: "none", why: "build-01 has no desktop.", notice: "off" } }) });
     await connected(r);
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
-      title: "Ember is on build-01", thought: "build-01 has no desktop, and commands are off there. Turn them on so I can work there.",
+      title: "I'm on build-01", thought: "build-01 has no desktop, and commands are off there. Turn them on so I can work there.",
       actions: [{ id: "conn:build-01:commands", label: "Turn on commands", primary: true }],
     }) });
     expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 has no desktop Ember can use. Commands are off on build-01. The user can turn them on in Ember's settings (Commands)." });
@@ -727,7 +735,7 @@ describe("SSH targets", () => {
     const l = await connected(r);
     l.move("stalled");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
-      title: "build-01 isn't answering", thought: "Its running commands stop in 15 s unless the link comes back. Nothing new is sent meanwhile.",
+      title: "build-01 isn't answering", thought: "Commands running there stop in 15 seconds unless it answers again. I'll send nothing new until then.",
       actions: [{ id: "conn:build-01:disconnect", label: "Disconnect" }],
     }) });
     expect(r.t.agent.handsFor("ssh:build-01").ok).toBe(false);
@@ -754,12 +762,12 @@ describe("SSH targets", () => {
       title: "build-01 needs you to sign in again", thought: "Reconnect to sign in.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }],
     }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Ember can show a Connect button for it." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Ember can show a Connect button for it, or it can be connected in Ember's settings (Computers)." });
     // Ten minutes of network failures: said as it is, with Reconnect.
     const l2 = await connected(r, "build-02");
     l2.move("lost");
     failed("build-02", "network", false, "Ember can't reach build-02 (no route).");
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't reconnect to build-02", thought: "Ember can't reach build-02 (no route).", mood: "error" }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't reconnect to build-02", thought: "I can't reach build-02 (no route).", mood: "error" }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-02")!.state).toBe("off");
     // A connect's own failure (not a reconnect's) is connect()'s to say.
     failed("build-02", "auth", false);
@@ -841,7 +849,7 @@ describe("SSH targets", () => {
     r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", "Check you're on the right network or VPN.", true));
     const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
     expect(res).toEqual({ ok: false, message: "Ember can't reach build-01 (no route). Check you're on the right network or VPN." });
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01", actions: [{ id: "conn:build-01:reconnect", label: "Try again" }] }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01", actions: [{ id: "conn:build-01:reconnect", label: "Try again" }, { id: "conn:close", label: "Close" }] }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
   });
 
@@ -898,7 +906,7 @@ describe("SSH targets", () => {
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("connecting");
     expect(r.t.menuItems()[0].submenu!.map(i => i.label)).toEqual(["This computer", "build-01 (connecting…)"]);
     for (const p of r.progress) p("build-01", { step: "downloading", done: 12_000_000, total: 29_000_000 });
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connecting to build-01…", thought: "Downloading what Ember needs for build-01 (12 of 29 MB)…" }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connecting to build-01…", thought: "Downloading what I need for build-01 (12 of 29 MB)…" }) });
     expect(r.t.busy().connections).toBe(1);
     expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
     release();
@@ -961,7 +969,8 @@ describe("SSH targets", () => {
     expect(r.t.bubbleAction("offer:1:connect")).toBe(true);
     await flush(); await flush();
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
-      title: "Already added as build-01", thought: "I'm on build-01 already, so I'll work there.", actions: [], mood: "done",
+      // A connection's good news has no state chip and a happy face (review #15).
+      title: "Already added as build-01", thought: "I'm on build-01 already, so I'll work there.", actions: [], mood: "idle",
     }) });
     expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
     expect(r.cards.length).toBe(cardsBefore);
@@ -1008,12 +1017,12 @@ describe("WSL targets", () => {
     // Offered once discovery has shown a distro to work in.
     await flush();
     expect(r.wsl.facts).toHaveBeenCalled();
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL", actions: [{ id: "offer:wsl:settings", label: "Open settings", primary: true }, { id: "offer:wsl:later", label: "Not now" }] }) });
     r.showState.mockClear();
     const again = r.t.agent.bind({ userWords: "open gedit in WSL" });
     expect(again.ok && again.binding.id).toBe("local");
     await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
     expect(r.openSettings).toHaveBeenCalledWith("computers");
   });
@@ -1031,7 +1040,7 @@ describe("WSL targets", () => {
       // "Linux" alone never brings up the WSL offer.
       r.t.agent.bind({ userWords: "search for how to install Python on Linux" });
       await flush();
-      expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+      expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
       for (const words of asks) {
         const b = r.t.agent.bind({ userWords: words });
         expect(b.ok && b.binding.id, `${JSON.stringify(o.wslFacts?.installed)} ${words}`).toBe("local");
@@ -1066,7 +1075,7 @@ describe("WSL targets", () => {
     const b = r.t.agent.bind({ userWords: "open gedit in WSL" });
     expect(b.ok && b.binding.id).toBe("local");
     await flush(); await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
   });
 
   it("never offers WSL on a PC where discovery finds no distro to work in (WSL's installer alone)", async () => {
@@ -1074,7 +1083,7 @@ describe("WSL targets", () => {
     const b = r.t.agent.bind({ userWords: "list my files in WSL" });
     expect(b.ok && b.binding.id).toBe("local");
     await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
   });
 
   it("with WSL on, still says why it can't work in WSL when discovery found no distro to work in", async () => {
@@ -1176,10 +1185,10 @@ describe("naming a computer by a short name (reviews #179, #180)", () => {
     // The settings window looked for distros (nothing is offered for that alone).
     await r.invoke(TARGETS_IPC.list, r.home);
     await flush();
-    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
     expect(r.t.agent.bind({ userWords: "in Ubuntu, list my home folder" })).toMatchObject({ ok: true, binding: { id: "local" } });
     await flush(); await flush();
-    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
     const got = r.t.agent.handsFor("local");
     if (!got.ok) throw new Error(got.why);
     expect((got.hands.commands as unknown as { othersNamed(words: string): string[] }).othersNamed("in Ubuntu, delete build/")).toEqual(["Ubuntu-22.04 (WSL)"]);
@@ -1291,10 +1300,12 @@ describe("question panels (§3.9)", () => {
 
   it("speaks only that Ember wants to run a command (never the command), and gives words for consent cards", () => {
     const r = rig();
-    expect(r.t.questionWords(commandQ)).toBe("Ember wants to run a command on build-01.");
-    expect(r.t.questionWords({ ...commandQ, panel: { kind: "command", card: { ...card, target: "local", targetLabel: "This computer" } } })).toBe("Ember wants to run a command on this computer.");
-    expect(r.t.questionWords(consentQ)).toBe("Ember needs your OK to run commands on this computer. Read what it means in the window that opened.");
-    expect(r.t.questionWords({ ...consentQ, panel: { kind: "consent", consent: wslConsent({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }) } })).toBe("Use Ember with WSL? Read what it means in the window that opened.");
+    // Each with how to get to its window from the keyboard (review #52).
+    const go = " The command is in Ember's command window: press Alt+Tab to go there.";
+    expect(r.t.questionWords(commandQ)).toBe(`Ember wants to run a command on build-01.${go}`);
+    expect(r.t.questionWords({ ...commandQ, panel: { kind: "command", card: { ...card, target: "local", targetLabel: "This computer" } } })).toBe(`Ember wants to run a command on this computer.${go}`);
+    expect(r.t.questionWords(consentQ)).toBe("Ember needs your OK to run commands on this computer. It's in the window that opened: press Alt+Tab to go there.");
+    expect(r.t.questionWords({ ...consentQ, panel: { kind: "consent", consent: wslConsent({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }) } })).toBe("Use Ember with WSL? It's in the window that opened: press Alt+Tab to go there.");
   });
 
   it("passes the card's own answers to the Confirmer as panel answers with their hash", () => {
@@ -1413,7 +1424,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     r.ticks[0]();
     await flush();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
-      title: "You're connected to build-01", thought: "Bring Ember there too? It will open its own connection with your SSH settings.",
+      title: "You're connected to build-01", thought: "Bring me there too? I'll open my own connection with your SSH settings.",
       actions: [{ id: "offer:1:bring", label: "Bring Ember", primary: true }, { id: "offer:1:later", label: "Not now" }, { id: "offer:1:never", label: "Don't offer again" }],
     }) });
     expect(r.t.bubbleAction("offer:1:bring")).toBe(true);
@@ -1521,13 +1532,138 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 });
 
+describe("how a question shown in a window is reached from the keyboard (review #52)", () => {
+  it("says it aloud and gives the Confirmer the same words for the bubble", async () => {
+    const r = rig();
+    const card = { target: "local", targetLabel: "This computer" } as unknown as CommandCard;
+    const consent = commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts: { kind: "local", privileged: false, windows: false, podman: false } });
+    expect(r.t.questionWords({ title: "May I run a command?", prompt: "x", options: [], panel: { kind: "command", card } }))
+      .toBe("Ember wants to run a command on this computer. The command is in Ember's command window: press Alt+Tab to go there.");
+    expect(r.t.questionWords({ title: "Turn on commands?", prompt: "x", options: [], panel: { kind: "consent", consent } }))
+      .toBe("Ember needs your OK to run commands on this computer. It's in the window that opened: press Alt+Tab to go there.");
+    expect(r.t.panelHint({ kind: "command", card })).toBe("The command is in Ember's command window: press Alt+Tab to go there.");
+    expect(rig({ os: "darwin" }).t.panelHint({ kind: "consent", consent })).toBe("It's in the window that opened.");
+  });
+});
+
+describe("a keyboard route for the runtime's buttons (review #47)", () => {
+  it("says under an offer, a loss and a failure worth trying again where the same buttons are in settings", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, settingsKey: () => "Ctrl+Alt+E" });
+    r.t.agent.offerConnect("build-01", "open the logs on build-01");
+    expect(s.screen()).toMatchObject({ title: "Connect to build-01?", step: "Or press Ctrl+Alt+E and go to Computers." });
+    const l = await connected(r);
+    l.move("lost");
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", step: "Or press Ctrl+Alt+E and go to Computers." });
+    r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", undefined, true));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(s.screen()).toMatchObject({ title: "Can't connect to build-01", step: "Or press Ctrl+Alt+E and go to Computers." });
+    // Without the settings shortcut (another app holds it), no key is named.
+    const t = screenRig();
+    const n = rig({ settings: withHosts([hostRecord("build-01")]), showState: t.setState, bubbles: () => t.notices, settingsKey: () => null });
+    n.t.agent.offerConnect("build-01", "open the logs on build-01");
+    expect(t.screen().step).toBe("Or open Ember's settings and go to Computers.");
+  });
+
+  it("tells the model the settings route too, never the menu alone", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toBe("Ember showed the user a Connect button for build-01. Tell them to click it, or to connect build-01 in Ember's settings (Computers); once it is connected, start the task there.");
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Ember can show a Connect button for it, or it can be connected in Ember's settings (Computers)." });
+  });
+});
+
+describe("the runtime's bubbles' state chip and face (review #15)", () => {
+  it("say Needs you only when a button needs a decision, never Done or Thinking for a connection, and set Ember's face", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    expect([s.screen().title, s.look()]).toEqual(["Connecting to build-01…", "acting/focused"]);
+    release();
+    await pending;
+    const l = r.links.get("build-01")!;
+    expect([s.screen().title, s.look()]).toEqual(["I'm on build-01", "idle/happy"]);
+    l.emit("console.stop", { at: SINCE });
+    expect([s.screen().title, s.look()]).toEqual(["Stopped on build-01", "idle/neutral"]);
+    l.move("stalled");
+    expect([s.screen().title, s.look()]).toEqual(["build-01 isn't answering", "error/worried"]);
+    l.move("lost");
+    expect([s.screen().title, s.look()]).toEqual(["Lost build-01", "error/worried"]);
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/Connect button/);
+    expect([s.screen().title, s.look()]).toEqual(["Connect to build-01?", "attention/curious"]);
+  });
+
+  it("says Problem for a failed connect, with a sorry face", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(new ConnectError("Ember can't reach build-01 (no route).", "network", undefined, false));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect([s.screen().title, s.look()]).toEqual(["Can't connect to build-01", "error/sad"]);
+  });
+});
+
+describe("offers in the bubble (review #14)", () => {
+  const notice = {
+    sshDestination: (argv: readonly string[]) => ({ dest: argv[argv.length - 1] }),
+    userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", "deploy@build-01"], via: "local" as const }]),
+  };
+  // The noticer looks only once the user has added a computer (review #33): web-07 here.
+  const added = withHosts([hostRecord("web-07")]);
+  const offered = async () => {
+    const s = screenRig();
+    const r = rig({ notice, cursor: true, showState: s.setState, bubbles: () => s.notices, settings: added });
+    r.ticks[0]();
+    await flush();
+    return { s, r };
+  };
+
+  it("go 25 seconds after they show, as a Not now (never as Don't offer again)", async () => {
+    const { s, r } = await offered();
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(24_900);
+    expect(s.screen().visible).toBe(true);
+    s.advance(100);
+    expect(s.screen().visible).toBe(false);
+    expect(r.settings.get().targets.dismissedOffers).toEqual([]);
+    expect(r.conns.connect).not.toHaveBeenCalled();
+  });
+
+  it("take no press in their first half second (a click already on its way lands on nothing)", async () => {
+    const { s, r } = await offered();
+    expect(r.t.bubbleAction("offer:1:never")).toBe(true);
+    expect(r.settings.get().targets.dismissedOffers).toEqual([]);
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(500);
+    expect(r.t.bubbleAction("offer:1:never")).toBe(true);
+    expect(r.settings.get().targets.dismissedOffers).toEqual(["deploy@build-01"]);
+    expect(s.screen().visible).toBe(false);
+  });
+
+  it("that nobody asked for wait behind an answer being read, and their time starts when they show", async () => {
+    const s = screenRig();
+    const r = rig({ notice, cursor: true, showState: s.setState, bubbles: () => s.notices, settings: added });
+    s.convo.userPrompt("what's the time?");
+    answers(s.convo, "Half past three.");
+    r.ticks[0]();
+    await flush();
+    expect(s.screen().thought).toBe("Half past three.");
+    s.advance(6000 + 16 * 50);
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(24_000);
+    expect(s.screen().title).toBe("You're connected to build-01");
+    s.advance(1000);
+    expect(s.screen().visible).toBe(false);
+  });
+});
+
 describe("offer_connect (§2.6)", () => {
   it("shows a Connect button only for a computer the user's words named that Ember knows", async () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     expect(r.t.agent.offerConnect("build-01", "open the logs")).toBe("The user didn't name that computer, so Ember won't offer to connect to it.");
     expect(r.t.agent.offerConnect("build-03", "open the logs on build-03")).toMatch(/doesn't know a computer called build-03/);
     expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/showed the user a Connect button for build-01/);
-    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connect to build-01?", thought: "You asked for build-01. Ember isn't connected to it yet." }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Connect to build-01?", thought: "You asked for build-01. I'm not connected to it yet." }) });
     expect(r.conns.connect).not.toHaveBeenCalled();
     r.t.bubbleAction("offer:1:connect");
     await flush(); await flush();
@@ -1636,8 +1772,8 @@ describe("small helpers", () => {
   });
 
   it("says each connecting step in §8.2's words", () => {
-    expect(progressWords("build-01", { step: "copying", done: 5_000_000, total: 31_000_000 })).toBe("Copying Ember's helper to build-01 (5 of 31 MB)…");
-    expect(progressWords("build-01", { step: "starting" })).toBe("Starting Ember on build-01…");
+    expect(progressWords("build-01", { step: "copying", done: 5_000_000, total: 31_000_000 })).toBe("Copying what I need to build-01 (5 of 31 MB)…");
+    expect(progressWords("build-01", { step: "starting" })).toBe("Starting up on build-01…");
     expect(progressWords("build-01", { step: "failed", message: "x", retry: false, kind: "dns" })).toBeNull();
   });
 });
@@ -1701,21 +1837,22 @@ describe("the remote and WSL seams (INT)", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")]) });
     const l = await connected(r);
     l.emit("console.stop", { at: SINCE });
-    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01");
+    // Each stopped task says why (review #11).
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", undefined, "Someone at build-01 pressed Stop.");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "Someone at build-01 pressed Stop." }) });
     // A lock stops only the tasks that used its desktop; the others are main's to judge (the host's cancelTasksOn).
     l.emit("desktop.changed", { access: "none", notice: "off", session: { type: "x11", locked: true, active: true } });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
-    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop", "build-01's screen locked, so I stopped this.");
     l.move("stalled");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(2);
     l.move("lost");
     expect(r.stopTasksOn).toHaveBeenCalledTimes(3);
-    expect(r.stopTasksOn.mock.calls[2]).toEqual(["ssh:build-01"]);
+    expect(r.stopTasksOn.mock.calls[2]).toEqual(["ssh:build-01", undefined, "build-01's connection dropped, so I stopped this."]);
     await connected(r);
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(4);
-    expect(r.stopTasksOn.mock.calls[3]).toEqual(["ssh:build-01"]);
+    expect(r.stopTasksOn.mock.calls[3]).toEqual(["ssh:build-01", undefined, "build-01 isn't connected any more, so I stopped this."]);
     expect(r.stopTasksOn.mock.calls.every(c => c[0] === "ssh:build-01")).toBe(true);
   });
 
@@ -1725,7 +1862,7 @@ describe("the remote and WSL seams (INT)", () => {
     // The agent reports an inactive session with access none and no session of its own.
     l.emit("desktop.changed", { access: "none", notice: "off" });
     expect(r.stopTasksOn).toHaveBeenCalledTimes(1);
-    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop");
+    expect(r.stopTasksOn).toHaveBeenLastCalledWith("ssh:build-01", "desktop", "build-01's desktop session isn't active any more, so I stopped this.");
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Stopped on build-01", thought: "build-01's desktop session isn't active any more, so I stopped working on its screen." }) });
     // Nothing more to take away: said once.
     l.emit("desktop.changed", { access: "none", notice: "off" });
@@ -1815,5 +1952,225 @@ describe("wslSwitchOn (the doctor's reading of the user's WSL switch)", () => {
     expect(wslSwitchOn(`${file(wsl(true, 1))}`.replace(/}$/, ",}"))).toBe(true);
     expect(wslSwitchOn(file(wsl(true, 1), { size: "huge" }))).toBe(true);
     for (const text of [null, "", "not json", "[]", "null", "{}", file({ wsl: "on" })]) expect(wslSwitchOn(text)).toBe(false);
+  });
+});
+
+/**
+ * The screen as main keeps it, with the shared bubble behind it: main's guarded setter (a question on screen holds the
+ * bubble), the conversation's presenter, and the notice board the runtime posts through, all on timers the test moves.
+ */
+function screenRig() {
+  let now = 0;
+  let screen: BubbleState = IDLE_BUBBLE;
+  const seen: string[] = [];
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  let id = 0;
+  const set = ((fn: () => void, ms?: number) => { timers.set(++id, { at: now + (ms ?? 0), fn }); return id; }) as unknown as typeof setTimeout;
+  const clear = ((t: number) => { timers.delete(t); }) as unknown as typeof clearTimeout;
+  const advance = (ms: number) => {
+    const end = now + ms;
+    for (;;) {
+      const next = [...timers].filter(([, t]) => t.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      timers.delete(next[0]);
+      now = next[1].at;
+      next[1].fn();
+    }
+    now = end;
+  };
+  const question = { up: false };
+  const answered: (() => void)[] = [];
+  let face: EmberState["emotion"] = "neutral";
+  const setState = guardWhileAsking(() => question.up, (patch: Partial<EmberState>) => {
+    if (patch.emotion) face = patch.emotion;
+    if (!patch.bubble) return;
+    screen = patch.bubble;
+    seen.push(screen.visible ? `${screen.title} | ${screen.thought} [${screen.actions.map(a => a.label).join("/")}]` : "(hidden)");
+  });
+  const owner = new BubbleOwner({ up: () => question.up, answered: () => new Promise<void>(r => { answered.push(r); }) }, { set, clear }, () => now);
+  const presenter = () => new Presenter(setState, { set, clear }, () => "Ember", owner, undefined, false, { now: () => now });
+  const convo = presenter();
+  const notices = presenter();
+  return {
+    convo, notices, owner, setState, advance, seen, question,
+    screen: () => screen,
+    /** The bubble's chip (its mood) and Ember's face now. */
+    look: () => `${screen.mood}/${face}`,
+    /** A question goes up (main's Confirmer writes it past the guard), or is answered. */
+    ask: (title: string) => { question.up = true; screen = { ...IDLE_BUBBLE, visible: true, mood: "attention", title, actions: [{ id: "q1:once", label: "Allow" }] }; },
+    answer: async () => { question.up = false; for (const r of answered.splice(0)) r(); await flush(); },
+  };
+}
+
+/** The conversation answers `text` and its turn ends. */
+function answers(p: Presenter, text: string): void {
+  p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+  p.event({ type: "assistant.message", data: { content: text } });
+  p.event({ type: "session.idle", data: {} });
+}
+
+describe("connection failures (review #183, #17)", () => {
+  const keyChanged = () => new ConnectError(
+    "The key build-01 shows isn't the one this computer knows. Someone may be pretending to be build-01, or it was reinstalled. Ember won't connect.",
+    "host-key-changed", "If you know why it changed, remove the old key in a terminal with `ssh-keygen -R build-01`, then connect again.", false);
+
+  it("stay until the user closes them, and the host's settings row keeps the reason", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(new ConnectError("build-01 refused after too many keys. Add `IdentitiesOnly yes` to your SSH config.", "too-many-keys", undefined, false));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    s.advance(10 * 60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Can't connect to build-01", thought: "build-01 refused after too many keys. Add IdentitiesOnly yes to your SSH config.", actions: [{ label: "Close" }] });
+    expect(r.t.summaries().find(t => t.id === "ssh:build-01")).toMatchObject({ state: "off", problem: "build-01 refused after too many keys. Add IdentitiesOnly yes to your SSH config." });
+    expect(r.t.bubbleAction(s.screen().actions[0].id)).toBe(true);
+    expect(s.screen().visible).toBe(false);
+    // A connect that works clears the row's reason.
+    r.failConnect(null);
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(r.t.summaries().find(t => t.id === "ssh:build-01")!.problem).toBeUndefined();
+  });
+
+  it("show a changed host key in its card, with the bubble saying so in a sentence", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(keyChanged());
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(r.pw.ask).toHaveBeenCalledWith(expect.objectContaining({ kind: "host-key-changed", host: "build-01" }));
+    expect(s.screen()).toMatchObject({ title: "Can't connect to build-01", thought: "build-01's identity changed, so I won't connect. The window that opened says what to do.", mood: "error" });
+  });
+
+  it("show once a question that was up meanwhile is answered", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    r.failConnect(new ConnectError("Ember can't find build-01. Check the name, or add it to your SSH config.", "dns", undefined, false));
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    s.ask("May I?");
+    release();
+    await pending;
+    expect(s.screen().title).toBe("May I?");
+    await s.answer();
+    s.advance(2000);
+    expect(s.screen().title).toBe("Can't connect to build-01");
+  });
+});
+
+describe("connection progress (review #20, #187)", () => {
+  it("rewrites the bubble only when its words change, not on every downloaded chunk", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    r.showState.mockClear();
+    for (let done = 0; done <= 30_000_000; done += 60_000) for (const p of r.progress) p("build-01", { step: "downloading", done, total: 30_000_000 });
+    const texts = r.showState.mock.calls.map(c => (c[0] as Partial<EmberState>).bubble?.thought).filter(Boolean);
+    expect(texts).toHaveLength(31);
+    expect(new Set(texts).size).toBe(31);
+    expect(texts.at(-1)).toBe("Downloading what I need for build-01 (30 of 30 MB)…");
+    release();
+    await pending;
+  });
+
+  it("never puts the connecting bubble back over an answer the user is reading", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const release = r.holdConnect();
+    const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    await flush();
+    expect(s.screen().title).toBe("Connecting to build-01…");
+    s.convo.userPrompt("what's the time?");
+    answers(s.convo, "Half past three.");
+    for (let done = 0; done <= 29_000_000; done += 1_000_000) for (const p of r.progress) p("build-01", { step: "copying", done, total: 29_000_000 });
+    expect(s.screen().thought).toBe("Half past three.");
+    // Once the answer goes, the connection shows how far it got.
+    s.advance(30_000);
+    expect(s.screen()).toMatchObject({ title: "Connecting to build-01…", thought: expect.stringContaining("(29 of 29 MB)") });
+    release();
+    await pending;
+  });
+});
+
+describe("a dropped connection (review #11, #185)", () => {
+  it("says work moves to this computer until it's back, and keeps its Reconnect over the stopped task's result", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const l = await connected(r);
+    expect(r.t.agent.active).toBe("ssh:build-01");
+    l.move("lost");
+    expect(r.t.agent.active).toBe("local");
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", thought: "The connection dropped, so everything there stopped. I'll try to reconnect; until then I'll work on this computer." });
+    // The task cut off there finishes a moment later: its result waits behind the loss.
+    const task = new Presenter(s.setState, undefined, () => "Check disk", s.owner, undefined, false, { task: true });
+    task.outcome({ title: "Check disk", text: "build-01's connection dropped, so I stopped this.", emotion: "neutral", gesture: "rest", mood: "idle" });
+    s.advance(60_000);
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
+  });
+
+  it("works there again when SA reconnects by itself, and says so; never over a computer the user picked meanwhile", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01"), hostRecord("build-02")]), showState: s.setState, bubbles: () => s.notices });
+    const l = await connected(r);
+    l.move("lost");
+    r.links.set("build-01", fakeLink("build-01"));
+    for (const p of r.progress) p("build-01", { step: "ready" });
+    expect(r.t.agent.active).toBe("ssh:build-01");
+    expect(s.screen()).toMatchObject({ visible: true, title: "build-01 is back", thought: "The connection came back, so I'll work there again.", actions: [] });
+    s.advance(7000);
+    expect(s.screen().visible).toBe(false);
+    // Lost again, and this time the user picks this computer meanwhile: it stays the user's choice.
+    r.links.get("build-01")!.move("lost");
+    r.t.bubbleAction("target:local");
+    r.links.set("build-01", fakeLink("build-01"));
+    for (const p of r.progress) p("build-01", { step: "ready" });
+    expect(r.t.agent.active).toBe("local");
+  });
+});
+
+describe("the runtime's bubbles in the shared bubble", () => {
+  it("keeps offer_connect's Connect button up while the conversation's turn goes on and ends (review #9)", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    s.convo.userPrompt("open the logs on build-01");
+    s.convo.event({ type: "tool.execution_start", data: { toolName: "offer_connect" } });
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/Connect button/);
+    expect(s.screen().title).toBe("Connect to build-01?");
+    s.convo.event({ type: "tool.execution_complete", data: { success: true } });
+    answers(s.convo, "I've shown a Connect button for build-01.");
+    s.advance(10_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Connect to build-01?", actions: [{ label: "Connect" }, { label: "Not now" }] });
+    // Its Connect connects, and the connection says how it goes.
+    expect(r.t.bubbleAction(s.screen().actions[0].id)).toBe(true);
+    await flush(); await flush();
+    expect(r.conns.connect).toHaveBeenCalledWith(expect.objectContaining({ id: "build-01" }), expect.anything());
+    expect(s.screen().title).toBe("I'm on build-01");
+  });
+
+  it("never lets the connected bubble's timer blank an answer the user asked for meanwhile (review #10)", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    await connected(r);
+    expect(s.screen().title).toBe("I'm on build-01");
+    s.advance(3000);
+    s.convo.userPrompt("how many files are in /var/log?");
+    s.advance(2000);
+    answers(s.convo, "There are 12 files in /var/log.");
+    // The runtime's own timers (as it kept them before the shared bubble) and the shared bubble's run out.
+    for (const f of r.timers.splice(0)) f();
+    s.advance(2500);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Ember", thought: "There are 12 files in /var/log." });
+  });
+
+  it("never lets an earlier answer's timer blank a runtime bubble shown since (review #10)", async () => {
+    const s = screenRig();
+    const r = rig({ settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices });
+    const l = await connected(r);
+    s.convo.userPrompt("what's on build-01?");
+    answers(s.convo, "Three terminals and a browser.");
+    expect(s.screen().thought).toBe("Three terminals and a browser.");
+    l.move("lost");
+    expect(s.screen().title).toBe("Lost build-01");
+    s.advance(60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
   });
 });

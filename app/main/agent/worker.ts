@@ -2530,7 +2530,10 @@ export class Worker {
     const prompt = `${this.place ? "Fill" : "Borrow your keyboard to fill"} ${jobs.length} cell${jobs.length > 1 ? "s" : ""}${app}${this.place ? " on my desk" : ""}: ${list}?${added ? ` ${added}` : ""}`;
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     this.asked = true;
-    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id }, this.overSignal);
+    // On another computer the question says where (§2.4), as every other question of a task does.
+    const where = this.d.target ? whereWords(this.d.target) : undefined;
+    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}) };
+    const answer = await this.d.confirmer.ask(question, this.overSignal);
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;

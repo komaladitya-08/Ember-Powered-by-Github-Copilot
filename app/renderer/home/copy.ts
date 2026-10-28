@@ -92,7 +92,7 @@ export function signInLabel(signInWith?: string): string {
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
-  if (t.failing) return "Ember needs a couple of things fixed before it can work on this machine.";
+  if (t.failing) return `Ember needs ${t.failing} thing${t.failing === 1 ? "" : "s"} fixed before it can work on this computer.`;
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;

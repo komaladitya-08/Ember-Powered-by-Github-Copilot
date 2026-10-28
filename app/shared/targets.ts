@@ -58,6 +58,8 @@ export interface TargetSummary {
   can: string;
   /** The picker's choice: requests that name no computer go here. */
   active: boolean;
+  /** Why the last connection to it failed, while it isn't connected (the settings row keeps it after the bubble goes). */
+  problem?: string;
 }
 
 /**

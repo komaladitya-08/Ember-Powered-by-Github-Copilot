@@ -43,7 +43,7 @@ body { font: var(--type-callout); color: var(--label); }
 .task span[hidden] { display: none; }
 /* Where a task acts when it isn't this computer (§2.4): a small capsule before the title, on the bubble and the cards. */
 .where {
-  display: inline-block; max-width: 160px; margin-right: 6px; padding: 0 6px; border-radius: var(--r-capsule); vertical-align: 1px;
+  display: inline-block; max-width: 136px; margin-right: 6px; padding: 0 6px; border-radius: var(--r-capsule); vertical-align: 1px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: var(--type-caption); color: var(--label); background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px var(--control-edge);
 }

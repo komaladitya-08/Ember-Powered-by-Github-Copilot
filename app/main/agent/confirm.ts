@@ -56,8 +56,8 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
 interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void }
 
 export interface ConfirmerTiming {
-  /** How long a question stays up before it expires as "no". */
-  timeoutMs?: number;
+  /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
+  timeoutMs?: number | (() => number);
   /** Clicks this soon after a question appears are ignored. */
   armMs?: number;
   /** The pause between one question being answered and the next appearing. */
@@ -74,6 +74,8 @@ export interface ConfirmerTiming {
    * approve key allow a panel question. Absent (tests, the eval): panel questions can't be allowed at all.
    */
   panelReady?: (n: number) => boolean;
+  /** Under a panel question, how to reach its window from the keyboard (main wires the targets runtime's panelHint). */
+  panelHint?: (panel: QuestionPanel) => string | undefined;
 }
 
 export class Confirmer {
@@ -81,7 +83,7 @@ export class Confirmer {
   private current: Pending | null = null;
   private n = 0;
   private gapTimer: ReturnType<typeof setTimeout> | null = null;
-  private timeoutMs: number;
+  private timeoutMs: number | (() => number);
   private armMs: number;
   private gapMs: number;
   private now: () => number;
@@ -89,6 +91,7 @@ export class Confirmer {
   private onChange: ConfirmerTiming["onChange"];
   private keyHint: ConfirmerTiming["keyHint"];
   private panelReady: ConfirmerTiming["panelReady"];
+  private panelHint: ConfirmerTiming["panelHint"];
   /** Waiting for no question to be up or queued (settled()). */
   private settledWaiters: (() => void)[] = [];
 
@@ -102,6 +105,7 @@ export class Confirmer {
     this.onChange = t.onChange;
     this.keyHint = t.keyHint;
     this.panelReady = t.panelReady;
+    this.panelHint = t.panelHint;
   }
 
   /**
@@ -180,6 +184,18 @@ export class Confirmer {
     }
   }
 
+  /** How to reach a panel question's window from the keyboard, or null when main doesn't say (a hint that throws says nothing). */
+  private panelHintFor(panel: QuestionPanel): string | null {
+    try { return this.panelHint?.(panel) || null; } catch { return null; }
+  }
+
+  /** How long the question showing now waits for an answer (a setting that can't be read: the default 2 minutes). */
+  private timeout(): number {
+    const t = this.timeoutMs;
+    if (typeof t === "number") return t;
+    try { const v = t(); return Number.isFinite(v) && v > 0 ? v : 120_000; } catch { return 120_000; }
+  }
+
   /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
   private armOf(q: Question): number {
     return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
@@ -206,15 +222,16 @@ export class Confirmer {
     if (!this.current) { this.checkSettled(); return; }
     const p = this.current;
     p.shownAt = this.now();
-    p.timer = setTimeout(() => this.finish(p, null), this.timeoutMs);
+    p.timer = setTimeout(() => this.finish(p, null), this.timeout());
     // The whole task, so a step like "press Enter" is read as part of what the user asked for (typing and saving too).
     const task = p.q.context?.trim();
     const panel = p.q.panel;
     const bubble: BubbleState = {
       visible: true, mood: "attention", title: p.q.title,
       thought: task && task !== p.q.prompt ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
-      // A panel question is answered in its window, which names the keys while they work there.
-      step: panel ? null : this.keyHint?.() || null, streaming: false,
+      // A panel question is answered in its window, which names the keys while they work there; its step says how to
+      // get there from the keyboard (the bubble's own buttons are mouse-only).
+      step: panel ? this.panelHintFor(panel) : this.keyHint?.() || null, streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]

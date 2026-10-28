@@ -483,7 +483,7 @@ describe("a run's tab", () => {
     });
     run.finish({ code: 2, ms: 1100 });
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0]).toMatchObject({ status: "Ended with exit code 2 after 1.1 s.", interactive: false, ended: true, typing: "", outcome: "failed" });
+    expect(page().last().tabs[0]).toMatchObject({ status: "Ended with exit code 2 after 1.1\u00a0s.", interactive: false, ended: true, typing: "", outcome: "failed" });
   });
 
   it("sends output in batches with its byte offsets, and a reloading page gets the rest whole", () => {
@@ -546,16 +546,16 @@ describe("a run's tab", () => {
     ctl.attach(card(), run);
     run.finish({ ended: "stopped-user", code: null, ms: 12_000 });
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays.");
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
     looked(["sleep", "\u202emalware"]);
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware. Ask Ember to stop them, or end them yourself.");
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware. Ask Ember to stop them, or end them yourself.");
     // A run that says nothing (a remote's) keeps its line as it was.
     const quiet = new FakeRun("00000000000000aa");
     ctl.attach(card({ runId: quiet.runId }), quiet);
     quiet.finish();
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0].status).toBe("Finished in 3.2 s.");
+    expect(page().last().tabs[0].status).toBe("Finished in 3.2\u00a0s.");
   });
 
   it("stops a live run from its Stop and closes only a finished tab", async () => {
@@ -568,7 +568,7 @@ describe("a run's tab", () => {
     expect(run.stops).toEqual(["user"]);
     run.finish({ ended: "stopped-user", code: null, ms: 12_000 });
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays.");
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
     ipc.send(COMMANDS_IPC.close, page(), { runId: run.runId });
     expect(page().last().tabs).toHaveLength(0);
     expect(run.listeners).toBe(0);
@@ -692,7 +692,7 @@ describe("a run's tab", () => {
     expect(status).not.toMatch(/[\u202e\n]/);
     expect([...status].length).toBeLessThan(400);
     const names = statusLine({ code: 0, signal: null, ended: "exit", ms: 1000, stragglers: ["ma\u200bke", "y".repeat(500)] } as RunExit, { label: "build-01", os: "linux" });
-    expect(names).toBe(`Finished in 1 s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}…. Ask Ember to stop them, or end them yourself.`);
+    expect(names).toBe(`Finished in 1\u00a0s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}…. Ask Ember to stop them, or end them yourself.`);
   });
 
   it("names how a run ended for its tab's symbol", () => {
@@ -1012,7 +1012,7 @@ describe("a command waiting for the user to type (review #263)", () => {
     vi.advanceTimersByTime(WAITING_MS + 10);
     run.finish({ ended: "timeout", code: null, ms: 120_000 });
     await vi.advanceTimersByTimeAsync(0);
-    expect(page().last().tabs[0].status).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
+    expect(page().last().tabs[0].status).toBe("Stopped after 2\u00a0min: it was waiting for you to type, and took too long.");
   });
 });
 

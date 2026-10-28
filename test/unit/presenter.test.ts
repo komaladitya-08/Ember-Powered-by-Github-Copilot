@@ -1,6 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
-import { BubbleOwner, NO_REPLY, Presenter, STILL_WAITING, expandedBubble, handStep, plainText, stepOf } from "../../app/main/agent/presenter";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
+
+// A test that fakes the clock (or sets its time) leaves the next one on the real clock.
+afterEach(() => { vi.useRealTimers(); });
 
 function setup() {
   const states: Partial<EmberState>[] = [];
@@ -206,11 +209,11 @@ describe("Presenter: review round 2", () => {
     const { friendlyError } = await import("../../app/main/agent/presenter");
     const cases: [string, string | undefined, { statusCode?: number; provider?: boolean }, RegExp][] = [
       ["400 The response was filtered due to the prompt triggering Azure OpenAI's content management policy.", "query", { statusCode: 400 }, /content filter/],
-      ["Authentication failed with provider at http://x/v1 (HTTP 403).", "authentication", { statusCode: 403, provider: true }, /organisation's AI endpoint refused/],
-      ["Authentication failed with provider at http://x/v1 (HTTP 401).", "authentication", { statusCode: 401, provider: true }, /organisation's AI endpoint refused/],
+      ["Authentication failed with provider at http://x/v1 (HTTP 403).", "authentication", { statusCode: 403, provider: true }, /organisation's model service refused/],
+      ["Authentication failed with provider at http://x/v1 (HTTP 401).", "authentication", { statusCode: 401, provider: true }, /organisation's model service refused/],
       ["Request failed: 401 Unauthorized", undefined, {}, /sign in again/],
       ["Forbidden", undefined, { statusCode: 403 }, /organisation policy or a missing Copilot seat/],
-      ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's AI endpoint/],
+      ["Could not connect to local model provider at http://127.0.0.1:1/v1.", "query", { provider: true }, /can't reach your organisation's model service/],
       ["Failed to get response from the AI model; retried 5 times. Last error: 429 Rate limit reached", "rate_limit", { statusCode: 429 }, /usage limit/],
       ["400 This model's maximum context length is 8192 tokens.", "query", { statusCode: 400 }, /too much/],
       ["Resource not found on provider at http://x/v1 (HTTP 404).", "query", { statusCode: 404, provider: true }, /model I'm set to use/],
@@ -477,7 +480,7 @@ describe("Presenter: tasks and guides sharing the bubble (review round 4)", () =
     const { friendlyError } = await import("../../app/main/agent/presenter");
     expect(friendlyError("Pending response rejected since connection got disposed")).toMatch(/can't reach Copilot/);
     expect(friendlyError("Failed to get response from the AI model; retried 5 times (total retry wait time: 54.36 seconds) Last error: 502 Bad gateway")).toBe("Copilot had a problem on its side. Try again in a moment.");
-    expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's AI endpoint had a problem/);
+    expect(friendlyError("Last error: 503 Service Unavailable", undefined, { provider: true })).toMatch(/^Your organisation's model service had a problem/);
   });
 });
 
@@ -667,5 +670,268 @@ describe("a task's bubble shows its steps, never its model's thinking (live rete
     expect(states.at(-1)?.bubble).toMatchObject({ title: "Open Mousepad", step: "Reading the window" });
     p.progress("Typing the list");
     expect(states.at(-1)?.bubble).toMatchObject({ title: "Open Mousepad", thought: "Typing the list" });
+  });
+});
+
+describe("Presenter.post: a bubble of Ember's own in the shared bubble (review #9, #10)", () => {
+  function board() {
+    vi.useFakeTimers();
+    const shown: string[] = [];
+    const owner = new BubbleOwner();
+    const push = (who: string) => (s: Partial<EmberState>) => { if (s.bubble) shown.push(`${who}:${s.bubble.visible ? s.bubble.title : "(hidden)"}`); };
+    const talk = new Presenter(push("ember"), undefined, () => "Ember", owner);
+    const notices = new Presenter(push("notice"), undefined, () => "Ember", owner);
+    return { owner, talk, notices, shown };
+  }
+  const offer = { title: "Connect to build-01?", thought: "You asked for build-01.", actions: [{ id: "offer:1:connect", label: "Connect" }], mood: "attention" as const };
+
+  it("holds the bubble until it is cleared: the conversation's answer waits behind it, then shows", () => {
+    const { talk, notices, shown } = board();
+    talk.userPrompt("open the logs on build-01");
+    notices.post(offer);
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Click Connect." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(60_000);
+    expect(shown.at(-1)).toBe("notice:Connect to build-01?");
+    notices.clear();
+    expect(shown.at(-1)).toBe("ember:Ember");
+  });
+
+  it("comes back after the user's next request is answered, until it is cleared", () => {
+    const { talk, notices, shown } = board();
+    notices.post(offer);
+    talk.userPrompt("what time is it?");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Half past three." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(30_000);
+    expect(shown.at(-1)).toBe("notice:Connect to build-01?");
+  });
+
+  it("with a time, goes that long after it reaches the screen, and never hides what covered it", () => {
+    const { talk, notices, shown } = board();
+    notices.post({ ...offer, title: "Ember is on build-01", actions: [], mood: "idle" }, { ms: 7000 });
+    vi.advanceTimersByTime(3000);
+    talk.userPrompt("how many files?");
+    talk.event({ type: "assistant.message_delta", data: { deltaContent: "Twelve." } });
+    talk.event({ type: "session.idle", data: {} });
+    vi.advanceTimersByTime(4500);
+    expect(shown.at(-1)).toBe("ember:Ember");
+  });
+
+  it("keeps its buttons' time on screen while only its words change (a download's progress), so Cancel can be pressed", () => {
+    const { notices } = board();
+    vi.setSystemTime(1000);
+    const connecting = { title: "Connecting to build-01…", thought: "Checking build-01…", actions: [{ id: "conn:build-01:cancel", label: "Cancel" }], mood: "acting" as const };
+    notices.post(connecting);
+    for (let t = 1010; t < 2000; t += 10) { vi.setSystemTime(t); notices.post({ ...connecting, thought: `Downloading (${t} of 2000 MB)…` }, { claim: "reply" }); }
+    expect(notices.shownAt).toBe(1000);
+    expect(notices.shownFor).toBeGreaterThan(500);
+  });
+
+  it("says when its bubble reached the screen, starting again with each post", () => {
+    const { notices } = board();
+    vi.setSystemTime(1000);
+    expect(notices.shownAt).toBeNull();
+    notices.post(offer);
+    expect(notices.shownAt).toBe(1000);
+    vi.setSystemTime(5000);
+    // Another offer (its own buttons): its time starts again.
+    notices.post({ ...offer, title: "Connect to build-02?", actions: [{ id: "offer:2:connect", label: "Connect" }] });
+    expect(notices.shownAt).toBe(5000);
+    notices.clear();
+    expect(notices.visible).toBe(false);
+  });
+});
+
+describe("Read all: by the lines an answer takes, not its characters (review #12)", () => {
+  const finished = (text: string) => {
+    const { p, last } = setup();
+    p.userPrompt("what can I do?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+    p.event({ type: "assistant.message", data: { content: text } });
+    return last().bubble!;
+  };
+
+  it("offers Read all for a short answer whose line breaks take more than the bubble's six lines", () => {
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    expect(options.length).toBeLessThan(LONG_ANSWER);
+    expect(answerLines(options)).toBe(9);
+    expect(finished(options).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
+    const list = "Here:\n- one\n- two\n- three\n- four\n- five\n- six\n- seven";
+    expect(finished(list).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
+  });
+
+  it("says under Read all where the keyboard finds the whole answer: the settings window's Conversation (review #47, #51)", () => {
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    expect(finished(options).step).toBe("Or press Ctrl+Alt+E and go to Conversation.");
+    expect(finished("It's half past three.").step).toBeNull();
+    // Opened in full, it needs no route.
+    expect(expandedBubble(finished(options), options).step).toBeNull();
+  });
+
+  it("leaves no task's step on a turn stopped mid-step", () => {
+    const { p, last } = setup();
+    p.userPrompt("tidy up");
+    p.event({ type: "tool.execution_start", data: { toolName: "click", toolCallId: "c1" } });
+    expect(last().bubble?.step).toBeTruthy();
+    p.event({ type: "session.idle", data: { aborted: true } });
+    expect(last().bubble).toMatchObject({ title: "Stopped", mood: "idle", step: null });
+  });
+
+  it("offers none for an answer that fits, and counts a long line as the lines it wraps onto", () => {
+    expect(finished("It's half past three.\nYour next meeting is at four.").actions).toEqual([]);
+    expect(answerLines("x".repeat(80))).toBe(3);
+    expect(answerLines("a\n\nb")).toBe(3);
+  });
+});
+
+describe("a question said aloud and in a notification names where it comes from (review #13)", () => {
+  it("says the computer when it isn't this one, with the keys that answer it", () => {
+    const words = questionAloud({ prompt: "Click **Save** in gedit?", where: "on build-01" }, { keys: ["Control Alt Y to allow"], spoken: s => s.replace(/\*/g, "") });
+    expect(words).toEqual({ say: "Ember asks, on build-01: Click Save in gedit? Press Control Alt Y to allow.", notify: "On build-01: Click **Save** in gedit?" });
+    expect(questionAloud({ prompt: "Click Save?" })).toEqual({ say: "Ember asks: Click Save?", notify: "Click Save?" });
+  });
+});
+
+describe("a problem's buttons follow what failed (review #18)", () => {
+  const errorOf = (data: Record<string, unknown>) => {
+    const { p, last } = setup();
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data });
+    return last().bubble!;
+  };
+
+  it("offers Open settings where settings can fix it (sign-in, model, access), never for the network or a hiccup", () => {
+    expect(errorOf({ message: "401 Unauthorized", errorType: "authentication" }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    expect(errorOf({ message: "model_not_supported" }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    expect(errorOf({ message: "403", statusCode: 403 }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    expect(errorOf({ message: "fetch failed ECONNRESET" }).actions).toEqual([]);
+    expect(errorOf({ message: "503 Service Unavailable" }).actions).toEqual([]);
+    expect(errorOf({ message: "429 rate limited", statusCode: 429 }).actions).toEqual([]);
+  });
+
+  it("offers nothing for a runtime that stopped and reconnects by itself", () => {
+    const { p, last } = setup();
+    p.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
+    expect(last().bubble!.actions).toEqual([]);
+  });
+
+  it("never names a settings-window button in the bubble: Open settings is the button there", () => {
+    expect(forBubble("Ember's Copilot runtime stopped while connecting. Press Check again.")).toBe("My Copilot runtime stopped while connecting. Open settings to try again.");
+    expect(forBubble("Copilot keeps stopping. Press Check again to retry, or restart Ember.")).toBe("Copilot keeps stopping. Open settings to try again, or restart Ember.");
+    expect(forBubble("It may have expired. Sign in again, or run “gh auth login” in a terminal and press Check again."))
+      .toBe("It may have expired. Sign in again in settings.");
+    const { p, last } = setup();
+    p.notice({ title: "Copilot isn't running", text: "Ember's Copilot runtime stopped while connecting. Press Check again.", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    expect(last().bubble!.thought).toBe("My Copilot runtime stopped while connecting. Open settings to try again.");
+  });
+});
+
+describe("the bubble's header says something the chip doesn't (review #21)", () => {
+  it("points with words of its own, not the guiding chip's 'Showing you'", () => {
+    expect(stepOf("point_at")).toBe("Pointing at it");
+  });
+
+  it("titles a problem with what failed, not 'Something went wrong'", () => {
+    const titleOf = (data: Record<string, unknown>, provider = false) => {
+      const states: Partial<EmberState>[] = [];
+      const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, provider);
+      p.userPrompt("hi");
+      p.event({ type: "session.error", data });
+      return states.at(-1)!.bubble!.title;
+    };
+    expect(titleOf({ message: "401", errorType: "authentication" })).toBe("Copilot didn't accept the sign-in");
+    expect(titleOf({ message: "fetch failed ECONNRESET" })).toBe("I can't reach Copilot");
+    expect(titleOf({ message: "429", statusCode: 429 })).toBe("Usage limit reached");
+    expect(titleOf({ message: "model_not_supported" })).toBe("That model isn't available");
+    expect(titleOf({ message: "content_filter" })).toBe("Request blocked");
+    expect(titleOf({ message: "503 Service Unavailable" })).toBe("Copilot had a problem");
+    expect(titleOf({ message: "something odd" }, true)).toBe("The model service had a problem");
+    // A failure outside the session's events (fail()) names the same service as its sentence does.
+    const failTitle = (message: string, provider: boolean) => {
+      const states: Partial<EmberState>[] = [];
+      const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, provider);
+      p.userPrompt("hi");
+      p.fail(message);
+      return states.at(-1)!.bubble!;
+    };
+    expect(failTitle(friendlyError("ECONNREFUSED", undefined, { provider: true }), true)).toMatchObject({ title: "I can't reach the model service", thought: expect.stringMatching(/your organisation's model service/) });
+    expect(failTitle(friendlyError("strange", undefined, { provider: true }), true).title).toBe("The model service had a problem");
+    expect(failTitle(friendlyError("ECONNREFUSED"), false).title).toBe("I can't reach Copilot");
+    expect(problemTitle("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.")).toBe("Copilot stopped");
+    expect(problemTitle("Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.")).toBe("Copilot isn't answering");
+    expect(problemTitle("Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.")).toBe("Copilot can't work right now");
+  });
+});
+
+describe("the bubble speaks in one voice, Ember's own (review #22)", () => {
+  it("says what the settings window says of Ember in the first person, and runs no commands in the bubble", () => {
+    expect(forBubble("Ember can't reach GitHub right now. It will try again when the network is back.")).toBe("I can't reach GitHub right now. I'll try again when the network is back.");
+    expect(forBubble("Ember's Copilot runtime is missing or can't start. Reinstall Ember (sudo dnf reinstall ember).")).toBe("My Copilot runtime is missing or can't start. Reinstall Ember.");
+    expect(forBubble("Copilot didn't accept the GitHub sign-in Ember found (from the GitHub CLI).")).toBe("Copilot didn't accept the GitHub sign-in I found (from the GitHub CLI).");
+    // Ember named inside a sentence (a setting, an app's permission) stays as it is.
+    expect(forBubble("If it's on your local network, allow Ember in System Settings.")).toBe("If it's on your local network, allow Ember in System Settings.");
+  });
+
+  it("marks a request it quotes cut short", () => {
+    const { p, last } = setup();
+    p.userPrompt("x".repeat(130));
+    expect(last().bubble?.thought).toBe(`“${"x".repeat(119)}…”`);
+    p.userPrompt("what's the time?");
+    expect(last().bubble?.thought).toBe("“what's the time?”");
+  });
+});
+
+describe("one name for the organisation's own model service (review #228)", () => {
+  it("says model service in every problem from it, never AI endpoint or AI service", () => {
+    const raws: [string, string | undefined, { statusCode?: number; provider?: boolean }][] = [
+      ["Authentication failed (HTTP 401).", "authentication", { statusCode: 401, provider: true }], ["ECONNREFUSED", undefined, { provider: true }],
+      ["429", "rate_limit", { statusCode: 429, provider: true }], ["503 Service Unavailable", undefined, { provider: true }],
+      ["content_filter", undefined, { provider: true }], ["strange", undefined, { provider: true }],
+    ];
+    for (const [raw, type, ctx] of raws) {
+      const said = friendlyError(raw, type, ctx);
+      expect(said, raw).toMatch(/model service/);
+      expect(said, raw).not.toMatch(/AI (endpoint|service)/);
+    }
+    // Copilot's own content filter is Copilot's.
+    expect(friendlyError("content_filter")).toBe("Copilot's content filter blocked that request. Try asking in other words.");
+  });
+});
+
+describe("More time to read and answer (review #51)", () => {
+  it("keeps every bubble its reading time times the user's setting", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    let scale = 3;
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { readTime: () => scale });
+    p.userPrompt("what time is it?");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Half past three." } });
+    p.event({ type: "session.idle", data: {} });
+    const ms = 6000 + 16 * 50;
+    vi.advanceTimersByTime(ms * 3 - 10);
+    expect(states.at(-1)?.bubble?.visible).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+    // The setting off: as before.
+    scale = 1;
+    p.notice({ title: "Copilot isn't running", text: "x", ms: 12_000 });
+    vi.advanceTimersByTime(12_010);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+  });
+
+  it("is ten times the usual time, as WCAG 2.2.1 asks of a time limit the user can adjust: a question waits 20 minutes", () => {
+    expect(readTimeOf(false)).toBe(1);
+    expect(readTimeOf(true)).toBe(10);
+    expect(120_000 * readTimeOf(true)).toBe(20 * 60_000);
+    // The presenter keeps all of it (its bubbles stay ten times as long, never more).
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { readTime: () => readTimeOf(true) });
+    p.notice({ title: "Copilot isn't running", text: "x", ms: 12_000 });
+    vi.advanceTimersByTime(120_000 - 10);
+    expect(states.at(-1)?.bubble?.visible).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
   });
 });

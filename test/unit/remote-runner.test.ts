@@ -350,11 +350,11 @@ describe("RemoteRunner: the stalled link's countdown on a running command's tab 
     expect(runner.status()).toBeNull();
     // The link has been silent 5 s: with a grace of 20 s its commands stop in 15 s.
     link.setState("stalled");
-    expect(runner.status()).toBe("build-01 isn't answering. This command stops in 15 s unless the link comes back.");
+    expect(runner.status()).toBe("build-01 isn't answering. This command stops in 15 seconds unless it answers again.");
     await vi.advanceTimersByTimeAsync(1000);
-    expect(runner.status()).toBe("build-01 isn't answering. This command stops in 14 s unless the link comes back.");
+    expect(runner.status()).toBe("build-01 isn't answering. This command stops in 14 seconds unless it answers again.");
     await vi.advanceTimersByTimeAsync(3000);
-    expect(seen.at(-1)).toBe("build-01 isn't answering. This command stops in 11 s unless the link comes back.");
+    expect(seen.at(-1)).toBe("build-01 isn't answering. This command stops in 11 seconds unless it answers again.");
     link.setState("ready");
     expect(runner.status()).toBeNull();
     expect(seen.at(-1)).toBeNull();
@@ -375,7 +375,7 @@ describe("RemoteRunner: the stalled link's countdown on a running command's tab 
     runner.onStatus(t => notes.push(t));
     link.setState("stalled");
     link.setState("lost");
-    expect(notes).toEqual(["build-01 isn't answering. This command stops in 15 s unless the link comes back.", null]);
+    expect(notes).toEqual(["build-01 isn't answering. This command stops in 15 seconds unless it answers again.", null]);
   });
 });
 

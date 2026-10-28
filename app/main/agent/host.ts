@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type PresenterEvent } from "./presenter";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent } from "./presenter";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -119,6 +119,8 @@ export interface HostOptions {
   settings: SettingsStore;
   log: Logger;
   setState: (patch: Partial<EmberState>) => void;
+  /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
+  readTime?: () => number;
   onStatus: (s: AgentStatus) => void;
   /** Text description of the user's screen, for the conductor's describe_screen tool. */
   describeScreen?: () => Promise<string>;
@@ -571,10 +573,14 @@ export class AgentHost {
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
+  /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
+  private readonly noticeBoard: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
   private readonly stoppedByAll = new Set<string>();
+  /** Why tasks stopped with their computer (its connection dropped, someone there pressed Stop): said instead of "Stopped.". */
+  private readonly stoppedWhy = new Map<string, string>();
   /** Tasks the conversation's latest turn started (its reply announces them: "On it…"). */
   private readonly announced = new Set<string>();
   /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
@@ -610,8 +616,18 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
+    const readTime = o.readTime ? { readTime: o.readTime } : {};
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts, ...readTime });
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, { shortcuts: this.sys.shortcuts, ...readTime });
+  }
+
+  /**
+   * Where the targets runtime's bubbles go (a connection, an offer, a loss): through the shared bubble, so the
+   * conversation's and the tasks' bubbles wait behind them as behind a question, and no presenter's timer hides them.
+   */
+  get notices(): NoticeBoard {
+    return this.noticeBoard;
   }
 
   /**
@@ -1015,10 +1031,13 @@ export class AgentHost {
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
-          const summary = task.result?.summary ?? "";
+          // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
+          const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
+          this.stoppedWhy.delete(task.id);
+          const summary = why ?? task.result?.summary ?? "";
           // A task failed on a refused sign-in: is it still signed in (checkSignIn)?
           if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
-          const text = taskOutcome(task);
+          const text = why ? `${task.title}: ${why}` : taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
           this.taskDesktop.delete(task.id);
@@ -1393,7 +1412,7 @@ export class AgentHost {
     const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
-      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}),
+      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}), ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
       ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
     });
     this.taskPresenters.set(id, p);
@@ -1534,7 +1553,11 @@ export class AgentHost {
       const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
       const title = this.status.phase === "starting" ? "I'm still connecting to Copilot" : NOTICE_TITLE[signedOut ? "signed-out" : this.status.reason ?? "other"];
       const restart = this.status.reason === "policy" && !!this.o.policyHeld?.();
-      this.presenter.notice({ title, text: why, actions: [restart ? { id: "ui:restart", label: "Restart Ember" } : { id: "ui:settings", label: "Open settings" }] });
+      // Not signed in: signing in is what to do next (as the greeting says it), not a problem. Settings is offered only
+      // where it can help: not while Ember waits for the network or reconnects by itself.
+      const selfMending = !signedOut && (this.status.phase === "starting" || this.status.reason === "network" || this.status.reason === "not-answering");
+      const actions = restart ? [{ id: "ui:restart", label: "Restart Ember" }] : selfMending ? [] : [{ id: "ui:settings", label: "Open settings" }];
+      this.presenter.notice({ title, text: why, actions, ...(signedOut ? { mood: "attention" as const } : {}) });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
       const asked = this.remember("you", text);
@@ -1578,6 +1601,8 @@ export class AgentHost {
     this.queued = [];
     this.claimBubble();
     this.presenter.quiet();
+    // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
+    this.noticeBoard.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();
@@ -1590,13 +1615,16 @@ export class AgentHost {
    * if it asked one): someone at that computer pressed Stop, or its connection went (§5.3.9, §5.1.11). With `only:
    * "desktop"` (its screen locked or its session went inactive, §5.3.4 step 8), only the running tasks that used its
    * desktop: one running only commands there goes on (its command window is on this PC), and a queued one hasn't used
-   * it; a running task that can't say counts as one that did. Tasks on other computers go on. Returns how many it stopped.
+   * it; a running task that can't say counts as one that did. Tasks on other computers go on. `why`: what each stopped
+   * task's result says instead of "Stopped." ("build-01's connection dropped, so I stopped this."). Returns how many it
+   * stopped.
    */
-  cancelTasksOn(target: TargetId, only?: "desktop"): number {
+  cancelTasksOn(target: TargetId, only?: "desktop", why?: string): number {
     let n = 0;
     for (const t of this.tasks?.list() ?? []) {
       if ((t.targetId ?? "local") !== target || (t.status !== "running" && t.status !== "queued")) continue;
       if (only === "desktop" && (t.status === "queued" || this.taskDesktop.get(t.id)?.() === false)) continue;
+      if (why) this.stoppedWhy.set(t.id, why);
       this.tasks?.cancel(t.id);
       n++;
     }

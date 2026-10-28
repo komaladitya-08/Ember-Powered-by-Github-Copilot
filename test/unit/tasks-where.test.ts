@@ -116,7 +116,8 @@ describe("a task's bubbles say where it acts", () => {
     p.taskStarted();
     p.announce("Pushing feature-x to origin, as you asked.", "ui:cmdstop:0123456789abcdef");
     expect(shown.at(-1)!.bubble).toMatchObject({
-      visible: true, title: "Pushing feature-x to origin, as you asked", thought: `On build-01. It starts in ${ANNOUNCE_MS / 1000} seconds. Ctrl+Alt+X stops everything at once.`,
+      // The badge says where (review #22); then the time it is given and the stop chord (review #46).
+      visible: true, title: "Pushing feature-x to origin, as you asked", thought: `It starts in ${ANNOUNCE_MS / 1000} seconds. Ctrl+Alt+X stops everything at once.`,
       actions: [{ id: "ui:cmdstop:0123456789abcdef", label: "Stop" }], where: "on build-01", task: "t1",
     });
     expect(spoken).toEqual(["Pushing feature-x to origin, as you asked."]);

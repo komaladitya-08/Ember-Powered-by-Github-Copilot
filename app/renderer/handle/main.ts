@@ -5,7 +5,7 @@ import { announcement, onPress, plainStream } from "@ember/bubble";
 import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
-import { targetBadge } from "./badge";
+import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
 import type { Settings } from "../../main/settings";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -81,7 +81,7 @@ function announce(b: BubbleState, status: string | null): void {
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, name);
+    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step }, name);
     if (text && text !== announced) { announced = text; parts.push(text); }
   }
   if ((status ?? "") !== announcedStatus) {
@@ -90,10 +90,10 @@ function announce(b: BubbleState, status: string | null): void {
   }
   if (parts.length) $("live").textContent = parts.join(" ");
 }
-/** The picker's target beside Ember's name (§8.1): nothing for this computer. */
+/** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
 let badgeKey = "";
-function renderTarget(s: EmberState): void {
-  const badge = targetBadge(s.target);
+function renderTarget(s: EmberState, given?: TargetBadge | null): void {
+  const badge = given !== undefined ? given : targetBadge(s.target);
   const key = badge ? `${badge.state}|${badge.text}` : "";
   if (key === badgeKey) return;
   badgeKey = key;
@@ -107,7 +107,7 @@ function renderTarget(s: EmberState): void {
 }
 
 api.onState(s => {
-  renderTarget(s);
+  if (!fallback) renderTarget(s);
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
   busy = s.talking || s.bubble.streaming;
@@ -126,6 +126,8 @@ api.onState(s => {
   announce(b, s.status ?? null);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
+  // Beside Ember's name: where the bubble's task acts (its question is about that computer), else the picker's choice.
+  renderTarget(s, cardBadge({ where: b.visible ? b.where : undefined, task: b.visible && !!b.task }, s.target));
   const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
@@ -156,7 +158,8 @@ api.onState(s => {
   if (task) {
     $("task").dataset.status = task.status;
     $("task-state").textContent = TASK_WORD[task.status];
-    $("task-title").textContent = task.title;
+    const at = whereText(task.where);
+    $("task-title").textContent = at ? `${task.title} (${at})` : task.title;
     $("task-detail").textContent = task.detail;
     $("task").title = `${task.title}${task.detail ? `: ${task.detail}` : ""}`;
   }

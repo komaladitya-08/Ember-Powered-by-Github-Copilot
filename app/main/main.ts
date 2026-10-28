@@ -47,7 +47,7 @@ import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
-import { expandedBubble } from "./agent/presenter";
+import { expandedBubble, questionAloud, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken } from "./agent/auth";
@@ -469,10 +469,12 @@ function start(): void {
   // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
 
-  /** Hides `bubble` later, unless something else has replaced it by then. */
+  /** How many times its usual time a bubble stays, and how long a question waits: the user's "More time to read and answer". */
+  const readTime = () => readTimeOf(settings.get().moreTime);
+  /** Hides `bubble` later (as long as the user needs to read it), unless something else has replaced it by then. */
   const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
     if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
-  }, ms);
+  }, ms * readTime());
   /** Ember's shortcuts on this OS (one table: the accelerators, and how the copy names them). */
   const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
@@ -737,11 +739,10 @@ function start(): void {
     // A command is never read out or put in a notification (R7): only that Ember wants to run one, and where; the card
     // on screen shows it, and the keys work only there.
     const words = targets?.questionWords(q.question) ?? null;
-    if (maySpeak()) {
-      const keys = heldKeys().map(k => k.say);
-      voice?.speak(words ?? `Ember asks: ${spokenText(q.question.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`);
-    }
-    if (userAway()) notify("Ember needs your OK", words ?? q.question.prompt);
+    // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
+    const aloud = questionAloud(q.question, { keys: heldKeys().map(k => k.say), spoken: spokenText });
+    if (maySpeak()) voice?.speak(words ?? aloud.say);
+    if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
   const userAway = () => (overlay?.isHidden() ?? false) || powerMonitor.getSystemIdleTime() >= 30;
@@ -1486,6 +1487,8 @@ function start(): void {
     // in force each day, so nothing is pruned once a changed policy holds Ember locked down (review #106).
     audit.pruneDaily(() => auditRetentionDays(admin), err => log.warn("audit.prune_failed", { err }));
     confirmer = new Confirmer(showState, {
+      // A question waits 2 minutes for an answer, 20 with more time to read and answer.
+      timeoutMs: () => 120_000 * readTime(),
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
@@ -1494,6 +1497,8 @@ function start(): void {
       // A question shown in a window of Ember's own (a command, a consent card): the keys allow it only while that window
       // shows all of it (R7).
       panelReady: n => targets?.panelReady(n) ?? false,
+      // And how to reach that window from the keyboard (the bubble's buttons are mouse-only).
+      panelHint: p => targets?.panelHint(p),
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);
@@ -1655,11 +1660,16 @@ function start(): void {
       keyHint: () => heldKeys().map(k => k.hint).join(" · ") || null,
       // A computer whose connection went or where someone pressed Stop: its tasks stop here too; whose screen locked or
       // session went inactive: those that used its desktop.
-      stopTasksOn: (target, only) => { agent?.cancelTasksOn(target, only); },
+      stopTasksOn: (target, only, why) => { agent?.cancelTasksOn(target, only, why); },
+      // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
+      bubbles: () => agent?.notices ?? null,
+      // Its bubbles' keyboard route names the settings shortcut only while Ember holds it.
+      settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
+      readTime,
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,

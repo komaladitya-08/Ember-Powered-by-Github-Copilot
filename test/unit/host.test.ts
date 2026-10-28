@@ -491,6 +491,8 @@ describe("asking", () => {
     await host.start(null);
     await host.ask("hi");
     expect(screen().bubble).toMatchObject({ visible: true, title: "I need Copilot first" });
+    // Signing in is what to do next, as the greeting says it: Needs you, not a problem (review #15).
+    expect(screen()).toMatchObject({ emotion: "curious", bubble: { mood: "attention", actions: [{ id: "ui:settings", label: "Open settings" }] } });
   });
 });
 
@@ -1030,7 +1032,7 @@ describe("review round 4", () => {
     await asked;
     await vi.advanceTimersByTimeAsync(100);
     expect(shown(patches.slice(n))).toEqual([]);
-    expect(shown(patches).filter(s => s.startsWith("Something went wrong"))).toEqual(["Something went wrong: Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment."]);
+    expect(shown(patches).filter(s => s.startsWith("Copilot stopped"))).toEqual(["Copilot stopped: Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment."]);
     await host.stop();
   });
 });
@@ -2089,6 +2091,8 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await host.ask("are you there?");
     // (Copilot is reachable: the title names what is wrong, not "I can't reach Copilot".)
     expect(screen().bubble).toMatchObject({ title: "Copilot isn't answering", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    // Settings can't help while it reconnects by itself: no Open settings (review #18).
+    expect(screen().bubble?.actions).toEqual([]);
     expect(conductorSession().sent.at(-1)).toMatch(/Tokyo$/);
     // The task ends (here the user stops it): Copilot is reconnected now, and the next ask goes out.
     host.tasks!.cancel(t.id);
@@ -2502,6 +2506,50 @@ describe("the models' cost in the status (review #144)", () => {
       { id: "delta-mini", name: "Delta Mini", vision: true },
     ]);
     expect(host.getStatus()).toMatchObject({ conductorModel: "delta-mini", workerModel: "delta-pro" });
+    await host.stop();
+  });
+});
+
+describe("the runtime's bubbles (AgentHost.notices, review #9, #10)", () => {
+  it("go through the shared bubble, and the kill switch takes them away for good", async () => {
+    const { host, screen } = makeHost();
+    host.notices.post({ title: "Lost build-01", thought: "The connection dropped.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect" }], mood: "error" });
+    expect(screen().bubble).toMatchObject({ visible: true, title: "Lost build-01" });
+    await host.abortAll();
+    expect(host.notices.visible).toBe(false);
+    // Main's hold on the bubble (its kill switch message) ends: nothing of anyone's comes back, main hides it itself.
+    expect(host.releaseBubble(null)).toBe(false);
+    await host.stop();
+  });
+});
+
+describe("a notice saying why Ember couldn't answer goes once that no longer holds", () => {
+  it("offline: the network comes back, and the notice goes at once rather than at the end of its time", async () => {
+    vi.useFakeTimers();
+    let reach = false;
+    sim.auth = async () => ({ isAuthenticated: reach, login: "octo" });
+    const { host, screen } = makeHost({ reachable: async () => reach });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    const asked = host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(100);
+    await asked;
+    expect(screen().bubble).toMatchObject({ visible: true, title: "I can't reach Copilot", thought: expect.stringMatching(/^I can't reach GitHub right now/) });
+    reach = true;
+    host.networkChanged(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(screen().bubble?.visible).toBe(false);
+    await host.stop();
+  });
+
+  it("signed out: the user signs in, and \"I need Copilot first\" goes at once", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    await host.start(null);
+    await host.ask("hi");
+    expect(screen().bubble).toMatchObject({ visible: true, title: "I need Copilot first", mood: "attention" });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(screen().bubble?.visible).toBe(false);
     await host.stop();
   });
 });

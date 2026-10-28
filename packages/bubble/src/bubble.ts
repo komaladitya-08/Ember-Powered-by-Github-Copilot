@@ -34,30 +34,60 @@ export function chipLabel(mood: BubbleMood, streaming: boolean): string {
   return mood === "idle" && streaming ? "Answering" : BUBBLE_LABEL[mood];
 }
 
+/** The title only says the chip's word again ("Thinking…" beside "Thinking"): the bubble shows it once, in the chip. */
+export function titleRepeatsChip(title: string, chip: string): boolean {
+  const norm = (s: string) => s.trim().replace(/[.…]+$/, "").toLowerCase();
+  return !!norm(title) && norm(title) === norm(chip);
+}
+
 export interface BubbleView {
   visible: boolean;
   mood: BubbleMood;
   title: string;
   thought: string;
   streaming: boolean;
+  /** Where its task acts when not on this computer ("on build-01"): the badge says it to the eye, this to the ear. */
+  where?: string;
+  /**
+   * Its step row: under a question, how to answer it ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"); under a problem, how the
+   * keyboard reaches what its buttons do ("Or press Ctrl+Alt+E and go to Computers."). Read after it.
+   */
+  step?: string | null;
 }
 
 /**
  * What a screen reader hears, once: finished answers and questions, never each
  * streamed token or the running commentary while Ember thinks or works.
- * "" means say nothing.
+ * "" means say nothing. A bubble from another computer says which first.
  */
 export function announcement(v: BubbleView, speaker = "Ember"): string {
   if (!v.visible || v.streaming) return "";
   const text = v.thought.trim();
   const title = v.title.trim();
   const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
+  const where = v.where?.replace(/\s+/g, " ").trim();
+  const at = where ? `, ${where}` : "";
+  // A question's step row says how to answer it (or where it is shown whole), a problem's how the keyboard reaches what
+  // its buttons do, an answer cut short's where it is whole: heard after it, as it is seen under it. (A guide's step,
+  // what it points at, is not read.)
+  const hint = v.step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim();
+  const end = (s: string) => (/[.!?…:]$/.test(s) ? s : `${s}.`);
+  const withHint = hint ? `${end(both)} ${end(hint)}` : both;
   switch (v.mood) {
-    case "attention": return both ? `${speaker} needs you: ${both}` : "";
-    case "error": return both ? `${speaker} has a problem: ${both}` : "";
-    case "idle": case "done": case "guiding": return text || title ? `${speaker} says: ${text || title}` : "";
+    case "attention": return both ? `${speaker} needs you${at}: ${withHint}` : "";
+    case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
+    case "idle": case "done": return text || title ? `${speaker} says${at}: ${hint ? `${end(text || title)} ${end(hint)}` : text || title}` : "";
+    case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
   }
+}
+
+/**
+ * Whether the finished thought scrolls inside the bubble when it is longer than it shows (BUBBLE_CSS): a question's and
+ * a problem's (up to ten lines), and an answer opened with "Read all". Its scroll area then takes the pointer.
+ */
+export function thoughtScrolls(v: { mood: BubbleMood; expanded: boolean; streaming: boolean }): boolean {
+  return !v.streaming && (v.mood === "attention" || v.mood === "error" || v.expanded);
 }
 
 const MARGIN = 8;
@@ -104,7 +134,11 @@ function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid:
     const slides = avoid.flatMap(r => [r.x - w - GAP, r.x + r.width + GAP]).filter(fitsX).sort((a, b) => Math.abs(a - p.x) - Math.abs(b - p.x));
     for (const sx of slides) tries.push({ x: sx, y: p.y });
   }
-  tries.push(fallback);
+  // The fallback ignores Ember (it is clamped to the screen only): never taken over Ember's body and its emote, so a
+  // bubble too big for any clear place (an answer opened in full) goes beside Ember over the cards instead (the usual
+  // placement), not over Ember's face.
+  const e = size > 0 ? { x: anchor.x - size * 0.75, y: anchor.y - size * 1.5, width: size * 1.5, height: size * 1.7 } : null;
+  if (!e || !(fallback.x < e.x + e.width && fallback.x + w > e.x && fallback.y < e.y + e.height && fallback.y + h > e.y)) tries.push(fallback);
   const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
   return tries.find(clear) ?? null;
 }
@@ -236,6 +270,13 @@ export const BUBBLE_CSS = `
   animation: eb-pulse 1.4s ease-in-out infinite;
 }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A question's or a problem's title carries the decision ("Pushing feature-x to origin, as you asked"): it wraps onto a
+   second line rather than lose its end under an ellipsis. */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-title {
+  white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+/* A title that only repeats the chip's word ("Thinking…" beside Thinking) isn't shown twice. */
+.ember-bubble .eb-title[hidden] { display: none; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
   margin: 0; max-height: calc(20px * 6); overflow: hidden;
@@ -258,8 +299,9 @@ export const BUBBLE_CSS = `
   -webkit-mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
 }
-/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence. */
-.ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
+/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence; so does a
+   problem, whose last sentence is usually what to do about it. */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]):not([data-streaming="true"]) .eb-thought {
   max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
@@ -282,9 +324,11 @@ export const BUBBLE_CSS = `
 .eb-step { display: flex; gap: 7px; padding-top: 8px; border-top: 1px solid var(--separator, rgba(255, 255, 255, 0.09)); font: 400 13px/18px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 600; }
-/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. */
-.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
-.ember-bubble[data-mood="attention"] .eb-step-arrow { display: none; }
+/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
+   is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."), and an
+   answer's cut short, where it is whole ("… go to Conversation."). */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
+.ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step-arrow { display: none; }
 .eb-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
 /* Capsules (the floating layer's large controls, 28 px). The prominent one is the app's accent; the others carry
@@ -373,6 +417,7 @@ export class ReasoningBubble {
   private expanded = false;
   private visible = true;
   private speaker = "Ember";
+  private where: string | undefined;
   private announced = "";
   private announceQueued = false;
   /** Content changed since the bubble last measured itself. */
@@ -430,6 +475,13 @@ export class ReasoningBubble {
     this.speaker = name;
   }
 
+  /** Where the bubble's task acts when not on this computer ("on build-01"), for screen readers (see `announcement`). */
+  setWhere(where: string | undefined): void {
+    if (where === this.where) return;
+    this.where = where;
+    this.queueAnnounce();
+  }
+
   setMood(mood: BubbleMood): void {
     if (mood === this.mood) return;
     this.mood = mood;
@@ -441,6 +493,7 @@ export class ReasoningBubble {
   setTitle(text: string): void {
     if (this.title.textContent === text) return;
     this.title.textContent = text;
+    this.updateTitle();
     this.changed();
   }
 
@@ -603,6 +656,14 @@ export class ReasoningBubble {
   private updateChip(): void {
     const label = chipLabel(this.mood, this.streaming);
     if (this.chipText.textContent !== label) this.chipText.textContent = label;
+    this.updateTitle();
+  }
+
+  /** Hides a title that only says the chip's word again (the chip shows unless it is a finished answer's "Ready"). */
+  private updateTitle(): void {
+    const chipShown = !(this.mood === "idle" && !this.streaming);
+    const hide = chipShown && titleRepeatsChip(this.title.textContent ?? "", chipLabel(this.mood, this.streaming));
+    if (this.title.hidden !== hide) this.title.hidden = hide;
   }
 
   /** One layout read: size, overflow, and where the clickable parts are. */
@@ -614,7 +675,7 @@ export class ReasoningBubble {
     const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     const hot: Rect[] = [];
     if (!this.actions.hidden) hot.push(rel(this.actions));
-    if (over && (this.mood === "attention" || this.expanded) && !this.streaming) hot.push(rel(t));
+    if (over && thoughtScrolls({ mood: this.mood, expanded: this.expanded, streaming: this.streaming })) hot.push(rel(t));
     return { box, hot, over };
   }
 
@@ -630,7 +691,8 @@ export class ReasoningBubble {
     // Keep what was said while hidden: a hide/show flicker (Ember crossing a screen edge) doesn't repeat it.
     if (!this.visible) return;
     const text = announcement({
-      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming,
+      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming, where: this.where,
+      step: this.step.hidden ? null : this.stepText.textContent,
     }, this.speaker);
     if (text === this.announced) return;
     this.announced = text;

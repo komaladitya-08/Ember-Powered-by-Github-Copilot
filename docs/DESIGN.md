@@ -47,8 +47,19 @@ They share one emotion rig, so switching never changes behaviour.
 
 - **Reasoning bubble** (`packages/bubble`): dark glass, always dark so it reads over any
   app; state (a dot and a word), one-line intent, streaming thought (last three lines),
-  current step with its reason, and buttons when Ember needs a decision. While Ember
-  thinks or listens, an ember-coloured glow breathes round its edge.
+  current step with its reason, and buttons when Ember needs a decision. Ember speaks in
+  the first person there ("I'm on build-01"), and a number's unit never wraps away from it
+  ("15 seconds" in a sentence). While Ember thinks or listens, an ember-coloured glow
+  breathes round its edge. The state says
+  "Needs you" only when a button needs a decision (a question, an offer, signing in);
+  a notice that asks nothing (a stop on another computer, "I'm on build-01") has no
+  state word, connecting to a computer is "Working", and a failure is "Problem". With
+  **More time to read and answer** (Settings › Comfort & access) every bubble stays ten
+  times as long and a question waits 20 minutes instead of 2. The bubble never takes the
+  keyboard, so under buttons only the mouse reaches it says where the keyboard finds the same
+  thing: an answer cut short offers **Read all**, and under it "Or press Ctrl+Alt+E and go to
+  Conversation." (the settings window keeps the whole answer; there is no shortcut of its own
+  for the last answer).
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
