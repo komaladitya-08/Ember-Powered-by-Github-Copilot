@@ -347,7 +347,9 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   your terminal's contents. It offers "You're connected to build-01" — "Bring me there too? I'll open my own
   connection with your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). The offer waits until
   you've finished reading what the bubble shows, ignores a press in its first half second, and goes after 25 seconds
-  unanswered (as **Not now**). Its buttons, like those of "Lost build-01" and "Can't connect", take only the mouse;
+  unanswered (as **Not now**; ten times that with **More time to read and answer**). While it is up, Ember stops
+  following the pointer and holds still beside it, as it does while you read an answer, so its buttons stay where you
+  reach for them. Its buttons, like those of "Lost build-01" and "Can't connect", take only the mouse;
   under them the bubble says where the same buttons are from the keyboard (Settings › **Computers**, with the settings
   shortcut). It offers each computer once per run, and **Don't offer again** sticks. Turn the offers off with
   **Offer to bring Ember along when I connect with ssh**. Ember always opens its own connection; it never uses or types
