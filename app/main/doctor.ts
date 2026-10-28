@@ -85,6 +85,16 @@ const OFF_LINUX: Record<"win32" | "darwin", { name: string; input: { ok: string;
   },
 };
 
+/**
+ * The platform's rows that are the same check as a row of the settings window's setup check, by that row's id: the
+ * doctor calls them what the window calls them (review #229), whatever the window's words are.
+ */
+const WINDOW_ROW: Readonly<Record<string, string>> = {
+  "accessibility-permission": "accessibility", "microphone-permission": "microphone", "microphone-privacy": "microphone", location: "location", root: "elevated",
+};
+/** The platform's microphone permission rows: where one is, the general "Not checked here" Microphone row isn't. */
+const MIC_ROWS = new Set(["microphone-permission", "microphone-privacy"]);
+
 /** The "Accessibility helper" row (Windows and macOS: the shared host and its provider, started once by the doctor). */
 function helperRow(h: HelperStatus | null, fix: string, reinstall: string): DoctorCheck {
   const label = "Accessibility helper";
@@ -145,7 +155,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     const onFix = /is off/i.test(a11y.detail) ? `gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then ${LINUX_A11Y_RESTART})` : undefined;
     // The fix line carries the command, so the detail doesn't repeat it.
     const detail = a11y.detail.replace(/:\s*sudo dnf install.*$/, ".");
-    out.push({ id: "accessibility", status: a11y.status, label: "Reading apps", detail, ...(pyFix || onFix ? { fix: pyFix ?? onFix } : {}) });
+    out.push({ id: "accessibility", status: a11y.status, label: a11y.label, detail, ...(pyFix || onFix ? { fix: pyFix ?? onFix } : {}) });
   }
   // Off Linux the shared host stands where the Python sidecar's accessibility check stands on Linux.
   if (off && p.helper !== undefined) out.push(helperRow(p.helper, off.helperFix, reinstall));
@@ -164,7 +174,11 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
         : { id: "xtest", status: "warn", label: "Mouse and keyboard", detail: "XTest isn't available, so Ember can only act through accessibility.", fix: "sudo dnf install libXtst" });
   }
 
-  for (const r of p.extra ?? []) out.push({ id: r.id, status: r.status, label: r.label, detail: r.detail, ...(r.fix ? { fix: r.fix } : {}) });
+  for (const r of p.extra ?? []) {
+    const same = WINDOW_ROW[r.id] !== undefined ? env(WINDOW_ROW[r.id])?.label : undefined;
+    const label = same ?? (MIC_ROWS.has(r.id) ? "Microphone" : r.label);
+    out.push({ id: r.id, status: r.status, label, detail: r.detail, ...(r.fix ? { fix: r.fix } : {}) });
+  }
 
   const copilot: DoctorCheck = !p.runtime
     ? { id: "copilot", status: "fail", label: "Copilot", detail: "Ember's Copilot runtime is missing from the installation.", fix: reinstall }
@@ -182,7 +196,9 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   else out.push({ id: "policy", status: "ok", label: "Organisation policy", detail: `None (optional: ${p.policyLocation ?? ADMIN_POLICY_FILE}).` });
 
   const micOk = !!p.microphones?.length;
-  out.push(p.microphones === null
+  // The platform's own microphone row says what the OS allows: a second "Microphone" saying nothing is left out.
+  const micRow = (p.extra ?? []).some(r => MIC_ROWS.has(r.id));
+  if (!(micRow && p.microphones === null)) out.push(p.microphones === null
     ? off
       ? { id: "microphone", status: "ok", label: "Microphone", detail: "Not checked here; the settings window tests it when you turn on “Hey Ember”." }
       : { id: "microphone", status: "warn", label: "Microphone", detail: "Can't list microphones (pactl is missing). Only needed for “Hey Ember”.", fix: "sudo dnf install pulseaudio-utils" }

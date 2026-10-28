@@ -185,7 +185,8 @@ function canWords(apps: string | null, commands: CommandCapability["state"]): st
   const c = commandsWord(commands);
   if (apps && c) return `${apps} and ${c}`;
   if (apps) return apps;
-  return c ? `${c} only` : "nothing yet";
+  // "commands once you agree" is never "only": that says the rest is already there.
+  return c ? (commands === "on" ? `${c} only` : c) : "nothing yet";
 }
 
 /** The local entry. */
@@ -304,7 +305,9 @@ export function activeOf(entries: readonly TargetEntry[], wanted: TargetId): Tar
 
 /** What the renderers get (settings, the handle's badge). */
 export function summaryOf(e: TargetEntry, active: TargetId): TargetSummary {
-  return { id: e.id, kind: e.kind, label: e.label, ...(e.login ? { login: e.login } : {}), state: e.state, can: e.can, active: e.id === active };
+  // The distro that "WSL" names is the one "in WSL" goes to: settings marks it.
+  const wslDefault = e.kind === "wsl" && e.names.includes(WSL_WORDS[0]);
+  return { id: e.id, kind: e.kind, label: e.label, ...(e.login ? { login: e.login } : {}), state: e.state, can: e.can, active: e.id === active, ...(wslDefault ? { wslDefault } : {}) };
 }
 
 /** A remote's desktop as the registry shows it: what the agent reported (§5.4). */

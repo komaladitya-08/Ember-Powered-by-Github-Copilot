@@ -15,11 +15,12 @@
       <div class="hero-text">
         <h1>Ember</h1>
         <p id="tagline" role="status">Starting…</p>
+        <p class="sr" id="home-live" role="status"></p>
       </div>
     </header>
 
     <nav class="jump after-setup" id="jump" aria-label="Settings sections">
-      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#access-h">Comfort</a><a href="#activity-h">Activity</a><a href="#checks-h">Setup</a><a href="#about-h">About</a>
+      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
     </nav>
 
     <p id="managed" class="managed" hidden></p>
@@ -42,7 +43,7 @@
       <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
       <div class="group">
         <div class="pick-row">
-          <label for="size">Size <output id="size-out" for="size">60 px</output></label>
+          <label for="size">Size <span id="size-out" class="size-out" aria-hidden="true">60 px</span></label>
           <input type="range" id="size" min="36" max="110" step="2" value="60" aria-valuetext="60 pixels">
         </div>
         <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
@@ -123,15 +124,17 @@
     <section class="after-setup" id="computers" aria-labelledby="computers-h" hidden>
       <h2 id="computers-h" tabindex="-1">Computers</h2>
       <div class="stack">
-        <p class="intro">Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.</p>
+        <p class="intro" id="computers-intro">Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.</p>
+        <div class="group" id="wsl-switch">
+          <label class="switch-row" id="wsl-row" hidden><input type="checkbox" id="wsl-on" role="switch"><span>Let Ember work in WSL</span></label>
+        </div>
         <ul class="plain-list targets" id="computers-list" aria-labelledby="computers-h"></ul>
         <div class="group" id="computers-switches">
-          <label class="switch-row" id="wsl-row" hidden><input type="checkbox" id="wsl-on" role="switch"><span>Let Ember work in WSL</span></label>
-          <label class="switch-row" id="offer-row" hidden><input type="checkbox" id="offer-ssh" role="switch"><span>Offer to bring Ember along when I connect with ssh</span></label>
+          <label class="switch-row" id="offer-row" hidden><input type="checkbox" id="offer-ssh" role="switch"><span>Offer to bring Ember along when I connect with SSH</span></label>
         </div>
         <form class="add-row" id="host-form" autocomplete="off" hidden>
           <label for="host-add" class="sr">SSH host</label>
-          <input id="host-add" type="text" maxlength="255" spellcheck="false" placeholder="An SSH host, e.g. build-01 or deploy@build-01.example.com" aria-describedby="computers-msg">
+          <input id="host-add" type="text" maxlength="255" spellcheck="false" placeholder="Host name or user@host" aria-describedby="computers-msg">
           <button type="submit" class="btn quiet">Connect</button>
         </form>
         <p class="hint" id="computers-managed" hidden></p>
@@ -183,6 +186,7 @@
       <details class="fold" id="checks-fold" aria-labelledby="checks-h">
         <summary><h2 id="checks-h">Setup check</h2><span class="fold-note" id="checks-note"></span></summary>
         <ul class="checks" id="checks"></ul>
+        <p class="sr" id="checks-msg" role="status"></p>
       </details>
     </section>
 

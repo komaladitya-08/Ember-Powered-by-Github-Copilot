@@ -279,7 +279,8 @@ async function runDoctor(): Promise<void> {
     extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
   });
-  process.stdout.write(`Ember ${app.getVersion()} check-up\n\n${formatDoctor(checks)}\n`);
+  // The settings window's name for it (review #229).
+  process.stdout.write(`Ember ${app.getVersion()} setup check\n\n${formatDoctor(checks)}\n`);
   input?.close();
   ws?.close();
   app.exit(checks.some(c => c.status === "fail") ? 1 : 0);
@@ -431,7 +432,8 @@ function start(): void {
       sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
   })));
-  ipcMain.handle(IPC.activity, guard(() => audit?.recent(150) ?? []));
+  // Every entry the log keeps: the window shows the newest 80 it has lines for (a command writes several entries).
+  ipcMain.handle(IPC.activity, guard(() => audit?.recent(500) ?? []));
   /** The administrator's never-look entries are applied on top; they never go into the user's own list. */
   const ownNeverLook = (patch: SettingsPatch): SettingsPatch => {
     if (!patch.privacy?.neverLook || !policy.neverLook.length) return patch;

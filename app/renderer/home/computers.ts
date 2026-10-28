@@ -10,7 +10,8 @@ import type { Status, StatusPlatform } from "../../shared/ipc";
 import type { Settings } from "../../main/settings";
 import type { TargetSummary, TargetsAct } from "../../shared/targets";
 import {
-  ACT_FAILED, ADD_INVALID, actMessage, commandsView, computersView, hostInput, type ComputerRow, type EmberTargetsApi, type Switch, type TargetsAdmin,
+  ACT_FAILED, ADD_INVALID, actMessage, actResult, addPending, addResult, commandsView, computersIntro, computersView, hostInput, type ComputerRow, type EmberTargetsApi,
+  type RowAction, type Switch, type TargetsAdmin,
 } from "./computers-copy";
 
 declare global { interface Window { emberTargets?: EmberTargetsApi } }
@@ -46,6 +47,55 @@ async function act(a: TargetsAct, msg: string): Promise<void> {
   }
 }
 
+/** Hosts whose helper is being removed (their rows say so until the answer comes). */
+const removing = new Set<string>();
+/**
+ * A row's button. Remove helper says it is working, in its row and the message line, and how it went (review #191):
+ * it can take a minute, and on success the row goes.
+ */
+async function rowAction(a: RowAction): Promise<void> {
+  const api = window.emberTargets;
+  if (!api) return;
+  if (a.silent) { await api.act(a.act).catch(() => { /* the removal's own answer says how it ended */ }); return; }
+  if (a.act.kind !== "uninstall") { await act(a.act, "computers-msg"); return; }
+  const hostId = a.act.hostId;
+  removing.add(hostId);
+  draw();
+  // Focus goes to the row's Cancel (the button pressed is gone).
+  $("computers-list").querySelector<HTMLElement>(`li[data-id="ssh:${CSS.escape(hostId)}"] button`)?.focus();
+  say("computers-msg", a.pending ?? "");
+  try {
+    say("computers-msg", actResult(await api.act(a.act), a.done ?? ""));
+  } catch {
+    say("computers-msg", ACT_FAILED);
+  } finally {
+    removing.delete(hostId);
+    draw();
+  }
+}
+
+/** An add under way: the form says so, and a second Connect waits for it. */
+let adding = false;
+/** Adds a host: the field keeps what was typed until the host is added (a typo stays to be fixed). */
+async function add(dest: string, input: HTMLInputElement, button: HTMLElement): Promise<void> {
+  const api = window.emberTargets;
+  if (!api) return;
+  adding = true;
+  button.setAttribute("aria-disabled", "true");
+  say("computers-msg", addPending(dest));
+  try {
+    const r = addResult(await api.act({ kind: "add", dest }));
+    // Typed over meanwhile: what is there now is the user's.
+    if (r.clear && hostInput(input.value) === dest) input.value = "";
+    say("computers-msg", r.message);
+  } catch {
+    say("computers-msg", ACT_FAILED);
+  } finally {
+    adding = false;
+    button.removeAttribute("aria-disabled");
+  }
+}
+
 /** A switch the runtime decides: a change asks it, and the switch keeps showing the settings until they change. */
 function asks(input: HTMLInputElement, onWant: (on: boolean) => void): void {
   input.addEventListener("change", () => {
@@ -65,6 +115,7 @@ function switchRow(s: Switch, onWant: (on: boolean) => void, cls = "switch-row")
   const input = el("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
+  if (s.ariaLabel) input.setAttribute("aria-label", s.ariaLabel);
   setSwitch(input, s);
   asks(input, onWant);
   row.append(input, el("span", "", s.label));
@@ -73,6 +124,7 @@ function switchRow(s: Switch, onWant: (on: boolean) => void, cls = "switch-row")
 
 function computerItem(r: ComputerRow): HTMLLIElement {
   const li = el("li", "target-row");
+  li.dataset.id = r.id;
   const text = el("span", "target-text");
   // "build-01 · deploy@build-01.example.com" on one line, then the status.
   const name = el("span", "target-name");
@@ -89,7 +141,7 @@ function computerItem(r: ComputerRow): HTMLLIElement {
       if (a.ariaLabel) b.setAttribute("aria-label", a.ariaLabel);
       b.addEventListener("click", () => {
         if (a.confirm && !window.confirm(a.confirm)) return;
-        void act(a.act, "computers-msg");
+        void rowAction(a);
       });
       buttons.append(b);
     }
@@ -115,7 +167,9 @@ function draw(): void {
   const shown = summaries !== null && settings !== null;
   for (const id of ["computers", "commands", "jump-computers", "jump-commands"]) $(id).hidden = !shown;
   if (!shown) return;
-  const c = computersView({ os, summaries: summaries!, settings: settings!, admin });
+  const intro = computersIntro(os);
+  if ($("computers-intro").textContent !== intro) $("computers-intro").textContent = intro;
+  const c = computersView({ os, summaries: summaries!, settings: settings!, admin, removing });
   const rows = [c.local, ...(c.wsl?.rows ?? []), ...c.ssh.rows];
   const key = JSON.stringify(rows);
   if (key !== computersKey) {
@@ -172,11 +226,11 @@ export function startTargets(): void {
   asks($("offer-ssh") as HTMLInputElement, on => void act({ kind: "offerSsh", on }, "computers-msg"));
   $("host-form").addEventListener("submit", e => {
     e.preventDefault();
+    if (adding) return;
     const input = $("host-add") as HTMLInputElement;
     const dest = hostInput(input.value);
     if (!dest) { say("computers-msg", ADD_INVALID); input.focus(); return; }
-    input.value = "";
-    void act({ kind: "add", dest }, "computers-msg");
+    void add(dest, input, $("host-form").querySelector("button")!);
   });
   $("open-commands").addEventListener("click", () => void act({ kind: "openCommands" }, "commands-msg"));
 }

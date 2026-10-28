@@ -620,6 +620,13 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     expect(moved.spawned).toEqual([]);
   });
 
+  it("stops a removal the user cancelled, before anything runs there (review #191)", async () => {
+    const r = track(rig());
+    await expect(r.conns.uninstall(record(), { signal: AbortSignal.abort() })).rejects.toMatchObject({ kind: "cancelled" });
+    expect(r.spawned).toEqual([]);
+    expect(r.audits.at(-1)).toMatchObject({ step: "failed", host: "build-01", kind: "cancelled", uninstall: true });
+  });
+
   it("resolves a typed destination for the consent card, with its jump hops", async () => {
     const r = track(rig({ g: argv => (argv.at(-1) === "build-01" ? gOut({ extra: ["proxyjump deploy@[10.0.0.5]:2200", "controlpath /home/ana/.ssh/cm-1"] }) : gOut({ hostname: "10.0.0.5" })) }));
     expect(await r.conns.resolve("build-01")).toEqual({ user: "deploy", hostname: "build-01.example.com", port: 22, jump: ["deploy@10.0.0.5:2200"], controlPath: null });
@@ -726,6 +733,10 @@ describe("a live link (§5.1.10-§5.1.13)", () => {
     await new Promise(res => setTimeout(res, 150));
     expect(failed().map(p => [p.kind, p.retry])).toEqual([["network", true], ["auth", false]]);
     expect(timers).toHaveLength(0);
+    // The audit keeps every try, marked as a reconnect's, and says once that it gave up (What Ember did shows only
+    // that: a link that drops for good tries about 24 times in 10 minutes, review #152).
+    expect(r.audits.filter(a => a.step === "failed" || a.step === "gave-up").map(a => [a.step, a.kind, a.reconnect]))
+      .toEqual([["failed", "network", true], ["failed", "auth", true], ["gave-up", "auth", undefined]]);
   });
 
   it("disconnects with bye and EOF, and doesn't reconnect", async () => {

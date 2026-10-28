@@ -619,7 +619,8 @@ export function createConnections(o: {
     } catch (err) {
       const e = err instanceof ConnectError ? err : new ConnectError(MESSAGES.unknown(h), "unknown", undefined, true);
       if (!(err instanceof ConnectError)) log?.warn("remote.connect_crashed", { err });
-      audit({ step: "failed", host: host.id, kind: e.kind });
+      // A reconnect's try is marked: What Ember did shows only its end ("gave-up"), not each of its ~24 tries.
+      audit({ step: "failed", host: host.id, kind: e.kind, ...(mode.reconnect ? { reconnect: true } : {}) });
       log?.info("remote.connect_failed", { host: host.id, kind: e.kind });
       // A reconnect's failure is told by onLost, which knows whether it tries again.
       if (!mode.reconnect) progress(host.id, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: e.retry, kind: e.kind });
@@ -660,7 +661,10 @@ export function createConnections(o: {
         const e = err instanceof ConnectError ? err : new ConnectError(MESSAGES.unknown(hostLabel(host.dest)), "unknown", undefined, true);
         const again = RETRYABLE.has(e.kind) && now() - since < RECONNECT_GIVE_UP_MS;
         progress(hostId, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: again, kind: e.kind });
-        if (!again) return end();
+        if (!again) {
+          audit({ step: "gave-up", host: hostId, kind: e.kind });
+          return end();
+        }
         next();
       }
     };
@@ -715,20 +719,28 @@ export function createConnections(o: {
       return l && (l.state === "ready" || l.state === "stalled") ? l : null;
     },
 
-    async uninstall(host) {
+    async uninstall(host, uo = {}) {
       const h = hostLabel(host.dest);
       await disconnect(host.id);
       const abort = new AbortController();
+      // The user's Cancel (settings' row) stops the removal where it is.
+      const onAbort = () => abort.abort();
+      uo.signal?.addEventListener("abort", onAbort, { once: true });
+      if (uo.signal?.aborted) abort.abort();
+      const cancelled = () => { if (abort.signal.aborted) throw new ConnectError(MESSAGES.cancelled(), "cancelled", undefined, true); };
       try {
         progress(host.id, { step: "resolving" });
+        cancelled();
         const p = await prepare(host.dest, host.port, host.extra, host.via, h);
         // Removal goes only to the computer the user allowed, as a connection does.
         sameResolution(p, host, h);
+        cancelled();
         let run = await attempt(p, host, h, "batch", false, abort.signal, "uninstall");
         if (run.r.kind === "failed") {
           await run.port.terminate().catch(() => undefined);
           const f = failureOf(run.r, p, h, "batch", false);
           if ((f.kind !== "unknown-host-key" && f.kind !== "auth") || !(await askpassReady(p.client))) throw refuse(f);
+          cancelled();
           run = await attempt(p, host, h, "interactive", f.kind === "unknown-host-key", abort.signal, "uninstall");
         }
         await run.port.terminate().catch(() => undefined);
@@ -740,6 +752,8 @@ export function createConnections(o: {
         audit({ step: "failed", host: host.id, kind: e.kind, uninstall: true });
         progress(host.id, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: e.retry, kind: e.kind });
         throw e;
+      } finally {
+        uo.signal?.removeEventListener("abort", onAbort);
       }
     },
 

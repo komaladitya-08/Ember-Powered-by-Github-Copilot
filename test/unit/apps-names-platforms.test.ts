@@ -80,13 +80,14 @@ describe("friendly app names on macOS", () => {
 });
 
 describe("the Linux table", () => {
-  it("is today's 22 names (frozen copy)", () => {
+  it("is today's 26 names (frozen copy; Chrome, Code and Slack added for review #164)", () => {
     expect({ ...APP_NAMES.linux }).toEqual({
       "gnome-control-center": "Settings", "org.gnome.settings": "Settings", "org.gnome.controlcenter": "Settings", nautilus: "Files", "org.gnome.nautilus": "Files",
       "gnome-terminal-server": "Terminal", "gnome-terminal": "Terminal", "org.gnome.terminal": "Terminal", gedit: "gedit", "org.gnome.gedit": "gedit",
       "gnome-text-editor": "Text Editor", "org.gnome.texteditor": "Text Editor", "gnome-calculator": "Calculator", "org.gnome.calculator": "Calculator",
       evince: "Document Viewer", eog: "Image Viewer", "gnome-system-monitor": "System Monitor", "soffice.bin": "LibreOffice", soffice: "LibreOffice",
       firefox: "Firefox", thunderbird: "Thunderbird", mousepad: "Mousepad",
+      "google-chrome": "Google Chrome", "google-chrome-stable": "Google Chrome", code: "Visual Studio Code", slack: "Slack",
     });
     expect(friendlyApp("org.gnome.Nautilus")).toBe("Files");
     expect(friendlyApp("winword.exe")).toBe("winword.exe");

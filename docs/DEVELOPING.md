@@ -340,7 +340,7 @@ It uploads the packages only when asked (§13): **Actions › ci › Run workflo
 days); at about 340 MB a run, uploading them every time filled the account's artifact storage.
 Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a
 bundled package's licence isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only
-for the root check-up).
+for the setup check run as root).
 
 `ember doctor` (or `npm run doctor` in a checkout) checks the session, compositor, accessibility, XTest,
 Copilot sign-in or the organisation's endpoint, the admin policy, microphone, speech models, speech-dispatcher,
@@ -463,7 +463,7 @@ accessibility helper, which takes a few seconds once per version of the helper (
 ### 10.2 Commands
 
 These work as in §5, from Command Prompt, PowerShell or Git Bash: `npm run dev`, `npm test`, `npm run lint`,
-`npm run typecheck`, `npm run build`, `npm run test:smoke` and `npm run doctor` (the check-up, printed in the
+`npm run typecheck`, `npm run build`, `npm run test:smoke` and `npm run doctor` (the setup check, printed in the
 terminal). CI runs the Copilot-runtime and voice integration suites on Linux only; on Windows it runs the suites in
 §10.3. Linux only: `npm run test:sidecar`, `npm run rebuild:el8`, `npm run check:symvers`, `npm run package`, Ember's
 desk and the eval.
@@ -475,7 +475,7 @@ desk and the eval.
 | `node scripts/package/fuses.mjs dist/package/Ember/Ember.exe` | Lists the staged Ember.exe's fuses (`--check` fails unless they are Ember's) |
 
 Lint, typecheck, unit tests, the build and staging need no desktop. The smoke test, the integration suites and the
-check-up's window and helper rows need a signed-in desktop session.
+setup check's window and helper rows need a signed-in desktop session.
 
 Environment variables (§5) are set per command in Git Bash (`EMBER_LOG_LEVEL=debug npm run dev`), or for the session
 in PowerShell (`$env:EMBER_LOG_LEVEL = "debug"`).
@@ -550,8 +550,9 @@ set EMBER_UIA_CACHE=%TEMP%\ember-uia
 
 **When Windows won't run the helper.** A Group Policy execution policy, under
 `SOFTWARE\Policies\Microsoft\Windows\PowerShell` in `HKLM` or `HKCU`, overrides `-ExecutionPolicy Bypass`. Ember never
-works around an administrator's policy: the setup check's **Screen reading** row and the check-up's **PowerShell** row
-say which case applies, and Ember keeps working with screenshots and the borrowed mouse.
+works around an administrator's policy: the setup check's **Screen reading** row (in the settings window) and
+**PowerShell** row (`ember-doctor.cmd`) say which case applies, and Ember keeps working with screenshots and the
+borrowed mouse.
 
 | Case | What Ember does |
 |---|---|
@@ -560,9 +561,9 @@ say which case applies, and Ember keeps working with screenshots and the borrowe
 | Constrained Language Mode (AppLocker, WDAC, `__PSLockdownPolicy`) | Says "Windows PowerShell is restricted on this computer…". `Add-Type` can't run, and the host doesn't try again until Ember restarts |
 | Any other failed start | The host tries again after 5 s, 30 s and 2 min, then every 10 min |
 
-For an endpoint-protection or application-control allow-list, the check-up's **Helper command line** row prints the
+For an endpoint-protection or application-control allow-list, the setup check's **Helper command line** row prints the
 exact command line, the script's path, and the compiled DLL's path and SHA-256. When Group Policy turns on PowerShell
-module logging or transcription, the check-up notes that the helper's start-up is logged there (never what is on
+module logging or transcription, the setup check notes that the helper's start-up is logged there (never what is on
 screen).
 
 ### 10.5 Packages
@@ -593,8 +594,8 @@ For Windows it:
 The zip is unsigned: README.md says what SmartScreen, Smart App Control and a `RemoteSigned` policy do on first start.
 CI checks the staged Ember.exe as Windows sees it (`(Get-Item Ember.exe).VersionInfo`, and `Get-AuthenticodeSignature`
 reporting `NotSigned`), its fuses, that `--inspect` is refused, that it starts and holds all six shortcuts, and its
-check-up (§10.9). On first start a packaged Ember adds `Ember.lnk` to the user's Start menu (toasts need it) and sets
-its AppUserModelId, `io.github.komaladitya08.ember`.
+setup check (§10.9). On first start a packaged Ember adds `Ember.lnk` to the user's Start menu (toasts need it) and
+sets its AppUserModelId, `io.github.komaladitya08.ember`.
 
 ### 10.6 Where Ember keeps things
 
@@ -636,7 +637,7 @@ New-ItemProperty -Path HKLM:\SOFTWARE\Policies\Ember -Name PolicyJson -PropertyT
   -Value (Get-Content -Raw C:\path\to\policy.json)
 ```
 
-The check-up's **Organisation policy** row then says "In force from HKLM\SOFTWARE\Policies\Ember (PolicyJson)".
+The setup check's **Organisation policy** row then says "In force from HKLM\SOFTWARE\Policies\Ember (PolicyJson)".
 
 For Group Policy or Intune, this template puts the JSON in one multi-line box, written as a `REG_MULTI_SZ` (each line
 of the box at most 4096 characters). It isn't checked in CI, so try it in the Group Policy editor before deploying it.
@@ -692,7 +693,7 @@ second as `ember.adml` in its `en-US` folder:
 **Speech models for everyone**: Ember also looks in `%ProgramData%\Ember\voice-models`, after the copy beside it,
 for the folder `node scripts/package/stage.mjs --with-models` puts in `resources\voice-models`.
 
-**Allow-lists and logging**: the check-up's **Helper command line** row (§10.4). Ember warns when it runs as
+**Allow-lists and logging**: the setup check's **Helper command line** row (§10.4). Ember warns when it runs as
 administrator: it should run as the user, so that it can't act with administrator rights by mistake.
 
 ### 10.8 Remote desktops and WSL
@@ -724,28 +725,28 @@ keeps "msrdc" and stays refused and blacked out; its title is then judged by the
 window (`app/main/policy/target-rules.ts`) until the Windows backend checks a RAIL window's owner chain and types by
 scancode there. The Windows X servers `vcxsrv`, `x410`, `xming`, `xwin` (Cygwin/X) and GWSL's programs (`gwsl` and
 every `gwsl_*`: `GWSL_vcxsrv` and `GWSL_vcxsrv_lowdpi`, the X server whose windows the Linux apps are, and
-`GWSL_service`) join the remote surfaces: their windows are Linux apps Ember can't identify. The WSL check-up row
+`GWSL_service`) join the remote surfaces: their windows are Linux apps Ember can't identify. The WSL setup check row
 (`app/main/wsl/doctor.ts`) recognises the same programs when it says an X server shows Linux apps.
 
 ### 10.9 Troubleshooting
 
-Run the check-up: `.\ember-doctor.cmd` in the `Ember` folder, or `npm run doctor` in a checkout. It exits 1 when
+Run the setup check: `.\ember-doctor.cmd` in the `Ember` folder, or `npm run doctor` in a checkout. It exits 1 when
 Ember can't work.
 
-| Check-up row | When it warns or fails | What to do |
+| Setup check row | When it warns or fails | What to do |
 |---|---|---|
 | Platform | Not x64 or Arm (fails) | Use a 64-bit Windows |
 | Operating system | Windows 10 before 22H2 (warns), before 1809 (fails) | Update Windows |
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
 | Transparent windows, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
 | Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
-| Microphone privacy | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** |
+| Microphone | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** |
 | Administrator | Ember runs as administrator | Start it from the Start menu, not with **Run as administrator** |
 | PowerShell | A policy stops Windows PowerShell running the helper | §10.4: **Unblock it**, or ask your administrator |
 | Helper command line | Never: it is the facts for an allow-list | — |
 | Copilot | Not signed in, or the Copilot runtime is missing from the package | Sign in from Ember's settings (Win+Alt+E) or with `gh auth login`; reinstall if the runtime is missing |
 | Organisation policy | The registry policy can't be trusted, so Ember is locked down | Fix `PolicyJson` (§10.7) |
-| Microphone, Speech models, Speaking | As on Linux; Ember speaks with Windows' own voices | — |
+| Speech models, Speaking | As on Linux; Ember speaks with Windows' own voices | — |
 
 The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
 scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: tell the
@@ -781,7 +782,7 @@ npm run dev:mac
 ```
 
 Lint, typecheck, unit tests, the build and staging need no permissions and no logged-in desktop. The smoke test,
-the integration suites and the check-up's permission rows need a logged-in desktop session and the permissions in
+the integration suites and the setup check's permission rows need a logged-in desktop session and the permissions in
 §11.2.
 
 ### 11.2 Running Ember in development, and its permissions
@@ -840,11 +841,11 @@ normal Mac. GitHub's macOS runners let a job write them (SIP is off there), so `
 | `node scripts/package/tcc.mjs show` | The rows now in both databases |
 
 On a Mac of your own, grant permissions in System Settings instead. The runner's processes already hold their grants,
-so a test in one of them proves nothing about what Ember.app gets. CI therefore runs the packaged check-up the way a
+so a test in one of them proves nothing about what Ember.app gets. CI therefore runs the packaged setup check the way a
 user opens Ember, through LaunchServices (`open -n -W --stdout <file> -a dist/package/Ember.app --args --doctor`),
-twice: before Ember.app's own rows exist, when the **Accessibility** and **Accessibility helper** rows must fail, and
-after, when both must pass. It also records whether key-state polling works without Input Monitoring (PLAN.md §10
-M11, departure 6).
+twice: before Ember.app's own rows exist, when the **Reading and using apps** and **Accessibility helper** rows must
+fail, and after, when both must pass. It also records whether key-state polling works without Input Monitoring
+(PLAN.md §10 M11, departure 6).
 
 ### 11.4 The AX provider
 
@@ -930,7 +931,7 @@ sudo chown root:wheel "/Library/Application Support/Ember" && sudo chmod 755 "/L
 sudo install -o root -g wheel -m 644 policy.json "/Library/Application Support/Ember/policy.json"
 ```
 
-The check-up's **Organisation policy** row then says the policy is in force from that file.
+The setup check's **Organisation policy** row then says the policy is in force from that file.
 
 **Speech models for everyone**: Ember also looks in `/Library/Application Support/Ember/voice-models`, after the copy
 inside Ember.app, for the folder `node scripts/package/stage.mjs --with-models` puts in
@@ -938,24 +939,24 @@ inside Ember.app, for the folder `node scripts/package/stage.mjs --with-models` 
 
 ### 11.8 Troubleshooting
 
-Run the check-up through LaunchServices, so that macOS judges Ember's own permissions (README.md has the commands).
+Run the setup check through LaunchServices, so that macOS judges Ember's own permissions (README.md has the commands).
 Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's permissions instead, and
 `npm run doctor` in a checkout reports your terminal's. It exits 1 when Ember can't work.
 
-| Check-up row | When it warns or fails | What to do |
+| Setup check row | When it warns or fails | What to do |
 |---|---|---|
 | Operating system | Older than macOS 13 | Update macOS |
 | Transparent windows | macOS's window functions didn't load | Reinstall Ember |
-| Accessibility helper | The helper didn't answer, or can't read apps | Allow Ember under Accessibility, then run the check-up again |
+| Accessibility helper | The helper didn't answer, or can't read apps | Allow Ember under Accessibility, then run the setup check again |
 | Mouse and keyboard | No Accessibility permission, or an app holds secure input | Allow Ember under Accessibility; see Secure input |
-| Accessibility | Not allowed | **System Settings › Privacy & Security › Accessibility**: switch Ember on (after an update: remove it with **−** and add it again) |
+| Reading and using apps | Not allowed | **System Settings › Privacy & Security › Accessibility**: switch Ember on (after an update: remove it with **−** and add it again) |
 | Screen Recording | Not allowed: no screenshots, and no other apps' window titles | **Privacy & Security › Screen Recording**: switch Ember on, then quit and reopen Ember. macOS asks again about once a month: choose **Allow** |
 | Input Monitoring | Not allowed: Ember won't use the keyboard for you | **Privacy & Security › Input Monitoring**: switch Ember on |
-| Microphone access | Off for Ember | **Privacy & Security › Microphone**: switch Ember on |
+| Microphone | Off for Ember | **Privacy & Security › Microphone**: switch Ember on |
 | Secure input | An app (the row names it) has secure keyboard entry on, so Ember won't use the keyboard | Close the password field, or turn off Secure Keyboard Entry there (Terminal: **Terminal › Secure Keyboard Entry**) |
-| Location | Not in the Applications folder | Quit Ember, drag it into Applications and open it from there |
+| Applications folder | Not in the Applications folder | Quit Ember, drag it into Applications and open it from there |
 | Root | Ember runs as root | Start it as yourself |
-| Copilot, Organisation policy, Microphone, Speech models, Speaking | As on Linux; Ember speaks with macOS's own voices | — |
+| Copilot, Organisation policy, Speech models, Speaking | As on Linux; Ember speaks with macOS's own voices | — |
 
 | Symptom | Fix |
 |---|---|
@@ -1013,7 +1014,7 @@ Rules for code under `app/main/platform/` and `app/sidecar-host/`:
 | Job | Runner | What it checks |
 |---|---|---|
 | `checks`, `el8`, `package`, `eval` | `ubuntu-24.04`, most in `rockylinux:8` | Linux, as in §5–§8 |
-| `windows` | `windows-2022` | Runner facts, unit tests, build, the bridge compiled and started as Ember starts it, the smoke test, the integration suites (§10.3), the zip and the packaged checks (§10.5), the check-up's rows (§10.9) |
+| `windows` | `windows-2022` | Runner facts, unit tests, build, the bridge compiled and started as Ember starts it, the smoke test, the integration suites (§10.3), the zip and the packaged checks (§10.5), the setup check's rows (§10.9) |
 | `macos` | `macos-15` (Apple silicon) | Runner facts and the image's own grants, unit tests, build, the smoke test, the grants (§11.3), the integration suites, the bundle, zip and dmg with the packaged checks (§11.5), and the attribution and Input Monitoring checks through LaunchServices |
 | `macos-x64` | `macos-15-intel` | The Intel bundle: build, `darwin-desktop`, every Mach-O file x86_64, the packaged checks and the smoke test. Runs on pushes to the default branch, on tags, and when asked |
 
@@ -1039,10 +1040,10 @@ computer reached over SSH is eyes, hands and a command runner. PLAN.md M12 lists
 
 | Folder | What it holds |
 |---|---|
-| `app/main/targets/` | The targets runtime (`runtime.ts`, the only part main calls): the registry of computers (`registry.ts`), naming a computer from the user's own words and binding a task to it (`resolve.ts`), each target's hands and command service, the handle menu's part, the first-use consent cards (`consent.ts`), noticing the user's own `ssh` (`offer.ts`), quick context, the settings window's channel and the check-up rows (`doctor.ts`) |
+| `app/main/targets/` | The targets runtime (`runtime.ts`, the only part main calls): the registry of computers (`registry.ts`), naming a computer from the user's own words and binding a task to it (`resolve.ts`), each target's hands and command service, the handle menu's part, the first-use consent cards (`consent.ts`), noticing the user's own `ssh` (`offer.ts`), quick context, the settings window's channel and the setup check rows (`doctor.ts`) |
 | `app/main/commands/` | Commands on every target: the contract (`types.ts`); the classifier (`lex-posix.ts`, `lex-powershell.ts`, `lex-cmd.ts`, `tables.ts`, `paths.ts`, `classify.ts`, which also records each shell script a command runs and asks for one it can't read first), the intent matcher (`intent.ts`) and the decision (`decide.ts`); output shaping (`output.ts`, `redact.ts`, `prompts.ts`, `taint.ts`); `run_command`'s flow (`flow.ts`, with `carried.ts`: it reads each recorded script through the target's runner and classifies its text before deciding, L8) and the command window's controller (`window.ts`) |
 | `app/main/commands/run/` | Running a command: the fixed launchers (`shells.ts`: the command text travels in `EMBER_CMD`, never on any argv), the environment, the local runner (`local.ts`), the stop ladder and the sweep, the target's facts and path checks (`inspect.ts`, with `readScriptText` and `decodeScript`: a script's first 64 KiB, a regular file only, never `/dev`, `/proc` or a UNC path), and the Windows job host (`job-host.ts`: Ember's binary in Node mode holding a kill-on-close job object, so Stop ends the whole tree) |
-| `app/main/wsl/` | WSL discovery from the registry and `wsl.exe`, never starting a distro (`discover.ts`, `lxss.ts`, `decode.ts`), the WSL runner (`runner.ts`), the `wsl` check-up row (`doctor.ts`), and the WSLg layer: the router over UIA and each distro's AT-SPI helper (`router.ts`, `routed-sidecar.ts`, `routed-windows.ts`, `launch-sidecar.ts`), window matching (`match.ts`), RAIL identification (`rail.ts`), Start-menu launching (`apps.ts`) and the joined vocabularies (`privacy.ts`) |
+| `app/main/wsl/` | WSL discovery from the registry and `wsl.exe`, never starting a distro (`discover.ts`, `lxss.ts`, `decode.ts`), the WSL runner (`runner.ts`), the `wsl` setup check row (`doctor.ts`), and the WSLg layer: the router over UIA and each distro's AT-SPI helper (`router.ts`, `routed-sidecar.ts`, `routed-windows.ts`, `launch-sidecar.ts`), window matching (`match.ts`), RAIL identification (`rail.ts`), Start-menu launching (`apps.ts`) and the joined vocabularies (`privacy.ts`) |
 | `app/main/remote/` | The PC's side of SSH: the protocol's schemas (`protocol.ts`), the framed stream both ends share (`mux.ts`), the link's worker thread (`link-worker.ts`), connections (`connections.ts`), ssh's argv, configuration and errors, the bootstrap script (`scripts/bootstrap.sh`), the install plan and the same-machine check, the Node.js download, the askpass server, noticing ssh (`notice-ssh.ts`), the prompt window's controller (`prompt-window.ts`), and the remote target's perception, accessibility, apps and runner (`target.ts`, `remote-*.ts`) |
 | `app/remote/` | `ember-remote`, the agent Ember runs on a computer reached over SSH (plain Node 24, `main.ts`): the protocol loop, gate 2 (its own re-check of every step and command, which also reads the shell scripts a command runs on its own filesystem: the PC can't, so its gate 1 leaves them to L8), the commands it runs (`commands.ts`: output held back while the link's bulk queue is over 1 MiB), desktop discovery and the desktop child, PNG capture, the single-instance lock, liveness, and the remote's own policy and audit |
 | `app/askpass/` | `askpass.cjs`, which ssh runs to ask for a password on a Linux or macOS PC (the answer comes from Ember's prompt window over a Unix socket made for that one ssh run) |
@@ -1201,7 +1202,7 @@ app/main/           Electron main process (settings, logging, environment checks
                     (what the compositions share), which.ts, os.ts
     linux/          adapters over the X11 modules (x11.ts, xshape.ts, hands/*, the desk), behaving as before
     win32/          window system and input over user32, gdi32 and dwmapi (koffi); platform.ts composes Windows;
-                    system/: apps (with a .lnk reader), registry, admin policy, login item, setup checks, check-up rows
+                    system/: apps (with a .lnk reader), registry, admin policy, login item, setup check rows
     darwin/         window system and input over CoreGraphics, AX and CoreFoundation (koffi), desktopCapturer capture;
                     platform.ts composes macOS; system/: apps (with a plist reader), policy, login item, permissions
 app/remote/         ember-remote, the agent Ember runs on a computer reached over SSH (plain Node 24)

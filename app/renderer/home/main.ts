@@ -15,8 +15,9 @@ import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  modelLabel, retryMessage, saveFailedText, signInLabel, tagline, usageLine, voiceFix, voiceFixFailed, type HomePatch, type Segment,
+  dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
+  rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed, withCommandShells,
+  type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -127,6 +128,9 @@ function applySettings(s: Settings): void {
   // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
   // everything else waits until Ember has started.
   const consented = s.consent.version >= CONSENT_VERSION;
+  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // (review #50), rather than dropping to the page.
+  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
   $("welcome").hidden = consented;
@@ -137,6 +141,11 @@ function applySettings(s: Settings): void {
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
+  if (started) {
+    $("home-live").textContent = STARTED_TEXT;
+    window.scrollTo({ top: 0 });
+    $("pick-h").focus({ preventScroll: true });
+  }
 }
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
@@ -206,8 +215,11 @@ function renderChecks(environment: Status["environment"]): void {
   checksNow = environment.checks;
   renderVoiceFix();
   const hadFocus = $("checks").contains(document.activeElement);
+  // A fix button that had focus keeps it when its row is drawn again (the row's check id says which).
+  const hadFix = hadFocus ? document.activeElement?.closest<HTMLElement>("li")?.dataset.check : undefined;
   $("checks").replaceChildren(...environment.checks.map(c => {
     const li = document.createElement("li");
+    li.dataset.check = c.id;
     const pill = document.createElement("span");
     pill.className = `pill ${c.status}`;
     pill.textContent = c.status === "ok" ? "OK" : c.status === "warn" ? "Check" : "Fix";
@@ -225,12 +237,20 @@ function renderChecks(environment: Status["environment"]): void {
       const btn = document.createElement("button");
       btn.className = "btn quiet check-fix";
       btn.textContent = platform?.fixLabels[fix] ?? "Turn on";
+      btn.setAttribute("aria-label", fixButtonName(btn.textContent, c.label));
       btn.addEventListener("click", () => {
-        btn.disabled = true;
+        // Busy, not disabled: a disabled button drops keyboard focus to the page.
+        if (btn.getAttribute("aria-disabled") === "true") return;
+        btn.setAttribute("aria-disabled", "true");
+        $("checks-msg").textContent = "";
         window.ember.applyFix(fix).then(renderChecks, err => {
-          btn.disabled = false;
-          // A refused fix says why in its own words (main's message, without Electron's IPC prefix).
-          detail.textContent = `Couldn't change it: ${ipcErrorText(err)}`;
+          btn.removeAttribute("aria-disabled");
+          // A refused fix says why in its own words (main's message, without Electron's IPC prefix), in its row and
+          // in the status line a screen reader reads; focus stays on the button.
+          const why = ipcErrorText(err);
+          detail.textContent = `Couldn't change it: ${why}`;
+          $("checks-msg").textContent = fixFailedText(c.label, why);
+          if (btn.isConnected) btn.focus();
         });
       });
       actions.append(btn);
@@ -238,7 +258,10 @@ function renderChecks(environment: Status["environment"]): void {
     if (actions.childElementCount) li.append(actions);
     return li;
   }));
-  if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
+  if (hadFocus) {
+    const again = hadFix ? $("checks").querySelector<HTMLElement>(`li[data-check="${CSS.escape(hadFix)}"] .check-fix`) : null;
+    (again ?? ($("checks-fold").querySelector("summary") as HTMLElement)).focus();
+  }
   failing = environment.checks.filter(c => c.status === "fail").length;
   const warn = environment.checks.filter(c => c.status === "warn").length;
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
@@ -411,7 +434,7 @@ async function refreshActivity(): Promise<void> {
   let today = 0;
   const items: HTMLLIElement[] = [];
   const words = entryWords(platform);
-  for (const e of entries) {
+  for (const e of withCommandShells(entries)) {
     const d = describeEntry(e, words);
     if (!d) continue;
     if (items.length >= 80) break;
@@ -608,7 +631,7 @@ $("retry").addEventListener("click", () => {
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
 $("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
 
-/** The device code row: "Code ABCD-1234 [Copy] — enter it at github.com/login/device [Open]". */
+/** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
   const msg = $("sign-in-msg");
   msg.hidden = false;
@@ -619,7 +642,8 @@ function showCode(userCode: string, uri: string): void {
   copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
-  const parts: (string | Node)[] = ["Code ", code, copy, ` — enter it at ${where}`];
+  // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).
+  const parts: (string | Node)[] = ["Code ", code, copy, Object.assign(document.createElement("span"), { className: "nowrap", textContent: `Enter it at ${where}` })];
   // Opening the page again needs the main process (the window never navigates); offered when it can.
   const open = (window.ember as EmberHomeApi & { openSignInPage?: () => Promise<void> }).openSignInPage;
   if (typeof open === "function") {

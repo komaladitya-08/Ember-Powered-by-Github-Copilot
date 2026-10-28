@@ -110,7 +110,7 @@ describe("settings window words", () => {
       element: { role: "table cell", name: `A${at + 2}` }, app: "soffice", batch: 3, at, ...more });
     expect([cell(0), cell(1)]).toEqual([null, null]);
     expect(cell(2, { batchVerdict: "ask", batchReason: "Ember needs your mouse or keyboard for this" }))
-      .toEqual({ tag: "Asked you", cls: "ask", what: "Fill 3 cells (your keyboard) in LibreOffice", why: "Ember needs your mouse or keyboard for this" });
+      .toEqual({ tag: "Asked you", cls: "ask", what: "Fill 3 cells (your keyboard) in LibreOffice", why: "Ember needs your mouse or keyboard for this." });
     expect(cell(2, { batchVerdict: "deny", batchReason: "this app is read-only for Ember" })).toMatchObject({ tag: "Refused", cls: "no", what: "Fill 3 cells (your keyboard) in LibreOffice" });
     // No question for the batch (each cell is asked on its own, or none needed): those lines say it.
     expect(cell(2, { batchVerdict: "none" })).toBeNull();
@@ -232,7 +232,8 @@ describe("What Ember did, review round 11", () => {
     expect(failed("The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed. Call perceive_window and try again."))
       .toBe("The spreadsheet was too busy to be read in time, so Ember couldn't tell which cell has the keyboard, and nothing was typed.");
     expect(failed("Ember typed into B2. A cell may still be being edited: press Escape, call perceive_window, and try again.")).toBe("Ember typed into B2. A cell may still be being edited.");
-    expect(failed("background_unavailable: this app takes no text this way")).toBe("this app takes no text this way");
+    // In the user's words (review #217): a capital first and a full stop.
+    expect(failed("background_unavailable: this app takes no text this way")).toBe("This app takes no text this way.");
     // A file name with underscores is the user's, and stays.
     expect(forUser("Couldn't open my_report.txt.")).toBe("Couldn't open my_report.txt.");
     expect(forUser("Call perceive_window and try again.")).toBeUndefined();
@@ -485,13 +486,16 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
       computersCopy.COMPUTERS_HEADING, computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_HEADING, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH,
       computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.ADD_BUTTON, computersCopy.ASK_EVERY_SWITCH, computersCopy.OPEN_COMMANDS,
       computersCopy.WSL_MANAGED, computersCopy.SSH_MANAGED, computersCopy.SSH_LIMITED, computersCopy.ASK_EVERY_MANAGED, computersCopy.ADD_INVALID, computersCopy.ACT_FAILED,
+      computersCopy.COMPUTERS_INTRO_WINDOWS,
     ].map(keep)).toEqual([
-      "Computers", "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
+      // WSL only on Windows (review #198): the page's own intro is Linux's and macOS's.
+      "Computers", "Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
       "Commands", "Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.",
-      "Let Ember work in WSL", "Offer to bring Ember along when I connect with ssh", "An SSH host, e.g. build-01 or deploy@build-01.example.com", "Connect",
+      "Let Ember work in WSL", "Offer to bring Ember along when I connect with SSH", "Host name or user@host", "Connect",
       "Ask me before every command", "Open the command window", "Your organisation doesn't allow Ember to work in WSL.",
       "Your organisation doesn't allow Ember on other computers.", "Your organisation lets Ember connect only to some computers.",
       "Your organisation asks you to approve every command here.", "Type a host name, or user@host.", "That didn't work. Try again.",
+      "Ember can work on this computer, in WSL, and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.",
     ]);
   });
 
@@ -504,8 +508,11 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(v.wsl?.rows.map(r => [r.name, keep(r.status), r.note])).toEqual([["Ubuntu (WSL)", "Stopped", "Commands only"]]);
     expect(v.wsl?.toggle).toEqual({ label: "Let Ember work in WSL", checked: true, disabled: false });
     expect(v.ssh.rows[0]).toMatchObject({ name: "build-01", detail: "deploy@build-01.example.com", status: "Connected: apps and commands" });
-    expect(v.ssh.rows[0].actions.map(a => keep(a.label))).toEqual(["Disconnect", "Forget", "Remove Ember from build-01"]);
-    expect(keep(v.ssh.rows[0].actions[2].confirm!)).toBe("Remove Ember's helper from build-01? Its record of what Ember did there stays on build-01.");
+    expect(v.ssh.rows[0].actions.map(a => keep(a.label))).toEqual(["Disconnect", "Forget", "Remove helper"]);
+    // What Remove does, before it does it (review #191), and Forget asks too (review #163).
+    expect(keep(v.ssh.rows[0].actions[2].confirm!)).toBe("Remove Ember's helper from build-01? This stops anything Ember is running there and forgets build-01 here. Its record of what Ember did there stays on build-01.");
+    expect(keep(v.ssh.rows[0].actions[1].confirm!)).toBe("Forget build-01? Ember disconnects, removes it from this list and forgets your OKs for it. Ember's helper stays on build-01.");
+    expect([v.ssh.rows[0].actions[2].pending!, v.ssh.rows[0].actions[2].done!].map(keep)).toEqual(["Removing Ember's helper from build-01…", "Removed. build-01 is no longer in your list."]);
     const statusOf = (state: TargetSummary["state"]) => computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({ id: "ssh:build-01", kind: "ssh", label: "build-01", state, can: "commands only" })] }).ssh.rows[0].status;
     expect(["connecting", "lost", "off"].map(s => keep(statusOf(s as TargetSummary["state"])))).toEqual(["Connecting…", "Lost: trying again", "Not connected"]);
     expect(statusOf("ready")).toBe("Connected: commands only");
@@ -523,7 +530,7 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
     expect(none.ssh.offer).toBeNull();
     expect(none.ssh.add).toBe(true);
     const one = computersCopy.computersView({ os: "linux", settings: settings(), admin: noPolicy, summaries: [summary({})] });
-    expect(one.ssh.offer).toEqual({ label: "Offer to bring Ember along when I connect with ssh", checked: true, disabled: false });
+    expect(one.ssh.offer).toEqual({ label: "Offer to bring Ember along when I connect with SSH", checked: true, disabled: false });
   });
 
   it("says what the organisation turned off, and offers nothing it doesn't allow", () => {

@@ -19,6 +19,9 @@ body { margin: 0; color: var(--fg); background: var(--bg); font: var(--type-body
 .home > * { min-width: 0; }
 section { display: grid; gap: 8px; }
 .stack { display: grid; gap: 8px; }
+/* What the page hides stays hidden, whatever display a rule gives it (a section, the SSH add form): the browser's own
+   [hidden] rule loses to any author rule that sets display. */
+[hidden] { display: none !important; }
 
 /* ───── Hero: the character on its tile (the app icon's tile), the name, and what Ember is doing ───── */
 .hero { display: flex; align-items: center; gap: 22px; }
@@ -81,7 +84,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* Size: a slider in its row (the filled part of the track follows the value: main.ts sets --fill). */
 .pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .pick-row label { color: var(--fg); min-width: 96px; }
-.pick-row output { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
+/* The number beside "Size" is for the eye: the slider's aria-valuetext says it once (an <output> said it twice). */
+.pick-row .size-out { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .pick-row input[type="range"] {
   flex: 1; min-width: 140px; height: 22px; margin: 0; background: transparent; cursor: pointer;
   -webkit-appearance: none; appearance: none;
@@ -158,6 +162,7 @@ html:has(> body.first-run) { scroll-padding-bottom: 150px; }
 }
 .sign-in-msg[hidden] { display: none; }
 .sign-in-msg .wait { flex-basis: 100%; color: var(--muted); }
+.sign-in-msg .nowrap { white-space: nowrap; }
 .models { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
 .models[hidden] { display: none; }
 .models label { color: var(--fg); }
@@ -329,6 +334,8 @@ h2, summary { scroll-margin-top: 16px; }
   body:not(.first-run) .home > .jump {
     position: fixed; left: 0; top: 0; bottom: 0; width: 200px; z-index: 2;
     margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto;
+    /* The slim scrollbar (ember.css) shows when the links outgrow a short window: none is only for the narrow row. */
+    scrollbar-width: auto;
     background: #181517; box-shadow: inset -1px 0 0 var(--separator);
   }
   .jump a { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); color: var(--fg); font: 500 14px/20px var(--ember-font); }
@@ -393,16 +400,20 @@ html { scroll-padding-top: 16px; }
 .jump-badge.warn { color: var(--warn); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
 @media (max-width: 639px) { .jump-badge { margin-left: 6px; } }
 .intro { margin: 0 4px 4px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
-.targets li { min-height: 48px; }
-.target-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; }
+/* A computer's name and status, then its buttons on a line of their own: three buttons beside a long address left
+   both cramped at the default window size (review #163). */
+.targets li { min-height: 48px; flex-wrap: wrap; row-gap: 2px; }
+.target-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
 .target-text b { font-weight: 600; }
 .target-name { min-width: 0; overflow-wrap: anywhere; }
 .target-detail { color: var(--muted); font: var(--type-callout); }
 .target-status { color: var(--muted); font: var(--type-callout); }
 .target-note { color: var(--muted); font: var(--type-footnote); }
-.target-actions { flex: none; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: 60%; }
+.target-actions { flex: 1 1 100%; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
+/* The words line up with the name above (the buttons' padding hangs past it). */
 .targets .target-actions .btn.quiet { margin-right: 0; color: var(--fg); }
+.targets .target-actions .btn.quiet:first-child { margin-left: -8px; }
 .targets .target-actions .btn.quiet.danger { color: var(--red-text); }
-#computers-switches:not(:has(> :not([hidden]))) { display: none; }
+#computers-switches:not(:has(> :not([hidden]))), #wsl-switch:not(:has(> :not([hidden]))) { display: none; }
 .sub-switch { padding-left: 16px; }
 .row-note { color: var(--muted); font: var(--type-footnote); }

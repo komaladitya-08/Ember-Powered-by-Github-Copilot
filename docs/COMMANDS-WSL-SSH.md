@@ -360,7 +360,7 @@ ssh-askpass) and never-look apps are refused there as on Linux.
 
 ### 3.3 What a distro needs
 
-Ember never installs anything itself; the check-up names the command. In each distro you want Ember to read apps in:
+Ember never installs anything itself; the setup check names the command. In each distro you want Ember to read apps in:
 
 | Distro | Command |
 |---|---|
@@ -412,7 +412,7 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   keyboard (Settings › **Computers**, with the settings shortcut). It offers each computer once per run, and **Don't
   offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`, `rsync`,
   scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with **Offer to
-  bring Ember along when I connect with ssh** (shown once a computer is added). Ember always opens its own connection;
+  bring Ember along when I connect with SSH** (shown once a computer is added). Ember always opens its own connection;
   it never uses or types into yours. If it can't connect there (your organisation doesn't allow that computer, its
   settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to build-01" with the
   reason. Ember looks at your `ssh` in WSL only in distros that are running at that moment, and never starts one to
@@ -566,9 +566,12 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 
 ### 4.7 Removing Ember from a computer
 
-- **With Ember**: Settings › **Computers** › **Remove Ember from build-01** ("Remove Ember's helper from build-01? Its
-  record of what Ember did there stays on build-01."). Ember connects, removes the helper, its consent record and its
-  logs, and keeps the audit record. **Forget** removes the computer from Ember's list without touching it.
+- **With Ember**: Settings › **Computers** › build-01's **Remove helper** ("Remove Ember's helper from build-01? This
+  stops anything Ember is running there and forgets build-01 here. Its record of what Ember did there stays on
+  build-01."). Ember connects, removes the helper, its consent record and its logs, and keeps the audit record; the row
+  says "Removing Ember's helper…" meanwhile, with a **Cancel** that stops it where it is (remove it again to finish),
+  and "Removed. build-01 is no longer in your list." once it is done.
+  **Forget** (it asks first too) removes the computer and your OKs for it from Ember's list without touching it.
 - **Without Ember**, on build-01: run the `uninstall.sh` in any version folder of the helper,
   `sh ~/.local/share/ember-remote/versions/<version>/uninstall.sh` (macOS:
   `sh ~/Library/Application\ Support/Ember\ Remote/versions/<version>/uninstall.sh`); `README.txt` beside it says the
@@ -604,7 +607,7 @@ build-01's row in Settings › **Computers** keeps the reason until it connects.
 | "Your organisation doesn't allow Ember to connect to build-01." | Your administrator's `ssh.allowedHosts` |
 | "build-01's administrator doesn't allow Ember there." / "build-01's Ember policy is broken, so Ember won't work there." | build-01's own policy (§6.4) |
 
-## 5. The check-up
+## 5. The setup check
 
 `ember doctor` and the settings window's setup check gain these rows:
 
@@ -741,7 +744,9 @@ that the user requested it when it ran on an announcement), each answer, start a
 output, how many lines the user typed, never what), the folder, and connections and their losses. A command's text is
 recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes only in the system journal); a refused
 command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
-are never recorded anywhere.
+are never recorded anywhere. Settings › **What Ember did** shows a line for each command question, answer, refusal and
+end (where it ran, the shell and how it ended, never the command's text) and for each connection made, lost, ended or
+failed. A reconnect's tries make one line, when it stops trying; the audit log keeps each try.
 
 ## 7. Known limits
 

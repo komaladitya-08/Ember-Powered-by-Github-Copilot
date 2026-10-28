@@ -60,6 +60,8 @@ export interface TargetSummary {
   active: boolean;
   /** Why the last connection to it failed, while it isn't connected (the settings row keeps it after the bubble goes). */
   problem?: string;
+  /** WSL: the distro "in WSL" and "in Linux" mean (the default one, §2.3); absent for every other target. */
+  wslDefault?: boolean;
 }
 
 /**
