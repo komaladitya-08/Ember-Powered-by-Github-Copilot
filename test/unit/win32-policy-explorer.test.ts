@@ -73,11 +73,13 @@ describe("File Explorer opening programs on Windows", () => {
     expect(engine().decide({ ...open("setup.exe"), kind: "read" }).verdict).toBe("allow");
   });
 
-  it("opens documents and folders as before", () => {
-    for (const name of ["report.docx", "notes.txt", "setup.exe.txt", "photo.jpg", "Programs", "exe", "readme.js.md", "archive.zip"]) {
+  it("opens documents, asking first (Explorer may hide a program's type behind theirs: review #110)", () => {
+    for (const name of ["report.docx", "notes.txt", "setup.exe.txt", "photo.jpg", "readme.js.md", "archive.zip"]) {
       expect(engine().decide(open(name)).tier, name).not.toBe("never");
       expect(engine().decide(enter(name)).tier, name).not.toBe("never");
     }
+    // A name that shows no type ("Programs", "exe") may be a program whose type Explorer hides: refused (review #110).
+    for (const name of ["Programs", "exe"]) expect(engine().decide(open(name)).tier, name).toBe("never");
   });
 
   it("never uses Explorer's Open, Open with or Run as commands, in Windows' main languages, whatever is selected", () => {
@@ -123,8 +125,9 @@ describe("File Explorer opening programs on Windows", () => {
     expect(engine().decide({ ...enter("setup.exe"), window: "Run", windowId: { pid: 4321, path: "65812", role: "frame" } }).reason).toBe(ITEM);
   });
 
-  it("has no such app on Linux or macOS", () => {
-    expect([OPENS_PROGRAMS.linux, OPENS_PROGRAMS.darwin]).toEqual([[], []]);
+  it("has no such app on Linux, and on macOS only Finder (review #110)", () => {
+    expect(OPENS_PROGRAMS.linux).toEqual([]);
+    expect(OPENS_PROGRAMS.darwin.map(r => r.app.test("Finder"))).toEqual([true]);
     for (const os of ["linux", "darwin"] as const) {
       expect(engine(os).decide(open("setup.exe")).reason, os).not.toBe(ITEM);
       expect(engine(os).decide(command("Open")).reason, os).not.toBe(COMMAND);

@@ -254,8 +254,12 @@ On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Ap
 (§11.7).
 
 An optional file that makes Ember stricter for everyone on the machine. Its values override users' settings, and
-users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down (no actions,
-no listening) until it is fixed, and says so in its settings window. Every key is optional:
+users can't loosen them. If the file exists but can't be read or has a mistake, Ember locks down until it is fixed,
+and says so in its settings window: no actions, commands or listening, nothing sent to any model service (neither
+GitHub Copilot nor the organisation's own endpoint), and nothing deleted from the audit log. Ember reads the policy
+again every 10 seconds. Once it changes (tightened, repaired, added or removed, and the next read says so too), Ember
+stops everything and stays locked down until the user restarts it (the bubble offers **Restart Ember**, and the
+settings window says so), and the restart reads the new policy whole. Every key is optional:
 
 ```json
 {
@@ -277,11 +281,11 @@ no listening) until it is fixed, and says so in its settings window. Every key i
 | `features.cursor` / `desk` | No borrowing the user's mouse and keyboard / no private desk |
 | `features.screenImages` | Accessibility text only; no screenshots go to the model |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
-| `confirmEveryAction` | A click before every action, every time |
+| `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app" |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
-| `auditRetentionDays` | How long the audit log is kept (default 30) |
+| `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
 | `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
 | `commands` | Commands on this computer, in WSL and over SSH: `"on"`, `"ask"` (every command asks) or `"off"` |
 | `ssh` | Allowed hosts, no remote desktop, console consent, a Node.js mirror, the command grace |
@@ -617,10 +621,11 @@ when an antivirus scan or a sync client holds the file.
 **The policy** is the same JSON as `/etc/ember/policy.json` (§5), kept in the registry: `HKLM\SOFTWARE\Policies\Ember`,
 value `PolicyJson`, a string (`REG_SZ`) or a multi-string (`REG_MULTI_SZ`, whose lines are joined with line breaks).
 Only administrators and SYSTEM can write there. Ember reads the 64-bit registry view, and no file. No value means no
-policy; anything else Ember can't trust locks it down (no actions, no listening) until it is fixed: a value it can't
-read, of another type, over 256 KiB, not JSON, or not valid for the schema. `provider.apiKeyFile` isn't supported on
-Windows and locks Ember down too: put the key in a `ProviderApiKey` string value beside `PolicyJson`, or in the
-`EMBER_PROVIDER_API_KEY` environment variable.
+policy; anything else Ember can't trust locks it down (§5: no actions, commands, listening or model service) until it
+is fixed: a value it can't read, of another type, over 256 KiB, not JSON, or not valid for the schema.
+`provider.apiKeyFile` isn't supported on Windows and locks Ember down too: put the key in a `ProviderApiKey` string
+value beside `PolicyJson`, or in the `EMBER_PROVIDER_API_KEY` environment variable. Ember reads the value again every
+10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
 
 From an elevated Windows PowerShell:
 
@@ -698,9 +703,14 @@ app). Ember names a window by its program, so to Ember whatever runs inside one,
 or a whole remote desktop, is just "msrdc" or "mstsc": its terminal, security-window and never-look checks can't see
 in, and one grant would cover every Linux app. So Ember refuses every action in these windows ("Ember can't tell
 what's inside a remote window…") and blacks them out of every screenshot. Reading their titles is unchanged. Other
-remote viewers (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't covered yet. The rule is
-`app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no Windows CI run has included it yet); Linux
-and macOS are unaffected.
+remote viewers on Windows (Hyper-V's `vmconnect`, VNC, TeamViewer, Citrix) aren't covered yet. On Linux and macOS the
+remote-desktop and virtual-machine viewers are remote surfaces too, refused and blacked out the same way: on Linux
+Remmina, virt-manager, virt-viewer and remote-viewer, GNOME Boxes and Connections, Vinagre, KRDC, the VNC viewers
+(TigerVNC, TightVNC), FreeRDP, rdesktop, X2Go, AnyDesk, TeamViewer, NoMachine, SPICE's spicy, VirtualBox, VMware, QEMU
+and Citrix Workspace; on macOS Screen Sharing, Apple Remote Desktop, Microsoft Remote Desktop and the Windows App, UTM,
+Parallels Desktop, VMware Fusion, VirtualBox, TeamViewer, AnyDesk, VNC Viewer, TigerVNC, Jump Desktop, Royal TSX,
+Citrix Viewer and NoMachine. The rule is `app/main/policy/remote-surface.ts` (`test/unit/remote-surface.test.ts`; no
+Windows CI run has included it yet).
 
 With WSL turned on for Ember (§14), WSLg's windows are identified instead: `app/main/wsl/rail.ts` tells WSLg's `msrdc`
 from a Remote Desktop client's by its program's path (`isWslgImage`), a helper inside the distro reads the Linux apps
@@ -747,6 +757,7 @@ Ember team) and **Keyboard shortcuts**.
 | Ember won't borrow the mouse for a window | The window's program runs as administrator; Windows would drop Ember's input |
 | Ember can't open an app by name | Store (MSIX) apps that have no Start menu shortcut, such as the new Teams, can't be opened by name yet |
 | Ember refuses to act in a window | A Remote Desktop or WSL window (§10.8) |
+| Ember won't open a file or folder in File Explorer | File Explorer hides file types, so a program can show as "setup": Ember never opens an item whose name shows no type, and asks every time before opening one that shows a document's. Folders are opened by their path (the address box) or from the navigation pane |
 
 ## 11. macOS
 
@@ -907,8 +918,10 @@ Applications**.
 **The policy** is the same JSON as `/etc/ember/policy.json` (§5), in `/Library/Application Support/Ember/policy.json`.
 The folder must be a real folder, not a link, that belongs to root and only root can write; the file must be a file,
 not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
-else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads this file
-only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
+else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads the file
+again every 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
+Ember reads this file only, not managed preferences, so deploy it as a file (a package or a script from your
+management tool):
 
 ```bash
 sudo mkdir -p "/Library/Application Support/Ember"
@@ -950,6 +963,7 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 | Ember won't type, and says to switch to a keyboard layout | An input method (Japanese, Pinyin, Korean…) is selected, and it would compose from Ember's keys. Choose a keyboard layout; Ember can still fill fields directly |
 | **Start Ember when I log in** doesn't stick | Allow Ember in **System Settings › General › Login Items**; a copy outside Applications can't register |
 | Ember can't reach your organisation's AI service on the local network (macOS 15) | Allow Ember under **Privacy & Security › Local Network** |
+| Ember won't open a file or folder in Finder | Finder hides file types (an app's `.app` always), so Ember never opens an item whose name shows no type, and asks every time before opening one that shows a document's. It opens the sidebar's places by name (Recents, Applications, Desktop, Documents, Downloads, iCloud Drive, the startup disk, Network…); the home folder, other disks, servers, folders you added to the sidebar and folders in the window itself are opened by their path (**Go › Go to Folder**) |
 
 ## 12. Working on the platform layer
 

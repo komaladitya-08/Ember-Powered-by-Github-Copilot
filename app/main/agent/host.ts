@@ -82,9 +82,10 @@ export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
 /**
  * Why Ember can't use Copilot (phase "error"): the network or GitHub out of reach, the sign-in refused, no Copilot for
  * this account (no seat, or an organisation's policy), no model it may use, the runtime itself, or Copilot not
- * answering. What the user reads (the bubble's title, the handle) says that, not always "can't reach".
+ * answering, or the administrator's policy locking Ember down (`policy`: nothing connects). What the user reads (the
+ * bubble's title, the handle) says that, not always "can't reach".
  */
-export type AgentReason = "network" | "sign-in" | "no-access" | "models" | "runtime" | "not-answering" | "other";
+export type AgentReason = "network" | "sign-in" | "no-access" | "models" | "runtime" | "not-answering" | "policy" | "other";
 
 export interface AgentStatus {
   phase: AgentPhase;
@@ -132,6 +133,13 @@ export interface HostOptions {
   provider?: ProviderConfig;
   /** Admin lockdown (/etc/ember/policy.json). */
   admin?: () => AdminPolicy;
+  /**
+   * Why no model service may be connected now (the administrator's policy locks Ember down: admin.ts
+   * modelServiceRefusal), or null: while it says why, no runtime client starts, whatever sign-in or endpoint is given.
+   */
+  refuseConnect?: () => string | null;
+  /** The policy changed while Ember ran (admin.ts heldUntilRestart): the notice offers Restart Ember, not settings. */
+  policyHeld?: () => boolean;
   /** Is the computer online? A failed start while offline is retried instead of blamed on the sign-in. */
   isOnline?: () => boolean;
   /**
@@ -308,6 +316,7 @@ export const NOTICE_TITLE: Record<AgentReason | "signed-out", string> = {
   models: "No Copilot model I can use",
   runtime: "Copilot isn't running",
   "not-answering": "Copilot isn't answering",
+  policy: "Your organisation's policy stops me",
   other: "Copilot isn't working right now",
 };
 
@@ -323,6 +332,7 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
     case "no-access": return "No Copilot access";
     case "models": return "No model";
     case "not-answering": return "Reconnecting…";
+    case "policy": return "Locked down";
     default: return "Copilot problem";
   }
 }
@@ -748,6 +758,12 @@ export class AgentHost {
   private async doStart(token: string | null, gen: number): Promise<void> {
     await this.doStop();
     if (gen !== this.gen) return;
+    // The administrator's policy locks Ember down: nothing connects, so nothing Ember reads goes anywhere.
+    const refused = this.o.refuseConnect?.() ?? null;
+    if (refused) {
+      this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined });
+      return;
+    }
     if (!token && !this.o.provider) {
       this.setStatus({ phase: "signed-out", detail: SIGNED_OUT, login: undefined, source: undefined });
       return;
@@ -1353,7 +1369,8 @@ export class AgentHost {
       const signedOut = this.status.phase === "signed-out";
       const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
       const title = this.status.phase === "starting" ? "I'm still connecting to Copilot" : NOTICE_TITLE[signedOut ? "signed-out" : this.status.reason ?? "other"];
-      this.presenter.notice({ title, text: why, actions: [{ id: "ui:settings", label: "Open settings" }] });
+      const restart = this.status.reason === "policy" && !!this.o.policyHeld?.();
+      this.presenter.notice({ title, text: why, actions: [restart ? { id: "ui:restart", label: "Restart Ember" } : { id: "ui:settings", label: "Open settings" }] });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
       this.remember("you", text);

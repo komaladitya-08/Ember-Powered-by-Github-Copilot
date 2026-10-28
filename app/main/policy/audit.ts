@@ -198,10 +198,13 @@ export class AuditLog {
   /**
    * Prunes once a day as well as at start (an Ember that runs for weeks keeps nothing past `days()`), without keeping
    * the process alive; returns a function that stops it. `onError`: a prune that failed (tried again the next day).
+   * A day whose `days()` is null prunes nothing (the policy in force can't be used, so its retention can't be read).
    */
-  pruneDaily(days: () => number, onError: (err: unknown) => void = () => undefined): () => void {
+  pruneDaily(days: () => number | null, onError: (err: unknown) => void = () => undefined): () => void {
     if (this.pruneTimer) clearInterval(this.pruneTimer);
-    const timer = setInterval(() => { try { this.prune(days()); } catch (err) { onError(err); } }, 86_400_000);
+    const timer = setInterval(() => {
+      try { const keep = days(); if (keep !== null) this.prune(keep); } catch (err) { onError(err); }
+    }, 86_400_000);
     timer.unref?.();
     this.pruneTimer = timer;
     return () => { clearInterval(timer); if (this.pruneTimer === timer) this.pruneTimer = null; };

@@ -99,6 +99,8 @@ export interface LoadedAdminPolicy {
   source: string | null;
   /** Set when the file exists but couldn't be used: Ember is locked down. */
   error?: string;
+  /** The policy changed while Ember ran: Ember holds itself locked down until it is restarted (heldUntilRestart). */
+  held?: boolean;
 }
 
 /** Everything off that could act or listen: used when the policy file is broken. */
@@ -117,15 +119,17 @@ export function lockedDown(source: string, error: string): LoadedAdminPolicy {
 /**
  * The policy in `raw` (JSON text) from `source`, checked against AdminPolicySchema: anything that isn't valid JSON
  * or breaks the schema locks Ember down, naming `source`. Every OS's policy source ends here (the Linux and macOS
- * files, the Windows registry value).
+ * files, the Windows registry value). A byte-order mark some editors put first is no part of the JSON. A key the
+ * schema doesn't know is named, with the likely reason: a policy written for a newer Ember.
  */
 export function parseAdminPolicy(raw: string, source: string): LoadedAdminPolicy {
   try {
-    // A byte-order mark is no reason to lock Ember down (review #82).
+    // A byte-order mark is no reason to lock Ember down (reviews #82 and #121).
     const parsed = AdminPolicySchema.safeParse(JSON.parse(stripBom(raw)));
     if (parsed.success) return { policy: parsed.data, source };
     const issue = parsed.error.issues[0];
-    return lockedDown(source, `${source}: ${issue.path.join(".") || "(top)"}: ${issue.message}`);
+    const newer = issue.code === "unrecognized_keys" ? ` (this Ember doesn't know ${issue.keys.length > 1 ? "them" : "it"}: it may be older than the policy)` : "";
+    return lockedDown(source, `${source}: ${issue.path.join(".") || "(top)"}: ${issue.message}${newer}`);
   } catch (err) {
     return lockedDown(source, `${source} is not valid JSON: ${(err as Error).message}`);
   }
@@ -154,6 +158,46 @@ export function loadAdminPolicy(file = ADMIN_POLICY_FILE, opts: { requireRootOwn
     }
   }
   return parseAdminPolicy(raw, file);
+}
+
+/** How long the audit log is kept when the policy doesn't say. */
+const DEFAULT_RETENTION_DAYS = 30;
+
+/**
+ * The days the audit log is kept under `loaded` (30 when it doesn't say), or null while the policy can't be used: then
+ * the administrator's retention can't be read (a typo, or a newer policy an older Ember doesn't understand), and a
+ * locked-down Ember never deletes evidence, so nothing is pruned until the policy reads fine again.
+ */
+export function auditRetentionDays(loaded: LoadedAdminPolicy): number | null {
+  if (loaded.error !== undefined) return null;
+  return loaded.policy.auditRetentionDays ?? DEFAULT_RETENTION_DAYS;
+}
+
+/**
+ * Why Ember uses no model service under `loaded`, or null when it may. A policy that can't be used may be one that
+ * requires the organisation's own endpoint (Ember then never uses a GitHub sign-in) or keeps windows out of sight:
+ * neither can be read from it, so a locked-down Ember sends what it reads nowhere, GitHub Copilot included (fail
+ * closed), until the policy is fixed.
+ */
+export function modelServiceRefusal(loaded: LoadedAdminPolicy): string | null {
+  if (loaded.error === undefined) return null;
+  if (loaded.held) return "Your organisation changed Ember's policy while Ember was running. Restart Ember to use the new one.";
+  return "Your organisation's Ember policy has a problem, so Ember won't send anything to a model service until it's fixed.";
+}
+
+/** Do `a` and `b` say the same (the same source, the same values, the same problem)? */
+export function samePolicy(a: LoadedAdminPolicy, b: LoadedAdminPolicy): boolean {
+  return a.source === b.source && a.error === b.error && JSON.stringify(a.policy) === JSON.stringify(b.policy);
+}
+
+/**
+ * What Ember holds to once the administrator's policy changed while it ran (`next`: what it says now): the lockdown,
+ * until a restart reads the new policy whole. Much of Ember is built from the policy once (the settings it overrides,
+ * the borrowed mouse, the desk, the model endpoint), so the old snapshot can't be trusted and the new one can't be
+ * applied in place: Ember stops acting, listening and using any model service in between (fail closed).
+ */
+export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
+  return { ...lockedDown(next.source ?? "the administrator's policy", "it changed while Ember was running; restart Ember to use it"), held: true };
 }
 
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
@@ -194,12 +238,15 @@ export function providerApiKey(p: NonNullable<AdminPolicy["provider"]>, read: (f
  * a policy that exists without a `commands` key → "off" (the administrator never agreed to commands); a policy that
  * couldn't be read → "off"; otherwise its value for `kind`, "off" when that key is missing. A kind the administrator
  * turned off (`features.wsl` or `features.ssh` false) has no commands either, whatever `commands` says (§9.3's table).
+ * "Confirm every action" covers commands too: a kind whose commands are on asks before every one (the stricter of
+ * the two; it never turns on a kind that is off).
  */
 export function commandMode(loaded: LoadedAdminPolicy, kind: TargetKind): CommandMode {
   if (loaded.error) return "off";
   if (kind !== "local" && loaded.policy.features[kind] === false) return "off";
   if (loaded.source === null) return "on";
-  return loaded.policy.commands?.[kind] ?? "off";
+  const mode = loaded.policy.commands?.[kind] ?? "off";
+  return mode === "on" && loaded.policy.confirmEveryAction ? "ask" : mode;
 }
 
 /** What a remote and the PC tell each other about their policies (protocol, gate 1). */

@@ -77,6 +77,25 @@ describe("audit retention (review #86)", () => {
     stop();
     expect(errors).toEqual([]);
   });
+
+  it("prunes nothing on a day the policy in force can't be used (review #106)", () => {
+    vi.useFakeTimers();
+    const dir = tmp();
+    let now = at("2026-10-01T09:00:00Z");
+    const log = new AuditLog(dir, () => now);
+    log.write({ event: "task", task: "old" });
+    now = at("2026-10-05T09:00:00Z");
+    log.write({ event: "task", task: "new" });
+    let keep: number | null = null;
+    const stop = log.pruneDaily(() => keep);
+    now = at("2026-10-09T09:00:00Z");
+    vi.advanceTimersByTime(86_400_000);
+    expect(tasks(log.file)).toEqual(["old", "new"]);
+    keep = 7;
+    vi.advanceTimersByTime(86_400_000);
+    expect(tasks(log.file)).toEqual(["new"]);
+    stop();
+  });
 });
 
 /**

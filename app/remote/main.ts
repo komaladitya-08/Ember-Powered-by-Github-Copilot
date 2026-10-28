@@ -20,6 +20,7 @@ import { isMainThread, workerData } from "node:worker_threads";
 import { z } from "zod";
 import { createLogger, type Logger, type LogLevel } from "../main/logger";
 import { journalSink } from "../main/policy/audit";
+import { auditRetentionDays } from "../main/admin";
 import { createMux } from "../main/remote/mux";
 import { emberNamesRegExp } from "../main/remote/protocol";
 import { readScriptText } from "../main/commands/run/inspect";
@@ -165,7 +166,7 @@ async function serve(o: { pcId: string; agentOs: AgentOs; arch: "x64" | "arm64";
   const policy = new PolicyWatch(() => loadRemotePolicy(o.agentOs), () => server?.onRemotePolicy());
   let source: AuditSource = { from: "", pcId: "" };
   const audit = createRemoteAudit({
-    dir: places.audit, retentionDays: policy.current.policy.auditRetentionDays ?? 30, source: () => source, log,
+    dir: places.audit, retentionDays: auditRetentionDays(policy.current), source: () => source, log,
     ...(o.agentOs === "linux" ? { sink: journalSink(err => log.warn("remote.journal_failed", { err })) } : {}),
   });
   const started = startOf(o.agentOs);

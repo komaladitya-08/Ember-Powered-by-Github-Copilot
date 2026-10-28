@@ -81,6 +81,24 @@ export const SECURITY_TITLE: Readonly<Record<OS, RegExp | null>> = {
 };
 
 /**
+ * The system's own Settings apps, tested on the window's app (trimmed): their switches weaken protection or grant
+ * devices to apps (the screen lock, location, camera, microphone, developer mode, remote assistance, login items) with
+ * labels that say nothing of security, and a macOS privacy pane names only the app it grants something to ("Terminal"),
+ * so policy.ts asks about every setting changed in them. Linux: GNOME Settings. Windows: Settings and System
+ * Properties' pages (remote assistance and desktop, system protection, performance, the computer's name). macOS: System
+ * Settings (System Preferences before macOS 13), by its bundle id and its names in other languages.
+ */
+export const SETTINGS_APP: Readonly<Record<OS, RegExp | null>> = {
+  linux: /^(gnome-control-center|org\.gnome\.settings)$/i,
+  win32: exactly(["systemsettings", "systempropertiesremote", "systempropertiesprotection", "systempropertiesadvanced", "systempropertiesperformance",
+    "systempropertiescomputername", "systempropertieshardware", "systempropertiesdataexecutionprevention"], String.raw`(?:\.exe)?`),
+  darwin: exactly(["system settings", "system preferences", "com.apple.systempreferences", "com.apple.settings", "systemeinstellungen",
+    "réglages système", "préférences système", "ajustes del sistema", "preferencias del sistema", "impostazioni di sistema", "preferenze di sistema",
+    "ajustes do sistema", "definições do sistema", "preferências do sistema", "systeeminstellingen", "systeemvoorkeuren", "システム設定", "システム環境設定",
+    "系统设置", "系统偏好设置", "系統設定", "系統偏好設定", "시스템 설정", "시스템 환경설정"]),
+};
+
+/**
  * Window classes of security prompts (lower case, whole), for the backends that report one: perception passes a
  * window's class as its app (WM_CLASS's parts on Linux, the Win32 class on Windows), so it is matched where the app
  * is. Empty on Linux, whose prompts are known by their programs, and on macOS, which has no window classes.
@@ -205,13 +223,22 @@ const STARTS_PROGRAM = new RegExp(String.raw`^"?[^\\/:*?"<>|\s]+"?(\s|$)`
   + String.raw`|[\\/](${[...TERMINALS.win32].map(literal).join("|")})"?(\s|$)`
   + String.raw`|^"?[a-z][\w+.-]+:`, "i");
 
-/** File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' main languages. */
-const ADDRESS_BOX = /^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|주소)(\s*[:：].*)?$/iu;
-/** The Run dialog's "Open:" box, in Windows' main languages (an access key may follow: "打开(O):"). */
-const RUN_BOX = /^(open|öffnen|ouvrir|abrir|apri|openen|打开|開啟|열기)\s*(\(\w\))?\s*[:：]?$/iu;
+/**
+ * File Explorer's address box ("Address", or "Address: <folder>" while it shows the path), in Windows' display languages;
+ * and, whatever the language, the box while it shows a folder's path ("<one or two words>: C:\…", "…: \\server\…",
+ * "…: %USERPROFILE%\…", "…: shell:…"), the shape no other box of Explorer's has.
+ */
+const ADDRESS_BOX = new RegExp(String.raw`^(address|adresse|dirección|indirizzo|endereço|adres|アドレス|地址|位址|주소|адрес|адреса|adress|adresa|adresas|adrese|`
+  + String.raw`adresă|aadress|osoite|cím|naslov|διεύθυνση|כתובת|العنوان|ที่อยู่)(\s*[:：].*)?$`
+  + String.raw`|^[^\s:：\\/]+(\s[^\s:：\\/]+)?\s*[:：]\s*([a-z]:\\|\\\\|%[\w()]+%|shell:)`, "iu");
+/** The Run dialog's "Open:" box, in Windows' display languages (an access key may follow: "打开(O):", "名前(O):"). */
+const RUN_BOX = /^(open|öffnen|ouvrir|abrir|apri|openen|打开|開啟|열기|名前|открыть|відкрити|отваряне|otwórz|otevřít|otvoriť|otvori|odpri|aç|öppna|åbn|åpne|avaa|ava|megnyitás|άνοιγμα|פתח|פתיחה|فتح|deschidere|atvērt|atidaryti|เปิด)\s*(\(\w\))?\s*[:：]?$/iu;
 
 /**
  * Boxes where type_text and fill_cells refuse to type a program's name. Empty on Linux: GNOME has no such box.
+ * These Windows rules know the boxes and windows by their words in Windows' display languages (a Language Interface
+ * Pack beyond them is judged as any other app); the accessibility host doesn't pass the controls' AutomationId or
+ * class name to the policy yet, which would know them in any language.
  * Windows: File Explorer's address box, and the Run dialog's box (it belongs to explorer.exe too), where any text
  * typed runs with Enter.
  */
@@ -238,7 +265,7 @@ export interface ReadOnlyWindow {
 }
 
 /**
- * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' main languages), whose OK
+ * Windows Ember only reads. Windows: the Run dialog (explorer.exe's "Run", titled in Windows' display languages), whose OK
  * and Enter run whatever its box holds, the last command typed there included, so a click is as good as typing one.
  * A File Explorer folder named "Run" has the same title and program, but it is a frame (CabinetWClass) where the Run
  * dialog is a dialog (Win32's dialog class, #32770, which the accessibility host reads as one): a folder window known
@@ -246,7 +273,11 @@ export interface ReadOnlyWindow {
  */
 export const READ_ONLY_WINDOW: Readonly<Record<OS, readonly ReadOnlyWindow[]>> = {
   linux: [],
-  win32: [{ app: /^explorer(\.exe)?$/i, title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행)$/iu, otherRole: /^frame$/ }],
+  win32: [{
+    app: /^explorer(\.exe)?$/i,
+    title: /^(run|ausführen|exécuter|ejecutar|esegui|executar|uitvoeren|ファイル名を指定して実行|运行|執行|실행|выполнить|виконати|изпълнение|uruchamianie|spustit|spustiť|pokretanje|zaženi|çalıştır|kör|kør|kjør|suorita|käivitamine|futtatás|εκτέλεση|הפעלה|تشغيل|executare|rulare|palaišana|vykdyti|เรียกใช้)$/iu,
+    otherRole: /^frame$/,
+  }],
   darwin: [],
 };
 
@@ -261,7 +292,49 @@ export interface OpensPrograms {
    * access key or "…" may follow): the request doesn't say what is selected, so they are refused whatever it is.
    */
   readonly commands: readonly string[];
+  /** The roles that carry those commands (default: menus, menu items, buttons and links: Explorer's ribbon and command bar). */
+  readonly commandRoles?: RegExp;
+  /** Keys that open the focused item, as policy.ts keyFamily spells them (default: Enter, with Ctrl or Shift too: Explorer's). */
+  readonly openKey?: RegExp;
+  /** Keys that move the keyboard off the selection or add the focused item to it (default: Explorer's Ctrl+arrows, Ctrl+Space); null: none. */
+  readonly splitsSelection?: RegExp | null;
+  /**
+   * The app hides file types by default, so an item's name may hide a program's: one whose name shows no type ("setup",
+   * a shortcut) is refused, and one that shows a document's ("invoice.pdf", which may be invoice.pdf.exe) is asked about.
+   */
+  readonly hidesTypes?: boolean;
+  /** Roles whose items are only ever places (File Explorer's navigation pane: folders and drives): opened as any other. */
+  readonly places?: RegExp;
+  /**
+   * Where the role can't tell a place from a file (Finder's sidebar and list view are both outlines, so both have tree
+   * items): an item of `roles` whose whole name, as written (case aside), is one of `names` (the sidebar's places as
+   * the system names them) is opened as any other.
+   */
+  readonly placeNames?: { readonly roles: RegExp; readonly names: ReadonlySet<string> };
 }
+
+/** A name as `OpensPrograms.placeNames` compares it: as written (no look-alike folding), composed, trimmed, lower case. */
+export const placeName = (s: string) => s.normalize("NFC").trim().toLowerCase();
+
+/**
+ * The places Finder's sidebar lists by name (Recents, AirDrop, Applications, Desktop, Documents, Downloads, Movies,
+ * Music, Pictures, iCloud Drive, Shared, the startup disk, Network) in the languages its commands are listed in. Best
+ * knowledge: a localized runner must confirm them. The home folder, other disks, servers and folders the user added
+ * there go by names of their own, so they are opened by path (Go ▸ Go to Folder) instead.
+ */
+const FINDER_PLACES = [
+  "recents", "airdrop", "applications", "desktop", "documents", "downloads", "movies", "music", "pictures", "icloud drive", "shared", "macintosh hd", "network",
+  "zuletzt benutzt", "programme", "schreibtisch", "dokumente", "filme", "musik", "bilder", "geteilt", "netzwerk",
+  "récents", "bureau", "téléchargements", "films", "musique", "images", "partagé", "réseau",
+  "recientes", "aplicaciones", "escritorio", "documentos", "descargas", "películas", "música", "imágenes", "compartido", "red",
+  "recenti", "applicazioni", "scrivania", "documenti", "download", "filmati", "musica", "immagini", "condivisi",
+  "recentes", "aplicativos", "mesa", "transferências", "filmes", "imagens", "compartilhado", "partilhado", "rede",
+  "recent", "apps", "programma's", "bureaublad", "documenten", "muziek", "afbeeldingen", "gedeeld", "netwerk",
+  "最近の項目", "アプリケーション", "デスクトップ", "書類", "ダウンロード", "ムービー", "ミュージック", "ピクチャ", "共有", "ネットワーク",
+  "最近使用", "隔空投送", "应用程序", "桌面", "文稿", "下载", "影片", "音乐", "图片", "icloud云盘", "网络",
+  "最近項目", "應用程式", "文件", "下載", "音樂", "圖片", "icloud 雲碟", "網路",
+  "최근 항목", "응용 프로그램", "데스크탑", "문서", "다운로드", "동영상", "음악", "사진", "공유됨", "네트워크",
+];
 
 /**
  * What File Explorer (and the desktop, also explorer.exe) runs with no dialog when it opens it: programs, scripts and
@@ -273,11 +346,14 @@ const RUNS_WHEN_OPENED = /\.(exe|com|bat|cmd|ps1|vbs|vbe|js|jse|wsf|wsh|hta|msi|
 /**
  * Apps where opening an item runs it when it is a program or script, with no dialog. Windows: File Explorer and the
  * desktop, on a double click, Enter, or their Open, Open with, Run as administrator, Run as different user and Run with
- * PowerShell commands, in Windows' main languages (and a script's Open with Command Prompt, which runs it in a console,
- * in English). An item is known by the extension its name shows: where Explorer
- * hides known extensions (its default) or never shows them (shortcuts: .lnk, .url, .pif, .appref-ms), the name says
- * nothing, and the request carries no file type (UI Automation's ItemType, "Application", "Shortcut"), so such an
- * item is judged as any other. None on Linux and macOS.
+ * PowerShell commands, in Windows' display languages (and a script's Open with Command Prompt, which runs it in a console,
+ * in English). An item is known by the extension its name shows: where Explorer hides known extensions (its default) or
+ * never shows them (shortcuts: .lnk, .url, .pif, .appref-ms) the name says nothing, and the request carries no file type
+ * (UI Automation's ItemType, "Application", "Shortcut", isn't passed to the policy yet), so an item whose name shows no
+ * type is refused and one whose name shows a document's type is asked about (`hidesTypes`); the navigation pane's items
+ * are places. macOS: Finder, which runs apps, Terminal scripts (.command, .tool, .terminal), Java archives and file
+ * locations it opens, and hides types too (an app's .app always); Cmd+O and Cmd+Down open there (Return renames). None
+ * on Linux: its file manager asks first (RUN_FILE_DIALOG).
  */
 export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
   linux: [],
@@ -297,9 +373,47 @@ export const OPENS_PROGRAMS: Readonly<Record<OS, readonly OpensPrograms[]>> = {
       "打开", "打开方式", "以管理员身份运行", "以其他用户身份运行", "使用 powershell 运行",
       "開啟", "開啟檔案", "以系統管理員身分執行", "以不同使用者身分執行", "用 powershell 執行",
       "열기", "연결 프로그램", "관리자 권한으로 실행", "다른 사용자로 실행", "powershell에서 실행",
+      "открыть", "открыть с помощью", "запуск от имени администратора", "запуск от имени другого пользователя", "выполнить с помощью powershell",
+      "відкрити", "відкрити за допомогою", "запуск від імені адміністратора", "запуск від імені іншого користувача", "виконати за допомогою powershell",
+      "отваряне", "отваряне с", "изпълнение като администратор", "изпълнение като друг потребител", "изпълнение с powershell",
+      "otwórz", "otwórz za pomocą", "uruchom jako administrator", "uruchom jako inny użytkownik", "uruchom za pomocą programu powershell",
+      "otevřít", "otevřít v programu", "spustit jako správce", "spustit jako jiný uživatel", "spustit pomocí powershellu",
+      "otvoriť", "otvoriť pomocou", "spustiť ako správca", "spustiť ako iný používateľ", "spustiť pomocou powershellu",
+      "otvori", "otvori pomoću", "pokreni kao administrator", "pokreni kao drugi korisnik", "pokreni pomoću powershella",
+      "odpri", "odpri z", "zaženi kot skrbnik", "zaženi kot drug uporabnik", "zaženi s programom powershell",
+      "aç", "birlikte aç", "yönetici olarak çalıştır", "farklı bir kullanıcı olarak çalıştır", "powershell ile çalıştır",
+      "öppna", "öppna med", "kör som administratör", "kör som annan användare", "kör med powershell",
+      "åbn", "åbn med", "kør som administrator", "kør som en anden bruger", "kør med powershell",
+      "åpne", "åpne med", "kjør som administrator", "kjør som en annen bruker", "kjør med powershell",
+      "avaa", "avaa sovelluksessa", "suorita järjestelmänvalvojana", "suorita toisena käyttäjänä", "suorita powershellillä",
+      "ava", "ava rakendusega", "käivita administraatorina", "käivita teise kasutajana", "käivita powershelliga",
+      "megnyitás", "társítás", "megnyitás a következővel", "futtatás rendszergazdaként", "futtatás más felhasználóként", "futtatás a powershell segítségével",
+      "άνοιγμα", "άνοιγμα με", "εκτέλεση ως διαχειριστής", "εκτέλεση ως διαφορετικός χρήστης", "εκτέλεση με το powershell",
+      "פתח", "פתח באמצעות", "הפעל כמנהל מערכת", "הפעל כמשתמש אחר", "הפעל באמצעות powershell",
+      "فتح", "فتح باستخدام", "تشغيل كمسؤول", "تشغيل كمستخدم مختلف", "تشغيل باستخدام powershell",
+      "deschidere", "deschidere cu", "executare ca administrator", "rulare ca administrator", "executare ca alt utilizator", "rulare cu powershell",
+      "atvērt", "atvērt ar", "palaist kā administratoram", "palaist kā citam lietotājam", "palaist ar powershell",
+      "atidaryti", "atidaryti naudojant", "vykdyti kaip administratoriui", "paleisti kaip administratorių", "vykdyti kaip kitam vartotojui",
+      "เปิด", "เปิดด้วย", "เรียกใช้ในฐานะผู้ดูแลระบบ", "เรียกใช้ในฐานะผู้ใช้อื่น", "เรียกใช้ด้วย powershell",
+      "executar como outro utilizador",
     ],
+    hidesTypes: true,
+    places: /^tree item$/,
   }],
-  darwin: [],
+  darwin: [{
+    app: /^(finder|com\.apple\.finder)$/i,
+    item: /\.(app|command|tool|terminal|jar|fileloc)$/i,
+    commands: ["open", "open with", "öffnen", "öffnen mit", "ouvrir", "ouvrir avec", "abrir", "abrir con", "abrir com", "apri", "apri con", "open met",
+      "開く", "このアプリケーションで開く", "打开", "打开方式", "打開", "打開檔案的應用程式", "열기", "다음으로 열기"],
+    // Its menus' Open and Open With (a dialog's Open button belongs to the dialog: Gatekeeper's runs-program rule, an Open panel's).
+    commandRoles: /^(menu|menu item)$/,
+    openKey: /^(alt\+)?(shift\+)?cmd\+(o|down)$/,
+    splitsSelection: null,
+    hidesTypes: true,
+    // Its sidebar's places. An app renamed to one of these names and opened from the list view would be taken for the
+    // folder (Gatekeeper still asks before one from the internet starts, and Ember refuses that question's Open).
+    placeNames: { roles: /^tree item$/, names: new Set(FINDER_PLACES.map(placeName)) },
+  }],
 };
 
 /**

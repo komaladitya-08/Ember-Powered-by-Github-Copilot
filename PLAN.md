@@ -240,7 +240,7 @@ Milestones are ordered; tasks inside a milestone can run in parallel unless a de
 | M8.4 | Untrusted-content tagging in worker results; conductor takes goals only from the user; task-alignment rules before tier-2 actions | Injection fixtures cause no out-of-scope action | M8.1, M4.1 |
 | M8.5 | Never-look list (WM_CLASS / desktop ID) enforced before capture and tree reads | Denied apps are masked in images and absent from trees | M3.3, M3.1 |
 | M8.6 | Audit log (append-only JSONL + journald), step timeline UI, retention; delete worker sessions after the follow-up window | Log covers every action and decision | M8.1, M4.1 |
-| M8.7 | `/etc/ember/policy.json` admin lockdown: features, apps, domains, stricter tiers only, models, BYOK lock, retention | Admin values override user settings | M8.1 |
+| M8.7 | `/etc/ember/policy.json` admin lockdown: features, apps, stricter tiers only, models, BYOK lock, retention (domain rules: not in v1, §5) | Admin values override user settings | M8.1 |
 | M8.8 | Onboarding consent: mic and screen disclosure, GNOME mic icon note, data-handling statement | First run cannot skip consent | M1.6 |
 | M8.9 | Kill switch: global hotkey and "Ember, stop" → abort all sessions and motion | Stops everything in < 300 ms | M4.1, M5.3 |
 
@@ -341,15 +341,20 @@ cost ten times Linux's; re-run only a failing group, with `only` set to it), and
 |---|---|---|
 | Read | Look at screen, summarize, navigate within a granted app | Automatic |
 | Reversible edit | Typing in an unsaved document, desk-only changes | Automatic, with a snapshot where possible |
-| Confirm | Send, post, submit, share; delete or overwrite; system settings; installing; new domain; uploads/downloads; cross-app data moves; anything with the borrowed cursor; anything right after an injection warning | Click or key in Ember's confirmation UI |
+| Confirm | Send, post, submit, share; delete or overwrite; system settings; installing; uploads; cross-app data moves; anything with the borrowed cursor; anything right after an injection warning | Click or key in Ember's confirmation UI |
 | Never | Passwords, polkit/sudo, payment fields, CAPTCHAs, security settings | User takes over; capture paused |
+
+Not in v1: asking before a new web domain or a download. In a browser the user let Ember act in, following a link,
+typing an address and a Download button go unasked (uploads, sends and payments ask, and opening a downloaded program
+from the file manager stays refused). The administrator's policy has no domain rules either (M8.7).
 
 Also: screen, file and web content is untrusted data; the conductor only takes goals from you;
 per-app grants; never-look list before capture; audit log; admin policy; local kill switch;
 wake-word protections (second-stage check, self-mute, speaker-output rejection).
 On Windows, remote surfaces (Remote Desktop and WSLg windows) are refused for every action and blacked out of
 screenshots, because Ember can't tell what runs inside them (M11); with WSL on, a WSLg window Ember identifies is
-treated as its Linux app (M12).
+treated as its Linux app (M12). Remote-desktop and virtual-machine viewers on Linux and macOS (Remmina, virt-manager,
+GNOME Boxes, VNC and RDP viewers, Screen Sharing, UTM, Parallels, VMware, VirtualBox) are remote surfaces too.
 
 Commands (M12) never go through a terminal of the user's: they run in Ember's own command window, where the user
 watches and can stop them. Ordinary commands run at once. Deleting or overwriting data, submitting or publishing,

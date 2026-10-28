@@ -566,10 +566,19 @@ Example for a fleet that allows SSH to build hosts, commands with questions on r
 | A policy without the new keys | available | available | **off** on every kind: the administrator never agreed to them |
 | `features.wsl: false` / `features.ssh: false` | off | off | that kind's commands off too |
 | `commands.<kind>: "ask"` | — | — | every command there asks; nothing runs on an announcement |
+| `confirmEveryAction: true` | — | — | every command asks, as with `"ask"`, on every kind whose commands are on |
 | `features.actions: false` | — | — | off (no task starts) |
 | A broken policy (Ember locks down) | off | off | off |
 | SSH, both computers | — | a remote's own `features.ssh: false` refuses Ember there | the stricter of both computers' `commands.ssh` |
 | A WSL distro's own `/etc/ember/policy.json` | ignored: root inside a distro needs no password, so it isn't an administrator's file | — | — |
+
+A locked-down Ember (a broken policy) also connects to no model service, neither GitHub Copilot nor the organisation's
+own endpoint, and prunes nothing from the audit log, until the policy reads fine again.
+
+Ember reads the PC's policy again every 10 seconds, as the helper on a remote does. When what it says changes (tightened,
+repaired, added or removed) and the next read says so too, Ember stops everything, holds itself locked down as above,
+and asks the user to restart it; the restart reads the new policy whole. One read that differs (a file caught mid-write)
+is let pass when the next one says what the policy said before; three reads in a row that differ count as a change.
 
 **An older Ember locks down when it reads a policy with these keys.** The policy schema is strict, so an Ember from
 before this release reads `commands`, `ssh`, `features.wsl` or `features.ssh` as a mistake and locks down (no actions,
@@ -602,7 +611,8 @@ the remote's policy before it copies anything, and the helper reads it again eve
 
 The helper keeps its own audit log on the remote (`~/.local/state/ember-remote/<machine>/audit/`, files readable by
 the user only; on Linux also copied to the system journal, with commands, titles and values as sizes only), kept for
-the remote policy's `auditRetentionDays` (default 30). The PC never deletes or rewrites it, and removing Ember's
+the remote policy's `auditRetentionDays` (default 30; while the remote's policy can't be read nothing is pruned, as on
+the PC). The PC never deletes or rewrites it, and removing Ember's
 helper keeps it. A user-space install can't stop the remote account itself (or root there) from changing the helper:
 the remote's policy binds an honest helper, and nothing from a remote can approve anything or run anything on the PC.
 

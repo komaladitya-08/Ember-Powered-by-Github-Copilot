@@ -16,7 +16,7 @@ import type { PerceptionWindows, StackedWindow, X11Image } from "../../app/main/
 import type { Logger } from "../../app/main/logger";
 import type { OS } from "../../app/shared/shortcuts";
 
-const REASON = "Ember can't tell what's inside a remote window (a remote desktop, or a Linux app under WSL), so it never acts in one";
+const REASON = "Ember can't tell what's inside a remote window (a remote desktop, a virtual machine, or a Linux app under WSL), so it never acts in one";
 
 /** Every kind of action that acts in a window: accessibility, typing, clicks and the borrowed cursor. */
 const IN_WINDOW: ActionKind[] = ["click", "toggle", "text", "select", "value", "cursor_click", "cursor_text", "keys", "scroll"];
@@ -71,10 +71,9 @@ describe("which windows are remote surfaces", () => {
     }
   });
 
-  it("knows none on Linux and macOS, where the check isn't even made", () => {
+  it("knows none of Windows' clients on Linux and macOS (their own viewers are theirs: remote-surface-viewers.test.ts, review #118)", () => {
     for (const os of ["linux", "darwin"] as const) {
-      expect(REMOTE_SURFACE[os]).toBeNull();
-      expect(remoteSurfaceCheck(os)).toBeUndefined();
+      expect(REMOTE_SURFACE[os]).not.toBeNull();
       for (const p of ["msrdc", "mstsc", "msrdcw", "Windows365", "RdClient.Windows"]) expect(isRemoteSurface(p, os), `${os} ${p}`).toBe(false);
     }
     expect(remoteSurfaceCheck("win32")?.("msrdc.exe")).toBe(true);

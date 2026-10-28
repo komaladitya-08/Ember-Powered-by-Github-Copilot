@@ -18,7 +18,7 @@ import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
-import { commandMode, managedKeys } from "./admin";
+import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
@@ -36,9 +36,10 @@ import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
-import { KillSwitch } from "./agent/killswitch";
+import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
 import { PolicyEngine } from "./policy/policy";
 import { remoteSurfaceCheck } from "./policy/remote-surface";
+import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
@@ -258,11 +259,12 @@ async function runDoctor(): Promise<void> {
 }
 
 function start(): void {
-  // The administrator's policy (/etc/ember/policy.json on Linux) overrides the user's settings.
-  const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
+  // The administrator's policy (/etc/ember/policy.json on Linux) overrides the user's settings. Read again every 10 s:
+  // once it changes, Ember holds itself locked down until it is restarted (the watch below replaces both).
+  let admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
   if (admin.error) log.error("admin_policy.invalid", { error: admin.error, note: "locked down until it is fixed" });
   else if (admin.source) log.info("admin_policy.loaded", { file: admin.source });
-  const policy = admin.policy;
+  let policy = admin.policy;
   // Windows: antivirus and sync tools briefly lock a file being replaced, so the save tries again.
   const settings = new SettingsStore(path.join(userData, "settings.json"), policy, { renameRetries: sys.paths.renameRetries });
   const loaded = settings.load();
@@ -384,8 +386,8 @@ function start(): void {
     environment: await environmentNow(),
     logFile: log.file,
     settingsNotice,
-    admin: { source: admin.source, error: admin.error ?? null, managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
-      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: policy.auditRetentionDays ?? 30,
+    admin: { source: admin.source, error: admin.error ?? null, ...(admin.held ? { held: true } : {}), managed: managedKeys(policy), features: policy.features, provider: policy.provider?.baseUrl ?? null,
+      confirmEveryAction: policy.confirmEveryAction, allowGrants: policy.allowGrants, retentionDays: auditRetentionDays(admin),
       neverLook: policy.neverLook, commands: { local: commandMode(admin, "local"), wsl: commandMode(admin, "wsl"), ssh: commandMode(admin, "ssh") },
       sshHostsLimited: policy.ssh?.allowedHosts !== undefined },
     platform: platformStatus(),
@@ -461,10 +463,11 @@ function start(): void {
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
-    const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
+    const lockedDown = modelServiceRefusal(admin);
+    const thought = lockedDown ?? (waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
-      : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`;
+      : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`);
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
       actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
@@ -820,7 +823,7 @@ function start(): void {
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu") => {
-    void killSwitch.pull(source);
+    const pulled = killSwitch.pull(source);
     // Failure cards stay until closed, and only a click closes them: Stop everything clears them too
     // (the keyboard's way, and the screen reader's).
     for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
@@ -828,6 +831,15 @@ function start(): void {
     statusBy.listen = statusBy.mic = null;
     setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble });
     hideIfStill(bubble, 3000);
+    // Parts still winding down after the kill switch's wait (a command's kill ladder, a slow remote link) are named.
+    void pulled.then(({ late }) => {
+      const computers = targets?.summaries().filter(t => t.kind === "ssh" && (t.state === "ready" || t.state === "connecting" || t.state === "lost")).map(t => t.label) ?? [];
+      const still = stillStoppingWords(late, computers);
+      if (!still || lastState.bubble !== bubble) return;
+      const stopping = { ...bubble, title: "Stopping", thought: still };
+      setState({ bubble: stopping });
+      hideIfStill(stopping, 6000);
+    });
   };
   let lastAskByVoice = false;
   /** This turn's answer: its follow-up takes "Okay." as the reply it is when the answer asked something. */
@@ -1073,6 +1085,8 @@ function start(): void {
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
+    // The administrator's policy changed while Ember ran: a restart reads it whole (inside an AppImage, the AppImage).
+    if (id === "ui:restart" && admin.held) { app.relaunch(restartOptions(process.env, process.argv)); app.quit(); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
@@ -1381,9 +1395,12 @@ function start(): void {
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
       err => log.warn("audit.write_failed", { err }));
-    try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
-    // And once a day: an Ember that runs for weeks keeps nothing past the retention (review #86).
-    audit.pruneDaily(() => policy.auditRetentionDays ?? 30, err => log.warn("audit.prune_failed", { err }));
+    // Nothing is pruned while the policy can't be used: its retention can't be read then.
+    const keepDays = auditRetentionDays(admin);
+    try { if (keepDays !== null) audit.prune(keepDays); } catch (err) { log.warn("audit.prune_failed", { err }); }
+    // And once a day: an Ember that runs for weeks keeps nothing past the retention (review #86). It reads the policy
+    // in force each day, so nothing is pruned once a changed policy holds Ember locked down (review #106).
+    audit.pruneDaily(() => auditRetentionDays(admin), err => log.warn("audit.prune_failed", { err }));
     confirmer = new Confirmer(showState, {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.
@@ -1546,6 +1563,8 @@ function start(): void {
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
+      // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
+      refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       describeScreen: () => seeing.describe(), hands,
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
       onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },
@@ -1638,7 +1657,7 @@ function start(): void {
       },
     });
     if (settings.get().voice.muted) voice.setMuted(true);
-    const wantVoice = () => settings.get().wakeWord && settings.get().voice.consent && consented();
+    const wantVoice = () => policy.features.voice !== false && settings.get().wakeWord && settings.get().voice.consent && consented();
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     let micConsent = settings.get().voice.consent;
@@ -1649,6 +1668,29 @@ function start(): void {
       if (wantVoice() !== wanted) { wanted = wantVoice(); void voice?.setWanted(wanted); }
     });
     app.on("will-quit", () => voice?.stop());
+
+    // The administrator's policy changed while Ember ran: everything stops, and Ember holds itself locked down (no
+    // actions, commands, listening or model service) until the user restarts it, which reads the new policy whole.
+    const unwatchPolicy = watchAdminPolicy({
+      first: admin,
+      read: () => sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY")),
+      onChange: next => {
+        log.warn("admin_policy.changed", { file: next.source, error: next.error ?? null, note: "held locked down until Ember restarts" });
+        admin = heldUntilRestart(next);
+        policy = admin.policy;
+        wanted = false;
+        void voice?.setWanted(false);
+        // The connection goes too: the host's refuseConnect now says why, so nothing reconnects until the restart.
+        void agent?.start(null);
+        void killSwitch.pull("policy").then(() => {
+          const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "Your organisation changed my policy",
+            thought: "I've stopped everything, and I won't act, listen or answer until you restart me.", actions: [{ id: "ui:restart", label: "Restart Ember" }] };
+          statusBy.listen = statusBy.mic = null;
+          setState({ emotion: "neutral", talking: false, status: statusBy.borrow, bubble });
+        });
+      },
+    });
+    app.on("will-quit", unwatchPolicy);
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
     if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();

@@ -597,6 +597,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     label: host.id, resolved, ...(host.extra ? { extra: host.extra } : {}),
     ...(host.via && host.via !== "local" ? { viaLabel: distroLabel(host.via.slice(4)) } : {}),
     desktopOff: admin().policy.ssh?.desktop === false, graceSeconds: admin().policy.ssh?.commandGraceSeconds ?? 20,
+    // The organisation's own model service: the card says what is read goes there, not to GitHub Copilot.
+    byok: admin().policy.provider !== undefined,
   });
   /** Builds the target for a link that came up (a connect, or SA's own reconnect). */
   const adopt = (hostId: string, link: RemoteLink): boolean => {
@@ -867,7 +869,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!consentCurrent("wsl", own.wsl.consent)) {
       await refreshWsl();
       const d = defaultDistro(wslFacts);
-      const card = wslConsent(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" });
+      const card = wslConsent({ ...(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" }), byok: admin().policy.provider !== undefined });
       if (!(await askCard(card))) return { ok: false, message: "Not now." };
       settings.update({ targets: { ...settings.own().targets, wsl: { on: true, consent: consentGiven("wsl", parts.now()) } } });
     } else {
@@ -905,7 +907,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const privileged = e.kind === "local" ? elevated()
       : e.kind === "wsl" ? e.distro?.defaultUid === 0 || (wslServices.get(e.distro?.name ?? "")?.facts()?.privileged ?? false)
         : safeCap(commandsOf(e.id))?.askEvery === "root";
-    return { kind: e.kind, privileged, windows: e.kind === "local" && deps.os === "win32", podman: e.kind === "wsl" && !!e.distro && isToolDistro(e.distro) };
+    return { kind: e.kind, privileged, windows: e.kind === "local" && deps.os === "win32", podman: e.kind === "wsl" && !!e.distro && isToolDistro(e.distro), byok: admin().policy.provider !== undefined };
   };
 
   // ── Panel answers (the command card's and a consent card's own buttons) ──
