@@ -12918,6 +12918,62 @@
   {
    "cmd": "foo dpkg-deb",
    "verdict": "run"
+  },
+  {
+   "cmd": "nm -o /usr/lib/libc.so.6",
+   "verdict": "run"
+  },
+  {
+   "cmd": "strings -o /usr/bin/ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "od -o /etc/hostname",
+   "verdict": "run"
+  },
+  {
+   "cmd": "hexdump -o /usr/bin/ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "clang x.c -o /home/ana/.config/autostart/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "nasm -f elf64 -o /usr/local/lib/x.o x.asm",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.system"
+   ]
+  },
+  {
+   "cmd": "pandoc in.md -o ~/.profile",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "strip -o /usr/local/bin/x x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.system"
+   ]
   }
  ]
 }

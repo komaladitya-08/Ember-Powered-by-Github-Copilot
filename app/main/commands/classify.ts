@@ -1983,6 +1983,8 @@ const ELSEWHERE_ARGS = new Set(["ssh", "slogin", "autossh", "mosh", "docker", "p
 const FILE_OPTION = /(file|files|.-from)$/;
 /** Long options whose value is a file the program writes or a folder it writes into: `--output`, `--outdir`, `--directory-prefix`. */
 const OUTPUT_OPTION = /^(out|output)(-?(file|dir|directory))?$|^(outdir|outfile|directory-prefix|pack-destination)$/;
+/** Known programs whose `-o` names their output (to the others, `nm -o`, `strings -o`, `od -o`, it is a flag or a format). */
+const OUTPUT_O = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "ld", "as", "rustc", "strip", "pandoc"]);
 
 /**
  * Every program's long options whose value names a file it reads or writes, judged after its own row (which may never
@@ -1999,7 +2001,7 @@ function optionPaths(h: H, unknown: boolean): void {
     const a = args[k];
     if (a.v === "--") return;
     // An unknown program's `-o` (PowerShell hands it over as a parameter, as written).
-    const short = unknown && a.v === "-o";
+    const short = unknown && a.v === "-o" && (!KNOWN_ORDINARY.has(h.key) || OUTPUT_O.has(h.key));
     if (a.param !== undefined && !short) continue;
     // A word Ember can't see is still an option by its written name (`--file="$F"`): its value is unknown.
     const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v ?? a.raw);
