@@ -277,6 +277,17 @@ describe("Ember's hello once it starts", () => {
       thought: "I can't reach GitHub yet: I'll connect as soon as the network is back.", mood: "error", actions: [], holdMs: 15000,
     });
   });
+
+  it("says first why Ember can't work here at all, in place of everything else", () => {
+    // main's reason (a desktop session Ember can't use, the organisation's lockdown) comes before Copilot and the rows.
+    const why = "This is a Wayland session, so I can't see your screen or use your mouse here.";
+    for (const more of [{}, { rows: MAC_FIRST }, { phase: "signed-out" }, { phase: "error", waiting: true }]) {
+      expect(hello(at({ ...more, cannotWork: why })), JSON.stringify(more)).toEqual({ thought: why, mood: "attention", actions: settingsButton, holdMs: 15000 });
+    }
+    expect(hello(at({ cannotWork: why, settingsOpen: true }))).toEqual({ thought: why, mood: "attention", actions: [], holdMs: 15000 });
+    // None: as before.
+    expect(hello(at({ cannotWork: null }))).toEqual(hello(at({})));
+  });
 });
 
 describe("Ember's handle while a setup row holds it back", () => {
