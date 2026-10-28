@@ -99,6 +99,9 @@ describe("redactSecrets on long output (review #26)", () => {
     "one\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----\nmid\n-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----",
     "Authorization: Bearer abc password: [secret hidden] token=[secret hidden]",
     `https://ana:pw@example.com ${GH} AKIAABCDEFGHIJKLMNOP`,
+    // A long suffix after the secret word (second round).
+    "PASSWORD_FOR_THE_PRODUCTION_DATABASE_SERVER_IN_THE_EU_WEST_REGION_PRIMARY_REPLICA=hunter2",
+    "client_secret_for_the_very_long_named_integration_with_the_partner_service_account_v2: abc123",
   ])("hides what the earlier patterns hid in %j", text => {
     expect(redactSecrets(text)).toBe(before(text));
   });

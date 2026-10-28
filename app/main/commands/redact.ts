@@ -50,11 +50,13 @@ const URL_CREDENTIALS = /:\/\/[^/\s:@]+:[^/\s@]+@/g;
  * Key-value pairs whose key names a secret: `password=…`, `token: …`, `"api_key": "…"` (the value only). The key may
  * carry a prefix or suffix (`DB_PASSWORD`, `client_secret_id`); the value runs to whitespace, a quote, a comma or a
  * semicolon. A value that is already hidden is left alone. The match starts at the secret word (a prefix stays in the
- * text as it is) and the suffix is at most 64 characters: an open-ended class on either side made every start in a
- * long run of letters rescan the whole run, which froze Ember for minutes on one long token of output.
+ * text as it is) and the suffix is at most 256 characters, taken whole (a lookahead and its back-reference: none of its
+ * characters can start the `=` or `:` after it, so giving any back never helps). That is a constant per start, so the
+ * time stays linear: an open-ended class on either side made every start in a long run of letters rescan the whole
+ * run, which froze Ember for minutes on one long token of output.
  */
 const KEY_VALUE =
-  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)[A-Za-z0-9_.-]{0,64}["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
+  /((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret)(?=([A-Za-z0-9_.-]{0,256}))\2["']?\s*(?:=|:)\s*["']?)([^\s"',;]+)/gi;
 
 /**
  * Replaces what looks like a secret in `text` with "[secret hidden]" (§3.11 step 4): GitHub, AWS, Slack, Google and
@@ -66,7 +68,7 @@ export function redactSecrets(text: string): string {
   for (const re of TOKEN_PATTERNS) out = re === PRIVATE_KEY ? hidePrivateKeys(out) : out.replace(re, SECRET_HIDDEN);
   for (const re of VALUE_PATTERNS) out = out.replace(re, (_m, keep: string) => keep + SECRET_HIDDEN);
   out = out.replace(URL_CREDENTIALS, `://${SECRET_HIDDEN}@`);
-  out = out.replace(KEY_VALUE, (m, keep: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
+  out = out.replace(KEY_VALUE, (m, keep: string, _suffix: string, value: string) => (value.startsWith("[secret") ? m : keep + SECRET_HIDDEN));
   return out;
 }
 
