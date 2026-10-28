@@ -82,9 +82,12 @@ export class Follower {
 
   /** `force`: go to the target even when parked or paused (stepping out of the way of a window). */
   step(target: Point, dt: number, force = false): Point {
-    if (force) return this.spring.step(target, Math.min(dt, 0.05));
+    // 0 to 50 ms: a clock that stepped back (VM time sync, NTP) or a frame time that isn't a number moves nothing,
+    // instead of throwing Ember hundreds of thousands of pixels off screen (review #88).
+    const t = dt > 0 ? Math.min(dt, 0.05) : 0;
+    if (force) return this.spring.step(target, t);
     if (this.paused && !this.parked) return this.position;
-    return this.spring.step(this.parked ?? target, Math.min(dt, 0.05));
+    return this.spring.step(this.parked ?? target, t);
   }
 
   jump(p: Point): void {

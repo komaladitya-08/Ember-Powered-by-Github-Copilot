@@ -15,6 +15,7 @@ import { CONSENT_VERSION } from "../shared/consent";
 import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
 import { DISTRO_NAME, HOST_ID, parseTargetId, type TargetId } from "../shared/targets";
 import { HOST_OS } from "./platform/os";
+import { readTextFile } from "./text-file";
 
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
 const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
@@ -234,9 +235,53 @@ const BUSY_RENAME = new Set(["EPERM", "EBUSY", "EACCES"]);
 /** How long to wait between those retries. */
 const RENAME_RETRY_MS = 50;
 
+/** How long a repairable hand edit must stay the same before Ember rewrites it (the watcher looks every 2 s). */
+const SETTLE_MS = 2000;
+/** How many copies of unusable versions (settings.json.bad-<time>) are kept. */
+const KEEP_BACKUPS = 3;
+
+/** Read errors another program's hold or a network home's hiccup causes for a moment (at login, scans and syncs run). */
+const BUSY_READ = new Set(["EBUSY", "EPERM", "EACCES", "EIO", "ETIMEDOUT", "EAGAIN"]);
+/** How long to wait before each further try of a start-up read (about 350 ms in all, only when it fails). */
+const READ_RETRY_MS = [50, 100, 200];
+
+/** The file's text at start-up, tried again a few times when it fails for a moment (review #83). */
+function readSoon(file: string): string {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return readTextFile(file);
+    } catch (err) {
+      if (attempt >= READ_RETRY_MS.length || !BUSY_READ.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
+      pause(READ_RETRY_MS[attempt]);
+    }
+  }
+}
+
 /** Waits `ms` without returning to the event loop (saves are synchronous; this runs only after a refused rename). */
 function pause(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * One plain sentence for a save that failed, for the settings window (review #84). `later`: the change stays in use
+ * and is saved with the next one (the size slider); otherwise it wasn't kept.
+ */
+export function saveFailure(err: unknown, later = false): string {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  const why = code === "ENOSPC" || code === "EDQUOT" ? "the disk is full"
+    : code === "EROFS" ? "its folder is on a disk that can only be read"
+    : code === "EACCES" || code === "EPERM" ? "it isn't allowed to write to its folder"
+    : code === "EBUSY" ? "another program is holding settings.json"
+    : "the file couldn't be written";
+  return `Ember couldn't save your settings: ${why}. ${later ? "It will try again with your next change." : "Your change wasn't kept."}`;
+}
+
+/**
+ * What the settings window is told when update() threw (review #84): a failed save as saveFailure's sentence (the
+ * raw error as its cause), never Node's own words; anything else as it is.
+ */
+export function plainSaveError(err: unknown): unknown {
+  return typeof (err as NodeJS.ErrnoException | null)?.code === "string" ? new Error(saveFailure(err), { cause: err }) : err;
 }
 
 /** How a SettingsStore saves on this OS (the platform's paths). */
@@ -246,6 +291,8 @@ export interface SettingsStoreOptions {
    * paths.renameRetries: 0 on Linux and macOS, as before; 5 on Windows, whose antivirus and sync locks are brief).
    */
   renameRetries?: number;
+  /** Milliseconds now (tests): how long a hand edit has stayed the same. */
+  clock?: () => number;
 }
 
 export interface LoadResult {
@@ -266,14 +313,20 @@ export class SettingsStore {
   private broken: string | null = null;
   /** The file as Ember last read or wrote it: anything newer was edited by hand. */
   private seen: number | null = null;
-  /** A change applied in memory whose save is due shortly (a slider being dragged). */
+  /** A change applied in memory whose save is due shortly (a slider being dragged), or once the file reads again. */
   private pending: SettingsPatch | null = null;
+  /** The file is there but couldn't be read at start-up: nothing is saved over it until it reads (review #83). */
+  private unread = false;
+  /** The notice that said so. */
+  private unreadNotice: string | null = null;
   private pendingTimer: NodeJS.Timeout | null = null;
 
   private renameRetries: number;
+  private clock: () => number;
 
   constructor(readonly file: string, private admin: AdminPolicy | null = null, o: SettingsStoreOptions = {}) {
     this.renameRetries = Math.max(0, Math.floor(o.renameRetries ?? 0));
+    this.clock = o.clock ?? Date.now;
   }
 
   load(): LoadResult {
@@ -298,19 +351,34 @@ export class SettingsStore {
    * trailing comma) never replaces the settings in use: they stay, and the file is read again
    * when it next changes. JSON with a few bad values is repaired value by value either way.
    */
-  private read(running: boolean): LoadResult {
+  private read(running: boolean, settle = running): LoadResult {
     let raw: string;
+    this.deferred = false;
     this.seen = this.mtime();
     try {
-      raw = fs.readFileSync(this.file, "utf8");
+      // Whatever Unicode form an editor or script saved it in (a byte-order mark, UTF-16): review #82.
+      raw = running ? readTextFile(this.file) : readSoon(this.file);
     } catch (err) {
+      const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
+      // Nothing is there to save over any more: the notice that said Ember wouldn't goes too.
+      if (missing && this.unread) { this.unread = false; this.withdraw(this.unreadNotice); }
       if (running) {
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
+        // (Still unreadable since start-up: its notice stands.)
+        if (!missing && !this.unread) this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
         return { settings: this.current };
       }
       this.current = DEFAULT_SETTINGS;
+      if (!missing) {
+        // The user's settings are there but can't be read: Ember runs on defaults and saves nothing over them until
+        // they can be read (the watcher keeps trying), so one change can't replace consent, hosts and the never-look
+        // list with defaults (review #83).
+        this.unread = true;
+        this.unreadNotice = `Ember can't read ${this.file}, so it started with its default settings. It won't save over the file until it can read it again.`;
+        this.problem(this.unreadNotice);
+      }
       return { settings: this.current };
     }
+    this.unread = false;
     let json: unknown;
     let strict = true;
     try {
@@ -334,6 +402,13 @@ export class SettingsStore {
       if (this.troubled) this.problem(null);
       return { settings: this.current };
     }
+    // An editor that saves as the user types may be mid-edit ("size": 800 on the way to 80): the file is
+    // rewritten only once it has stayed the same for SETTLE_MS, never under the editor (review #92).
+    if (settle && !this.settled()) {
+      this.seen = null; // looked at again at the next check
+      this.deferred = true;
+      return { settings: this.current };
+    }
     // Keep what is valid (down to single entries), reset only what isn't; from a file that can't be
     // read at all, at least the never-look list.
     if (parsed.success) this.current = parsed.data;
@@ -351,13 +426,48 @@ export class SettingsStore {
     return { settings: this.current, recoveredFrom: backup ?? undefined };
   }
 
+  /** The version of a repairable hand edit being waited on (its time stamp), and since when it has looked the same. */
+  private settling: { mtime: number | null; since: number } | null = null;
+  /** The last read left a repairable hand edit for later (it may still be changing): nothing changed in memory. */
+  private deferred = false;
+
+  /** Has the file (as last read) stayed the same for SETTLE_MS? */
+  private settled(): boolean {
+    const now = this.clock();
+    if (!this.settling || this.settling.mtime !== this.seen) this.settling = { mtime: this.seen, since: now };
+    return now - this.settling.since >= SETTLE_MS;
+  }
+
   /** A copy of the file as it is now (once per version of it), before Ember writes over it. */
   private kept: number | null = null;
+  private lastBackup = 0;
   private keep(): string | null {
     const m = this.mtime();
     if (m !== null && m === this.kept) return null;
-    const backup = `${this.file}.bad-${Date.now()}`;
-    try { fs.copyFileSync(this.file, backup); this.kept = m; return backup; } catch { return null; }
+    // Two versions within a millisecond still get a copy each.
+    this.lastBackup = Math.max(Date.now(), this.lastBackup + 1);
+    const backup = `${this.file}.bad-${this.lastBackup}`;
+    try { fs.copyFileSync(this.file, backup); this.kept = m; } catch { return null; }
+    this.pruneBackups();
+    return backup;
+  }
+
+  /** Only the newest KEEP_BACKUPS copies stay: an editor that saves as the user types makes one per save (review #92). */
+  private pruneBackups(): void {
+    const dir = path.dirname(this.file);
+    const prefix = `${path.basename(this.file)}.bad-`;
+    try {
+      const old = fs.readdirSync(dir)
+        .filter(n => n.startsWith(prefix) && /^\d+$/.test(n.slice(prefix.length)))
+        .sort((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)))
+        .slice(KEEP_BACKUPS);
+      for (const n of old) fs.rmSync(path.join(dir, n), { force: true });
+    } catch { /* tidied the next time */ }
+  }
+
+  /** Takes `msg` away if it is still the notice shown. */
+  private withdraw(msg: string | null): void {
+    if (msg !== null && this.lastProblem === msg) this.problem(null);
   }
 
   private problem(msg: string | null): void {
@@ -375,12 +485,15 @@ export class SettingsStore {
     return () => this.problemListeners.delete(fn);
   }
 
-  /** The file changed outside Ember (edited by hand): use it. Returns true when it did. */
+  /** The file changed outside Ember (edited by hand), or reads again after it couldn't: use it. Returns true when it did. */
   reloadIfChanged(): boolean {
     const m = this.mtime();
-    if (m === this.seen) return false;
+    const wasUnread = this.unread;
+    if (m === this.seen && !wasUnread) return false;
     const before = this.current;
     this.read(true);
+    // Still unreadable, or an edit left until it stops changing: nothing to use (or save) yet.
+    if ((wasUnread && this.unread) || this.deferred) return false;
     // A change still waiting to be saved goes on top of the hand edit.
     if (this.pending) {
       const next = SettingsSchema.safeParse({ ...this.current, ...this.pending });
@@ -388,6 +501,8 @@ export class SettingsStore {
     }
     if (this.current === before) return false;
     this.apply(this.current);
+    // Changes held while the file couldn't be read (no save is due for them) are saved now, on top of the user's own.
+    if (this.pending && !this.pendingTimer) { try { this.flush(); } catch { /* saved with the next change */ } }
     for (const fn of this.listeners) fn(this.effective);
     return true;
   }
@@ -415,19 +530,27 @@ export class SettingsStore {
    * second (a slider being dragged); any other change, or flush(), saves it at once.
    */
   update(patch: SettingsPatch, opts: { soon?: boolean } = {}): Settings {
-    // A hand edit since Ember last looked comes first: the patch goes on top of it.
-    if (this.mtime() !== this.seen) { try { this.read(true); } catch { /* keep what is in memory */ } }
-    const next = SettingsSchema.parse({ ...this.current, ...patch });
+    // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
+    // (A repairable edit is repaired now, not waited on: Ember saves anyway.)
+    if (this.unread || this.mtime() !== this.seen) { try { this.read(true, false); } catch { /* keep what is in memory */ } }
+    // A change not saved yet (held while the file couldn't be read, or a slider's) goes on top of what was just read,
+    // as reloadIfChanged() does it, and is saved with this one (review #83).
+    const next = SettingsSchema.parse({ ...this.current, ...this.pending, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
-    if (opts.soon) {
+    if (this.unread) {
+      // Saving would replace the user's unreadable file with defaults: the change is used now and saved on top of
+      // their settings once the file reads again (review #83).
+      this.pending = { ...this.pending, ...patch };
+    } else if (opts.soon) {
       this.pending = { ...this.pending, ...patch };
       if (!this.pendingTimer) {
-        this.pendingTimer = setTimeout(() => { try { this.flush(); } catch { /* saved with the next change */ } }, 400);
+        // Let go of before saving: a save that fails leaves the next change free to set a new one (review #84).
+        this.pendingTimer = setTimeout(() => { this.pendingTimer = null; try { this.flush(); } catch { /* saved with the next change */ } }, 400);
         this.pendingTimer.unref?.();
       }
     } else {
       // Saved first: memory changes only once the change is on disk.
-      this.save(next);
+      this.persist(next, false);
       this.clearPending();
       this.savedOverBroken();
     }
@@ -436,12 +559,31 @@ export class SettingsStore {
     return this.effective;
   }
 
-  /** Saves a change made with `soon` now (also done on quit). */
+  /** Saves a change made with `soon` now (also done on quit); nothing while the file can't be read (review #83). */
   flush(): void {
-    if (!this.pending) return;
-    this.save(this.current);
+    if (!this.pending || this.unread) return;
+    this.persist(this.current, true);
     this.clearPending();
     this.savedOverBroken();
+  }
+
+  /** The notice a failed save raised (the next save that works takes it away). */
+  private saveNotice: string | null = null;
+
+  /**
+   * save(), with its failure said plainly (review #84): every window's notice says why (the error is thrown on as it
+   * came; plainSaveError words it for the settings window). `later`: the change stays in use and is saved later.
+   */
+  private persist(settings: Settings, later: boolean): void {
+    try {
+      this.save(settings);
+    } catch (err) {
+      this.saveNotice = saveFailure(err, later);
+      this.problem(this.saveNotice);
+      throw err;
+    }
+    this.withdraw(this.saveNotice);
+    this.saveNotice = null;
   }
 
   /** Ember's own save replaced a hand edit that wasn't JSON: the notice says so (not "until it is fixed"). */

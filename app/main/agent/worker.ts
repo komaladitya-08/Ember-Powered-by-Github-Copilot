@@ -23,7 +23,7 @@ import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
-import type { AuditEntry, AuditLog } from "../policy/audit";
+import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
@@ -191,6 +191,8 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** Why a task stopped when its audit log can't be written (review #117): its card, bubble and speech say it. */
+const AUDIT_UNAVAILABLE = "I stopped because I can't write my record of what I do (the audit log). The disk may be full, or my audit folder can't be written to. Fix that, then ask me again.";
 
 /** A new run's terminal size when the command window doesn't say (columns, rows). */
 const COMMAND_SIZE = { cols: 120, rows: 32 };
@@ -3293,7 +3295,15 @@ export class Worker {
   /** Every audit entry goes through here: an action (tried or done) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
     if (e.event === "action" || (e.event === "command" && e.phase === "started")) this.declined = false;
-    this.d.audit.write(e);
+    try {
+      this.d.audit.write(e);
+    } catch (err) {
+      // Nothing more is done unrecorded: the task stops, plainly. A step already taken is reported as it went (an
+      // error would have the model try a "Send" again); one not taken yet isn't taken (review #117).
+      this.d.log.warn("worker.audit_failed", { task: this.spec.id, event: e.event, err });
+      this.stopNow(AUDIT_UNAVAILABLE);
+      if (!afterTheStep(e)) throw err;
+    }
   }
 
   /**

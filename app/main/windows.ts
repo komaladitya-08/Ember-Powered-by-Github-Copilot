@@ -65,8 +65,18 @@ export function createCommandWindow(os: OS): BrowserWindow {
     webPreferences: webPreferences("command"),
   });
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
+  closeWhenGone(win);
   void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
   return win;
+}
+
+/**
+ * A card window whose page crashed closes rather than staying on screen blank (review #91): its controller then does
+ * what it does when the user closes it (an SSH prompt is answered no, a countdown is cancelled, a consent question
+ * comes back with the bubble's "Read it"), and the next card gets a new window.
+ */
+function closeWhenGone(win: BrowserWindow): void {
+  win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); });
 }
 
 /**
@@ -91,6 +101,7 @@ export function createPromptWindow(os: OS): BrowserWindow {
   });
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
+  closeWhenGone(win);
   void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
   return win;
 }

@@ -12,8 +12,12 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
-import { createLogger, type LogLevel } from "./logger";
-import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
+import { createLogger, logLevel } from "./logger";
+import { dataFolderProblem } from "./data-folder";
+import { loginItemFollower } from "./autostart";
+import { watchCrashes } from "./crash-log";
+import { readTextFile } from "./text-file";
+import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
 import { inspectEnvironment, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
@@ -100,15 +104,20 @@ const userData = app.getPath("userData");
 // Private: settings, logs and the audit trail mention the user's apps and windows.
 try { fs.mkdirSync(userData, { recursive: true, mode: 0o700 }); fs.chmodSync(userData, 0o700); } catch { /* reported when used */ }
 
+// Any case; a name that isn't a level means info, said in the log (review #90).
+const wantedLevel = logLevel(process.env.EMBER_LOG_LEVEL);
 const log = createLogger({
   dir: path.join(userData, "logs"),
-  level: (process.env.EMBER_LOG_LEVEL as LogLevel | undefined) ?? "info",
+  level: wantedLevel.level,
   // `ember doctor` prints a report; log lines would get in its way.
   stdout: !process.argv.includes("--doctor") && (process.env.EMBER_LOG_STDOUT === "1" || !app.isPackaged),
 });
+if (wantedLevel.unknown !== undefined) log.warn("log.level_unknown", { value: wantedLevel.unknown.slice(0, 40), using: "info", levels: ["debug", "info", "warn", "error"] });
 
 process.on("uncaughtException", err => log.error("uncaught exception", { err }));
 process.on("unhandledRejection", reason => log.error("unhandled rejection", { reason }));
+// GPU, utility and page crashes reach the log too (review #91).
+watchCrashes(app, log);
 
 /** Ember could not start: say so plainly and exit, so the single-instance lock isn't held by a hidden Ember. */
 function startupFailed(err: unknown): void {
@@ -117,7 +126,8 @@ function startupFailed(err: unknown): void {
   void app.whenReady().then(() => {
     // A dialog with no parent window comes up in front only once Ember is the active app (macOS).
     sys.lifecycle.focusOwnApp();
-    dialog.showErrorBox("Ember couldn't start", `${message}\n\nThe details are in ${log.file}.`);
+    // A log that couldn't be written (its folder can't be) isn't pointed to.
+    dialog.showErrorBox("Ember couldn't start", fs.existsSync(log.file) ? `${message}\n\nThe details are in ${log.file}.` : message);
     app.exit(1);
   });
 }
@@ -126,8 +136,13 @@ if (process.argv.includes("--doctor")) {
   // A check-up, not a second Ember: runs even while Ember is running.
   void runDoctor();
 } else if (!app.requestSingleInstanceLock()) {
-  log.info("instance.handover", { pid: process.pid });
-  app.quit();
+  // Chromium can't take the lock in a data folder it can't write to either: that isn't another Ember (review #80).
+  const unusable = dataFolderProblem(userData);
+  if (unusable) startupFailed(new Error(unusable));
+  else {
+    log.info("instance.handover", { pid: process.pid });
+    app.quit();
+  }
 } else {
   try {
     start();
@@ -194,7 +209,7 @@ async function doctorHelper(): Promise<HelperStatus | null | undefined> {
 /** The user's settings file as it is on disk (the doctor only reads it), or null. */
 function settingsText(): string | null {
   try {
-    return fs.readFileSync(path.join(userData, "settings.json"), "utf8");
+    return readTextFile(path.join(userData, "settings.json"));
   } catch {
     return null; // none yet: defaults, WSL off
   }
@@ -387,7 +402,8 @@ function start(): void {
     const { patch, dropped } = settingsFromHome(sent);
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
-    return settings.update(ownNeverLook(patch), { soon: sizeOnly });
+    // A save that failed reaches the window as one plain sentence (review #84).
+    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1073,16 +1089,12 @@ function start(): void {
     overlay?.broadcastSettings(s);
     handle?.sendSettings(s);
   });
-  // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step.
-  const autostart = () => {
-    try {
-      if (sys.autostart.sync(settings.get().startAtLogin)) {
-        log.info("autostart.updated", { on: settings.get().startAtLogin });
-      }
-    } catch (err) { log.warn("autostart.failed", { err }); }
-  };
-  autostart();
-  settings.onChange(autostart);
+  // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step: at start
+  // only when it is on, then whenever it changes, so a start with it off removes nothing (review #85).
+  const autostart = loginItemFollower(on => sys.autostart.sync(on), (on, changed) => { if (changed) log.info("autostart.updated", { on }); },
+    err => log.warn("autostart.failed", { err }));
+  autostart(settings.get().startAtLogin);
+  settings.onChange(s => autostart(s.startAtLogin));
   const atLogin = sys.autostart.launchedAtLogin(process.argv);
   if (atLogin) log.info("app.autostart");
   let wasOnboarded = settings.get().onboarded;
@@ -1345,8 +1357,11 @@ function start(): void {
     });
     const seeing = perception;
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
-    audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })));
+    audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
+      err => log.warn("audit.write_failed", { err }));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
+    // And once a day: an Ember that runs for weeks keeps nothing past the retention (review #86).
+    audit.pruneDaily(() => policy.auditRetentionDays ?? 30, err => log.warn("audit.prune_failed", { err }));
     confirmer = new Confirmer(showState, {
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.

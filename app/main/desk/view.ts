@@ -12,6 +12,7 @@ import { SHORTCUT_MODIFIERS, planKey } from "./keys";
 import type { DeskPlace } from "./place";
 import type { Logger } from "../logger";
 import { x11WindowId } from "../platform/linux/window-system";
+import { revive } from "../revive";
 
 const appDir = path.join(__dirname);
 const SMALL = { width: 340, height: 238 };
@@ -153,6 +154,8 @@ export class DeskView {
       win.once("ready-to-show", () => { if (!win.isDestroyed()) win.showInactive(); });
       // Keys and buttons held when the view loses the keyboard would stay down on the desk.
       win.on("blur", () => this.releaseAll());
+      // A crashed page lets go of what it held and loads again (review #91).
+      revive(win, () => { this.releaseAll(); this.setControl(false); });
       win.on("closed", () => {
         if (this.win === win) this.win = null;
         this.stopFrames();

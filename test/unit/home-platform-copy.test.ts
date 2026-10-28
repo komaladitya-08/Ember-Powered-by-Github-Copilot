@@ -117,7 +117,8 @@ const MAC: StatusPlatform = {
 /** Today's sentences around everything the OS changes (before the port, verbatim). */
 const TODAY = {
   "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.",
-  "data-dir": "On this computer it keeps your settings, logs and a record of every action it took (kept 30 days) in ~/.config/ember. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.",
+  // What the audit log keeps of each task (its request and how it went) is said, not denied (review #87).
+  "data-dir": "On this computer it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (kept 30 days), in ~/.config/ember. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.",
   "mic-indicator": "Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only). GNOME shows a microphone icon while Ember listens. Ctrl+Alt+M turns the microphone off and on.",
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
 } as const;
@@ -220,7 +221,7 @@ describe("the settings window with a Windows or macOS status", () => {
     const chip = select(root, "[data-shortcut=\"stop\"]")[0];
     expect(chip.children.map(markup).join("")).toBe("<kbd>Control</kbd>+<kbd>Shift</kbd>+<kbd>Command</kbd>+<kbd>X</kbd>");
     expect(visible(around(root, "permissions-note"))).toBe(`${TODAY["permissions-note"]} macOS will ask you to allow Accessibility, Screen Recording and Input Monitoring for Ember.`);
-    expect(visible(around(root, "data-dir"))).toContain("in ~/Library/Application Support/ember. What you ask");
+    expect(visible(around(root, "data-dir"))).toContain("in ~/Library/Application Support/ember. The rest of your conversation");
     expect(visible(around(root, "audit-dir"))).toBe("Every decision and action is also in ~/Library/Application Support/ember/audit/.");
     expect(visible(around(root, "mic-indicator"))).toMatch(/again\. macOS shows an orange dot in the menu bar while Ember listens\. Control\+Shift\+Command\+M turns the microphone off and on\.$/);
     expect(visible(byId(root, "autostart-note"))).toBe(MAC.autostartNote);

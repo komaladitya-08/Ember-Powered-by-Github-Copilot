@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({ windows: [] as { handle: Buffer }[] }));
 vi.mock("electron", () => {
   class BrowserWindow {
     handle = Buffer.alloc(8);
-    webContents = { send() {} };
+    webContents = { send() {}, on() {} };
     constructor() { this.handle.writeUInt32LE(0x2c00011, 0); h.windows.push(this); }
     isDestroyed() { return false; }
     setAlwaysOnTop() {}

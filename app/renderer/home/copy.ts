@@ -32,6 +32,15 @@ export function ipcErrorText(err: unknown): string {
   return err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (?:[A-Za-z]*Error: )?/, "") : String(err);
 }
 
+/**
+ * What the settings window says when a change couldn't be saved (review #84): main's own plain sentence ("Ember
+ * couldn't save your settings: the disk is full…"), or a plain one of its own, never a raw error.
+ */
+export function saveFailedText(err: unknown): string {
+  const said = ipcErrorText(err);
+  return /^Ember couldn't save /.test(said) ? said : "Ember couldn't save that change.";
+}
+
 /** Token counts that read naturally: "312", "1.2k", "48k". */
 export function tokens(n: number): string {
   if (n < 1000) return String(Math.round(n));
