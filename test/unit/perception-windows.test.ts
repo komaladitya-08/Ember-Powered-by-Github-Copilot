@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { coveringRects, elementScales, matchFrame, shellCovers, uncoveredArea } from "../../app/main/perception/windows";
+import { coveringRects, elementScales, isPopupOf, matchFrame, samePopups, shellCovers, uncoveredArea } from "../../app/main/perception/windows";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxNode, AxWindow, Bounds, ElementInfo, ReadWindowResult, SecretFieldsResult, ShellOverlay } from "../../app/main/perception/sidecar";
 import type { StackedWindow, X11, X11Window } from "../../app/main/x11";
@@ -105,6 +105,20 @@ describe("covering windows", () => {
   it("counts the app's own dialogs above it (a Find & Replace, a \"Save changes?\"), not its menus", () => {
     const find = top(3, 42, { x: 100, y: 20, width: 300, height: 60 }, "Find & Replace");
     expect(coveringRects([top(1, 42, target), find, popup(4, 42, { x: 0, y: 0, width: 50, height: 50 })], 0, target, [42])).toEqual([{ x: 100, y: 20, width: 100, height: 60 }]);
+  });
+  it("finds the app's own popups over it, which its picture shows and its secret fields are looked for in (review #7)", () => {
+    const menu = popup(4, 42, { x: 10, y: 10, width: 20, height: 20 });
+    const elsewhere = popup(6, 42, { x: 900, y: 900, width: 20, height: 20 });
+    const others = popup(7, 77, { x: 10, y: 10, width: 20, height: 20 });
+    const embers = popup(8, 999, { x: 10, y: 10, width: 20, height: 20 });
+    expect(samePopups([top(1, 42, target), menu, elsewhere, others, embers], 0, target, [42], 999).map(p => p.id)).toEqual([4]);
+    expect(samePopups([menu, top(1, 42, target)], 1, target, [42], 999)).toEqual([]);
+    // Its accessibility window: the same process and place, as reported or at the app's scale (GDK_SCALE=2).
+    expect(isPopupOf(axWin(42, "", { x: 10, y: 10, width: 20, height: 20 }), menu, 1)).toBe(true);
+    expect(isPopupOf(axWin(42, "", { x: 5, y: 5, width: 10, height: 10 }), menu, 2)).toBe(true);
+    expect(isPopupOf(axWin(77, "", { x: 10, y: 10, width: 20, height: 20 }), menu, 1)).toBe(false);
+    expect(isPopupOf(axWin(42, "", { x: 60, y: 10, width: 20, height: 20 }), menu, 1)).toBe(false);
+    expect(isPopupOf(axWin(42, "", null), menu, 1)).toBe(false);
   });
   it("counts Ember's windows that take clicks, not its click-through overlay", () => {
     const own = (id: number, title: string) => top(id, 999, { x: 0, y: 0, width: 40, height: 40 }, title);

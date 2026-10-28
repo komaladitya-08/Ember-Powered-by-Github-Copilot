@@ -1069,6 +1069,7 @@ function start(): void {
     // click, not the user's: ignored.
     if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:")) { log.warn("bubble.action_while_borrowing", { id }); return; }
     if (id === "ui:settings") { openSettings(); return; }
+    if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
@@ -1352,6 +1353,22 @@ function start(): void {
       isSecurityWindow: privacy.isSecurityWindow,
       // Remote desktops' and WSLg apps' windows are blacked out of every screenshot (Windows only; undefined elsewhere).
       isRemoteSurface: remoteSurfaceCheck(platform.os),
+      os: platform.os,
+      // macOS refused Ember the screen (no Screen Recording): Ember says so once a run, with the way to the setting
+      // (the setup check's row: only the settings window applies a fix).
+      onNoScreenAccess: () => {
+        if (!sys.fixes.ids.includes("open-screen-recording-settings")) return;
+        const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "I can't take screenshots",
+          thought: "I don't have macOS's Screen Recording permission. Open the setup check to allow it, then quit and reopen me.",
+          actions: [{ id: "ui:setup-check", label: "Open setup check" }] };
+        // It comes mid-task: main holds the bubble so the task's progress doesn't replace it before it is read, then
+        // lets go (the task's progress comes back, or it hides).
+        agent?.claimBubble();
+        setState({ bubble });
+        setTimeout(() => {
+          if (lastState.bubble === bubble && !(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+        }, 15000);
+      },
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
         const hw = handle?.win && !handle.win.isDestroyed() ? handle.win : null;

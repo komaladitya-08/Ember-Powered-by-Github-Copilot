@@ -225,6 +225,19 @@ describe("screenshots with a remote surface on screen", () => {
     expect(p.capture).toBeNull();
   });
 
+  it("blacks out a remote viewer known by either part of its X11 class, or by its whole app name (review #8)", async () => {
+    // Linux's WM_CLASS is two parts joined ("remmina Org.remmina.Remmina"); macOS names a window by its app's whole
+    // name ("Screen Sharing"). A row for those OSes (policy/remote-surface.ts) names one program, as Windows' do.
+    const viewers = (app: string) => /^(?:remmina|virt-viewer|screen sharing)$/i.test(app.trim());
+    for (const wmClass of ["remmina Org.remmina.Remmina", "virt-viewer Virt-viewer", "Screen Sharing"]) {
+      const viewer = top(5, 66, wmClass, { x: 150, y: 0, width: 150, height: 200 }, "guest");
+      const { perception } = desktop({ stack: () => [NOTEPAD, viewer], remote: viewers });
+      expect(await perception.privateWindows(), wmClass).toEqual([{ x: 150, y: 0, width: 150, height: 200 }]);
+    }
+    const other = top(5, 66, "gedit Gedit", { x: 150, y: 0, width: 150, height: 200 }, "remmina notes");
+    expect(await desktop({ stack: () => [NOTEPAD, other], remote: viewers }).perception.privateWindows()).toEqual([]);
+  });
+
   it("captures as before without the check (Linux and macOS): nothing blacked out, nothing more asked", async () => {
     const { perception } = desktop({ stack: () => [NOTEPAD, RAIL], remote: remoteSurfaceCheck("linux") });
     expect(await perception.privateWindows()).toEqual([]);

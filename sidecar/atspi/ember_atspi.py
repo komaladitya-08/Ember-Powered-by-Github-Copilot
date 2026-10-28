@@ -141,10 +141,10 @@ SECRET_WORDS = [
     "pass(word|phrase|code|wd)s?", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
     "contrasenya", "senha", "palavra-passe", r"^[\s:*]*parol(a|ă)[\s:*]*$", "parolă", "parola d['’]ordine",
     "parola (nou(a|ă)|actual(a|ă)|curent(a|ă)|veche|contului)", "(confirm(a|ă)|introduce(ți|ti)|schimb(a|ă)) parola",
-    "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", r"^[\s:*]*clave[\s:*]*$",
+    "(afi(ș|ş)eaz(ă|a)|arat(ă|a)|ascunde) parola", "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", r"^[\s:*]*clave[\s:*]*$",
     "clave (de acceso|secreta|personal|bancaria|de seguridad|de (la )?tarjeta)", "(tu|su) clave", "lösenord", "adgangskode",
-    "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi",
-    "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
+    "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "(εμφάνιση|απόκρυψη) κωδικού",
+    "κωδικ(ού|ό) πρόσβασης", "пароль", "лозинка", "kata sandi", "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
     # Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
     "card ?(number|no)s?", "credit ?cards?", "cvv2?", "cvc2?", "csc", "security codes?", "card verification",
     "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
@@ -157,11 +157,16 @@ SECRET_WORDS = [
     # One-time codes.
     "one[- ]time (code|password|pin)s?", "otps?", "2fa", "two[- ]factor", "totp", "verification codes?", "auth(entication)? codes?",
     "recovery (code|key)s?", "backup codes?", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
-    "код (подтверждения|безопасности)",
-    # Keys, network passwords and secret answers.
+    "код (подтверждения|безопасности)", "(authenticator( app)?|sms|text message|login|log-in|sign-in|signin|access|activation|unlock|mfa|pass) codes?",
+    "([0-9]+|four|six|eight)[- ]?digit codes?",
+    # Wallets' seed phrases.
+    "(seed|recovery|backup|mnemonic) phrases?", "mnemonics?",
+    # Keys, network passwords and secret answers. Signing keys only where one is pasted: LibreOffice's "OpenPGP signing key:"
+    # picks one from a list.
     "secrets?", "private keys?", "(api|access|auth|bearer) ?(key|token)s?", "wi-?fi (key|password|passphrase)s?", "network (security )?keys?",
     "wpa2? ?(key|passphrase)s?", "pre-?shared keys?", "psk", "encryption keys?", "security (answer|question)s?", "secret (answer|question)s?",
-    "ssns?", "social security",
+    "(security|session|refresh|id) tokens?", "(master|ssh) keys?", "(jwt|webhook|private|gpg|ssh) signing keys?", "ssns?",
+    "social security",
 ]
 # The same, for scripts written without spaces between words (matched anywhere in the label).
 SECRET_ANYWHERE = ["密码", "密碼", "口令", "パスワード", "暗証", "비밀번호", "암호", "รหัสผ่าน", "סיסמ", "卡号", "卡號", "カード番号",
@@ -1616,6 +1621,11 @@ def walk(acc, depth, out, max_depth, max_nodes, parent_id, clip=None, budget=Non
         count = acc.childCount
     except Exception:
         count = 0
+    if page and count == 0 and bounds is not None and (bounds["width"] <= 0 or bounds["height"] <= 0):
+        # Its page is painted, but the browser hasn't handed over what it holds yet (see not_ready): the read says so,
+        # instead of passing for a window with nothing in it.
+        budget.cut_short("loading")
+        return judged
     long_list = count > MAX_CHILDREN
     grid = grid_of(acc, count, states, clip) if long_list else None
     if grid is not None:

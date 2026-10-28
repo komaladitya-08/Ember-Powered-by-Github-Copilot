@@ -484,6 +484,24 @@ class Reading(unittest.TestCase):
         e.walk(root, 0, [], e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
         self.assertFalse(budget.cut)
 
+    def test_a_page_not_handed_over_yet_makes_a_read_say_it_is_loading(self):
+        # A very big page, or the first read after a Chromium app turns accessibility on: its document shows with
+        # neither contents nor size until the browser has built its tree. The read says the page is still loading.
+        menu = Acc("menu bar", "", bounds=(0, 0, 800, 24), kids=[Acc("menu", "File", bounds=(0, 0, 40, 24))])
+        loading = Acc("document web", "Big page", bounds=(0, 30, 0, 0))
+        budget, nodes = e.Budget(), []
+        e.walk(Acc("frame", "Big page - Browser", bounds=(0, 0, 800, 600), kids=[menu, loading]), 0, nodes, e.MAX_DEPTH,
+               e.MAX_NODES, None, None, budget)
+        self.assertEqual((budget.cut, budget.why), (True, ["loading"]))
+        self.assertFalse(budget.busy)
+        # A page that has its size, or anything in it, is read as before: empty is empty.
+        for doc in (Acc("document web", "Blank", bounds=(0, 30, 800, 570)),
+                    Acc("document web", "Tiny", bounds=(0, 30, 0, 0), kids=[Acc("link", "Home", bounds=(10, 40, 40, 16))])):
+            budget = e.Budget()
+            e.walk(Acc("frame", "Browser", bounds=(0, 0, 800, 600), kids=[doc]), 0, [], e.MAX_DEPTH, e.MAX_NODES, None,
+                   None, budget)
+            self.assertFalse(budget.cut, doc.name)
+
     def test_what_shows_too_deep_down_makes_a_read_incomplete(self):
         def nested(levels, leaf):
             for i in range(levels):

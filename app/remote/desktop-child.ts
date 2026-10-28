@@ -26,7 +26,7 @@ import { ChildPolicySchema, InitArgsSchema, IpcError, lineRpc, type ChildPolicy,
 import { gateStep, sha256Hex } from "./gate";
 import { noticeText, startNotice, type Notice } from "./notice";
 import { remoteCapture } from "./png";
-import { rootScreen, rootSize } from "./screen";
+import { ignoreXErrors, rootScreen, rootSize } from "./screen";
 import { cut, targetOf, wireApp, wireCanDo, wireElementInfo, wirePoint, wireSeen, wireWindow, wireActionResult } from "./wire";
 
 
@@ -102,6 +102,8 @@ async function start(init: InitArgs, log: Logger, onStop: () => void, onGone: (w
   let ws: WindowSystem | null = null;
   let xinput: XInput | null = null;
   if (init.type === "x11") {
+    // Before the first X call: a window that closes between two calls must not end the helper (review #4).
+    if (!ignoreXErrors()) log.warn("remote.x_error_handler_failed", {});
     const size = env.DISPLAY ? rootSize(env.DISPLAY) : null;
     ws = size ? openLinuxWindows({ screen: rootScreen(size), env }) : null;
     if (!ws) return none(`Ember can't open ${init.host}'s display.`);

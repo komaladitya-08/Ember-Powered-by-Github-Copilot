@@ -252,7 +252,7 @@ const SeenSchema = z.object({
   nodes: z.array(AxNodeSchema).max(CAPS.nodes),
   blocked: z.boolean(),
   busy: z.boolean(),
-  truncated: z.enum(["nodes", "time", "depth"]).nullable(),
+  truncated: z.enum(["nodes", "time", "depth", "loading"]).nullable(),
   others: z.array(OtherWindowSchema).max(CAPS.windows),
   ms,
   axScale: z.number().gt(0).max(16),

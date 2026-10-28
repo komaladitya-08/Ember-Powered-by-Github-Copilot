@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { captureRect } from "../../app/main/perception/capture";
+import { captureRect, maskRect } from "../../app/main/perception/capture";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, Bounds } from "../../app/main/perception/sidecar";
 import type { StackedWindow, X11, X11Image } from "../../app/main/x11";
@@ -66,6 +66,46 @@ describe("captureRect", () => {
     });
     expect(await pixel(after!.data, 50, 50)).toEqual([0, 0, 0]);
     expect(await captureRect(fakeX11(), { x: 0, y: 0, width: 100, height: 100 }, { maskAfter: async () => null })).toBeNull();
+  });
+});
+
+describe("maskRect", () => {
+  // A private window on another monitor or a tile away from the window looked at lies wholly outside its picture:
+  // masks are given for every private window on screen, so these must leave the image as it is (review #0).
+  const W = 100, H = 50;
+  const grey = () => Buffer.alloc(W * H * 4, 200);
+  it.each([
+    ["left of", { x: -60, y: 0, width: 20, height: 10 }],
+    ["left of, reaching the top rows", { x: -460, y: -300, width: 300, height: 340 }],
+    ["above", { x: 10, y: -30, width: 20, height: 10 }],
+    ["right of", { x: 140, y: 0, width: 20, height: 10 }],
+    ["right of, reaching the bottom rows", { x: 140, y: 30, width: 400, height: 400 }],
+    ["below", { x: 10, y: 80, width: 20, height: 10 }],
+    ["touching the left edge from outside", { x: -20, y: 5, width: 20, height: 10 }],
+    ["empty", { x: 10, y: 10, width: 0, height: 10 }],
+  ])("leaves the image alone for a mask wholly %s it", (_where, r) => {
+    const rgba = grey();
+    expect(() => maskRect(rgba, W, H, r)).not.toThrow();
+    expect(rgba.equals(grey())).toBe(true);
+  });
+
+  it("still blacks out the part of a mask that overlaps the image", () => {
+    const rgba = grey();
+    maskRect(rgba, W, H, { x: -10, y: -10, width: 15, height: 15 });
+    expect([...rgba.subarray(0, 4)]).toEqual([0, 0, 0, 255]);
+    expect([...rgba.subarray((4 * W + 4) * 4, (4 * W + 4) * 4 + 4)]).toEqual([0, 0, 0, 255]);
+    expect([...rgba.subarray((5 * W + 5) * 4, (5 * W + 5) * 4 + 4)]).toEqual([200, 200, 200, 200]);
+  });
+});
+
+describe("captureRect with private windows elsewhere on screen", () => {
+  it("captures a window with a never-look window to its left on the same rows", async () => {
+    // The window looked at is at x=150..250; a private window at x=10..110 reaches its top row.
+    const c = await captureRect(fakeX11(), { x: 150, y: 40, width: 100, height: 100 }, {
+      format: "png", mask: [{ x: 10, y: 40, width: 100, height: 100 }],
+    });
+    expect(c?.rect).toEqual({ x: 150, y: 40, width: 100, height: 100 });
+    expect(await pixel(c!.data, 0, 0)).toEqual([200, 200, 200]);
   });
 });
 

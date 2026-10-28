@@ -2185,6 +2185,7 @@ namespace Ember.Uia
     private bool cutNodes;
     private bool cutDepth;
     private bool cutTime;
+    private bool cutOffscreen;
     private bool stop;
 
     internal Walk(Call call, Want want, int maxDepth, int maxNodes, int maxChildren, IntPtr window)
@@ -2199,7 +2200,7 @@ namespace Ember.Uia
       marginMs = Math.Min(100, call.DeadlineMs / 5.0);
     }
 
-    internal void Run(AutomationElement root) { Visit(root, -1, 0); }
+    internal void Run(AutomationElement root) { Visit(root, -1, 0, false); }
 
     /// <summary>The answer with what was read so far (the deadline's answer: busy, cut short by time).</summary>
     internal object Partial()
@@ -2218,6 +2219,7 @@ namespace Ember.Uia
       if (cutNodes) cut.Add("nodes");
       if (cutDepth) cut.Add("depth");
       if (cutTime || late) cut.Add("time");
+      if (cutOffscreen) cut.Add("offscreen");
       return new JObj().Add("nodes", nodes).Add("truncated", cut.Count > 0).Add("cut", cut).Add("busy", late);
     }
 
@@ -2234,13 +2236,25 @@ namespace Ember.Uia
       return true;
     }
 
-    private void Visit(AutomationElement el, int parent, int depth)
+    // `inCombo`: el is inside a combo box, whose closed drop-down (offscreen) is read whole: the host tells an editable
+    // combo box's choice from its list's selected item.
+    private void Visit(AutomationElement el, int parent, int depth, bool inCombo)
     {
       if (stop) return;
+      // Scrolled out of view, or in a closed menu (the window itself is always read). The host lists none of these,
+      // nor anything inside them; Children puts them after the elements that show.
+      bool offscreen = depth > 0 && Props.Flag(el, AutomationElement.IsOffscreenProperty) == true;
       int count;
       lock (gate) count = nodes.Count;
       if (count >= maxNodes)
       {
+        // Leaving out an offscreen element leaves out nothing that shows ("offscreen", not "nodes"): the walk goes on
+        // through what it already has (cached flags, no calls) in case something that shows comes after it.
+        if (offscreen)
+        {
+          Cut(ref cutOffscreen);
+          return;
+        }
         Cut(ref cutNodes);
         stop = true;
         return;
@@ -2255,6 +2269,11 @@ namespace Ember.Uia
         nodes.Add(node);
       }
       if (node.Has("gone")) return;
+      // Nothing inside an offscreen element is read: a long page scrolled down has thousands of elements above what
+      // shows, and walking them spent the budget before the part on screen was reached (only the element itself is
+      // listed, with its flag).
+      bool combo = inCombo || IsComboBox(el);
+      if (offscreen && !combo) return;
       if (depth >= maxDepth)
       {
         if (HasListedChild(el)) Cut(ref cutDepth);
@@ -2264,9 +2283,14 @@ namespace Ember.Uia
       if (kids == null) return;
       foreach (AutomationElement kid in kids)
       {
-        Visit(kid, index, depth + 1);
+        Visit(kid, index, depth + 1, combo);
         if (stop) return;
       }
+    }
+
+    private static bool IsComboBox(AutomationElement el)
+    {
+      return (Props.Get(el, AutomationElement.ControlTypeProperty) as ControlType) == ControlType.ComboBox;
     }
 
     // Below maxDepth: is there anything a deeper read would list? One level is enough to tell.
@@ -2289,7 +2313,8 @@ namespace Ember.Uia
     }
 
     // The children to visit: the ones that came with the element (two levels per call), or found now; without the
-    // offscreen ones that have no area, and at most maxChildren (on-screen ones first, in their order).
+    // offscreen ones that have no area, the on-screen ones first (in their order) and then the offscreen ones (in
+    // theirs), so a walk cut short by maxNodes leaves out what doesn't show first; and at most maxChildren.
     private List<AutomationElement> Children(AutomationElement el, JObj node)
     {
       AutomationElementCollection found = null;
@@ -2311,37 +2336,25 @@ namespace Ember.Uia
         }
       }
       List<AutomationElement> kids = new List<AutomationElement>(found.Count);
+      List<AutomationElement> hidden = new List<AutomationElement>();
       foreach (AutomationElement kid in found)
       {
-        if (!Props.Skipped(kid)) kids.Add(kid);
+        if (Props.Skipped(kid)) continue;
+        if (Props.Flag(kid, AutomationElement.IsOffscreenProperty) == true) hidden.Add(kid);
+        else kids.Add(kid);
       }
+      int shown = kids.Count;
+      kids.AddRange(hidden);
       if (kids.Count <= maxChildren) return kids;
-      bool[] keep = new bool[kids.Count];
-      int kept = 0;
-      for (int i = 0; i < kids.Count && kept < maxChildren; i++)
-      {
-        if (Props.Flag(kids[i], AutomationElement.IsOffscreenProperty) == true) continue;
-        keep[i] = true;
-        kept++;
-      }
-      for (int i = 0; i < kids.Count && kept < maxChildren; i++)
-      {
-        if (keep[i]) continue;
-        keep[i] = true;
-        kept++;
-      }
-      List<AutomationElement> chosen = new List<AutomationElement>(kept);
-      for (int i = 0; i < kids.Count; i++)
-      {
-        if (keep[i]) chosen.Add(kids[i]);
-      }
       lock (gate)
       {
         node.Add("childCount", kids.Count);
         node.Add("childrenCut", true);
-        cutNodes = true;
+        // Only offscreen children left out: nothing that shows is missing.
+        if (shown > maxChildren) cutNodes = true;
+        else cutOffscreen = true;
       }
-      return chosen;
+      return kids.GetRange(0, maxChildren);
     }
   }
 

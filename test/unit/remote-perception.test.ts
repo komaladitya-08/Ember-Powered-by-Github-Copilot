@@ -51,6 +51,7 @@ const SCENES: [string, Scene][] = [
   }],
   ["a slow read", { window: gedit, nodes: bench.slice(0, 3), read: { slow: true } }],
   ["a read cut at depth", { window: gedit, nodes: bench.slice(0, 3), read: { truncated: true, cut: ["depth"] } }],
+  ["a page still loading (review #6)", { window: gedit, nodes: bench.slice(0, 3), read: { truncated: true, cut: ["loading"] } }],
   ["a focused password field", { window: gedit, nodes: [...bench.slice(0, 5), axNode(6, "password text", "Password", { x: 70, y: 130, width: 200, height: 28 }, { states: ["focused"] })] }],
   ["a focused field labelled as a card number", { window: gedit, nodes: [axNode(1, "text", "Card number", null, { states: ["focused"], text: "4111 1111 1111 1111", selection: "4111" })] }],
   ["an untitled window", { window: { ...gedit, name: "" }, nodes: bench }],

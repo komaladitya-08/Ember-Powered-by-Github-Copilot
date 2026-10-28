@@ -3,15 +3,19 @@
  * doesn't show is never listed, nor anything inside it (invisible elements are a known prompt-injection channel);
  * unnamed grouping containers aren't listed but what they hold is, under the nearest listed ancestor; zero-size
  * elements aren't listed either; pre-order, `nodes[0]` the window itself; `depth` the real depth below the window;
- * at most `maxNodes` nodes (then cut "nodes") and `maxDepth` levels (something showing deeper: cut "depth"); nothing
- * inside a secret field. `shown` is the part of an element its scrolling container or window lets show.
+ * at most `maxNodes` nodes (then cut "nodes") and `maxDepth` levels (something showing deeper: cut "depth"), a page not
+ * handed over yet cut "loading" (see notHandedOver); nothing
+ * inside a secret field. `shown` is the part of an element its scrolling container or window lets show. Secret fields
+ * the read doesn't list (scrolled out of view, or past `maxNodes`) are still found, with what they hold, under the
+ * listed element nearest them: Chromium names a cell or a section after its fields' values (Secrets.redact); so are
+ * the unnamed fields among them, which a label the read lists beside them may make secret.
  */
 
 import type { AxNode, Bounds } from "../main/perception/sidecar";
 import type { RawNode, Rect } from "./provider";
 import type { SecretValues } from "./secrets";
 import {
-  CLIP_ROLES, DOCUMENT_ROLES, INTERACTIVE_ROLES, LAZY_ACTION_ROLES, SKIP_ROLES, TEXT_ROLES, UNNAMED_TEXT_ROLES, VALUE_ROLES,
+  CLIP_ROLES, DOCUMENT_ROLES, FIELD_ROLES, INTERACTIVE_ROLES, LAZY_ACTION_ROLES, SKIP_ROLES, TEXT_ROLES, UNNAMED_TEXT_ROLES, VALUE_ROLES,
   actionNames, atspiRole, childContext, statesOf, type RoleContext,
 } from "./roles";
 
@@ -69,6 +73,20 @@ export interface BuildOptions {
   isSecret(index: number, role: string, name: string): boolean;
 }
 
+/**
+ * A secret field a read doesn't list (it doesn't show, or the read was full), under `parent` (the nearest listed element,
+ * null for none): what it holds (never reported), or null where the snapshot doesn't say.
+ */
+export interface UnlistedSecret { parent: number | null; values: SecretValues | null }
+
+/**
+ * An unnamed field a read doesn't list (it doesn't show, or the read was full) and that isn't secret by itself, under
+ * `parent` (the nearest listed element): the label the read lists beside or above it may make it secret (as the
+ * Python sidecar's secret_by_labels, see Secrets.redact). `index`: its place in the snapshot; `name`: a combo box's
+ * (one named after what it shows counts as unnamed); `values`: what it holds, or null where the snapshot doesn't say.
+ */
+export interface UnlistedField { index: number; parent: number; role: string; name: string; bounds: Bounds | null; values: SecretValues | null }
+
 /** The nodes of a read, and what the host needs to finish it. */
 export interface Built {
   nodes: AxNode[];
@@ -83,6 +101,10 @@ export interface Built {
   cut: string[];
   /** Nodes whose text or selection the snapshot didn't carry. */
   wanted: TextWanted[];
+  /** Secret fields it doesn't list (see UnlistedSecret), password fields left out (their values never reach a name). */
+  unlisted: UnlistedSecret[];
+  /** Unnamed fields it doesn't list, under a listed element, that only a label beside them could make secret. */
+  unnamed: UnlistedField[];
 }
 
 /** The first selected option a combo box holds, two levels down at most, by its name. */
@@ -103,6 +125,8 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
   const ctx: RoleContext[] = new Array(raw.length);
   const cut: string[] = [];
   const wanted: TextWanted[] = [];
+  const unlisted: UnlistedSecret[] = [];
+  const unnamed: UnlistedField[] = [];
   const cutShort = (why: string) => { if (!cut.includes(why)) cut.push(why); };
   // Per index: nothing inside it is listed (it doesn't show, it is secret, or it lies too deep); the id of the nearest
   // listed element at or above it; the clip what is inside it shows within; whether it is in a web page.
@@ -110,12 +134,32 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
   const listedAt: (number | null)[] = new Array(raw.length).fill(null);
   const clipFor: (Bounds | null)[] = new Array(raw.length).fill(null);
   const webFor: boolean[] = new Array(raw.length).fill(false);
+  // Past maxNodes the rest is only looked through for secret fields (see UnlistedSecret), with contexts of its own.
+  let full = false;
+  const lookCtx: RoleContext[] = new Array(raw.length);
+  const lookRole: string[] = new Array(raw.length).fill("");
   for (let i = 0; i < raw.length; i++) {
     const n = raw[i];
     const p = n.parent >= 0 && n.parent < i ? n.parent : -1;
     if (p >= 0 && closed[p]) { closed[i] = true; continue; }
-    if (nodes.length >= o.maxNodes) { cutShort("nodes"); break; }
-    if (n.offscreen) { closed[i] = true; continue; }
+    if (!full && nodes.length >= o.maxNodes) { cutShort("nodes"); full = true; }
+    if (n.offscreen || full) {
+      // Not listed, nor anything in it that doesn't show; past maxNodes, what shows in it is looked through too.
+      closed[i] = n.offscreen || n.depth > o.maxDepth || p < 0;
+      const pc = p >= 0 ? ctx[p] ?? lookCtx[p] : undefined;
+      if (!pc) { closed[i] = true; continue; }
+      const c = lookCtx[i] = { ...childContext(pc, raw[p], roles[p] || lookRole[p]), depth: n.depth };
+      const role = lookRole[i] = atspiRole(o.vocabulary, n, c);
+      listedAt[i] = listedAt[p];
+      const own = n.name.trim();
+      if (TEXT_ROLES.has(role) && o.isSecret(i, role, own)) {
+        closed[i] = true;
+        if (role !== "password text" && !n.password) unlisted.push({ parent: listedAt[i], values: unlistedValues(raw, i, role) });
+      } else if (FIELD_ROLES.has(role) && (!own || role === "combo box") && listedAt[i] !== null) {
+        unnamed.push({ index: i, parent: listedAt[i]!, role, name: own.slice(0, 200), bounds: boundsOf(n.bounds), values: unlistedValues(raw, i, role) });
+      }
+      continue;
+    }
     if (n.depth > o.maxDepth) { cutShort("depth"); closed[i] = true; continue; }
     const c = p >= 0 ? { ...childContext(ctx[p], raw[p], roles[p]), depth: n.depth } : { depth: n.depth, inWeb: false, inTerminal: false, parentRole: "" };
     ctx[i] = c;
@@ -125,6 +169,7 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
     const clip = p >= 0 ? clipFor[p] : null;
     const web = p >= 0 ? webFor[p] : false;
     const page = DOCUMENT_ROLES.has(role);
+    if (notHandedOver(raw, i, role)) cutShort("loading");
     listedAt[i] = p >= 0 ? listedAt[p] : null;
     let secret = false;
     const listed = !SKIP_ROLES.has(role) || !!name;
@@ -194,5 +239,26 @@ export function buildNodes(raw: RawNode[], o: BuildOptions): Built {
       webFor[i] = web;
     }
   }
-  return { nodes, hidden, indexOf, roles, ctx, cut, wanted };
+  return { nodes, hidden, indexOf, roles, ctx, cut, wanted, unlisted, unnamed };
+}
+
+/**
+ * A page (snapshot index `i`, of `role`) that shows with neither contents nor size: its browser hasn't handed over what
+ * it holds yet (a very big page, or the first read after Chromium turns accessibility on), so a read says "loading"
+ * instead of passing for a window with nothing in it, and the secret-field scan can't check it. As the Python
+ * sidecar's not_ready.
+ */
+export function notHandedOver(raw: RawNode[], i: number, role: string): boolean {
+  if (!DOCUMENT_ROLES.has(role) || raw[i + 1]?.parent === i) return false;
+  const b = boundsOf(raw[i].bounds);
+  return !b || b.width <= 0 || b.height <= 0;
+}
+
+/** What an unlisted secret field holds, as the snapshot tells it (null: nothing told). */
+function unlistedValues(raw: RawNode[], i: number, role: string): SecretValues | null {
+  const n = raw[i];
+  const text = role === "combo box" && !n.editable ? undefined : readText(n.value, 2000);
+  const selected = role === "combo box" ? (!n.editable && n.value?.trim() ? n.value.trim() : chosenIn(raw, i)) : undefined;
+  const value = finite(n.range?.value);
+  return text || selected || value !== undefined ? { name: n.name.trim().slice(0, 200), role, text, selected, value } : null;
 }

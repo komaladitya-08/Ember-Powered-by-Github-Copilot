@@ -18,7 +18,7 @@ import {
 } from "./roles";
 import { secretByLayout } from "./labels";
 import type { SecretValues, WireKey } from "./secrets";
-import { MAX_DEPTH, MAX_NODES, NODE_TEXT, SELECTION_TEXT, boundsOf, buildNodes, clipTo, finite, readText } from "./tree";
+import { MAX_DEPTH, MAX_NODES, NODE_TEXT, SELECTION_TEXT, boundsOf, buildNodes, clipTo, finite, notHandedOver, readText } from "./tree";
 import { describeWindow, findWindow, listWindows, neverLooked, otherWindows, shellOverlays } from "./windows";
 
 /** A read's walk takes at most this long, and the whole read should be done within READ_TOTAL_MS (as the Python sidecar's). */
@@ -193,7 +193,13 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
       }
       if (!busy) await fillTexts(host, read, built, t0 + READ_TOTAL_MS);
       const keyOf = (id: number) => host.keyOf(snap.nodes[built.indexOf.get(id)!]);
-      const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid);
+      // Secret fields it doesn't list may be named in what it lists; past where the snapshot ended, nothing is known.
+      // An offscreen element the bridge left out past maxNodes ("offscreen") is a child of what holds the last element
+      // it read, as with "nodes": the names from there up may carry its value.
+      const unreadAfter = !!snap.busy || (snap.truncated && snap.cut.some(c => c === "nodes" || c === "time" || c === "offscreen"));
+      const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid, {
+        fields: built.unlisted, unnamed: built.unnamed, keyAt: i => host.keyOf(snap.nodes[i]), unreadAfter, inWeb: id => !!built.ctx[built.indexOf.get(id)!]?.inWeb || DOCUMENT_ROLES.has(built.roles[built.indexOf.get(id)!]),
+      });
       for (const id of red.removed) host.snapshots.remove(id);
       nodes = red.nodes;
       secretKeys = red.secretKeys;
@@ -297,6 +303,7 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
   const closed: boolean[] = new Array(raw.length).fill(false);
   let cut = snap.truncated && snap.cut.some(c => c === "nodes" || c === "depth");
   const fields: number[] = [], labels: number[] = [];
+  let loading = false;
   for (let i = 0; i < raw.length; i++) {
     const n = raw[i];
     const p = n.parent >= 0 && n.parent < i ? n.parent : -1;
@@ -304,6 +311,8 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
     if (n.depth > MAX_DEPTH) { cut = true; closed[i] = true; continue; }
     ctx[i] = p >= 0 ? { ...childContext(ctx[p], raw[p], roles[p]), depth: n.depth } : { ...TOP, depth: n.depth };
     const role = roles[i] = host.roleOf(n, ctx[i]);
+    // A page that shows but isn't handed over yet: none of it can be checked (busy, as the Python sidecar says it).
+    if (notHandedOver(raw, i, role)) loading = true;
     // A field is judged as a whole (what is inside it is its contents); a label names one.
     if (FIELD_ROLES.has(role)) { fields.push(i); closed[i] = true; }
     else if (LABEL_ROLES.has(role)) labels.push(i);
@@ -342,7 +351,7 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
     }
     return { id: host.snapshots.add({ handle: raw[i].handle, read, index: i }), role: roles[i], bounds: boundsOf(raw[i].bounds)! };
   });
-  const busy = !!snap.busy;
+  const busy = !!snap.busy || loading;
   const over = snap.cut.includes("time");
   return { fields: out, complete: !(busy || over || cut), busy, secretKeys: [...keys.values()], ms: since(t0) };
 }

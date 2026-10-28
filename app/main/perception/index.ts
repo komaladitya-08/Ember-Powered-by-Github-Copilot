@@ -16,8 +16,8 @@ import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { scaleBounds, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
-import { coveringRects, elementScales, matchFrame, OVERLAY_TITLE, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
-import type { PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
+import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
+import type { OS, PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
 import type { PerceptionSidecar } from "./ports";
 import type { TargetId } from "../../shared/targets";
@@ -29,7 +29,7 @@ export interface PerceptionOptions {
    * The window system: X11 on Linux (or the desk's remote X11), the Windows or macOS backend elsewhere; null without
    * one. The field keeps its old name so the desk and the tests keep compiling.
    */
-  x11: PerceptionWindows | null;
+  x11: (PerceptionWindows & ScreenAccess) | null;
   neverLook: () => string[];
   /** Full screen in native units (all displays): physical pixels on Linux and Windows, points on macOS. */
   screenBounds: () => Bounds;
@@ -41,7 +41,7 @@ export interface PerceptionOptions {
    */
   ownPid?: number;
   /** The OS's words for why there is no screenshot (default: Linux's, today's text). */
-  words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
+  words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
   /** Authentication and security windows on this OS (default: policy.ts's Linux vocabulary, today's check). */
   isSecurityWindow?: PrivacyVocabulary["isSecurityWindow"];
   /**
@@ -51,7 +51,21 @@ export interface PerceptionOptions {
   isRemoteSurface?: (app: string) => boolean;
   /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
   capture?: typeof captureRect;
+  /**
+   * The first time in a run a picture is refused because the OS refused Ember the screen (macOS without Screen
+   * Recording): Ember says so itself, with a way to the setting (main.ts). The worker's text says so every time.
+   */
+  onNoScreenAccess?: () => void;
+  /** The OS Ember runs on, for the log (perception.popup_unmatched); main.ts passes it. */
+  os?: OS;
 }
+
+/**
+ * What a window system may add for Perception: macOS's window system says whether Ember has the Screen Recording
+ * permission (DarwinWindowSystem.screenRecording), so a missing one is named instead of "off screen". Absent on Linux,
+ * Windows and the desk, which need no permission to capture.
+ */
+export interface ScreenAccess { screenRecording?(): boolean }
 
 /**
  * A window to read. `pid` with `path` (from an earlier read) names exactly one
@@ -81,8 +95,11 @@ export interface Seen {
   blocked: boolean;
   /** The app didn't answer in time, even when asked again (busy or hung): `nodes` are partial, or there is no window. */
   busy: boolean;
-  /** Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is nested deeper than a read goes. */
-  truncated: "nodes" | "time" | "depth" | null;
+  /**
+   * Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is
+   * nested deeper than a read goes, "loading" when a web page shows but the browser hasn't handed over what it holds.
+   */
+  truncated: "nodes" | "time" | "depth" | "loading" | null;
   /** The app's other windows the user is in or must answer first (an Open dialog); private ones left out. */
   others: OtherWindow[];
   ms: number;
@@ -101,6 +118,8 @@ export interface Perceived extends Seen {
 const BUSY_RETRY_MS = 300;
 /** Secret fields whose position is checked again once the picture is taken (they can scroll meanwhile). */
 const MAX_SECRET_RECHECK = 24;
+/** Popups accessibility doesn't list that are logged in a run (perception.popup_unmatched). */
+const UNMATCHED_POPUPS_LOGGED = 32;
 /** Workers see every element a read returns (the sidecar's MAX_NODES), so every id they may need is there. */
 const WORKER_LINES = 400;
 
@@ -111,7 +130,11 @@ export class Perception {
   private scales = new Map<string, { k: number; until: number }>();
   /** This OS's security-window check (one argument only: a second one would pick another OS's vocabulary). */
   private readonly isSecurity: PrivacyVocabulary["isSecurityWindow"];
-  private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen">;
+  private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
+  /** onNoScreenAccess was called (once a run). */
+  private toldNoScreenAccess = false;
+  /** The popups accessibility didn't list that were logged (app and size), a few at most. */
+  private unmatchedPopups = new Set<string>();
 
   constructor(private o: PerceptionOptions) {
     this.isSecurity = o.isSecurityWindow ?? (w => linuxSecurityWindow(w));
@@ -188,7 +211,8 @@ export class Perception {
     const nodes = await this.withSecrets(scaleNodes(res.nodes, each ?? 1));
     return {
       window: { ...window, bounds: frame }, x11Window, nodes, blocked, busy: !!res.busy,
-      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
+      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.includes("loading") ? "loading"
+        : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
       others: (res.others ?? []).filter(w => !this.isPrivate(window.app, w.name, list)),
       ms: Date.now() - t0, axScale: k,
     };
@@ -407,6 +431,16 @@ export class Perception {
     const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
     const x11 = this.o.x11;
     if (!x11) return noShot("screenshots aren't available on this display");
+    // A window's picture needs the window: one that closed, never matched or whose app is hung (no window read), or one
+    // of Ember's own, gets no picture, never one of the whole screen, which no secret-field check has looked through.
+    // Not found, the text says only that (not "use the screenshot").
+    if (opts.scope === "window" && !seen.window && !seen.x11Window) {
+      if (seen.ember) return noShot("Ember takes no pictures of its own windows");
+      if (seen.busy) return noShot("the app isn't answering");
+      return { ...seen, text: WINDOW_NOT_FOUND, capture: null };
+    }
+    // macOS gives no picture without Screen Recording (never allowed, or taken back): say that, not "off screen".
+    if (this.noScreenAccess(x11)) return noShot(this.screenRefused());
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
@@ -427,12 +461,23 @@ export class Perception {
       return at ? coveringRects(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : null;
     };
     let covers: Bounds[] = [];
+    // The app's own popups over the window are in its picture: their secret fields are blacked out, and so is a popup
+    // that can't be looked through (one that opens while the picture is taken, too).
+    let popups: { masks: Bounds[]; hidden: boolean } = { masks: [], hidden: false };
+    const popupsSeen = new Set<number>();
+    const popupsOver = (s: StackedWindow[] | null): StackedWindow[] => {
+      const at = s && this.locate(seen, s);
+      return at ? samePopups(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : [];
+    };
     if (windowScope) {
       const at = stack && this.locate(seen, stack);
       if (!at) return noShot("Ember couldn't find the window on screen, so it can't tell what covers it");
       rect = at.rect;
       covers = coveringRects(stack!, at.index, rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own);
       if (uncoveredArea(rect, covers) <= 0.01 * rect.width * rect.height) return noShot("the window is covered by other windows");
+      const over = popupsOver(stack!);
+      for (const p of over) popupsSeen.add(p.id);
+      if (over.length) popups = await this.popupMasks(over, seen.axScale);
     }
     const mask = await this.privateWindows(stack);
     if (mask === null) {
@@ -460,7 +505,7 @@ export class Perception {
       const known = new Set(secrets.map(n => rectKey(n.bounds!)));
       unread = more.filter(f => !physical(f.bounds, k).some(b => known.has(rectKey(b))));
     }
-    const blacked = [...mask, ...covers, ...mine, ...shell.masks];
+    const blacked = [...mask, ...covers, ...mine, ...shell.masks, ...popups.masks];
     let coveredAfter = false;
     let dialogAfter = false;
     const capture = await (this.o.capture ?? captureRect)(x11, rect, {
@@ -497,16 +542,72 @@ export class Perception {
         const after = covering(now);
         if (after === null) return null; // the window is gone from the stack: no picture
         coveredAfter = after.length > 0;
-        blacked.push(...after);
-        return [...priv, ...fields, ...after];
+        // A popup of the app's that opened meanwhile wasn't looked through: blacked out whole.
+        const opened = popupsOver(now).filter(p => !popupsSeen.has(p.id)).map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height }));
+        if (opened.length) popups.hidden = true;
+        blacked.push(...after, ...opened);
+        return [...priv, ...fields, ...after, ...opened];
       },
       hideOverlay: this.o.hideOverlay ? () => this.hideOverlay() : undefined,
       // No marks on what is blacked out (an element under another window can't be clicked either).
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
-    if (!capture) return noShot(dialogAfter ? SYSTEM_DIALOG : "the window is off screen, or the screen couldn't be captured safely");
+    if (!capture) {
+      return noShot(dialogAfter ? SYSTEM_DIALOG
+        : this.noScreenAccess(x11) ? this.screenRefused()
+        : "the window is off screen, or the screen couldn't be captured safely");
+    }
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
-    return { ...seen, text: text + note, capture };
+    const unchecked = popups.hidden ? "\n(Screenshot: a popup Ember couldn't check for password fields is hidden.)" : "";
+    return { ...seen, text: text + note + unchecked, capture };
+  }
+
+  /**
+   * What to black out of the app's own popups over its window (`popups`, from the stack): each one accessibility lists
+   * as a window of the app is looked through for secret fields like a window (secret_fields), and those are blacked
+   * out; one that can't be looked through whole (the scan is cut short, its app is busy, the call fails) is blacked out
+   * whole (`hidden` then). One accessibility doesn't list as a window (a macOS menu, a Windows menu's shadow) can't be
+   * looked through and is left as before: blacking it out would hide every open menu. Those are logged
+   * (perception.popup_unmatched, with the OS, once a run for each app and size), so CI and the field show which popups
+   * go unscanned. `k`: the app's scale.
+   */
+  private async popupMasks(popups: StackedWindow[], k: number): Promise<{ masks: Bounds[]; hidden: boolean }> {
+    let listed: AxWindow[] = [];
+    try {
+      listed = (await this.o.sidecar.listWindows({ ownPid: this.ownPid })).windows;
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+    }
+    const masks: Bounds[] = [];
+    let hidden = false;
+    for (const p of popups) {
+      const w = listed.find(l => l.path && isPopupOf(l, p, k));
+      if (!w) {
+        this.popupUnmatched(p);
+        continue;
+      }
+      const whole = { x: p.x, y: p.y, width: p.width, height: p.height };
+      try {
+        const r = await this.o.sidecar.secretFields({ pid: w.pid!, path: w.path! });
+        if (r.complete) {
+          masks.push(...r.fields.flatMap(f => physical(f.bounds, k).map(pad)));
+          continue;
+        }
+      } catch (err) {
+        this.o.log.warn("perception.secret_scan_failed", { err });
+      }
+      masks.push(whole);
+      hidden = true;
+    }
+    return { masks, hidden };
+  }
+
+  /** Logs a popup of the app's that accessibility doesn't list as a window, so it went unscanned (see popupMasks). */
+  private popupUnmatched(p: StackedWindow): void {
+    const key = `${p.wmClass} ${p.width}x${p.height}`;
+    if (this.unmatchedPopups.has(key) || this.unmatchedPopups.size >= UNMATCHED_POPUPS_LOGGED) return;
+    this.unmatchedPopups.add(key);
+    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height, ...(this.o.os ? { os: this.o.os } : {}) });
   }
 
   /**
@@ -552,6 +653,32 @@ export class Perception {
     } catch (err) {
       this.o.log.warn("perception.secret_scan_failed", { err });
       return "Ember couldn't check the whole window for password fields";
+    }
+  }
+
+  /** Why there is no picture when the OS refused Ember the screen; the first time in a run, Ember is told (onNoScreenAccess). */
+  private screenRefused(): string {
+    if (!this.toldNoScreenAccess) {
+      this.toldNoScreenAccess = true;
+      try {
+        this.o.onNoScreenAccess?.();
+      } catch (err) {
+        this.o.log.warn("perception.no_screen_access_notice_failed", { err });
+      }
+    }
+    return this.words.noScreenAccess ?? NO_SCREEN_ACCESS;
+  }
+
+  /**
+   * Has the OS refused Ember the screen (macOS without Screen Recording)? False where there is no such permission, and
+   * when the check fails: the capture then asks again itself and gives no picture without it (fail closed).
+   */
+  private noScreenAccess(ws: ScreenAccess): boolean {
+    try {
+      return ws.screenRecording?.() === false;
+    } catch (err) {
+      this.o.log.warn("perception.screen_access_check_failed", { err });
+      return false;
     }
   }
 
@@ -670,18 +797,24 @@ export class Perception {
   /**
    * The whole frames of the remote surfaces on screen (Windows: a remote desktop's or a WSLg app's window), from the
    * stack, which sees every top-level window: what they show can't be checked against the never-look list or for a
-   * password prompt. [] without the check (Linux, macOS); null when the stack can't be read (no picture then).
+   * password prompt. [] without the check; null when the stack can't be read (no picture then). A window is one by its
+   * whole app name (Windows' program, macOS's "Screen Sharing") or by either part of Linux's WM_CLASS ("remmina
+   * Org.remmina.Remmina"), as the security-window check reads them.
    */
   private remoteSurfaces(stack?: StackedWindow[] | null): Bounds[] | null {
     const remote = this.o.isRemoteSurface;
     if (!remote) return [];
     const s = stack ?? this.stackNow();
-    return s && s.filter(w => remote(w.wmClass)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
+    const isRemote = (app: string) => remote(app) || app.split(/\s+/).some(part => !!part && part !== app && remote(part));
+    return s && s.filter(w => isRemote(w.wmClass)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
   }
 }
 
 const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
+/** Why there is no screenshot when the OS refuses the screen and its words don't say more (macOS's do). */
+const NO_SCREEN_ACCESS = "Ember isn't allowed to capture the screen";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
+const WINDOW_NOT_FOUND = "That window can't be found (it may have closed, or its app isn't answering).";
 const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
 
 /** One open window as the "Open windows" lists say it: its app (as the user knows it), its title, and how it is. */
@@ -794,5 +927,6 @@ function notes(seen: Seen): string {
   if (seen.truncated === "nodes") out.push(`(The window has more elements than Ember reads at once; only the first ${seen.nodes.length} are listed. Scroll to the part you need, open it, or work in a smaller window, then look again.)`);
   if (seen.truncated === "time") out.push("(Reading the window took too long, so only part of it is listed. Scroll to the part you need or close what you don't need, then look again.)");
   if (seen.truncated === "depth") out.push("(Part of the window is nested too deeply for Ember to read, so elements there are missing from this list. Use the screenshot for that part.)");
+  if (seen.truncated === "loading") out.push("(The page is still loading, so its content isn't listed yet. Try again in a moment.)");
   return out.length ? `\n${out.join("\n")}` : "";
 }

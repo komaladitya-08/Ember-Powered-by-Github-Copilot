@@ -115,6 +115,27 @@ export function coveringRects(stack: StackedWindow[], index: number, rect: Bound
 }
 
 /**
+ * The target app's own popups (processes in `same`; menus, lists, tooltips, a completion or autofill panel) stacked
+ * above `index` over `rect`: coveringRects leaves them in the window's picture, so what they show is checked for
+ * secret fields too (Perception.popupMasks). Never Ember's own (process `own`).
+ */
+export function samePopups(stack: StackedWindow[], index: number, rect: Bounds, same: (number | null | undefined)[], own?: number): StackedWindow[] {
+  return stack.slice(index + 1).filter(s => s.overrideRedirect && s.pid != null && s.pid !== own && same.includes(s.pid) && !!intersect(s, rect));
+}
+
+/**
+ * Is accessibility window `w` (as its app reports it, `k` physical pixels per pixel) the popup `p` of the stack: the
+ * same process, place and size, within a few pixels of rounding?
+ */
+export function isPopupOf(w: Pick<AxWindow, "pid" | "bounds">, p: StackedWindow, k: number): boolean {
+  if (w.pid == null || w.pid !== p.pid || !w.bounds) return false;
+  return [1, k].some(s => {
+    const b = scaleBounds(w.bounds!, s), slack = 4 + 2 * s;
+    return Math.abs(b.x - p.x) <= slack && Math.abs(b.y - p.y) <= slack && Math.abs(b.width - p.width) <= slack && Math.abs(b.height - p.height) <= slack;
+  });
+}
+
+/**
  * What GNOME Shell's own drawings (not X11 windows, but in every screenshot) mean for a picture:
  * a system dialog (polkit's or the keyring's password prompt, most likely) means none at all, so
  * does the Activities overview or the window switcher (pictures of every window, private ones

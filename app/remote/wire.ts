@@ -95,7 +95,7 @@ export function wireSeen(s: Seen): SeenWire {
     nodes: (s.nodes ?? []).slice(0, CAPS.nodes).map(wireNode),
     blocked: !!s.blocked,
     busy: !!s.busy,
-    truncated: s.truncated === "nodes" || s.truncated === "time" || s.truncated === "depth" ? s.truncated : null,
+    truncated: s.truncated === "nodes" || s.truncated === "time" || s.truncated === "depth" || s.truncated === "loading" ? s.truncated : null,
     others: (s.others ?? []).slice(0, CAPS.windows).map(wireOther),
     ms: finite(s.ms) ? Math.max(0, s.ms) : 0,
     axScale: finite(s.axScale) && s.axScale > 0 ? Math.min(16, s.axScale) : 1,

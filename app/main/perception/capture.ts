@@ -64,9 +64,15 @@ export function bgraToRgba(bgra: Buffer): Buffer {
   return out;
 }
 
+/**
+ * Paints `r` (image pixels, clipped to the image) opaque black. A rectangle wholly outside the image changes nothing:
+ * masks come for every private window on screen, and one to the left of the picture would otherwise give `fill` a
+ * negative end on the top rows (a RangeError instead of a picture).
+ */
 export function maskRect(rgba: Buffer, width: number, height: number, r: Bounds): void {
   const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
   const x1 = Math.min(width, Math.ceil(r.x + r.width)), y1 = Math.min(height, Math.ceil(r.y + r.height));
+  if (!(x1 > x0 && y1 > y0)) return;
   for (let y = y0; y < y1; y++) rgba.fill(0, (y * width + x0) * 4, (y * width + x1) * 4);
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) rgba[(y * width + x) * 4 + 3] = 255;
 }

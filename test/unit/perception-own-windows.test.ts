@@ -96,10 +96,14 @@ describe("Ember's own windows in screenshots (critique integration-4)", () => {
   });
 
   it("blacks it out when the user is in one of Ember's own windows, whose picture is of the whole screen", async () => {
-    // The ask box has the keyboard: there is no window of the user's to take a picture of.
+    // The ask box has the keyboard: there is no window of the user's to take a picture of, so a window's picture is
+    // none at all (review #5), and the whole screen's blacks out Ember's windows.
     const askBox = top(4, OWN, { x: 20, y: 150, width: 100, height: 30 }, "Ask Ember", "ember");
     const { perception } = desktop({ stacks: () => [gedit, commands, askBox, overlay], active: win(4, OWN, "Ask Ember", "ember") });
-    const p = await perception.perceive({ image: true, scope: "window" });
+    const none = await perception.perceive({ image: true, scope: "window" });
+    expect(none.capture).toBeNull();
+    expect(none.text).toContain("(No screenshot: Ember takes no pictures of its own windows.)");
+    const p = await perception.perceive({ image: true, scope: "screen" });
     expect(p.capture?.rect).toEqual(SCREEN);
     const data = p.capture!.data;
     expect(isBlack(await at(data, SCREEN, 160, 85))).toBe(true);
