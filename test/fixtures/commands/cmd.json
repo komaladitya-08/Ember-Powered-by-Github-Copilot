@@ -2726,6 +2726,27 @@
    "rules": [
     "path.secret"
    ]
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443 < data.txt",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "send.nc"
+   ]
+  },
+  {
+   "cmd": "php -S 0.0.0.0:8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "php -S localhost:8000",
+   "verdict": "run"
   }
  ]
 }

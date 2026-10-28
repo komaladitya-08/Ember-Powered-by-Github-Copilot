@@ -14141,6 +14141,471 @@
   {
    "cmd": "gcloud config list",
    "verdict": "run"
+  },
+  {
+   "cmd": "python3 -m http.server 8000 --bind 0.0.0.0 -d ~",
+   "verdict": "ask",
+   "classes": [
+    "publish",
+    "secret"
+   ],
+   "rules": [
+    "net.listen",
+    "net.serve",
+    "path.secret-tree"
+   ]
+  },
+  {
+   "cmd": "python3 -m http.server",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "python3 -m http.server 8000",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "python3 -mhttp.server 8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "python -m SimpleHTTPServer 8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "python3 -m http.server --directory ~ 8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen",
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "python3 -m http.server -b 127.0.0.1 -d /etc",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "python3 -m http.server -b 127.0.0.1 -d \"$D\"",
+   "verdict": "ask",
+   "rules": [
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "php -S 0.0.0.0:8000",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "php -S localhost:8000 -t ~",
+   "verdict": "ask",
+   "rules": [
+    "net.serve",
+    "path.secret-tree"
+   ]
+  },
+  {
+   "cmd": "php -S localhost:8000 -t ../other",
+   "verdict": "ask",
+   "rules": [
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "busybox httpd -f -p 8000 -h ~",
+   "verdict": "ask",
+   "rules": [
+    "net.listen",
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "busybox httpd -f -p 8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "busybox httpd -p 127.0.0.1:8000",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.background"
+   ]
+  },
+  {
+   "cmd": "caddy file-server --root ~ --listen :8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen",
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "caddy file-server",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "caddy file-server --listen 127.0.0.1:8000 --root /home/ana",
+   "verdict": "ask",
+   "rules": [
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "caddy reverse-proxy --to localhost:3000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "caddy run",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "caddy start",
+   "verdict": "ask",
+   "rules": [
+    "net.listen",
+    "escape.background"
+   ]
+  },
+  {
+   "cmd": "caddy trust",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "caddy environ",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.env"
+   ]
+  },
+  {
+   "cmd": "miniserve ~",
+   "verdict": "ask",
+   "rules": [
+    "net.listen",
+    "net.serve"
+   ]
+  },
+  {
+   "cmd": "miniserve build",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "miniserve -i 127.0.0.1 -i 0.0.0.0 build",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "cloudflared tunnel --url http://localhost:80",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.tunnel"
+   ]
+  },
+  {
+   "cmd": "cloudflared tunnel run example",
+   "verdict": "ask",
+   "rules": [
+    "net.tunnel"
+   ]
+  },
+  {
+   "cmd": "cloudflared --url http://localhost:8000",
+   "verdict": "ask",
+   "rules": [
+    "net.tunnel"
+   ]
+  },
+  {
+   "cmd": "cloudflared tunnel token example",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "secret.program"
+   ]
+  },
+  {
+   "cmd": "cloudflared tunnel delete example",
+   "verdict": "ask",
+   "classes": [
+    "remote-delete"
+   ],
+   "rules": [
+    "cloud.delete"
+   ]
+  },
+  {
+   "cmd": "cloudflared service install",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "service.change"
+   ]
+  },
+  {
+   "cmd": "ngrok http 80",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.tunnel"
+   ]
+  },
+  {
+   "cmd": "ngrok tcp 22",
+   "verdict": "ask",
+   "rules": [
+    "net.tunnel"
+   ]
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443 < data.txt",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "send.nc"
+   ]
+  },
+  {
+   "cmd": "cat data.txt | openssl s_client -connect example.com:443",
+   "verdict": "ask",
+   "rules": [
+    "send.nc"
+   ]
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443 < \"$F\"",
+   "verdict": "ask",
+   "rules": [
+    "send.nc"
+   ]
+  },
+  {
+   "cmd": "openssl s_server -accept 4433 -cert cert.crt",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "openssl s_server -accept 4433 -WWW -cert cert.crt",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "ssh-copy-id example.com",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "send.ssh-key"
+   ]
+  },
+  {
+   "cmd": "ssh-copy-id -i ~/.ssh/id_rsa.pub ana@example.com",
+   "verdict": "ask",
+   "rules": [
+    "send.ssh-key"
+   ]
+  },
+  {
+   "cmd": "mount_smbfs //ana@example.com/share build/m",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.mount"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "mount_smbfs -o nobrowse //example.com/share ~/.config/autostart",
+   "verdict": "ask",
+   "rules": [
+    "net.mount",
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "mount_afp afp://example.com/share build/m",
+   "verdict": "ask",
+   "rules": [
+    "net.mount"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "python3 -m http.server --bind 127.0.0.1 8000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "python3 -m http.server -d build 8000 --bind 127.0.0.1",
+   "verdict": "run"
+  },
+  {
+   "cmd": "python3 -m http.server --bind ::1 8000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "php -S localhost:8000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "php -S localhost:8000 -t build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "php -S 127.0.0.1:8000 router.php",
+   "verdict": "run"
+  },
+  {
+   "cmd": "busybox httpd -f -p 127.0.0.1:8000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "busybox ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "caddy file-server --listen localhost:8000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "caddy file-server --listen 127.0.0.1:8000 --root build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "caddy reverse-proxy --from localhost:8080 --to localhost:3000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "caddy version",
+   "verdict": "run"
+  },
+  {
+   "cmd": "caddy fmt Caddyfile",
+   "verdict": "run"
+  },
+  {
+   "cmd": "caddy validate --config Caddyfile",
+   "verdict": "run"
+  },
+  {
+   "cmd": "miniserve -i 127.0.0.1 build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cloudflared --version",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cloudflared tunnel list",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ngrok version",
+   "verdict": "run"
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443",
+   "verdict": "run"
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443 </dev/null",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo | openssl s_client -connect example.com:443",
+   "verdict": "run"
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443 2>/dev/null </dev/null | openssl x509 -noout -dates",
+   "verdict": "run"
+  },
+  {
+   "cmd": "printf 'GET / HTTP/1.0\\r\\n\\r\\n' | openssl s_client -connect example.com:443 -quiet",
+   "verdict": "run"
+  },
+  {
+   "cmd": "openssl s_server -accept localhost:4433 -WWW -cert cert.crt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo caddy",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mise use ngrok",
+   "verdict": "run"
   }
  ]
 }

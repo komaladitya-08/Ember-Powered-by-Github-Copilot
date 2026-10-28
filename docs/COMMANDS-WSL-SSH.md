@@ -96,8 +96,12 @@ Ember stops and asks before a command that:
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
-  `curl -T`, `curl -d`, `ssh host <command>`), using a share on another computer from Windows (`dir \\server\share`,
-  `net use`, `New-PSDrive`), which signs in there with your Windows account, changing cloud services or clusters
+  `curl -T`, `curl -d`, `ssh host <command>`, a file fed to `openssl s_client`), adding your key to another computer
+  (`ssh-copy-id`), using a share on another computer (`dir \\server\share`, `net use`, `New-PSDrive` on Windows,
+  `mount_smbfs` on a Mac), which signs in there with your account, starting a server other computers can reach or
+  one that shares a folder outside your project (`python3 -m http.server`, `php -S 0.0.0.0:8000`, `caddy
+  file-server`, `miniserve`, `busybox httpd`; one on `127.0.0.1` or `localhost` serving your project doesn't ask),
+  opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), changing cloud services or clusters
   (`kubectl apply`, `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;

@@ -1951,7 +1951,8 @@ const KNOWN_ORDINARY = new Set([
  */
 const NOT_RUNNERS = new Set([
   "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
-  "desktop-file-install", "desktop-file-edit", "update-desktop-database",
+  "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok",
+  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav",
 ]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
@@ -2924,6 +2925,15 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
   }
   if (h.key === "osascript" && p.operands[0]) { h.e.unclear("unclear.script", "It runs a script Ember can't see."); return; }
+  if (h.key === "php" && h.args.some(a => a.v !== null && a.v.startsWith("-S"))) {
+    // PHP's own web server: -S address:port, -t the folder it serves (this one by default), and a router script it
+    // runs for every request (review #178).
+    const q = parseOpts(h.args, { shortValue: "cdzSt" });
+    const addr = values(q, "S").pop();
+    listens(h, addr === undefined || addr === null ? null : listenHost(addr), servedRoot(values(q, "t").pop()));
+    if (q.operands[0]) runScript(h, q.operands[0]);
+    return;
+  }
   const mod = values(p, "m")[0];
   if (mod !== undefined && /^python|^pypy|^py$/.test(h.key)) {
     if (mod === "pip" || mod === "pip3") {
@@ -2934,6 +2944,14 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
     if (mod === "timeit" || mod === "code" || mod === "pdb") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
     if (mod === "ensurepip") { h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code)."); return; }
+    if (mod === "http.server" || mod === "SimpleHTTPServer" || mod === "CGIHTTPServer") {
+      // A web server for a folder (this one by default) on every address unless --bind says otherwise (review #178).
+      const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
+      const q = parseOpts(h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1)), { shortValue: "bdp", longValue: ["bind", "directory", "protocol"] });
+      const bind = values(q, "b", "bind").pop();
+      listens(h, bind === undefined ? "" : bind, servedRoot(values(q, "d", "directory").pop()));
+      return;
+    }
     // zipfile and tarfile -e unpack into the folder given last (review #169).
     if ((mod === "zipfile" || mod === "tarfile") && h.args.some(a => a.v === "-e" || a.v === "--extract") && p.operands.length >= 2) {
       const to = p.operands[p.operands.length - 1];
@@ -4708,6 +4726,112 @@ reg(NATIVE, ["rclone"], h => {
   if (/^(mount|serve|rcd|nfsmount)$/.test(verb)) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if (!/^(ls|lsd|lsl|lsf|lsjson|cat|size|about|check|cryptcheck|tree|version|listremotes|md5sum|sha1sum|hashsum|ncdu|help|backend|selfupdate|test|config|genautocomplete|completion|gendocs)$/.test(verb)) h.e.unclear("unclear.rclone-verb", "Ember can't tell which rclone command this runs.");
 });
+// Servers, tunnels and shares (review #178).
+/** A loopback address: only programs on this computer can connect to it. */
+const LOOPBACK = /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1|0*:(0*:)*0*1|ip6-localhost|ip6-loopback)$/i;
+/** The address of `host:port`, `[v6]:port` or `:port` ("" for every address; a bare port too). */
+function listenHost(addr: string): string {
+  const v6 = /^\[([^\]]*)\](:\d*)?$/.exec(addr);
+  if (v6) return v6[1];
+  if (/^:?\d*$/.test(addr)) return "";
+  const at = addr.lastIndexOf(":");
+  return at < 0 || addr.indexOf(":") !== at ? addr : addr.slice(0, at);
+}
+/**
+ * A server Ember starts: unless it listens only on loopback (`bind`: "" for every address, null when Ember can't
+ * tell), other computers can connect; whoever connects reads the folder it serves, so that is read as a whole and asks
+ * when it is outside the task's folder.
+ */
+function listens(h: H, bind: string | null, root: Arg | null): void {
+  if (bind === null || !LOOPBACK.test(bind.replace(/^\[|\]$/g, ""))) h.e.add("publish", "net.listen", "Lets other computers on your network connect to this one.");
+  if (!root) return;
+  const obj = h.e.usePath(root, "readTree", h.sc);
+  if (obj.abs === null || !inWorkTree(obj.abs, h.sc.path)) {
+    h.e.add("publish", "net.serve", `Shares ${root.v === null ? "a folder Ember can't name" : obj.text} with anyone who connects.`, { objects: [obj] });
+  }
+}
+/** The folder a server is given (this one when none is; one Ember can't see stays unresolved). */
+const servedRoot = (v: string | null | undefined): Arg => (v === undefined ? lit(".") : v === null ? { v: null, raw: "?", glob: false } : lit(v));
+const TUNNEL_SAYS = "Makes a service on this computer reachable from the internet.";
+reg(NATIVE, ["busybox"], h => {
+  if (lower(h.args[0]) !== "httpd") { generic(h); return; }
+  // busybox httpd [-f] [-p [IP:]PORT] [-h HOME] [-c CONF]: port 80 on every address, this folder; without -f it
+  // carries on in the background.
+  const q = parseOpts(h.args.slice(1), { shortValue: "pchurmedP" });
+  const port = values(q, "p").pop();
+  listens(h, port === undefined ? "" : port === null ? null : listenHost(port), servedRoot(values(q, "h").pop()));
+  for (const c of values(q, "c")) if (c) h.e.usePath(lit(c), "read", h.sc);
+  if (!h.args.some(a => a.v !== null && /^-[a-zA-Z]*f/.test(a.v))) h.e.add("escape", "escape.background", SAYS.keepsRunning);
+});
+reg(NATIVE, ["caddy"], h => {
+  const verb = firstOperand(h.args).v;
+  const q = parseOpts(h.args, {
+    shortValue: "rlcatdf",
+    longValue: ["root", "listen", "domain", "from", "to", "config", "adapter", "envfile", "pidfile", "address", "body", "header", "status"],
+  });
+  for (const f of values(q, "c", "config", "envfile")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  if (verb === "trust" || verb === "untrust") { h.e.add("system", "system.security", TRUST_SAYS); return; }
+  if (verb === "environ") { h.e.add("secret", "secret.env", SAYS.env); return; }
+  if (verb === "file-server" || verb === "reverse-proxy" || verb === "respond") {
+    // Where it listens (--from names the site for reverse-proxy); every address when not given.
+    const at = values(q, ...(verb === "reverse-proxy" ? ["f", "from"] : ["l", "listen"])).pop();
+    listens(h, at === undefined ? "" : at === null ? null : listenHost(at.replace(/^[a-z]+:\/\//i, "")), verb === "file-server" ? servedRoot(values(q, "r", "root").pop()) : null);
+    return;
+  }
+  if (verb === "run" || verb === "start" || verb === "reload") {
+    // Its settings say where it listens and what it serves; Ember doesn't read them.
+    h.e.add("publish", "net.listen", "Lets other computers on your network connect to this one.");
+    if (verb === "start") h.e.add("escape", "escape.background", SAYS.keepsRunning);
+    return;
+  }
+  h.e.readArgs(q.operands.slice(1), h.sc);
+});
+reg(NATIVE, ["miniserve"], h => {
+  // miniserve [PATH]: every address unless -i/--interfaces says otherwise; -u lets whoever connects add files.
+  const q = parseOpts(h.args, {
+    shortValue: "ipacdtq",
+    longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key", "qrcode"],
+  });
+  const ifs = values(q, "i", "interfaces");
+  const root = q.operands[0] ?? lit(".");
+  listens(h, ifs.length === 0 ? "" : ifs.find(i => i === null || !LOOPBACK.test(i.replace(/^\[|\]$/g, ""))) ?? "localhost", root);
+  if (has(q, "u", "upload-files")) h.e.usePath(root, "write", h.sc);
+  for (const f of values(q, "auth-file", "tls-key")) if (f) h.e.usePath(lit(f), "read", h.sc);
+});
+reg(NATIVE, ["cloudflared", "ngrok"], h => {
+  const words = h.args.map(a => a.v);
+  if (words.some(w => w !== null && /^(-v|-h|--version|--help|version|help|completion|update)$/.test(w))) return;
+  if (words.includes("service")) { h.e.add("system", "service.change", "Starts, stops or changes a system service."); return; }
+  if (h.key === "ngrok") {
+    if (words.some(w => w !== null && /^(http|tcp|tls|start|tunnel)$/.test(w))) h.e.add("publish", "net.tunnel", TUNNEL_SAYS);
+    else h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
+    return;
+  }
+  // cloudflared: `tunnel` (a quick one with --url, or a named one), `--url` alone, and the bare program with its
+  // settings all run a tunnel; `tunnel list|info` only print, `access` reaches other services from here.
+  const t = words.indexOf("tunnel");
+  const sub = t < 0 ? undefined : words.slice(t + 1).find(w => w === null || /^(run|list|info|create|delete|route|cleanup|login|token|vnet)$/.test(w));
+  if (t < 0 && words.includes("access")) { if (words.includes("token")) h.e.add("secret", "secret.program", SAYS.secrets); return; }
+  if (sub === "list" || sub === "info") return;
+  if (sub === "token") { h.e.add("secret", "secret.program", SAYS.secrets); return; }
+  if (sub === "delete" || sub === "cleanup") { h.e.add("remote-delete", "cloud.delete", "Deletes things in Cloudflare."); return; }
+  if (sub === "create" || sub === "route" || sub === "login" || sub === "vnet") { h.e.add("publish", "cloud.change", "Changes Cloudflare."); return; }
+  h.e.add("publish", "net.tunnel", TUNNEL_SAYS);
+});
+reg(NATIVE, ["ssh-copy-id"], h => {
+  const p = opts(h, { shortValue: "ioptFJ", longValue: [] });
+  sshOptions(h, p);
+  const host = hostOf((p.operands[p.operands.length - 1]?.v ?? "another computer").replace(/^[^@]*@/, ""));
+  h.e.add("publish", "send.ssh-key", `Adds your key to ${host}, so this computer can sign in there without a password.`, { objects: [{ kind: "host", text: host, abs: null }] });
+});
+reg(NATIVE, ["mount_smbfs", "mount_afp", "mount_webdav"], h => {
+  // macOS: mounting another computer's share signs in there (with the password in the keychain, if any).
+  const ops = h.args.filter(a => !isOption(a) && h.args[h.args.indexOf(a) - 1]?.v !== "-o");
+  const share = ops[0]?.v ?? null;
+  const host = share === null ? "another computer" : /^(?:[a-z]+:)?\/\/(?:[^@/]*@)?([^/:]+)/i.exec(share)?.[1] ?? share;
+  h.e.add("publish", "net.mount", `Connects to ${host} and signs in there with your account.`, { objects: [{ kind: "host", text: host, abs: null }] });
+  if (ops[1]) h.e.usePath(ops[1], "write", h.sc);
+});
 reg(NATIVE, ["nc", "ncat", "netcat", "socat", "s_client"], h => {
   const args = h.args.map(a => a.v ?? "");
   if (h.key === "socat" && args.some(a => /^(EXEC|SYSTEM):/i.test(a))) h.e.unclear("unclear.socat-exec", "It runs a program Ember can't see.");
@@ -4755,6 +4879,22 @@ reg(NATIVE, ["gpg", "gpg2", "gpgsm"], h => {
 });
 reg(NATIVE, ["openssl"], h => {
   const sub = h.args[0]?.v ?? "";
+  if (sub === "s_client" && h.s.stdin !== null && h.s.stdin !== "heredoc") {
+    // Whatever stdin holds goes to the server: a file, or another program's output (text the command shows, from
+    // echo or printf, doesn't hide anything) (review #178).
+    const from = h.s.pipedFrom !== undefined ? h.e.commands[h.s.pipedFrom]?.program.toLowerCase() : undefined;
+    const files = h.s.redirs.filter(r => r.kind === "read").map(r => r.target?.v ?? null);
+    const sends = h.s.stdin === "file" ? files.some(f => f === null || !NULL_SINKS.has(f.toLowerCase())) : !/^(echo|printf|true|:|write-output)$/.test(from ?? "");
+    const at = h.args.findIndex(a => a.v === "-connect");
+    const host = hostOf(at >= 0 ? h.args[at + 1]?.v ?? "another computer" : "another computer");
+    if (sends) h.e.add("publish", "send.nc", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }] });
+  }
+  if (sub === "s_server") {
+    // A TLS server on every address unless -accept names one; -WWW and -HTTP serve this folder's files.
+    const at = h.args.findIndex(a => a.v === "-accept");
+    const addr = at >= 0 ? h.args[at + 1]?.v ?? null : "";
+    listens(h, addr === null ? null : listenHost(addr), h.args.some(a => a.v === "-WWW" || a.v === "-HTTP") ? lit(".") : null);
+  }
   if (/^(pkcs12|pkcs8|rsa|ec|genrsa|genpkey|req|ca)$/.test(sub) && h.args.some(a => /^-(passin|passout|export|nodes|noenc|text)$/.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (h.args.some(a => /^-pass(in|out)$/.test(a.v ?? "")) && h.args.some(a => /^pass:/.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   if (h.args.some(a => /^-(engine|provider|provider-path|keygen_engine)$/.test(a.v ?? ""))) h.e.unclear("unclear.openssl-engine", "It loads a program library Ember can't see.");
