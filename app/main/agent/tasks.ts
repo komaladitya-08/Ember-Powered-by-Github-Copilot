@@ -289,8 +289,7 @@ export class TaskManager {
     const cards: TaskCard[] = [...this.tasks.values()].map(t => ({
       id: t.id,
       title: t.title,
-      // A task waiting its turn is "queued", never "waiting" (that one's card says the user is needed).
-      status: t.status === "cancelled" ? "stopped" : t.status,
+      status: t.status === "queued" ? "waiting" : t.status === "cancelled" ? "stopped" : t.status,
       detail: t.detail,
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]

@@ -38,7 +38,7 @@ export function cardText(b: BubbleState, name: string, status: string | null, ta
  */
 export function cardTask(tasks: readonly TaskCard[], bubble?: Pick<BubbleState, "title" | "task">): TaskCard | null {
   const newest = [...tasks].reverse();
-  const busy = (t: TaskCard) => t.status === "running" || t.status === "queued" || t.status === "waiting";
+  const busy = (t: TaskCard) => t.status === "running" || t.status === "waiting";
   return (bubble?.task ? newest.find(t => busy(t) && t.id === bubble.task) : undefined)
     ?? (bubble?.title ? newest.find(t => busy(t) && t.title === bubble.title) : undefined)
     ?? newest.find(busy)

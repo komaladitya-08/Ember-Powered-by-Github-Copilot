@@ -3,7 +3,7 @@
 import type { TaskCard } from "../../shared/overlay";
 
 /** A task still under way: its card has Stop. */
-export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "queued" || t.status === "waiting";
+export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "waiting";
 
 /**
  * The cards from the top of the stack down: the tasks that ended (oldest first), then those under way, so

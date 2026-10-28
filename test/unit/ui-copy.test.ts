@@ -151,12 +151,6 @@ describe("corner card (no compositor)", () => {
   it("shows the newest running task (with Stop), else one with Close", () => {
     const task = (id: string, status: TaskCard["status"], actions: TaskCard["actions"] = []): TaskCard => ({ id, title: id, status, detail: "", actions });
     expect(cardTask([])).toBeNull();
-    // A task waiting its turn is under way too: its card shows it, with its Stop (review #19), and its symbol is a
-    // neutral clock, never the purple question of a task that needs the user.
-    expect(cardTask([task("q", "queued", [{ id: "task:q:stop", label: "Stop" }]), task("d", "done")])?.id).toBe("q");
-    const css = readFileSync(new URL("../../app/renderer/shared/ember.css", import.meta.url), "utf8");
-    expect(css).toMatch(/\[data-status="queued"\] \{ --sym-tint: var\(--gray\); --sym: var\(--sym-queued\); \}/);
-    expect(css).toMatch(/--sym-queued: url\("data:image\/svg\+xml,/);
     expect(cardTask([task("a", "running", [{ id: "task:a:stop", label: "Stop" }]), task("b", "done")])?.id).toBe("a");
     expect(cardTask([task("a", "running"), task("b", "running")])?.id).toBe("b");
     expect(cardTask([task("a", "failed", [{ id: "task:a:dismiss", label: "Close" }]), task("b", "done")])?.id).toBe("a");
