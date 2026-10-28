@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, parseOpts, programName, values,
+  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -2176,12 +2176,18 @@ reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "ex
 });
 // grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
 reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], h => {
-  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", "pager", "filter", "hostname-bin", "open-files-in-pager"] });
+  // git grep's and ugrep's pager value is optional and only follows `=`: written alone, the option takes the default
+  // pager and the next word is the pattern or a file (review #165). ag's and ack's take the next word.
+  const pagerApart = h.key === "git-grep" || h.key === "ugrep" ? [] : ["pager", "open-files-in-pager"];
+  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin"] });
   // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
   // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
   if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
   const pagerCmds = [...values(p, "pager", "open-files-in-pager"), ...values(p, "filter")];
-  if (h.key === "git-grep") for (const a of h.args) { const m = /^-O(.+)$/.exec(a.v ?? ""); if (m) pagerCmds.push(m[1]); else if (a.v === "-O") pagerCmds.push(null); }
+  if (h.key === "git-grep" && p.opts.some(o => o.value === undefined && optIs(o.name, "open-files-in-pager"))) pagerCmds.push(null);
+  // git grep's -O takes the rest of its word as the pager, after any flags bundled before it (`-nOcmd`); a bundle with
+  // a value option before it (-e, -f, -m, -A, -B, -C) gives that option the rest instead.
+  if (h.key === "git-grep") for (const a of h.args) { const m = /^-([A-Za-z0-9]*?)O(.*)$/.exec(a.v ?? ""); if (m && !/[efmABC]/.test(m[1])) pagerCmds.push(m[2] || null); }
   for (const cmd of pagerCmds) {
     if (cmd === null) { h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see."); continue; }
     // ugrep's filter is `glob:command,glob:command`; the pager options are a plain command line.

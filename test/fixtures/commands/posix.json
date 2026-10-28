@@ -14788,6 +14788,148 @@
   {
    "cmd": "gdb -batch --symbols=x.sym a.out",
    "verdict": "run"
+  },
+  {
+   "cmd": "git grep -nOrm TODO",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "git grep -iO'sh -c \"rm -rf build\"' TODO",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "git grep -lO\"rm -f\" TODO",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "git grep -nO TODO",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.rg-pre"
+   ]
+  },
+  {
+   "cmd": "git grep -iO'sh -c id' TODO",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git grep -nw TODO",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ugrep --pager '' ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "ugrep --pager . ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "ugrep --pager x ~/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git grep --no-index --open-files-in-pager . ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git grep --open-files-in-pager TODO ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git grep --open-files-in-pager TODO",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.rg-pre"
+   ]
+  },
+  {
+   "cmd": "ugrep --pager foo x.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ugrep --pager='rm -f' foo x.txt",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "git grep --open-files-in-pager='rm -f' TODO",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
+  },
+  {
+   "cmd": "ag --pager 'rm -f' foo",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "posix.rm"
+   ]
   }
  ]
 }
