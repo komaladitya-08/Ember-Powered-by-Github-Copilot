@@ -6,8 +6,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CHARACTERS } from "../../app/main/settings";
+import { announcement, type BubbleView } from "@ember/bubble";
+import { ANNOUNCE_MS } from "../../app/main/commands/flow";
+import * as commandWindow from "../../app/main/commands/window";
+import { CHARACTERS, DEFAULT_SETTINGS } from "../../app/main/settings";
 import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/permissions";
+import type { TargetEntry } from "../../app/main/targets/registry";
+import { targetMenu } from "../../app/main/targets/menu";
+import * as commandCopy from "../../app/renderer/command/copy";
+import { terminalOptions } from "../../app/renderer/command/terminal-options";
+import * as targetCopy from "../../app/renderer/overlay/target-copy";
+import * as promptCopy from "../../app/renderer/prompt/copy";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -37,11 +46,21 @@ function section(text: string, heading: string): string {
  * is, all must be (merge fix/docs after them all), and each such line is checked against its code, so a fix reverted
  * later fails here instead of leaving the docs wrong.
  */
+const homePage = read("app/renderer/home/index.html");
 const RELEASE: { from: string; what: string; here: boolean }[] = [
   { from: "fix/remote", what: "the WSL offer for a distro Settings lists", here: /\.\.\.wslListedNames\(\)\]/.test(read("app/main/targets/runtime.ts")) },
+  { from: "fix/ask", what: "Ask Ember… and Stop everything under Comfort & access › Ember on screen", here: /id="p-ask"/.test(homePage) && /id="p-stop"/.test(homePage) },
+  { from: "fix/voice", what: "the Voice section's choice of when Ember speaks", here: /<select id="speak">/.test(homePage) },
+  { from: "fix/bubble", what: "More time to read and answer", here: /id="more-time"/.test(homePage) },
+  { from: "fix/css", what: "Text size", here: /id="text-size"/.test(homePage) },
+  { from: "fix/cmdwin", what: "the longer announcement while a screen reader runs", here: "ANNOUNCE_SCREEN_READER_MS" in commandWindow },
+  { from: "fix/overlay", what: "the desk's way back, said when you take over", here: fs.existsSync(path.resolve("app/renderer/desk/a11y.ts")) },
+  { from: "fix/prompt", what: "the cards' notes on the keyboard and on reading a consent card", here: "KEYBOARD_ELSEWHERE_HINT" in promptCopy },
 ];
 /** Every fix the docs describe is here: the release (on fix/docs alone, none is). */
 const released = RELEASE.every(f => f.here);
+/** A module of the release, by its path: only a check that runs once `released` loads one (it isn't on fix/docs alone). */
+const load = async <T>(rel: string): Promise<T> => (await import(path.resolve(rel))) as T;
 
 describe("the release the docs describe", () => {
   it("has every fix the docs describe, or none of them (fix/docs on its own)", () => {
@@ -210,6 +229,141 @@ describe("README.md", () => {
       for (let v = from; v <= to; v++) covered.add(v);
     }
     for (let v = 13; v <= newest; v++) expect(covered.has(v), `macOS ${v}`).toBe(true);
+  });
+});
+
+describe("README.md's Accessibility section, against the release it describes", () => {
+  const raw = section(read("README.md"), "Accessibility");
+  const a11y = flat(raw);
+  /** The keyboard-route table's row for `to` (its first cell), flattened. */
+  const row = (to: string) => flat(raw.split("\n").find(l => l.startsWith(`| ${to} |`)) ?? "");
+  const gaps = flat(raw.split("**Known gaps.**")[1] ?? "");
+  /** The settings window's section (its h2) that holds `id`. */
+  const sectionOf = (id: string) => {
+    const at = homePage.indexOf(`id="${id}"`);
+    const heads = [...homePage.slice(0, at).matchAll(/<h2 [^>]*>([^<]+)<\/h2>/g)];
+    return heads.at(-1)?.[1].replace(/&amp;/g, "&");
+  };
+  /** A <select>'s options in the settings window. */
+  const options = (id: string) => [...(new RegExp(`<select id="${id}">([^]*?)</select>`).exec(homePage)?.[1] ?? "").matchAll(/<option value="(\w+)">([^<]+)<\/option>/g)]
+    .map(m => ({ value: m[1], text: m[2] }));
+
+  it.runIf(released)("says speaking follows Settings › Voice's choice, with its default, which a screen reader's user can change", async () => {
+    const label = /<label for="speak">([^<]+)<\/label>/.exec(homePage)?.[1] ?? "";
+    expect(sectionOf("speak")).toBe("Voice");
+    const { speakChoice } = await load<{ speakChoice(s: { speak: boolean; speakWithScreenReader: boolean }): string }>("app/shared/speech.ts");
+    const byDefault = speakChoice(DEFAULT_SETTINGS as unknown as { speak: boolean; speakWithScreenReader: boolean });
+    const choices = options("speak");
+    expect(choices.map(o => o.value)).toContain(byDefault);
+    expect(a11y).toContain(`Settings › **Voice** › **${label}**`);
+    for (const o of choices) expect(a11y).toContain(`**${o.text}**${o.value === byDefault ? " (the default)" : ""}`);
+    // Nothing says only the organisation can stop it, here or in the guide.
+    expect(a11y).not.toMatch(/even with \*\*Speak replies|only the organisation's policy/);
+    expect(flat(read("docs/DEVELOPING.md"))).not.toMatch(/\*\*Speak replies\*\* on \(or a screen reader running\)/);
+  });
+
+  it.runIf(released)("gives the time More time to read and answer gives, as settings says it, and no gap for it", () => {
+    const more = /More time to read and answer: messages stay ([^,<]+), and questions wait (\d+) minutes/.exec(homePage);
+    expect(more).not.toBeNull();
+    expect(sectionOf("more-time")).toBe("Comfort & access");
+    expect(a11y).toContain(`**More time to read and answer** (messages stay ${more![1]}, and a question waits ${more![2]} minutes`);
+    expect(gaps).not.toMatch(/question waits|leaves the bubble/);
+  });
+
+  it.runIf(released)("names every button of Comfort & access › Ember on screen where the handle's menu, ask and stop are", () => {
+    expect(sectionOf("presence-actions")).toBe("Comfort & access");
+    expect(homePage).toMatch(/<h3 class="sub">Ember on screen<\/h3>\s*<div class="group">\s*<p[^>]*id="presence-text"/);
+    const buttons = [...(/id="presence-actions">([^]*?)<\/div>/.exec(homePage)?.[1] ?? "").matchAll(/<button [^>]*>([^<]+)<\/button>/g)].map(m => m[1]);
+    expect(buttons).toEqual(expect.arrayContaining(["Ask Ember…", "Stop everything"]));
+    const menuRow = row("What the handle's menu does");
+    expect(menuRow).toContain("Settings › **Comfort & access › Ember on screen**");
+    for (const b of buttons) expect(menuRow, b).toContain(`**${b}**`);
+    expect(row("Ask Ember")).toContain("**Ask Ember…** in settings, under **Comfort & access › Ember on screen**");
+    expect(row("Stop")).toContain("**Stop everything** under **Comfort & access › Ember on screen**");
+    // The menu's computer items, and Settings › Computers for them.
+    const ssh = { id: "ssh:build-01", kind: "ssh", label: "build-01", state: "connecting", can: "", usable: false, listedOnly: false, names: ["build-01"], host: { id: "h1" } };
+    const local = { id: "local", kind: "local", label: "This computer", state: "ready", can: "", usable: true, listedOnly: false, names: [] };
+    const labels = targetMenu({ entries: [local, ssh] as unknown as TargetEntry[], active: "local", sshAllowed: true, pick: () => undefined, bring: () => undefined, disconnect: () => undefined })
+      .map(i => i.label ?? "");
+    expect(labels).toContain("Bring Ember to a computer…");
+    expect(labels).toContain("Cancel connecting to build-01");
+    expect(menuRow).toContain("**Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**");
+  });
+
+  it.runIf(released)("says Shift+Enter adds a line in the ask box", async () => {
+    const { enterAction } = await load<{ enterAction(e: { shiftKey: boolean; isComposing: boolean }): string }>("app/renderer/ask/field.ts");
+    expect(enterAction({ shiftKey: true, isComposing: false })).toBe("newline");
+    expect(row("Ask Ember")).toContain("Enter sends (Shift+Enter adds a line)");
+  });
+
+  it.runIf(released)("says a screen reader is told how to hand the desk back, and lists no gap for it", async () => {
+    const desk = await load<{ HAND_BACK_KEYS: string; modeNews(control: boolean, was: boolean): string | null }>("app/renderer/desk/a11y.ts");
+    expect(desk.modeNews(true, false)).toContain(desk.HAND_BACK_KEYS);
+    expect(row("Ember's desk (Linux)")).toContain(`until ${desk.HAND_BACK_KEYS} hands it back. A screen reader is told so when you take over`);
+    expect(gaps).not.toMatch(/announced/);
+  });
+
+  it.runIf(released)("gives the command window's keys and its screen-reader behaviour as the code has them", async () => {
+    const srMs = (commandWindow as { ANNOUNCE_SCREEN_READER_MS?: number }).ANNOUNCE_SCREEN_READER_MS ?? 0;
+    expect(srMs).toBeGreaterThan(ANNOUNCE_MS);
+    expect(a11y).toContain(`A dangerous command you asked for waits ${srMs / 1000} seconds instead of ${ANNOUNCE_MS / 1000} before it runs`);
+    // What a command prints reaches a screen reader (xterm's screen-reader mode) while one runs.
+    expect(terminalOptions({ interactive: false, cols: 80, rows: 24, screenReader: true } as Parameters<typeof terminalOptions>[0]).screenReaderMode).toBe(true);
+    expect(a11y).toContain("The command window reads out what a command prints");
+    type Key = { key: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean };
+    const { termKeyAction } = await load<{ termKeyAction(e: Key, o: { mac: boolean; hasSelection: boolean }): string }>("app/renderer/command/keys.ts");
+    const key = (k: string, m: Partial<Key> = {}): Key => ({ key: k, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
+    const linux = { mac: false, hasSelection: true };
+    expect(termKeyAction(key("Tab"), linux)).toBe("browser");
+    expect(termKeyAction(key("Tab", { shiftKey: true }), linux)).toBe("browser");
+    expect(termKeyAction(key("i", { ctrlKey: true }), linux)).toBe("terminal");
+    expect(termKeyAction(key("C", { ctrlKey: true, shiftKey: true }), linux)).toBe("copy");
+    const copyOutput = (commandCopy as { COPY_OUTPUT_LABEL?: string }).COPY_OUTPUT_LABEL;
+    expect(row("The command window")).toMatch(/^\| The command window \| Tab and Shift\+Tab move between [^|]*\(Ctrl\+I types a Tab for a program that wants one\); Ctrl\+Shift\+C copies/);
+    expect(row("The command window")).toContain(`**${copyOutput}** copies all a command printed`);
+  });
+
+  it.runIf(released)("names the text sizes and where they reach as settings does, and the contrast themes and badges", () => {
+    const sizes = options("text-size").filter(o => o.value !== "default").map(o => o.text);
+    expect(sizes.length).toBeGreaterThan(0);
+    expect(sectionOf("text-size")).toBe("Comfort & access");
+    expect(a11y).toContain(`**Text size** (${sizes.join(" or ")}, for settings,`);
+    const hint = /id="text-size">[^]*?<\/label>\s*<\/div>\s*<p class="hint">([^<]+)<\/p>/.exec(homePage)?.[1] ?? "";
+    const reach = /\*\*Text size\*\* \(([^)]*)\)/.exec(a11y)?.[1] ?? "";
+    for (const place of ["bubble", "task cards", "handle", "command window", "password and consent cards"]) {
+      expect(hint, place).toContain(place);
+      expect(reach, place).toContain(place);
+    }
+    expect(hint).toMatch(/The Ask box keeps its size/);
+    expect(reach).toContain("the ask box keeps its size");
+    // Windows' contrast themes (forced colours) and the handle's badges drawn per state.
+    expect(read("app/renderer/shared/ember.css")).toMatch(/@media \(forced-colors: active\)/);
+    expect(fs.existsSync(path.resolve("app/shared/mic.ts"))).toBe(true);
+    expect(a11y).toContain("Windows' contrast themes keep switches, edges, focus and state visible, and the handle's microphone and computer badges change shape as well as colour");
+  });
+
+  it.runIf(released)("quotes what the bubble tells a screen reader about answering, as the bubble says it", () => {
+    const view = { visible: true, mood: "attention", title: "May I?", thought: "Click “Save”?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" };
+    expect(announcement(view as BubbleView)).toContain("Ctrl+Alt+Y allow; Ctrl+Alt+N not now");
+    expect(a11y).toContain("(\"Ctrl+Alt+Y allow; Ctrl+Alt+N not now\")");
+    const where = (targetCopy as { panelHint?: (kind: "command" | "consent", os: "linux" | "win32" | "darwin") => string }).panelHint;
+    expect(where?.("command", "linux")).toMatch(/: press Alt\+Tab to go there\.$/);
+    expect(a11y).toContain("(\"press Alt+Tab to go there\")");
+    const route = (targetCopy as { keyboardRoute?: (key: string | null) => string }).keyboardRoute;
+    expect(route?.("Ctrl+Alt+E")).toBe("Or press Ctrl+Alt+E and go to Computers.");
+    expect(row("Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**)")).toContain("Settings › **Computers** has the same; the bubble says so");
+  });
+
+  it.runIf(released)("says what the sign-in and consent cards say about the keyboard and about reading a consent card", () => {
+    const { promptHint, KEYBOARD_ELSEWHERE_HINT, CONSENT_READ_HINT } = promptCopy as unknown as {
+      promptHint(o: { consent: boolean; seen: boolean; more: boolean; field: boolean; focused: boolean; sinceShownMs: number }): string;
+      KEYBOARD_ELSEWHERE_HINT: string; CONSENT_READ_HINT: string;
+    };
+    expect(promptHint({ consent: false, seen: true, more: false, field: true, focused: false, sinceShownMs: 60_000 })).toBe(KEYBOARD_ELSEWHERE_HINT);
+    expect(promptHint({ consent: true, seen: false, more: true, field: false, focused: true, sinceShownMs: 60_000 })).toBe(CONSENT_READ_HINT);
+    const cards = row("Sign-in and consent cards");
+    expect(cards).toContain("where the system keeps it in another app, a card you type into says so, and Alt+Tab reaches the card");
+    expect(cards).toContain("A consent card's yes counts once you have read all of it");
   });
 });
 
