@@ -247,7 +247,7 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     expect(result).toEqual({ success: true, summary: "Night Light is on, the name is filled in and saved. I left the password for you." });
     // One question: the first action in this app. "Allow" covers the rest of the task.
     expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/^Let me work in gtk3_bench\.py\? First step: switch/);
+    expect(asked[0]).toMatch(/^Let me work in gtk3_bench\.py\? First step: turn on the “Night Light” switch\./);
     // What really happened in the app.
     await new Promise(r => setTimeout(r, 300));
     expect(events).toEqual(expect.arrayContaining([
