@@ -7,7 +7,6 @@ import { readFileSync } from "node:fs";
 import { idleLine, micAnnouncement, micBadge, MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import type { MicState } from "../../app/shared/voice";
 import { HandleLive } from "../../app/renderer/handle/live";
-import { IDLE_BUBBLE } from "../../app/shared/overlay";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const STATES: MicState[] = ["off", "needs-models", "downloading", "starting", "waiting", "active", "muted", "error"];
@@ -78,7 +77,7 @@ describe("the microphone badge", () => {
 
 describe("what the handle says about the microphone in its live region", () => {
   /** Feeds microphone states in order, as main sends them; what is said at each. */
-  const said = (states: MicState[]) => { const live = new HandleLive("Ember"); return states.map(s => live.micNews(s)); };
+  const said = (states: MicState[]) => { const live = new HandleLive(); return states.map(s => live.micNews(s)); };
 
   it("says a microphone problem once while Ember keeps retrying, not at every retry (review #73)", () => {
     // VoiceService.restartLater: error, starting again after 1 s, error, after 5 s, error, then every 30 s.
@@ -98,8 +97,9 @@ describe("what the handle says about the microphone in its live region", () => {
 
   it("says \"Microphone off\" once in the no-compositor card when the shortcut mutes it (review #59)", () => {
     // main's toggleMute: the voice state changes to muted, then its status line says the same words for 2.5 s.
-    const live = new HandleLive("Ember");
-    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
+    // announce() in handle/main.ts: the bubble's words (none here), then these, as one live update (null: nothing).
+    const live = new HandleLive();
+    const update = (mic: MicState, status: string | null) => live.news(status, live.micNews(mic)).join(" ") || null;
     expect(update("waiting", null)).toBeNull();
     expect(update("muted", null)).toBe("Microphone off");
     expect(update("muted", "Microphone off")).toBeNull();
@@ -114,8 +114,9 @@ describe("what the handle says about the microphone in its live region", () => {
   });
 
   it("says it once in whichever order the two updates come, or when they come together (review #59)", () => {
-    const live = new HandleLive("Ember");
-    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
+    // announce() in handle/main.ts: the bubble's words (none here), then these, as one live update (null: nothing).
+    const live = new HandleLive();
+    const update = (mic: MicState, status: string | null) => live.news(status, live.micNews(mic)).join(" ") || null;
     update("waiting", null);
     expect(update("waiting", "Microphone off")).toBe("Microphone off");
     expect(update("muted", "Microphone off")).toBeNull();
@@ -124,8 +125,9 @@ describe("what the handle says about the microphone in its live region", () => {
   });
 
   it("still says the same status line again later, once the microphone's news is used up", () => {
-    const live = new HandleLive("Ember");
-    const update = (mic: MicState, status: string | null) => live.card(IDLE_BUBBLE, status, live.micNews(mic));
+    // announce() in handle/main.ts: the bubble's words (none here), then these, as one live update (null: nothing).
+    const live = new HandleLive();
+    const update = (mic: MicState, status: string | null) => live.news(status, live.micNews(mic)).join(" ") || null;
     update("waiting", null);
     expect(update("muted", null)).toBe("Microphone off");
     expect(update("muted", "Using your mouse: move it to take over")).toBe("Using your mouse: move it to take over");
@@ -135,9 +137,10 @@ describe("what the handle says about the microphone in its live region", () => {
 
   it("is what the handle page uses, in the pill and the card alike", () => {
     const main = read("app/renderer/handle/main.ts");
-    expect(main).toContain("new HandleLive(name)");
+    expect(main).toContain("const live = new HandleLive();");
     expect(main).toMatch(/const micNews = live\.micNews\(s\.mic\)/);
-    expect(main).toMatch(/live\.card\(b, s\.status \?\? null, micNews\)/);
+    expect(main).toMatch(/parts\.push\(\.\.\.live\.news\(status, micNews\)\);/);
+    expect(main).toMatch(/announce\(b, s\.status \?\? null, micNews\);/);
   });
 });
 
