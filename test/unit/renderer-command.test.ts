@@ -464,3 +464,37 @@ describe("a tab's status line and a screen reader (review #276)", () => {
     expect(main).toMatch(/sameAnnouncement\(/);
   });
 });
+
+describe("the page's wiring that only a real window shows (reviews #262, #264, #271)", () => {
+  const main = read("main.ts");
+  /** A top-level function's source, from its declaration to its closing brace at the start of a line. */
+  const fn = (name: string) => new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n}`).exec(main)?.[0] ?? "";
+
+  it("asks before closing with an alert dialog whose keyboard starts on Keep it open, and answers main both ways (#262)", () => {
+    const closing = fn("buildClosing");
+    expect(closing).toMatch(/setAttribute\("role", "alertdialog"\)/);
+    expect(closing).toMatch(/requestAnimationFrame\(\(\) => keep\.focus\(\)\)/);
+    expect(closing).toMatch(/stop\.addEventListener\("click", [^\n]*api\.closeWindow\(true\)/);
+    expect(closing).toMatch(/keep\.addEventListener\("click", [^\n]*api\.closeWindow\(false\)/);
+    // Only the user's own click answers it.
+    expect(closing.match(/e\.isTrusted/g)).toHaveLength(2);
+    expect(fn("render")).toMatch(/buildClosing\(closingRunning\)/);
+  });
+
+  it("gives the card's buttons back when main says the answer wasn't taken (#271)", () => {
+    const render = fn("render");
+    expect(render).toMatch(/\(card\.retry \?\? 0\) > ask\.retry/);
+    expect(render).toMatch(/ask\.sent = false;/);
+    expect(render).toMatch(/ask\.deny\.disabled = false;/);
+    // Allow comes back through paintAllow, which enables it once nothing has been sent.
+    expect(render).toMatch(/paintAllow\(\)/);
+    expect(fn("paintAllow")).toMatch(/if \(!ask\.sent\) ask\.allow\.disabled = !on;/);
+  });
+
+  it("puts the keyboard in a run that takes typing after each render and when the window comes up (#264)", () => {
+    expect(fn("render")).toMatch(/\n {2}focusTerminal\(\);/);
+    expect(main).toMatch(/window\.addEventListener\("focus", \(\) => focusTerminal\(\)\)/);
+    expect(fn("focusTerminal")).toMatch(/shouldFocusTerminal\(/);
+    expect(fn("focusTerminal")).toMatch(/e\.term\.focus\(\)/);
+  });
+});
