@@ -9,6 +9,7 @@
 import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
+import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
 import type { SettingsPatch } from "./settings";
 import { placeOnDisplay, type CloseGuarded, type Placeable } from "./commands/window";
 
@@ -112,13 +113,20 @@ function closeWhenGone(win: BrowserWindow): void {
 }
 
 /**
- * The prompt window ("Ember", §8.6): one small card at a time (a host key, a password, a consent card), always on top.
- * It takes focus, as it takes typing. On Windows and macOS it is left out of screen captures.
+ * The prompt window ("Ember", §8.6): one card at a time (a host key, a password, a consent card), always on top. It
+ * takes the keyboard, as it takes typing: `takeKeyboard` is main's (as settings is brought to the front: macOS
+ * activates Ember, Windows asks through the input backend), else show() and focus(); on macOS its first click counts
+ * (review #235). On Windows and macOS it is left out of screen captures. Its controller fits it to each card (`fit`:
+ * small for an SSH prompt, larger for a consent card, review #182, #270: sizes of the page, the frame comes on top),
+ * centred where it is and inside its display's work area; the user doesn't resize it.
  */
-export function createPromptWindow(os: OS): BrowserWindow & Placeable {
+export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: BrowserWindow) => void } = {}):
+  BrowserWindow & Placeable & { fit(size: { width: number; height: number }): void; takeKeyboard(): void } {
   const win = new BrowserWindow({
-    width: 440,
-    height: 300,
+    width: PROMPT_SIZE.card.width,
+    height: PROMPT_SIZE.card.height,
+    // The sizes are the page's own: the title bar and borders (Windows, macOS) come on top of them.
+    useContentSize: true,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -129,13 +137,48 @@ export function createPromptWindow(os: OS): BrowserWindow & Placeable {
     skipTaskbar: false,
     backgroundColor: "#121011",
     autoHideMenuBar: true,
+    // A click on Allow or Connect while another app is active counts, rather than only activating Ember.
+    ...(os === "darwin" ? { acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("prompt"),
   });
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
-  return Object.assign(win, placeable(win));
+  const fit = (size: { width: number; height: number }) => {
+    if (win.isDestroyed()) return;
+    const now = win.getBounds();
+    // `size` is the page's: the window is that plus its frame, and the whole of it is kept inside the work area.
+    const inner = win.getContentBounds();
+    const frame = { width: Math.max(0, now.width - inner.width), height: Math.max(0, now.height - inner.height) };
+    const next = fitBounds(now, { width: size.width + frame.width, height: size.height + frame.height }, screen.getDisplayMatching(now).workArea);
+    // Left where it is when it already has that size there (a window the user moved stays put).
+    if (next.x !== now.x || next.y !== now.y || next.width !== now.width || next.height !== now.height) win.setBounds(next);
+  };
+  const takeKeyboard = () => {
+    if (win.isDestroyed()) return;
+    if (hooks.takeKeyboard) hooks.takeKeyboard(win);
+    else { win.show(); win.focus(); }
+  };
+  return Object.assign(win, placeable(win), { fit, takeKeyboard });
+}
+
+/** One of Ember's windows as main sees it for keeping clear of it: on screen or not, focused or not, and where. */
+export interface ShownWindow { visible: boolean; minimized: boolean; focused: boolean; bounds: { x: number; y: number; width: number; height: number } }
+
+/**
+ * What Ember steps beside (`aside`) and what its bubble keeps off (`avoid`), in DIP. Settings counts while it is shown
+ * and focused (the user works in it), as before. Ember's own approval windows count while they ask (review #125): the
+ * prompt window whenever it is shown (it shows only with a card), the command window while a question's command card is
+ * up in it. They come first: the overlay stays above every window, so otherwise Ember, its bubble and the task cards
+ * would sit on the card the user must read, and on its buttons.
+ */
+export function keepClearOf(o: { home: ShownWindow | null; prompt: ShownWindow | null; command: ShownWindow | null; commandCard: boolean }):
+  { aside: ShownWindow["bounds"] | null; avoid: ShownWindow["bounds"][] } {
+  const up = (w: ShownWindow | null): w is ShownWindow => !!w && w.visible && !w.minimized;
+  const approvals = [o.prompt, o.commandCard ? o.command : null].filter(up).map(w => w.bounds);
+  const home = up(o.home) && o.home.focused ? o.home.bounds : null;
+  return { aside: approvals[0] ?? home, avoid: [...approvals, ...(home ? [home] : [])] };
 }
 
 /**

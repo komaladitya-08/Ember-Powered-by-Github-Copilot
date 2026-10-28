@@ -4,7 +4,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createPromptWindowController } from "../../app/main/remote/prompt-window";
+import { PROMPT_SIZE, createPromptWindowController } from "../../app/main/remote/prompt-window";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { Logger } from "../../app/main/logger";
 
@@ -43,5 +43,12 @@ describe("the prompt window's placement (review #272)", () => {
     const ctl = createPromptWindowController({ create: () => w, ipc, log, os: "linux" });
     void ctl.ask({ id: "h1", kind: "host-key", host: "build-01", address: "203.0.113.7", fingerprint: "SHA256:abc" });
     expect(w.calls.slice(0, 3)).toEqual(["place", "workspaces:true", "show"]);
+  });
+
+  it("is fitted to the card after it moves, so the card's size is kept inside the user's display (review #182, #272)", () => {
+    const w = Object.assign(new FakeWindow(), { fit(size: { width: number; height: number }) { w.calls.push(`fit:${size.width}x${size.height}`); } });
+    const ctl = createPromptWindowController({ create: () => w, ipc, log, os: "linux" });
+    void ctl.ask({ id: "h1", kind: "host-key", host: "build-01", address: "203.0.113.7", fingerprint: "SHA256:abc" });
+    expect(w.calls.slice(0, 4)).toEqual(["place", "workspaces:true", `fit:${PROMPT_SIZE.card.width}x${PROMPT_SIZE.card.height}`, "show"]);
   });
 });

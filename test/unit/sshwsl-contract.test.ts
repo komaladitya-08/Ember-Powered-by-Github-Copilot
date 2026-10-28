@@ -607,7 +607,7 @@ describe("the other stubs", () => {
     expect(win.cardReady(1)).toBe(false);
     await expect(win.announce({} as never, 4000, new AbortController().signal)).resolves.toBe(false);
     const prompts = createPromptWindow({ create: () => { throw new Error("no window"); }, ipc: {} as never, log: {} as never, os: "linux" });
-    await expect(prompts.ask({ id: "p1", kind: "touch", host: "build-01" })).resolves.toEqual({ id: "p1", ok: false });
+    await expect(prompts.ask({ id: "p1", kind: "touch", host: "build-01" })).resolves.toEqual({ id: "p1", ok: false, refused: true });
     expect(prompts.consentReady(1)).toBe(false);
     // Package AG built carried.ts and flow.ts (command-flow.test.ts): nothing read carries nothing; a stopped task runs nothing.
     expect(carriedText("echo hi", [], "say hi", "linux")).toBeNull();

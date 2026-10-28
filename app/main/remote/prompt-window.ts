@@ -45,6 +45,50 @@ export type PromptWindowController = PromptUi & PromptWindowExtras & {
   showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
 };
 
+/** A rectangle in DIP: a window's bounds, a display's work area. */
+export interface Rect { x: number; y: number; width: number; height: number }
+
+/**
+ * The page's size for each kind of card (§8.6), inside the window's title bar and borders. An SSH prompt fits the small
+ * card; a consent card is two screens of text in it, with what it can reach and the stop chord below the fold, so it
+ * gets a window that shows all of it (review #182, #270), capped to the work area. Whatever still runs on below (a long
+ * key path, larger text, a short screen) keeps the yes off until it has been read (copy.ts readThrough).
+ */
+export const PROMPT_SIZE = { card: { width: 440, height: 300 }, consent: { width: 520, height: 600 } } as const;
+export type PromptSize = (typeof PROMPT_SIZE)[keyof typeof PROMPT_SIZE];
+
+/** The size a card's window takes. */
+export const promptSizeOf = (card: PromptCard): PromptSize =>
+  (card.kind === "consent" || card.kind === "consent-direct" ? PROMPT_SIZE.consent : PROMPT_SIZE.card);
+
+/** Bounds for a window of `size`, centred where the window is now, inside `area` (with `margin` where there is room). */
+export function fitBounds(now: Rect, size: { width: number; height: number }, area: Rect, margin = 16): Rect {
+  const width = Math.max(1, Math.min(size.width, area.width - 2 * margin));
+  const height = Math.max(1, Math.min(size.height, area.height - 2 * margin));
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  const x = clamp(Math.round(now.x + now.width / 2 - width / 2), area.x + margin, area.x + area.width - margin - width);
+  const y = clamp(Math.round(now.y + now.height / 2 - height / 2), area.y + margin, area.y + area.height - margin - height);
+  return { x, y, width, height };
+}
+
+/** The prompt window as windows.ts makes it: the contract's window, plus the hooks the controller uses when present. */
+export interface PromptWindowLike extends BrowserWindowLike {
+  /** Sizes the window for a card (fitBounds within its display's work area). */
+  fit?(size: { width: number; height: number }): void;
+  /**
+   * Shows the window and gives it the keyboard as main brings settings to the front (review #235): macOS activates
+   * Ember (a hotkey or the ask box leaves the user's app active, so focus() alone doesn't make it the key window), and
+   * Windows asks through the input backend (foreground rules). Without it: show() and focus().
+   */
+  takeKeyboard?(): void;
+}
+
+/** How long after a card that takes typing shows the window must have the keyboard, or the user is told (review #235). */
+export const PROMPT_FOCUS_CHECK_MS = 800;
+
+/** What a card that takes typing asks for, in the notification that says the keyboard is elsewhere. */
+const ASKS_FOR = { password: "your password", passphrase: "your SSH key's passphrase", code: "a verification code", other: "an answer" } as const;
+
 /** A secret the page may send: one line, no NUL, at most this long (askpass hands it to ssh as one line). */
 const SECRET_MAX = 1024;
 
@@ -82,19 +126,28 @@ export function validPromptCard(c: unknown): c is PromptCard {
   }
 }
 
+/** What the prompt window is made from. `notify`: an OS notification (main's), for a card the keyboard didn't reach. */
+export interface PromptWindowOptions {
+  create: () => PromptWindowLike;
+  ipc: IpcLike;
+  log: Logger;
+  os: OS;
+  notify?: (title: string, body: string) => void;
+}
+
 /** The prompt window, as connections and the targets runtime use it. */
-export function createPromptWindow(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS }):
+export function createPromptWindow(o: PromptWindowOptions):
   PromptUi & { showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void } {
   return createPromptWindowController(o);
 }
 
 /** createPromptWindow with its extras typed: the same object (the targets runtime may call this name instead). */
-export function createPromptWindowController(o: { create: () => BrowserWindowLike; ipc: IpcLike; log: Logger; os: OS }): PromptWindowController {
+export function createPromptWindowController(o: PromptWindowOptions): PromptWindowController {
   /** Logs, never letting a logger that fails stop the fail-closed path it reports. */
   const note = (level: "warn" | "error", msg: string, fields: Record<string, unknown>) => {
     try { o.log[level](msg, fields); } catch { /* nothing else to do: the caller goes on failing closed */ }
   };
-  let win: BrowserWindowLike | null = null;
+  let win: PromptWindowLike | null = null;
   let disposed = false;
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
@@ -107,7 +160,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
    */
   const consents = new Map<number, ConsentPanel>();
 
-  const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
+  const live = (): PromptWindowLike | null => (win && !win.isDestroyed() ? win : null);
   const owns = (sender: WebContentsLike | undefined): boolean => {
     const w = live();
     return !!w && !!sender && typeof sender.id === "number" && sender.id === w.webContents.id;
@@ -116,11 +169,11 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     try { f(); } catch (err) { note("warn", "prompt.window_call_failed", { what, err }); }
   };
 
-  function ensure(): BrowserWindowLike | null {
+  function ensure(): PromptWindowLike | null {
     if (disposed) return null;
     const w0 = live();
     if (w0) return w0;
-    let w: BrowserWindowLike;
+    let w: PromptWindowLike;
     try { w = o.create(); } catch (err) {
       note("error", "prompt.window_failed", { err });
       return null;
@@ -155,16 +208,49 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     }
     const w = ensure();
     if (!w) {
-      // No window to ask in: an SSH prompt is answered no at once (nobody can answer it, and ssh mustn't wait); a
-      // consent question stays asked and expires as "no".
+      // No window to ask in: an SSH prompt is answered no at once, as refused (nobody can answer it, and ssh mustn't
+      // wait); a consent question stays asked and expires as "no".
       const head = queue[0];
-      if (head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false });
+      if (head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false, refused: true });
       return;
     }
-    push();
-    // On the display the user is on, and every workspace (windows.ts's placement: review #272).
+    // On the display the user is on, and every workspace (windows.ts's placement: review #272). First, so the card's
+    // size below is fitted to that display's work area.
     safe("place", () => { const p = w as typeof w & { placeNearUser?: () => void; setOnAllWorkspaces?: (on: boolean) => void }; p.placeNearUser?.(); p.setOnAllWorkspaces?.(true); });
-    safe("show", () => { w.show(); w.moveTop(); w.focus(); });
+    // Sized for the card before it is drawn and shown (review #182, #270).
+    const size = promptSizeOf(queue[0].card);
+    if (typeof w.fit === "function") safe("fit", () => w.fit?.(size));
+    push();
+    safe("show", () => {
+      w.show();
+      w.moveTop();
+      if (typeof w.takeKeyboard === "function") w.takeKeyboard();
+      else w.focus();
+    });
+    checkKeyboard(w, queue[0]);
+  }
+
+  /**
+   * A card that takes typing whose window didn't get the keyboard (macOS with another app active, Windows' foreground
+   * lock, a window manager that prevents focus stealing): a notification says so, once per card, so nobody types a
+   * secret into another app. The page says so on the card too.
+   */
+  let focusTimer: ReturnType<typeof setTimeout> | null = null;
+  const warned = new Set<string>();
+  function checkKeyboard(w: PromptWindowLike, e: Entry): void {
+    if (focusTimer) clearTimeout(focusTimer);
+    focusTimer = null;
+    const card = e.card;
+    if (card.kind !== "secret" || !o.notify || warned.has(card.id)) return;
+    focusTimer = setTimeout(() => {
+      focusTimer = null;
+      if (disposed || queue[0] !== e || live() !== w) return;
+      let has: boolean;
+      try { has = w.isFocused(); } catch { has = false; } // a window that can't say has to be clicked
+      if (has) return;
+      warned.add(card.id);
+      try { o.notify?.("Click Ember's window before you type", `Ember is asking for ${ASKS_FOR[card.secret]}, and the keyboard is still in another app.`); } catch (err) { note("warn", "prompt.notify_failed", { err }); }
+    }, PROMPT_FOCUS_CHECK_MS);
   }
 
   /** Answers a card (an `ask` card's promise) and moves to the next. */
@@ -172,6 +258,7 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     const at = queue.indexOf(e);
     if (at < 0) return;
     queue.splice(at, 1);
+    warned.delete(e.card.id);
     e.resolve?.(a);
     if (at === 0) reveal();
   }
@@ -242,7 +329,8 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     ask(card) {
       if (disposed || !validPromptCard(card) || card.kind === "consent" || queue.some(e => e.card.id === card.id)) {
         note("warn", "prompt.card_refused", { kind: (card as { kind?: unknown })?.kind });
-        return Promise.resolve({ id: (card as { id?: string })?.id ?? "", ok: false });
+        // Nobody was asked: the caller says so, not that the user said no (review #193).
+        return Promise.resolve({ id: (card as { id?: string })?.id ?? "", ok: false, refused: true });
       }
       return new Promise<PromptAnswer>(resolve => enqueue({ card, resolve }));
     },
@@ -296,6 +384,8 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (focusTimer) clearTimeout(focusTimer);
+      focusTimer = null;
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
       consentFns.clear();
       consents.clear();

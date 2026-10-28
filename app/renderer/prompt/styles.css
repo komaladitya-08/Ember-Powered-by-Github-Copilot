@@ -1,6 +1,6 @@
-/* The prompt window ("Ember", §8.6): a small opaque window, one card at a time. The words scroll when long (a consent
-   card); the field and the buttons stay at the bottom. */
-html, body { margin: 0; height: 100%; }
+/* The prompt window ("Ember", §8.6): a small opaque window, one card at a time, sized to its kind of card. Words that
+   don't fit scroll; the field, the hint and the buttons stay at the bottom. */
+html, body, main { margin: 0; height: 100%; }
 body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.006em; color: var(--label); overflow: hidden; }
 [hidden] { display: none !important; }
 .card { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 16px; }
@@ -8,6 +8,9 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 /* The title takes focus only so a screen reader starts at the card's words (a consent card): it is no control, so no ring. */
 .title { margin: 0; font: var(--type-title-2); letter-spacing: -0.009em; text-wrap: balance; overflow-wrap: anywhere; outline: none; }
 .body { flex: 1; min-height: 0; overflow-y: auto; display: grid; align-content: start; gap: 8px; font: var(--type-callout); overflow-wrap: anywhere; }
+/* Words that run on below what shows fade at their foot (overlay scrollbars hide the bar on macOS and Windows 11). */
+.body.more { mask-image: linear-gradient(to bottom, #000 calc(100% - 32px), transparent); }
+.body:focus-visible { outline: none; border-radius: var(--r-sm); box-shadow: var(--focus-ring); }
 .body p { margin: 0; text-wrap: pretty; }
 .body code, .mono { font: 12px/18px var(--ember-mono); }
 .mono { padding: 6px 8px; border-radius: var(--r-sm); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); overflow-wrap: anywhere; }
@@ -28,4 +31,5 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
   font: var(--type-body); color: var(--label); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); caret-color: var(--accent);
 }
 .form input:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.hint { flex: none; margin: 0; font: var(--type-footnote); color: var(--label-2); }
 .buttons { flex: none; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }

@@ -7,8 +7,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
-import { consentHash, consentPanel, createPromptWindow, createPromptWindowController, validConsent, validPromptCard, type ConsentAnswer } from "../../app/main/remote/prompt-window";
-import { PROMPT_ARM_MS, consentHashText, pressResult, promptView } from "../../app/renderer/prompt/copy";
+import {
+  PROMPT_FOCUS_CHECK_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
+} from "../../app/main/remote/prompt-window";
+import {
+  CONSENT_READ_HINT, KEYBOARD_ELSEWHERE_HINT, PROMPT_ARM_MS, consentHashText, moreBelow, pressResult, promptHint, promptView, readThrough,
+} from "../../app/renderer/prompt/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { Logger } from "../../app/main/logger";
 import type { ConsentPanel } from "../../app/shared/consent";
@@ -103,19 +107,22 @@ describe("the prompt window's queue", () => {
     ctl.dismiss("nope");
   });
 
-  it("refuses a malformed card, a duplicate id and a consent question through ask", async () => {
+  it("refuses a malformed card, a duplicate id and a consent question through ask, saying it was refused (review #193)", async () => {
     const { ctl, windows } = setup();
-    await expect(ctl.ask({ id: "", kind: "touch", host: "x" })).resolves.toMatchObject({ ok: false });
-    await expect(ctl.ask({ id: "x", kind: "secret", secret: "pin", host: "x", prompt: "" } as unknown as PromptCard)).resolves.toMatchObject({ ok: false });
-    await expect(ctl.ask({ id: "c", kind: "consent", n: 1, consent: commandsCard() })).resolves.toMatchObject({ ok: false });
+    await expect(ctl.ask({ id: "", kind: "touch", host: "x" })).resolves.toMatchObject({ ok: false, refused: true });
+    await expect(ctl.ask({ id: "x", kind: "secret", secret: "pin", host: "x", prompt: "" } as unknown as PromptCard)).resolves.toMatchObject({ ok: false, refused: true });
+    await expect(ctl.ask({ id: "c", kind: "consent", n: 1, consent: commandsCard() })).resolves.toMatchObject({ ok: false, refused: true });
+    // A server's keyboard-interactive question too long to show, and a host name too long: nobody was asked.
+    await expect(ctl.ask({ id: "long", kind: "secret", secret: "other", host: "build-01", prompt: "x".repeat(2001) })).resolves.toEqual({ id: "long", ok: false, refused: true });
+    await expect(ctl.ask({ id: "host", kind: "secret", secret: "password", host: "h".repeat(256), prompt: "Password: " })).resolves.toEqual({ id: "host", ok: false, refused: true });
     expect(windows).toHaveLength(0);
     void ctl.ask(password("dup"));
-    await expect(ctl.ask(password("dup"))).resolves.toEqual({ id: "dup", ok: false });
+    await expect(ctl.ask(password("dup"))).resolves.toEqual({ id: "dup", ok: false, refused: true });
   });
 
-  it("answers an SSH prompt no at once when no window can be made, so ssh never waits on it", async () => {
+  it("answers an SSH prompt no at once when no window can be made, so ssh never waits on it, saying it was refused", async () => {
     const ctl = createPromptWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux" });
-    await expect(ctl.ask(password("a"))).resolves.toEqual({ id: "a", ok: false });
+    await expect(ctl.ask(password("a"))).resolves.toEqual({ id: "a", ok: false, refused: true });
     ctl.showConsent(1, commandsCard());
     expect(ctl.consentReady(1)).toBe(false);
   });
@@ -280,21 +287,69 @@ describe("the page's buttons (pure press logic)", () => {
 
   it("empties the field the moment a secret is sent, and waits for one to be typed", () => {
     const field = { value: "" };
-    expect(pressResult(password(), ok(password()), field, 0, 0)).toEqual({ kind: "wait", focusField: true });
+    expect(pressResult(password(), ok(password()), field, 0, 0, true)).toEqual({ kind: "wait", focusField: true });
     field.value = "hunter2";
-    expect(pressResult(password(), ok(password()), field, 0, 0)).toEqual({ kind: "answer", answer: { id: "p1", ok: true, value: "hunter2" } });
+    expect(pressResult(password(), ok(password()), field, 0, 0, true)).toEqual({ kind: "answer", answer: { id: "p1", ok: true, value: "hunter2" } });
     expect(field.value).toBe("");
   });
 
   it("cancels at once, and arms Trust and connect and a consent yes for a moment", () => {
     const field = { value: "keep" };
-    expect(pressResult(hostKey(), cancel(hostKey()), field, 0, 0)).toEqual({ kind: "cancel", id: "h1" });
-    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS - 1, 0)).toEqual({ kind: "wait", focusField: false });
-    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS, 0)).toEqual({ kind: "answer", answer: { id: "h1", ok: true } });
+    expect(pressResult(hostKey(), cancel(hostKey()), field, 0, 0, true)).toEqual({ kind: "cancel", id: "h1" });
+    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS - 1, 0, true)).toEqual({ kind: "wait", focusField: false });
+    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS, 0, true)).toEqual({ kind: "answer", answer: { id: "h1", ok: true } });
     expect(field.value).toBe("keep");
     const consent: PromptCard = { id: "consent-1", kind: "consent", n: 1, consent: commandsCard() };
-    expect(pressResult(consent, ok(consent), field, 10, 0).kind).toBe("wait");
-    expect(pressResult(consent, ok(consent), field, PROMPT_ARM_MS, 0)).toMatchObject({ kind: "consent", id: "consent-1", sha256: commandsCard().sha256 });
+    expect(pressResult(consent, ok(consent), field, 10, 0, true).kind).toBe("wait");
+    expect(pressResult(consent, ok(consent), field, PROMPT_ARM_MS, 0, true)).toMatchObject({ kind: "consent", id: "consent-1", sha256: commandsCard().sha256 });
+  });
+
+  it("keeps a consent card's yes off until every word of it has been in view, and Not now on (review #182, #270)", () => {
+    const field = { value: "" };
+    const consent: PromptCard = { id: "consent-1", kind: "consent", n: 1, consent: commandsCard() };
+    const direct: PromptCard = { id: "d", kind: "consent-direct", consent: commandsCard() };
+    for (const c of [consent, direct]) {
+      expect(pressResult(c, ok(c), field, 60_000, 0, false)).toEqual({ kind: "wait", focusField: false });
+      expect(pressResult(c, ok(c), field, 60_000, 0, true).kind).toBe("consent");
+      expect(pressResult(c, cancel(c), field, 0, 0, false)).toEqual({ kind: "cancel", id: c.id });
+    }
+    // Other cards don't wait on it (their words are short, and a secret must not wait on a scroll).
+    expect(pressResult(hostKey(), ok(hostKey()), field, PROMPT_ARM_MS, 0, false).kind).toBe("answer");
+    field.value = "x";
+    expect(pressResult(password(), ok(password()), field, 0, 0, false).kind).toBe("answer");
+  });
+
+  it("judges every word in view only with nothing left below, and never for a block it can't measure", () => {
+    expect(readThrough({ scrollTop: 0, scrollHeight: 198, clientHeight: 198 }, true)).toBe(true);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 }, true)).toBe(false);
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 382, clientHeight: 198 })).toBe(true);
+    expect(readThrough({ scrollTop: 183.5, scrollHeight: 382, clientHeight: 198 }, true)).toBe(true);
+    expect(readThrough({ scrollTop: 100, scrollHeight: 382, clientHeight: 198 }, true)).toBe(false);
+    expect(readThrough({ scrollTop: 0, scrollHeight: 0, clientHeight: 0 }, true)).toBe(false);
+    expect(readThrough({ scrollTop: Number.NaN, scrollHeight: 10, clientHeight: 10 }, true)).toBe(false);
+    expect(CONSENT_READ_HINT).toBe("Scroll down to read it all first.");
+  });
+
+  it("counts nothing as read while the page's typeface is still loading: the words may yet run on below (review #182)", () => {
+    // A new window's first card is laid out in a fallback face until Ember's own has loaded. Measured in one at
+    // 1280x600: 466 px of words fit the 466 px block, and 478 px ran on below it once Ember's face had loaded.
+    const fits = { scrollTop: 0, scrollHeight: 466, clientHeight: 466 };
+    expect(readThrough(fits, false)).toBe(false);
+    expect(readThrough(fits, true)).toBe(true);
+    const atEnd = { scrollTop: 12, scrollHeight: 478, clientHeight: 466 };
+    expect(readThrough(atEnd, false)).toBe(false);
+    expect(readThrough(atEnd, true)).toBe(true);
+    // The fade is the layout's own: on while words are below what shows, whatever the typeface.
+    expect(moreBelow(fits)).toBe(false);
+    expect(moreBelow({ scrollTop: 0, scrollHeight: 478, clientHeight: 466 })).toBe(true);
+    // The page says whether its fonts have loaded, read after the words are laid out (that starts the load), and judges
+    // again when they finish (read from the page's source).
+    const src = readFileSync(new URL("../../app/renderer/prompt/main.ts", import.meta.url), "utf8");
+    const judge = /function judge\(\): void \{[\s\S]*?\n\}/.exec(src)?.[0] ?? "";
+    expect(judge).toMatch(/const m = \{[^\n]*scrollHeight[^\n]*\};\n\s*const fontsLoaded = document\.fonts\.status === "loaded";/);
+    expect(judge).toMatch(/if \(readThrough\(m, fontsLoaded\)\) seen = true;/);
+    expect(src).toMatch(/document\.fonts\.addEventListener\("loadingdone", judge\);/);
+    expect(src).toMatch(/document\.fonts\.addEventListener\("loadingerror", judge\);/);
   });
 
   it("keeps the window's title \"Ember\" and builds nothing from HTML (read from the page's source)", () => {
@@ -317,5 +372,147 @@ describe("the contract's factory", () => {
     const answer: Promise<PromptAnswer> = p.ask(password());
     p.dispose();
     return expect(answer).resolves.toEqual({ id: "p1", ok: false });
+  });
+});
+
+describe("the window's size", () => {
+  it("is fitted to each card before it shows: large for a consent card, small for an SSH prompt (review #182, #270)", async () => {
+    const ipc = new FakeIpc();
+    const windows: (FakeWindow & { fits: { width: number; height: number }[] })[] = [];
+    const ctl = createPromptWindowController({
+      create: () => { const w = Object.assign(new FakeWindow(), { fits: [] as { width: number; height: number }[] }); windows.push(w); return Object.assign(w, { fit: (s: { width: number; height: number }) => { w.fits.push(s); } }); },
+      ipc, log, os: "linux",
+    });
+    ctl.showConsent(1, commandsCard());
+    const pw = ctl.ask(password());
+    expect(windows[0].fits).toEqual([PROMPT_SIZE.consent]);
+    ctl.hideConsent(1);
+    expect(windows[0].fits).toEqual([PROMPT_SIZE.consent, PROMPT_SIZE.card]);
+    expect(windows[0].shown()?.id).toBe("p1");
+    ctl.dismiss("p1");
+    await pw;
+    expect(PROMPT_SIZE.card).toEqual({ width: 440, height: 300 });
+    expect(PROMPT_SIZE.consent.height).toBeGreaterThanOrEqual(520);
+    expect(promptSizeOf({ id: "d", kind: "consent-direct", consent: commandsCard() })).toBe(PROMPT_SIZE.consent);
+    expect(promptSizeOf(hostKey())).toBe(PROMPT_SIZE.card);
+    // A window without the hook (tests, an older factory) is shown as before.
+    const plain = setup();
+    plain.ctl.showConsent(2, commandsCard());
+    expect(plain.win().visible).toBe(true);
+  });
+
+  it("keeps the window's centre and stays inside the work area, with a margin where there is room", () => {
+    const area = { x: 0, y: 0, width: 1920, height: 1040 };
+    // Centred 440×300 grows to 520×600 around the same centre.
+    expect(fitBounds({ x: 740, y: 370, width: 440, height: 300 }, PROMPT_SIZE.consent, area)).toEqual({ x: 700, y: 220, width: 520, height: 600 });
+    // Near the bottom edge: moved up into the area.
+    expect(fitBounds({ x: 100, y: 900, width: 440, height: 300 }, PROMPT_SIZE.consent, area)).toEqual({ x: 60, y: 424, width: 520, height: 600 });
+    // A small screen (or a display left of the primary): capped to it, never off it.
+    expect(fitBounds({ x: -1000, y: 100, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: -1280, y: 0, width: 1280, height: 480 }))
+      .toEqual({ x: -1000 + 220 - 260, y: 16, width: 520, height: 448 });
+    expect(fitBounds({ x: 0, y: 0, width: 440, height: 300 }, PROMPT_SIZE.consent, { x: 0, y: 0, width: 20, height: 20 })).toMatchObject({ width: 1, height: 1 });
+  });
+});
+
+describe("the keyboard (review #235)", () => {
+  /** A window whose keyboard hook and focus the test controls. */
+  function keyboardRig(o: { hook?: boolean; gets?: boolean } = {}) {
+    const ipc = new FakeIpc();
+    const notes: [string, string][] = [];
+    const windows: (FakeWindow & { takes: number })[] = [];
+    const ctl = createPromptWindowController({
+      create: () => {
+        const w = Object.assign(new FakeWindow(), { takes: 0 });
+        // focus() says it worked, but the OS may not give the keyboard (macOS: another app active; Windows: foreground lock).
+        w.focus = () => { w.focused = o.gets ?? false; };
+        windows.push(w);
+        return o.hook === false ? w : Object.assign(w, { takeKeyboard: () => { w.takes++; w.focused = o.gets ?? false; } });
+      },
+      ipc, log, os: "darwin", notify: (title: string, body: string) => { notes.push([title, body]); },
+    });
+    return { ctl, windows, notes, page: () => windows[0].webContents, ipc };
+  }
+
+  it("asks main to bring the window to the front with the keyboard, as settings does, for every card", () => {
+    const { ctl, windows } = keyboardRig({ gets: true });
+    void ctl.ask(password());
+    expect(windows[0].takes).toBe(1);
+    ctl.showConsent(1, commandsCard());
+    ctl.dismiss("p1");
+    expect(windows[0].shown()?.id).toBe("consent-1");
+    expect(windows[0].takes).toBe(2);
+  });
+
+  it("tells the user in a notification when a card that takes typing didn't get the keyboard, once", () => {
+    vi.useFakeTimers();
+    const { ctl, notes } = keyboardRig({ gets: false });
+    void ctl.ask(password());
+    expect(notes).toEqual([]);
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(notes).toEqual([["Click Ember's window before you type", "Ember is asking for your password, and the keyboard is still in another app."]]);
+    vi.advanceTimersByTime(10 * PROMPT_FOCUS_CHECK_MS);
+    expect(notes).toHaveLength(1);
+  });
+
+  it("stays quiet when the window got the keyboard, when the card went first, and for a card nothing is typed into", () => {
+    vi.useFakeTimers();
+    const got = keyboardRig({ gets: true });
+    void got.ctl.ask(password());
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(got.notes).toEqual([]);
+    const gone = keyboardRig({ gets: false });
+    void gone.ctl.ask(password());
+    gone.ctl.dismiss("p1");
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(gone.notes).toEqual([]);
+    const consent = keyboardRig({ gets: false });
+    consent.ctl.showConsent(1, commandsCard());
+    void consent.ctl.ask(hostKey());
+    vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+    expect(consent.notes).toEqual([]);
+  });
+
+  it("names what each secret card asks for, and still shows and focuses a window without the hook", () => {
+    vi.useFakeTimers();
+    for (const [secret, what] of [["passphrase", "your SSH key's passphrase"], ["code", "a verification code"], ["other", "an answer"]] as const) {
+      const r = keyboardRig({ gets: false, hook: false });
+      void r.ctl.ask({ id: "s", kind: "secret", secret, host: "build-01", prompt: "Enter passphrase for key '/home/ana/.ssh/id_ed25519':" });
+      expect(r.windows[0].visible).toBe(true);
+      vi.advanceTimersByTime(PROMPT_FOCUS_CHECK_MS);
+      expect(r.notes).toEqual([["Click Ember's window before you type", `Ember is asking for ${what}, and the keyboard is still in another app.`]]);
+    }
+  });
+});
+
+describe("the page's hint line", () => {
+  it("says to read a consent card through first, and on a card that takes typing that the keyboard is elsewhere (review #182, #235)", () => {
+    const base = { consent: false, seen: false, more: true, field: false, focused: true, sinceShownMs: 5000 };
+    expect(promptHint({ ...base, consent: true })).toBe(CONSENT_READ_HINT);
+    expect(promptHint({ ...base, consent: true, seen: true, more: false })).toBe("");
+    // Not read yet with nothing below: only while the typeface loads (the yes stays off, and nothing says to scroll).
+    expect(promptHint({ ...base, consent: true, more: false })).toBe("");
+    expect(promptHint({ ...base, field: true, focused: false })).toBe(KEYBOARD_ELSEWHERE_HINT);
+    expect(KEYBOARD_ELSEWHERE_HINT).toBe("Click here before you type: the keyboard is still in another app.");
+    // Not while the window is still being given the keyboard, not once it has it, and not on a card nothing is typed into.
+    expect(promptHint({ ...base, field: true, focused: false, sinceShownMs: 100 })).toBe("");
+    expect(promptHint({ ...base, field: true, focused: true })).toBe("");
+    expect(promptHint({ ...base, focused: false })).toBe("");
+  });
+});
+
+describe("the page's semantics", () => {
+  const html = readFileSync(new URL("../../app/renderer/prompt/index.html", import.meta.url), "utf8");
+
+  it("keeps the main landmark and puts the dialog inside it, named by its title and described by its words (review #60)", () => {
+    const main = /<main\b[^>]*>/.exec(html)?.[0] ?? "";
+    expect(main).not.toBe("");
+    expect(main).not.toMatch(/\brole=/);
+    const dialog = /<(\w+)\b[^>]*\brole="dialog"[^>]*>/.exec(html);
+    expect(dialog?.[1]).toBe("div");
+    expect(dialog?.[0]).toMatch(/\bid="card"/);
+    expect(dialog?.[0]).toMatch(/aria-labelledby="title"/);
+    expect(dialog?.[0]).toMatch(/aria-describedby="body"/);
+    expect(html.indexOf(main)).toBeLessThan(html.indexOf(dialog![0]));
+    expect(html.indexOf(dialog![0])).toBeLessThan(html.indexOf("</main>"));
   });
 });

@@ -34,5 +34,8 @@ export type PromptCard =
   /** A first-use consent card asked directly (settings' switches), not through a question. */
   | { id: string; kind: "consent-direct"; consent: ConsentPanel };
 
-/** The page's answer to a card: `value` is the secret typed (never logged); `sha256` echoes a consent card's hash. */
-export type PromptAnswer = { id: string; ok: boolean; value?: string; sha256?: string };
+/**
+ * The page's answer to a card: `value` is the secret typed (never logged); `sha256` echoes a consent card's hash.
+ * `refused` is main's own no, never the user's: the card couldn't be shown (no window, or a card it won't show).
+ */
+export type PromptAnswer = { id: string; ok: boolean; value?: string; sha256?: string; refused?: true };

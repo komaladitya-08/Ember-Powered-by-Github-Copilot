@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { OverlayManager } from "./overlay";
@@ -344,12 +344,24 @@ function start(): void {
   };
   /** Ember greets once settings closes (first run while Copilot isn't connected yet). */
   let greetOnClose = false;
+  /** Ember's own approval windows (made through the targets runtime's factories below), and whether a command card is up. */
+  const approvals: { prompt: BrowserWindow | null; command: BrowserWindow | null } = { prompt: null, command: null };
+  let commandCardUp = false;
+  const shownWindow = (w: BrowserWindow | null) => (w && !w.isDestroyed()
+    ? { visible: w.isVisible(), minimized: w.isMinimized(), focused: w.isFocused(), bounds: w.getBounds() } : null);
   const stepAside = () => {
-    const h = home && !home.isDestroyed() && home.isVisible() && !home.isMinimized() && home.isFocused() ? home : null;
-    const r = h ? h.getBounds() : null;
-    overlay?.stepAside(r);
-    // The bubble keeps off the window too.
-    if (JSON.stringify(lastState.avoid ?? []) !== JSON.stringify(r ? [r] : [])) showState({ avoid: r ? [r] : [] });
+    // Settings while the user works in it; Ember's approval windows while they ask (review #125).
+    const { aside, avoid } = keepClearOf({ home: shownWindow(home), prompt: shownWindow(approvals.prompt), command: shownWindow(approvals.command), commandCard: commandCardUp });
+    overlay?.stepAside(aside);
+    // The bubble keeps off the windows too.
+    if (JSON.stringify(lastState.avoid ?? []) !== JSON.stringify(avoid)) showState({ avoid });
+  };
+  /** An approval window the targets runtime had main make: Ember and its bubble keep clear of it while it asks. */
+  const keepClear = <W extends BrowserWindow>(which: "prompt" | "command", win: W): W => {
+    approvals[which] = win;
+    for (const e of ["move", "resize", "minimize", "restore", "hide", "show"] as const) win.on(e as "show", stepAside);
+    win.on("closed", () => { if (approvals[which] === win) approvals[which] = null; stepAside(); });
+    return win;
   };
   const homeOpen = () => !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized();
 
@@ -704,8 +716,11 @@ function start(): void {
   const questionChanged = (q: { n: number; question: Question } | null) => {
     // The keys are held first, so a command card names the keys that answer it (the targets runtime asks keyHint).
     if (q) holdQuestionKeys();
-    // A question with a panel (a command, a consent card) shows its window; the window goes with it.
+    // A question with a panel (a command, a consent card) shows its window; the window goes with it. While a command
+    // card is up, Ember and its bubble keep clear of the command window (review #125).
+    commandCardUp = q?.question.panel?.kind === "command";
     targets?.questionChanged(q);
+    stepAside();
     if (!q) {
       for (const k of questionKeys) globalShortcut.unregister(k);
       questionKeys = [];
@@ -1603,7 +1618,19 @@ function start(): void {
       ipc,
       // As the settings channels' guard: the settings window's own page only (critique integration-5).
       isHome: sender => !!home && !home.isDestroyed() && sender.id === home.webContents.id && isTrustedSender(home.webContents.getURL()),
-      windows: { command: () => createCommandWindow(platform.os), prompt: () => createPromptWindow(platform.os) },
+      windows: {
+        command: () => keepClear("command", createCommandWindow(platform.os)),
+        // The prompt window takes the keyboard as settings does, and its field the keys (an SSH password is typed into
+        // it; review #235): macOS activates Ember, Windows asks the input backend (foreground rules).
+        prompt: () => keepClear("prompt", createPromptWindow(platform.os, {
+          takeKeyboard: win => {
+            bringToFront(win);
+            if (!sys.lifecycle.activateOwnWithInput) return;
+            const id = ownId(win);
+            try { if (id) inputRef?.focusInput?.(id); } catch { /* best effort, as bringToFront's activation */ }
+          },
+        })),
+      },
       fetch: (u, i) => net.fetch(u, i),
       devEnv,
       // Windows: the token's elevation, as the platform reads it (TokenElevation); elsewhere uid 0. It can't change while

@@ -53,9 +53,11 @@ bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
 
 Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
 (WSL)**, **Run commands on build-01**. The first time you turn one on (or a task needs one), Ember shows the card "Let
-Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. The card is answered with
-a click only, never with Ember's approve keys or by voice. Under each switch, **Ask me before every command** makes
-every command on that computer ask. **Open the command window** shows it.
+Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. It opens big enough to
+show the whole card on most screens, and names the stop chord in its first line. The card is answered with a click
+only, never with Ember's approve keys or by voice, and **Turn on** works only once the whole card has been in view (on
+a small screen, or with larger text, scroll to its end: "Scroll down to read it all first."). Under each switch, **Ask
+me before every command** makes every command on that computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
@@ -170,12 +172,13 @@ then why it asks ("Deletes build and everything in it.", "Pushes feature-x to or
 "This can reach your Windows files."); then the model's reason, quoted. A command that deletes data has a yellow bar
 on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
 stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
-view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works
-only while that card shows the whole command; **Not now** and the deny chord always work. There is never an "Always"
-for commands, a voice "yes" never approves one, and a notification only says "Ember wants to run a command on
-build-01." A question nobody answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that
-computer, in that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around
-it.
+view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y)
+works only while that card shows the whole command; **Not now** and the deny chord always work. While the card is up,
+Ember and its bubble keep clear of the command window (as they do of settings), and the same goes for Ember's sign-in
+and consent cards. There is never an "Always" for commands, a voice "yes" never approves one, and a notification only
+says "Ember wants to run a command on build-01." A question nobody answers counts as "no" after 2 minutes. Your yes
+covers exactly that command, on that computer, in that folder, for that task: any change asks again. After a "no",
+Ember doesn't try again or work around it.
 
 ### 2.5 When you asked for exactly that
 
@@ -394,8 +397,12 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,
-  what it copies there (§4.3), that your voice and sign-in stay here, what it does on the screen there, and that
-  build-01 keeps its own record.
+  what it does on the screen there if build-01 has a desktop (a server with no desktop, or a Mac, gets commands only),
+  that your voice and sign-in stay here, what it copies there and to which folder (§4.3), and that build-01 keeps its
+  own record. Asked again because your SSH settings changed, it starts with what changed: "Your SSH settings now send
+  build-01 to deploy@new.example.com, port 22 (before: deploy@old.example.com, port 22)." **Connect** works once the
+  whole card has been in view, as for the commands card. **Cancel** on the connecting bubble, **Forget** and the stop
+  chord take the card away with the connection.
 - **Your SSH settings and keys.** Ember runs the system's OpenSSH client with your `~/.ssh/config`, keys and SSH
   agent, through your jump hosts. On Linux and macOS, if you already have a shared connection open (`ControlMaster`),
   Ember rides it, so you aren't asked to sign in again; it never creates one. It forwards nothing (no agent, no X11,
@@ -403,11 +410,15 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 - **Passwords, passphrases and codes** are asked in Ember's own small window ("Sign in to build-01", "Unlock your SSH
   key", "Verification code for build-01", "Touch your security key"), handed to SSH only, and never saved, logged or
   sent to Copilot. A prompt for a jump host names that host "on the way to build-01". One card shows at a time: a
-  password card waits while a consent card is open. **With OpenSSH older than 8.5** on this computer (RHEL 8 has 8.0,
-  Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions come from the other computer, so a server could
-  word its own question as SSH's. There every password, passphrase or code is shown as "build-01 asks", with the
-  question quoted as it came, never as "Unlock your SSH key" or as a sign-in to another host: read it before you
-  answer, because the answer goes to whoever asked.
+  password card waits while a consent card is open. The window takes the keyboard as settings does; if another app
+  keeps it (macOS after a shortcut, Windows' focus rules), the card says "Click here before you type: the keyboard is
+  still in another app." and a notification says so too. **Cancel** (or Esc) on a sign-in card ends the connection
+  quietly, as the bubble's **Cancel** does. A sign-in card Ember can't show (no window, or a server's question too
+  long to show) ends it with "Ember couldn't show build-01's sign-in question." and **Try again**. **With OpenSSH
+  older than 8.5** on this computer (RHEL 8 has 8.0, Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions
+  come from the other computer, so a server could word its own question as SSH's. There every password, passphrase or
+  code is shown as "build-01 asks", with the question quoted as it came, never as "Unlock your SSH key" or as a
+  sign-in to another host: read it before you answer, because the answer goes to whoever asked.
 - **A computer you haven't connected to before** shows "Is this really build-01?" with its key's fingerprint. Check
   it with whoever looks after build-01; **Trust and connect** is never the default. If the key has changed, Ember
   won't connect ("build-01's identity changed"); remove the old key with `ssh-keygen -R build-01` only if you know

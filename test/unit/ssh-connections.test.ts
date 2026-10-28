@@ -457,6 +457,22 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     await expect(c.conns.connect(record(), { interactive: true })).rejects.toMatchObject({ kind: "cancelled", message: "Connection cancelled" });
   });
 
+  it("never counts a sign-in card Ember couldn't show as the user's cancel: the failure says so (review #193)", async () => {
+    // No window could be made, or the server's question was too long to show: the prompt window refuses it, nobody was
+    // asked, and ssh's sign-in fails. That is a failure to show (with Try again), not the quiet end of a user's Cancel.
+    const auth = { stderr: "deploy@build-01.example.com: Permission denied (publickey,keyboard-interactive).\n", code: 255 };
+    type Rig = ReturnType<typeof rig>;
+    const ref: { r?: Rig } = {};
+    const r = ref.r = track(rig({
+      remotes: [{ fail: () => auth }, { fail: async (run): Promise<typeof auth | null> => ((await (ref.r as Rig).askpass(run, `${"x".repeat(2001)}: `)) ? null : auth) }],
+      answer: card => ({ id: card.id, ok: false, refused: true }),
+    }));
+    const err = await r.conns.connect(record(), { interactive: true }).catch(e => e);
+    expect(r.cards).toHaveLength(1);
+    expect(err).toBeInstanceOf(ConnectError);
+    expect(err).toMatchObject({ kind: "auth", message: "Ember couldn't show build-01's sign-in question.", retry: true });
+  });
+
   it("on RHEL 8's ssh (8.0) a server asking in ssh's words gets the host's quoted question, never \"Unlock your SSH key\"", async () => {
     const auth = { stderr: "alice@build-01.example.com: Permission denied (publickey,keyboard-interactive).\n", code: 255 };
     const spoof = "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ";

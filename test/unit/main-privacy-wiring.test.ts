@@ -108,7 +108,10 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
       "targets = createTargets({", "localHands: hands ?? null,", "isHome: sender =>",
       // The runtime's channels hear only Ember's own bundled pages.
       'const fromPage = (e: { senderFrame: { url: string } | null }) => isTrustedSender(e.senderFrame?.url ?? "");',
-      "if (fromPage(e)) fn({ sender: e.sender }, ...args);", "if (!fromPage(e)) throw new Error(", "windows: { command: () => createCommandWindow(platform.os), prompt: () => createPromptWindow(platform.os) },",
+      "if (fromPage(e)) fn({ sender: e.sender }, ...args);", "if (!fromPage(e)) throw new Error(", "windows: {",
+      // Both approval windows are kept clear of (review #125); the prompt window takes the keyboard as settings does (#235).
+      'command: () => keepClear("command", createCommandWindow(platform.os)),', 'prompt: () => keepClear("prompt", createPromptWindow(platform.os, {',
+      "takeKeyboard: win => { bringToFront(win);",
       "fetch: (u, i) => net.fetch(u, i),", "elevated: () =>", "emberPids: () =>", "app.getAppMetrics()", "extraPath: () =>",
       'jobHost: platform.os === "win32" ? { execPath: process.execPath, script: path.join(__dirname, "job-host.cjs") } : null,',
     ]],

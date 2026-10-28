@@ -343,9 +343,9 @@ describe("the stop chord in the SSH, WSL and commands words, per OS", () => {
     for (const os of OSES) {
       const stop = SHORTCUTS[os].stop.label;
       const commands = consentPanel({ feature: "commands", os, target: "local", targetLabel: "This computer" });
-      expect(commands.body.at(-1)).toBe(`${stop} stops everything at once. What a command already changed stays changed.`);
+      expect(commands.body[0]).toContain(` ${stop} stops everything at once; what a command already changed stays changed.`);
       const ssh = consentPanel({ feature: "ssh", os, target: "ssh:build-01", targetLabel: "build-01", ssh: { login: "deploy", hostname: "build-01", port: 22, jump: [], desktop: "headless" } });
-      expect(ssh.body[1]).toContain(`stops when you disconnect, quit Ember or press ${stop}. If the connection drops`);
+      expect(ssh.body[3]).toContain(`stops when you disconnect, quit Ember or press ${stop}. If the connection drops`);
       for (const other of OSES.filter(o => o !== os)) expect(JSON.stringify([commands, ssh])).not.toContain(SHORTCUTS[other].stop.label);
       hashes.add(commands.sha256);
     }

@@ -51,7 +51,7 @@ import type { WslRunner } from "../wsl/runner";
 import { createWsl } from "../wsl/service";
 import type { WslFacts, WslService } from "../wsl/types";
 import { signInAgain } from "../../renderer/overlay/target-copy";
-import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
+import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshChangedFrom, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
 import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
 import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception, wslBinding, type HandsBase } from "./hands";
 import { registerTargetsIpc, type ActResult } from "./ipc";
@@ -408,7 +408,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   // Whether a screen reader runs: each run's terminal then mirrors its output for it (review #43).
   const screenReader = (): boolean => deps.sys.a11y.screenReaderOn();
   const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint, screenReader });
-  const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os });
+  // `notify`: a card that takes typing whose window didn't get the keyboard says so (review #235).
+  const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os, notify: deps.notify });
 
   // ── This computer's commands ──
   const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env });
@@ -568,13 +569,20 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
 
   // ── Consent cards asked directly (settings' switches, connecting) ──
   let cardSeq = 0;
-  const askCard = async (card: ConsentPanel): Promise<boolean> => {
+  /** `signal`: the connection the card belongs to; cancelled, forgotten or stopped, the card leaves the screen as a no. */
+  const askCard = async (card: ConsentPanel, signal?: AbortSignal): Promise<boolean> => {
+    const id = `consent-${++cardSeq}`;
+    if (signal?.aborted) return false;
+    const drop = () => { try { promptWindow.dismiss(id); } catch (err) { log.warn("targets.consent_dismiss_failed", { err }); } };
+    signal?.addEventListener("abort", drop, { once: true });
     try {
-      const a = await promptWindow.ask({ id: `consent-${++cardSeq}`, kind: "consent-direct", consent: card });
+      const a = await promptWindow.ask({ id, kind: "consent-direct", consent: card });
       return consentYes(card, a);
     } catch (err) {
       log.warn("targets.consent_failed", { feature: card.feature, err });
       return false;
+    } finally {
+      signal?.removeEventListener("abort", drop);
     }
   };
 
@@ -605,6 +613,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     desktopOff: admin().policy.ssh?.desktop === false, graceSeconds: admin().policy.ssh?.commandGraceSeconds ?? 20,
     // The organisation's own model service: the card says what is read goes there, not to GitHub Copilot.
     byok: admin().policy.provider !== undefined,
+    // Asked again because the SSH settings now send the name elsewhere: the card says from where to where.
+    changedFrom: sshChangedFrom(host, resolved),
   });
   /** Builds the target for a link that came up (a connect, or SA's own reconnect). */
   const adopt = (hostId: string, link: RemoteLink): boolean => {
@@ -713,8 +723,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const resolved = { user: now.user, hostname: now.hostname, port: now.port, jump: [...now.jump] };
       if (sshNeedsConsent(host, resolved)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
-        if (!(await askCard(card))) return stopped("Not now.");
-        // Cancelled, forgotten or stopped by the kill switch while the card was up: nothing is saved or connected.
+        // Cancelled, forgotten or stopped by the kill switch while the card was up: the card goes; nothing is saved.
+        if (!(await askCard(card, abort.signal))) return stopped(abort.signal.aborted ? "Cancelled." : "Not now.");
         if (abort.signal.aborted) return stopped("Cancelled.");
         host = { ...host, resolved, consent: consentGiven("ssh", parts.now()) };
         saveHost(host);
@@ -727,7 +737,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // Another computer under the same name than the one the user said yes to: asked again (§7.4).
       if (machineChanged(host, link.welcome.machineIdHash)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card))) return letGo("Not now.");
+        if (!(await askCard(card, abort.signal))) return letGo(abort.signal.aborted ? "Cancelled." : "Not now.");
         if (abort.signal.aborted) return letGo("Cancelled.");
         host = { ...host, consent: consentGiven("ssh", parts.now()) };
       }
@@ -760,7 +770,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // (once), and on a yes the old machine is forgotten and Ember connects afresh (SA then remembers the new one).
       if (err instanceof ConnectError && err.kind === "machine-changed" && !o.again) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card))) return stopped("Not now.");
+        if (!(await askCard(card, abort.signal))) return stopped(abort.signal.aborted ? "Cancelled." : "Not now.");
         const now = hostOf(hostId);
         if (abort.signal.aborted || !now) return stopped("Cancelled.");
         const { machineIdHash: _was, ...rest } = now;
@@ -769,6 +779,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         c.abort = null;
         return connect(hostId, { ...o, again: true });
       }
+      // The user closed a sign-in card (Cancel, Esc): ended as the bubble's Cancel does, with no error bubble.
+      if (err instanceof ConnectError && err.kind === "cancelled") return stopped("Cancelled.");
       if (err instanceof ConnectError) return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry);
       log.warn("targets.connect_failed", { err });
       return fail(`Ember couldn't connect to ${label}.`);

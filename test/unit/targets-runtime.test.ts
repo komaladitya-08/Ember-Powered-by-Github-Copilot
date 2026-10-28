@@ -27,7 +27,7 @@ import type { WslDistro, WslFacts, WslService } from "../../app/main/wsl/types";
 import { KEYS, SHORTCUTS, type OS } from "../../app/shared/shortcuts";
 import type { ConsentPanel } from "../../app/shared/consent";
 import { TARGETS_IPC, type TargetId } from "../../app/shared/targets";
-import { commandsConsent, consentSha256, sshConsent, wslConsent } from "../../app/main/targets/consent";
+import { commandsConsent, consentSha256, sshChangedFrom, sshConsent, wslConsent } from "../../app/main/targets/consent";
 import { commandTerminalRow, parseSshVersion, powershellRow, remotePartsRow, sshClientRow } from "../../app/main/targets/doctor";
 import { linuxOwnPids, linuxProcTable, ownTree, psProcTable, statParent } from "../../app/main/targets/local-service";
 import {
@@ -217,12 +217,13 @@ function rig(o: RigOptions = {}) {
   } as unknown as SystemPlatform;
   let runnerOpts: Parameters<TargetsParts["localRunner"]>[0] | null = null;
   let cwOpts: Parameters<TargetsParts["commandWindow"]>[0] | null = null;
+  let pwOpts: Parameters<TargetsParts["promptWindow"]>[0] | null = null;
   const wslMade = vi.fn((_o: Parameters<TargetsParts["wsl"]>[0]) => wsl as unknown as WslService);
   const parts: TargetsParts = {
     env: { APPIMAGE: "/home/ana/Ember.AppImage" }, home: "/home/ana", user: "ana",
     localRunner: ro => { runnerOpts = ro; return local; },
     commandWindow: co => { cwOpts = co; return cw as unknown as CommandWindow; },
-    promptWindow: () => pw as unknown as PromptWindow,
+    promptWindow: po => { pwOpts = po; return pw as unknown as PromptWindow; },
     wsl: wslMade,
     connections: co => { Object.assign(connOpts, co); return conns as unknown as Connections; },
     remoteParts: remoteParts as unknown as TargetsParts["remoteParts"],
@@ -257,6 +258,7 @@ function rig(o: RigOptions = {}) {
     remoteDesktop, refreshes, reads,
     runnerOpts: () => runnerOpts!,
     cwOpts: () => cwOpts!,
+    pwOpts: () => pwOpts!,
     onAnswer: () => onAnswer, onConsent: () => onConsent,
     failConnect: (e: Error | null) => { connectFail = e; },
     holdConnect: () => { let release!: () => void; connectGate = new Promise(r => { release = r; }); return () => { connectGate = null; release(); }; },
@@ -486,7 +488,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: true })).resolves.toEqual({ ok: true });
     expect(r.cards).toHaveLength(1);
     expect(r.cards[0].title).toBe("Let Ember run commands on this computer?");
-    expect(r.cards[0].body.at(-1)).toBe("Ctrl+Alt+X stops everything at once. What a command already changed stays changed.");
+    expect(r.cards[0].body[0]).toContain(" Ctrl+Alt+X stops everything at once; what a command already changed stays changed.");
     expect(r.settings.get().commands.local).toMatchObject({ on: true, consent: { version: 1 } });
     // Already accepted: switching off and on again asks nothing.
     await r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: false });
@@ -519,7 +521,8 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     const mac = commandsConsent({ os: "darwin", target: "local", targetLabel: "This computer", facts });
     expect(new Set([linux.sha256, win.sha256, mac.sha256]).size).toBe(3);
     for (const [c, osName] of [[linux, "linux"], [win, "win32"], [mac, "darwin"]] as const) {
-      expect(c.body.at(-1)!.startsWith(SHORTCUTS[osName].stop.label)).toBe(true);
+      // The stop chord comes first, before what the card goes on to say (review #270).
+      expect(c.body[0]).toContain(`${SHORTCUTS[osName].stop.label} stops everything at once`);
       expect(c.sha256).toBe(consentSha256(c));
     }
     expect(win.body).toEqual(expect.arrayContaining(["Commands here run as the administrator, so Ember asks before every one.", "Commands here run in Windows PowerShell and can't ask you for answers or passwords."]));
@@ -566,6 +569,27 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
     await connected(moved);
     expect(moved.cards).toHaveLength(1);
     expect(moved.settings.get().targets.hosts[0].resolved.hostname).toBe("elsewhere.example.com");
+  });
+
+  it("leads a card asked again for changed SSH settings with what changed, and never on the first card (review #192)", async () => {
+    const moved = rig({ settings: withHosts([hostRecord("build-01")]), resolved: { user: "ops", hostname: "elsewhere.example.com", port: 2222, jump: [] } });
+    await connected(moved);
+    expect(moved.cards[0].body[0]).toBe("Your SSH settings now send build-01 to ops@elsewhere.example.com, port 2222 (before: deploy@build-01.example.com, port 22). Connect only if you meant to change them.");
+    expect(moved.cards[0].body[1]).toMatch(/^Ember will connect to build-01 as ops \(ops@elsewhere\.example\.com, port 2222\)/);
+    const fresh = rig({ settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]), resolved: { user: "ops", hostname: "elsewhere.example.com", port: 2222, jump: [] } });
+    await connected(fresh);
+    expect(fresh.cards[0].body[0]).toMatch(/^Ember will connect to build-01 as ops/);
+    expect(sshChangedFrom(hostRecord("build-01"), { user: "deploy", hostname: "BUILD-01.example.com", port: 22, jump: ["new-hop"] })).toBeUndefined();
+    expect(sshChangedFrom(hostRecord("build-01"), { user: "deploy", hostname: "build-01.example.com", port: 23, jump: [] })).toEqual(hostRecord("build-01").resolved);
+  });
+
+  it("says where the helper goes and what it does on the screen for a Linux computer, a Mac or a server alike (review #192)", () => {
+    const card = sshConsent({ os: "linux", target: "ssh:build-01", facts: { label: "build-01", resolved: { user: "deploy", hostname: "build-01.example.com", port: 22, jump: [] }, desktopOff: false, graceSeconds: 20 } });
+    const text = card.body.join("\n");
+    expect(text).toContain("in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)");
+    expect(text).toContain("If build-01 has a desktop, Ember reads and uses apps on its screen only when deploy is the person logged in there");
+    expect(text).toContain("On a server with no desktop, or on a Mac, it only runs commands.");
+    expect(validConsent(card)).toBe(true);
   });
 
   it("asks again when the machine reached isn't the one the user said yes to, and disconnects on Not now", async () => {
@@ -807,6 +831,51 @@ describe("SSH targets", () => {
     const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
     expect(res).toEqual({ ok: false, message: "Ember can't reach build-01 (no route). Check you're on the right network or VPN." });
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01", actions: [{ id: "conn:build-01:reconnect", label: "Try again" }] }) });
+    expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
+  });
+
+  it("takes the host's card down when its connection is cancelled, forgotten or stopped while it is up (review #186)", async () => {
+    for (const how of ["cancel", "forget", "stop"] as const) {
+      const r = rig({ settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]) });
+      // The card waits for the user; dismissing it answers it no, as the prompt window does.
+      const open = new Map<string, (a: PromptAnswer) => void>();
+      r.pw.ask.mockImplementationOnce((card: { id: string }) => new Promise<PromptAnswer>(res => { open.set(card.id, res); }));
+      r.pw.dismiss.mockImplementation((id: string) => { open.get(id)?.({ id, ok: false }); open.delete(id); });
+      const pending = r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+      await flush();
+      expect(r.pw.ask).toHaveBeenCalledTimes(1);
+      const id = r.pw.ask.mock.calls[0][0].id;
+      if (how === "cancel") expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
+      else if (how === "forget") void r.invoke(TARGETS_IPC.act, r.home, { kind: "forget", hostId: "build-01" });
+      else void r.t.stopAll();
+      await expect(pending, how).resolves.toEqual({ ok: false, message: "Cancelled." });
+      expect(r.pw.dismiss, how).toHaveBeenCalledWith(id);
+      expect(open.size, how).toBe(0);
+      expect(r.conns.connect, how).not.toHaveBeenCalled();
+    }
+    // A card answered before anything cancels is never dismissed afterwards.
+    const r = rig({ settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]) });
+    await connected(r);
+    expect(r.t.bubbleAction("conn:build-01:cancel")).toBe(true);
+    expect(r.pw.dismiss).not.toHaveBeenCalled();
+  });
+
+  it("lets the prompt window tell the user, by main's notification, when a sign-in card didn't get the keyboard (review #235)", () => {
+    const r = rig();
+    expect(r.pwOpts()).toMatchObject({ os: "linux", ipc: r.deps.ipc });
+    expect(r.pwOpts().notify).toBe(r.deps.notify);
+    expect(r.pwOpts().create).toBe(r.deps.windows.prompt);
+  });
+
+  it("says nothing when the user cancels a password or passphrase card, as for the bubble's Cancel (review #193)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    // SA ends the attempt as cancelled when the user closes its sign-in card (connections.ts failureOf).
+    r.failConnect(new ConnectError("Connection cancelled", "cancelled", undefined, true));
+    const res = await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(res).toEqual({ ok: false, message: "Cancelled." });
+    // The connecting bubble goes, and no "Can't connect" bubble with Try again comes.
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01" }) });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ visible: false }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
   });
 
