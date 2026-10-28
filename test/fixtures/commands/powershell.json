@@ -5698,6 +5698,78 @@
    "rules": [
     "unclear.unresolved-arg"
    ]
+  },
+  {
+   "cmd": "net view \\\\example",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Resolve-Path \\\\example\\x",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Resolve-Path -Path \\\\example\\share\\x",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Resolve-Path -LiteralPath \\\\example\\share\\x",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "rvpa //example/share/x",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Resolve-Path src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "Resolve-Path -Path .\\src -Relative",
+   "verdict": "run"
+  },
+  {
+   "cmd": "net view",
+   "verdict": "run"
+  },
+  {
+   "cmd": "Convert-Path \\\\example\\share\\x",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
   }
  ]
 }

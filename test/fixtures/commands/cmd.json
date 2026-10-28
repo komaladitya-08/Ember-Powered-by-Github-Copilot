@@ -2747,6 +2747,20 @@
   {
    "cmd": "php -S localhost:8000",
    "verdict": "run"
+  },
+  {
+   "cmd": "net view \\\\example",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "net view",
+   "verdict": "run"
   }
  ]
 }

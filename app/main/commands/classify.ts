@@ -5119,8 +5119,8 @@ reg(NATIVE, ["net", "net1"], h => {
   if (verb === "share" && rest.length) { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
   if (verb === "time" && rest.some(a => /^\/set$/i.test(a.v ?? ""))) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if ((verb === "session" || verb === "file") && rest.some(a => /^\/(delete|close)$/i.test(a.v ?? ""))) { h.e.add("system", "kill.process", "Stops programs that are running (network sessions)."); return; }
-  // `net use [Z:] \\host\share` connects to that computer and signs in there (review #171).
-  if (verb === "use") for (const a of rest) if (/^[\\/]{2}/.test(a.v ?? "")) h.e.usePath(a, "list", h.sc);
+  // `net use [Z:] \\host\share` and `net view \\host` connect to that computer and sign in there (review #171).
+  if (verb === "use" || verb === "view") for (const a of rest) if (/^[\\/]{2}/.test(a.v ?? "")) h.e.usePath(a, "list", h.sc);
   if (verb === "use" && rest.some(a => /\\\\/.test(a.v ?? "")) && rest.some(a => /^\/user:/i.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
 reg(NATIVE, ["reg", "regedit", "regini"], h => {
@@ -6004,6 +6004,13 @@ reg(CMDLETS, ["get-content", "get-item", "select-string", "get-itemproperty", "g
   // Reading what a listing hands down reads the files in the folders it lists.
   if (paths.length === 0) objsOf(h, pipedListing(h), h.key === "get-item" ? "list" : "readTree");
   if (h.key === "get-item") h.e.listed.set(h.e.at, files);
+});
+// Resolve-Path and Convert-Path look a path up: one on another computer's share connects and signs in there, as
+// listing it does (review #171). Otherwise they only print names, as before.
+reg(CMDLETS, ["resolve-path", "convert-path"], h => {
+  textProgram(h);
+  const b = bindPs(h, { params: { Path: "v", LiteralPath: "v", Relative: "s", RelativeBasePath: "v", Credential: "v" }, aliases: { pspath: "LiteralPath", lp: "LiteralPath" }, pos: ["Path"] });
+  for (const a of psPaths(b, "Path", "LiteralPath")) if (/^[\\/]{2}/.test(a.v ?? "")) h.e.usePath(a, "list", h.sc);
 });
 reg(CMDLETS, ["get-childitem"], h => {
   const b = bindPs(h, PS_CMDLETS["get-childitem"]);
