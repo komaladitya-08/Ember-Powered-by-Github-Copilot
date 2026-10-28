@@ -153,6 +153,25 @@ describe("the GitHub CLI's download page (review #136)", () => {
     expect(mayOpenSignInPage(present.page)).toBe(false);
   });
 
+  it("is offered by the settings window's Open button, which asks main to open the one page it allows", () => {
+    // Source wiring (the preload, the renderer and main can't be loaded in a unit test): comments dropped, white space
+    // made one space.
+    const src = (file: string) => fs.readFileSync(path.resolve(file), "utf8").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1").replace(/\s+/g, " ");
+    expect(src("app/preload/home.ts")).toContain("openSignInPage: () => ipcRenderer.invoke(IPC.openSignInPage)");
+    // The renderer: a waiting message that names a page gets a button with that label, which asks main to open it.
+    const home = src("app/renderer/home/main.ts");
+    expect(home).toMatch(/if \(p\.state === "waiting"\) \{ setSigningIn\(true\); signInMsg\(p\.message \?\? ""\); if \(p\.link\) addOpenButton\(p\.link\); return; \}/);
+    const button = /function addOpenButton\(label: string\): void \{(.*?)\$\("sign-in-msg"\)\.append\(" ", btn\); \}/.exec(home)?.[1] ?? "";
+    expect(button).toContain(".openSignInPage;");
+    expect(button).toContain("textContent: label");
+    expect(button).toContain('btn.addEventListener("click", () => { void open(); });');
+    // Main: the wait's first progress and its page come from cliWaitStart, and only a page mayOpenSignInPage allows opens.
+    const main = src("app/main/main.ts");
+    expect(main).toContain("const start = cliWaitStart(platform.os, ghInstalled()); signInPage = start.page; say(start.progress);");
+    expect(main).toContain("const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };");
+    expect(main).toContain("ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));");
+  });
+
   it("is the one page besides GitHub's own sign-in pages that the Open button may show", async () => {
     const { GH_CLI_PAGE, mayOpenSignInPage } = await import("../../app/main/agent/github-app");
     expect(GH_CLI_PAGE).toBe("https://cli.github.com/");

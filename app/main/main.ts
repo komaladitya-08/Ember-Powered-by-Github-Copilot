@@ -995,8 +995,9 @@ function start(): void {
     // Ember's own GitHub App (its client id is built in, or EMBER_GITHUB_CLIENT_ID overrides it): the device flow.
     const clientId = githubClientId();
     if (!clientId) {
-      // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart). The
-      // message says what that needs (a GitHub account with Copilot and the GitHub CLI) and how to install gh here.
+      // A build without a client id (a fork): watch for a GitHub CLI sign-in instead, and connect as soon as one appears
+      // (no restart). The message says what that needs (a GitHub account with Copilot and the GitHub CLI) and how to
+      // install gh here.
       // Without gh, an Open button shows where to get it (only that page, on request).
       const start = cliWaitStart(platform.os, ghInstalled());
       signInPage = start.page;
