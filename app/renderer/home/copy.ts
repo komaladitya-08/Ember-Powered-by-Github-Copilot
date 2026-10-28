@@ -72,8 +72,8 @@ export function tagline(t: {
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
-  // Ready, with setup rows still to look at: said, so a warning isn't left in a closed fold (review #95).
-  return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} to look at.` : ""}`;
+  // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
+  return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
 }
 
 /** "one thing", "2 things": how many setup rows, in a sentence. */
@@ -88,13 +88,16 @@ function things(n: number): string {
 export function setupBadge(needing: number, failing = 0): { text: string; label: string; tone: "fail" | "warn" } | null {
   const n = failing || needing;
   if (!n) return null;
-  return { text: String(n), label: `, ${n} ${n === 1 ? "thing" : "things"} to ${failing ? "fix" : "look at"}`, tone: failing ? "fail" : "warn" };
+  return { text: String(n), label: `, ${n} ${n === 1 ? "thing" : "things"} ${failing ? "to fix" : "worth a look"}`, tone: failing ? "fail" : "warn" };
 }
 
-/** The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160). */
+/**
+ * The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160), as
+ * `ember doctor` says it ("worth a look").
+ */
 export function checksNote(failing: number, warn: number): string {
   const n = (k: number) => `${k} ${k === 1 ? "thing" : "things"}`;
-  return failing ? `${n(failing)} to fix` : warn ? `${n(warn)} to look at` : "All good";
+  return failing ? `${n(failing)} to fix` : warn ? `${n(warn)} worth a look` : "All good";
 }
 
 /** What the setup check shows, and what the window remembers between statuses. */

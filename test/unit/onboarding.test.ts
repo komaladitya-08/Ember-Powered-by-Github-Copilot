@@ -172,17 +172,17 @@ describe("the setup check in the settings window", () => {
     expect(v1).toMatchObject({ failing: 1, needing: 3, open: true, beforeStart: true, note: "1 thing to fix" });
     // Accessibility allowed: Screen Recording and Input Monitoring keep their buttons on screen.
     const v2 = setupView(allowed(MAC_FIRST, "accessibility"), { opened: true, beforeStart: v1.beforeStart });
-    expect(v2).toMatchObject({ failing: 0, needing: 2, open: false, beforeStart: true, note: "2 things to look at" });
+    expect(v2).toMatchObject({ failing: 0, needing: 2, open: false, beforeStart: true, note: "2 things worth a look" });
     // Everything allowed: the list (all OK) stays where the user was working until Start.
     expect(setupView(allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"), { opened: true, beforeStart: v2.beforeStart }))
       .toMatchObject({ needing: 0, beforeStart: true, note: "All good" });
   });
 
   it("opens and shows before Start for a warning with a fix, such as Linux's accessibility switch (review #161)", () => {
-    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, needing: 1, open: true, beforeStart: true, note: "1 thing to look at" });
+    expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, needing: 1, open: true, beforeStart: true, note: "1 thing worth a look" });
     // A warning with nothing to do keeps the fold shut and the first-run screen as it was.
     const other = LINUX_A11Y_OFF.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const } : r.id === "os" ? { ...r, status: "warn" as const } : r));
-    expect(setupView(other, first)).toMatchObject({ needing: 0, open: false, beforeStart: false, note: "1 thing to look at" });
+    expect(setupView(other, first)).toMatchObject({ needing: 0, open: false, beforeStart: false, note: "1 thing worth a look" });
     // Opened by itself once: a user who closes it isn't overruled by the next status.
     expect(setupView(LINUX_A11Y_OFF, { opened: true, beforeStart: true }).open).toBe(false);
   });
@@ -190,8 +190,8 @@ describe("the setup check in the settings window", () => {
   it("counts the rows in words by the heading (review #160)", () => {
     expect(checksNote(1, 0)).toBe("1 thing to fix");
     expect(checksNote(2, 3)).toBe("2 things to fix");
-    expect(checksNote(0, 1)).toBe("1 thing to look at");
-    expect(checksNote(0, 2)).toBe("2 things to look at");
+    expect(checksNote(0, 1)).toBe("1 thing worth a look");
+    expect(checksNote(0, 2)).toBe("2 things worth a look");
     expect(checksNote(0, 0)).toBe("All good");
   });
 });
@@ -303,14 +303,14 @@ describe("Ember's handle while a setup row holds it back", () => {
 });
 
 describe("the settings window's setup badge and line", () => {
-  it("badges the sidebar's Setup link and mentions what to look at in the tagline (review #95)", () => {
+  it("badges the sidebar's Setup link and mentions what is worth a look in the tagline (review #95)", () => {
     expect(setupBadge(0)).toBeNull();
     // Failing rows are counted as the heading counts them; else the rows that need a look.
     expect(setupBadge(3, 1)).toEqual({ text: "1", label: ", 1 thing to fix", tone: "fail" });
-    expect(setupBadge(2, 0)).toEqual({ text: "2", label: ", 2 things to look at", tone: "warn" });
+    expect(setupBadge(2, 0)).toEqual({ text: "2", label: ", 2 things worth a look", tone: "warn" });
     const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true };
-    expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has one thing to look at.");
-    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things to look at.");
+    expect(tagline({ ...base, look: 1 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything. The setup check has one thing worth a look.");
+    expect(tagline({ ...base, look: 2 }, "Win+Alt+Space")).toBe("Ember is beside your cursor. Press Win+Alt+Space to ask it anything. The setup check has 2 things worth a look.");
     expect(tagline({ ...base, look: 0 })).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     // Before Start the instruction stays (review #160).
     expect(tagline({ ...base, onboarded: false, look: 2 })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
