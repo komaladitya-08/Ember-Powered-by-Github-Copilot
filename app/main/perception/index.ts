@@ -445,8 +445,9 @@ export class Perception {
     const active = x11.focusWindow() ?? x11.activeWindow();
     if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
     // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
-    // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next).
-    if (this.platformDialog()) return noShot(SYSTEM_DIALOG);
+    // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next), but in
+    // a Wayland session, where XWayland shows Ember only X11 apps, the check is always on.
+    if (this.platformDialog()) return noShot(this.platformDialogWords());
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
     if (shell.unchecked) return noShot(this.words.shellUnchecked);
@@ -553,7 +554,7 @@ export class Perception {
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
     if (!capture) {
-      return noShot(dialogAfter ? SYSTEM_DIALOG
+      return noShot(dialogAfter ? this.platformDialogWords()
         : this.noScreenAccess(x11) ? this.screenRefused()
         : "the window is off screen, or the screen couldn't be captured safely");
     }
@@ -705,9 +706,30 @@ export class Perception {
   }
 
   /**
+   * Why the window system's check is on when it isn't a dialog (macOS: secure keyboard entry in a named app, review
+   * #236), as a clause; null when it is a dialog, nothing, or the words can't be read. Words only: the check decides.
+   */
+  async systemDialogReason(): Promise<string | null> {
+    try {
+      return this.o.x11?.systemDialogReason?.() ?? null;
+    } catch {
+      return null; // no words: the dialog's own are used
+    }
+  }
+
+  /** The no-screenshot note for the window system's check: its own reason when it gives one, else the dialog's. */
+  private platformDialogWords(): string {
+    try {
+      return this.o.x11?.systemDialogReason?.() ?? SYSTEM_DIALOG;
+    } catch {
+      return SYSTEM_DIALOG;
+    }
+  }
+
+  /**
    * The window system's own answer (Windows: the secure desktop or a credential prompt; macOS: SecurityAgent or secure
-   * keyboard entry). False where it has none (Linux, the desk) or there is no window system; true when the check
-   * throws (fail closed).
+   * keyboard entry; Linux: a Wayland session). False where it has none (Linux on Xorg, the desk) or there is no window
+   * system; true when the check throws (fail closed).
    */
   private platformDialog(): boolean {
     try {

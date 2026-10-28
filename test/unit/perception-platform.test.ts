@@ -55,7 +55,7 @@ function desktop(o: {
   window?: AxWindow | null; nodes?: AxNode[]; listed?: AxWindow[];
   shell?: { overlays: ShellOverlay[]; complete?: boolean } | Error;
   stack?: StackedWindow[]; active?: Win | null; focus?: Win | null; clients?: Win[];
-  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean;
+  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean; systemDialogReason?: () => string | null;
   screen?: Bounds; neverLook?: string[];
   screenRecording?: () => boolean;
   secretFields?: (w: { pid: number; path: string }) => { fields: { id: number; bounds: Bounds }[]; complete: boolean; busy?: boolean };
@@ -87,6 +87,7 @@ function desktop(o: {
       return (o.capture ?? ((cx, cy, cw, ch) => greyImage(screen, cx, cy, cw, ch)))(x, y, width, height);
     },
     ...(o.systemDialogOpen ? { systemDialogOpen: o.systemDialogOpen } : {}),
+    ...(o.systemDialogReason ? { systemDialogReason: o.systemDialogReason } : {}),
   };
   const { log, warnings, infos } = recordingLog();
   const perception = new Perception({
@@ -291,6 +292,26 @@ describe("Perception and the window system's system-dialog check (fails closed)"
     expect(p.capture).toBeNull();
     expect(p.text).toContain(NO_DIALOG);
     expect(warnings).toContain("perception.system_dialog_check_failed");
+  });
+
+  it("says the window system's own reason when it has one (macOS secure keyboard entry, review #236)", async () => {
+    const why = "secure keyboard entry is on in Terminal (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't look at the screen or use the mouse or keyboard until it's off";
+    const { perception, captures } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => true, systemDialogReason: () => why });
+    const p = await perception.perceive({ image: true, scope: "screen" });
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain(`(No screenshot: ${why}.)`);
+    expect(p.text).not.toContain("a system dialog is open");
+    expect(captures).toEqual([]);
+    expect(await perception.systemDialogReason()).toBe(why);
+    // No reason (a real prompt), or one that can't be read: the dialog words, still no picture.
+    const plain = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => true, systemDialogReason: () => null });
+    expect((await plain.perception.perceive({ image: true, scope: "screen" })).text).toContain(NO_DIALOG);
+    const broken = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => true, systemDialogReason: () => { throw new Error("gone"); } });
+    const b = await broken.perception.perceive({ image: true, scope: "screen" });
+    expect(b.capture).toBeNull();
+    expect(b.text).toContain(NO_DIALOG);
+    expect(await broken.perception.systemDialogReason()).toBeNull();
+    expect(await desktop({}).perception.systemDialogReason()).toBeNull();
   });
 
   it("takes the screenshot when the window system reports no dialog, or has no such check (Linux)", async () => {

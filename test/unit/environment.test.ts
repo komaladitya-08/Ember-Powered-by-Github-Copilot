@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { inspectEnvironment, parseOsRelease, type EnvInputs } from "../../app/main/environment";
+import { WAYLAND_REASON, inspectEnvironment, isWaylandSession, parseOsRelease, sessionGreeting, type EnvInputs } from "../../app/main/environment";
 
 const RHEL84 = 'NAME="Red Hat Enterprise Linux"\nVERSION="8.4 (Ootpa)"\nID="rhel"\nVERSION_ID="8.4"\nPRETTY_NAME="Red Hat Enterprise Linux 8.4 (Ootpa)"\n';
 const base: EnvInputs = {
@@ -60,5 +60,34 @@ describe("session detection without XDG_SESSION_TYPE (Xvfb, xrdp, ssh -X)", () =
     const r = inspectEnvironment({ env: { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, osRelease: null, glibc: "2.28", versions: { node: "22" }, platform: "linux", arch: "x64", shortcutsTaken: ["Control+Alt+X"] });
     expect(r.checks.find(c => c.id === "shortcuts")).toMatchObject({ status: "warn" });
     expect(r.checks.find(c => c.id === "shortcuts")?.detail).toMatch(/Ctrl\+Alt\+X.*handle/);
+  });
+});
+
+describe("a desktop session Ember can't use, at start-up (review #240)", () => {
+  it("is Wayland by the same rule the setup check uses", () => {
+    expect(isWaylandSession({ XDG_SESSION_TYPE: "wayland" })).toBe(true);
+    expect(isWaylandSession({ WAYLAND_DISPLAY: "wayland-0" })).toBe(true);
+    expect(isWaylandSession({ WAYLAND_DISPLAY: "wayland-0", XDG_SESSION_TYPE: "x11" })).toBe(false);
+    expect(isWaylandSession({ XDG_SESSION_TYPE: "x11", DISPLAY: ":0" })).toBe(false);
+    expect(isWaylandSession({ DISPLAY: ":99" })).toBe(false);
+    expect(WAYLAND_REASON).toMatch(/^this is a Wayland session, so Ember can't take screenshots or use the mouse and keyboard here: .*GNOME on Xorg/);
+  });
+
+  it("is what Ember's greeting says instead of “I'll stay by your cursor”", () => {
+    const wayland = inspectEnvironment({ ...base, env: { ...base.env, XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" } });
+    expect(sessionGreeting(wayland)).toBe("This is a Wayland session, so I can't see your screen or use your mouse here. Log out, click the gear on the login screen, choose “GNOME on Xorg”, and log in again.");
+    // In Ember's own voice throughout, never with the setup check's third-person detail appended.
+    const display = "I can't reach your desktop's display: start me from inside your desktop session.";
+    expect(sessionGreeting(inspectEnvironment({ ...base, env: {} }))).toBe(display);
+    expect(sessionGreeting(inspectEnvironment({ ...base, env: { DISPLAY: ":7" }, x11: false }))).toBe(display);
+    expect(sessionGreeting(inspectEnvironment(base))).toBeNull();
+    // Another check failing (old glibc) isn't the session's: the greeting stays as it was.
+    expect(sessionGreeting(inspectEnvironment({ ...base, glibc: "2.17" }))).toBeNull();
+  });
+
+  it("speaks of a Windows service session too", () => {
+    const r = inspectEnvironment({ env: {}, osRelease: null, glibc: null, versions: { node: "22" }, platform: "win32", arch: "x64",
+      windows: { build: 22631, elevated: false, session: "service", powershell: "full", dpiMixed: false } });
+    expect(sessionGreeting(r)).toBe("I can't work in this session: start me from your desktop, not as a service.");
   });
 });

@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { powershellPath } from "../../../../sidecar-host/providers/uia";
+import { WINDOWS_MIC_FIX } from "../../../environment";
 import type { AppLike, PlatformDoctorProbes, PlatformDoctorRow, SystemPreferencesLike } from "../../types";
 import type { Win32SysApi } from "./ffi";
 import { HELPER_FILES, powershellLogging, powershellState, type PowerShellFacts } from "./powershell";
@@ -75,7 +76,7 @@ export async function win32DoctorProbes(d: Win32DoctorDeps): Promise<PlatformDoc
     mic = undefined;
   }
   extra.push(mic === "denied" || mic === "restricted"
-    ? { id: "microphone-privacy", status: "warn", label: "Microphone privacy", detail: "Windows doesn't let Ember use the microphone, so “Hey Ember” can't hear you.", fix: "Settings › Privacy & security › Microphone › Let desktop apps access your microphone" }
+    ? { id: "microphone-privacy", status: "warn", label: "Microphone privacy", detail: "Windows doesn't let Ember use the microphone, so “Hey Ember” can't hear you.", fix: WINDOWS_MIC_FIX }
     : { id: "microphone-privacy", status: "ok", label: "Microphone privacy", detail: mic === "granted" ? "Desktop apps may use the microphone" : "Windows asks the first time Ember listens" });
 
   let elevated: boolean | null;

@@ -19,7 +19,7 @@ import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
-import { inspectEnvironment, type EnvReport } from "./environment";
+import { inspectEnvironment, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
@@ -180,6 +180,9 @@ const ghOptions = () => ({ path: sys.ghCliPath() ?? undefined, spawn: sys.spawnD
 const ghInstalled = () => !!(sys.ghCliPath() ?? sys.which("gh"));
 /** How this build signs in: Ember's own GitHub App when it has a client id (github-app.ts), else the GitHub CLI. */
 const signInWith = (): SignInWith => githubClientId() ? "github" : "github-cli";
+
+/** How long Ember's windows get to come up before a saved sign-in is read on macOS (the keychain may ask; ms). */
+const KEYCHAIN_PAUSE_MS = 800;
 
 // Packaged builds ship the sidecar under resources/; development runs it from the repo.
 const sidecarScript = () => app.isPackaged
@@ -470,16 +473,19 @@ function start(): void {
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
     const lockedDown = modelServiceRefusal(admin);
-    const thought = lockedDown ?? (waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
+    // A session Ember can't use (Wayland, no X display) is said before anything but a lockdown (no session helps until
+    // the policy is fixed, and the setup check still names it): nothing else at start-up says why nothing works.
+    const session = sessionGreeting(readEnvironment());
+    const thought = lockedDown ?? session ?? (waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
       ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
       : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`);
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
-      actions: connected || settingsOpen || waiting ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: session ? "attention" as const : connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
+      actions: settingsOpen || (!session && (connected || waiting)) ? [] : [{ id: "ui:settings", label: "Open settings" }] };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
-    greetTimer = hideIfStill(bubble, connected ? 7000 : 15000);
+    greetTimer = hideIfStill(bubble, connected && !session ? 7000 : 15000);
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
@@ -870,11 +876,11 @@ function start(): void {
   let sidecarRef: AtspiSidecar | null = null;
   /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
   let showBorrowing: (() => void) | null = null;
-  /** One status line, several writers: the borrow comes first, then listening, then the microphone. */
-  const statusBy: { borrow: string | null; listen: string | null; mic: string | null } = { borrow: null, listen: null, mic: null };
+  /** One status line, several writers: the borrow comes first, then listening, then the microphone, then the keychain. */
+  const statusBy: { borrow: string | null; listen: string | null; mic: string | null; keychain?: string | null } = { borrow: null, listen: null, mic: null };
   const setStatus = (owner: keyof typeof statusBy, text: string | null) => {
     statusBy[owner] = text;
-    setState({ status: statusBy.borrow ?? statusBy.listen ?? statusBy.mic });
+    setState({ status: statusBy.borrow ?? statusBy.listen ?? statusBy.mic ?? statusBy.keychain ?? null });
   };
   /** What Ember showed before a wake, put back if the wake turns out to be another word. */
   let beforeWake: Pick<EmberState, "emotion" | "bubble"> | null = null;
@@ -1371,7 +1377,8 @@ function start(): void {
     }
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
-    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage);
+    // On macOS the saved sign-in is opened asynchronously: the keychain prompt after an update holds no main thread.
+    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncDecrypt: platform.os === "darwin" });
     // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
     let adminKey: string | undefined;
     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
@@ -1608,6 +1615,8 @@ function start(): void {
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       describeScreen: () => seeing.describe(), hands,
+      // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
+      signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
       onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
@@ -1656,9 +1665,18 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
+      // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
+      // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
+      // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
+      // without the keychain words. The status lasts through both reads (renewing a sign-in that ran out reads it first).
+      const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
+      if (keychain) {
+        setStatus("keychain", "Reading your saved sign-in from the keychain…");
+        await new Promise(r => setTimeout(r, KEYCHAIN_PAUSE_MS));
+      }
       if (!provider) await keeper.freshen();
-      const found = provider ? null : await resolveToken(tokens, process.env, ghOptions());
-      log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
+      const found = provider ? null : await resolveToken(tokens, process.env, ghOptions()).finally(() => { if (keychain) setStatus("keychain", null); });
+      log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none", ...(tokens?.unreadable ? { saved: "unreadable" } : {}) });
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
       // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
       // the next source.
@@ -1737,8 +1755,9 @@ function start(): void {
     });
     app.on("will-quit", unwatchPolicy);
 
-    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
-    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();
+    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets,
+    // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
+    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin || sessionGreeting(env)) showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings

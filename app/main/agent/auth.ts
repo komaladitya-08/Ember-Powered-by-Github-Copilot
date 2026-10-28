@@ -11,6 +11,7 @@
 
 import { execFile } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 export type TokenSource = "stored" | "environment" | "github-cli";
 /** A sign-in found, where from, and for the environment the variable that holds it (a refusal names it). */
@@ -20,6 +21,8 @@ export interface SecretBox {
   isEncryptionAvailable(): boolean;
   encryptString(s: string): Buffer;
   decryptString(b: Buffer): string;
+  /** Electron's asynchronous read: the keyring's key is fetched off the main process's thread (macOS's keychain prompt). */
+  decryptStringAsync?(b: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
   /** "basic_text" means no keyring: nothing secret should be written to disk. */
   getSelectedStorageBackend?(): string;
 }
@@ -29,24 +32,86 @@ export function isUsableToken(t: string | undefined | null): t is string {
 }
 
 export class TokenStore {
-  constructor(private file: string, private box: SecretBox) {}
+  /**
+   * The last read (load, loadGrant) found a saved sign-in the keyring wouldn't open (decryptString threw: macOS's
+   * keychain prompt answered Deny or Cancel, which an ad-hoc-signed Ember meets after every update). The file is kept,
+   * to try again.
+   */
+  unreadable = false;
+
+  /**
+   * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
+   * `asyncDecrypt` (macOS): every read (load, loadGrant) opens it with decryptStringAsync, so the keychain prompt holds
+   * no main thread.
+   */
+  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncDecrypt?: boolean } = {}) {}
 
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
     return this.box.isEncryptionAvailable() && this.box.getSelectedStorageBackend?.() !== "basic_text";
   }
 
-  load(): string | null {
-    return this.loadGrant()?.token ?? null;
+  /** Is a sign-in saved (whether or not the keyring will open it)? Reads no secret. */
+  hasSaved(): boolean {
+    return fs.existsSync(this.file);
+  }
+
+  /** The version of Ember that last opened or saved the sign-in, beside it. */
+  private get readStamp(): string {
+    return path.join(path.dirname(this.file), "token-read-version");
+  }
+
+  /**
+   * Is a sign-in saved that this version of Ember hasn't opened yet? macOS's keychain asks only after an
+   * ad-hoc-signed Ember's identity changed, which is an update: then reading it may ask first. Reads no secret.
+   */
+  firstReadSinceUpdate(): boolean {
+    if (!this.hasSaved()) return false;
+    try {
+      return fs.readFileSync(this.readStamp, "utf8") !== this.opts.version;
+    } catch {
+      return true; // no stamp yet (saved by an earlier Ember)
+    }
+  }
+
+  /** The keyring let this version in: noted, so its next start reads without the keychain words. */
+  private stamp(): void {
+    if (!this.opts.version) return;
+    try {
+      if (!this.firstReadSinceUpdate()) return;
+      fs.writeFileSync(this.readStamp, this.opts.version, { mode: 0o600 });
+    } catch { /* only the keychain words come once more */ }
+  }
+
+  async load(): Promise<string | null> {
+    return (await this.loadGrant())?.token ?? null;
   }
 
   /**
    * The stored sign-in with what renews it (an expiring token from Ember's GitHub App), or a token alone (a file an
-   * earlier Ember wrote, or an app whose tokens don't expire); null when there is none usable.
+   * earlier Ember wrote, or an app whose tokens don't expire); null when there is none usable. Every read goes through
+   * here, so on macOS none holds the main process while the keychain asks (asyncDecrypt).
    */
-  loadGrant(): Grant | null {
+  async loadGrant(): Promise<Grant | null> {
+    let raw: Buffer;
     try {
-      const t = this.box.decryptString(fs.readFileSync(this.file));
+      raw = fs.readFileSync(this.file);
+    } catch {
+      this.unreadable = false;
+      return null; // none saved
+    }
+    let t: string;
+    try {
+      // Sealed by encryptString, opened by decryptStringAsync on macOS: the same keychain key, so shouldReEncrypt is
+      // false and the file is left as it is (darwin-system checks both on a real Mac).
+      t = this.opts.asyncDecrypt && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
+    } catch {
+      this.unreadable = true;
+      return null;
+    }
+    this.unreadable = false;
+    this.stamp();
+    try {
       if (!t.startsWith("{")) return isUsableToken(t) ? { token: t } : null;
       return parseGrant(JSON.parse(t));
     } catch {
@@ -81,6 +146,8 @@ export class TokenStore {
     try {
       fs.writeFileSync(tmp, sealed, { mode: 0o600 });
       fs.renameSync(tmp, this.file);
+      this.unreadable = false;
+      this.stamp();
       return "kept";
     } catch {
       try { fs.rmSync(tmp, { force: true }); } catch { /* nothing was written */ }
@@ -89,6 +156,7 @@ export class TokenStore {
   }
 
   clear(): void {
+    this.unreadable = false;
     try { fs.rmSync(this.file); } catch { /* already gone */ }
   }
 }
@@ -126,7 +194,7 @@ export async function resolveToken(
   gh: (() => Promise<string | null>) | GhCliOptions = {},
   skip: ReadonlySet<string> = new Set(),
 ): Promise<ResolvedToken | null> {
-  const stored = store?.load();
+  const stored = await store?.load();
   if (stored && !skip.has(stored)) return { token: stored, source: "stored" };
   for (const name of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
     const t = env[name]?.trim();
@@ -330,6 +398,8 @@ export class GrantKeeper {
   private grant: Grant | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastFreshen = -Infinity;
+  /** Counts use() and stop() calls: a stored grant read for an earlier use() is dropped when another came meanwhile. */
+  private turn = 0;
 
   constructor(private d: GrantKeeperDeps) {}
 
@@ -340,11 +410,19 @@ export class GrantKeeper {
    * in memory only, without a keyring; else the stored one), and none when the token is another sign-in's.
    */
   use(token: string | null, grant?: Grant | null): void {
-    const g = grant ?? (this.grant?.token === token ? this.grant : token ? this.d.store()?.loadGrant() ?? null : null);
-    this.track(token && g?.token === token ? g : null);
+    const g = grant ?? (this.grant?.token === token ? this.grant : null);
+    const store = token && !g ? this.d.store() : null;
+    if (!store) { this.track(token && g?.token === token ? g : null); return; }
+    this.stop();
+    // The stored one is read as every read of it is (on macOS without holding the main process while the keychain asks).
+    const turn = this.turn;
+    void store.loadGrant().then(s => {
+      if (turn === this.turn && this.d.inUse() === token) this.track(s?.token === token ? s : null);
+    }, () => undefined);
   }
 
   stop(): void {
+    this.turn++;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.grant = null;
@@ -355,7 +433,7 @@ export class GrantKeeper {
    * renewed first. At most once a minute (the GitHub CLI wait looks every 3 s). Never throws.
    */
   async freshen(): Promise<void> {
-    const g = this.d.store()?.loadGrant();
+    const g = await this.d.store()?.loadGrant();
     if (!g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
     if (this.now() - this.lastFreshen < RENEW_RETRY_MS) return;
     this.lastFreshen = this.now();

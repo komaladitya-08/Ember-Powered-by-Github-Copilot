@@ -85,6 +85,8 @@ export function darwinSystem(deps: PlatformDeps, seams: DarwinSystemSeams = {}):
     },
     apps: darwinApps({
       env: deps.env, run, home, now,
+      // Apple's apps are found, and their windows known, by the names this Mac shows them under (review #239).
+      languages: () => app.getPreferredSystemLanguages?.() ?? [],
       // `open -a` answers after launch() has returned: its failure is only logged (the worker sees no window appear).
       onLaunchError: err => seams.log?.()?.warn("platform.app_launch_failed", err),
     }),

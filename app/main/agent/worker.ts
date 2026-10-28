@@ -3103,8 +3103,11 @@ export class Worker {
     }
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
     if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "a system dialog is open" });
-      return denied("A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+      // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
+      const why = await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? "a system dialog is open" });
+      return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
+        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
     const check = () => {
       if (this.isOver) throw new BorrowStopped();

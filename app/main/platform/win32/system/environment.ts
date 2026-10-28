@@ -7,8 +7,8 @@
 
 import os from "node:os";
 import { SHORTCUTS, type ShortcutTable } from "../../../../shared/shortcuts";
-import type { EnvInputs } from "../../../environment";
-import type { EnvContext, FixId, ShellLike } from "../../types";
+import type { EnvInputs, MediaAccess } from "../../../environment";
+import type { EnvContext, FixId, ShellLike, SystemPreferencesLike } from "../../types";
 import type { Win32SysApi } from "./ffi";
 import { envValue } from "./interim";
 import { powershellState, unblockHelper, type PowerShellFacts, type PowerShellState } from "./powershell";
@@ -23,6 +23,8 @@ export interface Win32EnvFacts {
   powershell: PowerShellState;
   /** The helper's threads and its process see different DPI awareness (mixed-DPI risk, R22). */
   dpiMixed: boolean;
+  /** "Let desktop apps access your microphone" (absent when Electron's systemPreferences isn't given). */
+  microphone?: MediaAccess;
 }
 
 /** The Windows build from "10.0.22631" (process.getSystemVersion, or os.release()); 0 when it can't be read. */
@@ -49,6 +51,8 @@ export interface Win32EnvDeps {
   api: () => Win32SysApi | null;
   powershell: { get(fresh?: boolean): PowerShellFacts; forget(): void };
   shell: Pick<ShellLike, "openExternal">;
+  /** Electron's systemPreferences: the microphone's privacy switch for the setup check (a cheap call, read each time). */
+  systemPreferences?: Pick<SystemPreferencesLike, "getMediaAccessStatus">;
   /** process.getSystemVersion (Electron), else os.release(). */
   systemVersion?: () => string;
   versions?: { electron?: string; chrome?: string; node: string };
@@ -72,6 +76,14 @@ export function win32Environment(d: Win32EnvDeps): {
       if (elevated === undefined || elevated === null) elevated = api ? api.elevated() : null;
       if (session === undefined) session = sessionKind(d.env, api ? api.sessionId(d.pid ?? process.pid) : null);
       const helper = ctx.helper;
+      let microphone: MediaAccess | undefined;
+      if (d.systemPreferences?.getMediaAccessStatus) {
+        try {
+          microphone = d.systemPreferences.getMediaAccessStatus("microphone");
+        } catch {
+          microphone = "unknown"; // can't tell: no row
+        }
+      }
       const inputs: EnvInputs & { shortcuts: ShortcutTable; windows: Win32EnvFacts } = {
         env: d.env,
         osRelease: null,
@@ -87,6 +99,7 @@ export function win32Environment(d: Win32EnvDeps): {
           session,
           powershell: powershellState(d.powershell.get(), helper),
           dpiMixed: !!helper?.dpi && !!helper.processDpi && helper.dpi !== helper.processDpi,
+          ...(microphone ? { microphone } : {}),
         },
       };
       return inputs;

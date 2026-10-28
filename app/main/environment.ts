@@ -8,6 +8,7 @@
 
 import type { FixId } from "./platform/types";
 import { SHORTCUTS, type ShortcutTable } from "../shared/shortcuts";
+import { ISSUES_URL } from "../shared/support";
 
 export type { FixId };
 
@@ -32,6 +33,11 @@ export interface WindowsEnvInputs {
   dpiMixed: boolean;
   /** Why the helper couldn't read apps (its own words), for "missing". */
   helperDetail?: string;
+  /**
+   * "Let desktop apps access your microphone" as Electron's getMediaAccessStatus("microphone") reads it ("denied" when
+   * it is off). Omitted when it can't be asked (no row).
+   */
+  microphone?: MediaAccess;
 }
 
 /** What the macOS platform finds out about this machine and Ember's permissions. */
@@ -48,6 +54,11 @@ export interface MacEnvInputs {
   inApplications: boolean;
   /** Ember runs as root. */
   root: boolean;
+  /**
+   * Secure keyboard entry (a password field, Terminal's “Secure Keyboard Entry”) and the app holding it ("" when
+   * unnamed); `on` null when it can't be told. Omitted without a window system to ask (no row).
+   */
+  secureInput?: { on: boolean | null; app: string };
 }
 
 export interface EnvInputs {
@@ -123,6 +134,37 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
 }
 
+/**
+ * A Wayland session (GNOME's default login on RHEL 8): Ember's launcher forces X11, so it runs through XWayland, which
+ * shows it only X11 apps' windows, pixels, pointer and keys. WAYLAND_DISPLAY counts unless the session says x11.
+ */
+export function isWaylandSession(env: Record<string, string | undefined>): boolean {
+  const type = env.XDG_SESSION_TYPE ?? "unknown";
+  return type === "wayland" || (!!env.WAYLAND_DISPLAY && type !== "x11");
+}
+
+/**
+ * Why Ember takes no screenshots and doesn't borrow the mouse in a Wayland session (the window system's
+ * systemDialogReason there, so the model and the user read it in each refusal), as a clause.
+ */
+export const WAYLAND_REASON = "this is a Wayland session, so Ember can't take screenshots or use the mouse and keyboard here: log out and choose “GNOME on Xorg” on the login screen";
+
+/**
+ * What Ember's greeting says when the desktop session check fails (a Wayland session, no X display, a Windows service
+ * session), in place of "I'll stay by your cursor": nothing else at start-up says why nothing works. In Ember's own
+ * voice, one line for each case (the setup check's row has the details). null otherwise.
+ */
+export function sessionGreeting(report: EnvReport): string | null {
+  const c = report.checks.find(x => x.id === "session");
+  if (!c || c.status !== "fail") return null;
+  if (/wayland/i.test(c.detail)) {
+    return "This is a Wayland session, so I can't see your screen or use your mouse here. Log out, click the gear on the login screen, choose “GNOME on Xorg”, and log in again.";
+  }
+  if (report.sessionType === "service") return "I can't work in this session: start me from your desktop, not as a service.";
+  // Linux without an X display, or with one Ember can't connect to.
+  return "I can't reach your desktop's display: start me from inside your desktop session.";
+}
+
 export function inspectEnvironment(i: EnvInputs): EnvReport {
   if (i.platform === "win32") return inspectWindows(i);
   if (i.platform === "darwin") return inspectMac(i);
@@ -144,7 +186,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     detail: os.PRETTY_NAME ?? "unknown",
   });
 
-  if (sessionType === "wayland" || (!!i.env.WAYLAND_DISPLAY && sessionType !== "x11")) {
+  if (isWaylandSession(i.env)) {
     checks.push({
       id: "session", label: "Desktop session", status: "fail",
       detail: "Wayland session. Ember needs “GNOME on Xorg”: log out, click the gear on the login screen, choose it, and log in again.",
@@ -198,6 +240,22 @@ function windowsName(build: number): string {
   return build >= 22000 ? `Windows 11 (build ${build})` : build >= 10240 ? `Windows 10 (build ${build})` : `Windows (build ${build})`;
 }
 
+/**
+ * The way out of mixed display scaling (the helper and Ember disagree on DPI awareness): with every monitor at the same
+ * scale the two agree on every coordinate. The note itself stays after that (it compares the helper's thread with its
+ * process, which no scale changes), so the words ask for a report only if clicks still miss. The same words in the
+ * setup check and the doctor.
+ */
+export const MIXED_SCALING_FIX = `Set every monitor to the same scale in Settings › System › Display, then restart Ember. If it still clicks in the wrong place, report it at ${ISSUES_URL}.`;
+
+/**
+ * How to turn the microphone's privacy switch on, with its whole path on both supported Windows (Windows 10 22H2 calls
+ * the page "Privacy" and the switch "Allow desktop apps to access your microphone"). The same words in the setup check
+ * and the doctor.
+ */
+export const WINDOWS_MIC_FIX = "Turn on desktop apps' access to the microphone: Settings › Privacy & security › Microphone › Let desktop apps access your microphone "
+  + "(on Windows 10: Settings › Privacy › Microphone › Allow desktop apps to access your microphone).";
+
 /** Windows 10 22H2 is the oldest Windows Ember is tested on; 1809 (17763) the oldest it may work on. */
 const WINDOWS_TESTED = 19045, WINDOWS_OLDEST = 17763;
 
@@ -237,9 +295,15 @@ function inspectWindows(i: EnvInputs): EnvReport {
       case "unknown": break;
     }
 
+    // Not asked yet is fine (Windows asks, or it is on); off, “Hey Ember” hears nothing, and the voice line points here.
+    if (w.microphone === "denied" || w.microphone === "restricted") {
+      checks.push({ id: "microphone", label: "Microphone", status: "warn", fix: "open-microphone-settings",
+        detail: `Windows doesn't let desktop apps use the microphone, so “Hey Ember” can't hear you. ${WINDOWS_MIC_FIX}` });
+    }
+
     if (w.dpiMixed) {
       checks.push({ id: "display-scaling", label: "Display scaling", status: "warn",
-        detail: "Windows reports mixed display scaling to Ember's accessibility helper, so it may click in the wrong place on some monitors. Tell the Ember team." });
+        detail: `Windows reports mixed display scaling to Ember's accessibility helper, so it may click in the wrong place on some monitors. ${MIXED_SCALING_FIX}` });
     }
     if (w.elevated) {
       checks.push({ id: "elevated", label: "Administrator", status: "warn", detail: "Ember is running as administrator: start it normally so it can't act with administrator rights by mistake." });
@@ -285,6 +349,17 @@ function inspectMac(i: EnvInputs): EnvReport {
     // Not asked yet is fine: macOS asks when the user turns on “Hey Ember”.
     if (m.microphone === "denied" || m.microphone === "restricted") {
       checks.push({ id: "microphone", label: "Microphone", status: "warn", detail: `Microphone access is off for Ember, so “Hey Ember” can't hear you. ${MAC_REGRANT}`, fix: "open-microphone-settings" });
+    }
+
+    // While it is on Ember neither looks nor acts (the window system's system-dialog check), so the reason is shown here
+    // too, with the app that holds it: a stuck Secure Keyboard Entry otherwise turns Ember off without a word.
+    const secure = m.secureInput;
+    if (secure?.on === true) {
+      const where = secure.app ? ` in ${secure.app}` : "";
+      checks.push({ id: "secure-input", label: "Secure input", status: "warn",
+        detail: `Secure keyboard entry is on${where}, so Ember won't look at the screen or use the mouse or keyboard until it's off. Close the password field${where}, or turn off Secure Keyboard Entry there (Terminal: Terminal menu › Secure Keyboard Entry).` });
+    } else if (secure && secure.on === null) {
+      checks.push({ id: "secure-input", label: "Secure input", status: "warn", detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
     }
 
     checks.push(m.inApplications

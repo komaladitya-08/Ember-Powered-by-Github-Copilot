@@ -28,13 +28,13 @@ describe("saving the sign-in", () => {
     expect(new TokenStore(path.join(dir, "t.bin"), box).saveResult(TOKEN)).toBe("kept");
   });
 
-  it("writes the whole file or nothing (a crash mid-write leaves no truncated token), owner-only", () => {
+  it("writes the whole file or nothing (a crash mid-write leaves no truncated token), owner-only", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-tok-"));
     const file = path.join(dir, "github-token.bin");
     fs.writeFileSync(file, "sealed:gho_old");
     const store = new TokenStore(file, box);
     expect(store.save(TOKEN)).toBe(true);
-    expect(store.load()).toBe(TOKEN);
+    expect(await store.load()).toBe(TOKEN);
     expect(fs.readdirSync(dir)).toEqual(["github-token.bin"]);
     if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
   });

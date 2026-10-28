@@ -35,6 +35,11 @@ export interface PlatformWords {
   readonly micIndicator: string;
   /** home/index.html:31 consent copy, after "through the desktop's accessibility service": what the OS will ask for ("" when nothing). */
   readonly permissionsNote: string;
+  /**
+   * The signed-out status when the OS keyring refused Ember's saved sign-in (review #241). macOS only: its login
+   * keychain asks again after every update of an ad-hoc-signed Ember; elsewhere the status stays as it was.
+   */
+  readonly savedSignInRefused?: string;
 }
 
 /** The words for each OS. The Linux row is today's text, verbatim. */
@@ -71,5 +76,6 @@ export const PLATFORM_WORDS: Readonly<Record<OS, PlatformWords>> = {
     micIndicator: "macOS shows an orange dot in the menu bar while Ember listens.",
     // Input Monitoring too: keyboard borrowing needs it until CI shows key-state polling doesn't (design Q10).
     permissionsNote: "macOS will ask you to allow Accessibility, Screen Recording and Input Monitoring for Ember.",
+    savedSignInRefused: "macOS didn't let Ember read its saved sign-in from your login keychain, so it isn't connected. Sign in again below; if macOS asks for your login password, choose Always Allow.",
   },
 };

@@ -11,7 +11,7 @@
 import type { OwnWindowHandle, Rect, ScreenLike, StackedWindow, WindowSystem, X11Image, X11Window } from "../types";
 import type { Logger } from "../../logger";
 import { captureRect, type DarwinCapture } from "./capture";
-import { openDesktop, desktopError, secureInputOf, type DarwinDesktop, type DarwinSecureInput } from "./desktop";
+import { openDesktop, desktopError, secureInputCause, secureInputOf, type DarwinDesktop, type DarwinSecureInput } from "./desktop";
 import { resolveActive, resolveFocus, type Resolved } from "./focus";
 import { FLAG, MOUSE_BUTTON } from "./cg";
 import { VK } from "./keys";
@@ -53,6 +53,11 @@ export interface DarwinWindowSystem extends WindowSystem {
    * on (a password is being typed somewhere) or can't be checked: no screenshot. True when it can't be checked.
    */
   systemDialogOpen(): boolean;
+  /**
+   * Secure keyboard entry, naming the app that holds it, when that is why systemDialogOpen() is true and no
+   * credential or consent prompt is on screen; null otherwise (a prompt, nothing, or can't tell: the dialog's words).
+   */
+  systemDialogReason(): string | null;
   /** Is Ember trusted for Accessibility (focus, titles, activation and input need it)? */
   accessibilityTrusted(): boolean;
   /** Does Ember have the Screen Recording permission (capture and other apps' window titles need it)? */
@@ -222,6 +227,17 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
         return desktop.windows().some(e => SECURITY_OWNERS.has(e.owner) && e.alpha > 0);
       } catch {
         return true; // can't check: assume one is up
+      }
+    },
+
+    systemDialogReason() {
+      if (!open) return null;
+      try {
+        if (desktop.windows().some(e => SECURITY_OWNERS.has(e.owner) && e.alpha > 0)) return null; // a prompt: its own words
+        const state = secure();
+        return state.on === true ? `${secureInputCause(state.app)}, so Ember won't look at the screen or use the mouse or keyboard until it's off` : null;
+      } catch {
+        return null; // can't tell: the dialog's words (systemDialogOpen still refuses)
       }
     },
 

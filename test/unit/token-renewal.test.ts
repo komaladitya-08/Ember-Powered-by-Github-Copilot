@@ -56,30 +56,30 @@ describe("the device flow's sign-in", () => {
 });
 
 describe("the stored sign-in", () => {
-  it("keeps the whole grant, encrypted", () => {
+  it("keeps the whole grant, encrypted", async () => {
     const store = tmpStore();
     const grant: Grant = { token: OLD, refreshToken: REFRESH, expiresAt: 5 * HOUR, refreshExpiresAt: 4000 * HOUR, clientId: CLIENT };
     expect(store.saveResult(grant)).toBe("kept");
-    expect(store.loadGrant()).toEqual(grant);
-    expect(store.load()).toBe(OLD);
+    expect(await store.loadGrant()).toEqual(grant);
+    expect(await store.load()).toBe(OLD);
   });
 
-  it("still reads a token an earlier Ember saved, and writes a token that doesn't expire as it always did", () => {
+  it("still reads a token an earlier Ember saved, and writes a token that doesn't expire as it always did", async () => {
     const store = tmpStore();
     expect(store.save(OLD)).toBe(true);
-    expect(store.loadGrant()).toEqual({ token: OLD });
+    expect(await store.loadGrant()).toEqual({ token: OLD });
     expect(store.saveResult({ token: NEW })).toBe("kept");
     expect(box.decryptString(fs.readFileSync((store as unknown as { file: string }).file))).toBe(NEW);
   });
 
-  it("is none when the file is damaged or holds something that isn't a token", () => {
+  it("is none when the file is damaged or holds something that isn't a token", async () => {
     const store = tmpStore();
     const file = (store as unknown as { file: string }).file;
     fs.writeFileSync(file, "sealed:{not json");
-    expect(store.loadGrant()).toBeNull();
+    expect(await store.loadGrant()).toBeNull();
     fs.writeFileSync(file, `sealed:${JSON.stringify({ token: "ghp_classic", refreshToken: REFRESH })}`);
-    expect(store.loadGrant()).toBeNull();
-    expect(store.load()).toBeNull();
+    expect(await store.loadGrant()).toBeNull();
+    expect(await store.load()).toBeNull();
   });
 });
 
@@ -131,7 +131,7 @@ describe("keeping Ember's own sign-in alive", () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(calls).toHaveLength(1);
     expect(reconnected).toEqual([NEW]);
-    expect(store.loadGrant()).toMatchObject({ token: NEW, refreshToken: REFRESH2, expiresAt: T0 + 7 * HOUR + 8 * HOUR });
+    expect(await store.loadGrant()).toMatchObject({ token: NEW, refreshToken: REFRESH2, expiresAt: T0 + 7 * HOUR + 8 * HOUR });
     keeper.stop();
   });
 
@@ -211,14 +211,14 @@ describe("keeping Ember's own sign-in alive", () => {
     vi.setSystemTime(T0 + 9 * HOUR);
     await keeper.freshen();
     expect(calls).toHaveLength(1);
-    expect(store.loadGrant()).toEqual(grant);
+    expect(await store.loadGrant()).toEqual(grant);
     // The GitHub CLI wait looks every 3 s: GitHub isn't asked each time.
     await keeper.freshen();
     expect(calls).toHaveLength(1);
     vi.setSystemTime(T0 + 9 * HOUR + 61_000);
     await keeper.freshen();
     expect(calls).toHaveLength(2);
-    expect(store.load()).toBe(NEW);
+    expect(await store.load()).toBe(NEW);
     // Fresh now: nothing more to do.
     vi.setSystemTime(T0 + 9 * HOUR + 3 * 60_000);
     await keeper.freshen();
@@ -229,6 +229,39 @@ describe("keeping Ember's own sign-in alive", () => {
     const { keeper, calls } = setup();
     vi.setSystemTime(T0 + 8 * HOUR - RENEW_BEFORE_MS - 60_000);
     await keeper.freshen();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("reads the stored sign-in as the store does (macOS: asynchronously, so the keychain prompt holds no main process)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    const { fetch, calls } = github(renewed(), renewed(NEW, REFRESH2));
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin");
+    const syncReads = vi.fn((b: Buffer) => box.decryptString(b));
+    const mac: SecretBox = { ...box, decryptString: syncReads, decryptStringAsync: async b => ({ result: box.decryptString(b), shouldReEncrypt: false }) };
+    const store = new TokenStore(file, mac, { asyncDecrypt: true });
+    store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    let inUse: string | null = OLD;
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; } });
+    // A stored sign-in that ran out while Ember was off is renewed before use, read without decryptString.
+    vi.setSystemTime(T0 + 9 * HOUR);
+    await keeper.freshen();
+    expect(calls).toHaveLength(1);
+    // Connected with it: its grant is read the same way and kept alive.
+    inUse = NEW;
+    keeper.use(NEW);
+    await vi.advanceTimersByTimeAsync(8 * HOUR);
+    expect(calls).toHaveLength(2);
+    expect(inUse).toBe(NEW);
+    expect(syncReads).not.toHaveBeenCalled();
+    keeper.stop();
+  });
+
+  it("drops a stored grant read for a sign-in that is no longer the one in use", async () => {
+    const { keeper, calls } = setup();
+    keeper.use(OLD);
+    // Signed out (or another sign-in used) before the stored one was read.
+    keeper.use(null);
+    await vi.advanceTimersByTimeAsync(9 * HOUR);
     expect(calls).toHaveLength(0);
   });
 });
