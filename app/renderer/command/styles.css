@@ -52,7 +52,7 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 .pending-line::before { content: ""; flex: none; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
 
 /* ── Tabs: one per run, newest first; the symbol says how it is going (never colour alone) ── */
-.tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 2px; }
+.tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 4px; }
 .tab {
   all: unset; box-sizing: border-box; cursor: pointer; flex: none; display: inline-flex; align-items: center; gap: 6px;
   max-width: 260px; min-height: 28px; padding: 4px 10px; border-radius: var(--r-sm);
@@ -79,3 +79,27 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 .typing { margin: 0; font: var(--type-footnote); color: var(--label-2); }
 .foot { display: flex; align-items: center; gap: 10px; }
 .status { flex: 1; min-width: 0; margin: 0; font: var(--type-callout); color: var(--label); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the tabs, the command and the cards keep
+   their edges, the selected tab is filled with the highlight (its symbol in the highlight's text colour), and a
+   character you wouldn't see keeps its box (its tint is gone). */
+@media (forced-colors: active) {
+  .tab, .command { border: 1px solid ButtonText; }
+  .tab[aria-selected="true"] { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; --sym-tint: HighlightText; }
+  .card, .term { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .vt { outline: 1px solid CanvasText; }
+  .vt-mixed { outline: none; }
+  /* The terminal's focus, a deleting command's bar, a run's computer badge and the edge above Allow's row are drawn
+     with shadows, which the system drops. */
+  .term:focus-within { outline: 2px solid Highlight; outline-offset: -2px; }
+  .card.ask.risky { border-left: 3px solid CanvasText; }
+  .tab-where { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .card .actions { border-top: 1px solid CanvasText; }
+}
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type.
+   The terminal keeps its own size (xterm's cells, and the command's columns, are measured from it). */
+html[data-text-size] .command { font-size: calc(13px * var(--text-scale)); line-height: calc(19px * var(--text-scale)); }
+html[data-text-size] .command.small { font-size: calc(12px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .tab { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] .tab-where { max-width: calc(90px * var(--text-scale)); }

@@ -279,17 +279,17 @@ export const BUBBLE_CSS = `
 .ember-bubble .eb-title[hidden] { display: none; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
-  margin: 0; max-height: calc(20px * 6); overflow: hidden;
+  margin: 0; max-height: 6lh; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-start;
   color: var(--label, #f5f2ef); white-space: pre-line; overflow-wrap: anywhere;
 }
 .eb-thought:empty { display: none; }
 /* Running commentary (thinking, working, listening) is quieter: the secondary label, three lines. */
 .ember-bubble:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .eb-thought {
-  max-height: calc(20px * 3); color: var(--label-2, rgba(245, 240, 236, 0.66));
+  max-height: 3lh; color: var(--label-2, rgba(245, 240, 236, 0.66));
 }
 /* While text streams in, the newest lines show and the start slides away under a fade. */
-.ember-bubble[data-streaming="true"] .eb-thought { max-height: calc(20px * 3); justify-content: flex-end; }
+.ember-bubble[data-streaming="true"] .eb-thought { max-height: 3lh; justify-content: flex-end; }
 .ember-bubble[data-streaming="true"] .eb-thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
@@ -302,7 +302,7 @@ export const BUBBLE_CSS = `
 /* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence; so does a
    problem, whose last sentence is usually what to do about it. */
 .ember-bubble:is([data-mood="attention"], [data-mood="error"]):not([data-streaming="true"]) .eb-thought {
-  max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  max-height: 10lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
 /* A question gets room for its answers on one row ("Allow", "Always in …", "Not now"). */
@@ -311,7 +311,7 @@ export const BUBBLE_CSS = `
 /* "Read all": the whole answer, scrolling inside the bubble when it is longer still. As specific as the overflow
    fade above (which it must undo: a fade over the scroll box would hide the last line however far it scrolled). */
 .ember-bubble[data-expanded="true"]:not([data-streaming="true"]) .eb-thought {
-  max-height: calc(20px * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  max-height: 16lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
 /* Its scrollers' bars as on a Mac (a slim thumb, no track or arrows), with or without the page's tokens. */
@@ -347,8 +347,8 @@ export const BUBBLE_CSS = `
   .eb-actions button.eb-primary:hover { background: var(--accent, #ff9230); filter: brightness(1.08); }
 }
 .eb-actions button:active { transform: scale(0.97); }
-.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
-.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
+.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
+.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
 /* Read out by screen readers, never seen. */
 .eb-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes eb-pulse { 50% { opacity: 0.45; } }
@@ -365,6 +365,22 @@ html.calm .ember-bubble { transition: none; translate: none; }
 @media (prefers-contrast: more) {
   .ember-bubble { border-color: rgba(255, 255, 255, 0.5); background: var(--glass-fill, linear-gradient(#141112, #141112)) border-box; }
 }
+/* Windows contrast themes (forced colours): the system's colours, which drop every box-shadow. The buttons get real
+   edges and a real focus outline, the prominent one the highlight's fill, and the dot and caret the text colour (the
+   state's word is beside the dot). Written out here too, as the bubble also runs without ember.css. */
+@media (forced-colors: active) {
+  .ember-bubble, .ember-bubble[data-mood] { --eb-mood: CanvasText; }
+  .eb-actions button { border: 1px solid ButtonText; }
+  .eb-actions button.eb-primary, .eb-actions button.eb-primary:hover { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; }
+  .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+}
+/* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
+   grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
+html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
+html[data-text-size] .eb-chip { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
+html[data-text-size] .ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 `;
 
 /**

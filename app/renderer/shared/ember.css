@@ -19,15 +19,17 @@
   --ember-mono: ui-monospace, "SF Mono", "DejaVu Sans Mono", monospace;
 
   /* Type: Apple's text styles at a Linux desktop's size (body 14 rather than 13), on a 4 px line grid. Hierarchy
-     comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). */
-  --type-large-title: 700 28px/34px var(--ember-font);
-  --type-title-2: 600 17px/22px var(--ember-font);
-  --type-title-3: 700 22px/28px var(--ember-font);
-  --type-headline: 600 14px/20px var(--ember-font);
-  --type-body: 400 14px/20px var(--ember-font);
-  --type-callout: 400 13px/18px var(--ember-font);
-  --type-footnote: 400 12px/16px var(--ember-font);
-  --type-caption: 500 11px/14px var(--ember-font);
+     comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). All of
+     it grows with the text size (Settings > Comfort & access): main sets html[data-text-size] (page-prefs.ts). */
+  --text-scale: 1;
+  --type-large-title: 700 calc(28px * var(--text-scale))/calc(34px * var(--text-scale)) var(--ember-font);
+  --type-title-2: 600 calc(17px * var(--text-scale))/calc(22px * var(--text-scale)) var(--ember-font);
+  --type-title-3: 700 calc(22px * var(--text-scale))/calc(28px * var(--text-scale)) var(--ember-font);
+  --type-headline: 600 calc(14px * var(--text-scale))/calc(20px * var(--text-scale)) var(--ember-font);
+  --type-body: 400 calc(14px * var(--text-scale))/calc(20px * var(--text-scale)) var(--ember-font);
+  --type-callout: 400 calc(13px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font);
+  --type-footnote: 400 calc(12px * var(--text-scale))/calc(16px * var(--text-scale)) var(--ember-font);
+  --type-caption: 500 calc(11px * var(--text-scale))/calc(14px * var(--text-scale)) var(--ember-font);
 
   /* Labels: Apple's label / secondary / tertiary on a warm off-white. */
   --label: #f5f2ef;
@@ -93,7 +95,8 @@
 
   /* Symbols, one family (as SF Symbols' filled circles): masks, drawn in whatever colour the element is.
      working: a ring with its arc lit (static: nothing spins); waiting: Ember asks you; then done, failed,
-     stopped, more; and the disclosure and pop-up chevrons. */
+     stopped, more; the disclosure and pop-up chevrons; and the microphone, listening and struck out (the handle's
+     badge). */
   --sym-working: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='black' stroke-opacity='0.32' stroke-width='3'/%3E%3Cpath d='M12 3.5a8.5 8.5 0 0 1 8.5 8.5' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
   --sym-waiting: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Cpath d='M9.3 9.2a2.8 2.8 0 1 1 3.9 2.6c-.8.4-1.2 1-1.2 1.8v.4' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.1' r='1.35' fill='black'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='12' cy='12' r='11' mask='url(%23m)'/%3E%3C/svg%3E");
   --sym-done: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm5.2 7.3a1.2 1.2 0 0 0-1.7 0l-4.8 4.8-2.2-2.2a1.2 1.2 0 1 0-1.7 1.7l3 3a1.2 1.2 0 0 0 1.7 0l5.7-5.6a1.2 1.2 0 0 0 0-1.7z'/%3E%3C/svg%3E");
@@ -102,6 +105,8 @@
   --sym-more: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zM7.5 10.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4.5 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4.5 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z'/%3E%3C/svg%3E");
   --sym-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m9 5.5 6.5 6.5L9 18.5' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   --sym-updown: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --sym-mic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='8.5' y='2' width='7' height='12.5' rx='3.5'/%3E%3Cpath d='M5 11.5a7 7 0 0 0 14 0M12 18.5V22' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  --sym-mic-off: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Cpath d='M3.5 3l17 18' stroke='black' stroke-width='6.5'/%3E%3C/mask%3E%3C/defs%3E%3Cg mask='url(%23m)'%3E%3Crect x='8.5' y='2' width='7' height='12.5' rx='3.5'/%3E%3Cpath d='M5 11.5a7 7 0 0 0 14 0M12 18.5V22' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3C/g%3E%3Cpath d='M3.5 3l17 18' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
 
   /* Motion: springs (SwiftUI's response / damping), as CSS linear() curves. */
   --spring-snappy: linear(0, 0.046, 0.152, 0.284, 0.418, 0.542, 0.651, 0.741, 0.814, 0.871, 0.913, 0.945, 0.967, 0.982, 0.992, 0.999, 1.002, 1.004, 1.005, 1.005, 1.005, 1.004, 1.003, 1.003, 1);
@@ -110,12 +115,13 @@
   --t-snappy: 380ms;
   --t-bouncy: 540ms;
 
-  /* Keyboard focus: Apple's ring, a band of the accent just outside the control (3:1 or more on every surface). */
-  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 75%, transparent);
+  /* Keyboard focus: Apple's ring, a band of the accent just outside the control (3:1 or more on every surface), set
+     off by a gap of the window's colour so it reads as a ring round a filled control too (not as a larger button). */
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
 /* Increase contrast (the desktop's high-contrast preference): Apple's increased-contrast colours, firmer edges and
-   secondary text, solid glass with a contrasting border, a full-strength focus ring. */
+   secondary text, solid glass with a contrasting border, a full-strength focus ring (still set off by its gap). */
 @media (prefers-contrast: more) {
   :root {
     --accent: #ffa056;
@@ -135,9 +141,12 @@
     --glass-sheen: linear-gradient(transparent, transparent);
     --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
     --glass-edge: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5));
-    --focus-ring: 0 0 0 3px var(--accent);
+    --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--accent);
   }
 }
+/* Text size: the type tokens above (and each page's own sizes, in its html[data-text-size] rules) grow by this. */
+html[data-text-size="large"] { --text-scale: 1.15; }
+html[data-text-size="larger"] { --text-scale: 1.3; }
 /* Reduce transparency: glass becomes a solid panel. */
 @media (prefers-reduced-transparency: reduce) {
   :root { --glass-fill: linear-gradient(var(--glass-solid), var(--glass-solid)); --glass-sheen: linear-gradient(transparent, transparent); }
@@ -178,7 +187,7 @@ html {
   all: unset; box-sizing: border-box; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 28px; padding: 4px 13px; border-radius: var(--r-sm);
-  font: 600 13px/18px var(--ember-font); letter-spacing: -0.003em; text-align: center;
+  font: 600 calc(13px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font); letter-spacing: -0.003em; text-align: center;
   color: var(--on-accent); background: var(--accent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(0, 0, 0, 0.3);
   transition: filter 160ms ease, background-color 160ms ease, transform 220ms var(--spring-snappy);
@@ -190,7 +199,7 @@ html {
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 @media (hover: hover) { .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); filter: none; } }
-.btn.small { min-height: 24px; padding: 3px 10px; border-radius: var(--r-xs); font-size: 12px; line-height: 16px; }
+.btn.small { min-height: 24px; padding: 3px 10px; border-radius: var(--r-xs); font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .btn.quiet:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
@@ -246,7 +255,7 @@ input[type="checkbox"]:not([role="switch"]):checked:focus-visible { box-shadow: 
 /* ───── Keys: keycaps ───── */
 kbd {
   display: inline-block; min-width: 1.6em; padding: 0 5px; border-radius: var(--r-xs); text-align: center;
-  font: 600 11px/18px var(--ember-font); letter-spacing: 0.01em; color: var(--label);
+  font: 600 calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font); letter-spacing: 0.01em; color: var(--label);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.5);
   vertical-align: 1px;
@@ -256,4 +265,49 @@ kbd {
 html.calm *, html.calm *::before, html.calm *::after { transition-duration: 0s !important; animation: none !important; scroll-behavior: auto !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+
+/* Windows contrast themes (forced colours): the system paints with a few colours of its own and drops every
+   box-shadow and gradient, which draw Ember's control edges, focus ring, switches, slider and selection. A colour
+   given as a system colour is kept, so the tokens become system colours (the accent is the system's highlight, as a
+   selection or a default button is there) and the edges become real borders and outlines. Each page adds what only
+   it draws (its own styles.css), and the bubble its own (BUBBLE_CSS). */
+@media (forced-colors: active) {
+  :root {
+    --accent: Highlight;
+    --accent-2: Highlight;
+    --glow: Highlight;
+    --on-accent: HighlightText;
+    --green: CanvasText;
+    --red: CanvasText;
+    --yellow: CanvasText;
+    --purple: CanvasText;
+    --blue: CanvasText;
+    --gray: GrayText;
+    --control-edge: ButtonText;
+    --scroll-thumb: CanvasText;
+    /* A shadow ring would be dropped, and on the controls drawn as they are it would sit under the outline below. */
+    --focus-ring: 0 0 0 0 transparent;
+  }
+  /* Focus is a real outline, set off from the control so it never merges with a filled one. (A heading that takes
+     focus only to start a screen reader there is no control: no ring.) */
+  :focus-visible:not(:is(h1, h2, h3)[tabindex="-1"]) { outline: 2px solid Highlight !important; outline-offset: 2px; }
+  .link { color: LinkText; }
+  /* Buttons: an edge; the prominent one filled with the highlight and its text (the tokens above), as the default
+     button is. */
+  .btn { border: 1px solid ButtonText; }
+  /* Drawn as it is (the system would put its text on a backplate of the window's colour, unreadable on the fill). */
+  .btn:not(.quiet) { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
+  .btn:disabled, .btn[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
+  /* Switches and checkboxes are drawn as they are (their parts are placed to the pixel), in system colours. */
+  input[type="checkbox"] { forced-color-adjust: none; }
+  input[type="checkbox"]:not(:checked) { background: Canvas; }
+  input[type="checkbox"][role="switch"]::before { background: ButtonText; box-shadow: none; }
+  input[type="checkbox"][role="switch"]:checked::before { background: HighlightText; }
+  input[type="checkbox"]:disabled { opacity: 1; --control-edge: GrayText; }
+  input[type="checkbox"]:disabled:checked { background: GrayText; }
+  input[type="checkbox"][role="switch"]:disabled::before { background: GrayText; }
+  input[type="checkbox"][role="switch"]:disabled:checked::before { background: Canvas; }
+  /* Keycaps keep their edge (an outline: it takes no room). */
+  kbd { outline: 1px solid CanvasText; outline-offset: -1px; }
 }

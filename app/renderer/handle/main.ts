@@ -7,6 +7,8 @@ import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
 import type { Settings } from "../../main/settings";
+import { idleLine, micBadge } from "../../shared/mic";
+import { HandleLive } from "./live";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -72,22 +74,21 @@ let wasStreaming = false;
  * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
  */
 let announced = "";
-let announcedStatus = "";
+/** The status line and the microphone's news, each said once (live.ts): in the card, and the microphone's in the pill. */
+const live = new HandleLive();
 /**
  * Reads out what changed: the bubble's words, and the status line ("Using your mouse: move it to take over", "I only
- * caught the first part…"), which the card shows even under a bubble. Both at once go out together (one live update).
+ * caught the first part…"), which the card shows even under a bubble, and news about the microphone. All at once go
+ * out together (one live update).
  */
-function announce(b: BubbleState, status: string | null): void {
+function announce(b: BubbleState, status: string | null, micNews: string | null): void {
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
     const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step }, name);
     if (text && text !== announced) { announced = text; parts.push(text); }
   }
-  if ((status ?? "") !== announcedStatus) {
-    announcedStatus = status ?? "";
-    if (status) parts.push(status);
-  }
+  parts.push(...live.news(status, micNews));
   if (parts.length) $("live").textContent = parts.join(" ");
 }
 /** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
@@ -112,23 +113,30 @@ api.onState(s => {
   rig.setTalking(s.talking);
   busy = s.talking || s.bubble.streaming;
   const b = s.bubble;
+  // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
-  const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
-  mic.hidden = !micShown;
+  const micState = micBadge(s.mic);
+  mic.hidden = !micState;
   mic.dataset.state = s.mic ?? "off";
-  mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : s.mic === "error" ? "Microphone problem" : "";
+  mic.dataset.glyph = micState?.glyph ?? "";
+  mic.title = micState?.label ?? "";
+  mic.setAttribute("aria-label", micState?.label ?? "Microphone");
+  const micNews = live.micNews(s.mic);
+  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work.
+  const idle = idleLine(s.idle, s.mic);
   if (!fallback) {
+    if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || s.idle || "Ready");
+    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
     return;
   }
-  announce(b, s.status ?? null);
+  announce(b, s.status ?? null, micNews);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
   // Beside Ember's name: where the bubble's task acts (its question is about that computer), else the picker's choice.
   renderTarget(s, cardBadge({ where: b.visible ? b.where : undefined, task: b.visible && !!b.task }, s.target));
-  const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
+  const text = cardText(b, name, s.status ?? idle, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;

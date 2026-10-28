@@ -20,9 +20,11 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, settingsFromHome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
+import { MIC_PROBLEM_MENU } from "../shared/mic";
+import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
@@ -391,6 +393,8 @@ function start(): void {
   app.on("web-contents-created", (_e, contents) => {
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
     contents.on("will-navigate", e => e.preventDefault());
+    // Calm mode reaches every page of Ember's as it loads, those sent no settings too (page-prefs.ts).
+    contents.on("dom-ready", () => void applyPagePrefs(contents, pagePrefs(settings.get())));
   });
 
   // These channels change settings, sign in and out, and apply fixes: only the settings window may use them
@@ -463,6 +467,17 @@ function start(): void {
   }));
   settings.onChange(s => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
+  });
+  // And again when it changes (only then: the size slider changes the settings many times a second). The command and
+  // prompt windows grow with the text size, open ones too (windows.ts).
+  let pagePrefsKey = JSON.stringify(pagePrefs(settings.get()));
+  setTextScale(textScale(settings.get().textSize));
+  settings.onChange(s => {
+    const prefs = pagePrefs(s);
+    if (JSON.stringify(prefs) === pagePrefsKey) return;
+    pagePrefsKey = JSON.stringify(prefs);
+    setTextScale(textScale(prefs.textSize));
+    for (const w of BrowserWindow.getAllWindows()) void applyPagePrefs(w.webContents, prefs);
   });
 
   // Ember keeps running without windows: the overlay and handle are its presence.
@@ -622,6 +637,8 @@ function start(): void {
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
         ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
+      // A microphone that can't hear "Hey Ember": the way to fix it (Settings, at Voice, says why and how).
+      ...(voice?.micState === "error" ? [{ label: MIC_PROBLEM_MENU, click: () => { opens = true; showHome(); sendToHome(IPC.focusSection, "voice"); } }] : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
       { label: label("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
@@ -1226,7 +1243,7 @@ function start(): void {
 
   settings.onChange((s) => {
     overlay?.broadcastSettings(s);
-    handle?.sendSettings(s);
+    if (handle?.sendSettings(s)) deskViewRef?.handleMoved();
   });
   // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step: at start
   // only when it is on, then whenever it changes, so a start with it off removes nothing (review #85).

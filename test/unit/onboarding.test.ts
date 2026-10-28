@@ -324,7 +324,8 @@ describe("the settings window's setup badge and line", () => {
   });
 
   it("sets the badge's number in a type style, so it grows with the window's text", () => {
-    const badge = /\.jump-badge \{([^}]*)\}/.exec(STYLES)?.[1] ?? "";
+    // Its own rule, at the start of a line (the contrast themes' block gives it an outline too).
+    const badge = /^\.jump-badge \{([^}]*)\}/m.exec(STYLES)?.[1] ?? "";
     expect(badge).toContain("font: var(--type-caption)");
     expect(badge).not.toMatch(/\b\d+px\/|font-size: \d+px/);
   });

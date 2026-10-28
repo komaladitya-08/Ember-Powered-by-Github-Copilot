@@ -37,3 +37,9 @@ html.opaque body { box-shadow: var(--glass-rim); }
 html.opaque input { background: rgba(255, 255, 255, 0.05); border-color: var(--separator); box-shadow: none; }
 html.opaque input:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
 html.opaque .meta { background: transparent; border-color: transparent; }
+
+/* Windows contrast themes (forced colours; tokens in ember.css): the computer a request goes to is set apart by its
+   weight (the highlight is no text colour). */
+@media (forced-colors: active) {
+  .where { color: CanvasText; }
+}

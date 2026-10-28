@@ -117,6 +117,8 @@ export const SettingsSchema = z.object({
   reduceMotion: z.boolean().default(false),
   /** More time to read and answer: bubbles stay ten times as long, and a question waits 20 minutes (WCAG 2.2.1: readTimeOf). */
   moreTime: z.boolean().default(false),
+  /** Text size in Ember's windows, bubble and cards (main's page-prefs.ts applies it): larger is 30% bigger. */
+  textSize: z.enum(["default", "large", "larger"]).default("default"),
   /** Where Ember works (§2): the picker's target, the SSH hosts the user added, WSL, and this install's id. */
   targets: z.object({
     /** The picker's choice: requests that name no computer go here. */

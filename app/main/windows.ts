@@ -12,6 +12,7 @@ import type { OS } from "../shared/shortcuts";
 import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
 import type { SettingsPatch } from "./settings";
 import { placeOnDisplay, type CloseGuarded, type Placeable } from "./commands/window";
+import { rescaledBounds, scaledSize } from "./page-prefs";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -48,6 +49,44 @@ const webPreferences = (page: string) => ({
   spellcheck: false,
 });
 
+/** The text's scale (1, 1.15 or 1.3: page-prefs.ts's textScale), which main keeps up to date with the settings. */
+let textScaleNow = 1;
+/**
+ * The command and prompt windows open now, with their smallest size at the default text size (null: none). Their
+ * controllers make each once and then hide and show it, so one already made grows or shrinks when the text size changes.
+ */
+const sizedForText = new Map<BrowserWindow, { minWidth: number; minHeight: number } | null>();
+export function setTextScale(scale: number): void {
+  const from = textScaleNow;
+  textScaleNow = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  if (textScaleNow === from) return;
+  for (const [win, min] of sizedForText) {
+    if (win.isDestroyed()) { sizedForText.delete(win); continue; }
+    try {
+      const now = win.getBounds();
+      const area = screen.getDisplayMatching(now).workArea;
+      const least = min && scaledSize(min, textScaleNow, area);
+      if (least) win.setMinimumSize(least.minWidth, least.minHeight);
+      win.setBounds(rescaledBounds(now, from, textScaleNow, area, least ? { width: least.minWidth, height: least.minHeight } : undefined));
+    } catch { /* a window that can't be resized keeps its size */ }
+  }
+}
+/** Keeps `win` growing and shrinking with the text while it is open. */
+function sizeForText(win: BrowserWindow, min: { minWidth: number; minHeight: number } | null): void {
+  sizedForText.set(win, min);
+  win.on("closed", () => sizedForText.delete(win));
+}
+
+/**
+ * A window's usual size grown with the text, so its words keep their room (review #57); inside the primary display's
+ * work area. At the default size it is the usual size.
+ */
+const forText = <T extends Record<string, number>>(size: T): T =>
+  textScaleNow === 1 ? size : scaledSize(size, textScaleNow, screen.getPrimaryDisplay().workAreaSize);
+
+/** The command window's smallest size at the default text size. */
+const COMMAND_MIN = { minWidth: 480, minHeight: 280 };
+
 /**
  * What the command and prompt windows get to come up where the user is (review #272): the display nearest the pointer,
  * and every workspace (over a full-screen app on macOS) while a card is up. Their controllers call these. A macOS
@@ -74,10 +113,7 @@ function placeable(win: BrowserWindow, panel = false): Placeable {
  */
 export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Placeable {
   const win = new BrowserWindow({
-    width: 760,
-    height: 480,
-    minWidth: 480,
-    minHeight: 280,
+    ...forText({ width: 760, height: 480, ...COMMAND_MIN }),
     title: "Ember commands",
     show: false,
     backgroundColor: "#121011",
@@ -85,6 +121,7 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
     ...(os === "darwin" ? { type: "panel", acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("command"),
   });
+  sizeForText(win, COMMAND_MIN);
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
@@ -123,8 +160,7 @@ function closeWhenGone(win: BrowserWindow): void {
 export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: BrowserWindow) => void } = {}):
   BrowserWindow & Placeable & { fit(size: { width: number; height: number }): void; takeKeyboard(): void } {
   const win = new BrowserWindow({
-    width: PROMPT_SIZE.card.width,
-    height: PROMPT_SIZE.card.height,
+    ...forText({ width: PROMPT_SIZE.card.width, height: PROMPT_SIZE.card.height }),
     // The sizes are the page's own: the title bar and borders (Windows, macOS) come on top of them.
     useContentSize: true,
     resizable: false,
@@ -141,6 +177,7 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     ...(os === "darwin" ? { acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("prompt"),
   });
+  sizeForText(win, null);
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
@@ -151,7 +188,9 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     // `size` is the page's: the window is that plus its frame, and the whole of it is kept inside the work area.
     const inner = win.getContentBounds();
     const frame = { width: Math.max(0, now.width - inner.width), height: Math.max(0, now.height - inner.height) };
-    const next = fitBounds(now, { width: size.width + frame.width, height: size.height + frame.height }, screen.getDisplayMatching(now).workArea);
+    // The card's size grows with the text (review #57), as the window's first size does.
+    const want = forText(size);
+    const next = fitBounds(now, { width: want.width + frame.width, height: want.height + frame.height }, screen.getDisplayMatching(now).workArea);
     // Left where it is when it already has that size there (a window the user moved stays put).
     if (next.x !== now.x || next.y !== now.y || next.width !== now.width || next.height !== now.height) win.setBounds(next);
   };

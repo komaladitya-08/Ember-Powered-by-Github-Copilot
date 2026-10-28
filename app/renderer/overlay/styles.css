@@ -98,3 +98,17 @@ body { font: var(--type-callout); color: var(--label); }
 @media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i { animation: none; } }
 html.calm .focus { transition: none; }
 html.calm .focus::after, html.calm .status i { animation: none; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the cards' buttons and the where badge keep
+   their edges (the cards, the status line and the bubble keep theirs: a border the system colours). */
+@media (forced-colors: active) {
+  .task-actions button { border: 1px solid ButtonText; }
+  .where { outline: 1px solid CanvasText; outline-offset: -1px; }
+}
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type
+   (the bubble's own rules are in BUBBLE_CSS). */
+html[data-text-size] .status { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .task-actions button { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+/* The place's capsule grows with its words, so a shortened place (handle/badge.ts shortWhere) still shows whole. */
+html[data-text-size] .where { max-width: calc(136px * var(--text-scale)); }

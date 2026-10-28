@@ -291,7 +291,7 @@ describe("bubble styles", () => {
   });
 
   it("shows all of a problem as of a question: up to ten lines, then it scrolls (review #17)", () => {
-    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\):not\(\[data-streaming="true"\]\) \.eb-thought \{[^}]*max-height: calc\(20px \* 10\); overflow-y: auto;[^}]*pointer-events: auto;/);
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\):not\(\[data-streaming="true"\]\) \.eb-thought \{[^}]*max-height: 10lh; overflow-y: auto;[^}]*pointer-events: auto;/);
     expect(thoughtScrolls({ mood: "error", expanded: false, streaming: false })).toBe(true);
     expect(thoughtScrolls({ mood: "attention", expanded: false, streaming: false })).toBe(true);
     expect(thoughtScrolls({ mood: "idle", expanded: true, streaming: false })).toBe(true);

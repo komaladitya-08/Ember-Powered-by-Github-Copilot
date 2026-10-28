@@ -27,6 +27,8 @@ vi.mock("electron", () => ({
     show() { this.rec.calls.push("show"); }
     focus() { this.rec.calls.push("focus"); }
     once() { /* not shown by the factory */ }
+    /** windows.ts keeps the open window to resize with the text size (review #57) until it closes. */
+    on() { /* not closed here */ }
     isDestroyed() { return this.destroyed; }
     getBounds() { return { ...this.rec.bounds }; }
     /** The page's own area: the window less its title bar and borders (`frame`, none unless a test sets one). */

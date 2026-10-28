@@ -125,6 +125,7 @@ function applySettings(s: Settings): void {
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
+  ($("text-size") as HTMLSelectElement).value = s.textSize;
   // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
   // everything else waits until Ember has started.
   const consented = s.consent.version >= CONSENT_VERSION;
@@ -157,6 +158,8 @@ $("agree").addEventListener("change", e => {
 });
 $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
+// The text size reaches every window from main (page-prefs.ts), this one included.
+$("text-size").addEventListener("change", e => { void save({ textSize: (e.target as HTMLSelectElement).value as Settings["textSize"] }); });
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
