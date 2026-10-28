@@ -15226,6 +15226,48 @@
    "rules": [
     "unclear.unresolved-arg"
    ]
+  },
+  {
+   "cmd": "mysql --defaults-file=~/.my.cnf -e 'select 1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mysql --defaults-file ~/.my.cnf -e 'select 1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mysqldump --defaults-extra-file=~/.my.cnf db",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mysql --defaults-file=~/.my.cnf --print-defaults",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "my_print_defaults --defaults-file=~/.aws/credentials default",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "node --env-file=.env x.js",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }

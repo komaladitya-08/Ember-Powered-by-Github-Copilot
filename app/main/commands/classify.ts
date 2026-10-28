@@ -2060,6 +2060,11 @@ const FILE_OPTION = /(file|files|.-from)$/;
 const OUTPUT_OPTION = /^(out|output)(-?(file|dir|directory))?$|^(outdir|outfile|directory-prefix|pack-destination)$/;
 /** Known programs whose `-o` names their output (to the others, `nm -o`, `strings -o`, `od -o`, it is a flag or a format). */
 const OUTPUT_O = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "ld", "as", "rustc", "strip", "pandoc"]);
+/**
+ * Options naming a settings file the program loads without showing it: MySQL's option files, which keep the password
+ * off the command line (review #174). --print-defaults and my_print_defaults print what they hold.
+ */
+const SETTINGS_FILE_OPTION = new Set(["defaults-file", "defaults-extra-file"]);
 
 /**
  * Every program's long options whose value names a file it reads or writes, judged after its own row (which may never
@@ -2084,6 +2089,7 @@ function optionPaths(h: H, unknown: boolean): void {
     if (name === null) continue;
     const output = name === "o" || OUTPUT_OPTION.test(name);
     if (!output && (!FILE_OPTION.test(name) || name.endsWith("profile"))) continue;
+    if (SETTINGS_FILE_OPTION.has(name) && h.key !== "my_print_defaults" && !args.some(x => x.v === "--print-defaults")) continue;
     // `--file=x` in one word (its pattern, for a glob, is the part after `=`), or `--file x`.
     const value: Arg | undefined = m && m[2] !== undefined
       ? { ...a, v: a.v === null ? null : m[3], pattern: a.pattern === undefined ? undefined : a.pattern.slice(a.pattern.indexOf("=") + 1), param: undefined }
