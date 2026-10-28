@@ -2276,6 +2276,64 @@
   {
    "cmd": "docker run --rm -v `pwd`:/src alpine id",
    "verdict": "run"
+  },
+  {
+   "cmd": "powershell.exe -File '\\\\example\\share\\x.ps1'",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "powershell.exe -ExecutionPolicy Bypass -File '\\\\example\\share\\x.ps1'",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "pwsh.exe -File '\\\\example\\share\\x.ps1'",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "pwsh.exe -File //example/share/x.ps1",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -File '\\\\example\\share\\x.ps1'",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "powershell.exe -File '\\\\wsl.localhost\\Ubuntu\\home\\ana\\proj\\x.ps1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "powershell.exe -File x.ps1",
+   "verdict": "run"
   }
  ]
 }

@@ -5805,7 +5805,14 @@ reg(NATIVE, ["powershell", "pwsh", "powershell_ise"], h => {
     h.e.unclear("unclear.powershell-option", "Ember can't tell what PowerShell would run.");
     return;
   }
-  if (file) { runScript(h, file, "powershell"); return; }
+  if (file) {
+    // Through WSL interop the script's path is Windows's: one on another computer's share (`\\host\share\x.ps1`,
+    // `//host/share/x.ps1`) runs from there, as on Windows (review #171).
+    const ws = h.pn.interop ? windowsScope(h, "powershell") : null;
+    if (ws && file.v !== null) h.e.usePath(file, "exec", child(h.sc, ws));
+    runScript(h, file, "powershell");
+    return;
+  }
   if (text === null) { h.e.unclear("unclear.shell-text", "It runs PowerShell text Ember can't see."); return; }
   if (text === undefined || interactiveShell) {
     if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") { intoInterpreter(h); return; }
