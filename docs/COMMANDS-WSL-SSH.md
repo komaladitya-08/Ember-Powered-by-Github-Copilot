@@ -100,7 +100,8 @@ Ember stops and asks before a command that:
   (`ssh-copy-id`), using a share on another computer (`dir \\server\share`, `net use`, `New-PSDrive` on Windows,
   `mount_smbfs` on a Mac), which signs in there with your account, starting a server other computers can reach or
   one that shares a folder outside your project (`python3 -m http.server`, `php -S 0.0.0.0:8000`, `caddy
-  file-server`, `miniserve`, `busybox httpd`; one on `127.0.0.1` or `localhost` serving your project doesn't ask),
+  file-server`, `miniserve`, `busybox httpd`; one on `127.0.0.1` or `localhost` serving your project doesn't ask, but
+  `caddy reverse-proxy` listens on every address whatever `--from` says),
   opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), changing cloud services or clusters
   (`kubectl apply`, `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,

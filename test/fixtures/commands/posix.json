@@ -14545,7 +14545,10 @@
   },
   {
    "cmd": "caddy reverse-proxy --from localhost:8080 --to localhost:3000",
-   "verdict": "run"
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
   },
   {
    "cmd": "caddy version",
@@ -15268,6 +15271,30 @@
    "rules": [
     "path.secret"
    ]
+  },
+  {
+   "cmd": "caddy reverse-proxy --from localhost:8443 --to localhost:8000",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "caddy reverse-proxy -f 127.0.0.1:8443 -t localhost:8000",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "caddy respond --listen 127.0.0.1:9000 hello",
+   "verdict": "run"
   }
  ]
 }

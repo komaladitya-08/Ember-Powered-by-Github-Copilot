@@ -4879,8 +4879,9 @@ reg(NATIVE, ["caddy"], h => {
   if (verb === "trust" || verb === "untrust") { h.e.add("system", "system.security", TRUST_SAYS); return; }
   if (verb === "environ") { h.e.add("secret", "secret.env", SAYS.env); return; }
   if (verb === "file-server" || verb === "reverse-proxy" || verb === "respond") {
-    // Where it listens (--from names the site for reverse-proxy); every address when not given.
-    const at = values(q, ...(verb === "reverse-proxy" ? ["f", "from"] : ["l", "listen"])).pop();
+    // Where it listens: every address when --listen isn't given. reverse-proxy always listens on every address, on
+    // --from's port; --from's host only picks which requests it answers (review #178).
+    const at = verb === "reverse-proxy" ? undefined : values(q, "l", "listen").pop();
     listens(h, at === undefined ? "" : at === null ? null : listenHost(at.replace(/^[a-z]+:\/\//i, "")), verb === "file-server" ? servedRoot(values(q, "r", "root").pop()) : null);
     return;
   }
