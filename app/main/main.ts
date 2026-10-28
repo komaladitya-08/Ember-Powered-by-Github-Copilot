@@ -125,6 +125,12 @@ function startupFailed(err: unknown): void {
   });
 }
 
+/**
+ * Told the setup rows at each read (readEnvironment), once Ember runs: its handle's "Setup needed" follows them (review
+ * #95). Declared before start() runs below, which sets it.
+ */
+let onSetupRead: ((checks: EnvReport["checks"]) => void) | null = null;
+
 if (process.argv.includes("--doctor")) {
   // A check-up, not a second Ember: runs even while Ember is running.
   void runDoctor();
@@ -149,8 +155,6 @@ let helper: HelperStatus | null | undefined;
 let fixesApplied: readonly FixId[] = [];
 /** Whether Ember's spoken replies are heard: null until it has tried, false when no voice spoke (review #101). */
 let speechHeard: boolean | null = null;
-/** Told the setup rows at each read, once Ember runs: its handle's "Setup needed" follows them (review #95). */
-let onSetupRead: ((checks: EnvReport["checks"]) => void) | null = null;
 
 /** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper, fixes). */
 function readEnvironment(): EnvReport {

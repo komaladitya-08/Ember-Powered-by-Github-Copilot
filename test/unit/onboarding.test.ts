@@ -573,6 +573,10 @@ describe("the call sites", () => {
       "onSpeech: ok =>", // the speaking page's finding (#101)
       "speechMissing: speechHeard === false", // the voice status (#101)
     ]) expect(MAIN, call).toContain(call);
+    // start() runs while main.ts loads and sets the hook: declared (with its null) after that call, the declaration
+    // would run last and wipe it, and the handle would never say "Setup needed" (seen in the real app).
+    expect(MAIN.indexOf("let onSetupRead")).toBeGreaterThan(-1);
+    expect(MAIN.indexOf("let onSetupRead")).toBeLessThan(MAIN.indexOf("    start();\n"));
   });
 
   it("in the settings window", () => {
