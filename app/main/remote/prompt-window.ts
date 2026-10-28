@@ -208,10 +208,10 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     }
     const w = ensure();
     if (!w) {
-      // No window to ask in: an SSH prompt is answered no at once (nobody can answer it, and ssh mustn't wait); a
-      // consent question stays asked and expires as "no".
+      // No window to ask in: an SSH prompt is answered no at once, as refused (nobody can answer it, and ssh mustn't
+      // wait); a consent question stays asked and expires as "no".
       const head = queue[0];
-      if (head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false });
+      if (head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false, refused: true });
       return;
     }
     // Sized for the card before it is drawn and shown (review #182, #270).
@@ -326,7 +326,8 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     ask(card) {
       if (disposed || !validPromptCard(card) || card.kind === "consent" || queue.some(e => e.card.id === card.id)) {
         note("warn", "prompt.card_refused", { kind: (card as { kind?: unknown })?.kind });
-        return Promise.resolve({ id: (card as { id?: string })?.id ?? "", ok: false });
+        // Nobody was asked: the caller says so, not that the user said no (review #193).
+        return Promise.resolve({ id: (card as { id?: string })?.id ?? "", ok: false, refused: true });
       }
       return new Promise<PromptAnswer>(resolve => enqueue({ card, resolve }));
     },

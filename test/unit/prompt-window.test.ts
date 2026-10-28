@@ -107,19 +107,22 @@ describe("the prompt window's queue", () => {
     ctl.dismiss("nope");
   });
 
-  it("refuses a malformed card, a duplicate id and a consent question through ask", async () => {
+  it("refuses a malformed card, a duplicate id and a consent question through ask, saying it was refused (review #193)", async () => {
     const { ctl, windows } = setup();
-    await expect(ctl.ask({ id: "", kind: "touch", host: "x" })).resolves.toMatchObject({ ok: false });
-    await expect(ctl.ask({ id: "x", kind: "secret", secret: "pin", host: "x", prompt: "" } as unknown as PromptCard)).resolves.toMatchObject({ ok: false });
-    await expect(ctl.ask({ id: "c", kind: "consent", n: 1, consent: commandsCard() })).resolves.toMatchObject({ ok: false });
+    await expect(ctl.ask({ id: "", kind: "touch", host: "x" })).resolves.toMatchObject({ ok: false, refused: true });
+    await expect(ctl.ask({ id: "x", kind: "secret", secret: "pin", host: "x", prompt: "" } as unknown as PromptCard)).resolves.toMatchObject({ ok: false, refused: true });
+    await expect(ctl.ask({ id: "c", kind: "consent", n: 1, consent: commandsCard() })).resolves.toMatchObject({ ok: false, refused: true });
+    // A server's keyboard-interactive question too long to show, and a host name too long: nobody was asked.
+    await expect(ctl.ask({ id: "long", kind: "secret", secret: "other", host: "build-01", prompt: "x".repeat(2001) })).resolves.toEqual({ id: "long", ok: false, refused: true });
+    await expect(ctl.ask({ id: "host", kind: "secret", secret: "password", host: "h".repeat(256), prompt: "Password: " })).resolves.toEqual({ id: "host", ok: false, refused: true });
     expect(windows).toHaveLength(0);
     void ctl.ask(password("dup"));
-    await expect(ctl.ask(password("dup"))).resolves.toEqual({ id: "dup", ok: false });
+    await expect(ctl.ask(password("dup"))).resolves.toEqual({ id: "dup", ok: false, refused: true });
   });
 
-  it("answers an SSH prompt no at once when no window can be made, so ssh never waits on it", async () => {
+  it("answers an SSH prompt no at once when no window can be made, so ssh never waits on it, saying it was refused", async () => {
     const ctl = createPromptWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux" });
-    await expect(ctl.ask(password("a"))).resolves.toEqual({ id: "a", ok: false });
+    await expect(ctl.ask(password("a"))).resolves.toEqual({ id: "a", ok: false, refused: true });
     ctl.showConsent(1, commandsCard());
     expect(ctl.consentReady(1)).toBe(false);
   });

@@ -438,7 +438,7 @@ export function createConnections(o: {
   }
 
   /** ssh's failure in Ember's words (§5.1.8), with what the attempt knew. */
-  function failureOf(r: Extract<AttemptResult, { kind: "failed" }>, p: Prepared, h: string, mode: "batch" | "interactive", cancelledByUser: boolean): SshFailure {
+  function failureOf(r: Extract<AttemptResult, { kind: "failed" }>, p: Prepared, h: string, mode: "batch" | "interactive", cancelledByUser: boolean, promptRefused = false): SshFailure {
     if (r.cancelled || cancelledByUser) return { kind: "cancelled", message: MESSAGES.cancelled(), retry: true };
     if (r.deadline) return { kind: "timeout", message: MESSAGES.timeout(h), retry: true };
     if (r.spawnFailed) return { kind: "no-client", message: MESSAGES.noClient(), retry: false };
@@ -450,14 +450,16 @@ export function createConnections(o: {
       const named = /host key is known for (\S+?) and/.exec(r.exit?.stderr ?? "")?.[1];
       if (named && !p.names.some(n => n.toLowerCase() === named.toLowerCase())) return { ...f, kind: "unknown-hop-key", message: MESSAGES.unknownKeyNoAskpass(cleanLine(named, 100)), retry: false };
     }
+    // A sign-in card the prompt window couldn't show (no window, or a question too long to show): nobody was asked.
+    if (mode === "interactive" && f.kind === "auth" && promptRefused) return { ...f, message: MESSAGES.promptRefused(h), retry: true };
     if (mode === "interactive" && f.kind === "auth") return { ...f, message: MESSAGES.signInFailed(h), retry: true };
     return f;
   }
 
   /** One attempt end to end: the worker, its decision, its result (and the port, kept open when serving). */
-  async function attempt(p: Prepared, host: HostRecord, h: string, mode: "batch" | "interactive", acceptNewKey: boolean, signal: AbortSignal, decision: "plan" | "uninstall"): Promise<{ r: AttemptResult; port: LinkPort; refusal: Refusal | null; cancelledByUser: boolean }> {
+  async function attempt(p: Prepared, host: HostRecord, h: string, mode: "batch" | "interactive", acceptNewKey: boolean, signal: AbortSignal, decision: "plan" | "uninstall"): Promise<{ r: AttemptResult; port: LinkPort; refusal: Refusal | null; cancelledByUser: boolean; promptRefused: boolean }> {
     const refusal: { plan: Refusal | null } = { plan: null };
-    let cancelledByUser = false;
+    let cancelledByUser = false, promptRefused = false;
     let channel: AskpassChannel | null = null;
     let control: ReturnType<typeof runAttempt> | null = null;
     let runEnv: Record<string, string>;
@@ -470,7 +472,9 @@ export function createConnections(o: {
         sig.addEventListener("abort", onAbort, { once: true });
         try {
           const answer = await o.prompts.ask(card);
-          if (!answer.ok && card.kind !== "touch") cancelledByUser = true;
+          // The user's Cancel or Esc, not the prompt window's own refusal of a card it couldn't show (review #193).
+          if (!answer.ok && answer.refused) promptRefused = true;
+          else if (!answer.ok && card.kind !== "touch") cancelledByUser = true;
           return answerFor(card, answer);
         } finally {
           sig.removeEventListener("abort", onAbort);
@@ -493,7 +497,7 @@ export function createConnections(o: {
       });
       progress(host.id, { step: "connecting" });
       const r = await control.result;
-      return { r, port, refusal: refusal.plan, cancelledByUser };
+      return { r, port, refusal: refusal.plan, cancelledByUser, promptRefused };
     } catch (err) {
       await port.terminate().catch(() => undefined);
       throw err;
@@ -574,7 +578,7 @@ export function createConnections(o: {
         run = await attempt(p, host, h, "interactive", f.kind === "unknown-host-key", signal, "plan");
         if (run.r.kind === "failed") {
           await run.port.terminate().catch(() => undefined);
-          throw refuse(failureOf(run.r, p, h, "interactive", run.cancelledByUser));
+          throw refuse(failureOf(run.r, p, h, "interactive", run.cancelledByUser, run.promptRefused));
         }
       }
       if (run.r.kind === "done") {
@@ -728,7 +732,7 @@ export function createConnections(o: {
           run = await attempt(p, host, h, "interactive", f.kind === "unknown-host-key", abort.signal, "uninstall");
         }
         await run.port.terminate().catch(() => undefined);
-        if (run.r.kind === "failed") throw refuse(failureOf(run.r, p, h, "interactive", run.cancelledByUser));
+        if (run.r.kind === "failed") throw refuse(failureOf(run.r, p, h, "interactive", run.cancelledByUser, run.promptRefused));
         if (run.r.kind !== "done" || !run.r.uninstalled) throw refuse({ kind: "remote", message: MESSAGES.remoteStopped(h, "uninstall") });
         audit({ step: "uninstalled", host: host.id });
       } catch (err) {

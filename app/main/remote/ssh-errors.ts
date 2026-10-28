@@ -37,6 +37,7 @@ export const MESSAGES = {
   noSetup: (h: string) => `${h} didn't run Ember's set-up (it may be Windows, or this login runs a fixed program).`,
   authNoAskpass: (h: string) => `${h} didn't accept your key. Add it to the ssh-agent (\`ssh-add\`), then connect again.`,
   signInFailed: (h: string) => `${h} didn't accept that sign-in.`,
+  promptRefused: (h: string) => `Ember couldn't show ${h}'s sign-in question.`,
   unknownKeyNoAskpass: (h: string) => `Connect once with \`ssh ${h}\` in a terminal, check its key, then try again.`,
   unknownKey: (h: string) => `This computer hasn't connected to ${h} before.`,
   keyChanged: (h: string) => `The key ${h} shows isn't the one this computer knows. Someone may be pretending to be ${h}, or it was reinstalled. Ember won't connect.`,
