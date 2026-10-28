@@ -737,7 +737,8 @@ describe("SSH targets", () => {
     expect(r.t.agent.active).toBe("local");
     expect(r.showState).toHaveBeenCalledWith({ target: undefined });
     expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Lost build-01", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }, { id: "conn:build-01:stop", label: "Stop trying" }] }) });
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Reconnect it from Ember's menu first." });
+    // The menu's item is disabled while lost: the bubble's Reconnect, offer_connect or Settings (review #197).
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "The connection to build-01 dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers)." });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("lost");
   });
 
@@ -753,7 +754,7 @@ describe("SSH targets", () => {
       title: "build-01 needs you to sign in again", thought: "Reconnect to sign in.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }],
     }) });
     expect(r.t.summaries().find(s => s.id === "ssh:build-01")!.state).toBe("off");
-    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Connect it from Ember's menu first." });
+    expect(r.t.agent.handsFor("ssh:build-01")).toEqual({ ok: false, why: "build-01 isn't connected. Ember can show a Connect button for it." });
     // Ten minutes of network failures: said as it is, with Reconnect.
     const l2 = await connected(r, "build-02");
     l2.move("lost");
@@ -763,6 +764,16 @@ describe("SSH targets", () => {
     // A connect's own failure (not a reconnect's) is connect()'s to say.
     failed("build-02", "auth", false);
     expect(r.showState).not.toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "build-02 needs you to sign in again" }) });
+  });
+
+  it("asks to check the key again, never to sign in, when a reconnect stops at a host key it can't accept alone (review #196)", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    const l = await connected(r);
+    l.move("lost");
+    for (const p of r.progress) p("build-01", { step: "failed", message: "Connect once with ssh build-01 in a terminal, check its key, then try again.", retry: false, kind: "unknown-host-key" });
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({
+      title: "build-01 needs you to check its key again", thought: "Reconnect to check it.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect", primary: true }], mood: "attention",
+    }) });
   });
 
   it("adopts the link SA brought back by itself after a loss", async () => {
@@ -916,6 +927,49 @@ describe("SSH targets", () => {
     await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01.example.com:99999" })).resolves.toEqual({ ok: false, message: "That isn't an SSH host Ember can use. Type an alias from your SSH config, or user@host." });
   });
 
+  it("keeps one record for one computer: another spelling of it connects the record Ember has, with no second card (review #181)", async () => {
+    // "build-01" (an alias) and "deploy@build-01" resolve to the same login on the same computer.
+    const r = rig({ settings: withHosts([hostRecord("build-01", { dest: "build-01" })]) });
+    await connected(r);
+    r.t.bubbleAction("target:local");
+    const cardsBefore = r.cards.length;
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01" })).resolves.toEqual({ ok: true, message: "Already added as build-01." });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    expect(r.cards.length).toBe(cardsBefore);
+    expect(r.conns.connect).toHaveBeenCalledTimes(1);
+    expect(r.t.agent.active).toBe("ssh:build-01");
+    // Not connected: the record Ember has is connected, never a copy of it.
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "disconnect", hostId: "build-01" });
+    r.conns.resolve.mockResolvedValueOnce({ user: "deploy", hostname: "Build-01.example.com", port: 22, jump: [], controlPath: null });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "deploy@build-01.example.com" })).resolves.toEqual({ ok: true, message: "Already added as build-01." });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    expect(r.conns.connect).toHaveBeenCalledTimes(2);
+    // Another login on that computer is another record.
+    r.conns.resolve.mockResolvedValueOnce({ user: "root", hostname: "build-01.example.com", port: 22, jump: [], controlPath: null });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "add", dest: "root@build-01" })).resolves.toEqual({ ok: true });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01", "build-01-2"]);
+  });
+
+  it("says \"Already added\" from offer_connect's Connect when the ssh alias is a computer Ember is on, with no second record, card or connect (review #181)", async () => {
+    // The ssh config's "build-02" turns out to be deploy@build-01.example.com, the computer Ember is connected to as build-01.
+    const r = rig({ settings: withHosts([hostRecord("build-01")]) });
+    await connected(r);
+    const cardsBefore = r.cards.length;
+    r.conns.resolve.mockResolvedValueOnce({ user: "deploy", hostname: "build-01.example.com", port: 22, jump: [], controlPath: null });
+    expect(r.t.agent.offerConnect("build-02", "connect to build-02 please")).toMatch(/Connect button for build-02/);
+    r.showState.mockClear();
+    expect(r.t.bubbleAction("offer:1:connect")).toBe(true);
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({
+      title: "Already added as build-01", thought: "I'm on build-01 already, so I'll work there.", actions: [], mood: "done",
+    }) });
+    expect(r.settings.get().targets.hosts.map(h => h.id)).toEqual(["build-01"]);
+    expect(r.cards.length).toBe(cardsBefore);
+    expect(r.conns.connect).toHaveBeenCalledTimes(1);
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringMatching(/^Connecting to/) }) });
+    expect(r.t.agent.active).toBe("ssh:build-01");
+  });
+
   it("resets a remote picked last time to this computer at start (it isn't connected yet)", () => {
     const r = rig({ settings: withHosts([hostRecord("build-01")], { active: "ssh:build-01" }) });
     expect(r.t.agent.active).toBe("local");
@@ -1058,6 +1112,77 @@ describe("WSL targets", () => {
     expect(pod.hands.commands!.capability().askEvery).toBe("tool");
     expect(pod.hands.commands!.userAskEvery()).toBe(true);
     expect(pod.hands.binding.desktop).toBe("none");
+  });
+});
+
+describe("naming a computer by a short name (reviews #179, #180)", () => {
+  const fqdn = { user: "deploy", hostname: "build-01.example.com", port: 22, jump: [] };
+
+  it("binds 'on build-01' to a host added by its full name, whatever name the model passes, and offer_connect finds it", async () => {
+    const r = rig({ settings: withHosts([hostRecord("build-01.example.com", { dest: "deploy@build-01.example.com", resolved: fqdn })]), resolved: fqdn });
+    // Not connected yet: offer_connect knows it by its short name and shows its Connect button.
+    expect(r.t.agent.offerConnect("build-01", "on build-01, check the disk")).toMatch(/Connect button for build-01\.example\.com/);
+    await connected(r, "build-01.example.com");
+    r.t.bubbleAction("target:local");
+    expect(r.t.agent.active).toBe("local");
+    for (const choice of [undefined, "build-01", "build-01.example.com"]) {
+      const b = r.t.agent.bind({ userWords: "on build-01, check the disk", ...(choice ? { choice } : {}) });
+      expect(b.ok && b.binding.id, String(choice)).toBe("ssh:build-01.example.com");
+    }
+    expect(r.t.agent.offerConnect("build-01", "on build-01, check the disk")).toBe("Ember is already connected to build-01.example.com: start the task with target build-01.example.com.");
+  });
+
+  it("asks which one when two hosts share the short name the user said, and offer_connect says so", async () => {
+    const r = rig({ settings: withHosts([
+      hostRecord("build-01.a.com", { dest: "build-01.a.com", resolved: { ...fqdn, hostname: "build-01.a.com" } }),
+      hostRecord("build-01.b.com", { dest: "build-01.b.com", resolved: { ...fqdn, hostname: "build-01.b.com" } }),
+    ]) });
+    expect(r.t.agent.bind({ userWords: "on build-01, check the disk" })).toEqual({ ok: false, why: "Ember works on one computer per task. Ask the user which one." });
+    expect(r.t.agent.offerConnect("build-01", "on build-01, check the disk")).toBe("More than one computer Ember knows answers to build-01 (build-01.a.com, build-01.b.com). Ask the user which one.");
+  });
+
+  it("binds 'in Ubuntu' to Ubuntu-22.04, never to Windows, and the wrong-target guard hears it", async () => {
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ name: "Ubuntu-22.04" })]), settings: { ...wslOnSettings, ...commandsOn("local") } });
+    await flush();
+    for (const choice of [undefined, "Ubuntu"]) {
+      const b = r.t.agent.bind({ userWords: "in Ubuntu, list my home folder", ...(choice ? { choice } : {}) });
+      expect(b.ok && b.binding.id, String(choice)).toBe("wsl:Ubuntu-22.04");
+    }
+    expect(r.t.agent.offerConnect("Ubuntu", "in Ubuntu, list my home folder")).toBe("Ubuntu-22.04 (WSL) is WSL on this computer, not a computer to connect to: start the task with target Ubuntu-22.04 (WSL).");
+    expect(r.t.agent.othersNamed!("local", "in Ubuntu, delete build/")).toEqual(["Ubuntu-22.04 (WSL)"]);
+    // Another version than the one installed: asked, never run in this one.
+    const other = r.t.agent.bind({ userWords: "in Ubuntu 24.04, list my home folder" });
+    expect(other).toEqual({ ok: false, why: "The user named a version of Ubuntu that isn't on this computer. Ask them: did they mean Ubuntu-22.04 (WSL)?" });
+    expect(r.t.agent.bind({ userWords: "in Ubuntu 22.04, list my home folder" })).toMatchObject({ ok: true, binding: { id: "wsl:Ubuntu-22.04" } });
+  });
+
+  it("never takes a distro's own first word as its name: 'in build' stays here with a distro called build-env", async () => {
+    const distros = [ubuntu({ name: "Ubuntu-22.04" }), ubuntu({ name: "build-env", isDefault: false }), ubuntu({ name: "test-box", isDefault: false }), ubuntu({ name: "work-vm", isDefault: false })];
+    const r = rig({ os: "win32", wslFacts: wslFacts(distros), settings: { ...wslOnSettings, ...commandsOn("local") } });
+    await flush();
+    for (const w of ["delete the logs in build", "save it in test mode", "clean up old files in work"]) {
+      for (const choice of [undefined, "build", "test", "work"]) {
+        const b = r.t.agent.bind({ userWords: w, ...(choice ? { choice } : {}) });
+        expect(b.ok ? b.binding.id : b.why, `${w} / ${String(choice)}`).not.toMatch(/^wsl:/);
+      }
+    }
+    expect(r.t.agent.bind({ userWords: "delete the logs in build" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    expect(r.t.agent.bind({ userWords: "in Ubuntu, list my home folder" })).toMatchObject({ ok: true, binding: { id: "wsl:Ubuntu-22.04" } });
+    expect(r.t.agent.bind({ userWords: "in build-env, delete the logs" })).toMatchObject({ ok: true, binding: { id: "wsl:build-env" } });
+  });
+
+  it("while WSL is off, still binds here for 'in Ubuntu' but counts it for the guard and offers to turn WSL on (review #195)", async () => {
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu({ name: "Ubuntu-22.04" })]), settings: commandsOn("local") });
+    // The settings window looked for distros (nothing is offered for that alone).
+    await r.invoke(TARGETS_IPC.list, r.home);
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    expect(r.t.agent.bind({ userWords: "in Ubuntu, list my home folder" })).toMatchObject({ ok: true, binding: { id: "local" } });
+    await flush(); await flush();
+    expect(r.showState).toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Ember can work in WSL" }) });
+    const got = r.t.agent.handsFor("local");
+    if (!got.ok) throw new Error(got.why);
+    expect((got.hands.commands as unknown as { othersNamed(words: string): string[] }).othersNamed("in Ubuntu, delete build/")).toEqual(["Ubuntu-22.04 (WSL)"]);
   });
 });
 
@@ -1264,9 +1389,26 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", "deploy@build-01"], via: "local" as const }]),
   };
 
+  // The noticer looks only once the user has added a computer (review #33): web-07 here.
+  const added = withHosts([hostRecord("web-07")]);
+
+  it("looks for nothing until the user has added a computer: no window read, no process list, no offer (review #33)", async () => {
+    const r = rig({ notice: { ...notice, userSshProcesses: vi.fn(notice.userSshProcesses) }, cursor: true });
+    r.activeWindow.mockClear();
+    r.ticks[0]();
+    await flush();
+    expect(r.activeWindow).not.toHaveBeenCalled();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
+    // Once one is added (its card accepted), it looks; the switch still turns it off.
+    r.settings.update({ targets: { ...r.settings.own().targets, hosts: [hostRecord("web-07")] } });
+    r.ticks[0]();
+    await flush();
+    expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
+  });
+
   it("looks only with a way to see the user's window, offers Bring Ember, and connects after the card", async () => {
-    expect(rig({ notice }).ticks).toEqual([]);
-    const r = rig({ notice, cursor: true });
+    expect(rig({ notice, settings: added }).ticks).toEqual([]);
+    const r = rig({ notice, cursor: true, settings: added });
     expect(r.ticks).toHaveLength(1);
     r.ticks[0]();
     await flush();
@@ -1282,7 +1424,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 
   it("looks with main's window system alone: no mouse borrowing needed (an organisation's features.cursor: false)", async () => {
-    const r = rig({ notice, activeWindow: true });
+    const r = rig({ notice, activeWindow: true, settings: added });
     expect(r.hands?.cursor).toBeUndefined();
     expect(r.ticks).toHaveLength(1);
     r.ticks[0]();
@@ -1290,14 +1432,14 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(r.activeWindow).toHaveBeenCalled();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
     // Without a window system there is nothing to look at.
-    expect(rig({ notice, hands: null }).ticks).toEqual([]);
+    expect(rig({ notice, hands: null, settings: added }).ticks).toEqual([]);
   });
 
   it("reads the user's ssh in WSL only in distros running now (never booting one), through WA's runner", async () => {
     const seen = { sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async (_os: OS, _o?: unknown) => [] as { pid: number; argv: string[]; via: "local" }[]) };
     const make = (live: string[]) => {
       // Ubuntu ran when Ember last looked (its cached flag says running); WSL reports what runs now.
-      const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: wslOnSettings });
+      const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: { targets: { ...wslOnSettings.targets, hosts: [hostRecord("web-07")] } } });
       r.wsl.runningNow = async () => new Set(live);
       const runScript = vi.fn(async (_script: string, _o?: unknown) => ({ code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" }));
       for (const d of ["Ubuntu", "Debian"]) Object.assign(r.wsl.runner(d), { runScript });
@@ -1321,7 +1463,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
   });
 
   it("says why Bring Ember can't connect when the check before connecting refuses the host (never just a vanished offer)", async () => {
-    const r = rig({ notice, cursor: true });
+    const r = rig({ notice, cursor: true, settings: added });
     r.conns.resolve.mockRejectedValueOnce(new ConnectError("Your organisation doesn't allow Ember to connect to build-01.", "not-allowed"));
     r.ticks[0]();
     await flush();
@@ -1338,7 +1480,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     await flush(); await flush();
     expect(r.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-02", thought: expect.stringContaining("throw host keys away") }) });
     // The user's own Not now on the card says nothing more.
-    const no = rig({ notice, cursor: true, consent: "no" });
+    const no = rig({ notice, cursor: true, consent: "no", settings: added });
     no.ticks[0]();
     await flush();
     no.t.bubbleAction("offer:1:bring");
@@ -1346,8 +1488,30 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
     expect(no.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "Can't connect to build-01" }) });
   });
 
+  it("never offers a computer Ember is connected to, or one the user turned away, under another spelling (review #181)", async () => {
+    const seen = (dest: string) => ({ sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", dest], via: "local" as const }]) });
+    // Connected to "build-01" (an alias for deploy@build-01.example.com); the user runs "ssh deploy@build-01".
+    const r = rig({ notice: seen("deploy@build-01"), cursor: true, settings: withHosts([hostRecord("build-01", { dest: "build-01" })]) });
+    await connected(r);
+    r.showState.mockClear();
+    r.ticks[0]();
+    await flush();
+    expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
+    // Turned away as "deploy@build-01"; later seen as its full name.
+    const d = rig({ notice: seen("deploy@build-01.example.com"), cursor: true, settings: withHosts([hostRecord("build-01", { dest: "build-01" })], { dismissedOffers: ["deploy@build-01"] }) });
+    d.ticks[0]();
+    await flush();
+    expect(d.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: expect.stringContaining("You're connected to") }) });
+    // Another login there is still offered.
+    const other = rig({ notice: seen("root@build-01"), cursor: true, settings: withHosts([hostRecord("build-01", { dest: "build-01" })]) });
+    await connected(other);
+    other.ticks[0]();
+    await flush();
+    expect(other.showState).toHaveBeenLastCalledWith({ bubble: expect.objectContaining({ title: "You're connected to build-01" }) });
+  });
+
   it("remembers Don't offer again, and stops looking when the user turns offers off", async () => {
-    const r = rig({ notice, cursor: true });
+    const r = rig({ notice, cursor: true, settings: added });
     r.ticks[0]();
     await flush();
     r.t.bubbleAction("offer:1:never");
@@ -1399,7 +1563,7 @@ describe("the doctor's rows (§8.8)", () => {
     // SSH is optional: without a client the check-up warns, it never fails (a PC that never uses SSH still passes).
     expect(sshClientRow("linux", null)).toMatchObject({ status: "warn", detail: "No SSH client found", fix: expect.stringContaining("sudo dnf install openssh-clients") });
     expect(sshClientRow("linux", { path: "/usr/bin/ssh", text: "dropbear v2022" })).toMatchObject({ status: "warn" });
-    expect(commandTerminalRow(null)).toMatchObject({ status: "warn", fix: "Install util-linux (`sudo dnf install util-linux`)." });
+    expect(commandTerminalRow(null)).toMatchObject({ status: "warn", fix: "Install util-linux with: sudo dnf install util-linux" });
     expect(powershellRow({ path: "p", language: "ConstrainedLanguage" })).toMatchObject({ status: "warn" });
     expect(powershellRow(null)).toMatchObject({ status: "fail", detail: "Windows PowerShell isn't available" });
     expect(remotePartsRow(null)).toEqual({ id: "remote-parts", label: "Helper for other computers", status: "warn", detail: "Missing from this install", fix: "Reinstall Ember." });

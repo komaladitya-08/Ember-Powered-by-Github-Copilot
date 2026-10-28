@@ -8,10 +8,10 @@
  * Nothing new happens without a reason (critique integration-25): with nothing set up, or with the administrator
  * turning WSL, SSH and commands off, there is no menu item, no badge, no new window, no prompt change (caps all false;
  * with nothing set up, commandsOffered only lets the conversation say where commands are turned on, review #40)
- * and no process started; only the noticer's cheap look at the window the user is in runs, and only while SSH is allowed
- * and the offer switch is on. Every decision comes from local data: a remote's own reports only ever narrow what Ember
- * does there, and the model can never connect, pick a computer the user didn't name, or approve anything. Plain Node
- * (L13): Electron reaches it only through TargetsDeps.
+ * and no process started; the noticer's cheap look at the window the user is in runs only once the user has added a
+ * computer, while SSH is allowed and the offer switch is on (review #33). Every decision comes from local data: a
+ * remote's own reports only ever narrow what Ember does there, and the model can never connect, pick a computer the user
+ * didn't name, or approve anything. Plain Node (L13): Electron reaches it only through TargetsDeps.
  */
 
 import { execFile } from "node:child_process";
@@ -60,7 +60,7 @@ import { targetMenu } from "./menu";
 import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
 import {
-  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, sshAllowed, summaryOf, wslAllowed,
+  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, notConnectedWhy, otherVersionNamed, sshAllowed, summaryOf, wslAllowed,
   type LinkState, type LinkView, type TargetEntry,
 } from "./registry";
 import { createRemoteTarget, type RemoteTarget } from "./remote-service";
@@ -197,6 +197,32 @@ export function configHosts(text: string): string[] {
 function sameDest(h: HostRecord, dest: string, port: number | undefined): boolean {
   const fold = (d: string) => { const at = d.lastIndexOf("@"); return at < 0 ? d.toLowerCase() : `${d.slice(0, at)}@${d.slice(at + 1).toLowerCase()}`; };
   return fold(h.dest) === fold(dest) && (h.port ?? null) === (port ?? null);
+}
+
+/**
+ * Whether a host record is the computer and login ssh -G resolved (§7.4's user, hostname, port and jump hosts, through
+ * the same route): the same computer typed another way ("build-01" and "deploy@build-01.example.com") is one record,
+ * never a second one with its own card and a connection that fights the first for the remote's lock (review #181).
+ */
+function sameIdentity(h: HostRecord, r: HostRecord["resolved"], via: HostRecord["via"] | undefined): boolean {
+  const route = (v: HostRecord["via"] | undefined) => (v && v !== "local" ? v : "local");
+  const hops = (j: readonly string[]) => j.map(x => x.toLowerCase()).join(",");
+  return h.resolved.user === r.user && h.resolved.hostname.toLowerCase() === r.hostname.toLowerCase() && h.resolved.port === r.port
+    && hops(h.resolved.jump) === hops(r.jump) && route(h.via) === route(via);
+}
+
+/**
+ * Whether a destination the user's own ssh uses reaches a host record, as far as Ember can tell without running ssh -G
+ * (the noticer looks every few seconds): the same destination, or its host one of the record's own names (its id, its
+ * host part, its resolved hostname) with the user and the port, where given, the record's resolved ones (review #181).
+ */
+function reaches(h: HostRecord, dest: string, port: number | undefined): boolean {
+  if (sameDest(h, dest, port)) return true;
+  const at = dest.lastIndexOf("@");
+  const host = (at >= 0 ? dest.slice(at + 1) : dest).toLowerCase();
+  if (at >= 0 && dest.slice(0, at) !== h.resolved.user) return false;
+  if (port !== undefined && port !== h.resolved.port) return false;
+  return [h.id, hostPart(h.dest), h.resolved.hostname].some(n => n.toLowerCase() === host);
 }
 
 /** The destination a seen ssh connects to, with its -l user folded in ("deploy@build-01"). */
@@ -818,6 +844,18 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (!(err instanceof ConnectError)) log.warn("targets.resolve_failed", { err });
       return refused(err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up.");
     }
+    // The same computer and login under another spelling: the record Ember has, connected, and said so (review #181).
+    const same = settings.get().targets.hosts.find(h => sameIdentity(h, resolved, raw.via));
+    if (same) {
+      const was = conns.get(same.id)?.state;
+      const r = await connect(same.id, { interactive: true, activate: true });
+      if (!r.ok) return r;
+      // From a bubble's button, an already connected one has nothing else on screen to say where Ember is.
+      if (o.bubble && (was === "ready" || was === "stalled")) {
+        bubble(`connected:${same.id}`, { title: `Already added as ${same.id}`, thought: `I'm on ${same.id} already, so I'll work there.`, actions: [], mood: "done" }, INFO_MS);
+      }
+      return { ok: true, message: `Already added as ${same.id}.` };
+    }
     const id = hostIdFor(hostPart(raw.dest), new Set(settings.get().targets.hosts.map(h => h.id)));
     const host: HostRecord = {
       id, dest: raw.dest, ...(raw.port ? { port: raw.port } : {}), ...(raw.extra ? { extra: raw.extra } : {}), ...(raw.via ? { via: raw.via } : {}),
@@ -1042,7 +1080,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   if (parts.notice && look) {
     noticer = createNoticer({
       os: deps.os, log, notice: noticeOf(parts.notice),
-      enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh,
+      // Only once the user has added a computer (said yes to its SSH card): until then nothing new runs at all, as the
+      // first-run screen and the docs promise ("off until you turn them on"; review #33). The switch turns it off.
+      enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh && settings.get().targets.hosts.length > 0,
       activeWindow: () => {
         const w = look();
         return w && typeof w.app === "string" && typeof w.title === "string" ? { app: w.app, title: w.title } : null;
@@ -1055,8 +1095,14 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         const distros = wslFacts.distros.filter(d => entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
         return { exe: wslFacts.wslExe, distros };
       },
-      dismissed: s => settings.get().targets.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase()),
-      connected: s => settings.get().targets.hosts.some(h => sameDest(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
+      // Turned away under this spelling, or under another one of a computer Ember has a record of (review #181).
+      dismissed: s => {
+        const t = settings.get().targets;
+        if (t.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase())) return true;
+        const h = t.hosts.find(x => reaches(x, seenDest(s), s.port));
+        return !!h && t.dismissedOffers.some(d => reaches(h, d, undefined));
+      },
+      connected: s => settings.get().targets.hosts.some(h => reaches(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
       questionUp,
       offer: s => showSeenOffer(s),
       now: () => parts.now().getTime(),
@@ -1113,10 +1159,12 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         }
         if (p.step === "failed" && c?.state === "lost" && !p.retry) {
           // SA stopped reconnecting after a loss: no more "trying again". A sign-in it can't do in batch mode (a
-          // password, a passphrase outside the agent, a host key to accept) is §8.2's "sign in again".
+          // password, a passphrase outside the agent) is §8.2's "sign in again"; a host key to accept is checked again
+          // (Reconnect shows its card), never called a sign-in (review #196).
           c.state = "closed";
           const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
-          const words = signIn ? signInAgain(hostId) : null;
+          const words = p.kind === "unknown-host-key" ? { title: `${hostId} needs you to check its key again`, text: "Reconnect to check it." }
+            : signIn ? signInAgain(hostId) : null;
           bubble(`lost:${hostId}`, {
             title: words?.title ?? `Can't reconnect to ${hostId}`, thought: words?.text ?? (p.fix ? `${p.message} ${p.fix}` : p.message),
             actions: [{ id: `conn:${hostId}:reconnect`, label: "Reconnect", primary: true }], mood: signIn ? "attention" : "error",
@@ -1206,7 +1254,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (e.kind === "ssh") {
         const c = e.host ? conns.get(e.host.id) : undefined;
         const t = c?.target;
-        if (!t || !asking || c?.state !== "ready" || t.link.state !== "ready") return refuse(e.why ?? `${e.label} isn't connected. Connect it from Ember's menu first.`);
+        if (!t || !asking || c?.state !== "ready" || t.link.state !== "ready") return refuse(e.why ?? notConnectedWhy(e.label));
         const audit = deps.localHands?.audit ?? deps.audit();
         const confirmer = deps.localHands?.confirmer ?? deps.confirmer();
         if (!audit || !confirmer) return refuse("Ember can't keep its record of what it does, so it won't work there.");
@@ -1271,6 +1319,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
    * user's ssh config ("delete build/ on prod-db"): no command of that task announces either (the lead's ruling).
    */
   const unknownPlaces = (words: string): string[] => placesNamed(words, knownNamed().known);
+  /** The distros listed while WSL is off for Ember, by their own names (not WSL's words: "Linux" alone never offers). */
+  const wslListedNames = (): NamedTarget[] =>
+    entries.filter(e => e.kind === "wsl" && e.listedOnly && !e.distro?.needsSetup).map(e => ({ id: e.id, names: e.names.filter(n => !WSL_WORDS.includes(n)) }));
   const bind = (o: { userWords: string; choice?: string }): { ok: true; binding: TargetBinding } | { ok: false; why: string } => {
     try {
       rebuild();
@@ -1292,15 +1343,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           void refreshWsl();
           return refuse("Ember is still finding WSL's distros. Try again in a moment.");
         }
-      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }], deps.os).length) {
-        // The user said "in WSL" while it is off for Ember: the task goes on where Ember is set to work, and "Ember can
-        // work in WSL" is offered (once a run), only once discovery shows a distro to work in (it reads the registry;
-        // nothing starts). Never for "Linux" alone, which is as often what a request is about as where it should run.
+      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }, ...wslListedNames()], deps.os).length) {
+        // The user said "in WSL" (or "in Ubuntu", a distro discovery already listed) while it is off for Ember: the task
+        // goes on where Ember is set to work, and "Ember can work in WSL" is offered (once a run), only once discovery
+        // shows a distro to work in (it reads the registry; nothing starts). Never for "Linux" alone, which is as often
+        // what a request is about as where it should run.
         void refreshWsl().then(() => { if (!wslOn() && defaultDistro(wslFacts)) offerWsl(); });
       }
       const r = bindTarget({ userWords: words, ...(o.choice !== undefined ? { choice: o.choice } : {}), targets: namedTargets(entries), active: activeId(), os: deps.os });
       if (!r.ok) return r;
       const e = entryOf(r.id);
+      // "In Ubuntu 24.04" where only Ubuntu-22.04 is installed: asked, never done in another version (review #180).
+      const short = e?.kind === "wsl" && usableNamed.includes(e.id) ? otherVersionNamed(words, e) : null;
+      if (short && e) return refuse(`The user named a version of ${short} that isn't on this computer. Ask them: did they mean ${e.label}?`);
       return e ? { ok: true, binding: bindingOf(e) } : refuse(NOT_NAMED);
     } catch (err) {
       log.error("targets.bind_failed", { err });
@@ -1395,7 +1450,17 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         return "The user didn't name that computer, so Ember won't offer to connect to it.";
       }
       const key = normaliseName(n);
-      const host = settings.get().targets.hosts.find(h => [h.id, hostPart(h.dest), h.resolved.hostname].some(x => normaliseName(x) === key));
+      // The registry's names: a host's id, host part and resolved hostname, and the short names (reviews #179, #180).
+      rebuild();
+      const named = entries.filter(e => e.kind !== "local" && e.names.some(x => normaliseName(x) === key));
+      const distro = named.find(e => e.kind === "wsl");
+      if (distro) {
+        return distro.listedOnly || !distro.usable ? (distro.why ?? `Ember can't work in ${distro.label} now. Tell the user.`)
+          : `${distro.label} is WSL on this computer, not a computer to connect to: start the task with target ${distro.label}.`;
+      }
+      const hosts = named.filter(e => e.kind === "ssh" && e.host);
+      if (hosts.length > 1) return `More than one computer Ember knows answers to ${n} (${hosts.map(e => e.label).join(", ")}). Ask the user which one.`;
+      const host = hosts[0]?.host ?? null;
       const state = host ? conns.get(host.id)?.state : undefined;
       if (host && state === "ready") return `Ember is already connected to ${host.id}: start the task with target ${host.id}.`;
       if (host && state === "connecting") return `Ember is connecting to ${host.id} now. Start the task once it is connected.`;

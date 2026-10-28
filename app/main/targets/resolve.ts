@@ -1,10 +1,11 @@
 /**
  * Which computer the user's own words name (§2.3): pure and deterministic, run only on the user's typed or spoken words
  * (never the model's text, screen text, a file or command output). A target is named by its label, alias, hostname or
- * distro name after one normalisation (NFKC, lower case, spoken numbers zero to twenty as digits, nothing but letters
- * and digits), as a run of whole words, and only after a place word ("on build-01", "in Ubuntu"), as the request's
- * first words before ":" or ",", or before "'s desktop" and the like. So "Send build-01's report to Ana" names nothing,
- * and a model that lost track can't move a task by repeating a name the user never used as a place.
+ * distro name (or the registry's short names for them) after one normalisation (NFKC, lower case, spoken numbers zero
+ * to twenty as digits, nothing but letters and digits), as a run of whole words, the longest name written as one name
+ * winning, and only after a place word ("on build-01", "in Ubuntu"), as the request's first words before ":" or ",", or
+ * before "'s desktop" and the like. So "Send build-01's report to Ana" names nothing, and a model that lost track can't
+ * move a task by repeating a name the user never used as a place.
  */
 
 import type { OS } from "../../shared/shortcuts";
@@ -30,7 +31,7 @@ const DETERMINER = new Set(["the", "my", "our"]);
 /** What may follow "<name>'s" for the name to be a place ("build-01's desktop"). */
 const POSSESSIVE = /^['’]s\s+(?:desktop|screen|machine|server|computer|box|shell|terminal)(?![\p{L}\p{N}])/u;
 /** A name shorter than this, normalised, is never matched (too easy to say by accident). */
-const MIN_NAME = 3;
+export const MIN_NAME = 3;
 
 /** NFKC and lower case: the form every rule reads (positions refer to it). */
 function fold(s: string): string {
@@ -69,6 +70,39 @@ function runsOf(words: readonly Word[], name: string, min = MIN_NAME): [number, 
     }
   }
   return out;
+}
+
+/** A run of the request's words that spells one of a target's names: [first word, last word]. */
+interface Run { id: TargetId; i: number; j: number }
+
+/**
+ * Whether the words of `long` outside `short` are written onto it as one name: each joined to its neighbour by one "-",
+ * "_" or "." ("build-01-test", "build-01.other.net"), or by spaces when it is a number ("Ubuntu 24.04"). "db-01, backup"
+ * or "build-01 test" is two things said, not db-01-backup or build-01-test (reviews #179, #180).
+ */
+function writtenOnto(folded: string, ws: readonly Word[], long: Run, short: Run): boolean {
+  for (let k = long.i + 1; k <= long.j; k++) {
+    if (k > short.i && k <= short.j) continue;
+    const gap = folded.slice(ws[k - 1].end, ws[k].start);
+    const extra = k <= short.i ? ws[k - 1] : ws[k];
+    if (!/^[-_.]$/.test(gap) && !(/^\s+$/.test(gap) && /^\d+$/.test(extra.text))) return false;
+  }
+  return true;
+}
+
+/**
+ * Every run of `ws` that spells a name of one of `targets` ("local" aside), except a run inside a longer run of another
+ * target's name written as one name with it (the longest wins): "on build-01-test" names build-01-test, not also
+ * build-01, and "in Ubuntu 24.04" names Ubuntu-24.04, not also another distro that answers to "Ubuntu" (a short name;
+ * reviews #179, #180). "on db-01, backup the database" keeps both db-01 and db-01-backup, so Ember asks which one.
+ */
+function runsNaming(folded: string, ws: readonly Word[], targets: readonly NamedTarget[]): Run[] {
+  const runs: Run[] = [];
+  for (const t of targets) {
+    if (t.id === "local") continue;
+    for (const n of t.names) for (const [i, j] of runsOf(ws, normaliseName(n))) runs.push({ id: t.id, i, j });
+  }
+  return runs.filter(r => !runs.some(o => o.id !== r.id && o.i <= r.i && r.j <= o.j && o.j - o.i > r.j - r.i && writtenOnto(folded, ws, o, r)));
 }
 
 /** Rule 3: the run [i, j] stands where a place is named. */
@@ -114,20 +148,11 @@ export function targetsNamed(words: string, targets: readonly NamedTarget[], os:
   const folded = fold(String(words ?? ""));
   const ws = wordsOf(folded);
   const found: { id: TargetId; at: number }[] = [];
-  for (const t of targets) {
-    if (t.id === "local") {
-      const at = localAt(ws, os);
-      if (at >= 0) found.push({ id: t.id, at });
-      continue;
-    }
-    let first = -1;
-    for (const n of t.names) {
-      for (const [i, j] of runsOf(ws, normaliseName(n))) {
-        if (isPlace(folded, ws, i, j) && (first < 0 || i < first)) first = i;
-      }
-    }
-    if (first >= 0) found.push({ id: t.id, at: first });
+  if (targets.some(t => t.id === "local")) {
+    const at = localAt(ws, os);
+    if (at >= 0) found.push({ id: "local", at });
   }
+  for (const r of runsNaming(folded, ws, targets)) if (isPlace(folded, ws, r.i, r.j)) found.push({ id: r.id, at: r.i });
   found.sort((a, b) => a.at - b.at);
   return [...new Set(found.map(f => f.id))];
 }
@@ -302,6 +327,9 @@ export function bindTarget(o: { userWords: string; choice?: string; targets: rea
   if (named.length === 1) return { ok: true, id: named[0] };
   const choice = typeof o.choice === "string" ? o.choice.trim() : "";
   if (!choice) return { ok: true, id: o.active };
+  // A short name two computers share ("Ubuntu" for Ubuntu-22.04 and Ubuntu-24.04) picks neither: ask (review #180).
+  const c = normaliseName(choice);
+  if (o.targets.filter(t => t.id !== "local" && t.names.some(n => normaliseName(n) === c)).length > 1) return { ok: false, why: TWO_NAMED };
   const id = targetOfChoice(choice, o.targets, o.os);
   if (id === null) {
     // A computer the user did name, but Ember has no record of: the model may offer a connection, never make one.
@@ -310,7 +338,10 @@ export function bindTarget(o: { userWords: string; choice?: string; targets: rea
   }
   if (id === o.active) return { ok: true, id };
   const t = o.targets.find(x => x.id === id);
-  return t && namedAnywhere(o.userWords, t, o.os) ? { ok: true, id } : { ok: false, why: NOT_NAMED };
+  // Named anywhere, and not only as the start of another computer's name ("build-01" in "build-01-test's report").
+  const folded = fold(String(o.userWords ?? ""));
+  const said = id === "local" ? !!t && namedAnywhere(o.userWords, t, o.os) : runsNaming(folded, wordsOf(folded), o.targets).some(r => r.id === id);
+  return said ? { ok: true, id } : { ok: false, why: NOT_NAMED };
 }
 
 /** The words that name WSL itself on a Windows PC (rule 5), as names subject to rule 3: "in WSL", "on the Linux side". */

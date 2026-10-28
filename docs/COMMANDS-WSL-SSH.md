@@ -43,6 +43,16 @@ report to Ana" names no computer, and neither does "build-01 restart the web ser
 goes to the computer Ember is set to work on (and nothing dangerous in it runs on an announcement: §2.5). Only your
 own words choose: never text on a screen, in a file or in a command's output.
 
+**Short names.** A computer added by its full name also answers to its first part when that has a digit or a hyphen ("on
+build-01" for build-01.example.com; "in the app" never names app.example.com), and a distribution's WSL distro to its
+first word ("in Ubuntu" for Ubuntu-22.04, "in kali" for kali-linux; a distro you imported as build-env answers only to
+build-env, so "delete the logs in build" names none). The longest name you say wins when you write it as one name, its
+parts joined by a hyphen, an underscore or a dot, or followed by a version ("on build-01-test" is build-01-test, not
+build-01; "in Ubuntu 24.04" is Ubuntu-24.04). "On db-01, back up the database", with db-01 and db-01-backup both added,
+names both, so Ember asks which one. When two computers share the short name you said, Ember asks which one; when you
+name a version of a distro that isn't installed ("in Ubuntu 24.04" with only Ubuntu-22.04), Ember asks whether you meant
+the one you have.
+
 **One computer per task.** A task works on one computer from start to end. A request that names two is answered with
 a question; moving text from one computer to another happens only through a step Ember asks about. Task cards, the
 bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
@@ -384,16 +394,20 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 
 - **Add a computer** in Settings › **Computers**: type an alias from your `~/.ssh/config`, `user@host`,
   `user@host:port` or `ssh://user@host:port` and press **Connect**. The handle menu's **Bring Ember to a computer…**
-  opens that section.
-- **Or let Ember notice your own `ssh`.** When the window you're in is a terminal and its title changes, Ember may
-  look (at most every 10 seconds) at your own `ssh` processes: their command lines (the host and a few options), never
-  your terminal's contents. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own
-  connection with your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). It offers each computer
-  once per run, and **Don't offer again** sticks. Turn the offers off with **Offer to bring Ember along when I connect
-  with ssh**. Ember always opens its own connection; it never uses or types into yours. If it can't connect there
-  (your organisation doesn't allow that computer, its settings throw host keys away, it is this same computer…), the
-  bubble says so: "Can't connect to build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that
-  are running at that moment, and never starts one to look.
+  opens that section. The same computer and login typed another way (an alias, or user@host with its full name) is the
+  one Ember already has: it connects that one and says "Already added as build-01".
+- **Or let Ember notice your own `ssh`.** Once you've added a computer (and said yes to its card), when the window
+  you're in is a terminal and its title changes, Ember may look (at most every 10 seconds) at your own `ssh`
+  processes: their command lines (the host and a few options), never your terminal's contents. Until then it doesn't
+  look at all. It offers "You're connected to build-01" — "Bring Ember there too? It will open its own connection with
+  your SSH settings." (**Bring Ember**, **Not now**, **Don't offer again**). It offers each computer once per run, and
+  **Don't offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`,
+  `rsync`, scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with
+  **Offer to bring Ember along when I connect with ssh** (shown once a computer is added). Ember always opens its own
+  connection; it never uses or types into yours. If it can't connect there (your organisation doesn't allow that
+  computer, its settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to
+  build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that are running at that moment, and
+  never starts one to look.
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,
@@ -428,9 +442,10 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 - **Disconnect** from the handle menu or Settings. If the connection drops, everything there stops ("Lost build-01")
   and Ember tries to reconnect for up to 10 minutes; a reconnect starts fresh: no task resumes and no approval carries
   over. Reconnecting never asks you anything, so when it needs you (a password, a passphrase your SSH agent doesn't
-  hold, a host key to accept) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect
-  to sign in."; when it gives up for another reason (after 10 minutes, or a refusal), it says "Can't reconnect to
-  build-01" with the reason. Both have **Reconnect**, which connects with Ember's sign-in window.
+  hold) it stops trying and the bubble says "build-01 needs you to sign in again" — "Reconnect to sign in."; for a
+  host key to accept, "build-01 needs you to check its key again" — "Reconnect to check it."; when it gives up for
+  another reason (after 10 minutes, or a refusal), it says "Can't reconnect to build-01" with the reason. All have
+  **Reconnect**, which connects with Ember's sign-in window.
 
 ### 4.2 What stays here
 
@@ -528,8 +543,8 @@ rest of its output is dropped and you won't see it. After the stop chord, output
   OpenSSH Client in Settings › Apps › Optional features."). Its own password window works only with **8.4 or newer**
   (Windows 10's built-in client is older), and not under Constrained Language Mode or where application control
   blocks the small helper Ember compiles for it. There, connect with keys and the ssh-agent service ("build-01 didn't
-  accept your key. Add it to the ssh-agent (`ssh-add`), then connect again."), and accept an unknown host's key once
-  yourself ("Connect once with `ssh build-01` in a terminal, check its key, then try again.").
+  accept your key. Add it to the ssh-agent with ssh-add, then connect again."), and accept an unknown host's key once
+  yourself ("Connect once with ssh build-01 in a terminal, check its key, then try again.").
 - **`ssh` typed in a WSL tab** is noticed too. Ember connects with Windows' SSH unless connecting through the distro
   has been proven to work; then the offer says "Ember connects with Windows' SSH. Add your key to Windows' ssh-agent,
   or connect once from PowerShell, then bring Ember there." Connections through a distro use its keys and agent only,
@@ -556,12 +571,12 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 
 | Ember says | What to do |
 |---|---|
-| "Ember can't find SSH on this computer. Install OpenSSH (Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client), then try again." | As it says |
+| "Ember can't find SSH on this computer.", then how to install it on yours alone: on Linux "Install OpenSSH with: sudo dnf install openssh-clients", on Windows "Install the OpenSSH Client in Settings › Apps › Optional features, then try again." (through a WSL distro, the Linux line) | As it says; on a Mac, SSH comes with macOS at /usr/bin/ssh |
 | "Ember can't find build-01. Check the name, or add it to your SSH config." | Check the name |
 | "Ember can't reach build-01 (&lt;reason in a few words&gt;). Check you're on the right network or VPN." | On macOS 15, for a computer on your local network, also allow Ember in System Settings › Privacy & Security › Local Network |
 | "Your SSH settings for build-01 have a line this SSH can't use: &lt;the line&gt;. Fix or remove it, then connect again." | As it says |
 | "build-01 took too long to answer (a jump host or sign-in helper may be waiting)." | Check the jump host or sign-in helper |
-| "build-01 refused after too many keys. Add `IdentitiesOnly yes` and the right `IdentityFile` for build-01 to your SSH config." | As it says |
+| "build-01 refused after too many keys. In your SSH config, add IdentitiesOnly yes and an IdentityFile line with the right key for build-01." | As it says |
 | "build-01's settings throw host keys away, so Ember can't check it's really build-01." | Remove `UserKnownHostsFile /dev/null` for that host |
 | "build-01 didn't run Ember's set-up (it may be Windows, or this login runs a fixed program)." | Ember needs a normal shell login there |
 | "build-01's system is too old for Ember (it needs glibc 2.28 or newer, as in RHEL 8 or Ubuntu 20.04)." | Ember can't work there |
@@ -579,15 +594,15 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 
 | Row | Warns or fails when | What to do |
 |---|---|---|
-| **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". Only ever a warning: SSH is optional | Install or update OpenSSH (§4.8) |
-| **Command window terminal** (Linux, macOS, while your organisation allows commands here) | "No script program: commands can't ask for passwords or answers" | `sudo dnf install util-linux` |
+| **SSH client** (while SSH is allowed) | No client, or too old (OpenSSH 7.6 on Linux and macOS, 8.1 on Windows); on Windows 8.1 to 8.3: "Passwords can't be asked here: keys and the ssh-agent only". Only ever a warning: SSH is optional | Install or update OpenSSH (§4.8); on Windows, 8.4 or newer to enter passwords in Ember |
+| **Command window terminal** (Linux, macOS, while your organisation allows commands here) | "No script program: commands can't ask for passwords or answers" | Linux: `sudo dnf install util-linux` (macOS comes with `script`) |
 | **PowerShell for commands** (Windows, while your organisation allows commands here) | Windows PowerShell missing, or Constrained Language Mode ("command output may not be UTF-8, and SSH passwords can't be asked") | Turn on Windows PowerShell in Windows features |
 | **WSL** (Windows) | No distros; WSLg off ("Remove `guiApplications=false` from `%USERPROFILE%\.wslconfig`."); the built-in WSL ("Run `wsl --update`."); an X server showing Linux apps | As the row says |
 | **Linux apps in Ubuntu** (a running distro, while WSL is on in Ember) | The helper, Python 3, pyatspi or the session bus is missing, or the distro runs as root | §3.3 |
 | **Accessibility in Ubuntu** (likewise) | Toolkit accessibility is off | The row's button in the setup check (§3.3), then restart your Linux apps |
 | **Linux apps in WSL** (while WSL is off in Ember) | Never: "WSL is off in Ember's settings, so Ember doesn't look inside its distros" | Turn WSL on in Settings › **Computers** to check them |
 | **Helper for other computers** (an installed Ember, while SSH is allowed) | Missing from this install (only a warning: SSH is optional) | Reinstall Ember |
-| **Folders on build-01** (a connected Mac) | Commands can't open Desktop, Documents or Downloads | "Allow full disk access for remote users" on that Mac |
+| **Folders on build-01** (a connected Mac) | Commands can't open Desktop, Documents or Downloads | Turn on "Allow full disk access for remote users" on that Mac: System Settings › General › Sharing › Remote Login › ⓘ |
 
 ## 6. For administrators
 

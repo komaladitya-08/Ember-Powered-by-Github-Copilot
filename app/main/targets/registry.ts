@@ -16,7 +16,7 @@ import type { DesktopState } from "../remote/protocol";
 import type { Settings } from "../settings";
 import type { WslDistro, WslFacts } from "../wsl/types";
 import type { DesktopAccess } from "./types";
-import { WSL_WORDS, type NamedTarget } from "./resolve";
+import { MIN_NAME, WSL_WORDS, normaliseName, type NamedTarget } from "./resolve";
 
 /** This computer's label everywhere a target is named (§8.1). */
 export const LOCAL_LABEL = "This computer";
@@ -105,6 +105,78 @@ export function hostPart(dest: string): string {
   return h;
 }
 
+/**
+ * The first part of a host name ("build-01" of "build-01.example.com"), as a short name the user may say for it (review
+ * #179), or null: only for a dotted name that isn't an address, and only a part with a letter and a digit or a hyphen
+ * (what looks like a computer's name said alone, as the lead ruled for places) of at least MIN_NAME characters, so "on
+ * build-01" names build-01.example.com while "in the app" never names app.example.com.
+ */
+export function shortHostName(name: string): string | null {
+  const dot = name.indexOf(".");
+  if (dot <= 0 || name.includes(":") || /^[\d.]+$/.test(name)) return null;
+  const first = name.slice(0, dot);
+  return /[a-z]/i.test(first) && /[\d-]/.test(first) && normaliseName(first).length >= MIN_NAME ? first : null;
+}
+
+/**
+ * The distributions whose first word stands for the distro, as `wsl --list --online` and the Store name them
+ * ("Ubuntu-22.04", "kali-linux", "openSUSE-Leap-15.5", "OracleLinux_9_1"…). A distro the user made with `wsl --import`
+ * ("build-env", "test-box", "work-vm") gets no short name: "delete the logs in build" names no distro.
+ */
+const DISTRO_FAMILY = /^(?:ubuntu|debian|kali|opensuse|suse|sles|oraclelinux|almalinux|fedoralinux|fedora|pengwin|alpine|arch|archlinux|centos|rockylinux)$/i;
+
+/**
+ * A distro's first word, before its first "-", "_", "." or digit ("Ubuntu" of "Ubuntu-22.04", "kali" of "kali-linux",
+ * "openSUSE" of "openSUSE-Leap-15.5"), as a short name for "in Ubuntu" (review #180); null when that is its whole name or
+ * isn't a distribution's own name (a first word such as "build" of "build-env" is an everyday word, not a computer).
+ */
+export function shortDistroName(name: string): string | null {
+  const m = /^[A-Za-z]+/.exec(name);
+  return m && m[0] !== name && m[0].length >= MIN_NAME && DISTRO_FAMILY.test(m[0]) ? m[0] : null;
+}
+
+/**
+ * The distro's first word when the user's words give it with a version the distro doesn't have ("in Ubuntu 24.04" where
+ * Ubuntu-22.04 is installed), so Ember asks "did they mean Ubuntu-22.04 (WSL)?" instead of working in another version
+ * (review #180); null when the words give no version with it, or this one's (or the start of it: "Ubuntu 22").
+ */
+export function otherVersionNamed(words: string, e: TargetEntry): string | null {
+  const short = e.kind === "wsl" && e.distro ? shortDistroName(e.distro.name) : null;
+  if (!short || !e.distro) return null;
+  const full = normaliseName(e.distro.name);
+  // `short` is letters only (shortDistroName), so it is safe in the pattern.
+  const re = new RegExp(`(?<![\\p{L}\\p{N}])${short}[\\s_-]*(\\d+(?:[.,_-]\\d+)*)`, "giu");
+  for (const m of String(words ?? "").normalize("NFKC").matchAll(re)) {
+    if (!full.startsWith(normaliseName(`${short}${m[1]}`))) return short;
+  }
+  return null;
+}
+
+/**
+ * Each SSH host's and WSL distro's short names added to its names (reviews #179, #180), except one that is another
+ * target's own name (that one keeps it: the alias "build-01" over build-01.other.net's first part). Two that share a
+ * short name both get it, so saying only that asks which one (TWO_NAMED), while a longer name said in full still wins
+ * (targetsNamed's longest run). The wrong-target guard and offer_connect read the same names.
+ */
+function withShortNames(entries: TargetEntry[]): TargetEntry[] {
+  const owners = new Map<string, Set<TargetId>>();
+  for (const e of entries) {
+    for (const n of e.names) {
+      const k = normaliseName(n);
+      if (!k) continue;
+      const set = owners.get(k) ?? new Set<TargetId>();
+      set.add(e.id);
+      owners.set(k, set);
+    }
+  }
+  return entries.map(e => {
+    const shorts = e.kind === "ssh" && e.host ? [e.host.id, hostPart(e.host.dest), e.host.resolved.hostname].map(shortHostName)
+      : e.kind === "wsl" && e.distro ? [shortDistroName(e.distro.name)] : [];
+    const add = shorts.filter((n): n is string => !!n && ![...(owners.get(normaliseName(n)) ?? [])].some(id => id !== e.id));
+    return add.length ? { ...e, names: [...new Set([...e.names, ...add])] } : e;
+  });
+}
+
 /** What "can" says for commands of one state. */
 const commandsWord = (s: CommandCapability["state"]): string => (s === "on" ? "commands" : s === "needs-consent" ? "commands once you agree" : "");
 
@@ -163,6 +235,15 @@ function wslEntries(i: RegistryInput): TargetEntry[] {
   return out;
 }
 
+/**
+ * Why a known computer that isn't connected can't take a task: offer_connect puts a Connect button in the bubble, as it
+ * does for a computer Ember doesn't know yet, so the model is pointed there, not at a menu (review #197). The user may
+ * read it too (a queued task's card when its computer drops), so it names no tool and speaks to both.
+ */
+export function notConnectedWhy(label: string): string {
+  return `${label} isn't connected. Ember can show a Connect button for it.`;
+}
+
 /** The SSH entries: one per host record, while the administrator allows SSH. */
 function sshEntries(i: RegistryInput): TargetEntry[] {
   if (!sshAllowed(i.admin)) return [];
@@ -175,7 +256,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
     const names = [...new Set([h.id, hostPart(h.dest), h.resolved.hostname, h.dest.includes("@") ? "" : h.dest].filter(Boolean))];
     const base = { id, kind: "ssh" as const, label, login: h.resolved.user, names, host: h, listedOnly: false };
     if (!link || link.state === "closed") {
-      out.push({ ...base, state: "off", can: "not connected", usable: false, why: `${label} isn't connected. Connect it from Ember's menu first.` });
+      out.push({ ...base, state: "off", can: "not connected", usable: false, why: notConnectedWhy(label) });
       continue;
     }
     if (link.state === "connecting") {
@@ -183,7 +264,9 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
       continue;
     }
     if (link.state === "lost") {
-      out.push({ ...base, state: "lost", can: "connection lost", usable: false, why: `The connection to ${label} dropped. Reconnect it from Ember's menu first.` });
+      // The menu's item is disabled while lost: the bubble's Reconnect, offer_connect's button or Settings (review #197).
+      out.push({ ...base, state: "lost", can: "connection lost", usable: false,
+        why: `The connection to ${label} dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers).` });
       continue;
     }
     const cmd = link.commands ?? "off";
@@ -201,7 +284,7 @@ function sshEntries(i: RegistryInput): TargetEntry[] {
 
 /** Every target Ember knows now: "local" first, then WSL distros, then SSH hosts (§2.2). */
 export function buildRegistry(i: RegistryInput): TargetEntry[] {
-  return [localEntry(i), ...wslEntries(i), ...sshEntries(i)];
+  return withShortNames([localEntry(i), ...wslEntries(i), ...sshEntries(i)]);
 }
 
 /** The targets a task can bind to (listed-only rows left out). */

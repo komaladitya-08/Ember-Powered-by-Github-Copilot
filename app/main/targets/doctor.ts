@@ -14,6 +14,7 @@ import pathWin32 from "node:path/win32";
 import type { OS } from "../../shared/shortcuts";
 import { commandMode, type LoadedAdminPolicy } from "../admin";
 import type { PlatformDoctorRow, SystemPlatform } from "../platform/types";
+import { installSsh } from "../remote/ssh-errors";
 import { sshAllowed } from "./registry";
 
 /** What the rows are decided from (the real probes run the programs; tests pass answers). */
@@ -36,10 +37,15 @@ export function parseSshVersion(text: string): { major: number; minor: number; w
 
 const atLeast = (v: { major: number; minor: number }, major: number, minor: number) => v.major > major || (v.major === major && v.minor >= minor);
 
-/** §8.7's message when there is no SSH client. */
-export const NO_SSH_FIX = "Ember can't find SSH on this computer. Install OpenSSH (Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client), then try again.";
+/**
+ * What to do when there is no SSH client: this OS's way to install it only (the row's detail already says none was
+ * found, so the fix doesn't say it again; review #157, #218).
+ */
+export const noSshFix = (os: OS): string => installSsh(os);
 /** §8.7's message for a Windows client that is too old. */
 export const OLD_SSH_WIN_FIX = "Ember needs OpenSSH 8.1 or newer: update the OpenSSH Client in Settings › Apps › Optional features.";
+/** A Windows client of 8.1 to 8.3: it works, but Ember's password window needs 8.4 (L15; review #157, #218). */
+export const OLD_SSH_WIN_PASSWORDS_FIX = "Update the OpenSSH Client to 8.4 or newer to enter passwords in Ember.";
 /** §5.1.1's message for a POSIX client that is too old. */
 export const OLD_SSH_FIX = "Ember needs OpenSSH 7.6 or newer.";
 
@@ -50,24 +56,25 @@ export const OLD_SSH_FIX = "Ember needs OpenSSH 7.6 or newer.";
 export function sshClientRow(os: OS, found: { path: string; text: string } | null): PlatformDoctorRow {
   const row = { id: "ssh-client", label: "SSH client" };
   const v = found ? parseSshVersion(found.text) : null;
-  if (!found || !v) return { ...row, status: "warn", detail: "No SSH client found", fix: NO_SSH_FIX };
+  if (!found || !v) return { ...row, status: "warn", detail: "No SSH client found", fix: noSshFix(os) };
   const ver = `${v.major}.${v.minor}`;
   if (os === "win32") {
     if (!atLeast(v, 8, 1)) return { ...row, status: "warn", detail: "OpenSSH is too old for Ember", fix: OLD_SSH_WIN_FIX };
     // Win32-OpenSSH runs Ember's askpass only from 8.4 (L15).
-    if (!atLeast(v, 8, 4)) return { ...row, status: "warn", detail: "Passwords can't be asked here: keys and the ssh-agent only", fix: OLD_SSH_WIN_FIX };
+    if (!atLeast(v, 8, 4)) return { ...row, status: "warn", detail: "Passwords can't be asked here: keys and the ssh-agent only", fix: OLD_SSH_WIN_PASSWORDS_FIX };
     return { ...row, status: "ok", detail: `OpenSSH ${ver} (passwords through Ember's prompt)` };
   }
   if (!atLeast(v, 7, 6)) return { ...row, status: "warn", detail: "OpenSSH is too old for Ember", fix: OLD_SSH_FIX };
   return { ...row, status: "ok", detail: `OpenSSH ${ver} at ${found.path}` };
 }
 
-/** The command window terminal row (Linux, macOS; §8.8). */
-export function commandTerminalRow(script: string | null): PlatformDoctorRow {
+/** The command window terminal row (Linux, macOS; §8.8): util-linux is named only on Linux (review #157). */
+export function commandTerminalRow(script: string | null, os: OS = "linux"): PlatformDoctorRow {
   const row = { id: "command-terminal", label: "Command window terminal" };
+  const fix = os === "darwin" ? "macOS comes with script at /usr/bin/script, but Ember can't find it there." : "Install util-linux with: sudo dnf install util-linux";
   return script
     ? { ...row, status: "ok", detail: "script gives commands a terminal" }
-    : { ...row, status: "warn", detail: "No script program: commands can't ask for passwords or answers", fix: "Install util-linux (`sudo dnf install util-linux`)." };
+    : { ...row, status: "warn", detail: "No script program: commands can't ask for passwords or answers", fix };
 }
 
 /** The PowerShell row (Windows; §8.8). */
@@ -98,8 +105,8 @@ export function remotePartsRow(targets: string[] | null): PlatformDoctorRow {
 export function remoteTccRow(hostId: string): PlatformDoctorRow {
   return {
     id: `remote-tcc:${hostId}`, label: `Folders on ${hostId}`, status: "warn",
-    detail: `Commands on ${hostId} can't open your Desktop, Documents or Downloads folders until "Allow full disk access for remote users" is on.`,
-    fix: "System Settings › General › Sharing › Remote Login › ⓘ › Allow full disk access for remote users.",
+    detail: `Commands on ${hostId} can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on.`,
+    fix: "Turn it on in System Settings › General › Sharing › Remote Login › ⓘ.",
   };
 }
 
@@ -112,7 +119,7 @@ export async function doctorRowsWith(o: { os: OS; admin: () => LoadedAdminPolicy
   if (ssh) rows.push(sshClientRow(o.os, await safe(() => p.ssh(), null)));
   if (commandMode(admin, "local") !== "off") {
     if (o.os === "win32") rows.push(powershellRow(await safe(() => p.powershell(), null)));
-    else rows.push(commandTerminalRow(await safe(() => p.script(), null)));
+    else rows.push(commandTerminalRow(await safe(() => p.script(), null), o.os));
   }
   // Only an installed Ember carries the parts; a development copy builds them on demand.
   if (ssh && o.packaged) rows.push(remotePartsRow(await safe(() => p.remoteParts(), null)));

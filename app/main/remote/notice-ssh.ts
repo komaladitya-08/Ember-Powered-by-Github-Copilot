@@ -20,8 +20,16 @@ import type { SshSeen } from "./types";
 const WITH_VALUE = new Set("bceilmopBDEFIJLOPQRSwW".split(""));
 /** And those that don't ("1246afgknqstvxACGKMNTVXYy"). */
 const FLAGS = new Set("1246afgknqstvxACGKMNTVXYy".split(""));
-/** Runs that don't connect to a host for a session: a version, a config dump, a mux control command, a query, tunnels. */
-const NOT_A_SESSION = new Set(["V", "G", "O", "Q", "N", "W"]);
+/**
+ * Runs that don't connect to a host for a session: a version, a config dump, a mux control command, a query, tunnels,
+ * and -T, no terminal (`ssh -T git@github.com`, a script's ssh): nothing the user works in (review #34).
+ */
+const NOT_A_SESSION = new Set(["V", "G", "O", "Q", "N", "W", "T"]);
+/**
+ * Git hosting services' ssh servers: they give no shell, so `ssh git@github.com` (or an IDE's fetch) is never a
+ * computer to bring Ember to (review #34).
+ */
+const GIT_HOST = /^(?:(?:ssh\.)?github\.com|(?:altssh\.)?gitlab\.com|(?:altssh\.)?bitbucket\.org|ssh\.dev\.azure\.com|vs-ssh\.visualstudio\.com|source\.developers\.google\.com|git-codecommit\.[a-z0-9-]+\.amazonaws\.com)$/i;
 /** -o keys whose value decides where the connection goes: one Ember can't carry means it doesn't offer at all. */
 const ROUTE_KEYS = new Set(["Port", "User", "ProxyJump", "HostName", "HostKeyAlias"]);
 
@@ -31,23 +39,32 @@ export function isSshProgram(argv0: string): boolean {
   return /^ssh(\.exe)?$/i.test(base);
 }
 
-/** The destination an OpenSSH client command line connects to, or null (a -V, -G, -O, -Q run, a -W/-N tunnel, no host). */
+/**
+ * The destination an OpenSSH client command line connects to, or null: a -V, -G, -O, -Q run, a -W/-N tunnel, no
+ * terminal (-T), no host, a git hosting service, or a remote command without a terminal (-t): git over ssh, scp, rsync
+ * and scripts run ssh that way, and none of them is a session the user works in (review #34).
+ */
 export function sshDestination(argv: readonly string[]): SshSeen | null {
   if (!argv.length || !isSshProgram(argv[0])) return null;
   const seen: Omit<SshSeen, "dest"> & { dest?: string } = {};
   const identityFiles: string[] = [];
   const options: Record<string, string> = {};
   let dest: string | null = null;
+  /** Words follow the destination: a command runs there instead of the user's shell. */
+  let command = false;
+  /** -t: a terminal is asked for, so a command there is still interactive (`ssh -t build-01 tmux attach`). */
+  let tty = false;
   let i = 1;
   // ssh.c parses options before and after the destination; the first other word after it starts the command.
   for (; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--") {
       if (dest === null) { dest = argv[i + 1] ?? null; i++; continue; }
+      command = i + 1 < argv.length;
       break;
     }
     if (!a.startsWith("-") || a === "-") {
-      if (dest !== null) break;
+      if (dest !== null) { command = true; break; }
       dest = a;
       continue;
     }
@@ -55,6 +72,7 @@ export function sshDestination(argv: readonly string[]): SshSeen | null {
       const c = a[k];
       if (FLAGS.has(c)) {
         if (NOT_A_SESSION.has(c)) return null;
+        if (c === "t") tty = true;
         continue;
       }
       if (!WITH_VALUE.has(c)) return null;
@@ -65,7 +83,7 @@ export function sshDestination(argv: readonly string[]): SshSeen | null {
       break;
     }
   }
-  if (dest === null) return null;
+  if (dest === null || (command && !tty)) return null;
   // ssh://user@host:port: user and port taken apart, as for a destination typed in settings.
   if (/^ssh:\/\//i.test(dest)) {
     const typed = parseTypedDestination(dest);
@@ -73,7 +91,7 @@ export function sshDestination(argv: readonly string[]): SshSeen | null {
     dest = typed.dest;
     if (typed.port !== undefined && seen.port === undefined) seen.port = typed.port;
   }
-  if (!validDest(dest)) return null;
+  if (!validDest(dest) || GIT_HOST.test(dest.slice(dest.lastIndexOf("@") + 1))) return null;
   return {
     dest,
     ...(seen.user !== undefined ? { user: seen.user } : {}),

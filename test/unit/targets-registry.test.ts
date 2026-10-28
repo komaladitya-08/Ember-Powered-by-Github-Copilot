@@ -14,6 +14,7 @@ import type { TargetId } from "../../app/shared/targets";
 import {
   activeOf, bindable, buildRegistry, defaultDistro, hostPart, namedTargets, summaryOf, type LinkView, type RegistryInput,
 } from "../../app/main/targets/registry";
+import { bindTarget } from "../../app/main/targets/resolve";
 
 const noPolicy: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
 const policy = (p: unknown): LoadedAdminPolicy => ({ policy: AdminPolicySchema.parse(p), source: "/etc/ember/policy.json" });
@@ -128,7 +129,9 @@ describe("SSH hosts (§2.2)", () => {
     expect(e.find(x => x.id === "ssh:db-02")).toMatchObject({ state: "lost", usable: false });
     const off = withHosts([]).find(x => x.id === "ssh:build-01")!;
     expect(off).toMatchObject({ state: "off", usable: false, login: "deploy", can: "not connected" });
-    expect(off.why).toBe("build-01 isn't connected. Connect it from Ember's menu first.");
+    // Points the model at offer_connect's Connect button, in words the user may read too, in a failed task's card (review #197).
+    expect(off.why).toBe("build-01 isn't connected. Ember can show a Connect button for it.");
+    expect(e.find(x => x.id === "ssh:db-02")!.why).toBe("The connection to db-02 dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers).");
     const ready = withHosts([["build-01", view("ready", { desktop: "screen", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;
     expect(ready).toMatchObject({ state: "ready", usable: true, can: "apps and commands" });
     const stalled = withHosts([["build-01", view("stalled", { desktop: "none", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;
@@ -146,6 +149,71 @@ describe("SSH hosts (§2.2)", () => {
     expect(hostPart("deploy@build-01:2222")).toBe("build-01");
     expect(hostPart("[::1]:22")).toBe("::1");
     expect(hostPart("build-01")).toBe("build-01");
+  });
+});
+
+describe("short names (reviews #179, #180)", () => {
+  const namesOf = (e: ReturnType<typeof buildRegistry>, id: string) => e.find(x => x.id === id)!.names;
+  const fqdn = (id: string, more: Partial<HostRecord> = {}): HostRecord =>
+    host(id, { dest: `deploy@${id}`, resolved: { user: "deploy", hostname: id, port: 22, jump: [] }, ...more });
+
+  it("gives a host added by its full name the first part of it, when that looks like a computer's name", () => {
+    const e = buildRegistry(input({ settings: settingsWith({ hosts: [fqdn("build-01.example.com"), fqdn("app.example.com"), fqdn("db.example.com")] }) }));
+    expect(namesOf(e, "ssh:build-01.example.com")).toContain("build-01");
+    // "in the app" or "on db" never names a computer: a first part needs a letter and a digit or a hyphen.
+    expect(namesOf(e, "ssh:app.example.com")).not.toContain("app");
+    expect(namesOf(e, "ssh:db.example.com")).not.toContain("db");
+    // Its resolved hostname's first part too ("deploy@build-02" that ssh -G resolves to web-02.internal).
+    const viaConfig = buildRegistry(input({ settings: settingsWith({ hosts: [host("build-02", { resolved: { user: "deploy", hostname: "web-02.internal", port: 22, jump: [] } })] }) }));
+    expect(namesOf(viaConfig, "ssh:build-02")).toContain("web-02");
+    // An address has no first part to say.
+    const ip = buildRegistry(input({ settings: settingsWith({ hosts: [host("lab", { dest: "10.0.0.5", resolved: { user: "deploy", hostname: "10.0.0.5", port: 22, jump: [] } })] }) }));
+    expect(namesOf(ip, "ssh:lab").filter(n => !/\./.test(n))).toEqual(["lab"]);
+  });
+
+  it("gives a short name two hosts share to both (so saying it asks which), and leaves one that is another computer's own name to it", () => {
+    const shared = buildRegistry(input({ settings: settingsWith({ hosts: [fqdn("build-01.a.com"), fqdn("build-01.b.com")] }) }));
+    expect(namesOf(shared, "ssh:build-01.a.com")).toContain("build-01");
+    expect(namesOf(shared, "ssh:build-01.b.com")).toContain("build-01");
+    const owned = buildRegistry(input({ settings: settingsWith({ hosts: [host("build-01"), fqdn("build-01.other.net")] }) }));
+    expect(namesOf(owned, "ssh:build-01.other.net")).not.toContain("build-01");
+  });
+
+  it("gives a distro its first word: \"in Ubuntu\" names Ubuntu-22.04 (and the wrong-target guard hears it)", () => {
+    const e = buildRegistry(input({
+      os: "win32", settings: settingsWith({ wslOn: true }),
+      wsl: facts([distro("Ubuntu-22.04", { isDefault: true }), distro("kali-linux"), distro("openSUSE-Leap-15.5"), distro("Debian")]),
+    }));
+    expect(namesOf(e, "wsl:Ubuntu-22.04")).toContain("Ubuntu");
+    expect(namesOf(e, "wsl:kali-linux")).toContain("kali");
+    expect(namesOf(e, "wsl:openSUSE-Leap-15.5")).toContain("openSUSE");
+    expect(namesOf(e, "wsl:Debian")).toEqual(["Debian", "Debian (WSL)"]);
+    // Listed for settings while WSL is off, with the same names (the guard counts them then too).
+    const off = buildRegistry(input({ os: "win32", wsl: facts([distro("Ubuntu-22.04")]) }));
+    expect(namesOf(off, "wsl:Ubuntu-22.04")).toContain("Ubuntu");
+    // A distro called just Ubuntu keeps its name to itself.
+    const both = buildRegistry(input({ os: "win32", settings: settingsWith({ wslOn: true }), wsl: facts([distro("Ubuntu"), distro("Ubuntu-22.04")]) }));
+    expect(namesOf(both, "wsl:Ubuntu-22.04")).not.toContain("Ubuntu");
+  });
+
+  it("gives a first word only to a distribution's own name, so \"in build\" never names a distro called build-env", () => {
+    const e = buildRegistry(input({
+      os: "win32", settings: settingsWith({ wslOn: true }),
+      wsl: facts([distro("Ubuntu-22.04", { isDefault: true }), distro("build-env"), distro("test-box"), distro("work-vm"), distro("dev-ubuntu"), distro("the-box"), distro("AlmaLinux-9")]),
+    }));
+    expect(namesOf(e, "wsl:build-env")).toEqual(["build-env", "build-env (WSL)"]);
+    expect(namesOf(e, "wsl:test-box")).toEqual(["test-box", "test-box (WSL)"]);
+    expect(namesOf(e, "wsl:work-vm")).toEqual(["work-vm", "work-vm (WSL)"]);
+    expect(namesOf(e, "wsl:dev-ubuntu")).toEqual(["dev-ubuntu", "dev-ubuntu (WSL)"]);
+    expect(namesOf(e, "wsl:the-box")).toEqual(["the-box", "the-box (WSL)"]);
+    expect(namesOf(e, "wsl:AlmaLinux-9")).toContain("AlmaLinux");
+    const t = namedTargets(e);
+    const bound = (userWords: string) => bindTarget({ userWords, targets: t, active: "local", os: "win32" });
+    for (const w of ["delete the logs in build", "save it in test mode", "clean up old files in work", "work: tidy my folder", "list the files in dev"]) {
+      expect(bound(w)).toEqual({ ok: true, id: "local" });
+    }
+    expect(bound("in Ubuntu, list my home folder")).toEqual({ ok: true, id: "wsl:Ubuntu-22.04" });
+    expect(bound("in build-env, delete the logs")).toEqual({ ok: true, id: "wsl:build-env" });
   });
 });
 

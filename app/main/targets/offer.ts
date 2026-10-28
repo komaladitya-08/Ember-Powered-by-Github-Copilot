@@ -1,12 +1,13 @@
 /**
  * Noticing the user's own ssh and offering to come along (§2.7, R4). Read-only: the process list and each ssh's command
  * line (the destination and the few options Ember carries over), kept in memory and logged without the host. It looks
- * only while SSH is allowed and the user's offer switch is on, only when the window the user is in is a terminal whose
- * title just changed, and at most once every 10 s; on Windows the process query (a PowerShell start) runs only for
- * a title that looks like an SSH session and only while SSH is in use or the user hasn't turned the first offer away;
- * ssh inside WSL is read only with WSL on and only in distros running at that moment (never starting one). Each
- * destination is offered once per run, never one the user dismissed or Ember is already connected to, and never while
- * a question is up. Ember never opens a connection here: the offer's button does, after the SSH card.
+ * only while SSH is allowed, the user has added a computer and their offer switch is on (enabled(); review #33), only
+ * when the window the user is in is a terminal whose title just changed, and at most once every 10 s; on Windows the
+ * process query (a PowerShell start) runs only for a title that looks like an SSH session and only while SSH is in use
+ * or the user hasn't turned the first offer away; ssh inside WSL is read only with WSL on and only in distros running
+ * at that moment (never starting one). Each destination is offered once per run, never one the user dismissed or Ember
+ * is already connected to, and never while a question is up. Ember never opens a connection here: the offer's button
+ * does, after the SSH card.
  */
 
 import type { OS } from "../../shared/shortcuts";
@@ -42,7 +43,7 @@ export interface NoticerDeps {
   os: OS;
   log: Logger;
   notice: SshNotice | null;
-  /** SSH allowed by the administrator and the user's offer switch on. */
+  /** SSH allowed by the administrator, a computer added and the user's offer switch on. */
   enabled(): boolean;
   /** The window the user is in now (its program and title), or null when it can't be told. */
   activeWindow(): { app: string; title: string } | null;

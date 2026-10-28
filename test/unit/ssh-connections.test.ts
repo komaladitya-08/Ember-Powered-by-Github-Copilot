@@ -498,8 +498,24 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
 
   it("never prompts on a reconnect or a batch-only connect: the failure says what to do", async () => {
     const r = track(rig({ remotes: [{ fail: () => ({ stderr: "Permission denied (publickey).\n", code: 255 }) }] }));
-    await expect(r.conns.connect(record(), { interactive: false })).rejects.toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent (`ssh-add`), then connect again." });
+    await expect(r.conns.connect(record(), { interactive: false })).rejects.toMatchObject({ kind: "auth", message: "build-01 didn't accept your key. Add it to the ssh-agent with ssh-add, then connect again." });
     expect(r.spawned).toHaveLength(1);
+  });
+
+  it("says how to install SSH on this computer's OS alone when no SSH client answers (review #196)", async () => {
+    const want = {
+      linux: "Ember can't find SSH on this computer. Install OpenSSH with: sudo dnf install openssh-clients",
+      win32: "Ember can't find SSH on this computer. Install the OpenSSH Client in Settings › Apps › Optional features, then try again.",
+      darwin: "Ember can't find SSH on this computer. macOS comes with SSH at /usr/bin/ssh, but Ember can't run it there. Check that it's there, then try again.",
+    } as const;
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      const r = track(rig({ os, sshV: "" }));
+      await expect(r.conns.connect(record(), { interactive: true }), os).rejects.toMatchObject({ kind: "no-client", message: want[os] });
+      expect(r.spawned, os).toHaveLength(0);
+    }
+    // Through a WSL distro, the SSH that is missing is the distro's: the Linux line.
+    const via = track(rig({ os: "win32", internals: { viaWsl: true }, hosts: [record({ via: "wsl:Ubuntu" })] }));
+    await expect(via.conns.connect(record({ via: "wsl:Ubuntu" }), { interactive: true })).rejects.toMatchObject({ kind: "no-client", message: want.linux });
   });
 
   it("refuses before running anything: no consent, SSH off, a host the admin didn't allow, keys thrown away, this computer", async () => {
