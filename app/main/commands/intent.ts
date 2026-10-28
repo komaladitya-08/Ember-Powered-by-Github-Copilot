@@ -651,10 +651,12 @@ export function matchIntent(cls: Classification, userWords: string, ctx: Classif
 export function mentioned(findings: readonly Finding[], userWords: string): boolean {
   if (!userWords || userWords.trim() === "") return false;
   const w = wordsOf(userWords);
+  // What Ember can't follow in a script, when the user's words name the script ("run the build script", "run build.sh"):
+  // they asked for it (review #27). Only when that is all the card says: what a script does that is dangerous is asked
+  // for only when the words name that, as for the command's own findings.
+  const scriptOf = (f: Finding) => (f.cls === "unclear" ? f.widening.find(x => x.startsWith("script:"))?.slice("script:".length) : undefined);
+  if (findings.length > 0 && findings.every(f => { const s = scriptOf(f); return s !== undefined && scriptNamed(s, w); })) return true;
   return findings.some(f => {
-    // What a script does, when the user's words name the script (review #27: "run the build script", "run build.sh").
-    const script = f.widening.find(x => x.startsWith("script:"))?.slice("script:".length);
-    if (script !== undefined) return scriptNamed(script, w);
     const row = rowOf(f, findings);
     const objectNamed = f.objects.length === 0 || f.objects.some(o => (o.text !== "" && (nameNamed(o.text, w.raw) || pathTokenLoose(o, w) >= 0)));
     if (row) return hasVerb(w.list, ROW_VERBS[row] ?? []) && objectNamed;

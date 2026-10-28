@@ -218,6 +218,15 @@ function plainTest(f: Finding, got: Classification): boolean {
 /** The widening that names the script a finding came from (`script:build.sh`): the user's words may name it (intent.ts). */
 export const scriptTag = (name: string) => `script:${name}`;
 
+/** Ember's own limits in reading a script: too many commands, too long, nested too deeply (SAYS.unclear is syntax). */
+const READ_LIMITS = new Set(["unclear.too-many", "unclear.too-long", "unclear.depth"]);
+/**
+ * Whether a finding in a script is about Ember's reading of it (shell syntax it doesn't follow, or one of its limits)
+ * rather than about what a command in it does: an eval, an interactive program or an argument Ember can't see stays
+ * "In build.sh: Runs code Ember can't see." (review #27).
+ */
+const unreadFinding = (f: Finding): boolean => f.cls === "unclear" && (f.says === SAYS.unclear || READ_LIMITS.has(f.rule));
+
 /**
  * The card's line for something in a script Ember can't follow (review #27): "Ember can't read all of build.sh (it has
  * more commands than Ember can check one by one)." rather than "In build.sh: Ember can't tell exactly what this does."
@@ -353,7 +362,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       refuse ??= got.refuse;
       for (const f of got.findings) {
         if (FLOW_SHELLS.has(shell) && (SCRIPT_FLOW.has(f.rule) || plainTest(f, got))) continue;
-        const says = f.cls === "unclear" ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
+        const says = unreadFinding(f) ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
         if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)] });
       }
       downloads.push(...got.downloads);

@@ -125,10 +125,11 @@ asked for that kind of operation, and one that would touch Ember's own safety fi
 when Ember can't read all of it: an sh or bash script's `if`, `for` and `while` and a plain `[[ … ]]` test are read
 (the commands inside them are judged), but `case`, functions, `trap`, `{ … }` groups, a `[[` that compares numbers or
 uses `-v`, a variable in a file name, more than 64 commands or more than 8,000 characters ask, and so do zsh's `if`,
-`for` and `while` and PowerShell's and cmd's `if` and `for`; the card then says "Ember can't read all of build.sh
-(it has more commands than Ember can check one by one)." and, when you named the script, not "You didn't ask for
-this." Scripts it runs in
-turn are read too (four deep, sixteen in all; past that, it asks). A script whose `#!` line names another shell such
+`for` and `while` and PowerShell's and cmd's `if` and `for`; the card then says why ("Ember can't read all of
+build.sh (it has more commands than Ember can check one by one).", "In build.sh: Ember can't tell what cat is
+given."). When you named the script ("run the build script", "run build.sh") and that is all the card says, it doesn't
+add "You didn't ask for this."; a script that deletes, publishes or reads secrets still says it unless your words ask
+for that. Scripts it runs in turn are read too (four deep, sixteen in all; past that, it asks). A script whose `#!` line names another shell such
 as fish or csh, scripts named by a pattern (`sh *.sh`), a script read from a device (`sh /dev/fd/3`), and a script
 that the same command writes first (`echo 'rm -rf build' > t.sh; sh t.sh`) ask. A script this task downloaded always
 asks (that is downloading code and running it); one it wrote in an earlier command asks when Ember can't read all of
