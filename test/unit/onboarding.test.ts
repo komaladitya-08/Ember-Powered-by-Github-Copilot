@@ -565,7 +565,7 @@ describe("the call sites", () => {
     for (const call of [
       "setupView(environment.checks", // renderChecks (#94, #160, #161)
       "toggle(\"after-setup\", !checksBeforeStart)", // the check before Start (#94)
-      "renderSetupBadge(view.needing, view.failing)", // the sidebar's badge (#95)
+      "renderSetupBadge(view.needing, failing)", // the sidebar's badge (#95)
       "[c.fix, c.alt]", // a row's second button (#99)
       "targetFeatureApplies(k, platform?.os)", // the policy line (#221)
       "v.speechMissing === true", // the note under Speak (#101)

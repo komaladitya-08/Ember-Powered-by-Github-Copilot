@@ -113,6 +113,38 @@ export function parseOsRelease(text: string | null): Record<string, string> {
   return out;
 }
 
+/** Each OS's way to get a voice, for the Speaking row Ember adds once it found none (review #101). */
+const NO_VOICE: Record<"linux" | "win32" | "darwin", string> = {
+  linux: "Ember couldn't speak: this computer has no speech voice. Install one with sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng, then restart Ember.",
+  win32: "Ember couldn't speak: Windows has no voice it can use. Add one in Settings › Time & language › Speech, then restart Ember.",
+  darwin: "Ember couldn't speak: macOS has no voice it can use. Choose one in System Settings › Accessibility › Spoken Content, then restart Ember.",
+};
+
+/** The Speaking row, once Ember tried to speak and no voice started; nothing until then. */
+function speechCheck(i: EnvInputs, os: keyof typeof NO_VOICE): Check[] {
+  return i.speech === false ? [{ id: "speech", label: "Speaking", status: "warn", detail: NO_VOICE[os] }] : [];
+}
+
+/** Windows' and macOS's report with the Speaking row last, as Linux's has it. */
+function withSpeech(r: EnvReport, i: EnvInputs, os: "win32" | "darwin"): EnvReport {
+  return { ...r, checks: [...r.checks, ...speechCheck(i, os)] };
+}
+
+/** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
+export const LINUX_A11Y_RESTART = "restart apps that were already open, or log out and in";
+
+/**
+ * The macOS fixes "Reset Ember's permissions" undoes: it takes Ember off the Accessibility, Screen Recording and Input
+ * Monitoring lists, so each of their buttons has to be pressed again.
+ */
+const RESET_UNDOES: readonly FixId[] = ["open-accessibility-settings", "open-screen-recording-settings", "open-input-monitoring-settings"];
+
+/** The fixes applied so far (EnvInputs.applied) once `fix` has been applied too. */
+export function afterFix(applied: readonly FixId[], fix: FixId): FixId[] {
+  const kept = fix === "reset-permissions" ? applied.filter(f => !RESET_UNDOES.includes(f)) : [...applied];
+  return kept.includes(fix) ? kept : [...kept, fix];
+}
+
 const versionAtLeast = (v: string, min: string) => {
   const a = v.split(".").map(Number), b = min.split(".").map(Number);
   for (let i = 0; i < Math.max(a.length, b.length); i++) {
@@ -132,36 +164,9 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable): Check {
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
 }
 
-/** Each OS's way to get a voice, for the Speaking row Ember adds once it found none (review #101). */
-const NO_VOICE: Record<"linux" | "win32" | "darwin", string> = {
-  linux: "Ember couldn't speak: this computer has no speech voice. Install one with sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng, then restart Ember.",
-  win32: "Ember couldn't speak: Windows has no voice it can use. Add one in Settings › Time & language › Speech, then restart Ember.",
-  darwin: "Ember couldn't speak: macOS has no voice it can use. Choose one in System Settings › Accessibility › Spoken Content, then restart Ember.",
-};
-
-/** The Speaking row, once Ember tried to speak and no voice started; nothing until then. */
-function speechCheck(i: EnvInputs, os: keyof typeof NO_VOICE): Check[] {
-  return i.speech === false ? [{ id: "speech", label: "Speaking", status: "warn", detail: NO_VOICE[os] }] : [];
-}
-
-/** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
-export const LINUX_A11Y_RESTART = "restart apps that were already open, or log out and in";
-
-/**
- * The macOS fixes "Reset Ember's permissions" undoes: it takes Ember off the Accessibility, Screen Recording and Input
- * Monitoring lists, so each of their buttons has to be pressed again.
- */
-const RESET_UNDOES: readonly FixId[] = ["open-accessibility-settings", "open-screen-recording-settings", "open-input-monitoring-settings"];
-
-/** The fixes applied so far (EnvInputs.applied) once `fix` has been applied too. */
-export function afterFix(applied: readonly FixId[], fix: FixId): FixId[] {
-  const kept = fix === "reset-permissions" ? applied.filter(f => !RESET_UNDOES.includes(f)) : [...applied];
-  return kept.includes(fix) ? kept : [...kept, fix];
-}
-
 export function inspectEnvironment(i: EnvInputs): EnvReport {
-  if (i.platform === "win32") return inspectWindows(i);
-  if (i.platform === "darwin") return inspectMac(i);
+  if (i.platform === "win32") return withSpeech(inspectWindows(i), i, "win32");
+  if (i.platform === "darwin") return withSpeech(inspectMac(i), i, "darwin");
   const os = parseOsRelease(i.osRelease);
   const sessionType = i.env.XDG_SESSION_TYPE ?? "unknown";
   const desktop = i.env.XDG_CURRENT_DESKTOP ?? "unknown";
@@ -221,6 +226,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
   }
 
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux));
+
   checks.push(...speechCheck(i, "linux"));
 
   return {
@@ -288,7 +294,6 @@ function inspectWindows(i: EnvInputs): EnvReport {
     }
   }
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.win32));
-  checks.push(...speechCheck(i, "win32"));
   return { os: osName, sessionType: w?.session ?? "unknown", desktop: "Windows", display: "", glibc: "unknown", versions: i.versions, checks };
 }
 
@@ -347,6 +352,5 @@ function inspectMac(i: EnvInputs): EnvReport {
     if (m.root) checks.push({ id: "elevated", label: "Root", status: "warn", detail: "Ember is running as root. Start it as yourself." });
   }
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.darwin));
-  checks.push(...speechCheck(i, "darwin"));
   return { os: m?.version ? `macOS ${m.version}` : "macOS", sessionType: "macos", desktop: "macOS", display: "", glibc: "unknown", versions: i.versions, checks };
 }

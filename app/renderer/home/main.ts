@@ -7,16 +7,18 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
+import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { targetFeatureApplies } from "./computers-copy";
+import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
 import type { Settings } from "../../main/settings";
 import {
-  SPEAK_NO_VOICE, dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, setupBadge, setupView, tagline, usageLine, type HomePatch, type Segment,
+  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
+  retryMessage, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
-import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
-import { ISSUES_URL } from "../../shared/support";
+import { TARGET_FEATURE_TEXT } from "./computers-copy";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -214,13 +216,14 @@ function renderChecks(environment: Status["environment"]): void {
     return li;
   }));
   if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
+  failing = environment.checks.filter(c => c.status === "fail").length;
+  const warn = environment.checks.filter(c => c.status === "warn").length;
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
-  failing = view.failing;
-  toLook = view.needing - view.failing;
-  renderSetupBadge(view.needing, view.failing);
+  toLook = view.needing - failing;
+  renderSetupBadge(view.needing, failing);
   const note = $("checks-note");
   note.textContent = view.note;
-  note.className = `fold-note${view.failing ? " fail" : view.warn ? " warn" : ""}`;
+  note.className = `fold-note${failing ? " fail" : warn ? " warn" : ""}`;
   // A row needs the user (it fails, holds back reading or using apps, or has a button): the check opens by itself
   // (once), and it shows before Start too, until Start.
   if (view.open) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }

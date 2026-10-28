@@ -59,18 +59,13 @@ export function retryMessage(r: { found: boolean; source: string | null }, conne
   return `Found ${what}; ${connected ? "connected." : "connecting…"}`;
 }
 
-/** "one thing", "2 things": how many setup rows, in a sentence. */
-const things = (n: number) => (n === 1 ? "one thing" : `${n} things`);
-
-/**
- * The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. Before Start it
- * is always the first-run instruction (the setup check's own heading counts its rows, review #160).
- */
+/** The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. */
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
   /** Setup rows that don't fail but need the user (a warning that holds Ember back, or one with a button). */
   look?: number;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
+  // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
   if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer: see the setup check.`;
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
@@ -79,6 +74,11 @@ export function tagline(t: {
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
   // Ready, with setup rows still to look at: said, so a warning isn't left in a closed fold (review #95).
   return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} to look at.` : ""}`;
+}
+
+/** "one thing", "2 things": how many setup rows, in a sentence. */
+function things(n: number): string {
+  return n === 1 ? "one thing" : `${n} things`;
 }
 
 /**
