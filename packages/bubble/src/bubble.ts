@@ -48,7 +48,10 @@ export interface BubbleView {
   streaming: boolean;
   /** Where its task acts when not on this computer ("on build-01"): the badge says it to the eye, this to the ear. */
   where?: string;
-  /** Its step row: under a question, how to answer it ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"), read after it. */
+  /**
+   * Its step row: under a question, how to answer it ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"); under a problem, how the
+   * keyboard reaches what its buttons do ("Or press Ctrl+Alt+E and go to Computers."). Read after it.
+   */
   step?: string | null;
 }
 
@@ -64,12 +67,14 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
   const where = v.where?.replace(/\s+/g, " ").trim();
   const at = where ? `, ${where}` : "";
-  // A question's step row says how to answer it (or where it is shown whole): heard after it, as it is seen under it.
+  // A question's step row says how to answer it (or where it is shown whole), a problem's how the keyboard reaches what
+  // its buttons do: heard after it, as it is seen under it.
   const hint = v.step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim();
   const end = (s: string) => (/[.!?…:]$/.test(s) ? s : `${s}.`);
+  const withHint = hint ? `${end(both)} ${end(hint)}` : both;
   switch (v.mood) {
-    case "attention": return both ? `${speaker} needs you${at}: ${hint ? `${end(both)} ${end(hint)}` : both}` : "";
-    case "error": return both ? `${speaker} has a problem${at}: ${both}` : "";
+    case "attention": return both ? `${speaker} needs you${at}: ${withHint}` : "";
+    case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
     case "idle": case "done": case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
   }

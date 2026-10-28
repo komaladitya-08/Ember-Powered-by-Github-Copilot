@@ -72,6 +72,15 @@ describe("announcement: how to answer a question (review #52)", () => {
     // Only a question's step: a task's step while it works is never read out.
     expect(announcement(view({ mood: "idle", title: "Ember", thought: "Done.", step: "Clicking" }))).toBe("Ember says: Done.");
   });
+
+  it("reads a problem's keyboard route after it, as it is seen under its buttons (review #47)", () => {
+    expect(announcement(view({ mood: "error", title: "Can't connect to build-01", thought: "The connection was refused.", step: "Or press Ctrl+Alt+E and go to Computers." })))
+      .toBe("Ember has a problem: Can't connect to build-01. The connection was refused. Or press Ctrl+Alt+E and go to Computers.");
+    expect(announcement(view({ mood: "error", title: "Lost build-01", thought: "The connection dropped", step: "Or press Ctrl+Alt+E and go to Computers", where: "on build-01" })))
+      .toBe("Ember has a problem, on build-01: Lost build-01. The connection dropped. Or press Ctrl+Alt+E and go to Computers.");
+    expect(announcement(view({ mood: "error", title: "Something went wrong", thought: "The model is busy.", step: null })))
+      .toBe("Ember has a problem: Something went wrong. The model is busy.");
+  });
 });
 
 describe("bubblePosition", () => {
