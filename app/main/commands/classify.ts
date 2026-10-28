@@ -4469,11 +4469,14 @@ reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
 });
 /**
  * A folder a program saves files into by names Ember can't be sure of (wget -P, aria2c -d, git checkout-index
- * --prefix): the folder and a file in it are judged as written by §3.6's rules (review #169).
+ * --prefix): the folder and a file in it are judged as written by §3.6's rules (review #169). Only the rules: the
+ * folder isn't remembered as written, so a script in it that this command runs is still read first (L8), as before.
  */
 function writeInto(h: H, dir: string): void {
+  const mark = h.e.written.length;
   const obj = h.e.usePath(lit(dir), "write", h.sc);
   if (obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, dir);
+  h.e.written.length = mark;
 }
 /** A file a download saves: written (§3.6's rules) and recorded as downloaded (§3.4.7). */
 function saveAs(h: H, path: string): void {

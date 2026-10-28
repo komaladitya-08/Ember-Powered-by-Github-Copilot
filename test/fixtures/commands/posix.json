@@ -12974,6 +12974,18 @@
    "rules": [
     "path.system"
    ]
+  },
+  {
+   "cmd": "wget -P build https://example.com/x.tar.gz && sh build/run.sh",
+   "verdict": "run"
+  },
+  {
+   "cmd": "aria2c -d build https://example.com/x.tar.gz && sh build/run.sh",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pip download -d build x && sh build/run.sh",
+   "verdict": "run"
   }
  ]
 }
