@@ -2079,6 +2079,13 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "tar -cf /dev/null -T /mnt/c/Users/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }

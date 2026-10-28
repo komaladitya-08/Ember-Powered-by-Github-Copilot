@@ -11117,6 +11117,118 @@
   {
    "cmd": "cmake --build build -j 8 --config Release",
    "verdict": "run"
+  },
+  {
+   "cmd": "tar -T ~/.ssh/id_rsa -cf /dev/null",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar -cf /dev/null -T ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar -cT ~/.ssh/id_rsa -f /dev/null",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar cf /dev/null -T ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar --files-from=~/.aws/credentials -cf /dev/null",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar --files-from ~/.ssh/id_rsa -cf /dev/null",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar -X ~/.aws/credentials -cf /dev/null src",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar --exclude-from=~/.aws/credentials -cf /dev/null src",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar -xf x.tar -T ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "bsdtar -cf /dev/null -T ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar -cf /dev/null -T ~/.config/ember/settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cmake -E tar cf x.tar --files-from=/home/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ],
+   "missing": [
+    "x.tar"
+   ]
+  },
+  {
+   "cmd": "cmake -E tar cf /dev/null --files-from=/home/ana/.aws/credentials",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar -cf /dev/null -T files.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar -cf /dev/null -X exclude.txt src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "find src -name '*.c' | tar -cf /dev/null -T -",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tar -cf /dev/null -T ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
   }
  ]
 }

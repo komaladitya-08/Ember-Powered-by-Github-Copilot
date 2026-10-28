@@ -2414,6 +2414,8 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
   if (has(p, "to-command", "use-compress-program", "I", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
+  for (const f of values(p, "T", "files-from", "X", "exclude-from")) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   if (archive) {
     const arc = lit(archive);
     if (URL_LIKE.test(archive) || SCP_LIKE.test(archive)) h.e.add("publish", "send.tar", "Sends data to another computer.");
