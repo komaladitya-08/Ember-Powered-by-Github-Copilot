@@ -24,14 +24,22 @@ export function targetBadge(t: TargetSummary | null | undefined): TargetBadge | 
 }
 
 /**
+ * The ask box's chip in its two parts: where ("On build-01", "In Ubuntu (WSL)"), which the box may shorten, and the
+ * handle badge's state words while it isn't ready (" (lost)"), which it never does; null for this computer.
+ */
+export function targetChipParts(t: TargetSummary | null | undefined): { name: string; state: string } | null {
+  const badge = targetBadge(t);
+  if (!badge || !t) return null;
+  return { name: `${t.kind === "wsl" ? "In" : "On"} ${badge.text}`, state: badge.label.slice(`Working on ${badge.text}`.length) };
+}
+
+/**
  * The ask box's chip: "On build-01", "In Ubuntu (WSL)", with the handle badge's state words while it isn't ready ("On
  * build-01 (lost)"); null for this computer.
  */
 export function targetChip(t: TargetSummary | null | undefined): string | null {
-  const badge = targetBadge(t);
-  if (!badge || !t) return null;
-  const state = badge.label.slice(`Working on ${badge.text}`.length);
-  return `${t.kind === "wsl" ? "In" : "On"} ${badge.text}${state}`;
+  const parts = targetChipParts(t);
+  return parts ? parts.name + parts.state : null;
 }
 
 /** A `where` badge's words ("on build-01", "in Ubuntu (WSL)"), trimmed; null when there are none. */

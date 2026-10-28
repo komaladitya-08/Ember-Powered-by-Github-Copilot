@@ -13,7 +13,7 @@ import { win32Settings } from "../../app/main/platform/win32/system/settings";
 import { notificationBody } from "../../app/main/notification";
 import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "../../app/renderer/ask/field";
 import { liveWords, seesView } from "../../app/renderer/ask/chips";
-import { targetChip } from "../../app/renderer/handle/badge";
+import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
 import { Perception, openWindowLines, quickContextText, type Seen } from "../../app/main/perception";
 import type { AxNode } from "../../app/main/perception/sidecar";
@@ -34,7 +34,9 @@ describe("the ask box's field", () => {
   it("is a growing text area that keeps lines, not a one-line input that flattens them", () => {
     expect(ASK_HTML).toMatch(/<textarea id="q" rows="1"[^>]*maxlength="2000"/);
     expect(ASK_HTML).not.toMatch(/<input id="q"/);
-    expect(ASK_HTML).toMatch(/<span id="cut" class="cut" role="status" hidden><\/span>/);
+    // On its own line under the one that says what Ember will see, never crowding it (the window grows a line for it).
+    expect(ASK_HTML).toMatch(/<\/p>\s*(<!--[^>]*-->\s*)?<p id="cut" class="cut" role="status" hidden><\/p>/);
+    expect(/<p class="meta">[\s\S]*?<\/p>/.exec(ASK_HTML)?.[0]).not.toContain('id="cut"');
   });
 
   it("grows a line at a time to four, then scrolls", () => {
@@ -87,21 +89,21 @@ describe("what the ask box says Ember will see", () => {
     const withText = askSees(quickContextText(seen([field({ text: "Dear Ana, about the numbers" })]), open));
     expect(withText).toEqual({ sees: "Thunderbird · Write: Re: Q3", carries: { selection: false, fieldText: true, windows: 2 } });
     expect(seesView(withText)).toEqual({
-      text: "Thunderbird · Write: Re: Q3", extra: "+ field text, 2 window titles",
+      text: "Thunderbird · Write: Re: Q3", extra: "+ field text, 2 window titles", brief: "+ text, 2 titles",
       full: "Ember will see: Thunderbird · Write: Re: Q3, with the start of the focused field's text and the titles of 2 other open windows.",
     });
     const selected = askSees(quickContextText(seen([field({ text: "Dear Ana", selection: "the numbers" })]), open.slice(0, 2)));
-    expect(seesView(selected)).toMatchObject({ extra: "+ selected text, 1 window title", full: "Ember will see: Thunderbird · Write: Re: Q3, with the text you selected and the title of 1 other open window." });
+    expect(seesView(selected)).toMatchObject({ extra: "+ selected text, 1 window title", brief: "+ selection, 1 title", full: "Ember will see: Thunderbird · Write: Re: Q3, with the text you selected and the title of 1 other open window." });
     // The X selection added afterwards (an app that doesn't tell it) counts too.
     const primary = askSees(Perception.withSelection(quickContextText(seen([field({})]), []), "copied words"));
-    expect(seesView(primary)).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "+ selected text", full: "Ember will see: Thunderbird · Write: Re: Q3, with the text you selected." });
-    expect(seesView(askSees(quickContextText(seen([]), [])))).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "", full: "Ember will see: Thunderbird · Write: Re: Q3." });
+    expect(seesView(primary)).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "+ selected text", brief: "+ selection", full: "Ember will see: Thunderbird · Write: Re: Q3, with the text you selected." });
+    expect(seesView(askSees(quickContextText(seen([]), [])))).toEqual({ text: "Thunderbird · Write: Re: Q3", extra: "", brief: "", full: "Ember will see: Thunderbird · Write: Re: Q3." });
   });
 
   it("says Ember won't look at a private window, and nothing when it read nothing", () => {
     const priv = askSees(quickContextText(seen([], { blocked: true }), []));
     expect(priv).toEqual({ sees: null, privateWindow: true });
-    expect(seesView(priv)).toEqual({ text: "Ember won't look at this window", extra: "", full: "Ember won't look at this window." });
+    expect(seesView(priv)).toEqual({ text: "Ember won't look at this window", extra: "", brief: "", full: "Ember won't look at this window." });
     expect(askSees(null)).toEqual({ sees: null });
     expect(seesView({ sees: null })).toBeNull();
     // A remote with nothing to read: no window, so nothing is claimed.
@@ -115,6 +117,11 @@ describe("what the ask box says Ember will see", () => {
     expect(targetChip(t({ state: "connecting" }))).toBe("On build-01 (connecting…)");
     expect(targetChip(t({ id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)" }))).toBe("In Ubuntu (WSL)");
     expect(targetChip(t({ id: "local", kind: "local", label: "This computer" }))).toBeNull();
+    // In two parts on the box: the name may be shortened on a crowded line, the state never is.
+    expect(targetChipParts(t({ label: "deploy@build-server-01", state: "lost" }))).toEqual({ name: "On deploy@build-server-01", state: " (lost)" });
+    expect(targetChipParts(t({}))).toEqual({ name: "On build-01", state: "" });
+    expect(targetChipParts(null)).toBeNull();
+    expect(ASK_HTML).toMatch(/<span id="where" class="where" hidden><span id="where-name" class="where-name"><\/span><span id="where-state" class="where-state"><\/span><\/span>/);
   });
 
   it("says what Ember will see to screen readers once, when it arrives after the field has the keyboard", () => {

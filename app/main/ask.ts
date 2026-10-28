@@ -13,8 +13,11 @@ import { x11WindowId } from "./platform/linux/window-system";
 
 const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
-/** The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines. */
-const LINE = 24, MAX_LINES = 4;
+/**
+ * The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines; the
+ * note that a paste was cut takes one more row of the same height (MAX_ROWS).
+ */
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 1;
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
@@ -56,11 +59,12 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
 }
 
 /**
- * `b` (the box now) as tall as a field of `lines` lines (1 to MAX_LINES): growing upward when the box is above Ember
- * (`up`, its hint row stays put beside Ember's head), else downward; always inside the work area and clear of `keepOff`.
+ * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, and the note's when a paste was cut):
+ * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
+ * inside the work area and clear of `keepOff`.
  */
-export function grownBounds(b: Box, lines: number, wa: Box, up: boolean, keepOff?: Box | null): Box {
-  const height = SIZE.height + (Math.min(MAX_LINES, Math.max(1, Math.round(lines))) - 1) * LINE;
+export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?: Box | null): Box {
+  const height = SIZE.height + (Math.min(MAX_ROWS, Math.max(1, Math.round(rows))) - 1) * LINE;
   const top = wa.y + GAP, bottom = wa.y + wa.height - height - GAP;
   const y = up ? b.y + b.height - height : b.y;
   return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
@@ -156,8 +160,9 @@ export class AskWindow {
     win.on("blur", () => { if (this.win === win && !this.menuUp) this.hide(); });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
     win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
-    // The field asks for the lines its text needs (Shift+Enter, a pasted traceback): only this box's page is heard here.
-    win.webContents.ipc.on(IPC.askFit, (_e, lines: unknown) => { if (this.win === win && typeof lines === "number" && Number.isFinite(lines)) this.fit(lines); });
+    // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
+    // only this box's page is heard here.
+    win.webContents.ipc.on(IPC.askFit, (_e, rows: unknown) => { if (this.win === win && typeof rows === "number" && Number.isFinite(rows)) this.fit(rows); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
@@ -224,11 +229,14 @@ export class AskWindow {
     });
   }
 
-  /** The field needs `lines` lines (1 to 4) for its text: the box grows or shrinks to fit, away from Ember. */
-  fit(lines: number): void {
+  /**
+   * The page needs `rows` rows (1 to 5: the field's lines, and the note's when a paste was cut): the box grows or
+   * shrinks to fit, away from Ember.
+   */
+  fit(rows: number): void {
     if (!this.win || this.win.isDestroyed()) return;
     const b = this.win.getBounds();
-    const next = grownBounds(b, lines, screen.getDisplayMatching(b).workArea, this.up, this.keepOff());
+    const next = grownBounds(b, rows, screen.getDisplayMatching(b).workArea, this.up, this.keepOff());
     if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
   }
 

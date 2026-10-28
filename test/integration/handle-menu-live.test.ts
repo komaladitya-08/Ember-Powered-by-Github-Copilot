@@ -1,8 +1,10 @@
 /**
- * The handle's menu on a real X server (Xvfb) with the built app (dist/app; `npm run build` first): picking "Ask
- * Ember…" with the keyboard opens the ask box (review #67: a guard on menu-will-close, which Electron sends just before
- * the pick's click, swallowed every pick), and Esc on the menu opens nothing. Skipped without Xvfb, off Linux, or
- * without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a missing one fails.
+ * The handle's menu and the ask box on a real X server (Xvfb) with the built app (dist/app; `npm run build` first):
+ * picking "Ask Ember…" with the keyboard opens the ask box (review #67: a guard on menu-will-close, which Electron sends
+ * just before the pick's click, swallowed every pick), and Esc on the menu opens nothing; the line under the ask box's
+ * field keeps the window's name readable when it is crowded: a remote computer, what else is sent, a paste cut at the
+ * limit (reviews #70, #74). Skipped without Xvfb, off Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8
+ * CI, which builds first): there a missing one fails.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,8 +22,8 @@ const xvfb = process.platform === "linux" && spawnSync("sh", ["-c", "command -v 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 type ElectronApp = {
-  /** Runs `fn` in Ember's main process, given the electron module. */
-  evaluate<T>(fn: (electron: typeof Electron) => T): Promise<T>;
+  /** Runs `fn` in Ember's main process, given the electron module (and `arg`). */
+  evaluate<T, A = undefined>(fn: (electron: typeof Electron, arg: A) => T, arg?: A): Promise<T>;
   process(): ChildProcess;
   close(): Promise<void>;
 };
@@ -119,4 +121,50 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
     expect(events.filter(e => e.msg === "ask.open").length).toBe(before);
     expect(await askShown()).toBe(false);
   }, 30_000);
+
+  it("keeps the window's name readable under the ask box when the line is crowded or a long paste was cut", async () => {
+    await app.evaluate(() => (globalThis as unknown as { __ember: { showAsk(): void } }).__ember.showAsk());
+    for (let t = 0; t < 50 && !(await askShown()); t++) await sleep(100);
+    expect(await askShown()).toBe(true);
+    // The quick look's own update has come and gone: what follows is this test's.
+    await sleep(1500);
+    const ssh = { id: "ssh:deploy@build-server-01", kind: "ssh", label: "deploy@build-server-01", state: "lost", can: "", active: true };
+    const cases = {
+      "a mail window, field text and three windows": { sees: "Firefox · Inbox (12) — Mail", carries: { selection: false, fieldText: true, windows: 3 }, history: ["a"] },
+      "an editor, a selection and five windows": { sees: "Visual Studio Code · extension.ts — ember-improve", carries: { selection: true, fieldText: false, windows: 5 }, history: ["a"] },
+      "a lost SSH computer, field text and two windows": { sees: "Terminal · deploy@build-server-01: ~/src", carries: { selection: false, fieldText: true, windows: 2 }, history: ["a"], target: ssh },
+      "a private window": { sees: null, privateWindow: true, history: ["a"] },
+    };
+    type Row = { name: number; nameWhole: number; overflow: number; cut: boolean; cutOnLine: boolean; state: string; height: number };
+    const row = (ctx: object, text: string) => app.evaluate(async ({ BrowserWindow }, a: { ctx: object; text: string }): Promise<Row> => {
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember")!;
+      w.webContents.send("agent:ask-context", { sees: null, history: ["a"], opened: true });
+      w.webContents.send("agent:ask-context", a.ctx);
+      await new Promise(r => setTimeout(r, 150));
+      await w.webContents.executeJavaScript(`{ const q = document.getElementById("q"); q.value = ${JSON.stringify(a.text)}; q.dispatchEvent(new Event("input")); }`);
+      await new Promise(r => setTimeout(r, 400));
+      const page = await w.webContents.executeJavaScript(`(() => {
+        const t = document.getElementById("sees-text"), meta = document.querySelector(".meta"), cut = document.getElementById("cut");
+        const state = document.getElementById("where-state");
+        return { name: t.clientWidth, nameWhole: t.scrollWidth, overflow: meta.scrollWidth - meta.clientWidth, cut: !cut.hidden && cut.getBoundingClientRect().width > 0,
+          cutOnLine: meta.contains(cut), state: state && state.getBoundingClientRect().width > 0 ? state.textContent : "" };
+      })()`) as Omit<Row, "height">;
+      return { ...page, height: w.getBounds().height };
+    }, { ctx, text });
+    for (const [what, ctx] of Object.entries(cases)) {
+      for (const text of ["", "x".repeat(2000)]) {
+        const r = await row(ctx, text);
+        const label = `${what}${text ? ", 2000 characters pasted" : ""}: ${JSON.stringify(r)}`;
+        // The window's name keeps the room it aims for (or all it needs), and nothing is pushed off the line.
+        expect.soft(r.name, label).toBeGreaterThanOrEqual(Math.min(160, r.nameWhole));
+        expect.soft(r.overflow, label).toBe(0);
+        // The note says the paste was cut, on its own line under it: the box is a line taller than four lines of text.
+        expect.soft(r.cut, label).toBe(!!text);
+        expect.soft(r.cutOnLine, label).toBe(false);
+        if (text) expect.soft(r.height, label).toBe(92 + 4 * 24);
+        if ("target" in ctx) expect.soft(r.state, label).toBe(" (lost)");
+      }
+    }
+    await hideAsk();
+  }, 60_000);
 });

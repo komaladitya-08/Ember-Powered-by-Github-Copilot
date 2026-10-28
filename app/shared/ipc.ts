@@ -213,6 +213,6 @@ export interface EmberAskApi {
   onContext(fn: (c: AskContext) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
-  /** The field needs `lines` lines (1 to 4) for its text: the box grows to fit. */
-  fit?(lines: number): void;
+  /** The page needs `rows` rows (the field's 1 to 4 lines, and one for the note when a paste was cut): the box grows to fit. */
+  fit?(rows: number): void;
 }

@@ -1,7 +1,8 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
 body { font: var(--type-body); color: var(--label); }
 /* Inset enough that the shadow fits inside the window (no clipped rectangle around it). The window is 92 px tall
-   (main's ask.ts): 10 + field 46 + 4 + hint line 21 + 11 px, and 24 px taller for each line the field grows. */
+   (main's ask.ts): 10 + field 46 + 4 + hint line 21 + 11 px, 24 px taller for each line the field grows, and 24 px
+   taller again (4 + the note's 20) while the note says a paste was cut. */
 .ask { position: absolute; inset: 10px; display: flex; flex-direction: column; gap: 4px; }
 /* The field: a glass capsule with Ember's flame at its start, as Spotlight. It is always focused while open, so its
    focus shows quietly: a firmer rim and the accent caret, no glow. */
@@ -37,11 +38,20 @@ textarea:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 2
 .sees.private .eye { display: none; }
 .sees-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sees-extra { flex: none; color: var(--label-2); font-weight: 400; }
-/* The computer a request goes to, when it isn't this one: the label's colour, a little apart from what Ember sees. */
-.where { flex: none; max-width: 240px; overflow: hidden; text-overflow: ellipsis; color: var(--accent); font-weight: 600; }
+/* The computer a request goes to, when it isn't this one: the label's colour, a little apart from what Ember sees. Its
+   name shortens (less on a crowded line: .tight), its state ("(lost)") never does. */
+.where { flex: none; max-width: 240px; min-width: 0; overflow: hidden; display: inline-flex; color: var(--accent); font-weight: 600; }
+.where.tight { max-width: 150px; }
 .where[hidden] { display: none; }
-/* A paste longer than what is sent was cut: said in words, in the warning colour. */
-.cut { flex: none; color: var(--yellow); font-weight: 500; }
+.where-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.where-state { flex: none; white-space: pre; }
+/* A paste longer than what is sent was cut: said in words, in the warning colour, on its own quiet line under the one
+   above (20 px: main grows the window a line for it). */
+.cut {
+  box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 10px; align-self: flex-start; flex: none; max-width: calc(100% - 28px);
+  font: var(--type-footnote); line-height: 16px; color: var(--yellow); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
+}
 .cut[hidden] { display: none; }
 /* The keys as keycaps, each with its few words. */
 .hint { flex: none; margin-left: auto; display: inline-flex; gap: 10px; color: var(--label-2); }
@@ -52,4 +62,4 @@ html.opaque, html.opaque body { background: var(--glass-solid); }
 html.opaque body { box-shadow: var(--glass-rim); }
 html.opaque textarea { background: rgba(255, 255, 255, 0.05); border-color: var(--separator); box-shadow: none; }
 html.opaque textarea:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
-html.opaque .meta { background: transparent; border-color: transparent; }
+html.opaque .meta, html.opaque .cut { background: transparent; border-color: transparent; }

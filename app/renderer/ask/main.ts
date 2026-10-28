@@ -4,10 +4,10 @@
  */
 import type { AskContext, EmberAskApi } from "../../shared/ipc";
 import type { TargetSummary } from "../../shared/targets";
-import { targetChip } from "../handle/badge";
+import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
 import { CUT_NOTE, FIELD, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "./field";
-import { liveWords, seesView } from "./chips";
+import { liveWords, seesView, type SeesView } from "./chips";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
@@ -23,36 +23,58 @@ const where = document.getElementById("where")!;
 const cut = document.getElementById("cut")!;
 const seesLive = document.getElementById("sees-live")!;
 const seesText = document.getElementById("sees-text")!;
-/** Room the window's name keeps on the line before the key hints step aside (Esc first, then ↑, then Enter). */
+const seesExtra = document.getElementById("sees-extra")!;
+/** What the chip says now (fitMeta picks the long or the brief form of what else is sent). */
+let view: SeesView | null = null;
+/** Room the window's name keeps on the line before the rest gives way. */
 const NAME_ROOM = 160;
-/** The line under the field: the key hints give way, last first, while the window's name would be cut too short. */
+/**
+ * The line under the field, while the window's name would be cut shorter than NAME_ROOM: the key hints step aside
+ * (Esc first, then ↑, then Enter), then what else is sent says it in fewer words ("+ text, 2 titles"), then the other
+ * computer's name is shortened (never its state). The tooltip and screen readers keep the whole sentence.
+ */
 function fitMeta(): void {
   const keys = [...document.querySelectorAll<HTMLElement>("#hint .key")];
   for (const k of keys) k.classList.remove("crowded");
+  where.classList.remove("tight");
+  seesExtra.textContent = view?.extra ?? "";
   if (sees.hidden) return;
-  for (const k of keys.reverse()) {
-    if (seesText.scrollWidth <= seesText.clientWidth || seesText.clientWidth >= NAME_ROOM) break;
-    if (!k.hidden) k.classList.add("crowded");
+  const steps = [
+    ...keys.reverse().filter(k => !k.hidden).map(k => () => k.classList.add("crowded")),
+    () => { seesExtra.textContent = view?.brief ?? ""; },
+    () => where.classList.add("tight"),
+  ];
+  for (const step of steps) {
+    if (!cutShort()) break;
+    step();
   }
+}
+/** The window's name is shortened below NAME_ROOM (measured to the fraction of a pixel: an ellipsis can hide in one). */
+function cutShort(): boolean {
+  const whole = document.createRange();
+  whole.selectNodeContents(seesText);
+  const room = seesText.getBoundingClientRect().width;
+  return whole.getBoundingClientRect().width > room + 0.01 && room < NAME_ROOM;
 }
 /** What the live region last said in this opening (said once, when it arrives). */
 let said = "";
 const form = document.getElementById("form") as HTMLFormElement;
 const field = input.parentElement!;
-/** The lines the window was last sized for (main opens it at one). */
-let shownLines = 1;
+/** The rows the window was last sized for: the field's lines, and one for the note (main opens it at one). */
+let shownRows = 1;
 /**
- * The field as tall as its text (one line to four, then it scrolls), the window with it, and the note when the text
- * reached the most that is sent (a longer paste was cut at the limit).
+ * The field as tall as its text (one line to four, then it scrolls), the note on a line of its own when the text
+ * reached the most that is sent (a longer paste was cut at the limit), and the window with both.
  */
 function fit(): void {
   field.style.flexBasis = `${FIELD.oneLine}px`;
   const lines = fieldLines(input.scrollHeight);
   field.style.flexBasis = `${fieldHeight(lines)}px`;
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines) + 1);
-  if (lines !== shownLines) { shownLines = lines; window.emberAsk.fit?.(lines); }
   const full = atLimit(input.value);
   if (cut.hidden === full) { cut.hidden = !full; cut.textContent = full ? CUT_NOTE : ""; }
+  const rows = lines + (full ? 1 : 0);
+  if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
 }
 /** Earlier questions (↑/↓), and what was being typed meanwhile. */
 const history = new AskHistory();
@@ -89,18 +111,18 @@ window.emberAsk.onContext(c => {
   document.getElementById("hint-history")!.hidden = history.size === 0;
   // Where a request goes when it names no computer (§8.1): "On build-01" when that isn't this computer. Main sends the
   // picker's target with the context when the targets runtime has one; without it nothing shows, as before.
-  const chip = targetChip((c as AskContext & { target?: TargetSummary | null }).target);
+  const chip = targetChipParts((c as AskContext & { target?: TargetSummary | null }).target);
   where.hidden = !chip;
-  where.textContent = chip ?? "";
-  where.title = chip ?? "";
+  document.getElementById("where-name")!.textContent = chip?.name ?? "";
+  document.getElementById("where-state")!.textContent = chip?.state ?? "";
+  where.title = chip ? chip.name + chip.state : "";
   // The window's app and title (shortened on the chip), what else goes with a request, all of it in the tooltip.
-  const view = seesView(c);
+  view = seesView(c);
   sees.hidden = !view;
   sees.title = view?.full ?? "";
   sees.classList.toggle("private", c.privateWindow === true);
   document.getElementById("sees-full")!.textContent = view?.full ?? "";
   seesText.textContent = view?.text ?? "";
-  document.getElementById("sees-extra")!.textContent = view?.extra ?? "";
   // The field had the keyboard before this came, so its description isn't read again: a screen reader hears it here.
   const live = liveWords(said, c);
   if (live !== null) seesLive.textContent = said = live;
@@ -108,7 +130,7 @@ window.emberAsk.onContext(c => {
   input.focus();
   // Opened again: what was left in it (after Esc, or a click away) is selected, so typing replaces it instead of
   // running on from it ("draftwhat can you do"); End or a click keeps it. Main opened the window one line tall.
-  if (c.opened) { input.select(); shownLines = 1; }
+  if (c.opened) { input.select(); shownRows = 1; }
   fit();
 });
 // Typed while the box was opening: it goes where the caret is, as if typed here.

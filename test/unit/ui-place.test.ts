@@ -67,7 +67,7 @@ describe("askBounds", () => {
   });
 });
 
-describe("grownBounds (review #70: the field grows to four lines)", () => {
+describe("grownBounds (review #70: the field grows to four lines, and a row for the note that a paste was cut)", () => {
   const wa = { x: 0, y: 0, width: 1024, height: 600 };
 
   it("grows upward above Ember, so the hint row stays where it was, and back down to one line", () => {
@@ -75,8 +75,9 @@ describe("grownBounds (review #70: the field grows to four lines)", () => {
     const tall = grownBounds(b, 4, wa, true);
     expect(tall).toEqual({ ...b, height: 92 + 3 * 24, y: b.y + b.height - (92 + 3 * 24) });
     expect(grownBounds(tall, 1, wa, true)).toEqual(b);
-    // Never more than four lines, never less than one.
-    expect(grownBounds(b, 9, wa, true).height).toBe(164);
+    // Never more than four lines and the note's row (a paste cut at the limit), never less than one.
+    expect(grownBounds(b, 5, wa, true)).toEqual({ ...b, height: 92 + 4 * 24, y: b.y + b.height - (92 + 4 * 24) });
+    expect(grownBounds(b, 9, wa, true).height).toBe(188);
     expect(grownBounds(b, 0, wa, true).height).toBe(92);
   });
 
