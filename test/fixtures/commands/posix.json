@@ -10975,6 +10975,148 @@
   {
    "cmd": "bazel run //x",
    "verdict": "run"
+  },
+  {
+   "cmd": "cmake -P x.cmake ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ],
+   "missing": [
+    "~/.ssh/id_rsa"
+   ]
+  },
+  {
+   "cmd": "cmake -DF=~/.ssh/id_rsa -P x.cmake",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cmake -D F=/home/ana/.ssh/id_rsa -P x.cmake",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cmake -D F=~/.aws/credentials -P x.cmake",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cmake -D F:FILEPATH=/home/ana/.aws/credentials -P x.cmake",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cmake -D F=/home/ana/.aws/credentials -S . -B build",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cmake -P x.cmake \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "cmake -D X=1 -P x.cmake -- a b",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -D CMAKE_BUILD_TYPE=Release -S . -B build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake -P /dev/stdin <<< 'execute_process(COMMAND id)'",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "cmake -P - <<< 'execute_process(COMMAND id)'",
+   "verdict": "ask",
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --target clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build -t clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --target=clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --target app clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --clean-first",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build -- clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --target install",
+   "verdict": "ask",
+   "rules": [
+    "script.system"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --target \"$T\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --target all",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake --build build --target app -- -j4",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cmake --build build -j 8 --config Release",
+   "verdict": "run"
   }
  ]
 }

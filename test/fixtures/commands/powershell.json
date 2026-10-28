@@ -5212,6 +5212,17 @@
   {
    "cmd": "cmake -E remove_directory C:\\Users\\ana\\AppData\\Local\\ember",
    "verdict": "refuse"
+  },
+  {
+   "cmd": "cmake --build build --target clean",
+   "verdict": "ask",
+   "rules": [
+    "script.destroy"
+   ]
+  },
+  {
+   "cmd": "cmake --build build --config Release --target app",
+   "verdict": "run"
   }
  ]
 }

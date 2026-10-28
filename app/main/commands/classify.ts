@@ -4030,16 +4030,38 @@ reg(NATIVE, ["bazel", "bazelisk"], h => {
 reg(NATIVE, ["cmake"], h => {
   const e = h.args.findIndex(a => a.v === "-E");
   if (e >= 0) { cmakeCommand(h, h.args[e + 1], h.args.slice(e + 2)); return; }
+  // `-D NAME[:TYPE]=VALUE` written apart: VALUE is read as an argument is (`-DNAME=VALUE` already is).
+  h.e.readArgs(h.args.flatMap((a, k) => (h.args[k - 1]?.v === "-D" && a.v?.includes("=") ? [lit(a.v.slice(a.v.indexOf("=") + 1))] : [])), h.sc);
   const p = h.args.findIndex(a => a.v === "-P");
   if (p >= 0) {
     const script = h.args[p + 1];
+    // The script's arguments and the -D values are read as any program's are.
+    h.e.readArgs(h.args.filter((_, k) => k !== p && k !== p + 1), h.sc, { unresolvedUnclear: true });
     if (!script) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
     if (script.v !== null && STDIN_NAME.test(script.v)) { intoInterpreter(h); return; }
     runScript(h, script);
     return;
   }
+  const b = h.args.findIndex(a => a.v === "--build");
+  if (b >= 0) cmakeBuild(h, h.args.slice(b + 1));
   generic(h);
 });
+/**
+ * `cmake --build DIR`'s targets (after --target or -t, one or more, and the build tool's own after `--`) are judged by
+ * their names, as make's are; --clean-first runs the clean target first (review #167).
+ */
+function cmakeBuild(h: H, args: Arg[]): void {
+  let targets = false;
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v === null) continue;
+    if (v === "--") { for (const t of args.slice(k + 1)) if (t.v !== null && !t.v.startsWith("-")) nameCheck(h, t.v, `${h.prog} --build -- ${t.v}`); return; }
+    if (v === "--clean-first") h.e.add("destroy", "script.destroy", `Runs ${h.prog} --build --clean-first, which deletes build output.`);
+    if (v.startsWith("--target=")) nameCheck(h, v.slice("--target=".length), `${h.prog} --build --target ${v.slice("--target=".length)}`);
+    if (v.startsWith("-")) { targets = v === "--target" || v === "-t"; continue; }
+    if (targets) nameCheck(h, v, `${h.prog} --build --target ${v}`);
+  }
+}
 /** One `cmake -E` command, judged as the program it stands for. */
 function cmakeCommand(h: H, cmd: Arg | undefined, rest: Arg[]): void {
   if (!cmd) return;
