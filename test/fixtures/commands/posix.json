@@ -10313,7 +10313,7 @@
    ]
   },
   {
-   "cmd": "dconf write /org/gnome/system/proxy/mode \"'manual'\"",
+   "cmd": "dconf write /system/proxy/mode \"'manual'\"",
    "verdict": "ask",
    "rules": [
     "system.network"
@@ -11670,6 +11670,62 @@
    "verdict": "ask",
    "classes": [
     "unclear"
+   ]
+  },
+  {
+   "cmd": "dconf reset -f /system/proxy/",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "dconf write /system/proxy/http/host \"'example.com'\"",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "dconf load /system/proxy/ < proxy.ini",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "dconf reset -f /system/",
+   "verdict": "ask",
+   "rules": [
+    "system.network"
+   ]
+  },
+  {
+   "cmd": "dconf write /org/gnome/desktop/applications/terminal/exec \"'example'\"",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "dconf reset -f /org/gnome/desktop/applications/",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "gsettings set org.gnome.desktop.default-applications.terminal exec 'example'",
+   "verdict": "ask",
+   "rules": [
+    "system.autostart"
+   ]
+  },
+  {
+   "cmd": "dconf write /system/locale/region \"'en_GB.UTF-8'\"",
+   "verdict": "ask",
+   "rules": [
+    "system.settings"
    ]
   }
  ]

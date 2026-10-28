@@ -4749,10 +4749,10 @@ const SETTINGS_AREAS: readonly { rule: string; says: string; prefixes: readonly 
  * A GNOME settings write to `key` (dotted, lower case; null: a key Ember can't see, which could be any): the areas it
  * reaches, or plain desktop settings. `tree`: everything under `key` changes (a reset of a folder, a load).
  */
-function settingsWrite(h: H, key: string | null, tree: boolean): void {
+function settingsWrite(h: H, key: string | null, tree: boolean, form: (prefix: string) => string = p => p): void {
   let hit = false;
   for (const area of SETTINGS_AREAS) {
-    const reaches = key === null || area.prefixes.some(p => key === p || key.startsWith(`${p}.`) || (tree && (key === "" || p.startsWith(`${key}.`))));
+    const reaches = key === null || area.prefixes.map(form).some(p => key === p || key.startsWith(`${p}.`) || (tree && (key === "" || p.startsWith(`${key}.`))));
     if (reaches) { hit = true; h.e.add("system", area.rule, area.says); }
   }
   if (!hit) h.e.add("system", "system.settings", "Changes your desktop settings.");
@@ -4773,6 +4773,12 @@ reg(NATIVE, ["gsettings"], h => {
   const id = schema.split(":")[0].toLowerCase();
   settingsWrite(h, recursive ? id : `${id}.${name!.toLowerCase()}`, recursive);
 });
+/**
+ * Where a settings area's keys live in dconf, dotted: its schema id, except for the two schemas GNOME keeps elsewhere
+ * (org.gnome.system.proxy at /system/proxy/, org.gnome.desktop.default-applications at /org/gnome/desktop/applications/).
+ */
+const dconfForm = (id: string): string =>
+  id.replace(/^org\.gnome\.system\.proxy(?=\.|$)/, "system.proxy").replace(/^org\.gnome\.desktop\.default-applications(?=\.|$)/, "org.gnome.desktop.applications");
 reg(NATIVE, ["dconf"], h => {
   // dconf write KEY VALUE, reset [-f] KEY|DIR/, load [-f] DIR/ (keys from stdin), update and compile (the system's or a
   // file's database). Keys are paths (`/org/gnome/desktop/screensaver/lock-enabled`); a folder ends with `/`.
@@ -4785,7 +4791,7 @@ reg(NATIVE, ["dconf"], h => {
     case "write": case "reset": case "load": {
       const target = ops[0]?.v ?? null;
       if (target === null) { settingsWrite(h, null, true); return; }
-      settingsWrite(h, dotted(target), verb === "load" || target.endsWith("/"));
+      settingsWrite(h, dotted(target), verb === "load" || target.endsWith("/"), dconfForm);
       return;
     }
     case "update": settingsWrite(h, null, true); return;
