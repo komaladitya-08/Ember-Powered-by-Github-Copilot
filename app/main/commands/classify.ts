@@ -1879,6 +1879,8 @@ function interactive(h: H): void {
       // Script fed on stdin or a here-document: a `!` line, or `r !`/`w !`, runs a shell command (review #166).
       if (!stdin) { add(); return; }
       fromStdin(h, t => { if (/!/.test(t)) h.e.unclear("unclear.ed-shell", "It can run a shell command from the editor."); });
+      // The file the script edits: written (a `w` saves it), so §3.6's rules meet it (review #169).
+      for (const f of parseOpts(a, { shortValue: "p" }).operands) h.e.usePath(f, "write", h.sc);
       return;
     case "gdb": case "lldb": if (!has(p, "batch", "x", "version", "v")) add(); return;
     case "emacs": if (!has(p, "batch", "version", "script")) add(); else if (has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return;
@@ -1940,7 +1942,7 @@ const KNOWN_ORDINARY = new Set([
  * Programs with a handler whose names are common words or tools no wrapper runs: as an unknown program's operand
  * (`mise trust`, `somecli trust list`) they are words, as they were before these handlers existed.
  */
-const NOT_RUNNERS = new Set(["trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk"]);
+const NOT_RUNNERS = new Set(["trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb"]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
 function runners(): ReadonlySet<string> {
@@ -2598,7 +2600,7 @@ reg(NATIVE, ["7z", "7za", "7zz", "7zr"], h => {
   h.e.readArgs(ops, h.sc);
 });
 
-reg(NATIVE, ["rar"], h => {
+reg(NATIVE, ["rar", "unrar"], h => {
   const verb = lower(h.args[0]) ?? "";
   const rest = h.args.slice(1);
   const sw = rest.filter(a => (a.v ?? "").startsWith("-")).map(a => a.v!.toLowerCase());
@@ -2631,11 +2633,13 @@ reg(NATIVE, ["unzip"], h => {
 });
 
 reg(NATIVE, ["cpio"], h => {
-  const p = opts(h, { shortValue: "EFHIMORs", longValue: ["file", "format", "pattern-file", "rsh-command", "owner"] });
+  const p = opts(h, { shortValue: "EFHIMORsD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory"] });
   if (has(p, "rsh-command")) h.e.unclear("unclear.cpio-command", "It runs a command Ember can't see.");
   if (has(p, "i", "extract")) {
-    const into = h.e.usePath(lit("."), "write", h.sc);
-    if (has(p, "u", "unconditional") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", "Unpacks an archive over files in this folder.", { objects: [into] });
+    // -D/--directory: the folder it unpacks into (review #169).
+    const dir = values(p, "D", "directory")[0];
+    const into = dir === null ? { kind: "other" as const, text: "a folder Ember can't name", abs: null } : h.e.usePath(lit(dir ?? "."), "write", h.sc);
+    if (has(p, "u", "unconditional") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", `Unpacks an archive over files in ${dir === undefined ? "this folder" : into.text}.`, { objects: [into] });
   }
   if (has(p, "p", "pass-through")) {
     const dest = p.operands[0];
@@ -2650,6 +2654,29 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   const ins = objsOf(h, p.operands, "write");
   if (removes && p.operands.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+});
+
+// Programs that write the files their operands or options name (review #169); otherwise they are unknown programs.
+reg(NATIVE, ["sponge"], h => { objsOf(h, opts(h).operands, "write"); generic(h); });
+reg(NATIVE, ["split", "csplit"], h => {
+  const p = opts(h, h.key === "split"
+    ? { shortValue: "abClnt", longValue: ["suffix-length", "bytes", "line-bytes", "lines", "number", "separator", "additional-suffix", "filter"] }
+    : { shortValue: "bfn", longValue: ["suffix-format", "prefix", "digits"] });
+  // The output files' names start with split's second operand or csplit's -f.
+  const prefix = h.key === "split" ? p.operands[1]?.v : values(p, "f", "prefix")[0];
+  if (prefix) h.e.usePath(lit(`${prefix}${h.key === "split" ? "aa" : "00"}`), "write", h.sc);
+  // split --filter hands each piece to a shell command instead of a file.
+  for (const f of h.key === "split" ? values(p, "filter") : []) {
+    if (f === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
+    else h.e.nested(f, "sh", h.sc, "split --filter");
+  }
+  generic(h);
+});
+reg(NATIVE, ["dpkg-deb"], h => {
+  // -x, -X and -R unpack a package into the folder named after it.
+  const p = opts(h);
+  if (has(p, "x", "extract", "X", "vextract", "R", "raw-extract") && p.operands[1]?.v) writeInto(h, p.operands[1].v);
+  generic(h);
 });
 
 // sed and perl edit in place: ordinary inside the user's work, except on §3.6's paths; code-running scripts are unclear.
@@ -2860,6 +2887,12 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
     if (mod === "timeit" || mod === "code" || mod === "pdb") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
     if (mod === "ensurepip") { h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code)."); return; }
+    // zipfile and tarfile -e unpack into the folder given last (review #169).
+    if ((mod === "zipfile" || mod === "tarfile") && h.args.some(a => a.v === "-e" || a.v === "--extract") && p.operands.length >= 2) {
+      const to = p.operands[p.operands.length - 1];
+      if (to.v === null) h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name.");
+      else writeInto(h, to.v);
+    }
     if (mod) nameCheck(h, mod);
     h.e.readArgs(p.operands, h.sc);
     return;
@@ -3997,6 +4030,8 @@ function pip(h: H): void {
   if (verb === "install" || verb === "uninstall") {
     const p = parseOpts(rest, { shortValue: "rcetbi", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary"] });
     for (const r of values(p, "r", "requirement", "c", "constraint")) if (r) h.e.usePath(lit(r), "read", h.sc);
+    // The folders it installs into (review #169).
+    for (const d of values(p, "t", "target", "root", "prefix", "src")) if (d) writeInto(h, d);
     const editable = values(p, "e", "editable").map(v => (v === null ? { v: null, raw: "?", glob: false } : lit(v)));
     const reqs = values(p, "r", "requirement").map(r => ({ kind: "path" as const, text: r ?? "?", abs: null }));
     const objects = [...packageObjects(h, [...p.operands, ...editable]), ...reqs];
@@ -4005,7 +4040,12 @@ function pip(h: H): void {
     return;
   }
   if (verb === "config" && rest.some(a => a.v === "--global")) h.e.add("system", "pip.config.global", "Changes settings for every user.");
-  if (verb === "download" || verb === "wheel") h.e.readArgs(rest.filter(a => !isOption(a) && !URL_LIKE.test(a.v ?? "")), h.sc);
+  if (verb === "download" || verb === "wheel") {
+    // The folder it saves into (review #169).
+    const p = parseOpts(rest, { shortValue: "rcdwi", longValue: ["requirement", "constraint", "dest", "wheel-dir", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "src"] });
+    for (const d of values(p, "d", "dest", "w", "wheel-dir")) if (d) writeInto(h, d);
+    h.e.readArgs(rest.filter(a => !isOption(a) && !URL_LIKE.test(a.v ?? "")), h.sc);
+  }
 }
 reg(NATIVE, ["pip", "pip3", "pip2"], h => pip(h));
 

@@ -12699,6 +12699,225 @@
   {
    "cmd": "kubectl get pods -o jsonpath='{.items[0].metadata.name}'",
    "verdict": "run"
+  },
+  {
+   "cmd": "cpio -idv -D ~/.config/autostart < x.cpio",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "cpio -i -D /home/ana/.config/ember < x.cpio",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cpio -i --directory=/home/ana/.config/autostart < x.cpio",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "cpio -i -D \"$D\" < x.cpio",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "archive.unpack"
+   ]
+  },
+  {
+   "cmd": "cpio -i -D build < x.cpio",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cpio -i < x.cpio",
+   "verdict": "run"
+  },
+  {
+   "cmd": "sponge ~/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "sort x | sponge x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "split -b 1k x ~/.config/autostart/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "split -b 1k x ~/.config/ember/x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "split -b 1k x part-",
+   "verdict": "run"
+  },
+  {
+   "cmd": "split -l 10 x part- && sh run.sh",
+   "verdict": "run"
+  },
+  {
+   "cmd": "split --filter='rm -rf ~/Documents' x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "csplit x 1 -f ~/.config/autostart/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "csplit -f ~/.config/ember/x x 1",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "csplit x 1",
+   "verdict": "run"
+  },
+  {
+   "cmd": "unrar x a.rar ~/.config/autostart/",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "unrar x a.rar ~/.config/ember/",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "unrar x a.rar",
+   "verdict": "run"
+  },
+  {
+   "cmd": "unrar x a.rar build/",
+   "verdict": "run"
+  },
+  {
+   "cmd": "dpkg-deb -x a.deb ~/.config/autostart",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "dpkg-deb -x a.deb build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "dpkg-deb -c a.deb",
+   "verdict": "run"
+  },
+  {
+   "cmd": "python3 -m zipfile -e a.zip ~/.config/autostart",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "python3 -m zipfile -e a.zip ~/.config/ember",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "python3 -m tarfile -e a.tar build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "python3 -m zipfile -l a.zip",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ed ~/.bashrc <<< $'a\\nx\\n.\\nw'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "ed -s ~/.ssh/id_rsa <<< ',p'",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "ed -s x.txt <<< $'a\\nx\\n.\\nw'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pip download -d ~/.config/autostart x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "pip download -d build x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pip install --target ~/.config/ember x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "foo sponge",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo unrar",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo dpkg-deb",
+   "verdict": "run"
   }
  ]
 }
