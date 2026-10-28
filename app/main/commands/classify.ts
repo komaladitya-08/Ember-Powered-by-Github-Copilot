@@ -4846,6 +4846,8 @@ reg(NATIVE, ["PlistBuddy", "plistbuddy"], h => {
     else { writes = true; h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."); }
   }
   if (file) h.e.usePath(file, writes ? "write" : "read", h.sc);
+  // A command or file Ember can't see may be any, as for any program's unresolved argument.
+  if (file?.v === null || cmds.includes(null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
 });
 /** plutil's options that take values, and how many. */
 const PLUTIL_VALUES: Readonly<Record<string, number>> = { "-o": 1, "-e": 1, "-expect": 1, "-remove": 1, "-create": 1, "-convert": 1, "-extract": 2, "-type": 1 };
@@ -4871,6 +4873,7 @@ reg(NATIVE, ["plutil"], h => {
   if (out && out.v !== "-") h.e.usePath(out, "write", h.sc);
   if (verb === null || (verb !== undefined && /^-(insert|replace|remove|create|convert)$/.test(verb) && !out)) objsOf(h, files, "write");
   else h.e.readArgs(files, h.sc);
+  if (verb === null || files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
 });
 // Which certificates the computer trusts (review #108): NSS's certutil, p11-kit's trust, the system bundle, macOS's
 // trust settings. Windows' certutil is judged below its own handler.

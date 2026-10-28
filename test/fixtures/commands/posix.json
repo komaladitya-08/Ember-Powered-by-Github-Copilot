@@ -11376,6 +11376,75 @@
    "verdict": "run",
    "context": "darwin",
    "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c \"Set :a 1\" \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c \"Print\" \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c \"$cmd\" Info.plist",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace a -bool true \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -p \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil \"$OP\" Info.plist",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace CFBundleVersion -string \"$V\" Info.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c \"Set :CFBundleVersion $V\" Info.plist",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
   }
  ]
 }
