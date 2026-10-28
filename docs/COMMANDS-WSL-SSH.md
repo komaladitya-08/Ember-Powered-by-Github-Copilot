@@ -425,9 +425,11 @@ first click **Allow**.
   more, …"). A task that has only run commands there goes on: its command window is on this computer. A click on the
   notice's **Stop**, a lost connection, **Disconnect** and the stop chord still stop everything there.
   This computer's own screen is treated the same way: while it is locked, or its session isn't the one in front,
-  Ember doesn't listen for "Hey Ember", doesn't speak and takes no requests, and the tasks using this computer's
-  screen stop ("Your screen locked, so I stopped the task working on it.", once you're back); one that has only run
-  commands goes on. Listening starts again when you unlock it.
+  Ember doesn't listen for "Hey Ember", doesn't speak, takes no requests ("Your screen is locked, so I didn't take
+  that.") and doesn't read or act on this computer's screen (or a WSL app's window on it), and the tasks that have used
+  this computer's screen stop ("Your screen locked, so I stopped the task working on it.", once you're back); one that
+  has only run commands goes on. Listening starts again when you unlock it. Windows and macOS say when the screen locks;
+  on Linux, logind does (GNOME sets its LockedHint), watched with `gdbus monitor`, or read every 5 s without gdbus.
 - **No desktop, or only a VNC or xrdp session**: commands only ("build-01's desktop is a remote session: Ember will run
   commands only."). VNC and xrdp desktops aren't used because Ember can't be sure who sees its notice there.
 - **Wayland**: reading and using controls only, no screenshots. Until Ember's own test of it passes, a Wayland desktop

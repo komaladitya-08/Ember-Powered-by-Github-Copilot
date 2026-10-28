@@ -48,7 +48,7 @@ import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { speaksAloud } from "../shared/speech";
-import { ScreenLock, execText, loginctlLocked } from "./screen-lock";
+import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
@@ -751,10 +751,19 @@ function start(): void {
     const selected = active && active.pid !== process.pid && clip ? clip.readSelection(active.id).catch(() => "") : Promise.resolve("");
     callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
+  /**
+   * Main's own notice in the bubble for `ms`: held, so a task's hide doesn't wipe it, and given back after, so a task still
+   * at work shows its progress again (review #81).
+   */
+  const showNotice = (n: { title: string; thought: string }, ms: number) => holdNotice<EmberState["bubble"]>({
+    claim: () => agent?.claimBubble(), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
+    release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
+  }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, ms);
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
-    // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81).
-    if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); return; }
+    // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
+    // who sees it (the lock read wrongly) knows why nothing happened.
+    if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1382,7 +1391,8 @@ function start(): void {
       setStatus("borrow", driving ? (borrow.usesMouse ? "Using your mouse: move it to take over" : "Using your keyboard: press a key or move the mouse to take over")
         : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop using the keyboard and mouse…") : null);
     };
-    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, {
+    // Nothing is borrowed while this computer's screen is locked, whatever the input's own check sees (review #81).
+    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(lockAwareInput(xinput, () => screenLock?.locked ?? false), {
       onChange: showBorrowing,
       // Never the ask box (it hid when the borrow took the keyboard), nor a window that isn't on screen any more.
       mayRefocus: w => !askWindow.isWindow(w) && shownWindows().some(s => s.client === w || s.id === w),
@@ -1415,8 +1425,9 @@ function start(): void {
     // A desk whose display died is gone: the next desk task starts a new one.
     deskManager?.onDead(() => { deskPlace = null; });
     app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager?.stop(); });
-    // Built whenever a window system opened: reading apps (tier 1) needs no input backend.
-    const hands: Hands | undefined = wsSeen ? {
+    // Built whenever a window system opened: reading apps (tier 1) needs no input backend. They refuse this screen while
+    // it's locked (review #81).
+    const hands: Hands | undefined = wsSeen ? lockedOutHands({
       perception, sidecar: seenBy, audit, confirmer,
       policy: new PolicyEngine({
         neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
@@ -1463,7 +1474,7 @@ function start(): void {
         // Several tasks may borrow in turn: the state shown is the borrow's own (driving now, or someone waiting), not the last task's word.
         setBorrowing: showBorrowing,
       } : undefined,
-    } : undefined;
+    }, () => screenLock?.locked ?? false) : undefined;
     // Where tasks act (this computer, WSL distros, computers over SSH) and their commands (§2): made whether or not this
     // screen has hands (without them, this computer is commands only).
     // The runtime's channels hear only Ember's own bundled pages (each handler then checks which window sent it).
@@ -1627,38 +1638,24 @@ function start(): void {
 
     // ───── Screen lock (review #81) ─────
     // While this computer's screen is locked, or its session isn't the one in front, whoever is there isn't the user:
-    // Ember stops listening and speaking and takes no requests, and the tasks working on its desktop stop, as on a
-    // remote computer whose screen locks (also one that turns to the desktop later: checked every 2 s). What stopped
-    // is said once the user is back.
-    let stoppedWhileLocked = 0;
-    let lockSweep: NodeJS.Timeout | null = null;
-    const stopDesktopTasks = () => { stoppedWhileLocked += agent?.cancelTasksOn("local", "desktop") ?? 0; };
+    // Ember stops listening and speaking, takes no requests, its hands refuse this screen, and the tasks working on its
+    // desktop stop, as on a remote computer whose screen locks. What stopped is said once the user is back.
+    const lockControl = new LockController({
+      stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop") ?? 0,
+      setLocked: locked => voice?.setLocked(locked),
+      showNotice: n => showNotice(n, 8000),
+    });
     screenLock = new ScreenLock({
       events: powerMonitor,
-      initial: () => powerMonitor.getSystemIdleState(1) === "locked",
-      ...(platform.os === "linux" ? { poll: () => loginctlLocked(execText, { sessionId: process.env.XDG_SESSION_ID, uid: process.getuid?.() ?? -1 }) } : {}),
-      onChange: locked => {
-        log.info("screen.lock", { locked });
-        voice?.setLocked(locked);
-        if (lockSweep) clearInterval(lockSweep);
-        lockSweep = null;
-        if (locked) {
-          stopDesktopTasks();
-          lockSweep = setInterval(stopDesktopTasks, 2000);
-          return;
-        }
-        if (stoppedWhileLocked) {
-          const bubble = { visible: true, mood: "idle" as const, title: "Stopped while your screen was locked", thought: `Your screen locked, so I stopped ${stoppedWhileLocked === 1 ? "the task" : "the tasks"} working on it.`, step: null, streaming: false, actions: [] };
-          agent?.claimBubble();
-          setState({ emotion: "neutral", bubble });
-          hideIfStill(bubble, 8000);
-        }
-        stoppedWhileLocked = 0;
-      },
+      // Linux: logind, watched (Electron's own reading can't see GNOME's lock shield there); elsewhere Electron's.
+      ...(platform.os === "linux"
+        ? logindLock({ sessionId: process.env.XDG_SESSION_ID, uid: process.getuid?.() ?? -1, log: log.child("screen") })
+        : { initial: () => powerMonitor.getSystemIdleState(1) === "locked" }),
+      onChange: locked => { log.info("screen.lock", { locked }); lockControl.change(locked); },
     });
     screenLock.start();
-    if (screenLock.locked) voice.setLocked(true);
-    app.on("will-quit", () => screenLock?.stop());
+    if (screenLock.locked) lockControl.change(true);
+    app.on("will-quit", () => { screenLock?.stop(); lockControl.dispose(); });
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets.
     if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin) showHome();

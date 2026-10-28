@@ -285,7 +285,7 @@ describe("with nothing set up", () => {
     const r = rig();
     const got = r.t.agent.handsFor("local");
     if (!got.ok) throw new Error(got.why);
-    for (const k of Object.keys(r.hands!) as (keyof Hands)[]) expect(got.hands[k]).toBe(r.hands![k]);
+    for (const k of Object.keys(r.hands!) as (keyof Hands)[]) if (k !== "perception" && k !== "sidecar") expect(got.hands[k]).toBe(r.hands![k]); // (those two tell whether the task used them)
     expect(got.hands.commands).toBeNull();
     expect(got.hands.binding).toEqual({ id: "local", kind: "local", label: "This computer", screenOs: "linux", shellOs: "linux", desktop: "screen" });
     expect(got.hands.leaseKey("1:x")).toBe("1:x");
@@ -869,7 +869,7 @@ describe("WSL targets", () => {
     expect(b.ok && b.binding).toMatchObject({ id: "wsl:Ubuntu", screenOs: "win32", shellOs: "linux", desktop: "screen" });
     const got = r.t.agent.handsFor("wsl:Ubuntu");
     if (!got.ok) throw new Error(got.why);
-    expect(got.hands.perception).toBe(r.hands!.perception);
+    expect(got.hands.policy).toBe(r.hands!.policy); // this screen's
     expect(got.hands.leaseKey("0x10:gedit")).toBe("0x10:gedit");
     expect(got.hands.commands!.runner).toBe(r.wslRunners.get("Ubuntu"));
     expect(r.t.agent.describeScreen("wsl:Ubuntu")).toBeNull();
