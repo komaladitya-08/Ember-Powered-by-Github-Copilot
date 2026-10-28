@@ -438,15 +438,6 @@ function start(): void {
   // While Ember is asking the user something, nothing else may replace the question
   // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
-
-  /** Hides `bubble` later, unless something else has replaced it by then. */
-  const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
-    if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
-  }, ms);
-  /** Ember's shortcuts on this OS (one table: the accelerators, and how the copy names them). */
-  const sc = sys.shortcuts;
-  /** Whether one of Ember's own shortcuts works (another app may hold it). */
-  const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
   /** The setup rows as last read (none until then), for the handle's word: a status change doesn't read them again. */
   let setupSeen: EnvReport["checks"] = [];
   /** The handle's word: "Setup needed" while Copilot is ready and a setup row holds Ember back (review #95), else the agent's. */
@@ -462,6 +453,15 @@ function start(): void {
   const setupRows = (): EnvReport["checks"] => {
     try { const rows = readEnvironment().checks; sawSetup(rows); return rows; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
   };
+
+  /** Hides `bubble` later, unless something else has replaced it by then. */
+  const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
+    if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+  }, ms);
+  /** Ember's shortcuts on this OS (one table: the accelerators, and how the copy names them). */
+  const sc = sys.shortcuts;
+  /** Whether one of Ember's own shortcuts works (another app may hold it). */
+  const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
   const greet = () => {
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
