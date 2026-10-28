@@ -165,6 +165,14 @@ export function reaskText(label: string): string {
   return `Not run: ${outsideText(label, 64)}'s own check asks for your OK first.`;
 }
 
+/**
+ * The status line of a run sent back for the user's OK once no OK is coming for it (review #274): the user said Not
+ * now or let the question go, or the task was stopped while it was up.
+ */
+export function reaskEndText(why: "no" | "stopped"): string {
+  return why === "no" ? "Not run: you didn't allow it." : "Not run: the task was stopped.";
+}
+
 /** The approve keys' hint under the card (§8.5), in the PC's own labels: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now". */
 export function keyHintText(os: OS): string {
   return `${SHORTCUTS[os].allow.label} allow · ${SHORTCUTS[os].deny.label} not now`;

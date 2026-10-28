@@ -1532,20 +1532,51 @@ describe("a remote's own check (§3.8.3 step 13, §3.16)", () => {
     ]);
   });
 
+  /** The window's word on each run sent back for an OK, once no OK is coming for it (review #274). */
+  const reaskEnds = (h: Harness): [string, string][] => {
+    const ends: [string, string][] = [];
+    (h.ctx.service.window as unknown as { reaskEnded: (runId: string, why: string) => void }).reaskEnded = (runId, why) => { ends.push([runId, why]); };
+    return ends;
+  };
+
   it("asks only once: a second needs_confirm is the remote's refusal", async () => {
     makeJudge();
     const h = harness({ run: () => needsConfirm() });
+    const ends = reaskEnds(h);
     const r = await call(h);
     expect(h.asked).toHaveLength(1);
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "build-01 refused it: \"needs a yes\". Don't try another way; tell the user in finish_task." });
+    // The retry's tab says it was refused, not that an OK is awaited.
+    expect(ends).toEqual([[h.starts[1].runId, "refused"]]);
   });
 
   it("a no to the remote's question runs nothing more", async () => {
     makeJudge();
     const h = harness({ run: () => needsConfirm(), answers: ["deny"] });
+    const ends = reaskEnds(h);
     expect((await call(h)).resultType).toBe("denied");
     expect(h.starts).toHaveLength(1);
     expect(h.declined()).toBe(1);
+    // Its tab stops saying an OK is awaited.
+    expect(ends).toEqual([[h.starts[0].runId, "no"]]);
+  });
+
+  it("tells the window nothing more about the sent-back run when the user allows it: the retry's tab replaces it", async () => {
+    makeJudge();
+    const h = harness({ run: (_s, n) => (n === 1 ? needsConfirm() : {}) });
+    const ends = reaskEnds(h);
+    expect((await call(h)).resultType).toBe("success");
+    expect(ends).toEqual([]);
+  });
+
+  it("says the task stopped on the sent-back run's tab when it stops during the question", async () => {
+    makeJudge();
+    const abort = new AbortController();
+    const h = harness({ run: () => needsConfirm(), abort });
+    const ends = reaskEnds(h);
+    (h.ctx.confirmer as unknown as { ask: () => Promise<string | null> }).ask = async () => { abort.abort(); return null; };
+    await call(h);
+    expect(ends).toEqual([[h.starts[0].runId, "stopped"]]);
   });
 
   it("a remote's lines are quoted with every hidden character shown", () => {

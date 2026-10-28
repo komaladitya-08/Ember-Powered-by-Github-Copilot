@@ -17,7 +17,7 @@ import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, DangerClass, RunExit, RunningCommand } from "./types";
-import { RUNNING_STATUS, WAITING_STATUS, announceKeyText, headerLine, outsideText, reaskText, statusLine, typingHint, waitingTimeoutText } from "../../renderer/command/copy";
+import { RUNNING_STATUS, WAITING_STATUS, announceKeyText, headerLine, outsideText, reaskEndText, reaskText, statusLine, typingHint, waitingTimeoutText } from "../../renderer/command/copy";
 import { SECRET_PROMPT } from "./prompts";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
@@ -65,6 +65,12 @@ export interface CommandWindowExtras {
    * the task's bubble. Returns the unsubscribe.
    */
   onWaiting(fn: (runId: string, waiting: boolean) => void): () => void;
+  /**
+   * No OK is coming for run `runId`, which the remote's own check sent back for one (review #274): the user said no or
+   * let the question go ("no"), the task stopped ("stopped"), or the retry was sent back too, which is the remote's
+   * refusal ("refused"). Its tab stops saying an OK is awaited, and no later run replaces it.
+   */
+  reaskEnded(runId: string, why: "no" | "stopped" | "refused"): void;
 }
 
 /**
@@ -141,6 +147,8 @@ interface Tab {
   unsubscribe: () => void;
   /** The remote's own check sent it back for the user's OK (it never ran): the retry's run takes its place. */
   reask?: boolean;
+  /** That end, for the remote's refusal line if no OK comes (reaskEnded). */
+  reaskExit?: RunExit;
   /** The end of its decoded output (an interactive run's), and the timer that looks for a prompt there (review #263). */
   tail: string;
   decoder: TextDecoder;
@@ -696,6 +704,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
         // The remote's own check wants the user's OK first: nothing ran, and the question comes up now (§3.16).
         if (exit?.ended === "refused-remote" && exit.needsConfirm === true) {
           t.reask = true;
+          t.reaskExit = exit;
           t.outcome = "stopped";
           t.status = reaskText(c.targetLabel);
           push();
@@ -738,6 +747,19 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     termSize: () => ({ ...(size ?? DEFAULT_TERM_SIZE) }),
 
     announceMs: base => (screenReader() ? Math.max(base, ANNOUNCE_SCREEN_READER_MS) : base),
+
+    reaskEnded(runId, why) {
+      const t = tabs.find(x => x.card.runId === runId && x.reask === true);
+      if (disposed || !t) return;
+      t.reask = false;
+      if (why === "refused" && t.reaskExit) {
+        t.outcome = "failed";
+        t.status = statusLine(t.reaskExit, { label: t.card.targetLabel, os: o.os });
+      } else {
+        t.status = reaskEndText(why === "no" ? "no" : "stopped");
+      }
+      push();
+    },
 
     onWaiting(fn) {
       waitingFns.add(fn);

@@ -299,6 +299,8 @@ describe("the command window's words (§8.5)", () => {
     expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make. Ask Ember to stop it, or end it yourself.");
     expect(keep(commandCopy.stragglerText(["a", "b"]))).toBe("2 programs it started are still running: a, b. Ask Ember to stop them, or end them yourself.");
     expect(keep(commandCopy.reaskText("build-01"))).toBe("Not run: build-01's own check asks for your OK first.");
+    expect(keep(commandCopy.reaskEndText("no"))).toBe("Not run: you didn't allow it.");
+    expect(keep(commandCopy.reaskEndText("stopped"))).toBe("Not run: the task was stopped.");
     expect(commandCopy.durationText(9_960)).toBe("10 s");
     expect(commandCopy.durationText(59_600)).toBe("1 min");
     expect(commandCopy.durationText(2_000)).toBe("2 s");

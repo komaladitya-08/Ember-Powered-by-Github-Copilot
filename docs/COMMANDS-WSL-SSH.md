@@ -455,7 +455,9 @@ first click **Allow**.
 
 They follow §2. build-01's helper also checks each command with its own rules and its own administrator's policy;
 when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words), and the
-command's tab says "Not run: build-01's own check asks for your OK first." until the run you allow takes its place. A shell
+command's tab says "Not run: build-01's own check asks for your OK first." until the run you allow takes its place
+("Not run: you didn't allow it." if you don't; if build-01 sends the allowed run back too, its tab says build-01 refused
+it, and Ember doesn't ask again). A shell
 script the command runs (`sh build.sh`, `./tools/gen.sh`) is read by that check on build-01, not by this computer, which
 can't see build-01's files: anything dangerous in the script asks this way, and so does a script this task wrote or
 downloaded there that can't be read in full. Both computers record the command in their audit logs.

@@ -758,8 +758,14 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const own = [`${binding.label}'s own check also found:`, ...theirs];
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
-        const answer = await askCard(lines, "remote",
-          `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
+        let answer: "once" | "no" | "stopped" = "stopped";
+        try {
+          answer = await askCard(lines, "remote",
+            `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
+        } finally {
+          // No OK is coming: the sent-back run's tab says so instead of waiting for one (review #274).
+          if (answer !== "once") reaskEnded(svc, runId, answer);
+        }
         if (answer === "stopped") return STOPPED();
         if (answer === "no") return denied(SAID_NO);
         approvedAt = performance.now();
@@ -769,6 +775,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         continue;
       }
       if (exit.ended === "lost") factsCache.delete(ctx.state);
+      // The retry sent back too: that is the remote's refusal, and its tab says so (review #274).
+      if (exit.ended === "refused-remote" && exit.needsConfirm) reaskEnded(svc, runId, "refused");
       if (exit.ended === "refused-remote") return resultOf(exit, "", { label: binding.label, timeoutS, redact: j.redactSecrets });
       return finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId });
     }
@@ -887,6 +895,16 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     offStatus();
     offWaiting();
   }
+}
+
+/**
+ * Tells the command window (UI's reaskEnded) that no OK is coming for run `runId`, which the remote's own check sent back
+ * for one; nothing when the window doesn't have it.
+ */
+function reaskEnded(svc: CommandService, runId: string, why: "no" | "stopped" | "refused"): void {
+  const w = svc.window as CommandService["window"] & { reaskEnded?: (runId: string, why: "no" | "stopped" | "refused") => void };
+  if (typeof w.reaskEnded !== "function") return;
+  try { w.reaskEnded(runId, why); } catch { /* its tab only says it less well */ }
 }
 
 /** The task's bubble while its command waits at a prompt for the user to type (review #263). */

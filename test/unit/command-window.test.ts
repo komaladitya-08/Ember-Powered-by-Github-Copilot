@@ -830,6 +830,36 @@ describe("a run the remote's own check sent back for the user's OK (review #274)
     expect(page().last().tabs.map(t => t.runId)).toEqual(["fedcba9876543210"]);
   });
 
+  it("says the run didn't happen once no OK is coming: a no, a stopped task, or the remote refusing the retry too", async () => {
+    const { ctl, page } = setup();
+    const ask = async (runId: string, command: string) => {
+      const run = new FakeRun(runId);
+      ctl.attach(card({ runId, command }), run);
+      run.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true, error: "needs a yes" });
+      await vi.advanceTimersByTimeAsync(0);
+      return () => page().last().tabs.find(t => t.runId === runId);
+    };
+    // Not now, or the question left to expire.
+    const no = await ask("1111111111111111", "rm -r a");
+    ctl.reaskEnded("1111111111111111", "no");
+    expect(no()).toMatchObject({ outcome: "stopped", status: "Not run: you didn't allow it." });
+    // The same command again later is a run of its own: the answered tab stays.
+    ctl.attach(card({ runId: "4444444444444444", command: "rm -r a" }), new FakeRun("4444444444444444"));
+    expect(no()).toBeDefined();
+    const stopped = await ask("2222222222222222", "rm -r b");
+    ctl.reaskEnded("2222222222222222", "stopped");
+    expect(stopped()).toMatchObject({ outcome: "stopped", status: "Not run: the task was stopped." });
+    // The retry the user allowed was sent back again: that is the remote's refusal, said as one.
+    const again = await ask("3333333333333333", "rm -r c");
+    ctl.reaskEnded("3333333333333333", "refused");
+    expect(again()).toMatchObject({ outcome: "failed", status: "build-01 refused it: needs a yes." });
+    // A run that isn't waiting for an OK is left as it is.
+    const pushes = page().states().length;
+    ctl.reaskEnded("4444444444444444", "no");
+    ctl.reaskEnded("ffffffffffffffff", "no");
+    expect(page().states().length).toBe(pushes);
+  });
+
   it("keeps a refusal that needs no OK, and a waiting tab when another command comes", async () => {
     const { ctl, page } = setup();
     const refused = new FakeRun("0123456789abcdef");
