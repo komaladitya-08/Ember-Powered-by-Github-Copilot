@@ -80,6 +80,13 @@ export interface EnvInputs {
   windows?: WindowsEnvInputs;
   /** macOS only. */
   mac?: MacEnvInputs;
+  /**
+   * The setup-check fixes the user applied (pressed) while this Ember runs (afterFix): a row whose fix was used says
+   * what comes next, such as restarting apps that were already open (review #98).
+   */
+  applied?: readonly FixId[];
+  /** false: Ember tried to speak and no voice started (the speaking page's watch, review #101); else no row. */
+  speech?: boolean | null;
 }
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -94,6 +101,8 @@ export interface Check {
   detail: string;
   /** A fix Ember can apply itself (shown as a button): this OS's own, or one of the targets runtime's. */
   fix?: FixId | TargetFixId;
+  /** A second button, for when `fix` was used and didn't take (macOS: Reset Ember's permissions, review #99). */
+  alt?: FixId;
 }
 
 export interface EnvReport {
@@ -113,6 +122,38 @@ export function parseOsRelease(text: string | null): Record<string, string> {
     if (m) out[m[1]] = m[2].replace(/^"(.*)"$/, "$1");
   }
   return out;
+}
+
+/** Each OS's way to get a voice, for the Speaking row Ember adds once it found none (review #101). */
+const NO_VOICE: Record<"linux" | "win32" | "darwin", string> = {
+  linux: "Ember couldn't speak: this computer has no speech voice. Install one with sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng, then restart Ember.",
+  win32: "Ember couldn't speak: Windows has no voice it can use. Add one in Settings › Time & language › Speech, then restart Ember.",
+  darwin: "Ember couldn't speak: macOS has no voice it can use. Choose one in System Settings › Accessibility › Spoken Content, then restart Ember.",
+};
+
+/** The Speaking row, once Ember tried to speak and no voice started; nothing until then. */
+function speechCheck(i: EnvInputs, os: keyof typeof NO_VOICE): Check[] {
+  return i.speech === false ? [{ id: "speech", label: "Speaking", status: "warn", detail: NO_VOICE[os] }] : [];
+}
+
+/** Windows' and macOS's report with the Speaking row last, as Linux's has it. */
+function withSpeech(r: EnvReport, i: EnvInputs, os: "win32" | "darwin"): EnvReport {
+  return { ...r, checks: [...r.checks, ...speechCheck(i, os)] };
+}
+
+/** What GNOME's accessibility switch needs after it is turned on, in the setup check and in `ember doctor` alike. */
+export const LINUX_A11Y_RESTART = "restart apps that were already open, or log out and in";
+
+/**
+ * The macOS fixes "Reset Ember's permissions" undoes: it takes Ember off the Accessibility, Screen Recording and Input
+ * Monitoring lists, so each of their buttons has to be pressed again.
+ */
+const RESET_UNDOES: readonly FixId[] = ["open-accessibility-settings", "open-screen-recording-settings", "open-input-monitoring-settings"];
+
+/** The fixes applied so far (EnvInputs.applied) once `fix` has been applied too. */
+export function afterFix(applied: readonly FixId[], fix: FixId): FixId[] {
+  const kept = fix === "reset-permissions" ? applied.filter(f => !RESET_UNDOES.includes(f)) : [...applied];
+  return kept.includes(fix) ? kept : [...kept, fix];
 }
 
 const versionAtLeast = (v: string, min: string) => {
@@ -166,8 +207,8 @@ export function sessionGreeting(report: EnvReport): string | null {
 }
 
 export function inspectEnvironment(i: EnvInputs): EnvReport {
-  if (i.platform === "win32") return inspectWindows(i);
-  if (i.platform === "darwin") return inspectMac(i);
+  if (i.platform === "win32") return withSpeech(inspectWindows(i), i, "win32");
+  if (i.platform === "darwin") return withSpeech(inspectMac(i), i, "darwin");
   const os = parseOsRelease(i.osRelease);
   const sessionType = i.env.XDG_SESSION_TYPE ?? "unknown";
   const desktop = i.env.XDG_CURRENT_DESKTOP ?? "unknown";
@@ -183,7 +224,9 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     id: "os",
     label: "Operating system",
     status: isRhel8 ? "ok" : "warn",
-    detail: os.PRETTY_NAME ?? "unknown",
+    // Another Linux says why it is only a warning (review #105).
+    detail: isRhel8 ? os.PRETTY_NAME ?? "unknown"
+      : `${os.PRETTY_NAME ?? "This Linux"}. Ember is tested on RHEL 8 and its family (Rocky, Alma and Oracle Linux 8): it may work here, but it isn't supported.`,
   });
 
   if (isWaylandSession(i.env)) {
@@ -215,13 +258,18 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     if (!a.pyatspi) {
       checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Python accessibility bindings are missing: sudo dnf install python3-pyatspi" });
     } else if (a.enabled === false) {
-      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: "Accessibility is off, so Ember can only see screenshots. Turn it on, then restart open apps.", fix: "enable-accessibility" });
+      checks.push({ id: "accessibility", label: "Screen reading", status: "warn", detail: `Accessibility is off, so Ember can only see screenshots. Turn it on, then ${LINUX_A11Y_RESTART}.`, fix: "enable-accessibility" });
+    } else if (a.enabled && i.applied?.includes("enable-accessibility")) {
+      // Turned on from this setup check: apps opened before still can't be read until they restart (Qt, Chromium, Firefox).
+      checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: "On. Restart apps that were already open, or log out and in, so Ember can read them." });
     } else {
       checks.push({ id: "accessibility", label: "Screen reading", status: "ok", detail: a.enabled ? "Accessibility is on" : "Accessibility bus available" });
     }
   }
 
   if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux));
+
+  checks.push(...speechCheck(i, "linux"));
 
   return {
     os: os.PRETTY_NAME ?? "unknown",
@@ -315,13 +363,23 @@ function inspectWindows(i: EnvInputs): EnvReport {
 
 /**
  * An ad-hoc signed Ember gets a new code identity with every build, so macOS can show it switched on while the
- * permission no longer applies: every macOS permission check ends with the way out (design R9).
+ * permission no longer applies (design R9). The way out is said once the row's own button has been pressed and the
+ * permission is still off (review #99): Reset Ember's permissions for the three it covers, this sentence for the
+ * microphone (and once in `ember doctor`, where there are no buttons).
  */
 export const MAC_REGRANT = "If Ember is already listed and switched on, remove it with − and add it again: macOS ties the permission to this exact copy of Ember.";
+/**
+ * A row's note once its System Settings button was pressed and the permission is still off: the Reset button beside it.
+ * The reset clears all three (RESET_UNDOES), so the note says so: pressed for one row, it also undoes a grant that works.
+ */
+export const MAC_RESET_NOTE = "Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists, then switch each on again.";
 
 function inspectMac(i: EnvInputs): EnvReport {
   const m = i.mac;
   const checks: Check[] = [];
+  /** A permission still off after its button was pressed: the detail gets the way out, and the Reset button where it helps. */
+  const stillOff = (fix: FixId, detail: string, reset: boolean): Pick<Check, "detail" | "fix" | "alt"> => (!i.applied?.includes(fix) ? { detail, fix }
+    : reset ? { detail: `${detail} ${MAC_RESET_NOTE}`, fix, alt: "reset-permissions" } : { detail: `${detail} ${MAC_REGRANT}`, fix });
   checks.push(i.arch === "arm64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Apple silicon" }
     : i.arch === "x64" ? { id: "platform", label: "Platform", status: "ok", detail: "macOS on Intel" }
       : { id: "platform", label: "Platform", status: "fail", detail: `macOS on ${i.arch} is not supported` });
@@ -332,23 +390,23 @@ function inspectMac(i: EnvInputs): EnvReport {
 
     checks.push(m.accessibility
       ? { id: "accessibility", label: "Reading and using apps", status: "ok", detail: "Accessibility is allowed" }
-      : { id: "accessibility", label: "Reading and using apps", status: "fail", detail: `Ember needs the Accessibility permission to read and use apps. ${MAC_REGRANT}`, fix: "open-accessibility-settings" });
+      : { id: "accessibility", label: "Reading and using apps", status: "fail", ...stillOff("open-accessibility-settings", "Ember needs the Accessibility permission to read and use apps.", true) });
 
     checks.push(m.screen === "granted"
       ? { id: "screen-recording", label: "Screen Recording", status: "ok", detail: "Allowed. macOS asks again about once a month; choose Allow." }
       : { id: "screen-recording", label: "Screen Recording", status: "warn",
-        detail: `Without Screen Recording, Ember can't take screenshots or see other apps' window titles. After you allow it, quit and reopen Ember. ${MAC_REGRANT}`, fix: "open-screen-recording-settings" });
+        ...stillOff("open-screen-recording-settings", "Without Screen Recording, Ember can't take screenshots or see other apps' window titles. After you allow it, quit and reopen Ember.", true) });
 
     if (m.inputMonitoring !== null) {
       checks.push(m.inputMonitoring
         ? { id: "input-monitoring", label: "Input Monitoring", status: "ok", detail: "Allowed" }
         : { id: "input-monitoring", label: "Input Monitoring", status: "warn",
-          detail: `Without Input Monitoring, Ember won't use the keyboard for you, because it couldn't notice you taking over. ${MAC_REGRANT}`, fix: "open-input-monitoring-settings" });
+          ...stillOff("open-input-monitoring-settings", "Without Input Monitoring, Ember won't use the keyboard for you, because it couldn't notice you taking over.", true) });
     }
 
     // Not asked yet is fine: macOS asks when the user turns on “Hey Ember”.
     if (m.microphone === "denied" || m.microphone === "restricted") {
-      checks.push({ id: "microphone", label: "Microphone", status: "warn", detail: `Microphone access is off for Ember, so “Hey Ember” can't hear you. ${MAC_REGRANT}`, fix: "open-microphone-settings" });
+      checks.push({ id: "microphone", label: "Microphone", status: "warn", ...stillOff("open-microphone-settings", "Microphone access is off for Ember, so “Hey Ember” can't hear you.", false) });
     }
 
     // While it is on Ember neither looks nor acts (the window system's system-dialog check), so the reason is shown here

@@ -107,13 +107,15 @@ describe("macOS setup checks", () => {
     expect(check(mac({}, { arch: "x64" }), "platform")?.detail).toBe("macOS on Intel");
   });
 
-  it("on macOS 14 without Screen Recording or Input Monitoring, warn about both with their fixes and the re-grant advice", () => {
+  it("on macOS 14 without Screen Recording or Input Monitoring, warn about both with their fixes (the re-grant advice once a button was pressed)", () => {
     const i = mac({ screen: "denied", inputMonitoring: false });
     expect(check(i, "screen-recording")).toEqual({ id: "screen-recording", label: "Screen Recording", status: "warn",
-      detail: `Without Screen Recording, Ember can't take screenshots or see other apps' window titles. After you allow it, quit and reopen Ember. ${MAC_REGRANT}`,
+      detail: "Without Screen Recording, Ember can't take screenshots or see other apps' window titles. After you allow it, quit and reopen Ember.",
       fix: "open-screen-recording-settings" });
     expect(check(i, "input-monitoring")).toMatchObject({ status: "warn", fix: "open-input-monitoring-settings",
-      detail: expect.stringMatching(/^Without Input Monitoring, Ember won't use the keyboard for you, because it couldn't notice you taking over\. If Ember is already listed/) });
+      detail: "Without Input Monitoring, Ember won't use the keyboard for you, because it couldn't notice you taking over." });
+    expect(check({ ...i, applied: ["open-input-monitoring-settings"] }, "input-monitoring")).toMatchObject({ alt: "reset-permissions",
+      detail: expect.stringMatching(/taking over\. Already switched on\? macOS ties the permission to this exact copy of Ember/) });
     expect(inspectEnvironment(i).checks.filter(c => c.status === "fail")).toEqual([]);
     expect(check(mac({ screen: "not-determined" }), "screen-recording")?.status).toBe("warn");
   });
@@ -125,7 +127,9 @@ describe("macOS setup checks", () => {
 
   it("fail without Accessibility, offering System Settings", () => {
     expect(check(mac({ accessibility: false }), "accessibility")).toMatchObject({ label: "Reading and using apps", status: "fail", fix: "open-accessibility-settings",
-      detail: `Ember needs the Accessibility permission to read and use apps. ${MAC_REGRANT}` });
+      detail: "Ember needs the Accessibility permission to read and use apps." });
+    // The microphone keeps the remove-and-add advice, once its button was pressed.
+    expect(check({ ...mac({ microphone: "denied" }), applied: ["open-microphone-settings"] }, "microphone")?.detail).toContain(MAC_REGRANT);
   });
 
   it("leave Input Monitoring out when it can't be asked, and the microphone out until it is refused", () => {

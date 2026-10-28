@@ -116,7 +116,7 @@ const MAC: StatusPlatform = {
 
 /** Today's sentences around everything the OS changes (before the port, verbatim). */
 const TODAY = {
-  "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.",
+  "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.",
   // What the audit log keeps of each task (its request and how it went) is said, not denied (review #87).
   "data-dir": "On this computer it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (kept 30 days), in ~/.config/ember. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.",
   "mic-indicator": "Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens. GNOME shows a microphone icon while Ember listens. Ctrl+Alt+M turns the microphone off and on.",
@@ -377,8 +377,13 @@ describe("Computers and Commands before the targets runtime answers", () => {
     // The onboarding line sits in "Before Ember starts" (new users only), with no chord for the OS patches to change.
     const plug = elements(byId(root, "welcome")).filter(e => e.attrs["data-icon"] === "plug");
     expect(plug).toHaveLength(1);
-    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
+    // WSL is named on Windows only (review #221).
+    const win = apply(page(), homePatches(WINDOWS));
+    const winPlug = elements(byId(win, "welcome")).filter(e => e.attrs["data-icon"] === "plug")[0];
+    expect(visible(winPlug)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    for (const os of [MAC, LINUX]) expect(visible(byId(apply(page(), homePatches(os)), "welcome")), os.os).not.toMatch(/WSL/);
   });
 });
 

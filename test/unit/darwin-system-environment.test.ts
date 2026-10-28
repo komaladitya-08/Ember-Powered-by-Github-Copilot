@@ -268,7 +268,7 @@ describe("the macOS doctor rows", () => {
     expect(row(probes.extra, "screen-recording")?.detail).toBe("Allowed. macOS asks again about once a month; choose Allow.");
   });
 
-  it("give each missing permission its System Settings path and the re-grant sentence", () => {
+  it("give each missing permission its System Settings path, and the re-grant sentence once", () => {
     const { d } = deps({
       ws: fakeDarwinWindows({ trusted: false, inputMonitoring: false }),
       electron: { systemPreferences: { getMediaAccessStatus: () => "denied" } },
@@ -276,10 +276,12 @@ describe("the macOS doctor rows", () => {
     const rows = darwinDoctorRows(d);
     expect(row(rows, "accessibility-permission")).toMatchObject({ status: "fail", fix: `System Settings › Privacy & Security › Accessibility: switch Ember on. ${REGRANT}` });
     expect(row(rows, "screen-recording")).toMatchObject({ status: "warn" });
-    expect(row(rows, "screen-recording")?.fix).toMatch(/Screen Recording: switch Ember on, then quit and reopen Ember\. If Ember is already listed/);
-    expect(row(rows, "input-monitoring")?.fix).toContain(REGRANT);
+    // Said under the first row only (review #99): the same sentence under every row read as noise.
+    expect(row(rows, "screen-recording")?.fix).toBe("System Settings › Privacy & Security › Screen Recording: switch Ember on, then quit and reopen Ember.");
+    expect(row(rows, "input-monitoring")?.fix).toBe("System Settings › Privacy & Security › Input Monitoring: switch Ember on.");
     expect(row(rows, "microphone-permission")).toMatchObject({ status: "warn", detail: "Off for Ember, so “Hey Ember” can't hear you.",
-      fix: `System Settings › Privacy & Security › Microphone: switch Ember on. ${REGRANT}` });
+      fix: "System Settings › Privacy & Security › Microphone: switch Ember on." });
+    expect(rows.filter(r => r.fix?.includes(REGRANT)).map(r => r.id)).toEqual(["accessibility-permission"]);
     expect(REGRANT).toBe("If Ember is already listed and switched on, remove it with − and add it again: macOS ties the permission to this exact copy of Ember.");
   });
 

@@ -7,6 +7,7 @@ ipcRenderer.on(VOICE.port, e => { window.postMessage("ember-voice-port", "*", e.
 const api: MicApi = {
   status: s => ipcRenderer.send(VOICE.status, s),
   speaking: on => ipcRenderer.send(VOICE.speaking, on),
+  speech: ok => ipcRenderer.send(VOICE.speech, ok),
   onSpeak: fn => { ipcRenderer.on(VOICE.speak, (_e, text: string) => fn(text)); },
   onHush: fn => { ipcRenderer.on(VOICE.hush, () => fn()); },
 };

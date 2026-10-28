@@ -62,6 +62,8 @@ export interface VoiceOptions {
   micHint?: string;
   onEvent: (e: VoiceEvent) => void;
   onState: (s: MicState, detail?: string) => void;
+  /** A reply was heard (true), or no voice spoke (false): the speaking page tells it when that changes (review #101). */
+  onSpeech?: (ok: boolean) => void;
 }
 
 /** Downloads with Chromium's network stack (system proxy settings apply). A stalled connection fails, so "Downloading…" can't stay up forever. */
@@ -132,6 +134,10 @@ export class VoiceService {
         this.o.log.info("voice.mic", { device: s.device, rate: s.rate, context: s.context });
         if (this.micLost) { this.micLost = false; this.setState("waiting"); }
       }
+    });
+    ipcMain.on(VOICE.speech, (e, ok: unknown) => {
+      if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      this.o.onSpeech?.(ok === true);
     });
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;

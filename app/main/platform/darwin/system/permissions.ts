@@ -4,13 +4,13 @@
  * Monitoring (noticing the user take over the keyboard), the microphone, where Ember.app is, and whether it runs as
  * root. Every read is cheap (the settings window asks on each status request) and answers "not allowed" or "can't
  * tell" when it can't ask: the checks fail closed. Because an ad-hoc signature changes with every build, macOS keeps
- * showing an updated Ember switched on while it isn't trusted, so every permission's advice ends with REGRANT.
+ * showing an updated Ember switched on while it isn't trusted, so the advice says how to grant it again (REGRANT).
  */
 
 import os from "node:os";
 import type { AppLike, SystemPreferencesLike, WindowSystem } from "../../types";
 
-/** The last sentence of every permission's advice (R9: macOS ties a permission to one exact copy of Ember): the setup checks' own. */
+/** How to grant a permission again (R9: macOS ties a permission to one exact copy of Ember): the setup checks' own, said once. */
 export { MAC_REGRANT as REGRANT } from "../../../environment";
 
 /** System Settings panes, by the fix that opens them (`x-apple.systempreferences` URLs; verified on macOS 15 by I). */

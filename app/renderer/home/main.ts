@@ -7,6 +7,9 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
+import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { targetFeatureApplies } from "./computers-copy";
+import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
 import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
@@ -180,9 +183,11 @@ function focusAgree(): void {
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
 let failing = 0;
+/** Setup rows that don't fail but need the user: the tagline mentions them once Ember has started. */
+let toLook = 0;
 function renderTagline(): void {
   const text = tagline({
-    failing, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
+    failing, look: toLook, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
@@ -190,6 +195,8 @@ function renderTagline(): void {
 
 // ───── Setup check and build facts ─────
 let checksOpened = false;
+/** The setup check shows on the first-run screen (a row needed the user), and stays there until Start. */
+let checksBeforeStart = false;
 /** The checks on screen, to leave them alone when a fresh status brings the same ones. */
 let shownChecks = "";
 /** The setup check's rows as last shown: the voice line's fix button comes from its microphone row. */
@@ -211,8 +218,10 @@ function renderChecks(environment: Status["environment"]): void {
     detail.className = "check-detail";
     detail.textContent = c.detail;
     li.append(pill, label, detail);
-    if (c.fix) {
-      const fix = c.fix;
+    // The row's fix, and a second one beside it for when that didn't take (macOS: Reset Ember's permissions).
+    const actions = Object.assign(document.createElement("span"), { className: "check-actions" });
+    for (const fix of [c.fix, c.alt]) {
+      if (!fix) continue;
       const btn = document.createElement("button");
       btn.className = "btn quiet check-fix";
       btn.textContent = platform?.fixLabels[fix] ?? "Turn on";
@@ -224,21 +233,42 @@ function renderChecks(environment: Status["environment"]): void {
           detail.textContent = `Couldn't change it: ${ipcErrorText(err)}`;
         });
       });
-      li.append(btn);
+      actions.append(btn);
     }
+    if (actions.childElementCount) li.append(actions);
     return li;
   }));
   if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
   failing = environment.checks.filter(c => c.status === "fail").length;
   const warn = environment.checks.filter(c => c.status === "warn").length;
+  const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
+  toLook = view.needing - failing;
+  renderSetupBadge(view.needing, failing);
   const note = $("checks-note");
-  // As `ember doctor` says it ("worth a look").
-  note.textContent = failing ? `${failing} to fix` : warn ? `${warn} worth a look` : "All good";
+  // As `ember doctor` says it ("worth a look"), counted in words (copy.ts checksNote).
+  note.textContent = view.note;
   note.className = `fold-note${failing ? " fail" : warn ? " warn" : ""}`;
-  // Something fails: the check opens by itself (once), and it shows even before Start.
-  if (failing && !checksOpened) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
-  $("checks-fold").closest("section")!.classList.toggle("after-setup", !failing);
+  // A row needs the user (it fails, holds back reading or using apps, or has a button): the check opens by itself
+  // (once), and it shows before Start too, until Start.
+  if (view.open) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
+  checksBeforeStart = view.beforeStart;
+  $("checks-fold").closest("section")!.classList.toggle("after-setup", !checksBeforeStart);
   renderTagline();
+}
+
+/** The sidebar's Setup link carries how many rows need the user, so a warning is seen from anywhere (review #95). */
+function renderSetupBadge(needing: number, fails: number): void {
+  const link = document.querySelector<HTMLAnchorElement>("#jump a[href=\"#checks-h\"]");
+  if (!link) return;
+  const b = setupBadge(needing, fails);
+  let el = link.querySelector<HTMLElement>(".jump-badge");
+  if (!b) { el?.remove(); return; }
+  if (!el) el = link.appendChild(document.createElement("span"));
+  el.className = `jump-badge ${b.tone}`;
+  // The number is for the eye; a screen reader hears the words after the link's name instead.
+  const shown = Object.assign(document.createElement("span"), { textContent: b.text });
+  shown.setAttribute("aria-hidden", "true");
+  el.replaceChildren(shown, Object.assign(document.createElement("span"), { className: "sr", textContent: b.label }));
 }
 
 function render(status: Status): void {
@@ -251,6 +281,8 @@ function render(status: Status): void {
     ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`],
     ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json"],
     ["Log file", status.logFile],
+    // Somewhere to say what went wrong (review #105): the window never opens links, so the address is there to copy.
+    ["Report a problem", ISSUES_URL],
   ];
   $("facts").replaceChildren(...facts.flatMap(([k, val]) => {
     const dt = document.createElement("dt"); dt.textContent = k;
@@ -334,7 +366,7 @@ function renderAdmin(a: Status["admin"]): void {
     el.hidden = false;
     el.textContent = locked;
   } else if (a.source) {
-    const off = Object.entries(a.features).filter(([, v]) => v === false).map(([k]) => FEATURE_TEXT[k] ?? k);
+    const off = Object.entries(a.features).filter(([k, v]) => v === false && targetFeatureApplies(k, platform?.os)).map(([k]) => FEATURE_TEXT[k] ?? k);
     const rules = [
       off.length ? `Turned off: ${off.join(", ")}.` : "",
       a.confirmEveryAction ? "Ember asks before every action." : "",
@@ -831,6 +863,8 @@ const VOICE_TEXT: Record<string, string> = {
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;
+/** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
+let speechMissing = false;
 /** Screen readers hear the voice line when it changes, and a download only every 25 %. */
 const voiceLive = (text: string) => { if ($("voice-live").textContent !== text) $("voice-live").textContent = text; };
 /** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
@@ -866,6 +900,15 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  const missing = v.speechMissing === true;
+  if (missing !== speechMissing) {
+    speechMissing = missing;
+    const note = $("speak-note");
+    note.hidden = !missing;
+    note.textContent = missing ? SPEAK_NO_VOICE : "";
+    // The setup check gains (or loses) its Speaking row.
+    window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
+  }
 }
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };

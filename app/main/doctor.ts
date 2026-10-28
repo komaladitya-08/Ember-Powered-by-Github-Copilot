@@ -8,6 +8,7 @@
 
 import { MIXED_SCALING_FIX, type EnvReport } from "./environment";
 import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
+import { LINUX_A11Y_RESTART } from "./environment";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
@@ -128,20 +129,20 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
 
   if (off) {
     out.push(p.compositor === null
-      ? { id: "compositor", status: "fail", label: "Compositor", detail: `${off.name}'s window functions didn't load, so Ember can't see or use the screen.`, fix: reinstall }
-      : { id: "compositor", status: "ok", label: "Compositor", detail: `${off.name} always composites: Ember appears beside your cursor.` });
+      ? { id: "compositor", status: "fail", label: "Transparent windows", detail: `${off.name}'s window functions didn't load, so Ember can't see or use the screen.`, fix: reinstall }
+      : { id: "compositor", status: "ok", label: "Transparent windows", detail: `${off.name} always composites: Ember appears beside your cursor.` });
   } else {
     out.push(p.compositor === null
-      ? { id: "compositor", status: "warn", label: "Compositor", detail: "No X display to check.", fix: "Run ember doctor inside your desktop session." }
+      ? { id: "compositor", status: "warn", label: "Transparent windows", detail: "No X display to check.", fix: "Run ember doctor inside your desktop session." }
       : p.compositor
-        ? { id: "compositor", status: "ok", label: "Compositor", detail: "Transparent windows work: Ember appears beside your cursor." }
-        : { id: "compositor", status: "warn", label: "Compositor", detail: "No compositing manager, so Ember waits in a small card in the corner instead of beside the cursor.", fix: "Use GNOME on Xorg (its compositor is built in)." });
+        ? { id: "compositor", status: "ok", label: "Transparent windows", detail: "They work: Ember appears beside your cursor." }
+        : { id: "compositor", status: "warn", label: "Transparent windows", detail: "No compositing manager, so Ember waits in a small card in the corner instead of beside the cursor.", fix: "Use GNOME on Xorg (its compositor is built in)." });
   }
 
   const a11y = linux ? env("accessibility") : undefined;
   if (a11y) {
     const pyFix = /bindings are missing/i.test(a11y.detail) ? "sudo dnf install python3-pyatspi python3-gobject" : undefined;
-    const onFix = /is off/i.test(a11y.detail) ? "gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then log out and in)" : undefined;
+    const onFix = /is off/i.test(a11y.detail) ? `gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then ${LINUX_A11Y_RESTART})` : undefined;
     // The fix line carries the command, so the detail doesn't repeat it.
     const detail = a11y.detail.replace(/:\s*sudo dnf install.*$/, ".");
     out.push({ id: "accessibility", status: a11y.status, label: "Reading apps", detail, ...(pyFix || onFix ? { fix: pyFix ?? onFix } : {}) });
@@ -207,18 +208,18 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
 
   if (p.sandbox) {
     out.push(p.sandbox.userNamespaces || p.sandbox.suidHelper
-      ? { id: "sandbox", status: "ok", label: "Sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
-      : { id: "sandbox", status: "fail", label: "Sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
+      ? { id: "sandbox", status: "ok", label: "Window sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
+      : { id: "sandbox", status: "fail", label: "Window sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
   }
   // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
   // and never answers them.
   const w = p.fileWatchers;
   const watchersFix = "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it";
   if (w) out.push(w.max - w.used >= 8
-    ? { id: "file-watchers", status: "ok", label: "File watchers", detail: `${w.used} of ${w.max} in use.` }
+    ? { id: "file-watchers", status: "ok", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use.` }
     : w.used >= w.max
-      ? { id: "file-watchers", status: "fail", label: "File watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
-      : { id: "file-watchers", status: "warn", label: "File watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+      ? { id: "file-watchers", status: "fail", label: "Copilot's file watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
+      : { id: "file-watchers", status: "warn", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
   return out;
 }
 

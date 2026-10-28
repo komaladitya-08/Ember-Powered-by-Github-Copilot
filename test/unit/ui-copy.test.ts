@@ -565,8 +565,10 @@ describe("Computers and Commands in settings (§8.3) and the onboarding line (§
   it("adds the onboarding line to \"Before Ember starts\" exactly", () => {
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
     const l = computersCopy.ONBOARDING_LINE;
-    expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b>${l.rest}</li>`);
-    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    expect(page).toContain(`<li data-icon="plug"><b>${l.lead}</b><span id="targets-note">${l.rest}</span></li>`);
+    expect(keep(`${l.lead}${l.rest}`)).toBe("Other computers and commands are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.");
+    // WSL is Windows' alone (review #221).
+    expect(keep(`${l.lead}${computersCopy.onboardingRest("win32")}`)).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     for (const s of [computersCopy.COMPUTERS_INTRO, computersCopy.COMMANDS_INTRO, computersCopy.WSL_SWITCH, computersCopy.OFFER_SWITCH, computersCopy.ADD_PLACEHOLDER, computersCopy.OPEN_COMMANDS]) {
       expect(page).toContain(s);
     }

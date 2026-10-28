@@ -68,6 +68,9 @@ import { wrapForWsl } from "./wsl/routed-sidecar";
 import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
+import { afterFix, type FixId } from "./environment";
+import { settingsSection, setupIdle } from "../shared/setup-attention";
+import { hello } from "./hello";
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -136,6 +139,12 @@ function startupFailed(err: unknown): void {
   });
 }
 
+/**
+ * Told the setup rows at each read (readEnvironment), once Ember runs: its handle's "Setup needed" follows them (review
+ * #95). Declared before start() runs below, which sets it.
+ */
+let onSetupRead: ((checks: EnvReport["checks"]) => void) | null = null;
+
 if (process.argv.includes("--doctor")) {
   // A check-up, not a second Ember: runs even while Ember is running.
   void runDoctor();
@@ -161,9 +170,16 @@ let shortcutsTaken: string[] | undefined;
 /** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
 let helper: HelperStatus | null | undefined;
 
-/** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper). */
+/** The setup-check fixes the user applied while Ember runs (some rows then say what comes next, review #98). */
+let fixesApplied: readonly FixId[] = [];
+/** Whether Ember's spoken replies are heard: null until it has tried, false when no voice spoke (review #101). */
+let speechHeard: boolean | null = null;
+
+/** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper, fixes). */
 function readEnvironment(): EnvReport {
-  return inspectEnvironment(sys.environment({ windows: wsState, shortcutsTaken, helper }));
+  const report = inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied, speech: speechHeard });
+  onSetupRead?.(report.checks);
+  return report;
 }
 
 /**
@@ -439,6 +455,7 @@ function start(): void {
     const t = targets;
     const done = await applySetupFix(fix, { osFixes: sys.fixes.ids, applyOs: id => sys.fixes.apply(id), applyTarget: t ? id => t.applyFix(id) : null });
     log.info("fix.applied", { fix: done ? "wsl-a11y" : fix });
+    if (!done) fixesApplied = afterFix(fixesApplied, fix as FixId);
     const env = await environmentNow(true);
     return done ? afterTargetFix(env, done.target, done.message) : env;
   }));
@@ -468,6 +485,25 @@ function start(): void {
   // While Ember is asking the user something, nothing else may replace the question
   // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
+  /** The setup rows as last read (none until then), for the handle's word: a status change doesn't read them again. */
+  let setupSeen: EnvReport["checks"] = [];
+  /** The handle's word: "Setup needed" while Copilot is ready and a setup row holds Ember back (review #95), else the agent's. */
+  const idleNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen) ?? idleWord(status);
+  /**
+   * Setup rows just read (every readEnvironment: the settings window's status and focus re-read, a fix, Start, the
+   * hello): kept, and the handle's word follows them, so "Setup needed" goes once the row holding Ember back is fixed.
+   */
+  const sawSetup = (rows: EnvReport["checks"]) => {
+    setupSeen = rows;
+    const status = agent?.getStatus();
+    const idle = status && idleNow(status);
+    if (idle && idle !== lastState.idle) showState({ idle });
+  };
+  onSetupRead = sawSetup;
+  /** This OS's setup rows now, for the Start decision and the hello (none if they can't be read: words, never a gate). */
+  const setupRows = (): EnvReport["checks"] => {
+    try { return readEnvironment().checks; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
+  };
 
   /** How many times its usual time a bubble stays, and how long a question waits: the user's "More time to read and answer". */
   const readTime = () => readTimeOf(settings.get().moreTime);
@@ -488,20 +524,16 @@ function start(): void {
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
       : "Click my handle in the corner to ask me something or to stop me.";
     const settingsOpen = homeOpen();
-    const lockedDown = modelServiceRefusal(admin);
-    // A session Ember can't use (Wayland, no X display) is said before anything but a lockdown (no session helps until
-    // the policy is fixed, and the setup check still names it): nothing else at start-up says why nothing works.
-    const session = sessionGreeting(readEnvironment());
-    const thought = lockedDown ?? session ?? (waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
-      : !connected
-      ? settingsOpen ? "I'm not connected to Copilot yet: connect me in the settings window." : `I'm not connected to Copilot yet. Open settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""} to connect me.`
-      : overlay ? `I'll stay by your cursor. ${keys}` : `This session can't show me beside your cursor, so I'll wait here. ${keys}`);
-    const bubble = { ...IDLE_BUBBLE, visible: true, mood: session ? "attention" as const : connected ? "idle" as const : waiting ? "error" as const : "attention" as const, title: "Hi, I'm Ember!", thought,
-      actions: settingsOpen || (!session && (connected || waiting)) ? [] : [{ id: "ui:settings", label: "Open settings" }] };
+    // Why Ember can't work here at all, said in place of everything else: the organisation's lockdown first (#107; no
+    // session helps until the policy is fixed), then a session Ember can't use (Wayland, no X display, #240). Else what
+    // Ember says and for how long (hello.ts): connected, it names a setup row that holds it back (review #95).
+    const cannotWork = modelServiceRefusal(admin) ?? sessionGreeting(readEnvironment());
+    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: hasKey(sc.settings.accel) ? sc.settings.label : null, settingsOpen, rows: connected ? setupRows() : [], cannotWork });
+    const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
     setTimeout(() => setState({ talking: false }), 1600);
-    greetTimer = hideIfStill(bubble, connected && !session ? 7000 : 15000);
+    greetTimer = hideIfStill(bubble, h.holdMs);
   };
 
   const busyTasks = () => agent?.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0;
@@ -688,8 +720,9 @@ function start(): void {
   /** Settings, at the Copilot section when that's what needs doing. The bubble that offered it goes. */
   const openSettings = () => {
     showHome();
-    const phase = agent?.getStatus().phase;
-    if (phase === "signed-out" || phase === "error") sendToHome(IPC.focusSection, "copilot");
+    // Copilot to connect, or a setup row that holds Ember back (review #95).
+    const where = settingsSection(agent?.getStatus().phase, setupRows());
+    if (where) sendToHome(IPC.focusSection, where);
   };
 
   const sendToHome = (channel: string, value: unknown) => {
@@ -929,8 +962,10 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
-    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES,
+    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES, speechMissing: speechHeard === false,
   });
+  /** The detail of the microphone's current state, so a status sent for something else keeps it. */
+  let voiceDetail: string | undefined;
   /** What Ember does with what it hears. */
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
@@ -1216,12 +1251,14 @@ function start(): void {
   };
   settings.onChange(s => {
     if (s.onboarded && !wasOnboarded) {
-      // Setup finished: get out of the way so the user sees Ember say hello. If Copilot isn't
-      // connected, the window stays and shows how to connect (asking would only say "not connected").
+      // Setup finished: get out of the way so the user sees Ember say hello. If Copilot isn't connected, the window
+      // stays and shows how to connect (asking would only say "not connected"); if a setup row holds Ember back (a
+      // permission, screen reading), it stays at the setup check (review #95).
       void settledPhase().then(phase => {
-        if (phase === "signed-out" || phase === "error") {
-          // Settings stays open at Copilot; Ember says hello once it closes, not over it.
-          sendToHome(IPC.focusSection, "copilot");
+        const where = settingsSection(phase, setupRows());
+        if (where) {
+          // Settings stays open there; Ember says hello once it closes, not over it.
+          sendToHome(IPC.focusSection, where);
           if (homeOpen()) { greetOnClose = true; return; }
         } else if (home && !home.isDestroyed()) {
           // Hello once the window has gone (Ember is still waiting beside it until then).
@@ -1689,7 +1726,8 @@ function start(): void {
         if (status.phase === "error" && status.reason === "sign-in" && currentToken) refusedTokens.add(currentToken);
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
-        showState({ idle: idleWord(status) });
+        // Ready with a setup row holding Ember back: "Setup needed" (review #95).
+        showState({ idle: idleNow(status) });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
@@ -1767,7 +1805,14 @@ function start(): void {
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
+      onSpeech: ok => {
+        if (speechHeard === ok) return;
+        speechHeard = ok;
+        log.info("voice.speech", { ok });
+        broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+      },
       onState: (state, detail) => {
+        voiceDetail = detail;
         setState({ mic: state });
         // The microphone went off (muted, listening turned off, the voice process died): nothing more will be
         // heard, so "Listening…" goes (the bubble is given back), and so do a follow-up window's status line and

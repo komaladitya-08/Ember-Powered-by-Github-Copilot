@@ -63,6 +63,8 @@ export interface VoiceStatus {
   detail: string | null;
   modelsReady: boolean;
   modelsBytes: number;
+  /** Ember tried to speak and no voice started: the computer has none (review #101). */
+  speechMissing?: boolean;
 }
 
 /**

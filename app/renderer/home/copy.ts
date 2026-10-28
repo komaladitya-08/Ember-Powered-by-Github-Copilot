@@ -9,6 +9,8 @@ import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
+import { onboardingRest } from "./computers-copy";
+import { needsUser, type SetupRow } from "../../shared/setup-attention";
 
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
 export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
@@ -91,14 +93,66 @@ export function signInLabel(signInWith?: string): string {
 /** The line under "Ember" at the top of the window; `askLabel` is the ask shortcut as this OS writes it. */
 export function tagline(t: {
   failing: number; onboarded: boolean; phase: string | null; hidden: boolean; overlay: boolean; waitingForTasks?: boolean;
+  /** Setup rows that don't fail but need the user (a warning that holds Ember back, or one with a button). */
+  look?: number;
 }, askLabel = SHORTCUTS.linux.ask.label): string {
-  if (t.failing) return `Ember needs ${t.failing} thing${t.failing === 1 ? "" : "s"} fixed before it can work on this computer.`;
+  // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
+  if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer.`;
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
-  return `${where} Press ${askLabel} to ask it anything.`;
+  // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
+  return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
+}
+
+/** "1 thing", "2 things": how many setup rows, in a sentence. */
+function things(n: number): string {
+  return `${n} ${n === 1 ? "thing" : "things"}`;
+}
+
+/**
+ * The badge on the sidebar's Setup link: the count shown, the words a screen reader adds, and its tone (null: none).
+ * Failing rows are counted as the heading's note counts them; else the rows that need the user (setupView's `needing`).
+ */
+export function setupBadge(needing: number, failing = 0): { text: string; label: string; tone: "fail" | "warn" } | null {
+  const n = failing || needing;
+  if (!n) return null;
+  return { text: String(n), label: `, ${things(n)} ${failing ? "to fix" : "worth a look"}`, tone: failing ? "fail" : "warn" };
+}
+
+/**
+ * The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160), as
+ * `ember doctor` says it ("worth a look").
+ */
+export function checksNote(failing: number, warn: number): string {
+  return failing ? `${things(failing)} to fix` : warn ? `${things(warn)} worth a look` : "All good";
+}
+
+/** What the setup check shows, and what the window remembers between statuses. */
+export interface SetupView {
+  failing: number;
+  warn: number;
+  /** Rows that need the user (setup-attention.ts needsUser): failing ones, and warnings that hold Ember back or have a button. */
+  needing: number;
+  /** Open the fold now (once per window: a user who closes it isn't overruled by the next status). */
+  open: boolean;
+  /** The setup check shows before Start too. */
+  beforeStart: boolean;
+  note: string;
+}
+
+/**
+ * The setup check for these rows, given what the window did before (`opened` the fold by itself, showed the check
+ * `beforeStart`). A row that needs the user opens the fold and shows the check before Start (review #94, #161), and
+ * the check then stays until Start, so fixing one row never takes the others' buttons off the first-run screen.
+ */
+export function setupView(rows: readonly SetupRow[], before: { opened: boolean; beforeStart: boolean }): SetupView {
+  const failing = rows.filter(r => r.status === "fail").length;
+  const warn = rows.filter(r => r.status === "warn").length;
+  const needing = rows.filter(needsUser).length;
+  return { failing, warn, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(failing, warn) };
 }
 
 /** "Today", "Yesterday", else the weekday and date. */
@@ -115,6 +169,9 @@ export function dayLabel(t: string, now = new Date()): string {
 export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): string {
   return `Nothing yet. Press ${askLabel} and ask Ember something.`;
 }
+
+/** Under "Speak replies" once Ember tried to speak and no voice started (review #101); the setup check says how to add one. */
+export const SPEAK_NO_VOICE = "Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut as this OS writes it. */
 export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {
@@ -308,6 +365,8 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
     { selector: "#mic-indicator", content: [p.micIndicator], hidden: !p.micIndicator },
     { selector: "#audit-dir", content: [auditDirLabel(p)] },
     p.auditCopy ? { selector: "#journal-hint", content: auditCopySegments(p.auditCopy), hidden: false } : { selector: "#journal-hint", hidden: true },
+    // WSL is Windows' alone: the onboarding line names it only there (review #221).
+    { selector: "#targets-note", content: [onboardingRest(p.os)] },
   ];
 }
 
