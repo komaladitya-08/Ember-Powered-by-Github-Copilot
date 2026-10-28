@@ -322,6 +322,14 @@ export interface PresenterOptions {
   readTime?: () => number;
 }
 
+/**
+ * How many times its usual time each bubble stays, and a question waits: the user's "More time to read and answer".
+ * Ten times, as WCAG 2.2.1 asks of a time limit the user can adjust (a question waits 20 minutes instead of 2).
+ */
+export function readTimeOf(moreTime: boolean): number {
+  return moreTime ? 10 : 1;
+}
+
 /** A bubble of Ember's own that is no turn's or task's (the targets runtime's: a connection, an offer, a loss). */
 export type NoticeBubble = Pick<BubbleState, "title" | "thought" | "actions" | "mood"> & Partial<Pick<BubbleState, "step">>;
 

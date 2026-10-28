@@ -42,7 +42,7 @@ import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainStartError, gitHubReachable, idleWord, type Hands } from "./agent/host";
-import { expandedBubble, questionAloud } from "./agent/presenter";
+import { expandedBubble, questionAloud, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
@@ -426,7 +426,7 @@ function start(): void {
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
 
   /** How many times its usual time a bubble stays, and how long a question waits: the user's "More time to read and answer". */
-  const readTime = () => (settings.get().moreTime ? 3 : 1);
+  const readTime = () => readTimeOf(settings.get().moreTime);
   /** Hides `bubble` later (as long as the user needs to read it), unless something else has replaced it by then. */
   const hideIfStill = (bubble: EmberState["bubble"], ms: number) => setTimeout(() => {
     if (lastState.bubble === bubble) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
@@ -1349,7 +1349,7 @@ function start(): void {
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })));
     try { audit.prune(policy.auditRetentionDays ?? 30); } catch (err) { log.warn("audit.prune_failed", { err }); }
     confirmer = new Confirmer(showState, {
-      // A question waits 2 minutes for an answer, 6 with more time to read and answer.
+      // A question waits 2 minutes for an answer, 20 with more time to read and answer.
       timeoutMs: () => 120_000 * readTime(),
       // A click while Ember drives the mouse was Ember's own: never an answer (waiting for the user to let go is fine).
       // Where posted keys arrive late (macOS), neither is a chord within 500 ms of a key Ember posted itself.

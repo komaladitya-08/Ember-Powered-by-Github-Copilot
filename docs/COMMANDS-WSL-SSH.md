@@ -152,7 +152,7 @@ shows the whole command; **Not now** and the deny chord always work. There is ne
 "yes" never approves one, and a notification (and Ember's speech) only says "Ember wants to run a command on build-01."
 with how to get to the command window from the keyboard ("press Alt+Tab to go there" on Linux and Windows); screen
 readers hear that too, and a question's key hint ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody
-answers counts as "no" after 2 minutes (6 with **More time to read and answer** in Settings › Comfort & access).
+answers counts as "no" after 2 minutes (20 with **More time to read and answer** in Settings › Comfort & access).
 Your yes covers exactly that command, on that computer, in that folder, for that task: any change asks again. After a
 "no", Ember doesn't try again or work around it.
 

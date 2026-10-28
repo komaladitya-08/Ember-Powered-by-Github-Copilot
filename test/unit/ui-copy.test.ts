@@ -37,7 +37,7 @@ describe("settings window words", () => {
 
   it("offers more time to read and answer, beside Calm mode (review #51)", () => {
     const page = readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
-    expect(page).toContain('<label class="switch-row"><input type="checkbox" id="more-time" role="switch"><span>More time to read and answer: messages stay three times as long, and questions wait 6 minutes</span></label>');
+    expect(page).toContain('<label class="switch-row"><input type="checkbox" id="more-time" role="switch"><span>More time to read and answer: messages stay ten times as long, and questions wait 20 minutes</span></label>');
     expect(DEFAULT_SETTINGS.moreTime).toBe(false);
   });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 
 // A test that fakes the clock (or sets its time) leaves the next one on the real clock.
@@ -900,6 +900,21 @@ describe("More time to read and answer (review #51)", () => {
     scale = 1;
     p.notice({ title: "Copilot isn't running", text: "x", ms: 12_000 });
     vi.advanceTimersByTime(12_010);
+    expect(states.at(-1)?.bubble?.visible).toBe(false);
+  });
+
+  it("is ten times the usual time, as WCAG 2.2.1 asks of a time limit the user can adjust: a question waits 20 minutes", () => {
+    expect(readTimeOf(false)).toBe(1);
+    expect(readTimeOf(true)).toBe(10);
+    expect(120_000 * readTimeOf(true)).toBe(20 * 60_000);
+    // The presenter keeps all of it (its bubbles stay ten times as long, never more).
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { readTime: () => readTimeOf(true) });
+    p.notice({ title: "Copilot isn't running", text: "x", ms: 12_000 });
+    vi.advanceTimersByTime(120_000 - 10);
+    expect(states.at(-1)?.bubble?.visible).toBe(true);
+    vi.advanceTimersByTime(20);
     expect(states.at(-1)?.bubble?.visible).toBe(false);
   });
 });
