@@ -322,6 +322,12 @@ describe("the settings window's setup badge and line", () => {
     // Before Start the instruction stays (review #160).
     expect(tagline({ ...base, onboarded: false, look: 2 })).toBe("Read how Ember works, pick who keeps you company, then agree and press Start.");
   });
+
+  it("sets the badge's number in a type style, so it grows with the window's text", () => {
+    const badge = /\.jump-badge \{([^}]*)\}/.exec(STYLES)?.[1] ?? "";
+    expect(badge).toContain("font: var(--type-caption)");
+    expect(badge).not.toMatch(/\b\d+px\/|font-size: \d+px/);
+  });
 });
 
 // ───── The setup check's inputs on each OS (environment.ts) ─────
