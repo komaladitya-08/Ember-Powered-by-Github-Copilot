@@ -67,7 +67,7 @@ export function tagline(t: {
 }, askLabel = SHORTCUTS.linux.ask.label): string {
   // Before Start it is always the first-run instruction: the setup check's own heading counts its rows (review #160).
   if (!t.onboarded) return "Read how Ember works, pick who keeps you company, then agree and press Start.";
-  if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer: see the setup check.`;
+  if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer.`;
   const where = !t.overlay ? "Ember is in the bottom-right corner." : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks running are done.`;
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
@@ -76,9 +76,9 @@ export function tagline(t: {
   return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
 }
 
-/** "one thing", "2 things": how many setup rows, in a sentence. */
+/** "1 thing", "2 things": how many setup rows, in a sentence. */
 function things(n: number): string {
-  return n === 1 ? "one thing" : `${n} things`;
+  return `${n} ${n === 1 ? "thing" : "things"}`;
 }
 
 /**
@@ -88,7 +88,7 @@ function things(n: number): string {
 export function setupBadge(needing: number, failing = 0): { text: string; label: string; tone: "fail" | "warn" } | null {
   const n = failing || needing;
   if (!n) return null;
-  return { text: String(n), label: `, ${n} ${n === 1 ? "thing" : "things"} ${failing ? "to fix" : "worth a look"}`, tone: failing ? "fail" : "warn" };
+  return { text: String(n), label: `, ${things(n)} ${failing ? "to fix" : "worth a look"}`, tone: failing ? "fail" : "warn" };
 }
 
 /**
@@ -96,8 +96,7 @@ export function setupBadge(needing: number, failing = 0): { text: string; label:
  * `ember doctor` says it ("worth a look").
  */
 export function checksNote(failing: number, warn: number): string {
-  const n = (k: number) => `${k} ${k === 1 ? "thing" : "things"}`;
-  return failing ? `${n(failing)} to fix` : warn ? `${n(warn)} worth a look` : "All good";
+  return failing ? `${things(failing)} to fix` : warn ? `${things(warn)} worth a look` : "All good";
 }
 
 /** What the setup check shows, and what the window remembers between statuses. */
