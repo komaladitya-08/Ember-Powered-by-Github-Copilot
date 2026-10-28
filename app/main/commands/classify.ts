@@ -175,6 +175,11 @@ interface Simple {
   redirs: Redir[];
   /** Where stdin comes from. */
   stdin: "pipe" | "heredoc" | "file" | null;
+  /**
+   * A here-document's or here-string's text, when it is stdin and Ember can read all of it (quoted, or without
+   * expansions); null when it can't. A program that reads its own program text from stdin is judged by it (review #166).
+   */
+  stdinText?: string | null;
   /** An earlier command in its pipeline fetches from the network or decodes hidden text. */
   fetchBefore: boolean;
   background: boolean;
@@ -1175,15 +1180,31 @@ class Engine extends Classifier {
     const redirs = c.redirs.map(r => this.posixRedir(r, sc));
     const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
       : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
+    const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : undefined;
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
       this.redirects(redirs, sc);
       return;
     }
-    this.simple({ words, redirs, stdin, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
+    this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
     });
+  }
+
+  /**
+   * The text the last here-document or here-string on stdin hands the program: a here-string's word (with its newline),
+   * a quoted here-document's body, or an unquoted one's when it expands nothing. null when Ember can't see all of it.
+   */
+  private hereText(redirs: PRedir[], sc: Scope): string | null {
+    const last = redirs.filter(r => (r.fd === null || r.fd === 0) && r.dup === undefined && ["<", "<<", "<<-", "<<<"].includes(r.op)).pop();
+    if (!last) return null;
+    if (last.op === "<<<") {
+      const v = last.target ? this.posixWord(last.target, sc, false).v : null;
+      return v === null ? null : `${v}\n`;
+    }
+    if (!last.heredoc) return null;
+    return last.heredoc.quoted || !/[$`\\]/.test(last.heredoc.body) ? last.heredoc.body : null;
   }
 
   /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`); anything else unresolved. */
@@ -1852,7 +1873,11 @@ function interactive(h: H): void {
     case "mongo": case "mongosh": if (!(has(p, "eval", "version") || ops.some(o => o?.endsWith(".js")) || stdin)) add(); return;
     case "redis-cli": if (!(ops.length >= 1 || stdin || has(p, "version", "v"))) add(); return;
     case "bc": case "dc": if (!(ops.length >= 1 || stdin || has(p, "version", "v"))) add(); return;
-    case "ed": case "ex": if (!stdin) add(); return;
+    case "ed": case "ex":
+      // Script fed on stdin or a here-document: a `!` line, or `r !`/`w !`, runs a shell command (review #166).
+      if (!stdin) { add(); return; }
+      fromStdin(h, t => { if (/!/.test(t)) h.e.unclear("unclear.ed-shell", "It can run a shell command from the editor."); });
+      return;
     case "gdb": case "lldb": if (!has(p, "batch", "x", "version", "v")) add(); return;
     case "emacs": if (!has(p, "batch", "version", "script")) add(); else if (has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return;
     case "watch": {
@@ -2097,7 +2122,12 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
 });
 reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h => {
   if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-  if (h.key === "mysql" || h.key === "mariadb") { interactive(h); databaseText(h, inlineSql(h, ["e"], ["execute"])); }
+  if (h.key === "mysql" || h.key === "mariadb") {
+    interactive(h);
+    databaseText(h, inlineSql(h, ["e"], ["execute"]));
+    // SQL read from stdin or a here-document (`mysql <<< 'system id'`): judge the seen text, else ask (review #166).
+    if (h.s.stdin !== null && !inlineSql(h, ["e"], ["execute"]).length) fromStdin(h, t => databaseText(h, [t]));
+  }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
 });
@@ -2137,13 +2167,19 @@ function databaseText(h: H, texts: (string | null)[]): void {
 reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhouse-client", "mongo", "mongosh", "redis-cli", "sqlplus"], h => {
   if (INTERACTIVE.has(h.key)) interactive(h);
   const k = h.key;
-  if (k === "psql") databaseText(h, inlineSql(h, ["c"], ["command"]));
+  if (k === "psql") {
+    databaseText(h, inlineSql(h, ["c"], ["command"]));
+    // SQL read from stdin or a here-document (`psql <<< '\! id'`): judge the seen text, else ask (review #166).
+    if (h.s.stdin !== null && !inlineSql(h, ["c"], ["command"]).length && !inlineSql(h, ["f"], ["file"]).length) fromStdin(h, t => databaseText(h, [t]));
+  }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
   else if (k === "clickhouse-client") databaseText(h, inlineSql(h, ["q"], ["query"]));
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
     const ops = h.args.filter(a => !isOption(a));
     databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))]);
+    // SQL read from stdin or a here-document (`sqlite3 <<< '.shell id'`): judge the seen text, else ask (review #166).
+    if (h.s.stdin !== null && ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd")) fromStdin(h, t => databaseText(h, [t]));
     if (ops[0]) h.e.readArgs([ops[0]], h.sc);
     return;
   } else if (k === "mongo" || k === "mongosh") {
@@ -2623,7 +2659,9 @@ export function awkProgramOk(prog: string): boolean {
 reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   const p = opts(h, { shortValue: "fFvWe", longValue: ["file", "field-separator", "assign", "source", "include", "load"] });
   const progFiles = values(p, "f", "file", "include", "load");
-  for (const f of progFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
+  for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
+  if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
   let files = p.operands;
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
@@ -2661,6 +2699,18 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   }
   intoInterpreter(h, readAs);
 });
+
+/**
+ * A tool reading its program (a makefile, SQL, an awk or debugger script) from stdin or a here-document (review #166):
+ * when Ember can see all of the text (a quoted here-document or a here-string), `judge` it; otherwise a fetch before it
+ * is download-and-run, and anything else is unclear (it runs code Ember can't see). The dangerous cases ask either way.
+ */
+function fromStdin(h: H, judge: (text: string) => void): void {
+  const t = h.s.stdinText;
+  if (t !== undefined && t !== null) { judge(t); return; }
+  if (h.s.fetchBefore && (h.s.stdin === "pipe" || h.s.stdin === "heredoc")) { h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns); return; }
+  h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
+}
 
 /**
  * An interpreter reading its program from stdin: download-and-run after a fetch, else unclear; with no stdin,
@@ -3990,7 +4040,13 @@ reg(NATIVE, ["msbuild"], h => {
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
   const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
   const p = parseOpts(h.args, { shortValue: valueShort[h.key] ?? "", longValue: ["file", "makefile", "directory", "include-dir", "jobs", "load-average", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir"] });
-  for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
+  // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
+  if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f === null || STDIN_NAME.test(f))) {
+    fromStdin(h, () => h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."));
+    return;
+  }
+  for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make: `--eval` and variable overrides that name a shell or hold command text run code Ember can't see in the

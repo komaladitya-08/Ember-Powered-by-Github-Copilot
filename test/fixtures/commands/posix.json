@@ -11817,6 +11817,104 @@
   {
    "cmd": "gdb -batch a.out",
    "verdict": "run"
+  },
+  {
+   "cmd": "make -f - <<< 'all:'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "make -f /dev/stdin <<< 'all:'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "ninja -f /dev/stdin <<< 'x'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "awk -f - <<< 'BEGIN{system(\"id\")}'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.awk-program"
+   ]
+  },
+  {
+   "cmd": "sqlite3 <<< '.shell id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "sqlite3 x.db <<< 'select 1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "psql <<< '\\! id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "mysql <<< 'system id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "ed <<< '!id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.ed-shell"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -x /dev/stdin <<< 'shell id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "awk -f prog.awk data.txt",
+   "verdict": "run"
   }
  ]
 }
