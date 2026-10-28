@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import * as cc from "../../app/renderer/home/computers-copy";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { SettingsSchema, type Settings } from "../../app/main/settings";
-import { buildRegistry, summaryOf } from "../../app/main/targets/registry";
+import { buildRegistry, summaryOf, type LinkView } from "../../app/main/targets/registry";
 import type { TargetSummary } from "../../app/shared/targets";
 
 const summary = (over: Partial<TargetSummary>): TargetSummary => ({ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps and commands", active: true, ...over });
@@ -55,6 +55,27 @@ describe("a computer's status says what is true and what to do next (review #156
     expect(rows[0]).toMatchObject({ status: "Off", note: null });
     const setUp = cc.computersView({ os: "win32", settings: settings(), admin: noPolicy, summaries: [summary({}), wsl({ state: "unavailable", can: "set it up first" })] }).wsl!.rows;
     expect(setUp[0]).toMatchObject({ status: "Not available", note: "Set it up first" });
+  });
+
+  it("reads the registry's own words: a stalled link, a distro while WSL is off in Ember, a headless host with commands off", () => {
+    // Built from the registry itself (not its words copied here), so a change of wording there fails here.
+    const host = settings().targets.hosts[0];
+    const reg = (os: "linux" | "win32", links: Map<string, LinkView>, wslOn: boolean) => buildRegistry({
+      os, admin: { policy: AdminPolicySchema.parse({}), source: null }, localDesktop: true, commands: () => "off", links,
+      settings: SettingsSchema.parse({ targets: { active: "local", offerSsh: true, dismissedOffers: [], hosts: [host], pcId: "", wsl: { on: wslOn, consent: { version: wslOn ? 1 : 0, at: wslOn ? "x" : null } } } }),
+      wsl: os !== "win32" ? null : { installed: true, wslExe: "wsl.exe", distros: [{ name: "Ubuntu", version: 2, isDefault: true, defaultUid: 1000, running: true, needsSetup: false }], wslg: { available: true, disabledByUser: false, version: "1" }, wslVersion: "2" },
+    }).map(e => summaryOf(e, "local"));
+    const view = (os: "linux" | "win32", summaries: TargetSummary[]) => cc.computersView({ os, settings: settings(), admin: noPolicy, summaries });
+
+    const stalled = reg("linux", new Map([["build-01", { state: "stalled", desktop: "screen", commands: "on" }]]), false);
+    expect(view("linux", stalled).ssh.rows[0]).toMatchObject({ status: "Connected, but not answering", note: null });
+
+    const headless = reg("linux", new Map([["build-01", { state: "ready", desktop: "none", commands: "off" }]]), false);
+    expect(view("linux", headless).ssh.rows[0]).toMatchObject({ status: "Connected, commands off", note: "Turn on commands for build-01 under Commands to use it." });
+
+    const wslOff = reg("win32", new Map(), false);
+    expect(wslOff.find(t => t.kind === "wsl")).toMatchObject({ state: "unavailable" });
+    expect(view("win32", wslOff).wsl!.rows[0]).toMatchObject({ name: "Ubuntu (WSL)", status: "Off", note: null });
   });
 
   it("never says “commands once you agree only”", () => {
