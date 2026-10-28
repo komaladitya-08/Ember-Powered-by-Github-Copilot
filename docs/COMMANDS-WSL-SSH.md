@@ -90,8 +90,9 @@ Ember stops and asks before a command that:
 - **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`),
-  `truncate`, formatting or partitioning a disk, emptying the trash, and package scripts or make targets named
-  clean, wipe, purge, reset and the like;
+  `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
+  that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or
+  make targets named clean, wipe, purge, reset and the like;
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
@@ -108,7 +109,8 @@ Ember stops and asks before a command that:
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
   `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
   `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
-  certificates the computer trusts, users and groups,
+  certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
+  folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
   permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
   out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
   hooks;

@@ -3769,17 +3769,62 @@ function containerRun(h: H, prog: string, rest: Arg[]): void {
   const priv = has(p, "privileged")
     || values(p, "pid", "ipc", "userns", "uts", "cgroupns").includes("host") || values(p, "net", "network").includes("host")
     || values(p, "cap-add", "device").length > 0 || values(p, "security-opt").some(s => /unconfined|disable/.test(s ?? ""));
-  for (const vol of [...values(p, "v", "volume"), ...values(p, "mount").map(m => /(?:source|src)=([^,]+)/.exec(m ?? "")?.[1] ?? null)]) {
-    if (vol === null) continue;
-    // host:container[:options]; a Windows host path keeps its drive's colon.
-    const at = vol.indexOf(":", /^[A-Za-z]:[\\/]/.test(vol) ? 2 : 0);
-    const src = at < 0 ? vol : vol.slice(0, at);
-    if (src === "/" || /^\/:/.test(vol) || /^[A-Za-z]:\\?$/.test(src)) { h.e.add("system", "docker.privileged", "Gives a container access to the whole computer."); continue; }
-    if (/^[~./\\]|^[A-Za-z]:[\\/]/.test(src)) h.e.usePath(lit(src), "readTree", h.sc);
-  }
+  containerMounts(h, p);
   if (priv) h.e.add("system", "docker.privileged", "Gives a container access to the whole computer.");
   for (const f of values(p, "env-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   void prog;
+}
+/** A container engine's socket or named pipe: whoever reaches it can start a container that mounts the whole computer. */
+const ENGINE_SOCKET = /\.sock$|^[\\/]{2}[.?][\\/]pipe[\\/]/i;
+/** Folders that hold an engine's socket (`/run`, `/run/user/1000`, `/var/run/docker`). */
+const ENGINE_DIR = /^\/(var\/)?run(\/(docker|podman|containerd|crio|buildkit|user(\/\d+(\/(docker|podman|containerd))?)?))?$/;
+/** System folders as a whole, read-only or not. */
+const SYSTEM_MOUNT = /^\/(usr|boot|sys|proc|dev|bin|sbin|lib[^/]*|etc|var|opt)$/;
+/**
+ * A container's bind mounts (-v/--volume host:container[:options], --mount type=bind,src=…): the host path is read as a
+ * whole and, unless read-only, written; a mount of an engine's socket or a system folder gives the container the
+ * computer, and a writable one outside the task's folder lets the container change or delete what is there (review
+ * #170). Named volumes and anonymous ones (`data:/x`, `-v /x`) are the engine's own, not the computer's files.
+ */
+function containerMounts(h: H, p: Parsed): void {
+  const mounts: { src: string; ro: boolean }[] = [];
+  for (const vol of values(p, "v", "volume")) {
+    if (vol === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder the container is given."); continue; }
+    // host:container[:options]; a Windows host path keeps its drive's colon. `-v=x` is `-v x`.
+    const v = vol.replace(/^=/, "");
+    const at = v.indexOf(":", /^[A-Za-z]:[\\/]/.test(v) ? 2 : 0);
+    if (at < 0) { if (v === "/") mounts.push({ src: v, ro: false }); continue; }
+    const dst = v.slice(at + 1);
+    const end = dst.indexOf(":", /^[A-Za-z]:[\\/]/.test(dst) ? 2 : 0);
+    // Podman's `O` is an overlay: the container's changes are thrown away.
+    mounts.push({ src: v.slice(0, at), ro: end >= 0 && dst.slice(end + 1).split(",").some(o => /^(ro|readonly|O)$/.test(o)) });
+  }
+  for (const m of values(p, "mount")) {
+    if (m === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder the container is given."); continue; }
+    const kv = new Map(m.split(",").map(s => {
+      const i = s.indexOf("=");
+      return [(i < 0 ? s : s.slice(0, i)).trim().toLowerCase(), i < 0 ? "true" : s.slice(i + 1)] as const;
+    }));
+    const src = kv.get("source") ?? kv.get("src");
+    if (src === undefined || kv.get("type") === "tmpfs") continue;
+    mounts.push({ src, ro: ["readonly", "ro"].some(k => kv.has(k) && !/^(false|0)$/i.test(kv.get(k) ?? "")) });
+  }
+  for (const { src, ro } of mounts) {
+    if (src === "/" || /^[A-Za-z]:\\?$/.test(src)) { h.e.add("system", "docker.privileged", "Gives a container access to the whole computer."); continue; }
+    // A name without a slash is a named volume (`data`); anything else is a folder or file on the computer.
+    if (/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(src)) continue;
+    const mark = h.e.written.length;
+    const obj = h.e.usePath(lit(src), "readTree", h.sc);
+    if (!ro) h.e.usePath(lit(src), "write", h.sc);
+    // Only §3.6's rules: what the container writes there is a write Ember doesn't follow for a script run later (L8).
+    h.e.written.length = mark;
+    const forms = [src.startsWith("/") ? posix.normalize(src).replace(/(.)\/$/, "$1") : null, h.sc.path.flavour === "posix" ? obj.abs : null];
+    if (ENGINE_SOCKET.test(src) || forms.some(f => f !== null && (ENGINE_DIR.test(f) || SYSTEM_MOUNT.test(f) || (!ro && /^\/(sys|proc)\//.test(f))))) {
+      h.e.add("system", "docker.privileged", "Gives a container access to the whole computer.");
+    } else if (!ro && (obj.abs === null || !inWorkTree(obj.abs, h.sc.path))) {
+      h.e.add("destroy", "docker.mount", `Lets a container change or delete files in ${obj.text}.`, { objects: [obj] });
+    }
+  }
 }
 function compose(h: H, prog: string, rest: Arg[]): void {
   const p = parseOpts(rest, { shortValue: "fp", longValue: ["file", "project-name", "project-directory", "env-file", "profile", "context", "ansi", "progress"] });
@@ -3790,6 +3835,9 @@ function compose(h: H, prog: string, rest: Arg[]): void {
   if (sub === "up" || sub === "start" || sub === "run" || sub === "create") {
     if (flags.some(f => f === "-d" || f === "--detach" || /^-[a-z]*d[a-z]*$/.test(f))) h.e.add("escape", "escape.background", SAYS.keepsRunning);
     if (sub === "run" && !flags.includes("-T") && !flags.some(f => f === "-d" || f === "--detach")) h.e.unclear("unclear.interactive", SAYS.interactive);
+    // `compose run -v host:container` mounts as `docker run -v` does.
+    const at = rest.indexOf(p.operands[0]);
+    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop"], stopAtOperand: true }));
     return;
   }
   if (sub === "down" || sub === "rm" || sub === "kill") { h.e.add("destroy", `${prog}.rm`, "Deletes containers, images or volumes."); return; }

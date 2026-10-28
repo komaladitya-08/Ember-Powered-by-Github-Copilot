@@ -13056,6 +13056,318 @@
   {
    "cmd": "csplit -f p x 1 && sh p00",
    "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock docker:cli docker ps",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /var/run/docker.sock:/s:ro alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm --volume=/var/run/docker.sock:/s alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v=/var/run/docker.sock:/s alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm --mount type=bind,src=/var/run/docker.sock,dst=/s alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm --mount type=bind,source=/run/docker.sock,target=/s,readonly alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "podman run -v /run/podman/podman.sock:/s alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "nerdctl run -v /run/containerd/containerd.sock:/c.sock alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /var/run:/r alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /run/user/1000:/r:ro alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker create -v /var/run/docker.sock:/s alpine",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker container run -v /var/run/docker.sock:/s alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /usr:/u alpine ls",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /usr:/u:ro alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /boot:/b alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /sys:/s alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /sys/kernel:/k alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /lib:/l alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /bin:/b alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /sbin:/s alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /dev:/dev alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /usr/local/bin:/b alpine cp x /b/git",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.system"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/Documents:/d alpine rm -rf /d",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker run --rm --volume ~/Documents:/d alpine rm -rf /d",
+   "verdict": "ask",
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker run --rm --mount type=bind,src=/home/ana/Documents,dst=/d alpine rm -rf /d",
+   "verdict": "ask",
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "podman run --rm -v ~/Documents:/d:Z alpine rm -rf /d",
+   "verdict": "ask",
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "nerdctl run -v ~/Documents:/d alpine rm -rf /d",
+   "verdict": "ask",
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/.profile:/p alpine sh -c 'echo x >> /p'",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/.bashrc:/b alpine id",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/.config/autostart:/d alpine ls",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/.gitconfig:/root/.gitconfig alpine git config -l",
+   "verdict": "ask",
+   "rules": [
+    "git.config.code"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v \"$EXTRA\":/d alpine ls",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "docker compose run -T -v ~/Documents:/d web rm -rf /d",
+   "verdict": "ask",
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker compose run -T --volume /var/run/docker.sock:/s web id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/Documents:/d:ro alpine ls /d",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm --mount type=bind,src=/home/ana/Documents,dst=/d,readonly alpine ls /d",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$PWD\":/src -w /src node:22 npm test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v .:/src -w /src node:22 npm test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v ./build:/out alpine ls /out",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v /home/ana/proj:/src alpine ls /src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v data:/var/lib/postgresql/data postgres",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm --mount type=volume,src=data,dst=/data alpine ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm --mount type=tmpfs,dst=/cache alpine ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v /data alpine ls",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v /etc/localtime:/etc/localtime:ro alpine date",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker compose run -T -v ./build:/out web ls /out",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v $(pwd):/app alpine rm -rf /app/src",
+   "verdict": "ask",
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": "podman run --rm -v ~/Documents:/d:ro,Z alpine ls /d",
+   "verdict": "run"
   }
  ]
 }

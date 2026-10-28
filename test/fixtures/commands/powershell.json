@@ -5269,6 +5269,38 @@
   {
    "cmd": "cargo build --out-dir C:\\Users\\ana\\proj\\out",
    "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v C:\\Users\\ana\\Documents:/d alpine rm -rf /d",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v /var/run/docker.sock:/var/run/docker.sock docker:cli docker ps",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v \\\\.\\pipe\\docker_engine:\\\\.\\pipe\\docker_engine mcr.microsoft.com/windows/servercore:ltsc2022 cmd",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v C:\\Users\\ana\\proj:/src -w /src node:22 npm test",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v C:\\Users\\ana\\Documents:/d:ro alpine ls /d",
+   "verdict": "run"
   }
  ]
 }

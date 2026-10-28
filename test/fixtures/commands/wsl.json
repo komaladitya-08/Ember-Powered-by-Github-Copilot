@@ -2148,6 +2148,24 @@
   {
    "cmd": "git checkout-index -a --prefix=/home/ana/.local/state/ember-remote/",
    "verdict": "refuse"
+  },
+  {
+   "cmd": "docker run --rm -v /var/run/docker.sock:/s alpine id",
+   "verdict": "ask",
+   "rules": [
+    "docker.privileged"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v ~/Documents:/d alpine rm -rf /d",
+   "verdict": "ask",
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v \"$PWD\":/src -w /src node:22 npm test",
+   "verdict": "run"
   }
  ]
 }
