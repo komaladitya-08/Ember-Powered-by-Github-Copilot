@@ -2647,6 +2647,65 @@
   {
    "cmd": "gcc -o C:\\Users\\ana\\AppData\\Local\\ember\\x.exe x.c",
    "verdict": "refuse"
+  },
+  {
+   "cmd": "dir \\\\fileserver\\share",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "type \\\\fileserver\\share\\x.txt",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "pushd \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "\\\\fileserver\\share\\x.exe",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "\\\\fileserver\\share\\x.bat",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "cmd /c \\\\fileserver\\share\\x.exe",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "net use Z: \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "net use",
+   "verdict": "run"
   }
  ]
 }

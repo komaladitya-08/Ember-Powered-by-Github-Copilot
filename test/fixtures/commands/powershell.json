@@ -3367,7 +3367,13 @@
   },
   {
    "cmd": "New-PSDrive -Name X -PSProvider FileSystem -Root \\\\server\\share",
-   "verdict": "run"
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
   },
   {
    "cmd": "Mount-DiskImage -ImagePath C:\\x.iso",
@@ -5300,6 +5306,147 @@
   },
   {
    "cmd": "docker run --rm -v C:\\Users\\ana\\Documents:/d:ro alpine ls /d",
+   "verdict": "run"
+  },
+  {
+   "cmd": "dir \\\\fileserver\\share",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Get-ChildItem \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Test-Path \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "type \\\\fileserver\\share\\notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Get-Content //fileserver/share/notes.txt",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "Set-Location \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "\\\\fileserver\\share\\x.exe",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "& \\\\fileserver\\share\\x.ps1",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "& '\\\\fileserver\\share\\x.exe' /q",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "cmd /c \\\\fileserver\\share\\x.exe",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "powershell -File \\\\fileserver\\share\\x.ps1",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "node \\\\fileserver\\share\\x.js",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "net use \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "net use Z: \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "esentutl /y \\\\fileserver\\share\\x /d x.exe /o",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "expand \\\\fileserver\\share\\x.cab x.exe",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "New-PSDrive X FileSystem \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "New-PSDrive -Name P -PSProvider FileSystem -Root C:\\Users\\ana\\proj",
+   "verdict": "run"
+  },
+  {
+   "cmd": "net use",
+   "verdict": "run"
+  },
+  {
+   "cmd": "net use Z: /delete",
+   "verdict": "run"
+  },
+  {
+   "cmd": "Get-ChildItem C:\\Users\\ana\\proj",
    "verdict": "run"
   }
  ]

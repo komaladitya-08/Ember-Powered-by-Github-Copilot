@@ -96,8 +96,9 @@ Ember stops and asks before a command that:
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
-  `curl -T`, `curl -d`, `ssh host <command>`), changing cloud services or clusters (`kubectl apply`,
-  `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
+  `curl -T`, `curl -d`, `ssh host <command>`), using a share on another computer from Windows (`dir \\server\share`,
+  `net use`, `New-PSDrive`), which signs in there with your Windows account, changing cloud services or clusters
+  (`kubectl apply`, `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
 - **reads or changes passwords, keys or other secrets**: anything under `~/.ssh` (except reading public keys,
@@ -115,8 +116,8 @@ Ember stops and asks before a command that:
   out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
   hooks;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
-  downloaded in this task, `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without
-  `-Wait`;
+  downloaded in this task, running a program or script from another computer's share (`\\server\share\x.exe`),
+  `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window.").

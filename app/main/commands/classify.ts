@@ -349,9 +349,14 @@ class Classifier {
         if (WRITES.has(use) && /^[\\/]{2}\.[\\/](physicaldrive\d+|[a-z]:)$/i.test(text)) this.add("destroy", "path.disk", `Overwrites the disk ${text}.`);
         return { kind: "other", text, abs: null };
       }
-      if (/^[\\/]{2}[^\\/?.]/.test(text) && WRITES.has(use)) {
+      if (/^[\\/]{2}[^\\/?.]/.test(text)) {
+        // Another computer's share: Windows connects and signs in there with the user's account before anything is
+        // read, so even a listing hands that computer what it needs to pose as the user (review #171).
         const host = /^[\\/]{2}([^\\/]+)/.exec(text)?.[1] ?? "";
-        this.add("publish", "upload.unc", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }] });
+        const objects: Obj[] = [{ kind: "host", text: host, abs: null }];
+        if (WRITES.has(use)) this.add("publish", "upload.unc", `Sends data to ${host}.`, { objects });
+        else if (use === "exec") this.add("escape", "escape.run-remote", `Runs a program from another computer (${host}).`, { objects });
+        else this.add("publish", "net.unc", `Connects to ${host} and signs in there with your Windows account.`, { objects });
       }
     }
     if (sc.path.flavour === "posix" && (text === "~" || text.startsWith("~/")) && !sc.home) {
@@ -4830,6 +4835,8 @@ reg(NATIVE, ["net", "net1"], h => {
   if (verb === "share" && rest.length) { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
   if (verb === "time" && rest.some(a => /^\/set$/i.test(a.v ?? ""))) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if ((verb === "session" || verb === "file") && rest.some(a => /^\/(delete|close)$/i.test(a.v ?? ""))) { h.e.add("system", "kill.process", "Stops programs that are running (network sessions)."); return; }
+  // `net use [Z:] \\host\share` connects to that computer and signs in there (review #171).
+  if (verb === "use") for (const a of rest) if (/^[\\/]{2}/.test(a.v ?? "")) h.e.usePath(a, "list", h.sc);
   if (verb === "use" && rest.some(a => /\\\\/.test(a.v ?? "")) && rest.some(a => /^\/user:/i.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
 reg(NATIVE, ["reg", "regedit", "regini"], h => {
@@ -5883,7 +5890,12 @@ reg(CMDLETS, ["register-scheduledtask", "unregister-scheduledtask", "new-schedul
   h.e.add("system", "system.schedule", "Schedules something to run later or at login.");
 });
 reg(CMDLETS, ["new-psdrive", "mount-diskimage", "dismount-diskimage", "mount-vhd", "set-date", "set-timezone", "rename-computer", "add-computer", "remove-computer", "set-itemproperty-system"], h => {
-  if (h.key === "new-psdrive" && !h.args.some(a => /^persist$/i.test(a.param ?? ""))) return;
+  if (h.key === "new-psdrive") {
+    // A drive on another computer's share connects and signs in there as `net use` does (review #171).
+    const b = bindPs(h, { params: { Name: "v", PSProvider: "v", Root: "v", Description: "v", Scope: "v", Credential: "v", Persist: "s" }, pos: ["Name", "PSProvider", "Root"] });
+    for (const r of b.named.get("Root") ?? []) if (/^[\\/]{2}/.test(r.v ?? "")) h.e.usePath(r, "list", h.sc);
+    if (!h.args.some(a => /^persist$/i.test(a.param ?? ""))) return;
+  }
   h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 reg(CMDLETS, ["get-childitem-env"], () => undefined);
