@@ -16,6 +16,7 @@ import { targetMenu } from "../../app/main/targets/menu";
 import * as commandCopy from "../../app/renderer/command/copy";
 import { terminalOptions } from "../../app/renderer/command/terminal-options";
 import * as targetCopy from "../../app/renderer/overlay/target-copy";
+import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
@@ -47,6 +48,9 @@ function section(text: string, heading: string): string {
  * later fails here instead of leaving the docs wrong.
  */
 const homePage = read("app/renderer/home/index.html");
+const computersCopy = read("app/renderer/home/computers-copy.ts");
+/** The label of the button in Settings › Computers that removes Ember's helper from a computer, for build-01. */
+const removeHelper = (/label: (["`])([^"`]+)\1, act: \{ kind: "uninstall"/.exec(computersCopy)?.[2] ?? "").replace("${label}", "build-01");
 const RELEASE: { from: string; what: string; here: boolean }[] = [
   { from: "fix/remote", what: "the WSL offer for a distro Settings lists", here: /\.\.\.wslListedNames\(\)\]/.test(read("app/main/targets/runtime.ts")) },
   { from: "fix/ask", what: "Ask Ember… and Stop everything under Comfort & access › Ember on screen", here: /id="p-ask"/.test(homePage) && /id="p-stop"/.test(homePage) },
@@ -56,6 +60,7 @@ const RELEASE: { from: string; what: string; here: boolean }[] = [
   { from: "fix/cmdwin", what: "the longer announcement while a screen reader runs", here: "ANNOUNCE_SCREEN_READER_MS" in commandWindow },
   { from: "fix/overlay", what: "the desk's way back, said when you take over", here: fs.existsSync(path.resolve("app/renderer/desk/a11y.ts")) },
   { from: "fix/prompt", what: "the cards' notes on the keyboard and on reading a consent card", here: "KEYBOARD_ELSEWHERE_HINT" in promptCopy },
+  { from: "fix/settings", what: "Settings › Computers' Remove helper", here: removeHelper === "Remove helper" },
 ];
 /** Every fix the docs describe is here: the release (on fix/docs alone, none is). */
 const released = RELEASE.every(f => f.here);
@@ -150,8 +155,15 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
     expect(s31).toMatch(/When you ask for something in WSL/);
   });
 
-  it.runIf(released)("says a request that names a distro Settings lists brings the WSL offer too", () => {
-    expect(flat(section(doc, "3.1 Turning it on"))).toMatch(/When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember/);
+  it.runIf(released)("says a request that names a distro Settings lists brings the WSL offer too, with the offer's words", () => {
+    const s31 = flat(section(doc, "3.1 Turning it on"));
+    expect(s31).toMatch(/When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember/);
+    expect(s31).toContain(`Ember offers "${wslFirstSeen().title}"`);
+  });
+
+  it.runIf(released)("says the commands card's Turn on waits until the whole card has been read, in the card's words", () => {
+    const s21 = flat(section(doc, "2.1 Turning them on"));
+    expect(s21).toContain(`scroll to its end: "${(promptCopy as { CONSENT_READ_HINT?: string }).CONSENT_READ_HINT}"`);
   });
 });
 
@@ -188,8 +200,13 @@ describe("README.md", () => {
       expect(removal, os).toMatch(/computers you added over SSH/);
     }
     const ssh = flat(section(readme, "Commands, WSL and other computers"));
-    expect(ssh).toContain("**Remove Ember from build-01**");
+    expect(ssh).toMatch(/\*\*Before you remove Ember from this computer\*\*, press \*\*[^*]+\*\* beside each computer you added in Settings › \*\*Computers\*\*/);
     expect(ssh).toContain("sh ~/.local/share/ember-remote/versions/*/uninstall.sh");
+    // The button's name, as Settings › Computers has it in the release (and the release notes, and the guide's §4.7).
+    if (released) {
+      expect(ssh).toContain(`press **${removeHelper}** beside each computer`);
+      expect(flat(read("CHANGELOG.md"))).toContain(`Its **${removeHelper}** in Settings › **Computers** removes the helper again`);
+    }
   });
 
   it("has an accessibility section: screen readers on each OS, a keyboard route for every mouse-only thing, the gaps", () => {
@@ -379,6 +396,12 @@ describe("CHANGELOG.md", () => {
     for (const words of ["first release", "Windows", "macOS", "RHEL 8", "Hey Ember", "Cinder", "Commands, WSL and other computers"]) expect(first).toContain(words);
     // A first release has nothing earlier to have changed from.
     expect(first).not.toMatch(/### Changed/);
+  });
+
+  it.runIf(released)("names the settings switches as Settings › Computers has them", () => {
+    const offer = /export const OFFER_SWITCH = "([^"]+)"/.exec(computersCopy)?.[1] ?? "";
+    expect(offer).not.toBe("");
+    expect(changelog).toContain(`**${offer}**`);
   });
 
   it("names the same best-effort computers as the README", () => {

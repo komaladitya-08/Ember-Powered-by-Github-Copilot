@@ -53,11 +53,13 @@ bubble and questions say where they act ("on build-01", "in Ubuntu (WSL)").
 
 Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
 (WSL)**, **Run commands on build-01**. When you turn one on, Ember shows the card "Let Ember run commands on this
-computer?" (or "on build-01?") with **Turn on** and **Not now**. The card is answered with a click only, never with
-Ember's approve keys or by voice. While a computer's switch is off, Ember runs no commands there and a task can't
-bring up the card: turn the switch on yourself. If a later Ember changes what the card says, the next command a task
-runs there shows the new card first. Under each switch, **Ask me before every command** makes every command on that
-computer ask. **Open the command window** shows it.
+computer?" (or "on build-01?") with **Turn on** and **Not now**. It opens big enough to show the whole card on most
+screens, and names the stop chord in its first line. The card is answered with a click only, never with Ember's
+approve keys or by voice, and **Turn on** works only once the whole card has been in view (on a small screen, or with
+larger text, scroll to its end: "Scroll down to read it all first."). While a computer's switch is off, Ember runs no
+commands there and a task can't bring up the card: turn the switch on yourself. If a later Ember changes what the
+card says, the next command a task runs there shows the new card first. Under each switch, **Ask me before every
+command** makes every command on that computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
@@ -271,8 +273,9 @@ earlier command printed text that looked like instructions.").
 ### 3.1 Turning it on
 
 When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember ("in WSL, list my files",
-"in Ubuntu, …"; "Linux" alone doesn't), and Windows has a distro Ember could use, Ember offers "Ember can work in WSL"
-(**Open settings**, **Not now**), once each time it runs; the task itself goes on where Ember is set to work. Settings › **Computers** › **Let Ember work in WSL** shows the card "Use
+"in Ubuntu, …"; "Linux" alone doesn't), and Windows has a distro Ember could use, Ember offers "I can work in WSL"
+(**Open settings**, **Not now**), once each time it runs; the task itself goes on where Ember is set to work.
+Settings › **Computers** › **Let Ember work in WSL** shows the card "Use
 Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a small helper inside each distro that has a Linux
 app open, only while one is open, and never starts a distro on its own to read it; what it reads goes to Copilot as
 for your other windows; and commands in WSL, once you turn them on for a distro, can reach your Windows files and
@@ -482,8 +485,7 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 
 - **With Ember**: Settings › **Computers** › **Remove Ember from build-01** ("Remove Ember's helper from build-01? Its
   record of what Ember did there stays on build-01."). Ember connects, removes the helper, its consent record and its
-  logs, and keeps the audit record. **Forget** removes the computer from Ember's list without touching it. Before you
-  remove Ember from this computer, do this for each computer you added: afterwards only the way below is left.
+  logs, and keeps the audit record. **Forget** removes the computer from Ember's list without touching it.
 - **Without Ember**, on build-01: run the `uninstall.sh` in any version folder of the helper,
   `sh ~/.local/share/ember-remote/versions/<version>/uninstall.sh` (macOS:
   `sh ~/Library/Application\ Support/Ember\ Remote/versions/<version>/uninstall.sh`); `README.txt` beside it says the
@@ -493,6 +495,9 @@ rest of its output is dropped and you won't see it. After the stop chord, output
   rm -rf ~/.local/share/ember-remote ~/.local/state/ember-remote             # Linux
   rm -rf ~/Library/Application\ Support/Ember\ Remote                       # macOS
   ```
+
+Remove the helper with Ember from each computer you added before you remove Ember from this computer: once Ember is
+gone from here, only the way without Ember is left.
 
 ### 4.8 When connecting fails
 

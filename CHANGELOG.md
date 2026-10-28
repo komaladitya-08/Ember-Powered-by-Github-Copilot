@@ -87,7 +87,7 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   showing a notice with **Stop** there. When that screen locks or its session goes inactive, the tasks using the
   screen stop; a task only running commands there goes on (a **Stop** at that computer, a lost connection,
   **Disconnect** and the stop chord stop everything there). Your voice, Copilot and your GitHub sign-in stay on this
-  computer. **Remove Ember from build-01** removes the helper again.
+  computer. Its **Remove helper** in Settings › **Computers** removes the helper again.
 - **SSH connections, in detail**: with OpenSSH older than 8.5 on this computer (RHEL 8, Ubuntu 20.04, Debian 11),
   every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
   those clients can't mark a server's own questions. A silent connection shows "build-01 isn't answering" in the
@@ -97,7 +97,7 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   **Reconnect**. If **Bring Ember** can't connect, the bubble says why. A Node.js download that gets nothing for 60
   seconds ends with "The download of what Ember needs for build-01 stalled. Try again."
 - **Settings**: **Computers** and **Commands** sections (per-computer switches, **Ask me before every command**,
-  **Offer to bring Ember along when I connect with ssh**). The handle menu has **Work on** (with more than one
+  **Offer to bring Ember along when I connect with SSH**). The handle menu has **Work on** (with more than one
   computer), **Bring Ember to a computer…** and **Disconnect build-01**; the handle, task cards and questions say
   where Ember works.
 - **Check-up** (`ember doctor` and the settings window's setup check): rows for the SSH client, the command window's

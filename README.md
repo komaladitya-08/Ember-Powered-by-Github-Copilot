@@ -221,8 +221,8 @@ or make every command ask, in the organisation policy (`features.wsl`, `features
 older than this release locks down when its policy uses those keys. [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)
 has the details, including what Ember can't do yet.
 
-**Before you remove Ember from this computer**, choose **Remove Ember from build-01** in Settings › **Computers** for
-each computer you added: it removes the helper there and keeps that computer's record of what Ember did. Once Ember is
+**Before you remove Ember from this computer**, press **Remove helper** beside each computer you added in Settings ›
+**Computers**: it removes the helper there and keeps that computer's record of what Ember did. Once Ember is
 gone from here, the helper can only be removed on that computer itself
 ([docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md) §4.7):
 
