@@ -3,8 +3,9 @@
  * mono frames, for rejecting wake words that come out of the speakers. It counts as on only once parec has
  * started, and it's kept running: if parec stops (PulseAudio restarted), it starts again after 1 s, 5 s, then
  * every 30 s. Without parec installed it stays off. parec takes the monitor of the output that is the default
- * when it starts, and stays on it: when the default output changes (headphones, a Bluetooth speaker), `pactl
- * subscribe` says so, and parec starts again on the new one (review #260).
+ * when it starts, and stays on it: when the server's defaults change, `pactl subscribe` says so, and parec starts
+ * again on the new output if the default output is another one (headphones, a Bluetooth speaker; `pactl info` says
+ * which: PulseAudio 14 on RHEL 8 has no get-default-sink), review #260.
  */
 
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
@@ -13,6 +14,12 @@ const RETRY_MS = [1000, 5000, 30_000];
 const FRAME_BYTES = 512 * 4;
 /** A change of the default output comes with others (the old one goes, the new one is set up): parec starts again once they settle (ms). */
 const SWITCH_MS = 500;
+/** `pactl info` that hasn't answered in this long can't tell (ms). */
+const INFO_MS = 2000;
+/** pactl's words are translated: it's always read in English. */
+const PACTL_ENV = (): NodeJS.ProcessEnv => ({ ...process.env, LC_ALL: "C" });
+
+type Spawn = (cmd: string, args: string[], o: { stdio: ["ignore", "pipe", "ignore"]; env?: NodeJS.ProcessEnv }) => ChildProcess;
 
 export class SpeakerMonitor {
   private child: ChildProcess | null = null;
@@ -24,11 +31,13 @@ export class SpeakerMonitor {
   private watcher: ChildProcess | null = null;
   private switchTimer: NodeJS.Timeout | undefined;
   private replaced: ChildProcess | null = null;
+  /** The default output when parec's current run started (the one it monitors); null: unknown. */
+  private sink: string | null = null;
 
   constructor(
     private onFrame: (frame: Float32Array) => void,
     private onState: (on: boolean, reason?: string) => void,
-    private spawn: (cmd: string, args: string[], o: { stdio: ["ignore", "pipe", "ignore"] }) => ChildProcess = nodeSpawn,
+    private spawn: Spawn = nodeSpawn,
   ) {}
 
   start(): void {
@@ -49,7 +58,12 @@ export class SpeakerMonitor {
       if (this.startedAt && Date.now() - this.startedAt > 60_000) this.failures = 0; // it had been running fine
       this.retry = setTimeout(() => this.start(), RETRY_MS[Math.min(this.failures++, RETRY_MS.length - 1)]);
     };
-    p.once("spawn", () => { this.startedAt = Date.now(); this.onState(true); });
+    this.sink = null;
+    p.once("spawn", () => {
+      this.startedAt = Date.now();
+      this.onState(true);
+      void this.defaultSink().then(sink => { if (this.child === p) this.sink = sink; });
+    });
     p.once("error", (err: NodeJS.ErrnoException) => end(err.code === "ENOENT" ? "parec isn't installed (pulseaudio-utils)" : err.message, err.code !== "ENOENT"));
     p.once("exit", (code, signal) => end(`parec stopped (${signal ?? `exit ${code}`})`, true));
     let rest: Buffer = Buffer.alloc(0);
@@ -78,7 +92,7 @@ export class SpeakerMonitor {
    */
   private watchDefaults(): void {
     if (this.watcher) return;
-    const w = this.spawn("pactl", ["subscribe"], { stdio: ["ignore", "pipe", "ignore"] });
+    const w = this.spawn("pactl", ["subscribe"], { stdio: ["ignore", "pipe", "ignore"], env: PACTL_ENV() });
     this.watcher = w;
     const gone = () => { if (this.watcher === w) this.watcher = null; };
     w.once("error", gone);
@@ -89,17 +103,37 @@ export class SpeakerMonitor {
       line = lines.pop() ?? "";
       if (lines.some(l => /^Event 'change' on server\b/.test(l))) {
         clearTimeout(this.switchTimer);
-        this.switchTimer = setTimeout(() => this.switchOutput(), SWITCH_MS);
+        this.switchTimer = setTimeout(() => void this.switchOutput(), SWITCH_MS);
       }
     });
   }
 
-  /** The default output (may have) changed: parec starts again at once, so it takes the new default's monitor. */
-  private switchOutput(): void {
+  /**
+   * The server's defaults changed: if the default output is another one now, parec starts again at once, so it takes the
+   * new default's monitor. A change of something else (the default input, under pipewire-pulse other server settings)
+   * leaves it running, without a gap. Not knowing which output is the default, it starts again, to be sure.
+   */
+  private async switchOutput(): Promise<void> {
     const p = this.child;
     if (this.stopped || !p) return;
+    const sink = await this.defaultSink();
+    if (this.stopped || this.child !== p) return;
+    if (sink !== null && sink === this.sink) return;
     this.replaced = p;
     p.kill();
     this.start();
+  }
+
+  /** The default output's name (`pactl info`'s "Default Sink:" line), or null when it can't be told. */
+  private defaultSink(): Promise<string | null> {
+    return new Promise(resolve => {
+      let out = "";
+      const q = this.spawn("pactl", ["info"], { stdio: ["ignore", "pipe", "ignore"], env: PACTL_ENV() });
+      const timer = setTimeout(() => { q.kill(); resolve(null); }, INFO_MS);
+      const done = (sink: string | null) => { clearTimeout(timer); resolve(sink); };
+      q.stdout?.on("data", (chunk: Buffer) => { out += chunk.toString("utf8"); });
+      q.once("error", () => done(null));
+      q.once("exit", code => done(code === 0 ? /^Default Sink: (.+)$/m.exec(out)?.[1].trim() ?? null : null));
+    });
   }
 }
