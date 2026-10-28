@@ -113,12 +113,15 @@ function wslStatus(t: TargetSummary): { status: string; note: string | null } {
   return { status, note: t.can ? cap(t.can) : null };
 }
 
-/** A host's status from its state and what it can do (review #156, #190), and the note that says what to do next. */
-function sshStatus(t: TargetSummary | undefined, label: string): { status: string; note: string | null } {
+/**
+ * A host's status from its state and what it can do (review #156, #190), and the note that says what to do next: turn
+ * commands on, unless the organisation turned them off on SSH computers (then the note says that instead).
+ */
+function sshStatus(t: TargetSummary | undefined, label: string, mode: CommandMode | null): { status: string; note: string | null } {
   if (!t) return { status: "Not connected", note: null };
   if (t.state === "ready") {
     if (t.can === STALLED_CAN) return { status: "Connected, but not answering", note: null };
-    if (t.can === NOTHING_CAN) return { status: "Connected, commands off", note: `Turn on commands for ${label} under Commands to use it.` };
+    if (t.can === NOTHING_CAN) return { status: "Connected, commands off", note: mode === "off" ? OFF_LINES.ssh : `Turn on commands for ${label} under Commands to use it.` };
     return { status: t.can ? `Connected: ${t.can}` : "Connected", note: null };
   }
   if (t.state === "connecting") return { status: "Connecting…", note: null };
@@ -186,7 +189,7 @@ export function computersView(i: {
         pending: `Removing Ember's helper from ${label}…`, done: `Removed. ${label} is no longer in your list.`,
       });
     }
-    return { id, name: label, detail, ...(sshAllowed ? sshStatus(t, label) : { status: "Not available", note: null }), actions };
+    return { id, name: label, detail, ...(sshAllowed ? sshStatus(t, label, modeFor(i.admin, "ssh")) : { status: "Not available", note: null }), actions };
   });
   const managed = [...(!sshAllowed ? [SSH_MANAGED] : []), ...(sshAllowed && i.admin.sshHostsLimited ? [SSH_LIMITED] : [])];
   return {

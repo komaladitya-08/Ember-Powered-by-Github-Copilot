@@ -29,6 +29,20 @@ describe("a computer's status says what is true and what to do next (review #156
     expect(sshRow(ssh({ can: "apps and commands" })).status).toBe("Connected: apps and commands");
   });
 
+  it("doesn't point to the Commands switch when the organisation has turned commands off there", () => {
+    const admin: cc.TargetsAdmin = { source: "x", features: {}, commands: { ssh: "off" } };
+    const row = cc.computersView({ os: "linux", settings: settings(), admin, summaries: [summary({}), ssh({ can: "nothing yet" })] }).ssh.rows[0];
+    expect(row).toMatchObject({ status: "Connected, commands off", note: "Your organisation has turned off commands on computers reached over SSH." });
+    expect(row.note).not.toMatch(/Turn on commands/);
+    // The Commands section says the same, beside its switch for build-01 (turned off there).
+    const commands = cc.commandsView({ settings: settings(), admin, summaries: [summary({}), ssh({ can: "nothing yet" })] });
+    expect(commands.managed).toContain(row.note);
+    expect(commands.rows.find(r => r.id === "ssh:build-01")?.run.disabled).toBe(true);
+    // "ask" leaves the switch to the user: the hint stays.
+    const asks = cc.computersView({ os: "linux", settings: settings(), admin: { ...admin, commands: { ssh: "ask" } }, summaries: [summary({}), ssh({ can: "nothing yet" })] }).ssh.rows[0];
+    expect(asks.note).toBe("Turn on commands for build-01 under Commands to use it.");
+  });
+
   it("offers Cancel, not Disconnect, while connecting", () => {
     const row = sshRow(ssh({ state: "connecting", can: "connecting…" }));
     expect(row.status).toBe("Connecting…");
