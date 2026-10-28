@@ -333,7 +333,7 @@ export const CLOUD_READ = new Set([
 export const CLOUD_READ_PHRASES: readonly string[] = [
   "s3 ls", "config view", "config current-context", "config get-contexts", "config get-clusters", "config get-users", "auth list", "auth can-i",
   "auth whoami", "rollout status", "rollout history", "repo list", "dependency list", "plugin list", "state list", "state show",
-  "workspace list", "workspace show", "stack ls",
+  "workspace list", "workspace show", "stack ls", "storage ls",
 ];
 export const CLOUD_DELETE = new Set(["delete", "destroy", "remove", "rm", "terminate", "purge", "drain", "uninstall", "rb", "deregister", "detach"]);
 export const CLOUD_CLIS: Readonly<Record<string, string>> = {
