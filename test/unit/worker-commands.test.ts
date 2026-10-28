@@ -5,7 +5,6 @@
  * async app launch, a desktop step that wanted a confirmation) as tool results.
  */
 
-import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Worker, LINUX_WORKER_SYSTEM, type TaskSpec, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
@@ -367,13 +366,20 @@ describe("grants and questions by target", () => {
     expect(local.asked[0]).not.toHaveProperty("where");
   });
 
-  it("fill_cells' one question for all its cells carries where too (review #13)", () => {
-    // (Its spreadsheet path needs a borrowed keyboard and a sheet; the question it builds is checked in the source.)
-    const src = readFileSync(new URL("../../app/main/agent/worker.ts", import.meta.url), "utf8");
-    const batch = src.slice(src.indexOf("private async authorizeCells("), src.indexOf("private cellAddress("));
-    expect(batch).toContain("const where = this.d.target ? whereWords(this.d.target) : undefined;");
-    expect(batch).toMatch(/const question: WhereQuestion = \{ title: "May I\?", context, prompt, [^\n]*\.\.\.\(where \? \{ where \} : \{\}\) \};/);
-    expect(batch).toContain("this.d.confirmer.ask(question, this.overSignal)");
+  it("fill_cells' one question for all its cells carries where too (review #13)", async () => {
+    // (Its spreadsheet path needs a borrowed keyboard and a sheet: its one question is asked here as fill_cells asks it,
+    // for the cells it was given, by a policy that asks about every step.)
+    const cells = [{ cell: "B5", place: { col: 1, row: 5 }, text: "42", seenKey: "B5" }, { cell: "B6", place: { col: 1, row: 6 }, text: "43", seenKey: "B6" }];
+    const askOf = async (target?: TargetBinding) => {
+      const rig = makeWorker({ ...(target ? { target } : {}), grants: {}, confirmEvery: true });
+      await rig.call("perceive_window", {});
+      const verdict = await (rig.w as unknown as { authorizeCells(jobs: typeof cells): Promise<unknown> }).authorizeCells(cells);
+      expect(verdict).toBeNull();
+      expect(rig.asked).toHaveLength(1);
+      return rig.asked[0];
+    };
+    expect(await askOf({ ...REMOTE, desktop: "screen" })).toMatchObject({ title: "May I?", where: "on build-01", prompt: expect.stringMatching(/^Borrow your keyboard to fill 2 cells in .*: B5 “42”, B6 “43”\?/) });
+    expect(await askOf()).not.toHaveProperty("where");
   });
 });
 
