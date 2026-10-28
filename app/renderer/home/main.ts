@@ -627,13 +627,25 @@ function showSection(value: string): void {
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
   const field = control ? document.getElementById(control) : null;
   const to = field && !isHidden(field) ? field : target;
-  to.scrollIntoView({ block: to === field ? "center" : "start", behavior: calm ? "auto" : "smooth" });
+  const block = to === field ? "center" : "start";
+  to.scrollIntoView({ block, behavior: calm ? "auto" : "smooth" });
   to.focus({ preventScroll: true });
+  keptInView = { el: to, block, until: performance.now() + 3000 };
   markCurrent(section);
   // The scroll this starts (and a page too short to bring the section to the top) doesn't move the mark.
   pinnedUntil = performance.now() + 900;
 }
 let pinnedUntil = 0;
+/**
+ * What showSection just focused, brought back into view while sections above it are still appearing (Computers,
+ * Commands come after the page has loaded and push it down) for a few seconds, until the user moves on.
+ */
+let keptInView: { el: HTMLElement; block: ScrollLogicalPosition; until: number } | null = null;
+new ResizeObserver(() => {
+  if (!keptInView || performance.now() > keptInView.until) { keptInView = null; return; }
+  const r = keptInView.el.getBoundingClientRect();
+  if (r.top < 0 || r.bottom > innerHeight) keptInView.el.scrollIntoView({ block: keptInView.block, behavior: "auto" });
+}).observe(document.body);
 // Main asks for a section ("Read all" on a long answer, connecting after setup).
 window.ember.onFocusSection(showSection);
 // A section that was hidden when main asked for it shows itself once it appears; a click, key or scroll first drops it.
@@ -642,7 +654,7 @@ new MutationObserver(() => {
   const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !isHidden(h); });
   if (value) showSection(value);
 }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
-for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => pendingSection.drop(), { capture: true, passive: true });
+for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; }, { capture: true, passive: true });
 const jumpLinks = [...document.querySelectorAll<HTMLAnchorElement>("#jump a")];
 const sectionOf = (a: HTMLAnchorElement) => (a.getAttribute("href") ?? "").replace(/^#/, "").replace(/-h$/, "");
 $("jump").addEventListener("click", e => {

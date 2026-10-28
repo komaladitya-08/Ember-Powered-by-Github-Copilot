@@ -146,4 +146,13 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     expect(MAIN).toContain('ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));');
     expect(MAIN).toContain('click: () => stopEverything("menu") }');
   });
+
+  it("opens settings from the keyboard at Ask Ember… while another app holds the ask shortcut (review #45)", () => {
+    expect(MAIN).toContain("const showHomeFromKeys = () => { showHome(); const at = keyboardRoute(shortcutsTaken ?? [], sc); if (at) sendToHome(IPC.focusSection, at); };");
+    // Ember started again, the Dock, and the settings shortcut; not the handle menu's Settings… (a pointer's way).
+    expect(MAIN).toContain('app.on("second-instance", () => { log.info("instance.second", {}); showHomeFromKeys(); });');
+    expect(MAIN).toContain('app.on("activate", () => showHomeFromKeys());');
+    expect(MAIN).toContain("[sc.settings.accel]: showHomeFromKeys,");
+    expect(MAIN).toContain("click: () => { opens = true; showHome(); } },");
+  });
 });

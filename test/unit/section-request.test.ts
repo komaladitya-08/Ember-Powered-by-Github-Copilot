@@ -14,6 +14,9 @@ describe("a section request from main", () => {
     expect(sectionRequest("computers:host")).toEqual({ section: "computers", control: "host-add" });
     expect(sectionRequest("computers:wsl")).toEqual({ section: "computers", control: "wsl-on" });
     expect(sectionRequest("computers:nonsense")).toEqual({ section: "computers", control: null });
+    // Opened from the keyboard while another app holds the ask or stop shortcut: at that button (review #45).
+    expect(sectionRequest("access:ask")).toEqual({ section: "access", control: "p-ask" });
+    expect(sectionRequest("access:stop")).toEqual({ section: "access", control: "p-stop" });
   });
 
   it("waits while its section is hidden, and is taken once it shows", () => {

@@ -15,7 +15,7 @@ import path from "node:path";
 import { createLogger, type LogLevel } from "./logger";
 import { SettingsStore, hasConsent, type SettingsPatch } from "./settings";
 import { commandMode, managedKeys } from "./admin";
-import { inspectEnvironment, type EnvReport } from "./environment";
+import { inspectEnvironment, keyboardRoute, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, quitQuestion, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
@@ -327,7 +327,7 @@ function start(): void {
 
   app.on("second-instance", () => {
     log.info("instance.second", {});
-    showHome();
+    showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.
@@ -439,6 +439,15 @@ function start(): void {
   const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
+  /**
+   * Settings opened from the keyboard (Ember started again, its settings shortcut, the Dock): while another app holds
+   * the ask or stop shortcut, at Ask Ember… or Stop everything, the keyboard's way to them then (review #45).
+   */
+  const showHomeFromKeys = () => {
+    showHome();
+    const at = keyboardRoute(shortcutsTaken ?? [], sc);
+    if (at) sendToHome(IPC.focusSection, at);
+  };
   const greet = () => {
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
@@ -447,7 +456,7 @@ function start(): void {
     // Shortcuts another app holds: the handle for a pointer, and settings' Ask Ember… for the keyboard.
     const keys = hasKey(sc.ask.accel) && hasKey(sc.stop.accel)
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
-      : `Click my handle in the corner to ask me something or to stop me, or use Ask Ember… in settings${hasKey(sc.settings.accel) ? ` (${sc.settings.label})` : ""}.`;
+      : `Click my handle in the corner to ask me something or to stop me, or ${hasKey(sc.settings.accel) ? `press ${sc.settings.label}: settings opens` : "open Ember again: its settings open"} at Ask Ember… and Stop everything.`;
     const settingsOpen = homeOpen();
     const thought = waiting ? "I can't reach GitHub yet: I'll connect as soon as the network is back."
       : !connected
@@ -1270,7 +1279,7 @@ function start(): void {
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
     let lastAskPress = 0;
     const shortcuts: Record<string, () => void> = {
-      [sc.settings.accel]: showHome,
+      [sc.settings.accel]: showHomeFromKeys,
       // A callback is not a press: X11 reports the shortcut again when its grab ends, after the keyboard buffer lets
       // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it. Elsewhere a callback is
       // one press (trusted, debounced).
@@ -1625,7 +1634,7 @@ function start(): void {
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.
-    if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHome());
+    if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHomeFromKeys());
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {

@@ -117,9 +117,19 @@ const versionAtLeast = (v: string, min: string) => {
 const OPEN_AGAIN: Readonly<Record<OS, string>> = { linux: "from your apps", win32: "from the Start menu", darwin: "from Applications" };
 
 /**
+ * Where settings opens when the user opens it from the keyboard (Ember started again, its settings shortcut, the Dock)
+ * while another app holds Ember's ask or stop shortcut: at Ask Ember… (else Stop everything) under Comfort & access,
+ * the keyboard's way to them then (review #45); null: where it was.
+ */
+export function keyboardRoute(taken: readonly string[], sc: ShortcutTable): "access:ask" | "access:stop" | null {
+  return taken.includes(sc.ask.accel) ? "access:ask" : taken.includes(sc.stop.accel) ? "access:stop" : null;
+}
+
+/**
  * The keyboard shortcuts check: the table's labels for those Ember holds, or which ones another app took and what to use
- * meanwhile, for the mouse (the handle) and for the keyboard (Ask Ember… in the settings window, which opening Ember
- * again brings up), since the handle can't be reached without a pointer.
+ * meanwhile, for the mouse (the handle) and for the keyboard (opening Ember again brings up its settings, at Ask Ember…
+ * and Stop everything when it is their shortcut that is taken: keyboardRoute), since the handle can't be reached
+ * without a pointer.
  */
 function shortcutsCheck(taken: string[], sc: ShortcutTable, os: OS): Check {
   // An accelerator as the copy writes it (on Linux the table's label is exactly "Control" → "Ctrl").
@@ -128,7 +138,7 @@ function shortcutsCheck(taken: string[], sc: ShortcutTable, os: OS): Check {
   return named.length
     ? {
       id: "shortcuts", label: "Keyboard shortcuts", status: "warn",
-      detail: `Another app already uses ${named.join(", ")}. Ember keeps trying to get ${named.length === 1 ? "it" : "them"}; meanwhile, click Ember's handle in the corner (it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again ${OPEN_AGAIN[os]} and choose Ask Ember… in its settings.`,
+      detail: `Another app already uses ${named.join(", ")}. Ember keeps trying to get ${named.length === 1 ? "it" : "them"}; meanwhile, click Ember's handle in the corner (it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again ${OPEN_AGAIN[os]}${keyboardRoute(taken, sc) ? ": its settings open at Ask Ember… and Stop everything, under Comfort & access." : " for its settings."}`,
     }
     : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
 }

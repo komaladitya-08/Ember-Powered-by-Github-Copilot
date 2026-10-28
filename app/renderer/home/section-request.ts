@@ -1,12 +1,16 @@
 /**
  * Which section of the settings window main asked for, and the control in it to focus: "computers" (its heading), or
- * "computers:host" / "computers:wsl" (the field to add a computer, the WSL switch). A section can still be hidden when
- * the request comes (Computers shows only once the computers list and the status have both arrived, after the page has
- * loaded): the request then waits until it shows, unless the user has moved on first. Pure and renderer-safe.
+ * "computers:host" / "computers:wsl" (the field to add a computer, the WSL switch), "access:ask" / "access:stop" (Ask
+ * Ember… and Stop everything, the keyboard's way to them while another app holds their shortcut). A section can still
+ * be hidden when the request comes (Computers shows only once the computers list and the status have both arrived,
+ * after the page has loaded): the request then waits until it shows, unless the user has moved on first. Pure and
+ * renderer-safe.
  */
 
 /** The controls a request may focus, by the name main uses (main's openSettings). */
-const CONTROLS: Readonly<Record<string, string>> = { "computers:host": "host-add", "computers:wsl": "wsl-on" };
+const CONTROLS: Readonly<Record<string, string>> = {
+  "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
+};
 
 /** A request as the page acts on it: the section's id (its heading is `${section}-h`) and the control's id, if any. */
 export interface SectionRequest {
