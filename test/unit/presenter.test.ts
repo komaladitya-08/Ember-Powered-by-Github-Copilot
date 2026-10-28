@@ -1,6 +1,9 @@
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
+
+// A test that fakes the clock (or sets its time) leaves the next one on the real clock.
+afterEach(() => { vi.useRealTimers(); });
 
 function setup() {
   const states: Partial<EmberState>[] = [];
