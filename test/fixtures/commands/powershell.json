@@ -5223,6 +5223,20 @@
   {
    "cmd": "cmake --build build --config Release --target app",
    "verdict": "run"
+  },
+  {
+   "cmd": "git add --pathspec-from-file=C:\\Users\\ana\\.ssh\\id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git add --pathspec-from-file=paths.txt",
+   "verdict": "run"
   }
  ]
 }

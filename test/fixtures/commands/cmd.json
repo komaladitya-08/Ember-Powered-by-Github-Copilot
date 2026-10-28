@@ -2633,6 +2633,16 @@
    "rules": [
     "secret.env"
    ]
+  },
+  {
+   "cmd": "git add --pathspec-from-file=C:\\Users\\ana\\.aws\\credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }

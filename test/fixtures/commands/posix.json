@@ -11915,6 +11915,284 @@
   {
    "cmd": "awk -f prog.awk data.txt",
    "verdict": "run"
+  },
+  {
+   "cmd": "date -f ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date -f ~/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date -f/home/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date --file=~/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date --file ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date -uf ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date -f ~/.config/ember/settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "date -f \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": "date -f dates.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "date -f - <<< 'tomorrow'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "date -d tomorrow",
+   "verdict": "run"
+  },
+  {
+   "cmd": "date -j -f %Y 2020 +%s",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "date -j -f '%Y-%m-%d' 2024-01-01 +%s",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "du --files0-from=~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "du --files0-from ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "du --files0-from=/home/ana/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "du -X ~/.ssh/id_rsa .",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "du --exclude-from=/home/ana/.ssh/id_rsa .",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "du --exclude=.env .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "du --exclude='*.pem' -sh .",
+   "verdict": "run"
+  },
+  {
+   "cmd": "du --files0-from=names.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "sort --files0-from ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "wc --files0-from=~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "wc --files0-from ~/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "wc --files0-from=names.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tree --fromfile ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tree --fromfile listing.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "find -files0-from ~/.ssh/id_rsa -print",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "find -files0-from names.txt -print",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git add --pathspec-from-file=~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git add --pathspec-from-file /home/ana/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git rm --cached --pathspec-from-file=/home/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git reset --pathspec-from-file=/home/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "git add --pathspec-from-file=paths.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git add --pathspec-from-file=- <<< 'a.txt'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ls --hide=.env",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo --file=~/.ssh/id_rsa",
+   "verdict": "run"
   }
  ]
 }

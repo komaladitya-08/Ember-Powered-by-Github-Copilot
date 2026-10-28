@@ -2086,6 +2086,30 @@
    "rules": [
     "path.secret"
    ]
+  },
+  {
+   "cmd": "du --files0-from=/mnt/c/Users/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date -f /mnt/c/Users/ana/.aws/credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "date -f /home/ana/.local/state/ember-remote/x",
+   "verdict": "refuse"
   }
  ]
 }

@@ -1588,8 +1588,9 @@ class Engine extends Classifier {
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
-    if (n) { n(h); return; }
-    generic(h);
+    if (n) n(h);
+    else generic(h);
+    optionPaths(h);
   }
 
   /** Every argument read as a possible path (an unknown program's operands): secrets and Ember's paths judged. */
@@ -1686,6 +1687,7 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     if (n) n(inner);
     else generic(inner);
+    optionPaths(inner);
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
@@ -1973,6 +1975,37 @@ function generic(h: H): void {
   }
 }
 
+/** Programs whose arguments name files on another computer or in a container, not here (their own rows judge them). */
+const ELSEWHERE_ARGS = new Set(["ssh", "slogin", "autossh", "mosh", "docker", "podman", "nerdctl", "docker-compose", "podman-compose", "kubectl"]);
+/** Long options whose value names a file the program reads: `--file`, `--input-file`, `--pathspec-from-file`, `--files0-from`. */
+const FILE_OPTION = /(file|files|.-from)$/;
+
+/**
+ * Every program's long options whose value names a file it reads, judged after its own row (which may never look at
+ * them): `du --files0-from=…`, `git add --pathspec-from-file …`, `date --file=…` read the file and show its lines in
+ * their errors, so the secret and Ember rules meet the file as they do `cat`'s (review #174). Text programs' words
+ * and the arguments of programs that name files elsewhere (another computer, a container) are left out.
+ */
+function optionPaths(h: H): void {
+  if (TEXT.has(h.key) || ELSEWHERE_ARGS.has(h.key)) return;
+  const args = h.args;
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (a.v === null || a.param !== undefined) continue;
+    if (a.v === "--") return;
+    const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v);
+    if (!m) continue;
+    const name = m[1].toLowerCase();
+    if (!FILE_OPTION.test(name) || name.endsWith("profile")) continue;
+    // `--file=x` in one word (its pattern, for a glob, is the part after `=`), or `--file x`.
+    const value: Arg | undefined = m[2] !== undefined
+      ? { ...a, v: m[3], pattern: a.pattern === undefined ? undefined : a.pattern.slice(a.pattern.indexOf("=") + 1) }
+      : args[k + 1];
+    if (!value || value.v === null || value.v === "" || STDIN_NAME.test(value.v) || NULL_SINKS.has(value.v.toLowerCase()) || URL_LIKE.test(value.v)) continue;
+    h.e.usePath(value, "read", h.sc);
+  }
+}
+
 /** PowerShell's approved verbs that change things: an unknown cmdlet with one is unclear (§3.4.2's conservative rule). */
 const PS_READ_VERBS = new Set(["get", "find", "search", "select", "measure", "test", "compare", "convertto", "convertfrom", "format", "resolve", "trace", "join", "split", "group", "sort", "where", "foreach", "show", "read", "out", "write", "debug", "wait", "use", "watch", "confirm", "assert", "ping", "receive", "convert", "expand", "limit"]);
 function unknownCmdlet(h: H): void {
@@ -2007,6 +2040,13 @@ reg(NATIVE, ["hostname"], h => {
 });
 reg(NATIVE, ["date"], h => {
   if (h.args.some(a => a.v === "-s" || (a.v ?? "").startsWith("--set"))) h.e.add("system", "system.kernel", "Changes how the system works.");
+  // GNU date -f reads dates from a file and shows each line it can't read in its error, so it reads that file like cat
+  // (review #174). BSD date's -f is an input format.
+  if (h.sc.os === "darwin") return;
+  for (const f of values(opts(h, { shortValue: "dfrs", longValue: ["date", "file", "reference", "set"] }), "f", "file")) {
+    if (f === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
+    else if (!STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  }
 });
 
 // cd and friends: the task's folder for what follows (§3.14).
@@ -2085,11 +2125,21 @@ function finishCd(h: H, abs: string | null): void {
 
 // Listing names and sizes reads no file's contents.
 reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "exa", "eza"], h => {
-  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style"] });
+  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style", "files0-from", "exclude-from"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
+  // du reads names from --files0-from and patterns from -X/--exclude-from, and shows the lines in its errors (review
+  // #174): those files are read. `--exclude` is a pattern, not an abbreviation of --exclude-from.
+  if (h.key === "du") {
+    for (const o of p.opts) {
+      const named = o.name === "-X" || (o.name.startsWith("--files0") && "--files0-from".startsWith(o.name)) || (o.name.startsWith("--exclude-") && "--exclude-from".startsWith(o.name));
+      if (named && o.value !== undefined && o.value !== null && !STDIN_NAME.test(o.value)) h.e.usePath(lit(o.value), "read", h.sc);
+    }
+  }
+  // tree --fromfile reads each file it is given as a listing and prints its lines.
+  const use: PathUse = h.key === "tree" && has(p, "fromfile") ? "read" : "list";
   for (const a of p.operands) {
     if (a.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`); continue; }
-    const obj = h.e.usePath(a, "list", h.sc);
+    const obj = h.e.usePath(a, use, h.sc);
     if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
   }
 });
@@ -2288,6 +2338,8 @@ reg(NATIVE, ["find"], h => {
     }
     if (/^-(print0?|printf|ls)$/.test(v)) action = true;
     if (/^-(i?name|i?path|i?wholename|i?regex|i?lname)$/.test(v)) { const pv = expr[j + 1]?.v; if (pv) patterns.push(pv); j++; continue; }
+    // The starting points read from a file, whose names find shows in its errors (review #174).
+    if (v === "-files0-from") { const f = expr[j + 1]; if (f && f.v !== null && !STDIN_NAME.test(f.v)) h.e.usePath(f, "read", h.sc); j++; continue; }
     if (FIND_VALUE.has(v)) j++;
   }
   if (hasDelete) h.e.add("destroy", "posix.find.delete", `Deletes what it finds under ${where}.`, { objects: startObjs });
