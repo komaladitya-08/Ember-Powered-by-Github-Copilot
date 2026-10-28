@@ -11445,6 +11445,183 @@
    ],
    "context": "darwin",
    "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/com.apple.LaunchServices LSQuarantine -bool false",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/com.apple.LaunchServices.plist LSQuarantine -bool false",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/com.apple.screensaver askForPassword -int 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/ByHost/com.apple.screensaver.ABC idleTime 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults -currentHost write ~/Library/Preferences/ByHost/com.apple.screensaver.0123ABCD-4567-89EF-0123-456789ABCDEF.plist idleTime 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/com.apple.loginitems x y",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults delete ~/Library/Preferences/com.apple.screensaver askForPassword",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write /Library/Preferences/com.apple.alf globalstate -int 0",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults read ~/Library/Preferences/com.apple.screensaver",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/com.example.app x 1",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/Library/Preferences/ByHost/com.example.app.ABC x 1",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "defaults write ~/proj/build/com.apple.screensaver askForPassword -int 0",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Set :askForPassword 0' ~/Library/Preferences/com.apple.screensaver.plist",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Set :LSQuarantine false' ~/Library/Preferences/com.apple.LaunchServices.plist",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Add :x string y' ~/Library/Preferences/com.apple.loginitems.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "/usr/libexec/PlistBuddy -c 'Print' ~/Library/Preferences/com.apple.screensaver.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace askForPassword -integer 0 ~/Library/Preferences/com.apple.screensaver.plist",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace idleTime -integer 0 ~/Library/Preferences/ByHost/com.apple.screensaver.0123ABCD-4567-89EF-0123-456789ABCDEF.plist",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace LSQuarantine -bool false ~/Library/Preferences/com.apple.LaunchServices.plist",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -convert binary1 -o ~/Library/Preferences/com.apple.screensaver.plist new.plist",
+   "verdict": "ask",
+   "rules": [
+    "system.security"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -p ~/Library/Preferences/com.apple.screensaver.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace x -integer 0 ~/Library/Preferences/com.example.app.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
   }
  ]
 }

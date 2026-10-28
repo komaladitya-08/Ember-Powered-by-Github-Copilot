@@ -4792,6 +4792,29 @@ reg(NATIVE, ["dconf"], h => {
 const DEFAULTS_SECURITY = /^com\.apple\.(screensaver|alf|security(\..+)?|screensharing|remotemanagement|remotedesktop|softwareupdate|commerce)$/i;
 /** macOS preference domains that start something at login or choose which program opens a file or link (review #175). */
 const DEFAULTS_AUTOSTART = /^com\.apple\.(loginitems|loginwindow|backgroundtaskmanagementagent|launchservices)(\/|$)/i;
+/**
+ * The preference domains a property list holds, when it is one macOS reads settings from: a file in a Library/Preferences
+ * folder (`…/Library/Preferences/com.apple.screensaver.plist` holds com.apple.screensaver), or in its ByHost folder,
+ * whose names end with the computer's id (`com.apple.screensaver.<id>`). Empty for any other file (review #108).
+ */
+function prefsDomains(path: string): string[] {
+  const m = /(?:^|\/)Library\/Preferences\/(ByHost\/)?(.+?)(?:\.plist)?$/i.exec(path);
+  if (!m) return [];
+  return m[1] ? [m[2], m[2].replace(/\.[^.]*$/, "")] : [m[2]];
+}
+/**
+ * A change to preference domains (null: ones Ember can't name, which could be any): those that weaken a protection, and
+ * LSQuarantine (`lsq`: the change names it) in any, ask as security; those that start something at login ask as autostart.
+ */
+function prefsChange(h: H, domains: readonly string[] | null, lsq: boolean): void {
+  if (domains === null || lsq || domains.some(d => DEFAULTS_SECURITY.test(d))) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
+  if (domains === null || (!lsq && domains.some(d => DEFAULTS_AUTOSTART.test(d)))) h.e.add("system", "path.autostart", "Schedules something to run later or at login.");
+}
+/** A property list written by PlistBuddy or plutil: a preferences file is judged as a change to its domains. */
+function prefsFile(h: H, obj: Obj, lsq: boolean): void {
+  const domains = obj.abs === null ? [] : prefsDomains(obj.abs);
+  if (domains.length) prefsChange(h, domains, lsq);
+}
 reg(NATIVE, ["defaults"], h => {
   // defaults [-currentHost | -host NAME] <verb> <domain> …; the domain may be `-g`, `-app NAME`, a name or a path.
   let k = 0;
@@ -4810,14 +4833,11 @@ reg(NATIVE, ["defaults"], h => {
   }
   if (verb !== null && !/^(write|delete|import|rename)$/.test(verb)) { if (file) h.e.usePath(file, "read", h.sc); return; }
   if (verb === "import" && rest[1] && rest[1].v !== "-") h.e.usePath(rest[1], "read", h.sc);
-  if (file) { h.e.usePath(file, "write", h.sc); return; }
+  const lsq = rest.some(a => /LSQuarantine/i.test(a.v ?? ""));
+  // A path domain is judged as a write to its file and as a change to the domain it holds (review #108).
+  if (file) { const obj = h.e.usePath(file, "write", h.sc); prefsChange(h, prefsDomains(obj.abs ?? file.v ?? ""), lsq); return; }
   const unknown = verb === null || (!app && domain === null);
-  if (unknown || rest.some(a => /LSQuarantine/i.test(a.v ?? "")) || (domain !== null && DEFAULTS_SECURITY.test(domain))) {
-    h.e.add("system", "system.security", "Turns off or weakens a security protection.");
-  }
-  if (unknown || (domain !== null && DEFAULTS_AUTOSTART.test(domain) && !rest.some(a => /LSQuarantine/i.test(a.v ?? "")))) {
-    h.e.add("system", "path.autostart", "Schedules something to run later or at login.");
-  }
+  prefsChange(h, unknown ? null : domain === null ? [] : [domain], lsq);
 });
 // Property lists edited in place (review #175): a LaunchAgent built with PlistBuddy or plutil runs at the next login.
 reg(NATIVE, ["PlistBuddy", "plistbuddy"], h => {
@@ -4845,7 +4865,10 @@ reg(NATIVE, ["PlistBuddy", "plistbuddy"], h => {
     if (h.s.stdin === null) h.e.unclear("unclear.interactive", SAYS.interactive);
     else { writes = true; h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."); }
   }
-  if (file) h.e.usePath(file, writes ? "write" : "read", h.sc);
+  if (file) {
+    const obj = h.e.usePath(file, writes ? "write" : "read", h.sc);
+    if (writes) prefsFile(h, obj, cmds.some(c => c !== null && /LSQuarantine/i.test(c)));
+  }
   // A command or file Ember can't see may be any, as for any program's unresolved argument.
   if (file?.v === null || cmds.includes(null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
 });
@@ -4870,8 +4893,9 @@ reg(NATIVE, ["plutil"], h => {
     if (v === "-insert" || v === "-replace") k += /^-(array|dictionary)$/.test(h.args[k + 2]?.v ?? "") ? 2 : 3;
     else k += PLUTIL_VALUES[v] ?? 0;
   }
-  if (out && out.v !== "-") h.e.usePath(out, "write", h.sc);
-  if (verb === null || (verb !== undefined && /^-(insert|replace|remove|create|convert)$/.test(verb) && !out)) objsOf(h, files, "write");
+  const lsq = h.args.some(a => /LSQuarantine/i.test(a.v ?? ""));
+  if (out && out.v !== "-") prefsFile(h, h.e.usePath(out, "write", h.sc), lsq);
+  if (verb === null || (verb !== undefined && /^-(insert|replace|remove|create|convert)$/.test(verb) && !out)) for (const f of files) prefsFile(h, h.e.usePath(f, "write", h.sc), lsq);
   else h.e.readArgs(files, h.sc);
   if (verb === null || files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog} is given.`);
 });
