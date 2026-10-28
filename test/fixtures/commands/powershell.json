@@ -5255,6 +5255,20 @@
   {
    "cmd": "gcc --output=C:\\Users\\ana\\AppData\\Local\\ember\\x x.c",
    "verdict": "refuse"
+  },
+  {
+   "cmd": "tsc --outDir C:\\Windows\\x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.system"
+   ]
+  },
+  {
+   "cmd": "cargo build --out-dir C:\\Users\\ana\\proj\\out",
+   "verdict": "run"
   }
  ]
 }

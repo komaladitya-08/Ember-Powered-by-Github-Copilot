@@ -12986,6 +12986,68 @@
   {
    "cmd": "pip download -d build x && sh build/run.sh",
    "verdict": "run"
+  },
+  {
+   "cmd": "eslint -o report.json src",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pytest --log-file=build/test.log",
+   "verdict": "run"
+  },
+  {
+   "cmd": "pytest --junitxml=build/junit.xml",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tsc --project tsconfig.json",
+   "verdict": "run"
+  },
+  {
+   "cmd": "go test ./... -coverprofile=cover.out",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gcc -Wall -o build/app main.c",
+   "verdict": "run"
+  },
+  {
+   "cmd": "esbuild src/index.ts --bundle --outfile=dist/out.js",
+   "verdict": "run"
+  },
+  {
+   "cmd": "bun build ./index.ts --outdir ./out",
+   "verdict": "run"
+  },
+  {
+   "cmd": "sort --files0-from=names0",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git commit --file=msg.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "valgrind --log-file=vg.txt ./app",
+   "verdict": "run"
+  },
+  {
+   "cmd": "split -l 1000 data.csv chunk_",
+   "verdict": "run"
+  },
+  {
+   "cmd": "yq -o json x.yaml",
+   "verdict": "run"
+  },
+  {
+   "cmd": "node --env-file=.env server.js",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }
