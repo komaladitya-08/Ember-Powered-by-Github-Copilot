@@ -298,7 +298,7 @@ ssh-askpass) and never-look apps are refused there as on Linux.
 
 ### 3.3 What a distro needs
 
-Ember never installs anything itself; the check-up names the command. In each distro you want Ember to read apps in:
+Ember never installs anything itself; the setup check names the command. In each distro you want Ember to read apps in:
 
 | Distro | Command |
 |---|---|
@@ -511,7 +511,7 @@ rest of its output is dropped and you won't see it. After the stop chord, output
 | "Your organisation doesn't allow Ember to connect to build-01." | Your administrator's `ssh.allowedHosts` |
 | "build-01's administrator doesn't allow Ember there." / "build-01's Ember policy is broken, so Ember won't work there." | build-01's own policy (§6.4) |
 
-## 5. The check-up
+## 5. The setup check
 
 `ember doctor` and the settings window's setup check gain these rows:
 
