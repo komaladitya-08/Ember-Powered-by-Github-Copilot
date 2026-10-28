@@ -534,7 +534,8 @@ export class SettingsStore {
     } else if (opts.soon) {
       this.pending = { ...this.pending, ...patch };
       if (!this.pendingTimer) {
-        this.pendingTimer = setTimeout(() => { try { this.flush(); } catch { /* saved with the next change */ } }, 400);
+        // Let go of before saving: a save that fails leaves the next change free to set a new one (review #84).
+        this.pendingTimer = setTimeout(() => { this.pendingTimer = null; try { this.flush(); } catch { /* saved with the next change */ } }, 400);
         this.pendingTimer.unref?.();
       }
     } else {
