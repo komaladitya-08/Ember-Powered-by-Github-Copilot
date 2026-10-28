@@ -97,20 +97,67 @@ app.whenReady().then(async () => {
 });
 `;
 
+/**
+ * The keychain child (review #241): seals a sign-in with safeStorage.encryptString, as TokenStore.save does, and opens
+ * it with decryptStringAsync, as TokenStore.load does on macOS (so the keychain prompt after an update holds no main
+ * thread), directly and through TokenStore itself. It prints "EMBER_RESULT <json>" and quits. It adds an
+ * "ember-darwin-system-keychain Safe Storage" item to the login keychain.
+ */
+const KEYCHAIN_CHILD = `
+import { app, safeStorage } from "electron";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { TokenStore } from "./app/main/agent/auth";
+
+app.whenReady().then(async () => {
+  const out: Record<string, unknown> = {};
+  try {
+    out.available = safeStorage.isEncryptionAvailable();
+    out.asyncAvailable = await safeStorage.isAsyncEncryptionAvailable();
+    const opened = await safeStorage.decryptStringAsync(safeStorage.encryptString("gho_EmberKeychainCheck1"));
+    out.result = opened.result;
+    out.shouldReEncrypt = opened.shouldReEncrypt;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-keychain-"));
+    try {
+      const store = new TokenStore(path.join(dir, "github-token.bin"), safeStorage, { version: "0.0.0-test", asyncDecrypt: true });
+      out.saved = store.save("gho_EmberKeychainCheck2");
+      out.loaded = await store.load();
+      out.unreadable = store.unreadable;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    out.error = String(err);
+  }
+  process.stdout.write("EMBER_RESULT " + JSON.stringify(out) + "\\n");
+  app.exit(0);
+});
+`;
+
+/** What the keychain child reports (see KEYCHAIN_CHILD). */
+interface KeychainReport {
+  available?: boolean; asyncAvailable?: boolean; result?: string; shouldReEncrypt?: boolean;
+  saved?: boolean; loaded?: string | null; unreadable?: boolean; error?: string;
+}
+
 /** The Electron binary the electron package installed (its main export is the path). */
 const electronBinary = () => createRequire(import.meta.url)("electron") as unknown as string;
 
-/** Builds CHILD into .cache/test (so it loads koffi from the repository's node_modules) and runs it under Electron. */
-async function runChild(): Promise<ChildReport> {
-  const dir = path.join(root, ".cache", "test", "darwin-system-electron");
+/**
+ * Builds a child (CHILD by default) into .cache/test/<folder> (so it loads koffi from the repository's node_modules)
+ * and runs it under Electron as the app `name`.
+ */
+async function runChild<R = ChildReport>(source = CHILD, folder = "darwin-system-electron", name = "ember-darwin-system-test"): Promise<R> {
+  const dir = path.join(root, ".cache", "test", folder);
   fs.mkdirSync(dir, { recursive: true });
   buildSync({
-    stdin: { contents: CHILD, loader: "ts", resolveDir: root, sourcefile: "darwin-system-child.ts" },
+    stdin: { contents: source, loader: "ts", resolveDir: root, sourcefile: `${folder}-child.ts` },
     bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron", "koffi"], outfile: path.join(dir, "main.cjs"), logLevel: "silent",
   });
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "ember-darwin-system-test", main: "main.cjs" }));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, main: "main.cjs" }));
   const electron = electronBinary();
-  return new Promise<ChildReport>((resolve, reject) => {
+  return new Promise<R>((resolve, reject) => {
     // ELECTRON_RUN_AS_NODE from the caller would start a plain Node instead of the app.
     const child = spawn(electron, [dir], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0", ELECTRON_RUN_AS_NODE: undefined } });
     let stdout = "", stderr = "";
@@ -122,7 +169,7 @@ async function runChild(): Promise<ChildReport> {
       const line = stdout.split("\n").find(l => l.startsWith("EMBER_RESULT "));
       if (!line) return reject(new Error(`Electron exited ${code} without a report\n${stderr}`));
       if (stderr.trim()) console.log(`Electron child's stderr:\n${stderr}`);
-      resolve(JSON.parse(line.slice("EMBER_RESULT ".length)) as ChildReport);
+      resolve(JSON.parse(line.slice("EMBER_RESULT ".length)) as R);
     });
   });
 }
@@ -255,6 +302,17 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
     }
   }, 40_000);
 
+  // Writes an item to the login keychain: only where asked for, as CI does.
+  it.runIf(required)("opens a sign-in sealed with encryptString through decryptStringAsync, as TokenStore does on macOS (review #241)", async () => {
+    const r = await runChild<KeychainReport>(KEYCHAIN_CHILD, "darwin-system-keychain", "ember-darwin-system-keychain");
+    console.log(`keychain child: ${JSON.stringify(r)}`);
+    expect(r.error).toBeUndefined();
+    expect({ available: r.available, asyncAvailable: r.asyncAvailable }).toEqual({ available: true, asyncAvailable: true });
+    // The same key either way: a token TokenStore.save sealed opens, and needn't be sealed again.
+    expect({ result: r.result, shouldReEncrypt: r.shouldReEncrypt }).toEqual({ result: "gho_EmberKeychainCheck1", shouldReEncrypt: false });
+    expect({ saved: r.saved, loaded: r.loaded, unreadable: r.unreadable }).toEqual({ saved: true, loaded: "gho_EmberKeychainCheck2", unreadable: false });
+  }, 90_000);
+
   describe("inside Electron", () => {
     let report: ChildReport | null = null;
     let missing = "";
@@ -266,7 +324,7 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
         if (required) throw new Error(missing);
         return;
       }
-      report = await runChild();
+      report = await runChild<ChildReport>();
       console.log(`Electron child: ${JSON.stringify(report)}`);
       // On a developer's Mac the grant belongs to whichever app started the run (Terminal, an editor): skip without it.
       if (report.screenAccess !== "granted") missing = `Screen Recording is ${report.screenAccess} for the app that started this run`;

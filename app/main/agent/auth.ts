@@ -19,6 +19,8 @@ export interface SecretBox {
   isEncryptionAvailable(): boolean;
   encryptString(s: string): Buffer;
   decryptString(b: Buffer): string;
+  /** Electron's asynchronous read: the keyring's key is fetched off the main process's thread (macOS's keychain prompt). */
+  decryptStringAsync?(b: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
   /** "basic_text" means no keyring: nothing secret should be written to disk. */
   getSelectedStorageBackend?(): string;
 }
@@ -34,8 +36,11 @@ export class TokenStore {
    */
   unreadable = false;
 
-  /** `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate). */
-  constructor(private file: string, private box: SecretBox, private opts: { version?: string } = {}) {}
+  /**
+   * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
+   * `asyncDecrypt` (macOS): load() opens it with decryptStringAsync, so the keychain prompt holds no main thread.
+   */
+  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncDecrypt?: boolean } = {}) {}
 
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
@@ -74,7 +79,7 @@ export class TokenStore {
     } catch { /* only the keychain words come once more */ }
   }
 
-  load(): string | null {
+  async load(): Promise<string | null> {
     let raw: Buffer;
     try {
       raw = fs.readFileSync(this.file);
@@ -83,7 +88,9 @@ export class TokenStore {
       return null; // none saved
     }
     try {
-      const t = this.box.decryptString(raw);
+      // Sealed by encryptString, opened by decryptStringAsync on macOS: the same keychain key, so shouldReEncrypt is
+      // false and the file is left as it is (darwin-system checks both on a real Mac).
+      const t = this.opts.asyncDecrypt && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
       this.unreadable = false;
       this.stamp();
       return isUsableToken(t) ? t : null;
@@ -145,7 +152,7 @@ export async function resolveToken(
   env: NodeJS.ProcessEnv = process.env,
   gh: (() => Promise<string | null>) | GhCliOptions = {},
 ): Promise<ResolvedToken | null> {
-  const stored = store?.load();
+  const stored = await store?.load();
   if (stored) return { token: stored, source: "stored" };
   for (const name of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]) {
     if (isUsableToken(env[name])) return { token: env[name]!.trim(), source: "environment" };
