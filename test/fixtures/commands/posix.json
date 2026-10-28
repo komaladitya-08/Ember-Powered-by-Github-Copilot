@@ -14930,6 +14930,176 @@
    "rules": [
     "posix.rm"
    ]
+  },
+  {
+   "cmd": "psql -f - <<< '\\! id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "psql -f /dev/stdin <<< '\\! id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "psql --file=- <<< '\\! id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "cat x.sql | psql -f -",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.stdin-code"
+   ]
+  },
+  {
+   "cmd": "psql -f - <<< 'select 1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "sqlite3 -init /dev/stdin x.db .tables <<< '.shell id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "sqlite3 -init x.sql x.db .tables",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "sqlite3 -init ~/.ssh/id_rsa x.db .tables",
+   "verdict": "ask",
+   "classes": [
+    "secret",
+    "unclear"
+   ],
+   "rules": [
+    "path.secret",
+    "unclear.sql"
+   ]
+  },
+  {
+   "cmd": "sqlite3 -init /dev/stdin x.db .tables <<< '.mode box'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "sqlite3 -cmd '.mode box' x.db 'select 1'",
+   "verdict": "run"
+  },
+  {
+   "cmd": "make -f /dev/fd/3 3<<< $'all:\\n\\trm -rf ~/Documents'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.script-stream"
+   ]
+  },
+  {
+   "cmd": "awk -f /dev/fd/3 x.txt 3<<< 'BEGIN{system(\"id\")}'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.script-stream"
+   ]
+  },
+  {
+   "cmd": "cmake -P /dev/fd/3 3<<< 'execute_process(COMMAND id)'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.script-stream"
+   ]
+  },
+  {
+   "cmd": "ninja -f /proc/self/fd/3 3< build.x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.script-stream"
+   ]
+  },
+  {
+   "cmd": "psql -f /dev/fd/3 3<<< '\\! id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.script-stream"
+   ]
+  },
+  {
+   "cmd": "sqlite3 -init /dev/fd/3 x.db .tables 3<<< '.shell id'",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.script-stream"
+   ]
+  },
+  {
+   "cmd": "sqlite3 x.db < schema.sql",
+   "verdict": "run"
+  },
+  {
+   "cmd": "psql -d x < dump.sql",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mysql x < dump.sql",
+   "verdict": "run"
+  },
+  {
+   "cmd": "psql -f - < dump.sql",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cat dump.sql | mysql x",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.stdin-code"
+   ]
   }
  ]
 }

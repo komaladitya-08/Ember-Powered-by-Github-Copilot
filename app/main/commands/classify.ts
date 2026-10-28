@@ -124,6 +124,7 @@ export const SAYS = {
   downloadsAndRuns: "Downloads code and runs it.",
   opensProgram: "Opens a program that keeps running after Ember stops.",
   runsDownloaded: "Runs a file downloaded in this task.",
+  scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
   interactive: "This opens an interactive program; you'd have to use it yourself in the command window.",
@@ -527,7 +528,7 @@ class Classifier {
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);
     if (stream(abs)) {
-      this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first.");
+      this.unclear("unclear.script-stream", SAYS.scriptStream);
       return;
     }
     // A shell or the kernel opens the name as written, walking `..` through links (`sh sub/../t.sh` with sub a link
@@ -542,7 +543,7 @@ class Classifier {
       this.addProbe(open);
       real = this.ctx.real?.get(open);
       if (!real) { this.unclear("unclear.script-path", SCRIPT_UNSURE); return; }
-      if (stream(real)) { this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first."); return; }
+      if (stream(real)) { this.unclear("unclear.script-stream", SAYS.scriptStream); return; }
     }
     // A secret or one of Ember's own files is never read as a script: running it already asks or is refused (the path's
     // own rule), and its text has no business on a card.
@@ -679,6 +680,8 @@ const reg = (table: Record<string, Handler>, names: readonly string[], fn: Handl
 
 /** A file name that is the program's stdin (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`). */
 const STDIN_NAME = /^(-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/(self|\d+)\/fd\/0)$/;
+/** A file name that is one of the program's open descriptors (`/dev/fd/3`, `/proc/self/fd/3`); fd 0 is STDIN_NAME. */
+const STREAM_NAME = /^(\/dev\/fd\/\d+|\/proc\/(self|\d+)\/fd\/\d+)$/;
 
 /** A URL (`https://…`, `file:///…`, `s3://…`, `git@host:…`). */
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
@@ -2213,7 +2216,7 @@ reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h =>
     interactive(h);
     databaseText(h, inlineSql(h, ["e"], ["execute"]));
     // SQL read from stdin or a here-document (`mysql <<< 'system id'`): judge the seen text, else ask (review #166).
-    if (h.s.stdin !== null && !inlineSql(h, ["e"], ["execute"]).length) fromStdin(h, t => databaseText(h, [t]));
+    if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h);
   }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
@@ -2242,6 +2245,14 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
   return out;
 }
 
+/**
+ * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
+ * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does.
+ */
+function sqlFromStdin(h: H): void {
+  if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t]));
+}
+
 /** A database client's own text: changing data is class a; running programs or touching files from it is unclear. */
 function databaseText(h: H, texts: (string | null)[]): void {
   for (const t of texts) {
@@ -2256,17 +2267,32 @@ reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhou
   const k = h.key;
   if (k === "psql") {
     databaseText(h, inlineSql(h, ["c"], ["command"]));
-    // SQL read from stdin or a here-document (`psql <<< '\! id'`): judge the seen text, else ask (review #166).
-    if (h.s.stdin !== null && !inlineSql(h, ["c"], ["command"]).length && !inlineSql(h, ["f"], ["file"]).length) fromStdin(h, t => databaseText(h, [t]));
+    // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
+    // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
+    const files = inlineSql(h, ["f"], ["file"]);
+    if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h);
+    if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
   }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
   else if (k === "clickhouse-client") databaseText(h, inlineSql(h, ["q"], ["query"]));
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
-    const ops = h.args.filter(a => !isOption(a));
+    // -cmd's and -init's values are not the database or its SQL.
+    const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
     databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))]);
+    // -init FILE runs the file's commands first, as `.read FILE` does (review #166): stdin is judged as below, another
+    // descriptor can't be read first, and any other file asks.
+    const init = h.args.flatMap((a, j) => (/^--?init$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : []));
+    for (const f of init) {
+      if (f !== null && STDIN_NAME.test(f)) sqlFromStdin(h);
+      else if (f !== null && STREAM_NAME.test(f)) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+      else {
+        if (f) h.e.usePath(lit(f), "read", h.sc);
+        h.e.unclear("unclear.sql", "It runs database client commands from a file Ember doesn't read.");
+      }
+    }
     // SQL read from stdin or a here-document (`sqlite3 <<< '.shell id'`): judge the seen text, else ask (review #166).
-    if (h.s.stdin !== null && ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd")) fromStdin(h, t => databaseText(h, [t]));
+    if (ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd") && !init.some(f => f !== null && STDIN_NAME.test(f))) sqlFromStdin(h);
     if (ops[0]) h.e.readArgs([ops[0]], h.sc);
     return;
   } else if (k === "mongo" || k === "mongosh") {
@@ -2811,6 +2837,7 @@ reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
   if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
+  else if (progFiles.some(f => f !== null && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
   let files = p.operands;
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
@@ -4302,6 +4329,11 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
     fromStdin(h, () => h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."));
     return;
   }
+  // One given as another descriptor (`-f /dev/fd/3 3<<< …`) can't be read first either.
+  if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f !== null && STREAM_NAME.test(f))) {
+    h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+    return;
+  }
   for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
   if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
@@ -4370,6 +4402,7 @@ reg(NATIVE, ["cmake"], h => {
     h.e.readArgs(h.args.filter((_, k) => k !== p && k !== p + 1), h.sc, { unresolvedUnclear: true });
     if (!script) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
     if (script.v !== null && STDIN_NAME.test(script.v)) { intoInterpreter(h); return; }
+    if (script.v !== null && STREAM_NAME.test(script.v)) { h.e.unclear("unclear.script-stream", SAYS.scriptStream); return; }
     runScript(h, script);
     return;
   }
