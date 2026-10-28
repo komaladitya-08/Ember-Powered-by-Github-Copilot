@@ -160,7 +160,8 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
-  onVoiceProgress(fn: (p: { done: number; total: number }) => void): () => void;
+  /** `phase` "unpacking": the last download is in, and is being checked and unpacked. */
+  onVoiceProgress(fn: (p: { done: number; total: number; phase?: "unpacking" }) => void): () => void;
   /** The newest audit entries, newest first. */
   activity(): Promise<ActivityEntry[]>;
   /** Look for a sign-in again (e.g. after gh auth login) and reconnect; says whether one was found and where. */

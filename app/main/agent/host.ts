@@ -192,6 +192,11 @@ export interface HostOptions {
    * has none, through the GitHub CLI: the signed-out line then says so, and the status tells the settings window.
    */
   signInWith?: SignInWith;
+  /**
+   * How a spoken announcement says to cancel it (main's cancelWords: the kill phrase only where Ember can tell its own
+   * voice from the user's, review #251). Default: the stop shortcut, as said aloud.
+   */
+  cancelWords?: () => string;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -1379,7 +1384,7 @@ export class AgentHost {
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
       task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}),
-      ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} Say 'Ember, stop' to cancel.`) } : {}),
+      ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
     });
     this.taskPresenters.set(id, p);
     return p;

@@ -44,8 +44,9 @@ describe("bindings", () => {
 describe("this screen's hands (local and WSL)", () => {
   it("are main's own objects with the binding, system and commands added, grants lower-case and leases unchanged", () => {
     const h = screenHands({ hands, base: null, binding: localBinding("linux", true), system, commands })!;
-    for (const k of Object.keys(hands) as (keyof Hands)[]) expect(h[k]).toBe(hands[k]);
-    expect(h.system).toBe(system);
+    // (Its perception and sidecar are main's, telling whether the task used them: see below.)
+    for (const k of Object.keys(hands) as (keyof Hands)[]) if (k !== "perception" && k !== "sidecar") expect(h[k]).toBe(hands[k]);
+    expect(h.system.os).toBe("win32");
     expect(h.commands).toBe(commands);
     expect(h.grantKey("GEdit")).toBe("gedit");
     expect(h.leaseKey("100:notes")).toBe("100:notes");
@@ -56,9 +57,48 @@ describe("this screen's hands (local and WSL)", () => {
     const local = screenHands({ hands, base: null, binding: localBinding("win32", true), system, commands: null })!;
     const wsl = screenHands({ hands, base: null, binding: wslBinding({ name: "Ubuntu", version: 2 }, true), system, commands })!;
     expect(wsl.leaseKey("0x1234:gedit")).toBe(local.leaseKey("0x1234:gedit"));
-    expect(wsl.perception).toBe(local.perception);
     expect(wsl.binding.id).toBe("wsl:Ubuntu");
     expect(wsl.grantKey("wsl:ubuntu:gedit")).toBe("wsl:ubuntu:gedit");
+  });
+
+  it("tell whether their own task used this screen: a read, a picture, a step, an app opened, Ember's desk (review #81)", async () => {
+    const read = vi.fn(async () => "seen"), perceive = vi.fn(async () => "picture"), doAction = vi.fn(async () => true);
+    const launch = vi.fn(), desk = vi.fn(async () => "place");
+    const mine = { ...hands, perception: { ...refusingPerception("no"), read, perceive }, sidecar: { ...refusingSidecar("no"), doAction }, desk } as unknown as Hands;
+    const sys = { os: "linux", apps: { list: () => [], launch } } as unknown as WorkerSystem;
+    const make = (binding = localBinding("linux", true)) => screenHands({ hands: mine, base: null, binding, system: sys, commands })!;
+    const reads = make(), pictures = make(wslBinding({ name: "Ubuntu", version: 2 }, true)), steps = make(), opens = make(), desks = make(), commandsOnly = make();
+    expect(reads.usedDesktop?.()).toBe(false);
+    await expect(reads.perception.read({})).resolves.toBe("seen");
+    expect(reads.usedDesktop?.()).toBe(true);
+    await expect(pictures.perception.perceive({ image: true, scope: "screen" })).resolves.toBe("picture");
+    expect(pictures.usedDesktop?.()).toBe(true);
+    steps.sidecar.scaleOf(1);
+    steps.sidecar.stop();
+    expect(steps.usedDesktop?.()).toBe(false);
+    await expect(steps.sidecar.doAction(3, "click")).resolves.toBe(true);
+    expect(doAction).toHaveBeenCalledWith(3, "click");
+    expect(steps.usedDesktop?.()).toBe(true);
+    opens.system.apps.launch({ id: "gedit.desktop", name: "Text Editor" } as never);
+    expect(launch).toHaveBeenCalledWith({ id: "gedit.desktop", name: "Text Editor" });
+    expect(opens.usedDesktop?.()).toBe(true);
+    await expect(desks.desk?.()).resolves.toBe("place");
+    expect(desks.usedDesktop?.()).toBe(true);
+    // Commands and listing the apps aren't this screen: such a task goes on when it locks. Each task's hands speak only
+    // for that task.
+    expect(commandsOnly.commands).toBe(commands);
+    commandsOnly.system.apps.list();
+    expect(commandsOnly.usedDesktop?.()).toBe(false);
+  });
+
+  it("keep this screen's reason for its system-dialog check (secure keyboard entry, Wayland), which counts as a use", async () => {
+    const why = "secure keyboard entry is on in Terminal";
+    const mine = { ...hands, perception: { ...refusingPerception("no"), systemDialogReason: vi.fn(async () => why) } } as unknown as Hands;
+    const h = screenHands({ hands: mine, base: null, binding: localBinding("darwin", true), system, commands })!;
+    await expect(h.perception.systemDialogReason?.()).resolves.toBe(why);
+    expect(h.usedDesktop?.()).toBe(true);
+    const plain = screenHands({ hands: { ...hands, perception: refusingPerception("no") }, base: null, binding: localBinding("linux", true), system, commands })!;
+    expect(plain.perception.systemDialogReason).toBeUndefined();
   });
 
   it("without a window system carry commands only: every read and action refuses, nothing flies, no window starts a task", async () => {

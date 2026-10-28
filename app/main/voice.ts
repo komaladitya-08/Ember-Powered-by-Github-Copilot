@@ -15,9 +15,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader } from "../voice/models";
+import { ensureModels, forgetModels, modelPaths, modelsReady, VOICE_MODELS_BYTES, type Downloader, type ModelsProgress } from "../voice/models";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
+import { FrameWatchdog } from "../voice/watchdog";
+import { withoutOwnPhrases } from "../voice/spoken";
 import { VOICE, type MicState, type MicStatus } from "../shared/voice";
 import type { Logger } from "./logger";
 
@@ -32,10 +34,25 @@ const SPEAKING_MAX_MS = 60_000;
 const CANCEL_GRACE_MS = 1000;
 /** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
 const RESTART_MS = [1000, 5000, 30_000];
+/**
+ * A ready voice process that says nothing for this long is stuck or suspended (it says it's alive every second; its
+ * longest piece of work, 21 s of speech to transcribe, took 1.4 s as measured; ms).
+ */
+const ALIVE_MS = 15_000;
+/** What the voice line says while the screen is locked (review #81). */
+const LOCKED_TEXT = "Not listening while the screen is locked.";
+/** What the voice line says while the microphone sends only digital silence (review #255). */
+const SILENT_TEXT = "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.";
 
 export interface VoiceOptions {
   log: Logger;
+  /** The speech models' folder. */
   modelsRoot: string;
+  /**
+   * `modelsRoot` came with Ember (inside the app, or installed beside it), so Ember never changes it: should its models
+   * turn out damaged, the user's own models folder (`userRoot`) is used, and downloaded to, instead (review #254).
+   */
+  bundled?: { userRoot: string };
   /** Speaker-output rejection (needs parec). */
   monitor: boolean;
   /**
@@ -78,6 +95,8 @@ export class VoiceService {
   private state: MicState = "off";
   private muted = false;
   private wanted = false;
+  /** The screen is locked: no listening and no speech until it's unlocked. */
+  private locked = false;
   private downloading: Promise<void> | null = null;
   /** Until when Ember is speaking, or about to: a follow-up window waits until it's done. */
   private speakingUntil = 0;
@@ -88,12 +107,23 @@ export class VoiceService {
   private cancelledAt = Number.NEGATIVE_INFINITY;
   /** The microphone went away and the mic page is getting it back (its frames stop meanwhile). */
   private micLost = false;
+  /** The microphone sends only digital silence (the voice line says so until sound comes back). */
+  private micSilent = false;
+  /** The voice process hears the speakers' own stream (speaker rejection runs: Linux with parec). */
+  private monitorOn = false;
   /** Starting again after listening broke: the timer, how many times in a row, and when the current process got ready. */
   private retry: NodeJS.Timeout | null = null;
   private failures = 0;
   private readyAt = 0;
+  /** Whether the ready voice process still answers: what it last sent, checked every second (review #257). */
+  private alive: { watch: FrameWatchdog; timer: NodeJS.Timeout } | null = null;
+  /** Where the models are: modelsRoot, or the user's own folder once those that came with Ember turned out damaged. */
+  private modelsRoot: string;
+  private bundled: boolean;
 
   constructor(private o: VoiceOptions) {
+    this.modelsRoot = o.modelsRoot;
+    this.bundled = !!o.bundled;
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
@@ -120,8 +150,17 @@ export class VoiceService {
     return this.state;
   }
 
+  /**
+   * Ember listens and can tell its own voice (and the speakers') from the user's: the speakers' stream is arriving, so
+   * a wake or stop phrase it says itself is rejected. False while not listening, and wherever speaker rejection doesn't
+   * run (Windows, macOS, Linux without parec): Ember then never says those phrases (owner decision V1, review #251).
+   */
+  get rejectsSpeakers(): boolean {
+    return !!this.proc && this.monitorOn && (this.state === "waiting" || this.state === "active");
+  }
+
   get modelsReady(): boolean {
-    return modelsReady(this.o.modelsRoot);
+    return modelsReady(this.modelsRoot);
   }
 
   /** Lets the mic window (and only it) use the microphone, audio only. */
@@ -145,11 +184,25 @@ export class VoiceService {
     return this.muted;
   }
 
+  /**
+   * The screen locked, or this session isn't the one in front (review #81): no listening and no speech until it's back,
+   * so nobody in the room talks to Ember (the wake word isn't the user's alone) or hears it read out the user's apps.
+   */
+  setLocked(on: boolean): void {
+    if (on === this.locked) return;
+    this.locked = on;
+    if (!on) { void this.start(); return; }
+    this.hush();
+    this.cancelRetry();
+    this.teardown();
+    if (this.wanted && !this.muted) this.setState("off", LOCKED_TEXT);
+  }
+
   /** Rejects if the download fails; the state has then already gone back (with what went wrong as its detail). */
-  async downloadModels(progress: (done: number, total: number) => void): Promise<void> {
+  async downloadModels(progress: ModelsProgress): Promise<void> {
     if (!this.downloading && !this.modelsReady) {
       this.setState("downloading");
-      this.downloading = ensureModels(this.o.modelsRoot, electronDownloader, progress)
+      this.downloading = ensureModels(this.modelsRoot, electronDownloader, progress)
         .then(() => { this.o.log.info("voice.models_ready", { bytes: VOICE_MODELS_BYTES }); })
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
@@ -198,6 +251,9 @@ export class VoiceService {
   }
 
   speak(text: string): void {
+    if (this.locked) return;
+    // Listening without the speakers' stream, the microphone would take Ember's own "Ember, stop" for the user's.
+    if (this.mic && !this.rejectsSpeakers) text = withoutOwnPhrases(text);
     this.speakingUntil = Math.max(this.speakingUntil, Date.now() + SPEECH_START_MS);
     if (this.mic && !this.mic.isDestroyed()) { this.mic.webContents.send(VOICE.speak, text); return; }
     // Listening is off: "Speak replies" still works, from a window that only speaks.
@@ -222,10 +278,13 @@ export class VoiceService {
     if (!this.wanted || this.proc) return;
     this.cancelRetry();
     if (this.muted) { this.setState("muted"); return; }
+    if (this.locked) { this.setState("off", LOCKED_TEXT); return; }
     if (!this.modelsReady) { this.setState(this.downloading ? "downloading" : "needs-models"); return; }
     this.setState("starting");
     this.readyAt = 0;
     this.micLost = false;
+    this.micSilent = false;
+    this.monitorOn = false;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
@@ -234,10 +293,46 @@ export class VoiceService {
     });
     proc.on("message", (m: VoiceProcessMessage) => {
       if (this.proc !== proc) return; // a process being replaced: only the current one speaks for the mic
-      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.setState("waiting"); return; }
-      if (m.type === "error") { this.o.log.error("voice.error", { message: m.message }); this.setState("error", m.message); this.teardown(); return; }
+      this.alive?.watch.frame();
+      if (m.type === "alive") return;
+      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting"); return; }
+      if (m.type === "error") {
+        this.o.log.error("voice.error", { message: m.message, models: !!m.models });
+        this.teardown();
+        // Models that won't load are damaged: they count as missing from now, and settings offers the download again.
+        if (m.models) {
+          // Models that came with Ember are never changed (they may be inside the signed app, and an update replaces
+          // them): the user's own folder is used from now on, and the download goes there.
+          if (this.bundled && this.o.bundled) {
+            this.o.log.warn("voice.bundled_models_damaged", { root: this.modelsRoot });
+            this.bundled = false;
+            this.modelsRoot = this.o.bundled.userRoot;
+            if (this.modelsReady) void this.start();
+            else this.setState("needs-models", "The speech models look damaged. Download them again.");
+            return;
+          }
+          if (forgetModels(this.modelsRoot)) this.setState("needs-models", "The speech models look damaged. Download them again.");
+          else this.setState("error", "The speech models look damaged, and Ember can't replace them: it isn't allowed to change its models folder.");
+          return;
+        }
+        this.setState("error", m.message);
+        return;
+      }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
-      if (m.type === "monitor") { this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
+      if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
+      // They keep failing (unusable until loaded again): started again, with the backoff.
+      if (m.type === "engine-broken") { this.o.log.error("voice.engine_broken", { message: m.message }); this.restartLater("The speech recognizer kept failing."); return; }
+      if (m.type === "monitor") { this.monitorOn = m.on; this.o.log.info("voice.speaker_rejection", { on: m.on, reason: m.reason }); return; }
+      if (m.type === "silent") {
+        // Frames still arrive (the watchdog is content), but nothing can be heard in them: said, not restarted.
+        this.o.log.warn("voice.silent", { on: m.on });
+        const was = this.micSilent;
+        this.micSilent = m.on;
+        if (m.on) this.setState("error", SILENT_TEXT);
+        else if (was && this.state === "error") this.setState("waiting"); // (not another error, such as a lost microphone)
+        return;
+      }
       if (m.type === "stalled") {
         // The mic page says when it lost the microphone (and gets it back itself); otherwise audio just stopped.
         if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }
@@ -251,7 +346,7 @@ export class VoiceService {
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: modelPaths(this.o.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged }, [port1]);
+    proc.postMessage({ type: "init", models: modelPaths(this.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;
@@ -277,6 +372,30 @@ export class VoiceService {
     this.retry = setTimeout(() => { this.retry = null; void this.start(); }, ms);
   }
 
+  /**
+   * From ready on, a voice process that says nothing for ALIVE_MS is taken for stuck (a WebAssembly call that never
+   * returns, or security software suspending it) and started again: it can't say so itself, the microphone's frames
+   * would pile up in its queue, and Ember would show "Listening" while deaf (review #257). Main's own late check (the
+   * computer slept) doesn't count.
+   */
+  private watchAlive(proc: UtilityProcess): void {
+    this.stopWatchingAlive();
+    const watch = new FrameWatchdog(ms => {
+      if (this.proc !== proc) return;
+      this.o.log.warn("voice.unresponsive", { ms });
+      this.restartLater("The voice process stopped responding.");
+    }, Date.now, ALIVE_MS, ALIVE_MS);
+    watch.frame();
+    const timer = setInterval(() => watch.check(), 1000);
+    timer.unref?.();
+    this.alive = { watch, timer };
+  }
+
+  private stopWatchingAlive(): void {
+    if (this.alive) clearInterval(this.alive.timer);
+    this.alive = null;
+  }
+
   private cancelRetry(): void {
     if (this.retry) clearTimeout(this.retry);
     this.retry = null;
@@ -291,9 +410,15 @@ export class VoiceService {
   private teardown(): void {
     this.closeMic();
     this.dropFollowUp();
+    this.stopWatchingAlive();
+    this.monitorOn = false;
     const p = this.proc;
     this.proc = null;
-    p?.kill();
+    if (!p) return;
+    p.kill();
+    // Not started yet (no pid): kill() does nothing then, and with its handle dropped the process would live on, models
+    // loaded, until Ember quits. It goes as soon as it has started (review #256).
+    if (p.pid === undefined) p.once("spawn", () => p.kill());
   }
 
   stop(): void {

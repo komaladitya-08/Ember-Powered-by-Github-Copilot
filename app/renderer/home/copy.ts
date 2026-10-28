@@ -11,6 +11,12 @@ import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefau
 /** Linux's never-look defaults, the list a fresh Linux install starts with (other OSes': app/shared/never-look.ts). */
 export const NEVER_LOOK_DEFAULTS: readonly string[] = NEVER_LOOK_BY_OS.linux;
 
+/**
+ * The row a control the organisation manages dims with it (Element.closest): the switch's label it sits in, or the
+ * choice row its own label sits beside (Speak … out loud, review #55).
+ */
+export const MANAGED_ROW = "label, .choice";
+
 /** How a never-look entry reads on screen (the defaults are stored lower-case, as matched). */
 export function neverLookLabel(item: string): string {
   return NEVER_LOOK_NAMES[item.trim().toLowerCase()] ?? item;

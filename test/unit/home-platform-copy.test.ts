@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   LINUX_ENTRY_WORDS, NEVER_LOOK_DEFAULTS, auditCopySegments, auditDirLabel, chordSegments, describeEntry, emptyConversationText, entryWords, homePatches,
-  keyLabel, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
+  keyLabel, MANAGED_ROW, micOffText, missingDefaults, rereadsStatusOnFocus, tagline, type HomePatch, type Segment,
 } from "../../app/renderer/home/copy";
 import type { StatusPlatform } from "../../app/shared/ipc";
 import { SHORTCUTS, type OS, type ShortcutId } from "../../app/shared/shortcuts";
@@ -119,7 +119,7 @@ const TODAY = {
   "permissions-note": "It reads the window you're working in through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.",
   // What the audit log keeps of each task (its request and how it went) is said, not denied (review #87).
   "data-dir": "On this computer it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (kept 30 days), in ~/.config/ember. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.",
-  "mic-indicator": "Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only). GNOME shows a microphone icon while Ember listens. Ctrl+Alt+M turns the microphone off and on.",
+  "mic-indicator": "Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens. GNOME shows a microphone icon while Ember listens. Ctrl+Alt+M turns the microphone off and on.",
   "audit-dir": "Every decision and action is also in ~/.config/ember/audit/ and in the system journal (journalctl -t ember-audit).",
 } as const;
 const CHORD_SENTENCES: Record<ShortcutId, string> = {
@@ -127,8 +127,8 @@ const CHORD_SENTENCES: Record<ShortcutId, string> = {
   settings: "Press Ctrl+Alt+E any time to come back here, or click Ember's handle in the bottom-right corner.",
   ask: "Ask Ember anything with Ctrl+Alt+Space.",
   mute: TODAY["mic-indicator"],
-  allow: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.",
-  deny: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.",
+  allow: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.",
+  deny: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.",
 };
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
 const t = "2026-10-22T09:00:00.000Z";
@@ -380,4 +380,23 @@ describe("Computers and Commands before the targets runtime answers", () => {
     expect(visible(plug[0])).toBe("Other computers and commands are off until you turn them on: Ember can work in WSL, on computers you reach over SSH, and run commands in its own window. Each asks you first.");
     expect(elements(plug[0]).some(e => e.attrs.class === "chord")).toBe(false);
   });
+});
+
+describe("a voice control the organisation manages", () => {
+  /** Element.closest for MANAGED_ROW's forms (a tag, or a class), on the page model: the element itself, then up. */
+  const closest = (root: El, id: string, selector: string): El | null => {
+    const trail = (n: El, up: El[]): El[] | null => {
+      if (n.attrs.id === id) return [...up, n];
+      for (const c of n.children) if (typeof c !== "string") { const t = trail(c, [...up, n]); if (t) return t; }
+      return null;
+    };
+    const is = (e: El, one: string) => (one.startsWith(".") ? (e.attrs.class ?? "").split(/\s+/).includes(one.slice(1)) : e.tag === one);
+    return [...trail(root, [])!].reverse().find(e => selector.split(",").some(one => is(e, one.trim()))) ?? null;
+  };
+
+  it.each([["wake", "Listen for “Hey Ember”"], ["speak", "Speak replies, questions and results out loud"]])(
+    "dims its whole row, its words included: %s (review #55)", (id, words) => {
+      const row = closest(page(), id, MANAGED_ROW);
+      expect(row && visible(row)).toContain(words);
+    });
 });

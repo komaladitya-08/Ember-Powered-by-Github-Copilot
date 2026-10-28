@@ -9,9 +9,10 @@ import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
+import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
+  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
   modelLabel, retryMessage, saveFailedText, signInLabel, tagline, usageLine, voiceFix, voiceFixFailed, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
@@ -354,7 +355,7 @@ function renderAdmin(a: Status["admin"]): void {
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
-    (input.closest("label") ?? input).classList.toggle("locked", managed.has(key));
+    (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
     if (managed.has(key)) input.title = "Managed by your organisation";
   }
   privacyKey = "";
@@ -866,7 +867,7 @@ function renderVoice(v: VoiceStatus): void {
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
-  ($("speak") as HTMLInputElement).checked = s.speak;
+  ($("speak") as HTMLSelectElement).value = speakChoice(s);
   if (voice) renderVoice(voice);
 }
 $("wake").addEventListener("change", e => {
@@ -883,7 +884,7 @@ $("consent-yes").addEventListener("click", () => {
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
-$("speak").addEventListener("change", e => { void save({ speak: (e.target as HTMLInputElement).checked }); });
+$("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
   // The button goes while it downloads: focus stays in the section.
@@ -894,8 +895,10 @@ window.ember.onVoiceProgress(p => {
   bar.hidden = false;
   bar.value = p.done / p.total;
   const pct = Math.round((p.done / p.total) * 100);
-  $("voice-text").textContent = `Downloading speech models… ${pct}%`;
-  voiceLive(`Downloading speech models… ${progressStep(p.done / p.total)}%`);
+  // Once the last byte is in, the archive is checked and unpacked: said, so the bar doesn't look stuck (review #259).
+  const doing = p.phase === "unpacking" ? "Unpacking" : "Downloading";
+  $("voice-text").textContent = `${doing} speech models… ${pct}%`;
+  voiceLive(`${doing} speech models… ${progressStep(p.done / p.total)}%`);
 });
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);

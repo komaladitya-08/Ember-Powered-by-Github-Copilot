@@ -336,6 +336,19 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await host.stop();
   });
 
+  it("an announced command says how to cancel it as main says, by default the stop shortcut: never the kill phrase Ember's own voice could trigger (review #251)", async () => {
+    const { t } = fakeTargets();
+    const said: string[] = [];
+    const plain = await started({ hands: hands(), targets: t, onAnnounce: s => said.push(s) });
+    (plain.real({ id: "9-c", goal: "x", target: {}, targetId: "ssh:build-01" }, () => undefined) as any).d.presenter.announce("Deleting build, as you asked.", "ui:cmdstop:1");
+    expect(said).toEqual(["On build-01: Deleting build, as you asked. Press Control Alt X to cancel."]);
+    await plain.host.stop();
+    const heard = await started({ hands: hands(), targets: t, onAnnounce: s => said.push(s), cancelWords: () => "Say 'Ember, stop' to cancel." });
+    (heard.real({ id: "9-d", goal: "x", target: {} }, () => undefined) as any).d.presenter.announce("Deleting build, as you asked.", "ui:cmdstop:2");
+    expect(said.at(-1)).toBe("Deleting build, as you asked. Say 'Ember, stop' to cancel.");
+    await heard.host.stop();
+  });
+
   it("a target that can't take the task when it runs ends it at once with why, and no session is made", async () => {
     const { t } = fakeTargets({ refuse: { "ssh:build-01": "build-01 isn't connected. Connect it from Ember's menu first." } });
     const { host, real } = await started({ hands: hands(), targets: t });

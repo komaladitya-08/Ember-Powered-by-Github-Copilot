@@ -90,14 +90,17 @@
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
         <div id="consent" class="consent" hidden>
-          <p>Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only).</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</p>
+          <p>Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</p>
           <div class="agent-actions"><button type="button" id="consent-yes" class="btn">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
         <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
         <p class="sr" id="voice-live" role="status"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
-        <label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies, questions and results out loud</span></label>
+        <div class="choice">
+          <label for="speak">Speak replies, questions and results out loud</label>
+          <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
+        </div>
       </div>
       <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
     </section>
@@ -167,7 +170,7 @@
         <div class="group">
           <label class="switch-row"><input type="checkbox" id="reduce-motion" role="switch"><span>Calm mode: no hops, bounces or fidgets</span></label>
         </div>
-        <p class="hint">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.</p>
+        <p class="hint">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.</p>
       </div>
     </section>
 

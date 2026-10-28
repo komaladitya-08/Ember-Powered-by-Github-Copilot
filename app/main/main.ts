@@ -52,7 +52,9 @@ import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
-import { endsWithQuestion, spokenText } from "../voice/spoken";
+import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
+import { speaksAloud } from "../shared/speech";
+import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
@@ -732,8 +734,11 @@ function start(): void {
     try { if (Notification.isSupported()) new Notification({ title, body: body.slice(0, 240), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
   };
   let askHistory: string[] = [];
-  /** Speak replies (or a screen reader runs: Orca, Narrator, VoiceOver), unless the organisation turned speaking off. */
-  const maySpeak = () => policy.features.speak !== false && (settings.get().speak || sys.a11y.screenReaderOn());
+  /**
+   * Speak replies: always, or while a screen reader runs (Orca, Narrator, VoiceOver; the default), or never, as the user
+   * chose (review #55); never when the organisation turned speaking off.
+   */
+  const maySpeak = () => policy.features.speak !== false && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
 
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
@@ -760,6 +765,8 @@ function start(): void {
   let targets: (TargetsRuntime & TargetsRuntimeExtra) | null = null;
   let perception: Perception | null = null;
   let voice: VoiceService | null = null;
+  /** This computer's screen lock (review #81): while locked, Ember doesn't listen, speak or take requests. */
+  let screenLock: ScreenLock | null = null;
   /** Where the user was when they last called Ember (taken before anything of Ember's takes focus). */
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
@@ -778,8 +785,19 @@ function start(): void {
     const selected = active && active.pid !== process.pid && clip ? clip.readSelection(active.id).catch(() => "") : Promise.resolve("");
     callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
+  /**
+   * Main's own notice in the bubble for `ms`: held, so a task's hide doesn't wipe it, and given back after, so a task still
+   * at work shows its progress again (review #81).
+   */
+  const showNotice = (n: { title: string; thought: string }, ms: number) => holdNotice<EmberState["bubble"]>({
+    claim: () => agent?.claimBubble(), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
+    release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
+  }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, ms);
   const askEmber = async (text: string) => {
     if (!consented()) { showHome(); return; }
+    // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
+    // who sees it (the lock read wrongly) knows why nothing happened.
+    if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
     if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
     // A Stop while the screen is read (or the brain connects) drops the request.
@@ -1093,7 +1111,7 @@ function start(): void {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
     try {
-      await voice?.downloadModels((done, total) => broadcast(IPC.voiceProgress, { done, total }));
+      await voice?.downloadModels((done, total, phase) => broadcast(IPC.voiceProgress, { done, total, ...(phase ? { phase } : {}) }));
     } catch {
       return; // VoiceService already left "Downloading…" and said why (onState → voiceStatus with the detail)
     }
@@ -1477,7 +1495,8 @@ function start(): void {
       setStatus("borrow", driving ? (borrow.usesMouse ? "Using your mouse: move it to take over" : "Using your keyboard: press a key or move the mouse to take over")
         : borrow.pending > 0 ? (borrow.usesMouse ? "Waiting until you let go of the mouse…" : "Waiting until you stop using the keyboard and mouse…") : null);
     };
-    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(xinput, {
+    // Nothing is borrowed while this computer's screen is locked, whatever the input's own check sees (review #81).
+    const borrow: CursorBorrow | null = xinput && policy.features.cursor !== false ? new CursorBorrow(lockAwareInput(xinput, () => screenLock?.locked ?? false), {
       onChange: showBorrowing,
       // Never the ask box (it hid when the borrow took the keyboard), nor a window that isn't on screen any more.
       mayRefocus: w => !askWindow.isWindow(w) && shownWindows().some(s => s.client === w || s.id === w),
@@ -1510,8 +1529,9 @@ function start(): void {
     // A desk whose display died is gone: the next desk task starts a new one.
     deskManager?.onDead(() => { deskPlace = null; });
     app.on("will-quit", () => { void deskPlace?.then(p => p.close()).catch(() => undefined); deskManager?.stop(); });
-    // Built whenever a window system opened: reading apps (tier 1) needs no input backend.
-    const hands: Hands | undefined = wsSeen ? {
+    // Built whenever a window system opened: reading apps (tier 1) needs no input backend. They refuse this screen while
+    // it's locked (review #81).
+    const hands: Hands | undefined = wsSeen ? lockedOutHands({
       perception, sidecar: seenBy, audit, confirmer,
       policy: new PolicyEngine({
         neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
@@ -1558,7 +1578,7 @@ function start(): void {
         // Several tasks may borrow in turn: the state shown is the borrow's own (driving now, or someone waiting), not the last task's word.
         setBorrowing: showBorrowing,
       } : undefined,
-    } : undefined;
+    }, () => screenLock?.locked ?? false) : undefined;
     // Where tasks act (this computer, WSL distros, computers over SSH) and their commands (§2): made whether or not this
     // screen has hands (without them, this computer is commands only).
     // The runtime's channels hear only Ember's own bundled pages (each handler then checks which window sent it).
@@ -1653,6 +1673,8 @@ function start(): void {
       emberPids: () => targets?.emberPids() ?? [],
       // A command the user asked for is announced aloud too when replies are spoken (D4.4); its Stop is on screen.
       onAnnounce: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
+      // Its cancel words: the kill phrase only where Ember can tell its own voice from the user's (owner decision V1).
+      cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null }),
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
@@ -1698,6 +1720,8 @@ function start(): void {
     voice = new VoiceService({
       log: log.child("voice"),
       modelsRoot: speechModels.root,
+      // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
+      ...(speechModels.bundled ? { bundled: { userRoot: path.join(userData, "models") } } : {}),
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without
@@ -1754,6 +1778,27 @@ function start(): void {
       },
     });
     app.on("will-quit", unwatchPolicy);
+
+    // ───── Screen lock (review #81) ─────
+    // While this computer's screen is locked, or its session isn't the one in front, whoever is there isn't the user:
+    // Ember stops listening and speaking, takes no requests, its hands refuse this screen, and the tasks working on its
+    // desktop stop, as on a remote computer whose screen locks. What stopped is said once the user is back.
+    const lockControl = new LockController({
+      stopDesktopTasks: () => agent?.cancelTasksOn("local", "desktop") ?? 0,
+      setLocked: locked => voice?.setLocked(locked),
+      showNotice: n => showNotice(n, 8000),
+    });
+    screenLock = new ScreenLock({
+      events: powerMonitor,
+      // Linux: logind, watched (Electron's own reading can't see GNOME's lock shield there); elsewhere Electron's.
+      ...(platform.os === "linux"
+        ? logindLock({ sessionId: process.env.XDG_SESSION_ID, uid: process.getuid?.() ?? -1, log: log.child("screen") })
+        : { initial: () => powerMonitor.getSystemIdleState(1) === "locked" }),
+      onChange: locked => { log.info("screen.lock", { locked }); lockControl.change(locked); },
+    });
+    screenLock.start();
+    if (screenLock.locked) lockControl.change(true);
+    app.on("will-quit", () => { screenLock?.stop(); lockControl.dispose(); });
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets,
     // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.

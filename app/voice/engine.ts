@@ -20,6 +20,11 @@
  */
 
 export const SAMPLE_RATE = 16_000;
+/**
+ * Less audio than this (0.1 s) holds no word, and the recognizer can't take it: Moonshine throws a bare number out of
+ * WebAssembly for under about 0.06 s (review #253). transcribe() hears nothing in it.
+ */
+export const MIN_TRANSCRIBE_SAMPLES = Math.round(0.1 * SAMPLE_RATE);
 
 /** The recognizers, behind an interface so the state machine is testable. */
 export interface VoiceBackend {
@@ -49,6 +54,7 @@ export interface VoiceBackend {
   /** Ends any segment in progress and returns it (it ends with the last frame fed); the VAD starts afresh. */
   flushVad(): Float32Array[];
   resetVad(): void;
+  /** What was said in `samples`; "" for nothing heard (less than MIN_TRANSCRIBE_SAMPLES of audio, or the recognizer failed). */
   transcribe(samples: Float32Array): string;
   /** What the VAD heard just before a segment it returned (0.1 s), if it still has it; optional. */
   before?(segment: Float32Array): Float32Array | null;
@@ -766,7 +772,10 @@ export class VoiceEngine {
    * voice is much louder, as before a wake). Returns whether the stop check is done with.
    */
   private bargeIn(s: PendingStop, now: number): boolean {
-    const heard = this.backend.transcribe(this.ring.read());
+    // A window that was already listening has heard its pre-roll (the ring is empty): nothing to check here, and the stop
+    // check below still hears what was said with the name.
+    const pre = this.ring.read();
+    const heard = pre.length >= MIN_TRANSCRIBE_SAMPLES ? this.backend.transcribe(pre) : "";
     if (saidWakeStop(heard)) {
       this.pendingStop = null;
       this.emit({ type: "stop" });
