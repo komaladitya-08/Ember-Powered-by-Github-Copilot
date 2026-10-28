@@ -5448,6 +5448,82 @@
   {
    "cmd": "Get-ChildItem C:\\Users\\ana\\proj",
    "verdict": "run"
+  },
+  {
+   "cmd": "Copy-Item tool.exe $env:LOCALAPPDATA\\Microsoft\\WindowsApps\\git.exe",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "C:\\Users\\ana\\AppData\\Local\\Microsoft\\WindowsApps\\git.exe"
+   ]
+  },
+  {
+   "cmd": "Set-Content -Path $HOME\\_vimrc -Value x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "C:\\Users\\ana\\_vimrc"
+   ]
+  },
+  {
+   "cmd": "Set-Content -Path $env:LOCALAPPDATA\\nvim\\init.lua -Value x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "C:\\Users\\ana\\AppData\\Local\\nvim\\init.lua"
+   ]
+  },
+  {
+   "cmd": "Set-Content -Path $env:APPDATA\\pip\\pip.ini -Value x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "C:\\Users\\ana\\AppData\\Roaming\\pip\\pip.ini"
+   ]
+  },
+  {
+   "cmd": "Copy-Item config.toml $HOME\\.cargo\\config.toml",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "C:\\Users\\ana\\.cargo\\config.toml"
+   ]
+  },
+  {
+   "cmd": "Get-Content $HOME\\_vimrc",
+   "verdict": "run"
+  },
+  {
+   "cmd": "Copy-Item tool.exe bin\\tool.exe",
+   "verdict": "run",
+   "missing": [
+    "bin\\tool.exe"
+   ]
   }
  ]
 }

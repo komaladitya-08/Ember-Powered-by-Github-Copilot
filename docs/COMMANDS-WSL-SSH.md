@@ -113,8 +113,10 @@ Ember stops and asks before a command that:
   certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
   folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
   permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
-  out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
-  hooks;
+  out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `~/.bashrc.d`,
+  `$PROFILE`) and git hooks, putting a program in a folder your shell searches for commands (`~/.local/bin`, `~/bin`),
+  settings a program runs code from (`~/.vimrc`, `~/.tmux.conf`, `~/.config/pip`, `~/.cargo/config.toml`), and
+  launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
   downloaded in this task, running a program or script from another computer's share (`\\server\share\x.exe`),
   `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;

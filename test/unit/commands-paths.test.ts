@@ -120,6 +120,9 @@ describe("POSIX path rules", () => {
     ["/home/ana/.bashrc", "startup"], ["/home/ana/.config/fish/config.fish", "startup"], ["/etc/profile.d/x.sh", "startup"],
     ["/home/ana/proj/.git/hooks/pre-commit", "hook"], ["/etc/wsl.conf", "wsl-config"], ["/etc/hosts", "system"], ["/usr/local/bin/x", "system"],
     ["/var/tmp/x", null], ["/dev/sda", "disk"], ["/dev/null", null], ["/home/ana/.config/autostart/x.desktop", "autostart"], ["/home/ana/proj/x", null], ["/tmp/x", null],
+    ["/home/ana/.bashrc.d/x.sh", "startup"], ["/home/ana/.local/bin/git", "bin"], ["/home/ana/bin", "bin"], ["/home/ana/proj/bin/x", null],
+    ["/home/ana/.vimrc", "program-config"], ["/home/ana/.cargo/config.toml", "program-config"], ["/home/ana/proj/.cargo/config.toml", null],
+    ["/home/ana/.local/share/applications/x.desktop", "autostart"],
   ])("writeKind(%j) → %s", (p, want) => {
     expect(P.writeKind(p, envL)).toBe(want);
   });
@@ -228,6 +231,7 @@ describe("Windows path rules", () => {
     ["C:\\Users\\ana\\Documents\\WindowsPowerShell\\Microsoft.PowerShell_profile.ps1", "startup"], ["C:\\Users\\ana\\.wslconfig", "wsl-config"],
     ["C:\\Windows\\x", "system"], ["C:\\Program Files (x86)\\x", "system"], ["C:\\ProgramData\\x", "system"],
     ["C:\\Users\\ana\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\x.lnk", "autostart"], ["\\\\.\\PhysicalDrive0", "disk"],
+    ["C:\\Users\\ana\\AppData\\Local\\Microsoft\\WindowsApps\\git.exe", "bin"], ["C:\\Users\\ana\\_vimrc", "program-config"],
     ["C:\\Users\\ana\\proj\\x", null],
   ])("writeKind(%j) → %s", (p, want) => {
     expect(P.writeKind(p, envW)).toBe(want);

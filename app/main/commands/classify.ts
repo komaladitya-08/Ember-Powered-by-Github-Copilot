@@ -508,6 +508,8 @@ class Classifier {
       case "autostart": this.add("system", "path.autostart", "Schedules something to run later or at login."); break;
       case "system": this.add("system", "path.system", "Changes system files."); break;
       case "disk": this.add("destroy", "path.disk", `Overwrites the disk ${text}.`); break;
+      case "bin": this.add("system", "path.bin", "Changes which program a command name runs."); break;
+      case "program-config": this.add("system", "path.program-config", "Changes what a program runs the next time you use it."); break;
     }
   }
 
@@ -1492,7 +1494,7 @@ class Engine extends Classifier {
     const obj = this.usePath(t, "append", sc);
     if (obj.abs === null) { this.add("destroy", rule, "Writes to a file Ember can't name."); return; }
     const k = writeKind(obj.abs, sc.path);
-    if (k === "startup" || k === "hook" || k === "git-config" || k === "wsl-config" || k === "autostart") return;
+    if (k === "startup" || k === "hook" || k === "git-config" || k === "wsl-config" || k === "autostart" || k === "bin" || k === "program-config") return;
     if (!inWorkTree(obj.abs, sc.path) || homeDotFile(obj.abs, sc.path)) {
       this.add("destroy", rule, `Adds to ${obj.text}, outside your project.`, { objects: [obj] });
     }
@@ -1947,7 +1949,10 @@ const KNOWN_ORDINARY = new Set([
  * Programs with a handler whose names are common words or tools no wrapper runs: as an unknown program's operand
  * (`mise trust`, `somecli trust list`) they are words, as they were before these handlers existed.
  */
-const NOT_RUNNERS = new Set(["trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb"]);
+const NOT_RUNNERS = new Set([
+  "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
+  "desktop-file-install", "desktop-file-edit", "update-desktop-database",
+]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
 function runners(): ReadonlySet<string> {
@@ -2300,11 +2305,43 @@ reg(NATIVE, ["trash", "trash-put", "gio"], h => {
       return;
     }
     if (sub === "copy" || sub === "move" || sub === "rename" || sub === "save") { copyLike({ ...h, args: rest }, sub === "move" ? "mv" : "cp"); return; }
+    // A launcher marked trusted runs without the desktop's warning (review #172).
+    const trusted = rest.findIndex(a => lower(a) === "metadata::trusted");
+    if (sub === "set" && trusted >= 0 && !/^(false|no|0)$/i.test(rest[trusted + 1]?.v ?? "")) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
     h.e.readArgs(rest, h.sc);
     return;
   }
   const objs = objsOf(h, h.args.filter(a => !isOption(a)), "delete");
   h.e.add("destroy", "posix.rm", `Deletes ${listOf(objs)}.`, { objects: objs });
+});
+
+// Launcher entries (review #172): desktop-file-install copies them into --dir (by default the system's applications
+// folder), desktop-file-edit changes one in place, and update-desktop-database writes the folder's file-type list.
+reg(NATIVE, ["desktop-file-install", "desktop-file-edit", "update-desktop-database"], h => {
+  const p = opts(h, {
+    shortValue: "m",
+    longValue: [
+      "dir", "mode", "vendor", "set-key", "set-value", "set-name", "set-generic-name", "set-comment", "set-icon", "remove-key",
+      "add-category", "remove-category", "add-mime-type", "remove-mime-type", "add-only-show-in", "remove-only-show-in",
+      "add-not-show-in", "remove-not-show-in",
+    ],
+  });
+  if (h.key === "desktop-file-edit") { objsOf(h, p.operands, "write"); return; }
+  if (h.key === "update-desktop-database") {
+    for (const d of p.operands.length ? p.operands : [lit("/usr/share/applications")]) {
+      if (d.v === null) h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder this changes.");
+      else h.e.usePath(lit(`${d.v.replace(/[\\/]+$/, "")}/mimeinfo.cache`), "write", h.sc);
+    }
+    return;
+  }
+  const dir = values(p, "dir").pop() ?? "/usr/share/applications";
+  if (dir === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder this changes."); return; }
+  for (const f of p.operands) {
+    h.e.usePath(f, has(p, "delete-original") ? "move" : "read", h.sc);
+    const name = f.v === null ? null : baseName(f.v, h.sc.path.flavour);
+    if (name) h.e.usePath(lit(`${dir.replace(/[\\/]+$/, "")}/${name}`), "write", h.sc);
+    else writeInto(h, dir);
+  }
 });
 
 // find: deletes, writes, payloads, secret searches (§3.4.5, §3.5.1, critique security-5).

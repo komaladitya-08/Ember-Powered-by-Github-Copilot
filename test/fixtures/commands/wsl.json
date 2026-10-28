@@ -2181,6 +2181,45 @@
    "rules": [
     "escape.run-remote"
    ]
+  },
+  {
+   "cmd": "cp tool.exe /mnt/c/Users/ana/AppData/Local/Microsoft/WindowsApps/git.exe",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "/mnt/c/Users/ana/AppData/Local/Microsoft/WindowsApps/git.exe"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.local/bin/git",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/.local/bin/git"
+   ]
+  },
+  {
+   "cmd": "echo x > /mnt/c/Users/ana/_vimrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "/mnt/c/Users/ana/_vimrc"
+   ]
   }
  ]
 }

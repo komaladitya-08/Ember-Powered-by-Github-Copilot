@@ -13368,6 +13368,415 @@
   {
    "cmd": "podman run --rm -v ~/Documents:/d:ro,Z alpine ls /d",
    "verdict": "run"
+  },
+  {
+   "cmd": "echo x > ~/.bashrc.d/x.sh",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ],
+   "missing": [
+    "~/.bashrc.d/x.sh"
+   ]
+  },
+  {
+   "cmd": "cp x.sh ~/.bashrc.d/",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ],
+   "missing": [
+    "~/.bashrc.d"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.Xresources",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ],
+   "missing": [
+    "~/.Xresources"
+   ]
+  },
+  {
+   "cmd": "cp x ~/.local/bin/git",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/.local/bin/git"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.local/bin/ls",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/.local/bin/ls"
+   ]
+  },
+  {
+   "cmd": "ln -s /home/ana/proj/build/tool ~/.local/bin/ssh",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/.local/bin/ssh"
+   ]
+  },
+  {
+   "cmd": "install -m 755 build/tool ~/bin/tool",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/bin/tool"
+   ]
+  },
+  {
+   "cmd": "curl -sSL -o ~/.local/bin/tool https://example.com/tool",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/.local/bin/tool"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.vimrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.vimrc"
+   ]
+  },
+  {
+   "cmd": "echo x >> ~/.vimrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.vim/plugin/x.vim",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.vim/plugin/x.vim"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.config/nvim/init.lua",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.config/nvim/init.lua"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.tmux.conf",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.tmux.conf"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.config/pip/pip.conf",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.config/pip/pip.conf"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.cargo/config.toml",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.cargo/config.toml"
+   ]
+  },
+  {
+   "cmd": "cp settings.xml ~/.m2/settings.xml",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.m2/settings.xml"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.local/share/applications/x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "missing": [
+    "~/.local/share/applications/x.desktop"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.local/share/gnome-shell/extensions/x/extension.js",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "missing": [
+    "~/.local/share/gnome-shell/extensions/x/extension.js"
+   ]
+  },
+  {
+   "cmd": "cp -r build/x ~/.local/share/gnome-shell/extensions/",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "missing": [
+    "~/.local/share/gnome-shell/extensions"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.config/gnome-shell/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "missing": [
+    "~/.config/gnome-shell/x"
+   ]
+  },
+  {
+   "cmd": "desktop-file-install --dir=$HOME/.config/autostart x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "missing": [
+    "~/.config/autostart/x.desktop"
+   ]
+  },
+  {
+   "cmd": "desktop-file-install --dir ~/.local/share/applications x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "missing": [
+    "~/.local/share/applications/x.desktop"
+   ]
+  },
+  {
+   "cmd": "desktop-file-install x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.system"
+   ]
+  },
+  {
+   "cmd": "desktop-file-edit --set-key=Exec --set-value=x ~/.local/share/applications/x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "update-desktop-database ~/.local/share/applications",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "gio set ~/Desktop/x.desktop metadata::trusted true",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "system.security"
+   ]
+  },
+  {
+   "cmd": "desktop-file-install --dir=build x.desktop",
+   "verdict": "run",
+   "missing": [
+    "build/x.desktop"
+   ]
+  },
+  {
+   "cmd": "desktop-file-validate x.desktop",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gio set x.desktop metadata::trusted false",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo x > ~/proj/bin/x",
+   "verdict": "run",
+   "missing": [
+    "bin/x"
+   ]
+  },
+  {
+   "cmd": "cp build/tool bin/tool",
+   "verdict": "run",
+   "missing": [
+    "bin/tool"
+   ]
+  },
+  {
+   "cmd": "cat ~/.vimrc",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ls ~/.local/bin",
+   "verdict": "run"
+  },
+  {
+   "cmd": "echo x > .cargo/config.toml",
+   "verdict": "run",
+   "missing": [
+    ".cargo/config.toml"
+   ]
+  },
+  {
+   "cmd": "echo x > ~/.local/bin/tool",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.bin"
+   ],
+   "missing": [
+    "~/.local/bin/tool"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "echo x > ~/.vimrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/.vimrc"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "echo x > \"$HOME/Library/Application Support/pip/pip.conf\"",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.program-config"
+   ],
+   "missing": [
+    "~/Library/Application Support/pip/pip.conf"
+   ],
+   "context": "darwin"
   }
  ]
 }

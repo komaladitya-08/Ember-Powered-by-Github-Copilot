@@ -273,7 +273,7 @@ const STARTUP_HOME = [
   ".zshenv", ".zlogin", ".zlogout", ".kshrc", ".cshrc", ".tcshrc", ".login", ".inputrc", ".config/fish/config.fish",
   ".config/fish/conf.d/", ".config/fish/functions/", ".config/environment.d/", ".pam_environment", ".xprofile",
   ".xinitrc", ".xsession*", ".local/share/bash-completion/", ".zfunc/", ".oh-my-zsh/custom/", ".config/zsh/",
-  ".config/powershell/",
+  ".config/powershell/", ".bashrc.d/", ".Xresources",
 ];
 const STARTUP_ABSOLUTE = [
   "/etc/profile", "/etc/profile.d/", "/etc/bash.bashrc", "/etc/bashrc", "/etc/zsh*", "/etc/zprofile", "/etc/zshrc",
@@ -282,10 +282,22 @@ const STARTUP_ABSOLUTE = [
 /** PowerShell's profile files, wherever Documents is (OneDrive too) and in $PSHOME. */
 const PS_PROFILE = /(^|[\\/])(windows)?powershell[\\/][^\\/]*profile\.ps1$/i;
 
-/** Autostart and scheduling folders. */
+/** Autostart and scheduling folders, and what the desktop runs later: launcher entries and shell extensions (review #172). */
 const AUTOSTART_HOME = [
   ".config/autostart/", "Library/LaunchAgents/", ".config/systemd/user/",
-  "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/",
+  "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/", ".local/share/applications/", ".config/gnome-shell/",
+  ".local/share/gnome-shell/extensions/",
+];
+/**
+ * Folders on the user's PATH as set up out of the box (RHEL's ~/.bashrc puts ~/.local/bin and ~/bin first; Windows'
+ * user PATH holds WindowsApps): a program put there runs in place of the one a command names (review #172).
+ */
+const BIN_HOME = [".local/bin/", "bin/", "AppData/Local/Microsoft/WindowsApps/"];
+/** Settings a program runs code from the next time it starts or builds: editors, tmux, pip, cargo and Maven (review #172). */
+const PROGRAM_CONFIG_HOME = [
+  ".vimrc", ".gvimrc", ".vim/", "_vimrc", "vimfiles/", ".config/nvim/", "AppData/Local/nvim/", ".tmux.conf", ".config/tmux/",
+  ".config/pip/", ".pip/", "AppData/Roaming/pip/", "Library/Application Support/pip/", ".cargo/config", ".cargo/config.toml",
+  ".m2/settings.xml",
 ];
 const AUTOSTART_ABSOLUTE = ["/etc/systemd/", "/Library/LaunchAgents/", "/Library/LaunchDaemons/", "/etc/cron*", "/var/spool/cron/", "/etc/xdg/autostart/"];
 
@@ -384,7 +396,7 @@ export type PathUse =
 
 /** A path rule that applies: a finding to add, or a refusal. */
 export interface PathVerdict {
-  kind: "secret" | "history" | "ember" | "startup" | "hook" | "git-config" | "wsl-config" | "system" | "autostart" | "disk";
+  kind: "secret" | "history" | "ember" | "startup" | "hook" | "git-config" | "wsl-config" | "system" | "autostart" | "disk" | "bin" | "program-config";
 }
 
 /** Uses that change the path (writes, deletes, moves). */
@@ -511,6 +523,8 @@ export function writeKind(p: string, env: PathEnv): PathVerdict["kind"] | null {
     if (underEntries(p, homes, WSL_CONFIG_HOME, env, true)) return "wsl-config";
     if (underEntries(p, homes, AUTOSTART_HOME, env, true)) return "autostart";
     if (underEntries(p, homes, STARTUP_HOME, env, true)) return "startup";
+    if (underEntries(p, homes, BIN_HOME, env, true)) return "bin";
+    if (underEntries(p, homes, PROGRAM_CONFIG_HOME, env, true)) return "program-config";
     if (DISK_DEVICE_WIN.test(p)) return "disk";
     const drive = /^[A-Za-z]:/.exec(env.windows?.systemRoot ?? "C:")?.[0] ?? "C:";
     if (underEntries(p, [drive.toLowerCase()], SYSTEM_WINDOWS, env, true)) return "system";
@@ -522,6 +536,10 @@ export function writeKind(p: string, env: PathEnv): PathVerdict["kind"] | null {
   if (env.mountRoot && underEntries(p, [`${env.mountRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/[a-z]/users/[^/]+`], WSL_CONFIG_HOME, env, true)) return "wsl-config";
   if (underEntries(p, homes, AUTOSTART_HOME, env, ci) || underAbsolute(p, AUTOSTART_ABSOLUTE, ci)) return "autostart";
   if (env.mountRoot && underEntries(p, [`${env.mountRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/[a-z]/users/[^/]+`], AUTOSTART_HOME, env, true)) return "autostart";
+  for (const [list, kind] of [[BIN_HOME, "bin"], [PROGRAM_CONFIG_HOME, "program-config"]] as const) {
+    if (underEntries(p, homes, list, env, ci)) return kind;
+    if (env.mountRoot && underEntries(p, [`${env.mountRoot.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/[a-z]/users/[^/]+`], list, env, true)) return kind;
+  }
   if (DISK_DEVICE.test(p)) return "disk";
   if (underAbsolute(p, NOT_SYSTEM_POSIX, false)) return null;
   if (underAbsolute(p, SYSTEM_POSIX, env.os === "darwin")) return "system";
@@ -760,6 +778,8 @@ function writeEntries(env: PathEnv): { p: string; folder: boolean; kind: NonNull
   for (const h of homes) {
     for (const e of STARTUP_HOME) out.push({ p: join(h, e.replace(/\/$/, "")), folder: e.endsWith("/"), kind: "startup" });
     for (const e of AUTOSTART_HOME) out.push({ p: join(h, e.replace(/\/$/, "")), folder: true, kind: "autostart" });
+    for (const e of BIN_HOME) out.push({ p: join(h, e.replace(/\/$/, "")), folder: true, kind: "bin" });
+    for (const e of PROGRAM_CONFIG_HOME) out.push({ p: join(h, e.replace(/\/$/, "")), folder: e.endsWith("/"), kind: "program-config" });
     for (const e of GIT_CONFIG_HOME) out.push({ p: join(h, e), folder: false, kind: "git-config" });
     if (env.flavour === "win32") {
       for (const e of WSL_CONFIG_HOME) out.push({ p: join(h, e), folder: false, kind: "wsl-config" });
