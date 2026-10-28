@@ -1601,8 +1601,9 @@ describe("output past what is kept (review #32)", () => {
     const h = harness({ run: () => ({ output: chunks }) });
     const t0 = performance.now();
     await call(h);
-    // Recopying the 4 MiB tail per chunk took seconds here; keeping chunks takes tens of milliseconds.
-    expect(performance.now() - t0).toBeLessThan(1500);
+    // Recopying the 4 MiB tail per chunk took 7.4 s here; keeping chunks takes about 0.26 s on an idle machine. The
+    // budget leaves room for a loaded runner (1.6 s at load 33) and still fails the old keeper.
+    expect(performance.now() - t0).toBeLessThan(5000);
     expect(j.shaped[0].raw === expected(chunks.join(""))).toBe(true);
     expect(h.audit.find(e => e.phase === "ended")).toMatchObject({ outBytes: chunks.join("").length });
   });
