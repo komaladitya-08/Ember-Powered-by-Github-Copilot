@@ -19,6 +19,12 @@ export interface AuditEntry {
 
 const MONTH_FILE = /^audit-(\d{4})-(\d{2})\.jsonl$/;
 
+/** How a rename says the file it would replace is open (Windows). */
+const REPLACE_REFUSED = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/** How long a trim waits, after replacing a month's file, for a line another process was just writing to the old one. */
+const LATE_WRITER_MS = 10;
+
 /** Command phases written once their step has happened (a run started or ended, the task's folder changed). */
 const DONE_PHASES = new Set(["started", "ended", "tainted", "cd"]);
 
@@ -101,11 +107,11 @@ export class AuditLog {
 
   /**
    * Deletes entries older than `days`, by each entry's own time (review #86): a month whose end is older goes whole, a
-   * month that straddles the cutoff is trimmed in place (a torn line goes with the old ones), and a newer one isn't
-   * read at all.
+   * month that straddles the cutoff is trimmed in place (see trim), and a newer one isn't read at all.
    */
   prune(days = 30): void {
-    const cutoff = this.now().getTime() - days * 86_400_000;
+    const now = this.now().getTime();
+    const cutoff = now - days * 86_400_000;
     for (const f of fs.readdirSync(this.dir)) {
       const m = MONTH_FILE.exec(f);
       if (!m) continue;
@@ -113,31 +119,77 @@ export class AuditLog {
       const start = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1);
       const end = Date.UTC(Number(m[1]), Number(m[2]), 1); // first day of the following month
       if (end <= cutoff) fs.rmSync(file);
-      else if (start < cutoff) this.trim(file, cutoff);
+      else if (start < cutoff) this.trim(file, cutoff, end <= now);
     }
     this.latest = null;
   }
 
-  /** Keeps the lines of `file` written at `cutoff` or later; rewrites it (0600, atomically) only when some go. */
-  private trim(file: string, cutoff: number): void {
-    const lines = fs.readFileSync(file, "utf8").split("\n").filter(Boolean);
-    const keep = lines.filter(l => {
-      try {
-        const t = Date.parse((JSON.parse(l) as { t?: unknown }).t as string);
-        return Number.isFinite(t) && t >= cutoff;
-      } catch {
-        return false; // a torn line
-      }
-    });
-    if (keep.length === lines.length) return;
-    if (!keep.length) { fs.rmSync(file); return; }
-    const tmp = `${file}.tmp-${process.pid}`;
+  /**
+   * Keeps the lines of `file` written at `cutoff` or later; rewrites it (0600, atomically) only when some go, and
+   * removes it when none stay and its month is over (`ended`). Another process may be appending to it all the while
+   * (two remote agents for one machine share their audit folder): what it adds before the new file is in place, and
+   * just after where the system lets an open file be replaced (not Windows), goes across too, and a line still being
+   * written is carried over as it is; a torn line goes with the old ones (review #86).
+   */
+  private trim(file: string, cutoff: number, ended: boolean): void {
+    let src: number | null = fs.openSync(file, "r");
     try {
-      fs.writeFileSync(tmp, keep.join("\n") + "\n", { mode: 0o600 });
-      fs.renameSync(tmp, file);
-    } catch (err) {
-      try { fs.rmSync(tmp, { force: true }); } catch { /* nothing left to tidy */ }
-      throw err;
+      const head = fs.readFileSync(src);
+      const whole = head.lastIndexOf(0x0a) + 1;
+      const lines = head.subarray(0, whole).toString("utf8").split("\n").filter(Boolean);
+      const keep = lines.filter(l => {
+        try {
+          const t = Date.parse((JSON.parse(l) as { t?: unknown }).t as string);
+          return Number.isFinite(t) && t >= cutoff;
+        } catch {
+          return false; // a torn line
+        }
+      });
+      if (keep.length === lines.length) return;
+      if (!keep.length && ended) { fs.closeSync(src); src = null; fs.rmSync(file); return; }
+      const ino = fs.fstatSync(src).ino;
+      const tmp = `${file}.tmp-${process.pid}`;
+      let copied = head.length;
+      try {
+        const out = fs.openSync(tmp, "w", 0o600);
+        try {
+          fs.writeSync(out, Buffer.concat([Buffer.from(keep.map(l => l + "\n").join("")), head.subarray(whole)]));
+          copied = copyAdded(src, out, copied);
+        } finally {
+          fs.closeSync(out);
+        }
+        // Another prune replaced it first (and lines may have gone into its version since): left as it is.
+        if (fs.statSync(file).ino !== ino) { fs.rmSync(tmp, { force: true }); return; }
+        try {
+          fs.renameSync(tmp, file);
+        } catch (err) {
+          // Windows won't replace a file anything holds open, this read included: what was added meanwhile goes across,
+          // then it lets go of the file and tries once more.
+          if (!REPLACE_REFUSED.has((err as NodeJS.ErrnoException).code ?? "")) throw err;
+          const more = fs.openSync(tmp, "a");
+          try { copyAdded(src, more, copied); } finally { fs.closeSync(more); }
+          fs.closeSync(src);
+          src = null;
+          fs.renameSync(tmp, file);
+        }
+      } catch (err) {
+        try { fs.rmSync(tmp, { force: true }); } catch { /* nothing left to tidy */ }
+        throw err;
+      }
+      // A line that reached the old file as it was replaced goes across too, and once more a moment later for a writer
+      // that had opened it just before (a trim is rare: at start and once a day).
+      if (src !== null) {
+        const out = fs.openSync(file, "a", 0o600);
+        try {
+          copied = copyAdded(src, out, copied);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LATE_WRITER_MS);
+          copyAdded(src, out, copied);
+        } finally {
+          fs.closeSync(out);
+        }
+      }
+    } finally {
+      if (src !== null) fs.closeSync(src);
     }
   }
 
@@ -154,6 +206,18 @@ export class AuditLog {
     this.pruneTimer = timer;
     return () => { clearInterval(timer); if (this.pruneTimer === timer) this.pruneTimer = null; };
   }
+}
+
+/** Copies what another process added to `src` past `from` to `out`, until it stops growing; returns where `src` ends. */
+function copyAdded(src: number, out: number, from: number): number {
+  for (let size = fs.fstatSync(src).size; size > from; size = fs.fstatSync(src).size) {
+    const buf = Buffer.alloc(size - from);
+    const n = fs.readSync(src, buf, 0, buf.length, from);
+    if (n <= 0) break;
+    fs.writeSync(out, buf, 0, n);
+    from += n;
+  }
+  return from;
 }
 
 /** systemd-cat, when there is a journal to write to (its program and the journal's socket both exist). */
