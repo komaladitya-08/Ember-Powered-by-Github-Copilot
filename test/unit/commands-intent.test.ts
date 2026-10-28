@@ -321,4 +321,21 @@ describe("matchIntent: the folder the words put a path in (review #31)", () => {
     const cls = classifyCommand("rm -r build", "bash", inside);
     expect(matchIntent(cls, "delete build/ in my-project", { ...inside, git: null })?.announce).toBe("Deleting build, as you asked.");
   });
+
+  it("takes the folder named as the path's own folder, not any folder further up (review #31, second round)", () => {
+    const ctx = contextOf("linux");
+    const said = (cmd: string, cwd: string, words: string) => {
+      const here = { ...ctx, cwd };
+      return matchIntent(classifyCommand(cmd, "bash", here), words, { ...here, git: null })?.announce ?? null;
+    };
+    // build/ in packages/core is not build/ in my-app, though my-app is further up.
+    expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in my-app")).toBeNull();
+    expect(said("rm -r packages/core/build", "/home/ana/my-app", "delete build/ in my-app")).toBeNull();
+    expect(said("rm -r /home/ana/my-app/packages/core/build", "/home/ana", "delete the build folder in my-app")).toBeNull();
+    // The folder named is the path's own: by name, by a longer path, or the task's folder.
+    expect(said("rm -r build", "/home/ana/my-app", "delete build/ in my-app")).toBe("Deleting build, as you asked.");
+    expect(said("rm -r my-app/build/", "/home/ana", "delete build/ in my-app")).toBe("Deleting my-app/build/, as you asked.");
+    expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in packages/core")).toBe("Deleting build, as you asked.");
+    expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in my-app/packages")).toBeNull();
+  });
 });

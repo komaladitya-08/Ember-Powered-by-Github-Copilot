@@ -267,16 +267,17 @@ function folderNamed(idx: number, w: Words): string | null {
 }
 
 /**
- * Whether `resolved` is inside a folder the words named (folderNamed): the folder's path, as written, is a run of the
+ * Whether `resolved` is directly in a folder the words named (folderNamed): the folder's path, as written, ends the
  * folders above it ("my-app" in /home/ana/my-app/build, "packages/app" in …/packages/app/build). Review #31: once
- * "in my-app" no longer counts as another computer, the path must really be in it.
+ * "in my-app" no longer counts as another computer, the path must really be in it, and not in a folder further down
+ * (/home/ana/my-app/packages/core/build is not "build/ in my-app").
  */
 function inNamedFolder(resolved: string, folder: string): boolean {
   const above = resolved.toLowerCase().split(/[\\/]+/).filter(Boolean).slice(0, -1);
   const want = normPath(folder).split(/[\\/]+/).filter(x => x !== "" && x !== ".");
-  if (want.length === 0) return false;
-  for (let i = 0; i + want.length <= above.length; i++) if (want.every((x, j) => above[i + j] === x)) return true;
-  return false;
+  if (want.length === 0 || want.length > above.length) return false;
+  const tail = above.slice(above.length - want.length);
+  return want.every((x, j) => tail[j] === x);
 }
 
 /** The path at `idx` is where the words put it: in the folder they named after it, when they named one. */

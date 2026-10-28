@@ -1246,6 +1246,26 @@ describe("a place that looks like a computer Ember doesn't know (the lead's ruli
     }
   });
 
+  it("asks for a path in a folder below the one the words named (review #31, second round)", async () => {
+    setCommandJudge(null);
+    const there = (p: string) => ({ exists: true, real: p });
+    for (const o of [
+      { cwd: "/home/ana/my-app/packages/core", command: "rm -r build" },
+      { cwd: "/home/ana/my-app", command: "rm -r packages/core/build" },
+    ]) {
+      const h = harness({ binding: LOCAL, words: "delete build/ in my-app", paths: there, answers: ["deny"], state: { cwd: o.cwd, downloaded: new Set<string>(), running: false } });
+      const r = await call(h, { target: "this computer", command: o.command });
+      expect(r.resultType, o.command).toBe("denied");
+      expect(h.announced, o.command).toEqual([]);
+      expect(h.asked, o.command).toHaveLength(1);
+    }
+    // The path in the folder named still announces.
+    const h = harness({ binding: LOCAL, words: "delete build/ in my-app", paths: there, state: { cwd: "/home/ana/my-app", downloaded: new Set<string>(), running: false } });
+    await call(h, { target: "this computer", command: "rm -r build" });
+    expect(h.asked).toEqual([]);
+    expect(h.announced).toHaveLength(1);
+  });
+
   it("leaves ordinary commands alone: they run anywhere", async () => {
     makeJudge();
     const h = harness({ binding: LOCAL, words: "list the files on prod-db", placesNamed: unknown });

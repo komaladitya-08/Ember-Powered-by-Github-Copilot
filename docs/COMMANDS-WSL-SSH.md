@@ -191,8 +191,8 @@ computer."). Ordinary commands still run. Everyday places ("on the desktop", "in
 main.ts", "in 5 minutes") don't count, nor do dates and number ranges ("on 2026-10-22,", "from 10-20"). Nor does a
 folder or a branch the computer shows: "in my-app" (or inside, into) when my-app is a folder where the task works or
 one of the folders it is in, and "on feature-x" when feature-x is the branch the task's folder is on; the command then
-announces only if it acts on what is in that folder ("delete build/ in my-app" covers `rm -r my-app/build`, not
-`rm -r build` elsewhere). When the computer can't say, it asks. A name in quotes, backticks, guillemets or brackets,
+announces only if it acts on what is directly in that folder ("delete build/ in my-app" covers `rm -r my-app/build`,
+not `rm -r build` elsewhere, nor `my-app/packages/core/build`). When the computer can't say, it asks. A name in quotes, backticks, guillemets or brackets,
 written with any kind of dash, with a port or a folder after it ("prod-db:22", "deploy@prod-db:/srv"), or after a word
 such as server, host or machine ("on the server prod-db", "ssh to prod-db") counts too. On a Windows PC where WSL
 isn't on in Ember (or isn't installed, or your organisation turned it off), "WSL", "Linux" and "the Linux side" don't
