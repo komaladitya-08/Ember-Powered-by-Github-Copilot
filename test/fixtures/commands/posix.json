@@ -14606,6 +14606,188 @@
   {
    "cmd": "mise use ngrok",
    "verdict": "run"
+  },
+  {
+   "cmd": "gdb -batch --ex 'shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch --ex='shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -eval-command='shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -eval 'shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch --eval 'shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -init-eval-command='shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -ix x.gdb a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch --init-command=x.gdb a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -command=x.gdb a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch --x=x.gdb a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb --batch --one-line 'platform shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb --batch --one-line-before-file 'platform shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb --batch --one-line-on-crash='platform shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb --batch --source-before-file x.lldb a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb --batch --source-on-crash x.lldb a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb --batch -k 'platform shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "lldb -batch -one-line 'platform shell id' a.out",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.inline-code"
+   ]
+  },
+  {
+   "cmd": "gdb -batch -s x.sym a.out",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gdb -batch -e a.out -c core",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gdb -batch --symbols=x.sym a.out",
+   "verdict": "run"
   }
  ]
 }

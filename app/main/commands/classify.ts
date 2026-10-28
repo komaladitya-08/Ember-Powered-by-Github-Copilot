@@ -5182,6 +5182,18 @@ reg(NATIVE, ["taskkill"], h => {
   }
   killPids(h, pids);
 });
+/**
+ * A gdb or lldb option that runs debugger commands, given on the line or read from a file (reviews #165, #166). Both
+ * take one or two dashes; gdb also takes any unambiguous prefix of a long name (`-eval` is --eval-command) and a value
+ * after `=`. gdb's -s is --symbols, not a script.
+ */
+function debuggerCode(key: string, word: string): boolean {
+  const m = /^--?([A-Za-z][\w-]*)(=|$)/.exec(word);
+  if (!m) return false;
+  const name = m[1];
+  if (key === "lldb") return /^([oOkKsS]|one-line|one-line-before-file|one-line-on-crash|source|source-before-file|source-on-crash)$/.test(name);
+  return /^(ex|iex|x|ix)$/.test(name) || (name.length >= 2 && ["eval-command", "init-eval-command", "command", "init-command"].some(l => l.startsWith(name)));
+}
 reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h => {
   const pids = h.args.flatMap((a, k) => (/^(-p|--pid|-pid|--attach-pid)$/.test(h.args[k - 1]?.v ?? "") || /^--pid=/.test(a.v ?? "") ? [(a.v ?? "").replace(/^--pid=/, "")] : []));
   if (h.key === "renice") pids.push(...h.args.filter(a => /^\d+$/.test(a.v ?? "")).slice(1).map(a => a.v!));
@@ -5195,7 +5207,7 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
   // gdb/lldb command and script options run debugger commands (which can `shell`/`platform shell`), from the line or a
   // file or stdin: Ember can't vouch for them, so batch mode runs only when none is present (reviews #165, #166).
   if (h.key === "gdb" || h.key === "lldb") {
-    const code = h.args.some(a => a.v !== null && /^(-ex|-iex|-x|-o|-O|-s|-S|--eval-command|--command|--source)(=|$)/.test(a.v));
+    const code = h.args.some(a => a.v !== null && debuggerCode(h.key, a.v));
     if (code) h.e.unclear("unclear.inline-code", "It runs debugger commands Ember can't see.");
     else if (!h.args.some(a => /^-?-batch$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
   }
