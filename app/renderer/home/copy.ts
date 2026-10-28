@@ -53,7 +53,7 @@ const SOURCE_TEXT: Record<string, string> = {
 
 /**
  * What "Check again" says. `hint`: main's words when nothing was found (what signing in needs in this build: the GitHub
- * CLI, and how to install it here, until Ember has its own GitHub App); a main that sends none gets today's sentence.
+ * CLI, and how to install it here, in a build without Ember's own GitHub App); a main that sends none gets the old sentence.
  */
 export function retryMessage(r: { found: boolean; source: string | null; hint?: string }, connected = false): string {
   if (!r.found) return r.hint || "No GitHub sign-in found on this computer. Run “gh auth login” in a terminal, then press Check again.";
