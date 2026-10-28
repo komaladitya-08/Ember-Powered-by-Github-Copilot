@@ -93,6 +93,12 @@ describe("What Ember did: reasons in your words (review #217)", () => {
     expect(userWords("Is it done?")).toBe("Is it done?");
     // A name stays as it is written.
     expect(userWords("build-01's own check refused it")).toBe("build-01's own check refused it.");
+    // "the user's" that ends a clause is "yours", not "your" (decide.ts' reason for a tainted task).
+    expect(userWords("It asks first: an earlier step in the task wasn't the user's.")).toBe("It asks first: an earlier step in the task wasn't yours.");
+    expect(userWords("It asks first: an earlier step in the task wasn't the user's; it deletes or overwrites data."))
+      .toBe("It asks first: an earlier step in the task wasn't yours; it deletes or overwrites data.");
+    expect(userWords("the choice is the user's")).toBe("The choice is yours.");
+    expect(userWords("The user's")).toBe("Yours.");
     expect(userWords(undefined)).toBeUndefined();
     expect(userWords("  ")).toBeUndefined();
   });
@@ -105,5 +111,10 @@ describe("What Ember did: reasons in your words (review #217)", () => {
     expect(describeEntry({ t, event: "decision", kind: "cursor_text", verdict: "confirm", batch: 2, at: 1, batchVerdict: "deny", batchReason: "the user's keyboard is in use" })?.why)
       .toBe("Your keyboard is in use.");
     expect(describeEntry({ t, event: "task", phase: "failed", goal: "Tidy up", summary: "the window closed before Ember finished" })?.why).toBe("The window closed before Ember finished.");
+    // decide.ts' exact reason once a task is tainted (commands-decide.test.ts pins it there).
+    expect(describeEntry(cmd({ phase: "decided", shell: "bash", verdict: "ask", reason: "It asks first: commands here run as an administrator; the organisation asks for every command; the user asked to check every command; it deletes or overwrites data; it may carry text Ember read elsewhere in the task; an earlier step in the task wasn't the user's." }))?.why)
+      .toBe("It asks first: commands here run as an administrator; the organisation asks for every command; you asked to check every command; it deletes or overwrites data; it may carry text Ember read elsewhere in the task; an earlier step in the task wasn't yours.");
+    expect(describeEntry(cmd({ phase: "decided", shell: "bash", verdict: "ask", reason: "It asks first: an earlier step in the task wasn't the user's." }))?.why)
+      .toBe("It asks first: an earlier step in the task wasn't yours.");
   });
 });

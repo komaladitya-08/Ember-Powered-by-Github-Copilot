@@ -199,13 +199,15 @@ const YOU_VERBS: Readonly<Record<string, string>> = {
 };
 /**
  * A reason as the user reads it in "What Ember did" (review #217): the audit keeps the policy's and the helpers' own
- * words, which call the user "the user" and often start in lower case. Here they say "you" and "your", start with a
- * capital and end with a full stop. A first word that is a name ("build-01's") keeps its case.
+ * words, which call the user "the user" and often start in lower case. Here they say "you", "your" and "yours", start
+ * with a capital and end with a full stop. A first word that is a name ("build-01's") keeps its case.
  */
 export function userWords(why: string | undefined): string | undefined {
   const s = why?.trim();
   if (!s) return undefined;
   const you = s
+    // "… wasn't the user's." ends its clause: "yours", not "your" (decide.ts' reason for a tainted task).
+    .replace(/\b([Tt])he user's(?=\s*[.,;:!?)]|\s*$)/g, (_m, t: string) => (t === "T" ? "Yours" : "yours"))
     .replace(/\b([Tt])he user's\b/g, (_m, t: string) => (t === "T" ? "Your" : "your"))
     .replace(/\b([Tt])he user\b(?: (\S+))?/g, (_m, t: string, next: string | undefined) => {
       const verb = next !== undefined ? YOU_VERBS[next] ?? next : undefined;
