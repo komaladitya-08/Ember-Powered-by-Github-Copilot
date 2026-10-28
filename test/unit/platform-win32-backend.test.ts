@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Rect, ScreenLike } from "../../app/main/platform/types";
 import type { Win32Api } from "../../app/main/platform/win32/ffi";
 import { openWin32Input, openWin32Windows } from "../../app/main/platform/win32";
+import { CursorBorrow } from "../../app/main/hands/borrow";
 import { FAKE_CONTROL_GRACE_MS, VK } from "../../app/main/platform/win32/keys";
 import { EMBER_INPUT_TAG, INPUT_SIZE, KEYEVENTF, MOUSEEVENTF } from "../../app/main/platform/win32/layouts";
 import { WS, WS_EX } from "../../app/main/platform/win32/rules";
@@ -748,6 +749,40 @@ describe("Windows input: keys", () => {
     const x = inputOn(d);
     for (const ch of ["", "ab", "\u0007", "\ud83d"]) expect(x.textKey!(ch, true)).toBe(false);
     expect(d.sent).toEqual([]);
+  });
+});
+
+describe("Windows input: digit shortcuts on a layout that types digits with Shift", () => {
+  /** French AZERTY, as VkKeyScanExW answers: "&" is VK_1 alone, "1" is VK_1 with Shift; "à" and "0" share VK_0. */
+  const FRENCH: Record<string, [number, number]> = { "&": [0x31, 0], "1": [0x31, 1], "é": [0x32, 0], "2": [0x32, 1], "à": [0x30, 0], "0": [0x30, 1] };
+  const french = () => {
+    const d = desktop();
+    d.vkKeyScan = ch => { const hit = FRENCH[String.fromCharCode(ch)]; return hit ? (hit[1] << 8) | hit[0] : -1; };
+    return d;
+  };
+  const NAMES: Record<number, string> = { [VK.LCONTROL]: "LCtrl", [VK.LSHIFT]: "LShift", [VK.LMENU]: "LAlt", 0x31: "1", 0x30: "0" };
+  const pressed = (d: FakeDesktop) => d.sent.flatMap(e => (e.kind === "key" ? [`${e.flags & KEYEVENTF.KEYUP ? "up" : "down"} ${NAMES[e.vk] ?? e.vk.toString(16)}`] : []));
+  const fast = { idleMs: 0, sleep: () => Promise.resolve(), window: 0x40 };
+
+  it("presses Ctrl+1, Ctrl+0 and Alt+1 without Shift: apps match the digit's virtual key, the same on every layout (review #63)", async () => {
+    const d = french();
+    const b = new CursorBorrow(inputOn(d));
+    for (const [combo, mod] of [["ctrl+1", "LCtrl"], ["ctrl+0", "LCtrl"], ["alt+1", "LAlt"]] as const) {
+      d.sent = [];
+      await b.borrow(hand => hand.keys(combo), fast);
+      const key = combo.slice(-1);
+      expect(pressed(d), combo).toEqual([`down ${mod}`, `down ${key}`, `up ${key}`, `up ${mod}`]);
+    }
+  });
+
+  it("still takes Shift for a digit alone (typing it), and when the user asked for it", async () => {
+    const d = french();
+    const b = new CursorBorrow(inputOn(d));
+    await b.borrow(hand => hand.keys("1"), fast);
+    expect(pressed(d)).toEqual(["down LShift", "down 1", "up 1", "up LShift"]);
+    d.sent = [];
+    await b.borrow(hand => hand.keys("ctrl+shift+1"), fast);
+    expect(pressed(d)).toEqual(["down LCtrl", "down LShift", "down 1", "up 1", "up LShift", "up LCtrl"]);
   });
 });
 

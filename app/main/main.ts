@@ -238,6 +238,9 @@ async function runDoctor(): Promise<void> {
   // for every window at once (the Accessibility permission, secure input), while Windows refuses a window it can't
   // check, and 0 is never one, so every Windows check-up would say input was missing. Linux has no such question.
   const blocked = ws && input?.blockedReason ? input.blockedReason(ws.activeWindow()?.id ?? 0) : null;
+  // What stops Ember's typing but not its clicks (Linux: Typing Assist; macOS: an input method) has a row of its own.
+  const typing = ws && input && !blocked ? input.keyboardBlockedReason?.() ?? null : null;
+  if (typing) probes.extra.push({ id: "typing", status: "warn", label: "Typing", detail: typing });
   const checks = doctorChecks({
     os: platform.os, helper, env, compositor: ws ? ws.hasCompositor() : null,
     xtest: ws ? !!input && !blocked : null,
@@ -1216,7 +1219,9 @@ function start(): void {
       const d = ws.toDipPoint(p);
       return { x: d.x, y: d.y, buttons: p.mask & 0x1f00 };
     };
-    app.on("will-quit", () => ws?.close());
+    // A borrow still running hands back first (see the input's will-quit below): whether the window the keyboard goes
+    // back to is still on screen is asked of the window system, which lists no windows once closed.
+    app.on("will-quit", () => { borrowRef?.stopForQuit(); ws?.close(); });
     log.info("app.ready", {
       version: app.getVersion(),
       os: env.os,
@@ -1374,8 +1379,9 @@ function start(): void {
     });
     // Linux warns xtest.unavailable when XTest is missing.
     const xinput = inputRef = platform.openInput(ws, log);
-    // A borrow still running lets go (keys up, pointer home) before the connection closes.
-    app.on("will-quit", () => { borrowRef?.stop(); xinput?.close(); });
+    // A borrow still running lets go at once (keys up, pointer home, the keyboard back) before the connection closes:
+    // the window system's will-quit above already did (it runs first), so this one only finds it stopped.
+    app.on("will-quit", () => { borrowRef?.stopForQuit(); xinput?.close(); });
     // The administrator can turn off borrowing the mouse (tier 3) and Ember's desk (tier 2).
     // The borrow says when someone starts waiting for the mouse or Ember starts driving it; the status follows.
     showBorrowing = () => {
