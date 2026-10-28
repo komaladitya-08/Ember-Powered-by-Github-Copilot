@@ -222,9 +222,19 @@ const SECRET_HOME_POSIX = [
   ".local/share/keyrings/", ".password-store/", ".config/Bitwarden*/", ".config/1Password/", ".mozilla/",
   "snap/firefox/", ".config/google-chrome/", ".config/chromium/", ".config/BraveSoftware/", ".config/microsoft-edge/",
   ".thunderbird/", ".local/share/ember*",
+  // Sign-ins of GitHub Copilot and of cloud and hosting tools, X's display keys, chat apps' and VS Code's stored
+  // sign-ins, and the other Chromium browsers (review #173).
+  ".config/github-copilot/", ".copilot/", ".config/gcloud/", ".config/doctl/", ".config/glab-cli/", ".config/netlify/",
+  ".config/heroku/", ".config/op/", ".oci/", ".config/helm/", ".m2/settings.xml", ".Xauthority", ".ICEauthority",
+  ".config/Slack/", ".config/discord/", ".config/Signal/", ".config/Code/User/globalStorage/", ".config/vivaldi/",
+  ".config/opera/",
   // macOS.
   "Library/Keychains/", "Library/Cookies/", "Library/Application Support/Google/Chrome/",
   "Library/Application Support/Firefox/", "Library/Application Support/1Password/",
+  "Library/Application Support/BraveSoftware/", "Library/Application Support/Microsoft Edge/",
+  "Library/Application Support/Vivaldi/", "Library/Application Support/com.operasoftware.Opera/",
+  "Library/Application Support/Slack/", "Library/Application Support/discord/", "Library/Application Support/Signal/",
+  "Library/Application Support/Code/User/globalStorage/", "Library/Application Support/doctl/",
 ];
 
 /** Windows secret paths relative to a profile (also judged under WSL's drive mounts). */
@@ -233,6 +243,11 @@ const SECRET_HOME_WINDOWS = [
   "AppData/Local/Google/Chrome/User Data/", "AppData/Local/Microsoft/Edge/User Data/",
   "AppData/Roaming/Mozilla/Firefox/Profiles/", "AppData/Roaming/gh/", "AppData/Roaming/GitHub CLI/", ".ssh/", ".aws/",
   ".azure/", ".kube/", ".docker/config.json", "_netrc", ".npmrc", ".git-credentials",
+  // Review #173: GitHub Copilot's sign-in, cloud tools, chat apps, VS Code's stored sign-ins, the other Chromium browsers.
+  "AppData/Local/github-copilot/", "AppData/Roaming/gcloud/", "AppData/Roaming/doctl/", "AppData/Roaming/helm/",
+  "AppData/Roaming/Slack/", "AppData/Roaming/discord/", "AppData/Roaming/Signal/", "AppData/Roaming/Code/User/globalStorage/",
+  "AppData/Local/BraveSoftware/Brave-Browser/User Data/", "AppData/Local/Vivaldi/User Data/", "AppData/Roaming/Opera Software/",
+  "AppData/Local/Chromium/User Data/",
 ];
 
 /** A Windows profile holds both lists' secrets (a Windows build of OpenSSH, the AWS CLI and git keep the POSIX names). */
@@ -251,6 +266,8 @@ const HISTORY_NAMES = new Set([
 const SECRET_ABSOLUTE_POSIX = [
   "/etc/shadow", "/etc/shadow-", "/etc/gshadow", "/etc/gshadow-", "/etc/sudoers", "/etc/sudoers.d/", "/root/",
   "/var/lib/sss/", "/etc/krb5.keytab", "/Library/Keychains/", "/proc/*/environ", "/etc/ssh/ssh_host_*_key",
+  // Kerberos tickets kept in a folder, and the display's key under GNOME (review #173).
+  "/run/user/*/krb5cc*", "/run/user/*/gdm/Xauthority",
   // Keyboards and mice as devices: reading one records what is typed, passwords included.
   "/dev/input/",
 ];
@@ -264,6 +281,8 @@ function secretBasename(name: string, ci: boolean): boolean {
   if (/\.(pem|key|p12|pfx|jks|keystore|kdbx|tfstate)$/.test(l) || /\.tfstate\./.test(l)) return true;
   if (/^id_(rsa|ecdsa|ed25519|dsa)/.test(l)) return !l.endsWith(".pub");
   if (l === "credentials.json" || /^secrets\.ya?ml$/.test(l)) return true;
+  // A Kerberos ticket cache (`/tmp/krb5cc_1000`, wherever KRB5CCNAME puts it: review #173).
+  if (/^krb5cc(_|$)/.test(l)) return true;
   return false;
 }
 
@@ -509,7 +528,7 @@ export const SECRET_SAMPLE_NAMES = [
   ".env", ".env.local", ".env.production", "server.pem", "server.key", "cert.p12", "cert.pfx", "keys.jks",
   "app.keystore", "id_rsa", "id_ecdsa", "id_ed25519", "id_dsa", "vault.kdbx", "credentials.json", "secrets.yaml",
   "secrets.yml", "terraform.tfstate", ".netrc", "_netrc", ".npmrc", ".pypirc", ".git-credentials", ".bash_history",
-  ".zsh_history", ".python_history",
+  ".zsh_history", ".python_history", "krb5cc_1000",
 ];
 
 /** Which start-up, hook, WSL, autostart or system rule a write to `p` meets, or null. */

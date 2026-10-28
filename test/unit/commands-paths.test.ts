@@ -105,6 +105,8 @@ describe("POSIX path rules", () => {
     ["/home/ana/.ssh", "list", null], ["/home/ana/.bash_history", "read", "history"], ["/etc/shadow", "read", "secret"],
     ["/home/ana/proj/.env", "read", "secret"], ["/home/ana/proj/.env.example", "read", null], ["/home/ana/.aws/credentials", "write", "secret"],
     ["/proc/123/environ", "read", "secret"], ["/root/x", "read", "secret"], ["/home/bob/.netrc", "read", "secret"], ["/home/ana/proj/a.ts", "read", null],
+    ["/home/ana/.config/github-copilot/hosts.json", "read", "secret"], ["/tmp/krb5cc_1000", "read", "secret"], ["/home/ana/.Xauthority", "read", "secret"],
+    ["/run/user/1000/krb5cc/tkt", "read", "secret"], ["/home/ana/.config/Code/User/settings.json", "read", null],
   ] as const)("secretKind(%j, %s) → %s", (p, use, want) => {
     expect(P.secretKind(p, use, envL)).toBe(want);
   });

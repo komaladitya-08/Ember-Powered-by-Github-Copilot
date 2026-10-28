@@ -103,8 +103,10 @@ Ember stops and asks before a command that:
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
 - **reads or changes passwords, keys or other secrets**: anything under `~/.ssh` (except reading public keys,
   `known_hosts` and `config`), `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.config/gh`, `~/.docker/config.json`,
-  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, keychains and credential stores, browser profiles, password managers,
-  `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
+  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
+  and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
+  (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
+  password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`); reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
   written on the command line;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,

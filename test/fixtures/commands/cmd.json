@@ -2706,6 +2706,26 @@
   {
    "cmd": "net use",
    "verdict": "run"
+  },
+  {
+   "cmd": "type %LOCALAPPDATA%\\github-copilot\\hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "type %APPDATA%\\Slack\\Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }

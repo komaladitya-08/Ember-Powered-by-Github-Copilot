@@ -2220,6 +2220,36 @@
    "missing": [
     "/mnt/c/Users/ana/_vimrc"
    ]
+  },
+  {
+   "cmd": "cat /mnt/c/Users/ana/AppData/Local/github-copilot/hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /mnt/c/Users/ana/AppData/Roaming/gcloud/credentials.db",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/github-copilot/hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }

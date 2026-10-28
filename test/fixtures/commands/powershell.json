@@ -5524,6 +5524,130 @@
    "missing": [
     "bin\\tool.exe"
    ]
+  },
+  {
+   "cmd": "Get-Content $env:LOCALAPPDATA\\github-copilot\\hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\gcloud\\credentials.db",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\Slack\\Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\discord\\Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\Signal\\config.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\Code\\User\\globalStorage\\state.vscdb",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content \"$env:LOCALAPPDATA\\BraveSoftware\\Brave-Browser\\User Data\\Default\\Login Data\"",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content \"$env:LOCALAPPDATA\\Vivaldi\\User Data\\Default\\Login Data\"",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content \"$env:APPDATA\\Opera Software\\Opera Stable\\Login Data\"",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $HOME\\.copilot\\config.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $HOME\\.config\\github-copilot\\hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\doctl\\config.yaml",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "Get-Content $env:APPDATA\\Code\\User\\settings.json",
+   "verdict": "run"
   }
  ]
 }

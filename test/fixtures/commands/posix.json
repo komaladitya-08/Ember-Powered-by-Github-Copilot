@@ -13777,6 +13777,370 @@
     "~/Library/Application Support/pip/pip.conf"
    ],
    "context": "darwin"
+  },
+  {
+   "cmd": "cat ~/.config/github-copilot/hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/github-copilot/apps.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.copilot/config.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/gcloud/application_default_credentials.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/gcloud/credentials.db",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/gcloud/access_tokens.db",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/doctl/config.yaml",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/glab-cli/config.yml",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/netlify/config.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/heroku/config.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/op/config",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.oci/config",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/helm/repositories.yaml",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.m2/settings.xml",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /tmp/krb5cc_1000",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /tmp/krb5cc_1000_AbCdEf",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /run/user/1000/krb5cc/tkt",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.Xauthority",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.ICEauthority",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /run/user/1000/gdm/Xauthority",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/Slack/Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/discord/Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/Signal/config.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/Code/User/globalStorage/state.vscdb",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat ~/.config/vivaldi/Default/Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "base64 ~/.config/github-copilot/hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "rev ~/.config/gcloud/application_default_credentials.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat /tmp/krb5cc*",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "tar czf x.tgz ~/.config/gcloud",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cp ~/.Xauthority build/",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "cat \"$HOME/Library/Application Support/Slack/Cookies\"",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "cat ~/.config/github-copilot/hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "cat \"$HOME/Library/Application Support/Code/User/globalStorage/state.vscdb\"",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "cat \"$HOME/Library/Application Support/BraveSoftware/Brave-Browser/Default/Login Data\"",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin"
+  },
+  {
+   "cmd": "cat ~/.config/Code/User/settings.json",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cat /tmp/*.log",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ls ~/.config/gcloud",
+   "verdict": "run"
+  },
+  {
+   "cmd": "cat ~/.m2/repository/x/x.pom",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gcloud config list",
+   "verdict": "run"
   }
  ]
 }
