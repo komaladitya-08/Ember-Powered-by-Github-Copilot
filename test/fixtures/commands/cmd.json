@@ -2643,6 +2643,10 @@
    "rules": [
     "path.secret"
    ]
+  },
+  {
+   "cmd": "gcc -o C:\\Users\\ana\\AppData\\Local\\ember\\x.exe x.c",
+   "verdict": "refuse"
   }
  ]
 }

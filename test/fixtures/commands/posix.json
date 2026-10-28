@@ -12425,6 +12425,280 @@
   {
    "cmd": "axel -o build/x.tar.gz https://example.com/x.tar.gz",
    "verdict": "run"
+  },
+  {
+   "cmd": "git checkout-index -f --prefix=$HOME/.config/ember/ -a",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "git checkout-index -f --prefix=/home/ana/.config/autostart/ -a",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "git checkout-index -a --prefix=/home/ana/.config/autostart/x-",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "git checkout-index --prefix=/home/ana/. bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "git checkout-index --prefix /home/ana/.config/autostart/ -a",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "git checkout-index --prefix=\"$P\" -a",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "redirect.overwrite"
+   ]
+  },
+  {
+   "cmd": "git checkout-index -a --prefix=export/",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git checkout-index --prefix=export/ Makefile",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git checkout-index -f -a",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git worktree add ~/.config/autostart",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "git worktree add ~/.config/ember x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "git worktree move ../wt ~/.config/ember",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "git worktree add -b fix ../wt-fix",
+   "verdict": "run"
+  },
+  {
+   "cmd": "git worktree add ../wt-fix main",
+   "verdict": "run"
+  },
+  {
+   "cmd": "npm pack --pack-destination ~/.config/ember",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "npm pack --pack-destination build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "go build -o ~/.config/ember/settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "go build -o ~/.bashrc .",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "go test -c -o /etc/x.test",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.system"
+   ]
+  },
+  {
+   "cmd": "go build -o bin/app ./cmd/app",
+   "verdict": "run"
+  },
+  {
+   "cmd": "go build -o ~/Library/LaunchAgents/x .",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "gcc -o ~/.bashrc x.c",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "gcc x.c -o /home/ana/.config/autostart/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "gcc -o build/x x.c",
+   "verdict": "run"
+  },
+  {
+   "cmd": "gcc -o build/x x.c && ./build/x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "ps -o pid,comm",
+   "verdict": "run"
+  },
+  {
+   "cmd": "lsblk -o NAME,SIZE",
+   "verdict": "run"
+  },
+  {
+   "cmd": "journalctl -o json-pretty",
+   "verdict": "run"
+  },
+  {
+   "cmd": "tsc --outDir ~/.config/autostart",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "tsc --outDir dist",
+   "verdict": "run"
+  },
+  {
+   "cmd": "esbuild app.ts --outfile=/home/ana/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "pandoc in.md --output ~/.profile",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "pandoc in.md --output=out.pdf",
+   "verdict": "run"
+  },
+  {
+   "cmd": "python3 gen.py --output=/home/ana/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "python3 gen.py --output=build/x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "helm template x . --output-dir ~/.config/ember",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "cargo build --out-dir ~/.config/autostart",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "git add --pathspec-from-file=\"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": "du --files0-from=\"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": "docker run --rm alpine foo --output=/etc/x",
+   "verdict": "run"
+  },
+  {
+   "cmd": "kubectl get pods -o jsonpath='{.items[0].metadata.name}'",
+   "verdict": "run"
   }
  ]
 }

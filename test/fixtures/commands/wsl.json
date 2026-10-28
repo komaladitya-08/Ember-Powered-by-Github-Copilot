@@ -2134,6 +2134,20 @@
    "rules": [
     "path.secret"
    ]
+  },
+  {
+   "cmd": "gcc -o '/mnt/c/Users/ana/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/x.exe' x.c",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "git checkout-index -a --prefix=/home/ana/.local/state/ember-remote/",
+   "verdict": "refuse"
   }
  ]
 }

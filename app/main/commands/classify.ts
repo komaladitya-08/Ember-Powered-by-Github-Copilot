@@ -1590,7 +1590,7 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     if (n) n(h);
     else generic(h);
-    optionPaths(h);
+    optionPaths(h, !n);
   }
 
   /** Every argument read as a possible path (an unknown program's operands): secrets and Ember's paths judged. */
@@ -1687,7 +1687,7 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     if (n) n(inner);
     else generic(inner);
-    optionPaths(inner);
+    optionPaths(inner, !n);
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
@@ -1979,30 +1979,46 @@ function generic(h: H): void {
 const ELSEWHERE_ARGS = new Set(["ssh", "slogin", "autossh", "mosh", "docker", "podman", "nerdctl", "docker-compose", "podman-compose", "kubectl"]);
 /** Long options whose value names a file the program reads: `--file`, `--input-file`, `--pathspec-from-file`, `--files0-from`. */
 const FILE_OPTION = /(file|files|.-from)$/;
+/** Long options whose value is a file the program writes or a folder it writes into: `--output`, `--outdir`, `--directory-prefix`. */
+const OUTPUT_OPTION = /^(out|output)(-?(file|dir|directory))?$|^(outdir|outfile|directory-prefix|pack-destination)$/;
 
 /**
- * Every program's long options whose value names a file it reads, judged after its own row (which may never look at
- * them): `du --files0-from=…`, `git add --pathspec-from-file …`, `date --file=…` read the file and show its lines in
- * their errors, so the secret and Ember rules meet the file as they do `cat`'s (review #174). Text programs' words
- * and the arguments of programs that name files elsewhere (another computer, a container) are left out.
+ * Every program's long options whose value names a file it reads or writes, judged after its own row (which may never
+ * look at them). One it reads (`du --files0-from=…`, `git add --pathspec-from-file …`, `date --file=…` show its lines
+ * in their errors) meets the secret and Ember rules as `cat`'s file does (review #174); one it writes, or a folder it
+ * writes into (`--output`, `npm pack --pack-destination`, an unknown program's `-o`: `gcc -o ~/.bashrc`), meets the
+ * start-up, autostart, system and Ember rules too (review #169). Text programs' words and the arguments of programs
+ * that name files elsewhere (another computer, a container) are left out.
  */
-function optionPaths(h: H): void {
+function optionPaths(h: H, unknown: boolean): void {
   if (TEXT.has(h.key) || ELSEWHERE_ARGS.has(h.key)) return;
   const args = h.args;
   for (let k = 0; k < args.length; k++) {
     const a = args[k];
-    if (a.v === null || a.param !== undefined) continue;
     if (a.v === "--") return;
-    const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v);
-    if (!m) continue;
-    const name = m[1].toLowerCase();
-    if (!FILE_OPTION.test(name) || name.endsWith("profile")) continue;
+    // An unknown program's `-o` (PowerShell hands it over as a parameter, as written).
+    const short = unknown && a.v === "-o";
+    if (a.param !== undefined && !short) continue;
+    // A word Ember can't see is still an option by its written name (`--file="$F"`): its value is unknown.
+    const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v ?? a.raw);
+    const name = m ? m[1].toLowerCase() : short ? "o" : null;
+    if (name === null) continue;
+    const output = name === "o" || OUTPUT_OPTION.test(name);
+    if (!output && (!FILE_OPTION.test(name) || name.endsWith("profile"))) continue;
     // `--file=x` in one word (its pattern, for a glob, is the part after `=`), or `--file x`.
-    const value: Arg | undefined = m[2] !== undefined
-      ? { ...a, v: m[3], pattern: a.pattern === undefined ? undefined : a.pattern.slice(a.pattern.indexOf("=") + 1) }
+    const value: Arg | undefined = m && m[2] !== undefined
+      ? { ...a, v: a.v === null ? null : m[3], pattern: a.pattern === undefined ? undefined : a.pattern.slice(a.pattern.indexOf("=") + 1), param: undefined }
       : args[k + 1];
+    if (value && value.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell what ${h.prog || "the program"} is given.`); continue; }
     if (!value || value.v === null || value.v === "" || STDIN_NAME.test(value.v) || NULL_SINKS.has(value.v.toLowerCase()) || URL_LIKE.test(value.v)) continue;
-    h.e.usePath(value, "read", h.sc);
+    if (!output) { h.e.usePath(value, "read", h.sc); continue; }
+    // An output option's value may be a format (`--output json`, `ps -o pid,comm`): only one that looks like a path.
+    if (!/[~/\\.]/.test(value.v)) continue;
+    // Only §3.6's rules: whether a script this command runs is one it writes is its own row's business (L8).
+    const mark = h.e.written.length;
+    const obj = h.e.usePath(value, "write", h.sc);
+    if (obj.abs !== null && /(dir|directory|prefix|destination)$/.test(name)) h.e.judgeInside(obj.abs, "write", h.sc, value.v);
+    h.e.written.length = mark;
   }
 }
 
@@ -3362,6 +3378,25 @@ git(["replace", "update-ref", "symbolic-ref"], h => { if (h.args.some(a => a.v =
 git(["worktree"], h => {
   if (h.args[0]?.v === "remove" && h.args.some(a => a.v === "-f" || a.v === "--force")) h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.");
   if (h.args[0]?.v === "remove") { const objs = objsOf(h, h.args.slice(1).filter(a => !isOption(a)), "deleteTree"); h.e.add("destroy", "git.worktree.remove", `Deletes ${listOf(objs)} and everything in it.`, { objects: objs }); }
+  // add checks files out into a folder, move moves a work tree to one: §3.6's rules meet that folder (review #169).
+  if (h.args[0]?.v === "add" || h.args[0]?.v === "move") {
+    const p = parseOpts(h.args.slice(1), { shortValue: "bB", longValue: ["reason"] });
+    const to = p.operands[h.args[0].v === "add" ? 0 : 1];
+    if (to?.v === null) h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name.");
+    else if (to?.v) writeInto(h, to.v);
+  }
+});
+// checkout-index writes each file at <prefix><path>: a prefix ending in a slash is a folder, any other the start of
+// each name (review #169). Without one it writes the work tree's own files (writesUnnamedFiles).
+git(["checkout-index"], h => {
+  const p = opts(h, { longValue: ["prefix", "stage"] });
+  const files = p.operands.filter(a => a.v !== "--");
+  const prefix = values(p, "prefix")[0];
+  if (h.args.some(a => a.v === null && /^--prefix/.test(a.raw))) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); return; }
+  if (prefix === undefined || prefix === "") { h.e.readArgs(files, h.sc); return; }
+  if (prefix === null || files.some(f => f.v === null)) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); if (prefix === null) return; }
+  for (const f of files) if (f.v !== null) h.e.usePath(lit(prefix + f.v), "write", h.sc);
+  if (has(p, "a", "all", "stdin") || files.length === 0) writeInto(h, prefix.replace(/[^\\/]*$/, "") || ".");
 });
 git(["rm"], h => {
   const p = opts(h, { longValue: ["pathspec-from-file"] });
@@ -4054,6 +4089,16 @@ reg(NATIVE, ["go"], h => {
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
   if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s); return; }
   if (verb === "clean" && rest.some(a => /^-(cache|modcache|testcache|fuzzcache)$/.test(a.v ?? ""))) h.e.add("destroy", "script.destroy", "Runs clean, whose name says it deletes things.");
+  // build and test -c write the program where -o says, a file or a folder (review #169).
+  if (verb === "build" || verb === "test") {
+    for (let k = 0; k < rest.length; k++) {
+      const m = /^--?o(=([\s\S]*))?$/.exec(rest[k].v ?? "");
+      if (!m) continue;
+      const o = m[1] !== undefined ? m[2] : rest[k + 1]?.v;
+      if (o === null || o === undefined) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+      else if (!NULL_SINKS.has(o.toLowerCase())) h.e.usePath(lit(o), "write", h.sc);
+    }
+  }
 });
 reg(NATIVE, ["dotnet"], h => {
   const g = globals(h, "dotnet");
