@@ -4847,17 +4847,30 @@ reg(NATIVE, ["PlistBuddy", "plistbuddy"], h => {
   }
   if (file) h.e.usePath(file, writes ? "write" : "read", h.sc);
 });
+/** plutil's options that take values, and how many. */
+const PLUTIL_VALUES: Readonly<Record<string, number>> = { "-o": 1, "-e": 1, "-expect": 1, "-remove": 1, "-create": 1, "-convert": 1, "-extract": 2, "-type": 1 };
 reg(NATIVE, ["plutil"], h => {
-  // plutil -insert|-replace KEY -TYPE VALUE FILE, -remove KEY FILE, -create FORMAT FILE, -convert FORMAT [-o OUT] FILE…
-  // change their file in place, or write -o's (`-` is stdout); -lint, -p and -help only read.
-  const vs = h.args.map(a => a.v);
-  const verb = vs.find(v => v !== null && /^-(insert|replace|remove|create|convert|extract)$/.test(v));
-  const outAt = vs.findIndex(v => v === "-o");
-  const out = outAt >= 0 ? h.args[outAt + 1] : undefined;
+  // plutil <command> … [-s] [-r] [-n] [-o OUT | -e EXT] [--] FILE…, options anywhere: -insert|-replace KEY -TYPE VALUE
+  // (-array and -dictionary take no value), -remove KEY, -create FORMAT and -convert FORMAT change every FILE in place,
+  // or write -o's (`-` is stdout); -extract KEY FORMAT, -type KEY, -lint, -p and -help only read. A command Ember
+  // can't see may change them (review #175).
+  let verb: string | null | undefined;
+  let out: Arg | undefined;
+  const files: Arg[] = [];
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    const v = a.v;
+    if (v === "--") { files.push(...h.args.slice(k + 1)); break; }
+    if (v === null && verb === undefined) { verb = null; continue; }
+    if (v === null || !v.startsWith("-") || v === "-") { files.push(a); continue; }
+    if (verb === undefined && /^-(insert|replace|remove|create|convert|extract|type|lint|p|help)$/.test(v)) verb = v;
+    if (v === "-o") out = h.args[k + 1];
+    if (v === "-insert" || v === "-replace") k += /^-(array|dictionary)$/.test(h.args[k + 2]?.v ?? "") ? 2 : 3;
+    else k += PLUTIL_VALUES[v] ?? 0;
+  }
   if (out && out.v !== "-") h.e.usePath(out, "write", h.sc);
-  const last = h.args[h.args.length - 1];
-  if (!verb || !last || last === out) { h.e.readArgs(h.args.filter((a, k) => !isOption(a) && k !== outAt + 1), h.sc); return; }
-  h.e.usePath(last, out || verb === "-extract" ? "read" : "write", h.sc);
+  if (verb === null || (verb !== undefined && /^-(insert|replace|remove|create|convert)$/.test(verb) && !out)) objsOf(h, files, "write");
+  else h.e.readArgs(files, h.sc);
 });
 // Which certificates the computer trusts (review #108): NSS's certutil, p11-kit's trust, the system bundle, macOS's
 // trust settings. Windows' certutil is judged below its own handler.

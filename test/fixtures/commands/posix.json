@@ -11229,6 +11229,153 @@
    ],
    "context": "darwin",
    "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace RunAtLoad -bool true ~/Library/LaunchAgents/x.plist -s",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -create xml1 ~/Library/LaunchAgents/x.plist -s",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -insert ProgramArguments -array ~/Library/LaunchAgents/x.plist -r",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -insert RunAtLoad -bool true ~/Library/LaunchAgents/x.plist other.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -remove Disabled ~/Library/LaunchAgents/x.plist -s",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -convert xml1 ~/Library/LaunchAgents/x.plist Info.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -s -replace RunAtLoad -bool true -- ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -insert ProgramArguments -array -append ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -replace Label -string x ~/Library/Application\\ Support/ember/x.plist -s",
+   "verdict": "refuse",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil \"$OP\" RunAtLoad -bool true ~/Library/LaunchAgents/x.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.autostart"
+   ],
+   "context": "darwin",
+   "shell": "zsh",
+   "missing": [
+    "~/Library/LaunchAgents/x.plist"
+   ]
+  },
+  {
+   "cmd": "plutil -p ~/.ssh/id_rsa Info.plist",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ],
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -extract Label raw ~/Library/LaunchAgents/x.plist",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -lint ~/Library/LaunchAgents/x.plist Info.plist -s",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -convert json -o out.json Info.plist -r",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "plutil -replace CFBundleVersion -string 2 Info.plist -s",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
   }
  ]
 }
