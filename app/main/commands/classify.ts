@@ -4350,18 +4350,23 @@ reg(NATIVE, ["wget", "wget2"], h => {
   if (values(p, "e", "execute").length) h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see.");
   if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
   if (values(p, "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
-  const dir = values(p, "P", "directory-prefix")[0] ?? null;
+  const dir = values(p, "P", "directory-prefix")[0];
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
-    if (out !== "-" && out !== null) {
+    if (out === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    else if (out !== "-") {
       const obj = h.e.usePath(lit(out), "write", h.sc);
       if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
       h.e.download(out, h.sc);
     }
   } else {
+    // The folder it saves into (-P) and each file by the name its address ends in meet §3.6's rules, Ember's own files
+    // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
+    if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    else if (dir !== undefined) writeInto(h, dir);
     for (const u of urls) {
       const name = u.replace(/[?#].*$/, "").split("/").pop() || "index.html";
-      h.e.download(dir ? `${dir}/${name}` : name, h.sc);
+      saveAs(h, dir ? `${dir}/${name}` : name);
     }
   }
   for (const f of values(p, "a", "append-output")) if (f) h.e.append(lit(f), h.sc, "redirect.append");
@@ -4375,10 +4380,44 @@ reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
   if (hasMethod || items.some(i => /^[^=:@]+(:?=|@)/.test(i)) || h.args.some(a => /^(-f|--form|--raw)$/.test(a.v ?? ""))) h.e.add("publish", "send.http", `Sends data to ${hostOf(url ?? "")}.`);
   for (const i of items) { const m = /^[^=:@]+(?:=@|:=@|@)(.+)$/.exec(i); if (m) h.e.usePath(lit(m[1]), "read", h.sc); }
 });
+/**
+ * A folder a program saves files into by names Ember can't be sure of (wget -P, aria2c -d, git checkout-index
+ * --prefix): the folder and a file in it are judged as written by §3.6's rules (review #169).
+ */
+function writeInto(h: H, dir: string): void {
+  const obj = h.e.usePath(lit(dir), "write", h.sc);
+  if (obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, dir);
+}
+/** A file a download saves: written (§3.6's rules) and recorded as downloaded (§3.4.7). */
+function saveAs(h: H, path: string): void {
+  h.e.usePath(lit(path), "write", h.sc);
+  h.e.download(path, h.sc);
+}
 reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
-  const p = opts(h, { shortValue: "odi", longValue: ["out", "dir", "input-file"] });
-  for (const o of values(p, "o", "out")) if (o) { h.e.usePath(lit(o), "write", h.sc); h.e.download(o, h.sc); }
-  for (const u of p.operands) if (u.v) h.e.download(u.v.replace(/[?#].*$/, "").split("/").pop() ?? null, h.sc);
+  const p = opts(h, { shortValue: h.key === "aria2c" ? "odi" : h.key === "lwp-download" ? "" : "o", longValue: ["out", "dir", "input-file", "output"] });
+  for (const f of values(p, "i", "input-file")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // Where it saves (review #169): aria2c's -d folder (-o names a file in it), fetch's and axel's -o (a file or a
+  // folder), lwp-download's second operand (the same); otherwise the name the address ends in.
+  const dir = h.key === "aria2c" ? values(p, "d", "dir")[0] : undefined;
+  if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+  else if (dir !== undefined) writeInto(h, dir);
+  const at = (name: string): string => (dir ? `${dir}/${name}` : name);
+  const named = (u: Arg): string | null => (u.v ? u.v.replace(/[?#].*$/, "").split("/").pop() || "index.html" : null);
+  const outs = values(p, "o", "out", "output");
+  for (const o of outs) {
+    if (o === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    else if (o !== "-") saveAs(h, at(o));
+  }
+  if (h.key === "lwp-download" && p.operands.length >= 2) {
+    const [url, to] = p.operands;
+    if (to.v === null) { h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name."); return; }
+    saveAs(h, to.v);
+    // A folder gets the file by the address's name.
+    const name = named(url);
+    if (name) h.e.usePath(lit(`${to.v.replace(/[\\/]+$/, "")}/${name}`), "write", h.sc);
+    return;
+  }
+  if (outs.length === 0) for (const u of p.operands) { const name = named(u); if (name) saveAs(h, at(name)); }
 });
 
 reg(NATIVE, ["scp", "pscp"], h => {

