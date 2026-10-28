@@ -568,7 +568,8 @@ describe("the call sites", () => {
       "settingsSection(phase, setupRows())", // after Start (#95)
       "settingsSection(agent?.getStatus().phase, setupRows())", // Open settings (#95)
       "idle: idleNow(status)", // the agent's status (#95)
-      "sawSetup(env.checks)", // every status the settings window reads, and the fix handler's (#95)
+      "onSetupRead?.(report.checks)", // every read of the setup rows: status, focus re-read, fix, Start, hello (#95)
+      "onSetupRead = sawSetup", // ... reaches the handle's word (#95)
       "onSpeech: ok =>", // the speaking page's finding (#101)
       "speechMissing: speechHeard === false", // the voice status (#101)
     ]) expect(MAIN, call).toContain(call);

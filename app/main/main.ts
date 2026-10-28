@@ -149,10 +149,14 @@ let helper: HelperStatus | null | undefined;
 let fixesApplied: readonly FixId[] = [];
 /** Whether Ember's spoken replies are heard: null until it has tried, false when no voice spoke (review #101). */
 let speechHeard: boolean | null = null;
+/** Told the setup rows at each read, once Ember runs: its handle's "Setup needed" follows them (review #95). */
+let onSetupRead: ((checks: EnvReport["checks"]) => void) | null = null;
 
 /** The setup checks: what this OS reports, plus what the running app has learnt (its display, shortcuts, helper, fixes). */
 function readEnvironment(): EnvReport {
-  return inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied, speech: speechHeard });
+  const report = inspectEnvironment({ ...sys.environment({ windows: wsState, shortcutsTaken, helper }), applied: fixesApplied, speech: speechHeard });
+  onSetupRead?.(report.checks);
+  return report;
 }
 
 /**
@@ -367,12 +371,7 @@ function start(): void {
   // The setup check shows the other computers' and WSL's rows too, as ember --doctor does (§8.8): read through the
   // targets runtime, kept a few seconds, and waited for briefly (the rows from before show while a slow one finishes).
   const targetChecks = targetChecksSource(() => targets?.doctorRows() ?? Promise.resolve([]), { keepMs: 15_000, waitMs: 3000, now: () => Date.now() });
-  const environmentNow = async (fresh = false) => {
-    const env = readEnvironment();
-    // The handle's "Setup needed" follows the setup check: it goes once the row holding Ember back is fixed (review #95).
-    sawSetup(env.checks);
-    return withTargetChecks(env, await targetChecks(fresh));
-  };
+  const environmentNow = async (fresh = false) => withTargetChecks(readEnvironment(), await targetChecks(fresh));
   ipcMain.handle(IPC.getStatus, guard(async (): Promise<Status> => ({
     appVersion: app.getVersion(),
     settings: settings.get(),
@@ -442,16 +441,20 @@ function start(): void {
   let setupSeen: EnvReport["checks"] = [];
   /** The handle's word: "Setup needed" while Copilot is ready and a setup row holds Ember back (review #95), else the agent's. */
   const idleNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen) ?? idleWord(status);
-  /** Setup rows just read: kept, and the handle's word follows them. */
+  /**
+   * Setup rows just read (every readEnvironment: the settings window's status and focus re-read, a fix, Start, the
+   * hello): kept, and the handle's word follows them, so "Setup needed" goes once the row holding Ember back is fixed.
+   */
   const sawSetup = (rows: EnvReport["checks"]) => {
     setupSeen = rows;
     const status = agent?.getStatus();
     const idle = status && idleNow(status);
     if (idle && idle !== lastState.idle) showState({ idle });
   };
+  onSetupRead = sawSetup;
   /** This OS's setup rows now, for the Start decision and the hello (none if they can't be read: words, never a gate). */
   const setupRows = (): EnvReport["checks"] => {
-    try { const rows = readEnvironment().checks; sawSetup(rows); return rows; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
+    try { return readEnvironment().checks; } catch (err) { log.warn("environment.read_failed", { err }); return []; }
   };
 
   /** Hides `bubble` later, unless something else has replaced it by then. */
