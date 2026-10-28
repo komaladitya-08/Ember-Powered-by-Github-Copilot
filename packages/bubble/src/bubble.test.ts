@@ -69,8 +69,14 @@ describe("announcement: how to answer a question (review #52)", () => {
       .toBe("Ember needs you: May I? Click “Save” in gedit? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
     expect(announcement(view({ title: "May I run a command?", thought: "On build-01: Deletes build", step: "The command is in Ember's command window: press Alt+Tab to go there." })))
       .toBe("Ember needs you: May I run a command? On build-01: Deletes build. The command is in Ember's command window: press Alt+Tab to go there.");
-    // Only a question's step: a task's step while it works is never read out.
-    expect(announcement(view({ mood: "idle", title: "Ember", thought: "Done.", step: "Clicking" }))).toBe("Ember says: Done.");
+    // A guide's step (what it points at) is never read out: it says what it shows.
+    expect(announcement(view({ mood: "guiding", title: "Ember", thought: "Open the File menu.", step: "Pointing at it" }))).toBe("Ember says: Open the File menu.");
+  });
+
+  it("reads under an answer cut short where the keyboard finds it whole (review #47)", () => {
+    expect(announcement(view({ mood: "idle", title: "Ember", thought: "You have three options…", step: "Or press Ctrl+Alt+E and go to Conversation." })))
+      .toBe("Ember says: You have three options… Or press Ctrl+Alt+E and go to Conversation.");
+    expect(announcement(view({ mood: "idle", title: "Ember", thought: "Done.", step: null }))).toBe("Ember says: Done.");
   });
 
   it("reads a problem's keyboard route after it, as it is seen under its buttons (review #47)", () => {
@@ -279,9 +285,9 @@ describe("bubble styles", () => {
     expect(BUBBLE_CSS.indexOf(".ember-bubble .eb-title[hidden] { display: none; }")).toBeGreaterThan(wrap);
   });
 
-  it("puts a problem's keyboard route quietly under its buttons, as a question's key hint (review #47)", () => {
-    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\) \.eb-step \{ order: 1;/);
-    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\) \.eb-step-arrow \{ display: none; \}/);
+  it("puts a problem's or an answer's keyboard route quietly under its buttons, as a question's key hint (review #47)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\], \[data-mood="idle"\]\) \.eb-step \{ order: 1;/);
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\], \[data-mood="idle"\]\) \.eb-step-arrow \{ display: none; \}/);
   });
 
   it("shows all of a problem as of a question: up to ten lines, then it scrolls (review #17)", () => {

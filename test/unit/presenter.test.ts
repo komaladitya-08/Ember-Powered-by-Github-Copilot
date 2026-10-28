@@ -761,6 +761,23 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
     expect(finished(list).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
   });
 
+  it("says under Read all where the keyboard finds the whole answer: the settings window's Conversation (review #47, #51)", () => {
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    expect(finished(options).step).toBe("Or press Ctrl+Alt+E and go to Conversation.");
+    expect(finished("It's half past three.").step).toBeNull();
+    // Opened in full, it needs no route.
+    expect(expandedBubble(finished(options), options).step).toBeNull();
+  });
+
+  it("leaves no task's step on a turn stopped mid-step", () => {
+    const { p, last } = setup();
+    p.userPrompt("tidy up");
+    p.event({ type: "tool.execution_start", data: { toolName: "click", toolCallId: "c1" } });
+    expect(last().bubble?.step).toBeTruthy();
+    p.event({ type: "session.idle", data: { aborted: true } });
+    expect(last().bubble).toMatchObject({ title: "Stopped", mood: "idle", step: null });
+  });
+
   it("offers none for an answer that fits, and counts a long line as the lines it wraps onto", () => {
     expect(finished("It's half past three.\nYour next meeting is at four.").actions).toEqual([]);
     expect(answerLines("x".repeat(80))).toBe(3);

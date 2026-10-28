@@ -68,14 +68,16 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   const where = v.where?.replace(/\s+/g, " ").trim();
   const at = where ? `, ${where}` : "";
   // A question's step row says how to answer it (or where it is shown whole), a problem's how the keyboard reaches what
-  // its buttons do: heard after it, as it is seen under it.
+  // its buttons do, an answer cut short's where it is whole: heard after it, as it is seen under it. (A guide's step,
+  // what it points at, is not read.)
   const hint = v.step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim();
   const end = (s: string) => (/[.!?…:]$/.test(s) ? s : `${s}.`);
   const withHint = hint ? `${end(both)} ${end(hint)}` : both;
   switch (v.mood) {
     case "attention": return both ? `${speaker} needs you${at}: ${withHint}` : "";
     case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
-    case "idle": case "done": case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
+    case "idle": case "done": return text || title ? `${speaker} says${at}: ${hint ? `${end(text || title)} ${end(hint)}` : text || title}` : "";
+    case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
   }
 }
@@ -323,9 +325,10 @@ export const BUBBLE_CSS = `
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 600; }
 /* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
-   is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."). */
-.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
-.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-step-arrow { display: none; }
+   is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."), and an
+   answer's cut short, where it is whole ("… go to Conversation."). */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
+.ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step-arrow { display: none; }
 .eb-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
 /* Capsules (the floating layer's large controls, 28 px). The prominent one is the app's accent; the others carry

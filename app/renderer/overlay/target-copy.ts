@@ -147,9 +147,10 @@ export const wslFirstSeen = (): BubbleWords => ({
 
 /**
  * Under a bubble whose buttons the keyboard can't reach (the overlay never takes the keyboard): where the same buttons
- * are in settings, with the settings shortcut while Ember holds it (`key`; null: another app took it).
+ * are in settings, with the settings shortcut while Ember holds it (`key`; null: another app took it). An answer cut
+ * short is whole in Conversation.
  */
-export const keyboardRoute = (key: string | null, section: "Computers" | "Commands" = "Computers"): string =>
+export const keyboardRoute = (key: string | null, section: "Computers" | "Commands" | "Conversation" = "Computers"): string =>
   (key ? `Or press ${key} and go to ${section}.` : `Or open Ember's settings and go to ${section}.`);
 
 /**

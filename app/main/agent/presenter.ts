@@ -9,7 +9,7 @@ import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
 import { plainMarkdown } from "@ember/bubble";
-import { announcement, firstPerson } from "../../renderer/overlay/target-copy";
+import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
 
 export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 
@@ -959,8 +959,12 @@ export class Presenter {
           // "Thinking…" stays, the earlier answer isn't put back under it (it is kept for "Read the last answer").
           if (this.asked !== null && this.askedOverAnswer) break;
           // By the lines it takes, not its characters: a short list or a few paragraphs fill the bubble's six lines too.
+          // "Read all" takes only the mouse (the overlay never takes the keyboard): under it, where the keyboard finds
+          // the whole answer.
+          const more = cutShort(full);
           this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
-            actions: cutShort(full) ? [{ id: "ui:more", label: "Read all" }] : [] } });
+            step: more ? keyboardRoute(this.settingsKey, "Conversation") : null,
+            actions: more ? [{ id: "ui:more", label: "Read all" }] : [] } });
         }
         break;
       }
@@ -992,7 +996,7 @@ export class Presenter {
         }
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
         const face = aborted ? "neutral" : this.answering ? "happy" : this.state.emotion === "thinking" || this.state.emotion === "focused" ? "neutral" : this.state.emotion;
-        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const } : {}) } });
+        this.apply({ talking: false, emotion: face, bubble: { ...this.state.bubble, streaming: false, ...(aborted ? { title: "Stopped", mood: "idle" as const, step: null } : {}) } });
         // Long answers stay up longer (they also have "Read all", and the settings window keeps them).
         const chars = this.answer.length;
         this.hideLater(Math.min(30000, 6000 + chars * 50));
