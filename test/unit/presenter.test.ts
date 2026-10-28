@@ -827,6 +827,17 @@ describe("the bubble's header says something the chip doesn't (review #21)", () 
     expect(titleOf({ message: "content_filter" })).toBe("Request blocked");
     expect(titleOf({ message: "503 Service Unavailable" })).toBe("Copilot had a problem");
     expect(titleOf({ message: "something odd" }, true)).toBe("The model service had a problem");
+    // A failure outside the session's events (fail()) names the same service as its sentence does.
+    const failTitle = (message: string, provider: boolean) => {
+      const states: Partial<EmberState>[] = [];
+      const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, provider);
+      p.userPrompt("hi");
+      p.fail(message);
+      return states.at(-1)!.bubble!;
+    };
+    expect(failTitle(friendlyError("ECONNREFUSED", undefined, { provider: true }), true)).toMatchObject({ title: "I can't reach the model service", thought: expect.stringMatching(/your organisation's model service/) });
+    expect(failTitle(friendlyError("strange", undefined, { provider: true }), true).title).toBe("The model service had a problem");
+    expect(failTitle(friendlyError("ECONNREFUSED"), false).title).toBe("I can't reach Copilot");
     expect(problemTitle("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.")).toBe("Copilot stopped");
     expect(problemTitle("Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.")).toBe("Copilot isn't answering");
     expect(problemTitle("Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.")).toBe("Copilot can't work right now");

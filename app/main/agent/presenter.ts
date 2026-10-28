@@ -675,7 +675,7 @@ export class Presenter {
     const said = forBubble(message);
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
-      bubble: { visible: true, mood: "error", title: problemTitle(said), thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
+      bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
     }, "take");
     this.onProblem?.(message);
     this.hideLater(12000);
