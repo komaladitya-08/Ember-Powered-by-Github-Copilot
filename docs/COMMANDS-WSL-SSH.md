@@ -76,7 +76,7 @@ terminal when its tab comes up, so what you type there goes straight to it. Ever
 your other windows without taking the keyboard, and when a command's output stops at a question for a couple of
 seconds ("Password:", "Username for 'https://github.com':", "[y/N]"), its tab says "Waiting for you to type in this
 window.", the window comes up and flashes in the taskbar or Dock, and the task's bubble says "A command is waiting for
-you to type in the command window." The command's time limit still runs while it waits; if it runs out, the tab says
+you to type in the command window." until you type or the command ends. The command's time limit still runs while it waits; if it runs out, the tab says
 it was waiting for you. What you type goes only to the command: it
 never reaches Copilot, the log or the audit. Tab and Shift+Tab always move on to the window's buttons and tabs, never
 into the command (Ctrl+I types a tab for a program that wants one). Off a Mac, Ctrl+C copies the text you selected

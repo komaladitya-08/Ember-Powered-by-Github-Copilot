@@ -1010,15 +1010,47 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     const h = harness({ run: () => ({ hang: true }) });
     (h.ctx.service.window as unknown as { onWaiting: (fn: (runId: string, waiting: boolean) => void) => () => void }).onWaiting = fn => { tell = fn; return () => { tell = null; }; };
     const progress: string[] = [];
-    (h.ctx.presenter as unknown as { progress: (t: string) => void }).progress = t => progress.push(t);
+    // The bubble as the presenter shows it: what the task said before, then each progress line.
+    const bubble = { thought: "Cloning the private repository." };
+    Object.assign(h.ctx.presenter as object, { progress: (t: string) => { progress.push(t); bubble.thought = t; }, bubble });
     const done = call(h, { command: "git clone https://github.com/acme/private" });
     await vi.waitFor(() => expect(h.runs).toHaveLength(1));
-    tell!(h.starts[0].runId, true);
+    const runId = h.starts[0].runId;
+    tell!(runId, true);
     tell!("ffffffffffffffff", true);
     expect(progress).toEqual(["A command is waiting for you to type in the command window."]);
+    // Once the user has typed, the bubble says again what it said before.
+    tell!(runId, false);
+    expect(progress.at(-1)).toBe("Cloning the private repository.");
+    // Waiting again, then something newer in the bubble (the task's next words): that stays.
+    tell!(runId, true);
+    bubble.thought = "Checking out main.";
+    tell!(runId, false);
+    expect(progress).toEqual(["A command is waiting for you to type in the command window.", "Cloning the private repository.",
+      "A command is waiting for you to type in the command window."]);
+    // The run ends while it waits: the bubble doesn't keep saying a command waits.
+    tell!(runId, true);
+    expect(progress.at(-1)).toBe("A command is waiting for you to type in the command window.");
     h.abort.abort();
     await done;
     expect(tell).toBeNull();
+    expect(progress.at(-1)).toBe("Checking out main.");
+  });
+
+  it("puts a plain running line back after the wait when the bubble said nothing before it (review #263)", async () => {
+    let tell: ((runId: string, waiting: boolean) => void) | null = null;
+    const h = harness({ run: () => ({ hang: true }) });
+    (h.ctx.service.window as unknown as { onWaiting: (fn: (runId: string, waiting: boolean) => void) => () => void }).onWaiting = fn => { tell = fn; return () => { tell = null; }; };
+    const progress: string[] = [];
+    const bubble = { thought: "" };
+    Object.assign(h.ctx.presenter as object, { progress: (t: string) => { progress.push(t); bubble.thought = t; }, bubble });
+    const done = call(h, { command: "sudo apt install htop" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    tell!(h.starts[0].runId, true);
+    tell!(h.starts[0].runId, false);
+    expect(progress).toEqual(["A command is waiting for you to type in the command window.", "The command is running."]);
+    h.abort.abort();
+    await done;
   });
 
   it("tells the card what kind of danger it asks about, for its marker (review #275)", async () => {

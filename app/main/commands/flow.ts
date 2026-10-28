@@ -891,20 +891,40 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
 
 /** The task's bubble while its command waits at a prompt for the user to type (review #263). */
 export const WAITING_BUBBLE = "A command is waiting for you to type in the command window.";
+/** The task's bubble after the wait, when it said nothing before it. */
+export const RUNNING_BUBBLE = "The command is running.";
 
 /**
  * The command window's word that run `runId` waits for the user's typing (UI's onWaiting), said in the task's bubble;
- * nothing when the window doesn't have it. Returns the unsubscribe.
+ * nothing when the window doesn't have it. Once the run stops waiting (the user typed, or it ended), the bubble says
+ * again what it said before, unless something newer has replaced the waiting line since. Returns the unsubscribe.
  */
 function followWaiting(svc: CommandService, runId: string, presenter: Presenter): () => void {
   const window = svc.window as CommandService["window"] & { onWaiting?: (fn: (runId: string, waiting: boolean) => void) => () => void };
   if (typeof window.onWaiting !== "function") return () => undefined;
+  const thought = (): string | null => {
+    try { const t = (presenter as Partial<Pick<Presenter, "bubble">>).bubble?.thought; return typeof t === "string" ? t : null; } catch { return null; }
+  };
+  /** What the bubble said before the waiting line, while it shows that line. */
+  let before: string | null = null;
+  const restore = (): void => {
+    if (before === null) return;
+    const back = before;
+    before = null;
+    if (thought() !== WAITING_BUBBLE) return; // something newer is in the bubble: it stays
+    try { presenter.progress(back.trim() ? back : RUNNING_BUBBLE); } catch { /* the bubble is only a pointer */ }
+  };
   try {
     const off = window.onWaiting((id, waiting) => {
-      if (id !== runId || !waiting) return;
+      if (id !== runId) return;
+      if (!waiting) { restore(); return; }
+      if (before === null) { const t = thought(); before = t !== null && t !== WAITING_BUBBLE ? t : ""; }
       try { presenter.progress(WAITING_BUBBLE); } catch { /* the bubble is only a pointer: the window says it too */ }
     });
-    return () => { try { off(); } catch { /* already gone */ } };
+    return () => {
+      try { off(); } catch { /* already gone */ }
+      restore();
+    };
   } catch {
     return () => undefined;
   }
