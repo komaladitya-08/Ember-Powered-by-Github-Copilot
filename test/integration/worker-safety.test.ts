@@ -837,7 +837,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
       await makeWorker(screen, "Make my terminal text bigger", { grants: { "gnome-terminal-server": "act" }, isTerminalApp: n => /terminal/.test(n), confirmer: asking(["once"], asked) }).run(new AbortController().signal);
       expect(asked).toEqual([]);
       expect(screen.log).toEqual([]);
-      expect(toolResults("Make my terminal text bigger")[1]).toMatch(/never acts in terminals/);
+      expect(toolResults("Make my terminal text bigger")[1]).toMatch(/doesn't act in terminal windows/);
     });
 
     it("words the user added while it ran count, but not the words Ember wraps them in", async () => {

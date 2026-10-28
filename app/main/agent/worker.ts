@@ -166,6 +166,11 @@ export interface TaskSpec {
    */
   userWords?: string;
   /**
+   * The user's own words for commands when they differ from userWords: those heard where Ember can't tell the user from
+   * its speakers are left out (OWNER V1), so a dangerous command they name asks. Absent: userWords.
+   */
+  commandWords?: string;
+  /**
    * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
    * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
    */
@@ -834,6 +839,8 @@ export class Worker {
    * user's steers, never the goal or a steer's text (the conductor's words). "" when none: then no command announces.
    */
   private commandWords: string;
+  /** Some of the user's words were heard where Ember can't tell the user from its speakers (TaskSpec.commandWords). */
+  private spokenOnly: boolean;
   /** The task's folder and downloads on its target, and whether a command is running (commands/flow.ts). */
   private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
   /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
@@ -892,7 +899,8 @@ export class Worker {
     this.target = { ...spec.target };
     // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
-    this.commandWords = spec.userWords?.replace(STEERED, "\n$1") ?? "";
+    this.commandWords = (spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
+    this.spokenOnly = spec.commandWords !== undefined;
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
     if (spec.screen) this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
@@ -1099,7 +1107,7 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
             const place = await this.d.desk!();
             // Stopped while the desk started: nothing is opened (and the desk view isn't shown for a task that is gone).
@@ -1128,7 +1136,7 @@ export class Worker {
           const apps = this.sys.apps;
           const app = apps.find(apps.list(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           // Another computer's app list is that computer's words: its names are quoted as screen text is (§7.2 item 4).
           const shownApp = this.d.target?.kind === "ssh" ? q(app.name, 100) : app.name;
           return this.system("open_app", app.name, async () => {
@@ -1227,6 +1235,7 @@ export class Worker {
       task: {
         id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
         commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
+        spokenWords: () => (this.spokenOnly ? this.userWords : ""),
         // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
         taint: () => { this.tainted = true; },
         readFrom: () => [...this.read.values()],
@@ -1361,9 +1370,10 @@ export class Worker {
 
   /**
    * The user's new instruction for this running task ("use Firefox instead"); `userWords`: what the user said in that
-   * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec).
+   * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec);
+   * `commandWords`: those words for commands, when some were heard where Ember can't tell the user (TaskSpec).
    */
-  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[]): Promise<boolean> {
+  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
     if (agreed?.length) this.agreed = [...this.agreed, ...agreed];
     if (screen) {
@@ -1376,7 +1386,9 @@ export class Worker {
     const words = userWords ?? (this.spec.userWords === undefined ? said : "");
     if (words) this.userWords = `${this.userWords}\n${words}`;
     // Commands hear only the user's own words: never the instruction the conductor wrote (critique security-1).
-    if (userWords?.trim()) this.commandWords = this.commandWords ? `${this.commandWords}\n${userWords}` : userWords;
+    const heard = commandWords ?? userWords;
+    if (commandWords !== undefined) this.spokenOnly = true;
+    if (heard?.trim()) this.commandWords = this.commandWords ? `${this.commandWords}\n${heard}` : heard;
     await this.session.send({ prompt: `<user_update>The user changed the task: ${said}</user_update>`, mode: "immediate" });
     return true;
   }

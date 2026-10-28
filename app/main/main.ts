@@ -793,7 +793,8 @@ function start(): void {
     claim: () => agent?.claimBubble(), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
     release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
   }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, ms);
-  const askEmber = async (text: string) => {
+  /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
@@ -805,7 +806,7 @@ function start(): void {
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
-    return agent?.ask(text, context, epoch)?.catch(err => log.error("ask.failed", { err }));
+    return agent?.ask(text, context, epoch, how)?.catch(err => log.error("ask.failed", { err }));
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -960,8 +961,9 @@ function start(): void {
           setStatus("listen", note);
           setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
         }
-        // A follow-up (no wake word) keeps the context from the last call.
-        void askEmber(e.text);
+        // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
+        // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
+        void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers });
         break;
       }
       case "stop":

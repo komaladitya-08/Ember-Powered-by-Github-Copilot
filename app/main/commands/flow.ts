@@ -20,7 +20,7 @@ import type { Confirmer, Question } from "../agent/confirm";
 import type { Presenter } from "../agent/presenter";
 import type { AuditEntry } from "../policy/audit";
 import type { Agreement, ReadSource } from "../policy/policy";
-import { placesNamed } from "../targets/resolve";
+import { placeMentions, placesNamed } from "../targets/resolve";
 import type { TargetBinding } from "../targets/types";
 import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
@@ -28,7 +28,8 @@ import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
-import { cleanOutput, shapeOutput, type ShapeOptions } from "./output";
+import { mentioned } from "./intent";
+import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
 import { trackSecretPrompts, type SecretTracker } from "./prompts";
 import { redactSecrets } from "./redact";
@@ -48,6 +49,11 @@ export interface CommandFlowContext {
     title: string;
     /** The user's own words only (Worker.commandWords, §3.7): never the goal; "" when none. */
     commandWords: () => string;
+    /**
+     * The task's words when some of them were heard where Ember can't tell the user from its speakers (OWNER V1): they
+     * never count for an announcement, but the card says the user asked by voice rather than "You didn't ask for this."
+     */
+    spokenWords?: () => string;
     agreed: () => Agreement[];
     tainted: () => boolean;
     /** Marks the task tainted (command output that reads like instructions, §3.11 step 7); audited. */
@@ -107,6 +113,9 @@ export function setCommandJudge(j: CommandJudge | null): void {
   judge = j ?? CL_JUDGE;
 }
 
+/** The card's line when the user asked for it by voice where Ember can't tell their voice from the speakers (OWNER V1). */
+export const SPOKEN_LINE = "You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.";
+
 /** The card's taint line when what tainted the task was a command's own output (§3.8.4). */
 export const OUTPUT_TAINT_LINE = "I'm checking each step: an earlier command printed text that looked like instructions.";
 
@@ -134,8 +143,45 @@ export interface CommandTargetGuard {
 /** The card's first line when the user's words also name another computer: it says which one runs the command. */
 export const wrongTargetLine = (others: string[], here: string) => `You also named ${listOf(others)}, but this runs ${here}.`;
 
-/** The card's first line when the user's words name a place that looks like a computer Ember doesn't know. */
-export const unknownPlaceLine = (places: string[], here: string) => `You named ${listOf(places)}, but this runs ${here}.`;
+/**
+ * The card's first line when the user's words name a place that looks like a computer Ember doesn't know: it may be a
+ * folder or a branch after all ("in my-app"), so the card says what it looks like (review #31).
+ */
+export const unknownPlaceLine = (places: string[], here: string) =>
+  places.length === 1 && places[0] === "another computer"
+    ? `It looks like you named another computer, but this runs ${here}.`
+    : `It looks like you named another computer (${listOf(places)}), but this runs ${here}.`;
+
+/** Place words that name a folder ("delete build/ in my-app"), for notLocalPlaces. */
+const FOLDER_WORDS: ReadonlySet<string> = new Set(["in", "inside", "into"]);
+
+/**
+ * The places that are still unknown computers once the target has been asked (review #31): one every mention of which
+ * reads as a folder ("in my-app") that is a folder of the task's folder's path or is there, or as a branch ("on
+ * feature-x") that the task's folder is on, is a folder or a branch, not a computer. Only what the target confirms takes
+ * a place out: a check that can't answer leaves it in (the command asks).
+ */
+async function notLocalPlaces(places: string[], words: string, o: {
+  runner: CommandRunner; cwd: string; git: GitFacts | null; at: (p: string) => string; isOver: () => boolean;
+}): Promise<string[]> {
+  const simple = (p: string) => /^[\p{L}\p{N}_][\p{L}\p{N}._-]*$/u.test(p) && !/^\d+(\.\d+){3}$/.test(p);
+  const all = (p: string, ok: (via: string) => boolean) => { const m = placeMentions(words, p); return m.length > 0 && m.every(ok); };
+  const folders = places.filter(p => simple(p) && all(p, v => FOLDER_WORDS.has(v)));
+  const branches = places.filter(p => simple(p) && all(p, v => v === "on"));
+  const gone = new Set<string>();
+  const above = new Set(o.cwd.split(/[\\/]+/).filter(Boolean).map(s => s.toLowerCase()));
+  for (const p of folders) if (above.has(p.toLowerCase())) gone.add(p);
+  const look = folders.filter(p => !gone.has(p));
+  if (look.length) {
+    const found = await inspect(o.runner, look.map(o.at), o.cwd);
+    look.forEach((p, i) => { if (found[i].exists === true) gone.add(p); });
+  }
+  if (branches.length && !o.isOver()) {
+    const branch = (o.git ?? await within(o.runner.gitFacts(o.cwd), PROBE_MS, null))?.branch?.toLowerCase();
+    for (const p of branches) if (branch && branch === p.toLowerCase()) gone.add(p);
+  }
+  return places.filter(p => !gone.has(p));
+}
 
 /** Strings a guard gave: each once, at most five (anything else is dropped). */
 const guardList = (got: unknown): string[] =>
@@ -344,11 +390,13 @@ const TERMINAL_CODES = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\
 /**
  * The output a run printed, decoded as it comes: the first HEAD_CHARS characters and a rolling tail up to KEEP_CHARS
  * (the middle counted, not kept), and where its secret prompts were (the tracker sees every character and every Enter
- * the user pressed, never what they typed).
+ * the user pressed, never what they typed). The tail is a list of chunks, cut back to size only when it holds twice
+ * what is kept: cutting a single string per chunk copied 4 MiB each time and saturated the main thread.
  */
 class OutputKeeper {
   private head = "";
-  private tail = "";
+  private tail: string[] = [];
+  private tailLength = 0;
   private dropped = 0;
   private decoder = new TextDecoder("utf-8");
   bytes = 0;
@@ -373,24 +421,34 @@ class OutputKeeper {
       text = text.slice(take);
     }
     if (!text) return;
-    this.tail += text;
+    this.tail.push(text);
+    this.tailLength += text.length;
+    if (this.tailLength > 2 * (KEEP_CHARS - HEAD_CHARS)) this.trim();
+  }
+
+  /** Cuts the tail to its last KEEP_CHARS - HEAD_CHARS characters, counting what goes. */
+  private trim(): string {
     const room = KEEP_CHARS - HEAD_CHARS;
-    if (this.tail.length > room) {
-      const cut = this.tail.length - room;
-      this.tail = this.tail.slice(cut);
-      this.dropped += cut;
+    let tail = this.tail.join("");
+    if (tail.length > room) {
+      this.dropped += tail.length - room;
+      tail = tail.slice(tail.length - room);
     }
+    this.tail = [tail];
+    this.tailLength = tail.length;
+    return tail;
   }
 
   /** The text kept, with a note where the middle went, and `spans` (positions in everything printed) moved into it. */
   kept(spans: { from: number; to: number }[]): { text: string; spans: { from: number; to: number }[] } {
+    const tail = this.trim();
     const h = this.head.length;
-    if (!this.dropped) return { text: this.head + this.tail, spans };
+    if (!this.dropped) return { text: this.head + tail, spans };
     const note = `\n[… ${this.dropped} characters of output left out …]\n`;
     const end = h + this.dropped;
     const from = (p: number) => (p < h ? p : p < end ? h : p - this.dropped + note.length);
     const to = (p: number) => (p <= h ? p : p < end ? h + note.length : p - this.dropped + note.length);
-    return { text: this.head + note + this.tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
+    return { text: this.head + note + tail, spans: spans.map(s => ({ from: from(s.from), to: to(s.to) })).filter(s => s.to > s.from) };
   }
 }
 
@@ -404,7 +462,8 @@ function checkedText(text: string, spans: { from: number; to: number }[], typed:
   }
   out += text.slice(at);
   for (const t of typed.map(l => l.trim()).filter(l => l.length >= 3)) out = out.split(t).join(" ");
-  return out.replace(TERMINAL_CODES, "");
+  // Lines cut as cleanOutput cuts them: what is past that can't reach the model, and reading it costs main-thread time.
+  return capLines(out.replace(TERMINAL_CODES, ""));
 }
 
 /** A question with S0b's panel fields (confirm.ts §3.9.1): `where`, `armMs`, `panel`, `clickOnly`. */
@@ -625,6 +684,10 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const words = ctx.task.commandWords();
   others = [...new Set([...others, ...othersNamedIn(svc, words)])].slice(0, 5);
   places = [...new Set([...places, ...placesNamedIn(svc, words, binding, others)])].slice(0, 5);
+  if (places.length) {
+    places = await notLocalPlaces(places, words, { runner: svc.runner, cwd, git, at: p => j.resolveTargetPath(p, { os: facts.os, home, cwd }), isOver: () => ctx.isOver() });
+    if (ctx.isOver()) return STOPPED();
+  }
   where = whereWords(binding) ?? (others.length || places.length ? here : undefined);
   const tainted = ctx.task.tainted();
   const carried = carriedText(a.command, ctx.task.readFrom(), words, binding.shellOs);
@@ -643,6 +706,14 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       reason: others.length ? "It asks first: the user's words also name another computer." : "It asks first: the user's words name a computer Ember doesn't know.",
       armMs: Math.max(d.armMs, 1500),
     };
+  }
+  // Words heard where Ember can't tell the user from its speakers didn't count (OWNER V1): when they named it, the card
+  // says so instead of "You didn't ask for this."
+  const spoken = ctx.task.spokenWords?.() ?? "";
+  if (d.verdict === "ask" && d.unasked && spoken.trim() && mentioned(cls.findings, spoken)) {
+    const says = d.says.includes(LINES.unasked) ? d.says.map(l => (l === LINES.unasked ? SPOKEN_LINE : l)) : [...d.says];
+    if (!says.includes(SPOKEN_LINE)) says.splice(says.includes(LINES.windows) ? says.indexOf(LINES.windows) : says.length, 0, SPOKEN_LINE);
+    d = { ...d, unasked: false, says };
   }
   if (d.verdict === "ask" && (others.length || places.length)) {
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];

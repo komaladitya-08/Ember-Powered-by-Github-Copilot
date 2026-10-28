@@ -248,3 +248,102 @@ describe("matchIntent: words that don't ask, and objects the words don't name ex
     expect(announce("git checkout HEAD~3 -- a.ts", "discard changes to a.ts")).toBeNull();
   });
 });
+
+describe("matchIntent: only a request counts (review #28)", () => {
+  const PUSH = "git push origin feature-x";
+  it.each([
+    // Questions, how-tos and explanations.
+    ["rm -r build", "should I delete build/ or keep it?"],
+    ["rm -r build", "how do I delete build/"],
+    ["rm -r build", "can you tell me how to delete the build folder"],
+    ["rm -r build", "what would delete build/?"],
+    ["rm -r build", "delete build/?"],
+    ["rm -r build", "explain how rm -r build works, should I delete build/?"],
+    [PUSH, "should I push my branch to GitHub?"],
+    [PUSH, "explain how to push my branch to GitHub"],
+    [PUSH, "tell me how to push feature-x to origin"],
+    [PUSH, "how to push feature-x to origin"],
+    // Hypotheticals, past tense and instructions about something else.
+    ["rm -r build", "I might delete build/ later, but first list the files"],
+    ["rm -r build", "maybe delete build/"],
+    ["rm -r build", "list build/ and tell me if I can delete it"],
+    ["rm -r build", "I deleted build/ yesterday"],
+    ["rm -r build", "the script that deletes build/ is broken, fix it"],
+    ["rm -r build", "fix the Makefile target that deletes build/"],
+    ["rm -r build", "deleting build/ is what the clean target does"],
+    [PUSH, "I pushed my branch to GitHub already"],
+    [PUSH, "I pushed feature-x to origin, now run the tests"],
+    ["rm -r build", "I wanted to delete build/ yesterday"],
+    ["rm -r build", "do I want to delete build/?"],
+    ["rm -r build", "I want to know how to delete build/"],
+  ])("asks for `%s` after %j", (cmd, words) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBeNull();
+  });
+
+  it.each([
+    ["rm -r build", "delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "Please delete build/.", "Deleting build, as you asked."],
+    ["rm -r build", "Ember, delete build/ now", "Deleting build, as you asked."],
+    ["rm -r build", "hey ember delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "can you delete build/?", "Deleting build, as you asked."],
+    ["rm -r build", "could you please delete the build folder", "Deleting build, as you asked."],
+    ["rm -r build", "I want you to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I want to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I need to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I'd like to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I would like to delete the build folder", "Deleting build, as you asked."],
+    [PUSH, "I want to push feature-x to origin", "Pushing feature-x to origin, as you asked."],
+    ["rm -r build", "go ahead and delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "fix line 12 in main.ts and delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "list the files, then delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "how big is build/? delete build/ if it is over 1 GB", "Deleting build, as you asked."],
+    ["rm -r build", "on the desktop delete build/", "Deleting build, as you asked."],
+    [PUSH, "push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
+    [PUSH, "commit and push my branch to GitHub", "Pushing feature-x to origin, as you asked."],
+    [PUSH, "can you commit and push feature-x to origin?", "Pushing feature-x to origin, as you asked."],
+    [PUSH, "let's push feature-x to origin", "Pushing feature-x to origin, as you asked."],
+  ])("announces `%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words, { git: FEATURE })).toBe(said);
+  });
+});
+
+describe("matchIntent: the folder the words put a path in (review #31)", () => {
+  it.each([
+    ["rm -r build", "delete build/ in my-project", null],
+    ["rm -r my-project/build", "delete build/ in my-project", "Deleting my-project/build, as you asked."],
+    ["rm -r build", "delete the build folder in packages/app", null],
+    ["rm -rf packages/app/build", "delete the build folder in packages/app", "Deleting packages/app/build, as you asked."],
+    ["rm -r step2/cache", "clean up the cache folder in step2", "Deleting step2/cache, as you asked."],
+    ["rm -r cache", "clean up the cache folder in step2", null],
+    ["rm -r build", "delete build/ in 5 minutes", "Deleting build, as you asked."],
+    ["rm -r build", "delete build/ in my home folder", "Deleting build, as you asked."],
+    ["echo x > notes.txt", "overwrite notes.txt in my-app", null],
+    ["echo x > my-app/notes.txt", "overwrite notes.txt in my-app", "Overwriting my-app/notes.txt, as you asked."],
+  ])("`%s` after %j", (cmd, words, said) => {
+    expect(announce(cmd, words)).toBe(said);
+  });
+
+  it("reads the task's own folder as the folder named", () => {
+    const ctx = contextOf("linux");
+    const inside = { ...ctx, cwd: "/home/ana/my-project" };
+    const cls = classifyCommand("rm -r build", "bash", inside);
+    expect(matchIntent(cls, "delete build/ in my-project", { ...inside, git: null })?.announce).toBe("Deleting build, as you asked.");
+  });
+
+  it("takes the folder named as the path's own folder, not any folder further up (review #31, second round)", () => {
+    const ctx = contextOf("linux");
+    const said = (cmd: string, cwd: string, words: string) => {
+      const here = { ...ctx, cwd };
+      return matchIntent(classifyCommand(cmd, "bash", here), words, { ...here, git: null })?.announce ?? null;
+    };
+    // build/ in packages/core is not build/ in my-app, though my-app is further up.
+    expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in my-app")).toBeNull();
+    expect(said("rm -r packages/core/build", "/home/ana/my-app", "delete build/ in my-app")).toBeNull();
+    expect(said("rm -r /home/ana/my-app/packages/core/build", "/home/ana", "delete the build folder in my-app")).toBeNull();
+    // The folder named is the path's own: by name, by a longer path, or the task's folder.
+    expect(said("rm -r build", "/home/ana/my-app", "delete build/ in my-app")).toBe("Deleting build, as you asked.");
+    expect(said("rm -r my-app/build/", "/home/ana", "delete build/ in my-app")).toBe("Deleting my-app/build/, as you asked.");
+    expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in packages/core")).toBe("Deleting build, as you asked.");
+    expect(said("rm -r build", "/home/ana/my-app/packages/core", "delete build/ in my-app/packages")).toBeNull();
+  });
+});

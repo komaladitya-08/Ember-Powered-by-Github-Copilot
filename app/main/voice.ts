@@ -153,7 +153,9 @@ export class VoiceService {
   /**
    * Ember listens and can tell its own voice (and the speakers') from the user's: the speakers' stream is arriving, so
    * a wake or stop phrase it says itself is rejected. False while not listening, and wherever speaker rejection doesn't
-   * run (Windows, macOS, Linux without parec): Ember then never says those phrases (owner decision V1, review #251).
+   * run (Windows, macOS, Linux without parec): Ember then never says those phrases (owner decision V1, review #251), and
+   * a call, a video or Ember's own voice can say a request, so words heard then never count as asking for a dangerous
+   * command (review #252).
    */
   get rejectsSpeakers(): boolean {
     return !!this.proc && this.monitorOn && (this.state === "waiting" || this.state === "active");

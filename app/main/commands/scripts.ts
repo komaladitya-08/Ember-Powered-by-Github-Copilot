@@ -15,7 +15,7 @@
 
 import posix from "node:path/posix";
 import win32 from "node:path/win32";
-import { SCRIPT_UNSURE, type ClassificationExtra, type ScriptRef } from "./classify";
+import { SAYS, SCRIPT_UNSURE, type ClassificationExtra, type ScriptRef } from "./classify";
 import { isUnder, pathEnv, physicalForm, type PathEnv } from "./paths";
 import { OTHER_SHELLS, POSIX_SHELLS } from "./tables";
 import type { Classification, ClassifyContext, Finding, PathFact, RunnerFacts, ShellId } from "./types";
@@ -187,6 +187,55 @@ async function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
   }
 }
 
+/**
+ * The classifier reads an sh or bash script's if, then, else, for, while, until, do and done as words it can't follow,
+ * though it classifies every command in them (a condition, a loop's body, a substitution in its list) and leaves a
+ * variable in a file argument unresolved (which asks): inside such a script, these words alone don't make it ask
+ * (review #27). A plain `[[ … ]]` test doesn't either (plainTest). case, functions, traps, select and `{ … }` groups
+ * (whose commands the classifier doesn't read) still ask, and so do zsh's flow words (its short forms run the command
+ * after the condition: `if [[ -n x ]] rm -rf ~`) and PowerShell's and cmd's if and for, whose blocks the classifier
+ * doesn't read inside.
+ */
+const SCRIPT_FLOW = new Set([
+  "unclear.if", "unclear.then", "unclear.elif", "unclear.else", "unclear.fi", "unclear.for", "unclear.while", "unclear.until",
+  "unclear.do", "unclear.done", "unclear.in",
+]);
+const FLOW_SHELLS: ReadonlySet<ShellId> = new Set<ShellId>(["sh", "bash"]);
+/** `[[ … ]]` operators whose operands bash evaluates as arithmetic or reads as a variable's name: a `$(…)` in a subscript runs. */
+const TEST_RUNS = new Set(["-eq", "-ne", "-lt", "-le", "-gt", "-ge", "-v", "-R"]);
+
+/**
+ * Whether a finding is only a `[[ … ]]` test that runs nothing: the whole test on one command, ending at its `]]`, with
+ * no operator that evaluates a value (`[[ $x -eq 0 ]]` with x='a[$(rm -rf ~)]' runs the rm). Ember can't see an
+ * operator in an unresolved word, but bash reads `[[`'s operators before expanding anything, so none can be there.
+ */
+function plainTest(f: Finding, got: Classification): boolean {
+  const c = got.commands[f.at];
+  if (f.rule !== "unclear.keyword" || f.program !== "[[" || c?.program !== "[[") return false;
+  return c.args.indexOf("]]") === c.args.length - 1 && !c.args.some(a => a !== null && TEST_RUNS.has(a));
+}
+
+/** The widening that names the script a finding came from (`script:build.sh`): the user's words may name it (intent.ts). */
+export const scriptTag = (name: string) => `script:${name}`;
+
+/** Ember's own limits in reading a script: too many commands, too long, nested too deeply (SAYS.unclear is syntax). */
+const READ_LIMITS = new Set(["unclear.too-many", "unclear.too-long", "unclear.depth"]);
+/**
+ * Whether a finding in a script is about Ember's reading of it (shell syntax it doesn't follow, or one of its limits)
+ * rather than about what a command in it does: an eval, an interactive program or an argument Ember can't see stays
+ * "In build.sh: Runs code Ember can't see." (review #27).
+ */
+const unreadFinding = (f: Finding): boolean => f.cls === "unclear" && (f.says === SAYS.unclear || READ_LIMITS.has(f.rule));
+
+/**
+ * The card's line for something in a script Ember can't follow (review #27): "Ember can't read all of build.sh (it has
+ * more commands than Ember can check one by one)." rather than "In build.sh: Ember can't tell exactly what this does."
+ */
+export function unreadPart(name: string, says: string): string {
+  const why = says === SAYS.unclear ? "it uses shell syntax Ember doesn't follow" : says.replace(/[.!]+$/, "").replace(/^(It|Its) /, m => m.toLowerCase());
+  return `Ember can't read all of ${name} (${why}).`;
+}
+
 /** The card's words for a script of the task's own that can't be read in full. */
 export const unreadOwnScript = (name: string) => `It runs ${name}, which this task wrote or downloaded, and Ember can't read all of it first.`;
 /** The card's words for a script that another part of the same command writes first (as classify's own rule says). */
@@ -225,8 +274,9 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
   const inner: { by: Ran; writes: string[]; anywhere: boolean }[] = [];
   const ran: Ran[] = [];
   let refuse = cls.refuse;
-  const unclear = (rule: string, says: string): void => {
-    if (!extra.some(f => f.rule === rule && f.says === says)) extra.push({ cls: "unclear", rule, says, program: "", objects: [], widening: ["in-script"], at: -1 });
+  const unclear = (rule: string, says: string, name?: string): void => {
+    const widening = name ? ["in-script", scriptTag(name)] : ["in-script"];
+    if (!extra.some(f => f.rule === rule && f.says === says)) extra.push({ cls: "unclear", rule, says, program: "", objects: [], widening, at: -1 });
   };
   /** What the target says of one path (asked once; "couldn't tell" when time is up). */
   const factOf = async (p: string, cwd: string): Promise<PathFact> => {
@@ -257,7 +307,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     let where = ref.real ?? null;
     if (ref.open !== undefined && where === null) {
       where = (await factOf(ref.open, folder)).real;
-      if (where === null) { unclear("unclear.script-path", SCRIPT_UNSURE); continue; }
+      if (where === null) { unclear("unclear.script-path", SCRIPT_UNSURE, flavour.basename(ref.path)); continue; }
     }
     const me: Ran = { names: where !== null && where !== ref.path ? [ref.path, where] : [ref.path], depth };
     ran.push(me);
@@ -273,7 +323,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       const own = (p: string | null): boolean => p !== null && taskWrote(p, env.written, env.downloaded, cmp);
       if (own(ref.path) || own(where) || (env.written?.paths.size ?? 0) > 0 || env.downloaded.size > 0) {
         const fact = await factOf(ref.open ?? ref.path, folder);
-        if (fact.exists !== false && (own(ref.path) || own(where) || own(fact.real))) unclear("unclear.script-unread", unreadOwnScript(name));
+        if (fact.exists !== false && (own(ref.path) || own(where) || own(fact.real))) unclear("unclear.script-unread", unreadOwnScript(name), name);
       }
       continue;
     }
@@ -282,7 +332,7 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
     const text = ref.as === "powershell" ? raw.replace(/^\uFEFF/, "") : raw;
     const lang = scriptLanguage(ref.as, text);
     if (lang.kind === "none") continue;
-    if (lang.kind === "unclear") { unclear("unclear.other-shell", lang.says); continue; }
+    if (lang.kind === "unclear") { unclear("unclear.other-shell", lang.says, name); continue; }
     if (lang.kind === "follow") {
       // A relative interpreter is found from the folder the command runs in.
       if (!flavour.isAbsolute(lang.path) && !ref.cwd) { unclear("unclear.script", "It runs a script Ember can't name."); continue; }
@@ -311,8 +361,9 @@ export async function judgeScripts(cls: Classification, io: ScriptIo | null, cla
       if (real.size) got = classify(text, shell, { ...sctx, real });
       refuse ??= got.refuse;
       for (const f of got.findings) {
-        const says = `In ${name}: ${f.says}`;
-        if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script"] });
+        if (FLOW_SHELLS.has(shell) && (SCRIPT_FLOW.has(f.rule) || plainTest(f, got))) continue;
+        const says = unreadFinding(f) ? unreadPart(name, f.says) : `In ${name}: ${f.says}`;
+        if (!extra.some(g => g.rule === f.rule && g.says === says)) extra.push({ ...f, says, widening: [...f.widening, "in-script", scriptTag(name)] });
       }
       downloads.push(...got.downloads);
       const x = got as Partial<ClassificationExtra>;

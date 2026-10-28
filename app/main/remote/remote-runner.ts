@@ -23,6 +23,31 @@ import type { RemoteLink } from "./types";
 import { trackSecretPrompts, type SecretTracker } from "../commands/prompts";
 import { stalledText } from "../../renderer/command/copy";
 
+/**
+ * A remote's refusal as the run's `error` (review #215): only its own words, one plain line, because the flow's result
+ * for the model and the command tab's status line each say "build-01 refused it" themselves. A sentence the remote's
+ * gate says of itself ("This computer's administrator has turned off commands from Ember.") names the computer, as the
+ * user's PC sees it.
+ */
+function refusalOf(reason: string, label: string): string {
+  return cleanRemote(reason, 500).replace(/^This computer\b/, () => label);
+}
+
+/** A refusal the link reported in its own sentence ("build-01 refused it: \"…\""): the words quoted in it (refusalOf). */
+function refusalIn(message: string, label: string): string {
+  const prefix = `${label} refused it`;
+  let rest = message.startsWith(prefix) ? message.slice(prefix.length).replace(/^[:.]\s*/, "") : message;
+  if (rest.startsWith("\"")) {
+    try {
+      const v: unknown = JSON.parse(rest);
+      if (typeof v === "string") rest = v;
+    } catch {
+      // not one quoted string: kept as it is
+    }
+  }
+  return refusalOf(rest, label);
+}
+
 /** CL's secret-prompt tracker (§3.11 step 2; commands/prompts.ts). */
 export type { SecretTracker };
 
@@ -178,7 +203,10 @@ class RemoteRun implements RemoteRunningCommand {
     }
     if (a.status !== "started") {
       const said = remoteWords(a.reason, 500);
-      if (a.status === "deny") return this.end({ ...this.base("refused-remote"), error: said ? `${o.label} refused it: ${said}` : `${o.label} refused it` });
+      if (a.status === "deny") {
+        const words = refusalOf(typeof a.reason === "string" ? a.reason : "", o.label);
+        return this.end({ ...this.base("refused-remote"), ...(words ? { error: words } : {}) });
+      }
       // Gate 2 found more than the PC did (critique security-3): the flow asks once, with the remote's own lines.
       const extra = (a.rules ?? []).filter(r => !this.spec.stamp.rules.includes(r));
       const says = (a.says ?? []).map(s => cleanRemote(s, 500)).filter(Boolean).slice(0, SAYS_MAX);
@@ -232,7 +260,10 @@ class RemoteRun implements RemoteRunningCommand {
     if (err instanceof RemoteStepError) {
       switch (err.code) {
         // linkFailure's sentence, with the remote's own words quoted in it.
-        case "deny": return this.end({ ...this.base("refused-remote"), error: err.message || `${o.label} refused it` });
+        case "deny": {
+          const words = refusalIn(err.message, o.label);
+          return this.end({ ...this.base("refused-remote"), ...(words ? { error: words } : {}) });
+        }
         case "needs_confirm": return this.end({ ...this.base("refused-remote"), error: `${o.label}'s own check wants the user's yes first`, needsConfirm: true, remoteSays: [], rules: [] });
         case "stopped": return this.end(this.failed("It was stopped before it started"));
         default: return this.end(this.failed(`${o.label} didn't answer in time, so the command wasn't started`));

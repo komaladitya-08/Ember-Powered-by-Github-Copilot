@@ -76,6 +76,22 @@ beforeEach(() => { electron.procs.length = 0; electron.windows.length = 0; elect
 afterEach(() => { vi.useRealTimers(); for (const s of services) s.stop(); fs.rmSync(root, { recursive: true, force: true }); });
 
 describe("VoiceService", () => {
+  it("says it can tell the user from the speakers only while the voice process hears the speakers' stream (review #252)", async () => {
+    const { v } = service();
+    expect(v.rejectsSpeakers).toBe(false);
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    expect(v.rejectsSpeakers).toBe(false);
+    proc.emit("message", { type: "monitor", on: true });
+    expect(v.rejectsSpeakers).toBe(true);
+    proc.emit("message", { type: "monitor", on: false, reason: "parec stopped (exit 1)" });
+    expect(v.rejectsSpeakers).toBe(false);
+    proc.emit("message", { type: "monitor", on: true });
+    v.stop();
+    expect(v.rejectsSpeakers).toBe(false);
+  });
+
   it("opens the follow-up window only after Ember has finished speaking its answer", async () => {
     const { v } = service();
     await v.setWanted(true);

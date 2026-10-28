@@ -75,9 +75,9 @@ describe("main.ts's privacy wiring (critique integration-1)", () => {
       expect(isTerminalApp({ id: "Shell Window", name: "Shell Window" }, "darwin")).toBe(false);
       expect(privacy.isTerminalApp({ id: "Shell Window", name: "Shell Window" })).toBe(true);
       const click = (app: string) => policy.decide({ taskId: "t", kind: "click", app, window: "Default", element: { role: "menu item", name: "Paste" } });
-      expect(click("Shell Window")).toMatchObject({ tier: "never", reason: "Ember doesn't run commands, so it never acts in terminals or apps with a shell built in" });
+      expect(click("Shell Window")).toMatchObject({ tier: "never", reason: "Ember doesn't act in terminal windows or apps with a shell built in; it runs commands in its own command window when Commands is on" });
       expect(click("Kitten").tier).toBe("never");
-      expect(policy.decide({ taskId: "t", kind: "open_app", app: "Warp Preview", window: "" })).toMatchObject({ tier: "never", reason: "Ember doesn't run commands, so it never opens terminals" });
+      expect(policy.decide({ taskId: "t", kind: "open_app", app: "Warp Preview", window: "" })).toMatchObject({ tier: "never", reason: "Ember doesn't open terminal windows; it runs commands in its own command window when Commands is on" });
       // An ordinary app is judged as before.
       expect(click("Notes").tier).not.toBe("never");
     });

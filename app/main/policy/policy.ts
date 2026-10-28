@@ -2120,10 +2120,10 @@ export class PolicyEngine {
     // Ember's own windows: a task could answer its own (or another task's) question, or change consent or the never-look list.
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     if (r.element?.role === "password text") return never("password fields are for the user only");
-    if (r.element?.role === "terminal") return never("Ember doesn't run commands, so it never types into terminals");
-    if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't run commands, so it never opens terminals");
+    if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");
+    if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't open terminal windows; it runs commands in its own command window when Commands is on");
     // Not their menus or settings either: Paste puts the clipboard into the shell, a profile's command runs.
-    if (r.kind !== "read" && r.app && this.o.isTerminalApp?.(r.app)) return never("Ember doesn't run commands, so it never acts in terminals or apps with a shell built in");
+    if (r.kind !== "read" && r.app && this.o.isTerminalApp?.(r.app)) return never("Ember doesn't act in terminal windows or apps with a shell built in; it runs commands in its own command window when Commands is on");
     // A remote desktop's or a WSLg app's window (Windows): its program says nothing of what runs inside, so no grant covers it.
     if (r.kind !== "read" && r.kind !== "open_app" && isRemoteSurface(r.app, os)) return never(REMOTE_SURFACE_REASON);
     // Windows' Run dialog runs what its box holds on OK or Enter (READ_ONLY_WINDOW; none on Linux): not a window known to
