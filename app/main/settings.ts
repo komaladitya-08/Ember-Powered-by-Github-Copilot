@@ -317,6 +317,8 @@ export class SettingsStore {
   private pending: SettingsPatch | null = null;
   /** The file is there but couldn't be read at start-up: nothing is saved over it until it reads (review #83). */
   private unread = false;
+  /** The notice that said so. */
+  private unreadNotice: string | null = null;
   private pendingTimer: NodeJS.Timeout | null = null;
 
   private renameRetries: number;
@@ -358,8 +360,8 @@ export class SettingsStore {
       raw = running ? readTextFile(this.file) : readSoon(this.file);
     } catch (err) {
       const missing = (err as NodeJS.ErrnoException).code === "ENOENT";
-      // Nothing is there to save over any more.
-      if (missing) this.unread = false;
+      // Nothing is there to save over any more: the notice that said Ember wouldn't goes too.
+      if (missing && this.unread) { this.unread = false; this.withdraw(this.unreadNotice); }
       if (running) {
         // (Still unreadable since start-up: its notice stands.)
         if (!missing && !this.unread) this.problem(`Ember can't read ${this.file}, so it keeps the settings it has.`);
@@ -371,7 +373,8 @@ export class SettingsStore {
         // they can be read (the watcher keeps trying), so one change can't replace consent, hosts and the never-look
         // list with defaults (review #83).
         this.unread = true;
-        this.problem(`Ember can't read ${this.file}, so it started with its default settings. It won't save over the file until it can read it again.`);
+        this.unreadNotice = `Ember can't read ${this.file}, so it started with its default settings. It won't save over the file until it can read it again.`;
+        this.problem(this.unreadNotice);
       }
       return { settings: this.current };
     }
@@ -462,6 +465,11 @@ export class SettingsStore {
     } catch { /* tidied the next time */ }
   }
 
+  /** Takes `msg` away if it is still the notice shown. */
+  private withdraw(msg: string | null): void {
+    if (msg !== null && this.lastProblem === msg) this.problem(null);
+  }
+
   private problem(msg: string | null): void {
     this.troubled = msg !== null;
     this.lastProblem = msg;
@@ -525,7 +533,9 @@ export class SettingsStore {
     // A hand edit since Ember last looked comes first (or the file that couldn't be read): the patch goes on top of it.
     // (A repairable edit is repaired now, not waited on: Ember saves anyway.)
     if (this.unread || this.mtime() !== this.seen) { try { this.read(true, false); } catch { /* keep what is in memory */ } }
-    const next = SettingsSchema.parse({ ...this.current, ...patch });
+    // A change not saved yet (held while the file couldn't be read, or a slider's) goes on top of what was just read,
+    // as reloadIfChanged() does it, and is saved with this one (review #83).
+    const next = SettingsSchema.parse({ ...this.current, ...this.pending, ...patch });
     if (next.onboarded && !hasConsent(next)) throw new Error("onboarding can't finish before the user gives consent");
     if (this.unread) {
       // Saving would replace the user's unreadable file with defaults: the change is used now and saved on top of
@@ -572,7 +582,7 @@ export class SettingsStore {
       this.problem(this.saveNotice);
       throw err;
     }
-    if (this.saveNotice !== null && this.lastProblem === this.saveNotice) this.problem(null);
+    this.withdraw(this.saveNotice);
     this.saveNotice = null;
   }
 
