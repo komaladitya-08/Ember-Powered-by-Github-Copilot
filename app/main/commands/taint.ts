@@ -12,9 +12,11 @@ const RULES: readonly TaintRule[] = [
   // Text addressed to an assistant or agent.
   { re: /(ignore|disregard) (all |any )?(previous|prior|above) (instructions|directions)/i, why: "output.ignore-instructions" },
   { re: /\b(you are|you're) (now )?(an? )?(ai|assistant|agent)\b/i, why: "output.you-are-an-assistant" },
-  // A chat transcript's role label: first on its line, and not a report's heading ("System:" before "Host: …" in
-  // inxi), so "Operating System: Ubuntu" (hostnamectl, docker info) and "refactor: assistant: …" don't count.
-  { re: /^[ \t]*(assistant|Assistant|ASSISTANT|system|System|SYSTEM)[ \t]*:(?![ \t]*(?:$|[A-Z][A-Za-z ]{0,20}:))/m, why: "output.role-label" },
+  // A chat transcript's role label: first on its line, so "Operating System: Ubuntu" (hostnamectl, docker info) and
+  // "refactor: assistant: …" don't count. Only a report's heading is left out: inxi's "System:", then two spaces or
+  // an indented next line, then two or more "Key: value" fields ("System:    Host: x Kernel: y"). "System: Note: …"
+  // and a label alone on its line before ordinary text are a transcript's.
+  { re: /^[ \t]*(assistant|Assistant|ASSISTANT|system|System|SYSTEM)[ \t]*:(?!(?:[ \t]{2,}|[ \t]*\r?\n[ \t]+)[A-Za-z][\w/.()-]{0,24}:[ \t]+[^\n]*?\S[ \t]+[A-Za-z][\w/.()-]{0,24}:[ \t]*\S)/m, why: "output.role-label" },
   { re: /<\/?(system|instructions?|prompt)>/i, why: "output.role-tag" },
   { re: /\bas an ai\b/i, why: "output.as-an-ai" },
   // Download-and-run text. Each is anchored at the pipe and looks back along its line for the download: read from
