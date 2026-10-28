@@ -2664,9 +2664,12 @@ reg(NATIVE, ["split", "csplit"], h => {
   const p = opts(h, h.key === "split"
     ? { shortValue: "abClnt", longValue: ["suffix-length", "bytes", "line-bytes", "lines", "number", "separator", "additional-suffix", "filter"] }
     : { shortValue: "bfn", longValue: ["suffix-format", "prefix", "digits"] });
-  // The output files' names start with split's second operand or csplit's -f.
+  // The output files' names start with split's second operand or csplit's -f. Only §3.6's rules meet them: the pieces
+  // stay writes Ember doesn't follow for a script this command runs (L8).
   const prefix = h.key === "split" ? p.operands[1]?.v : values(p, "f", "prefix")[0];
+  const mark = h.e.written.length;
   if (prefix) h.e.usePath(lit(`${prefix}${h.key === "split" ? "aa" : "00"}`), "write", h.sc);
+  h.e.written.length = mark;
   // split --filter hands each piece to a shell command instead of a file.
   for (const f of h.key === "split" ? values(p, "filter") : []) {
     if (f === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");

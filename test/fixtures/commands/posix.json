@@ -13048,6 +13048,14 @@
    "rules": [
     "path.secret"
    ]
+  },
+  {
+   "cmd": "split -l 10 x s. && sh s.aa",
+   "verdict": "run"
+  },
+  {
+   "cmd": "csplit -f p x 1 && sh p00",
+   "verdict": "run"
   }
  ]
 }
