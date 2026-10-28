@@ -406,7 +406,7 @@ function start(): void {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(IPC.settingsChanged, s);
   });
   // And again when it changes (only then: the size slider changes the settings many times a second). The command and
-  // prompt windows open larger with the text size.
+  // prompt windows grow with the text size, open ones too (windows.ts).
   let pagePrefsKey = JSON.stringify(pagePrefs(settings.get()));
   setTextScale(textScale(settings.get().textSize));
   settings.onChange(s => {

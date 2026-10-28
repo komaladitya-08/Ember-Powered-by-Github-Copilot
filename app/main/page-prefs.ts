@@ -46,6 +46,26 @@ export function scaledSize<T extends Record<string, number>>(size: T, scale: num
   return out as T;
 }
 
+type Bounds = { x: number; y: number; width: number; height: number };
+
+/**
+ * Where an open window goes when the text's scale changes from `from` to `to`: its size times to / from (a size the user
+ * chose keeps its proportion, and back at the default the usual size is exact again), at least `least`, inside `area`
+ * (its display's work area), centred where it was.
+ */
+export function rescaledBounds(now: Bounds, from: number, to: number, area: Bounds, least = { width: 1, height: 1 }): Bounds {
+  const grow = (v: number, lo: number, room: number) => Math.min(Math.max(Math.round((v * to) / from), lo), room);
+  const width = grow(now.width, least.width, area.width);
+  const height = grow(now.height, least.height, area.height);
+  const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  return {
+    x: clamp(Math.round(now.x + (now.width - width) / 2), area.x, area.x + area.width - width),
+    y: clamp(Math.round(now.y + (now.height - height) / 2), area.y, area.y + area.height - height),
+    width,
+    height,
+  };
+}
+
 /** The display settings to apply, from Ember's settings (an unknown text size is the default). */
 export function pagePrefs(s: Pick<Settings, "reduceMotion" | "textSize">): PagePrefs {
   return { calm: s.reduceMotion === true, textSize: TEXT_SIZES.includes(s.textSize) ? s.textSize : "default" };

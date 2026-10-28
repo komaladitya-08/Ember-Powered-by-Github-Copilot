@@ -10,7 +10,7 @@ import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
-import { scaledSize } from "./page-prefs";
+import { rescaledBounds, scaledSize } from "./page-prefs";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -49,8 +49,30 @@ const webPreferences = (page: string) => ({
 
 /** The text's scale (1, 1.15 or 1.3: page-prefs.ts's textScale), which main keeps up to date with the settings. */
 let textScaleNow = 1;
+/**
+ * The command and prompt windows open now, with their smallest size at the default text size (null: none). Their
+ * controllers make each once and then hide and show it, so one already made grows or shrinks when the text size changes.
+ */
+const sizedForText = new Map<BrowserWindow, { minWidth: number; minHeight: number } | null>();
 export function setTextScale(scale: number): void {
+  const from = textScaleNow;
   textScaleNow = Number.isFinite(scale) && scale > 0 ? scale : 1;
+  if (textScaleNow === from) return;
+  for (const [win, min] of sizedForText) {
+    if (win.isDestroyed()) { sizedForText.delete(win); continue; }
+    try {
+      const now = win.getBounds();
+      const area = screen.getDisplayMatching(now).workArea;
+      const least = min && scaledSize(min, textScaleNow, area);
+      if (least) win.setMinimumSize(least.minWidth, least.minHeight);
+      win.setBounds(rescaledBounds(now, from, textScaleNow, area, least ? { width: least.minWidth, height: least.minHeight } : undefined));
+    } catch { /* a window that can't be resized keeps its size */ }
+  }
+}
+/** Keeps `win` growing and shrinking with the text while it is open. */
+function sizeForText(win: BrowserWindow, min: { minWidth: number; minHeight: number } | null): void {
+  sizedForText.set(win, min);
+  win.on("closed", () => sizedForText.delete(win));
 }
 
 /**
@@ -60,6 +82,9 @@ export function setTextScale(scale: number): void {
 const forText = <T extends Record<string, number>>(size: T): T =>
   textScaleNow === 1 ? size : scaledSize(size, textScaleNow, screen.getPrimaryDisplay().workAreaSize);
 
+/** The command window's smallest size at the default text size. */
+const COMMAND_MIN = { minWidth: 480, minHeight: 280 };
+
 /**
  * The command window ("Ember commands", §3.10, §8.5): hidden until its controller shows it. macOS: a non-activating panel
  * whose first click counts (one click allows; the user's app stays active). Windows: its controller shows it inactive.
@@ -67,7 +92,7 @@ const forText = <T extends Record<string, number>>(size: T): T =>
  */
 export function createCommandWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
-    ...forText({ width: 760, height: 480, minWidth: 480, minHeight: 280 }),
+    ...forText({ width: 760, height: 480, ...COMMAND_MIN }),
     title: "Ember commands",
     show: false,
     backgroundColor: "#121011",
@@ -75,6 +100,7 @@ export function createCommandWindow(os: OS): BrowserWindow {
     ...(os === "darwin" ? { type: "panel", acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("command"),
   });
+  sizeForText(win, COMMAND_MIN);
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
   return win;
@@ -99,6 +125,7 @@ export function createPromptWindow(os: OS): BrowserWindow {
     autoHideMenuBar: true,
     webPreferences: webPreferences("prompt"),
   });
+  sizeForText(win, null);
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));

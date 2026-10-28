@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { applyPagePrefs, pageOf, pagePrefs, prefsScript, scaledSize, textScale, type PrefsPage } from "../../app/main/page-prefs";
+import { applyPagePrefs, pageOf, pagePrefs, prefsScript, rescaledBounds, scaledSize, textScale, type PrefsPage } from "../../app/main/page-prefs";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const url = (page: string) => `file:///opt/Ember/resources/app/dist/app/renderer/${page}/index.html`;
@@ -160,6 +160,22 @@ describe("the text size", () => {
     // No larger than the work area, and never smaller than the usual size (a small screen keeps today's window).
     expect(scaledSize(usual, 1.3, { width: 1024, height: 560 })).toEqual({ width: 988, height: 560, minWidth: 624, minHeight: 364 });
     expect(scaledSize(usual, 1.3, { width: 700, height: 400 })).toEqual({ width: 760, height: 480, minWidth: 624, minHeight: 364 });
+  });
+
+  it("grows an open window when the text size changes, keeping a size the user chose in proportion (review #57)", () => {
+    const area = { x: 0, y: 0, width: 1920, height: 1040 };
+    // Centred where it was: Default to Large, and back to exactly the usual size.
+    const large = rescaledBounds({ x: 580, y: 280, width: 760, height: 480 }, 1, 1.15, area);
+    expect(large).toEqual({ x: 523, y: 244, width: 874, height: 552 });
+    expect(rescaledBounds(large, 1.15, 1, area)).toEqual({ x: 580, y: 280, width: 760, height: 480 });
+    expect(rescaledBounds(large, 1.15, 1.3, area)).toMatchObject({ width: 988, height: 624 });
+    // A size the user chose grows by the same factor; never below the smallest size at the new scale.
+    expect(rescaledBounds({ x: 0, y: 0, width: 1000, height: 300 }, 1, 1.3, area, { width: 624, height: 364 })).toMatchObject({ width: 1300, height: 390 });
+    expect(rescaledBounds({ x: 0, y: 0, width: 400, height: 250 }, 1, 1.3, area, { width: 624, height: 364 })).toMatchObject({ width: 624, height: 364 });
+    // Kept inside the work area of its display (another display's origin too), however near its edge it was.
+    const side = { x: 1920, y: 0, width: 1280, height: 680 };
+    expect(rescaledBounds({ x: 2900, y: 400, width: 760, height: 480 }, 1, 1.3, side)).toEqual({ x: 2212, y: 56, width: 988, height: 624 });
+    expect(rescaledBounds({ x: 1920, y: 0, width: 1200, height: 600 }, 1, 1.3, side)).toEqual({ x: 1920, y: 0, width: 1280, height: 680 });
   });
 
   it("is a setting in Comfort & access", () => {

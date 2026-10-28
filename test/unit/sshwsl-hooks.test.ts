@@ -32,6 +32,7 @@ vi.mock("electron", () => ({
     setAlwaysOnTop(on: boolean, level?: string) { this.calls.push(["setAlwaysOnTop", on, level]); }
     loadFile(file: string) { this.calls.push(["loadFile", file]); return Promise.resolve(); }
     once() { /* not shown by the factories */ }
+    on(event: string) { this.calls.push(["on", event]); }
   },
 }));
 
