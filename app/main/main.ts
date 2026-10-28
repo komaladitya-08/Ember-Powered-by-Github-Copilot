@@ -1342,8 +1342,13 @@ function start(): void {
         const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "I can't take screenshots",
           thought: "I don't have macOS's Screen Recording permission. Allow it in System Settings, then quit and reopen me.",
           actions: [{ id: "ui:screen-recording", label: sys.fixes.label("open-screen-recording-settings") }] };
+        // It comes mid-task: main holds the bubble so the task's progress doesn't replace it before it is read, then
+        // lets go (the task's progress comes back, or it hides).
+        agent?.claimBubble();
         setState({ bubble });
-        hideIfStill(bubble, 15000);
+        setTimeout(() => {
+          if (lastState.bubble === bubble && !(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
+        }, 15000);
       },
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
