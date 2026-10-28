@@ -4,7 +4,8 @@
  * visible tokens, and in every word the letters from a script other than the word's main one are marked "mixed" (a
  * Cyrillic "і" in "buіld"), so what the user approves is what runs. A word ends at whitespace and at the characters
  * that join names into paths, options and addresses (/ \ = : , ; @ and the like), so the user's own folder in their
- * alphabet (C:\Users\Иван) marks nothing beside it, while a look-alike letter inside a word still is (review #266).
+ * alphabet (C:\Users\Иван) marks nothing beside it, while a look-alike letter inside a word still is, and so is a
+ * host spelled wholly in letters that only look Latin (https://аррӏе.com, deploy@аррӏе) (review #266).
  * Renderer-safe: no Node or Electron import; the command window's page and main's tests both use it.
  */
 
@@ -54,6 +55,15 @@ const SCRIPTS: readonly [string, RegExp][] = [
 ];
 const LETTER = /\p{L}/u;
 
+/**
+ * Letters of other alphabets that look like a Latin letter (Unicode's confusables, the common ones): Cyrillic а е о р
+ * с у х ѕ і ј ӏ һ ԁ ԛ ԝ ү and capitals, Greek α ο ν ι ρ υ γ and capitals, Armenian օ ս հ ո. A word that mixes Latin
+ * with only these is judged Latin, so раураl.com marks раура, and a word written wholly in them beside Latin in the
+ * same token (deploy@аррӏе) is marked too (review #266). A real name in that alphabet (Иван, пример.рф) has letters
+ * that look like no Latin one and is left alone.
+ */
+const LATIN_LOOKALIKE = /[\u0430\u0435\u043e\u0440\u0441\u0443\u0445\u0455\u0456\u0458\u04cf\u04bb\u0501\u051b\u051d\u04af\u0410\u0412\u0415\u041a\u041c\u041d\u041e\u0420\u0421\u0422\u0423\u0425\u0405\u0406\u0408\u04ae\u04ba\u04c0\u051a\u051c\u03b1\u03bf\u03bd\u03b9\u03c1\u03c5\u03b3\u0391\u0392\u0395\u0396\u0397\u0399\u039a\u039c\u039d\u039f\u03a1\u03a4\u03a5\u03a7\u0585\u057d\u0570\u0578]/u;
+
 /** The script of a letter ("Other" for a letter of none of the listed scripts), or null for anything else. */
 function scriptOf(ch: string): string | null {
   if (!LETTER.test(ch)) return null;
@@ -90,32 +100,52 @@ function special(ch: string): VisibleSegment | null {
 /**
  * The command as the card shows it: plain runs, visible tokens for controls (`⟨U+001B⟩`), bidi controls (`⟨RLO⟩`),
  * invisible characters (`⟨ZWSP⟩`), tabs (`→`) and non-breaking spaces (`⟨NBSP⟩`), and "mixed" runs for letters from a
- * script other than their word's main one (on a tie between Latin and another script, the other one is marked).
+ * script other than their word's main one (on a tie between Latin and another script, or when the other script's
+ * letters all look Latin, the other one is marked; see LATIN_LOOKALIKE).
  */
 export function visibleText(s: string): VisibleSegment[] {
   const chars = Array.from(s);
   // The main script of each word (whitespace, specials and WORD_BREAK end one).
   const main: (string | null)[] = new Array<string | null>(chars.length).fill(null);
+  // Words written wholly in Latin look-alikes of another alphabet, as [start, end), and whether each token (whitespace
+  // and specials end one) holds a Latin letter.
+  const lookalikeWords: [number, number][] = [];
+  const tokenLatin: boolean[] = new Array<boolean>(chars.length).fill(false);
   let start = 0;
+  let tokenStart = 0;
   const closeToken = (end: number): void => {
     const counts = new Map<string, number>();
+    let lookalikesOnly = true;
     for (let k = start; k < end; k++) {
       const sc = scriptOf(chars[k]);
       if (sc) counts.set(sc, (counts.get(sc) ?? 0) + 1);
+      if (sc && sc !== "Latin" && !LATIN_LOOKALIKE.test(chars[k])) lookalikesOnly = false;
     }
     let best: string | null = null;
     let bestN = 0;
     for (const [sc, n] of counts) {
       if (n > bestN || (n === bestN && sc === "Latin")) { best = sc; bestN = n; }
     }
+    const others = [...counts.keys()].some(sc => sc !== "Latin");
+    // Latin beside nothing but look-alikes (раураl.com): the look-alikes are the ones marked.
+    if (others && lookalikesOnly && counts.has("Latin")) best = "Latin";
+    if (others && lookalikesOnly && !counts.has("Latin")) lookalikeWords.push([start, end]);
     for (let k = start; k < end; k++) main[k] = best;
   };
   for (let k = 0; k <= chars.length; k++) {
-    if (k === chars.length || /\s/u.test(chars[k]) || WORD_BREAK.test(chars[k]) || special(chars[k]) !== null) {
+    const blank = k === chars.length || /\s/u.test(chars[k]) || special(chars[k]) !== null;
+    if (blank || WORD_BREAK.test(chars[k])) {
       closeToken(k);
       start = k + 1;
     }
+    if (blank) {
+      const latin = chars.slice(tokenStart, k).some(ch => scriptOf(ch) === "Latin");
+      for (let j = tokenStart; j < k; j++) tokenLatin[j] = latin;
+      tokenStart = k + 1;
+    }
   }
+  // A word wholly in look-alikes beside Latin in its token (deploy@аррӏе): marked as if the word were Latin.
+  for (const [a, b] of lookalikeWords) if (tokenLatin[a]) for (let k = a; k < b; k++) main[k] = "Latin";
 
   const out: VisibleSegment[] = [];
   const push = (text: string, kind: VisibleSegment["kind"]): void => {

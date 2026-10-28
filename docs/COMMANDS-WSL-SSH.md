@@ -157,7 +157,8 @@ asks), and so is an overwrite (`echo x > sub/../notes.txt` asks when the notes.t
 window shows the card "Ember wants to run this command" ("… on build-01", "… in Ubuntu (WSL)" for another computer; a
 tab there carries the computer's name too): the whole command in monospace, nothing cut, with characters you wouldn't
 see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (each folder of a path is judged on its own,
-so `C:\Users\Иван` marks nothing), and Hebrew or Arabic text shown in the order it runs, as the terminal shows it;
+so `C:\Users\Иван` marks nothing, while letters that only look Latin, as in `https://аррӏе.com` or `deploy@аррӏе`,
+are underlined), and Hebrew or Arabic text shown in the order it runs, as the terminal shows it;
 then why it asks ("Deletes build and everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.",
 "This can reach your Windows files."); then the model's reason, quoted. A command that deletes data has a yellow bar
 on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
