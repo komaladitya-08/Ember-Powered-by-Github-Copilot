@@ -10898,6 +10898,83 @@
   {
    "cmd": "bazelisk test //src/...",
    "verdict": "run"
+  },
+  {
+   "cmd": "bazel run //x -- /home/ana/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ],
+   "missing": [
+    "/home/ana/.ssh/id_rsa"
+   ]
+  },
+  {
+   "cmd": "bazel run //x -- ~/.aws/credentials",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "bazel run --config=opt //x -- ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "bazelisk run //x -- ~/.ssh/id_rsa",
+   "verdict": "ask",
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "bazel run //x -- \"$F\"",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
+  },
+  {
+   "cmd": "bazel run --script_path=~/.bashrc //x",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ],
+   "missing": [
+    "~/.bashrc"
+   ]
+  },
+  {
+   "cmd": "bazel run --script_path ~/.bashrc //x",
+   "verdict": "ask",
+   "rules": [
+    "path.startup"
+   ],
+   "missing": [
+    "~/.bashrc"
+   ]
+  },
+  {
+   "cmd": "bazel run --script_path=/home/ana/.config/ember/x.sh //x",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "bazel run --script_path=build/run.sh //x",
+   "verdict": "run",
+   "missing": [
+    "build/run.sh"
+   ]
+  },
+  {
+   "cmd": "bazel run //x -- --flag=1 out.txt",
+   "verdict": "run"
+  },
+  {
+   "cmd": "bazel run //x",
+   "verdict": "run"
   }
  ]
 }

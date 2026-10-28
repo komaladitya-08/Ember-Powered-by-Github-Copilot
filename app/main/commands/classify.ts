@@ -4007,14 +4007,19 @@ function ninjaTool(h: H, tool: string | null): void {
   if (tool === "msvc") { const dd = h.args.findIndex(a => a.v === "--"); h.e.payload(dd >= 0 ? h.args.slice(dd + 1) : [], h.sc, "ninja -t msvc"); }
 }
 reg(NATIVE, ["bazel", "bazelisk"], h => {
-  // `bazel clean` deletes build output; `bazel run <target>` runs a target, judged by its name like a make target (review #167).
+  // `bazel clean` deletes build output; `bazel run <target>` runs a target, judged by its name like a make target, and
+  // its other arguments are read as any program's are; `--script_path` writes a script that runs it (review #167).
   const verb = firstOperand(h.args);
   if (verb.v === "clean") { h.e.add("destroy", "script.destroy", "Runs bazel clean, which deletes build output."); return; }
   if (verb.v === "run") {
     const target = h.args.slice(verb.at + 1).find(a => !isOption(a));
     if (target?.v === null) h.e.unclear("unclear.target", "It runs a target Ember can't name.");
     else if (target) nameCheck(h, target.v, `${h.prog} run ${target.v}`);
-    return;
+    for (let k = 0; k < h.args.length && h.args[k].v !== "--"; k++) {
+      const v = h.args[k].v;
+      if (v === "--script_path" && h.args[k + 1]) h.e.usePath(h.args[k + 1], "write", h.sc);
+      else if (v?.startsWith("--script_path=")) h.e.usePath(lit(v.slice("--script_path=".length)), "write", h.sc);
+    }
   }
   generic(h);
 });
