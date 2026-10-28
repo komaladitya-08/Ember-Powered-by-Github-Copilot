@@ -52,12 +52,13 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   name as before. A script named with `..` (`sh sub/../t.sh`, `cd link && sh ../t.sh`) is read where the computer
   really runs it (beside the link's target), and asks ("Ember can't tell which script this runs.") when the computer
   can't say where that is; any other path with `..` is judged where it really leads too.
-- **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
-  ("Pushing feature-x to origin, as you asked."). Only your own words count, and only for what they name: "delete
-  build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks. Typed words
-  count everywhere, spoken ones only where Ember can tell your voice from what your speakers play (Linux with parec).
-  On Windows, on macOS and on Linux without parec, a dangerous command you asked for by voice asks with the card, as a
-  call, a video or Ember's own voice could say the same words.
+- **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop** (15
+  seconds while a screen reader runs) ("Pushing feature-x to origin, as you asked."). Only your own words count, and
+  only for what they name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain
+  "delete build" asks. Typed words count everywhere, spoken ones only where Ember can tell your voice from what your
+  speakers play (Linux with speaker rejection on and parec installed). On Windows, on macOS and on Linux without it, a
+  dangerous command you asked for by voice asks with the card, as a call, a video or Ember's own voice could say the
+  same words.
   Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask. If your
   words also name another computer, or a place that looks like one Ember doesn't know ("delete build/ on prod-db",
   "from the server web-2", "at deploy@10.0.0.5", "prod-db: …"), nothing in that task runs on an announcement: every

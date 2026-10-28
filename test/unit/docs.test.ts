@@ -324,6 +324,7 @@ describe("README.md's Accessibility section, against the release it describes", 
     const srMs = (commandWindow as { ANNOUNCE_SCREEN_READER_MS?: number }).ANNOUNCE_SCREEN_READER_MS ?? 0;
     expect(srMs).toBeGreaterThan(ANNOUNCE_MS);
     expect(a11y).toContain(`A dangerous command you asked for waits ${srMs / 1000} seconds instead of ${ANNOUNCE_MS / 1000} before it runs`);
+    expect(flat(read("CHANGELOG.md"))).toContain(`a ${ANNOUNCE_MS / 1000}-second **Stop** (${srMs / 1000} seconds while a screen reader runs)`);
     // What a command prints reaches a screen reader (xterm's screen-reader mode) while one runs.
     expect(terminalOptions({ interactive: false, cols: 80, rows: 24, screenReader: true } as Parameters<typeof terminalOptions>[0]).screenReaderMode).toBe(true);
     expect(a11y).toContain("The command window reads out what a command prints");
@@ -421,7 +422,8 @@ describe("CHANGELOG.md", () => {
     expect(notes).not.toMatch(/typed or spoken words count/);
     const rule = /Only your own words count[^]*?asks with the card/.exec(notes)?.[0] ?? "";
     expect(rule).toMatch(/Typed words count everywhere/);
-    expect(rule).toMatch(/spoken[^.]*only where Ember can tell your voice from what your speakers play \(Linux with parec\)/);
-    expect(notes).toMatch(/On Windows, on macOS and on Linux without parec, a dangerous command you asked for by voice asks/);
+    // In the words the commands guide uses for it (§2.5).
+    expect(rule).toMatch(/spoken[^.]*only where Ember can tell your voice from what your speakers play \(Linux with speaker rejection on and parec installed\)/);
+    expect(notes).toMatch(/On Windows, on macOS and on Linux without it, a dangerous command you asked for by voice asks/);
   });
 });
