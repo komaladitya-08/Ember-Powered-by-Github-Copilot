@@ -566,8 +566,8 @@ export class Perception {
    * out; one that can't be looked through whole (the scan is cut short, its app is busy, the call fails) is blacked out
    * whole (`hidden` then). One accessibility doesn't list as a window (a macOS menu, a Windows menu's shadow) can't be
    * looked through and is left as before: blacking it out would hide every open menu. Those are logged
-   * (perception.popup_unmatched, once a run for each app and size), so CI and the field show which popups go unscanned.
-   * `k`: the app's scale.
+   * (perception.popup_unmatched, with the OS, once a run for each app and size), so CI and the field show which popups
+   * go unscanned. `k`: the app's scale.
    */
   private async popupMasks(popups: StackedWindow[], k: number): Promise<{ masks: Bounds[]; hidden: boolean }> {
     let listed: AxWindow[] = [];
@@ -605,7 +605,7 @@ export class Perception {
     const key = `${p.wmClass} ${p.width}x${p.height}`;
     if (this.unmatchedPopups.has(key) || this.unmatchedPopups.size >= UNMATCHED_POPUPS_LOGGED) return;
     this.unmatchedPopups.add(key);
-    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height });
+    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height, os: process.platform });
   }
 
   /**

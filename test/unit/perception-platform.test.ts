@@ -579,7 +579,8 @@ describe("the app's own popups in its window's picture (review #7)", () => {
     const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), { ...popup, wmClass: "gedit" }], listed: [window] });
     await d.perception.perceive({ image: true, scope: "window" });
     await d.perception.perceive({ image: true, scope: "window" });
-    expect(d.infos.filter(([e]) => e === "perception.popup_unmatched")).toEqual([["perception.popup_unmatched", { app: "gedit", width: 120, height: 80 }]]);
+    // With the OS: the field's logs come from all three, and each OS lists different popups as windows.
+    expect(d.infos.filter(([e]) => e === "perception.popup_unmatched")).toEqual([["perception.popup_unmatched", { app: "gedit", width: 120, height: 80, os: process.platform }]]);
     // A popup that was looked through isn't.
     const listed = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), popup], listed: [window, popupWin] });
     await listed.perception.perceive({ image: true, scope: "window" });
