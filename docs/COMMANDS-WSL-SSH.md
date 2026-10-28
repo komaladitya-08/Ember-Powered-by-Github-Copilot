@@ -369,11 +369,12 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   password card waits while a consent card is open. The window takes the keyboard as settings does; if another app
   keeps it (macOS after a shortcut, Windows' focus rules), the card says "Click here before you type: the keyboard is
   still in another app." and a notification says so too. **Cancel** (or Esc) on a sign-in card ends the connection
-  quietly, as the bubble's **Cancel** does. **With OpenSSH older than 8.5** on this computer (RHEL 8 has 8.0,
-  Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions come from the other computer, so a server could
-  word its own question as SSH's. There every password, passphrase or code is shown as "build-01 asks", with the
-  question quoted as it came, never as "Unlock your SSH key" or as a sign-in to another host: read it before you
-  answer, because the answer goes to whoever asked.
+  quietly, as the bubble's **Cancel** does. A sign-in card Ember can't show (no window, or a server's question too
+  long to show) ends it with "Ember couldn't show build-01's sign-in question." and **Try again**. **With OpenSSH
+  older than 8.5** on this computer (RHEL 8 has 8.0, Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions
+  come from the other computer, so a server could word its own question as SSH's. There every password, passphrase or
+  code is shown as "build-01 asks", with the question quoted as it came, never as "Unlock your SSH key" or as a
+  sign-in to another host: read it before you answer, because the answer goes to whoever asked.
 - **A computer you haven't connected to before** shows "Is this really build-01?" with its key's fingerprint. Check
   it with whoever looks after build-01; **Trust and connect** is never the default. If the key has changed, Ember
   won't connect ("build-01's identity changed"); remove the old key with `ssh-keygen -R build-01` only if you know
