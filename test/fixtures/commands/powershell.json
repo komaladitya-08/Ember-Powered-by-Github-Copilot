@@ -5676,6 +5676,28 @@
   {
    "cmd": "py -m http.server --bind 127.0.0.1 8000",
    "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(Get-Location):/src\" alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(pwd):/src\" alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"${PWD}:/src\" alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(Get-Location -Stack):/src\" alpine id",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
   }
  ]
 }

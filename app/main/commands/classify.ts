@@ -678,6 +678,21 @@ const CMDLETS: Record<string, Handler> = {};
 const CMD_BUILTINS: Record<string, Handler> = {};
 const reg = (table: Record<string, Handler>, names: readonly string[], fn: Handler): void => { for (const n of names) table[n] = fn; };
 
+/** A substitution that is only `pwd`, with no arguments, redirections or assignments. */
+function lonePwd(list: PList): boolean {
+  const item = list.items.length === 1 ? list.items[0] : null;
+  const pipe = item && !item.background && item.pipes.length === 1 ? item.pipes[0] : null;
+  const cmd = pipe && !pipe.bang && pipe.cmds.length === 1 ? pipe.cmds[0] : null;
+  return cmd !== null && cmd.kind === "simple" && cmd.assigns.length === 0 && cmd.redirs.length === 0 && cmd.words.length === 1
+    && cmd.words[0].segs.every(seg => seg.t === "lit") && cmd.words[0].segs.map(seg => (seg.t === "lit" ? seg.s : "")).join("") === "pwd";
+}
+/** A PowerShell subexpression that is only Get-Location (or its aliases pwd and gl), with no arguments or redirections. */
+function lonePsLocation(list: PsStatement[]): boolean {
+  const el = list.length === 1 && list[0].assign === null && list[0].elements.length === 1 ? list[0].elements[0] : null;
+  return el !== null && el.kind === "command" && !el.call && !el.background && el.args.length === 0 && el.redirs.length === 0
+    && el.name.segs.every(seg => seg.t === "lit") && /^(get-location|pwd|gl)$/i.test(el.name.segs.map(seg => (seg.t === "lit" ? seg.s : "")).join(""));
+}
+
 /** A file name that is the program's stdin (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`). */
 const STDIN_NAME = /^(-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/(self|\d+)\/fd\/0)$/;
 /** A file name that is one of the program's open descriptors (`/dev/fd/3`, `/proc/self/fd/3`); fd 0 is STDIN_NAME. */
@@ -1217,12 +1232,14 @@ class Engine extends Classifier {
     return last.heredoc.quoted || !/[$`\\]/.test(last.heredoc.body) ? last.heredoc.body : null;
   }
 
-  /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`); anything else unresolved. */
+  /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`, `$(pwd)`); anything else unresolved. */
   posixWord(w: PWord, sc: Scope, fetch: boolean): Arg {
     let v = "";
     let pattern = "";
     let unquoted = "";
     let unresolved = false;
+    // A word whose only substitution is a plain `$(pwd)` or `` `pwd` `` gives the folder, as `$PWD` does (review #170).
+    const cwdSub = w.subs.length === 1 && w.segs.filter(seg => seg.t === "unres" && seg.why === "command substitution").length === 1 && lonePwd(w.subs[0]);
     for (const seg of w.segs) {
       if (seg.t === "lit") {
         v += seg.s;
@@ -1232,6 +1249,9 @@ class Engine extends Classifier {
         const val = seg.name === "HOME" ? sc.home : seg.name === "PWD" ? sc.cwd : null;
         if (val === null) unresolved = true;
         else { v += val; pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
+      } else if (seg.t === "unres" && seg.why === "command substitution" && cwdSub && sc.cwd) {
+        v += sc.cwd;
+        pattern += sc.cwd.replace(/[*?[\]\\]/g, "\\$&");
       } else if (seg.t === "tilde") {
         if (seg.user !== "") unresolved = true;
         // A home Ember doesn't know stays `~` (judged as some user's home, never probed: usePath).
@@ -1365,7 +1385,10 @@ class Engine extends Classifier {
   /** A PowerShell argument as one or more values (an array gives one per element). */
   psArgValues(a: PsArg, sc: Scope): Arg[] {
     if (a.items) return a.items.map(segs => this.psValue(segs, a.raw, sc, a.quoted));
-    return [this.psValue(a.segs, a.raw, sc, a.quoted)];
+    // A value whose only subexpression is a plain `$(Get-Location)` or `$(pwd)` gives the folder, as `$PWD` does (#170).
+    const cwdSub = a.subs.length === 1 && a.segs.filter(seg => seg.t === "unres" && seg.why === "subexpression").length === 1 && lonePsLocation(a.subs[0]);
+    const segs = cwdSub ? a.segs.map(seg => (seg.t === "unres" && seg.why === "subexpression" ? { t: "var" as const, name: "pwd" } : seg)) : a.segs;
+    return [this.psValue(segs, a.raw, sc, a.quoted)];
   }
 
   /** PowerShell redirections in the shared form (`*>` as `&>`; a merge such as `2>&1` writes no file). */

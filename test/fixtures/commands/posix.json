@@ -13359,7 +13359,7 @@
    "verdict": "run"
   },
   {
-   "cmd": "docker run --rm -v $(pwd):/app alpine rm -rf /app/src",
+   "cmd": "docker run --rm -v $(git rev-parse --show-toplevel):/app alpine rm -rf /app/src",
    "verdict": "ask",
    "rules": [
     "unclear.unresolved-arg"
@@ -15180,6 +15180,52 @@
   {
    "cmd": "ex -s x.txt <<< $'%s/a/b/g\\nwq'",
    "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(pwd)\":/src alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(pwd):/src\" alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v `pwd`:/src alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(pwd)/build:/out\" alpine id",
+   "verdict": "run"
+  },
+  {
+   "cmd": "docker run --rm -v \"$(pwd)/..\":/src alpine id",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ],
+   "rules": [
+    "docker.mount"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v \"$(pwd -P)\":/src alpine id",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
+  },
+  {
+   "cmd": "docker run --rm -v \"$(id -un)\":/src alpine id",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ],
+   "rules": [
+    "unclear.unresolved-arg"
+   ]
   }
  ]
 }
