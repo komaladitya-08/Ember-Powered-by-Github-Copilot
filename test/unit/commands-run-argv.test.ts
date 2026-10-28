@@ -312,7 +312,7 @@ describe("launchArgv", () => {
     refuse(() => launchArgv(spec({ shell: "powershell" }), linux, { jobHost: null }), /powershell/);
     refuse(() => launchArgv(spec({ shell: "cmd" }), windows, { jobHost: JOB_HOST }), /PowerShell only/);
     refuse(() => launchArgv(spec({ shell: "bash" }), windows, { jobHost: JOB_HOST }), /PowerShell only/);
-    refuse(() => launchArgv(spec({ shell: "powershell" }), windows, { jobHost: null }), /job host/);
+    refuse(() => launchArgv(spec({ shell: "powershell" }), windows, { jobHost: null }), /Part of Ember.s install is missing/);
     refuse(() => launchArgv(spec({ shell: "powershell" }), { ...windows, shellPaths: { powershell: "powershell.exe" } }, { jobHost: JOB_HOST }), /PowerShell/);
     refuse(() => launchArgv(spec({ command: "echo a\0b" }), linux, { jobHost: null }), /NUL/);
     // An unpaired surrogate would reach the shell as U+FFFD: not the text that was shown.
@@ -324,7 +324,7 @@ describe("launchArgv", () => {
     for (const cwd of ['/home/ana/"x"', "/home/ana/a\\b", "/home/ana/a\nb", "/home/ana/\x1b[2J", "relative/dir"]) {
       refuse(() => launchArgv(spec({ cwd }), linux, { jobHost: JOB_HOST, wsl }), /can't pass that folder to WSL/);
     }
-    refuse(() => launchArgv(spec(), linux, { jobHost: null, wsl }), /job host/);
+    refuse(() => launchArgv(spec(), linux, { jobHost: null, wsl }), /Part of Ember.s install is missing/);
     refuse(() => launchArgv(spec(), linux, { jobHost: JOB_HOST, wsl: { ...wsl, distro: "Ubuntu --exec x" } }), /name/);
   });
 
@@ -486,7 +486,7 @@ describe("a local run", () => {
     child.end(125);
     const exit = await run.done;
     expect(exit.ended).toBe("failed-to-start");
-    expect(exit.error).toBe("Ember's job host couldn't start the command, so it didn't run (AssignProcessToJobObject failed (error 5)).");
+    expect(exit.error).toBe("Ember couldn't start the command safely, so it didn't run (AssignProcessToJobObject failed (error 5)).");
     // A job host that couldn't start PowerShell says so, not that the job failed.
     const ps = await started(h, spec({ shell: "powershell", cwd: "C:\\x" }));
     ps.child.err("job: can't start C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe: ENOENT\n");

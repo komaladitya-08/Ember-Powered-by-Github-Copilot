@@ -6,7 +6,8 @@
  * quick context, stops every command and remote for the kill switch, and adds the doctor's rows.
  *
  * Nothing new happens without a reason (critique integration-25): with nothing set up, or with the administrator
- * turning WSL, SSH and commands off, there is no menu item, no badge, no new window, no prompt change (caps all false)
+ * turning WSL, SSH and commands off, there is no menu item, no badge, no new window, no prompt change (caps all false;
+ * with nothing set up, commandsOffered only lets the conversation say where commands are turned on, review #40)
  * and no process started; only the noticer's cheap look at the window the user is in runs, and only while SSH is allowed
  * and the offer switch is on. Every decision comes from local data: a remote's own reports only ever narrow what Ember
  * does there, and the model can never connect, pick a computer the user didn't name, or approve anything. Plain Node
@@ -1350,7 +1351,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       rebuild();
       const live = bindable(entries);
       // "needs-consent" is a user who turned commands on and must accept a newer card: waiting only for the card.
-      return { commands: live.some(e => safeState(commandsOf(e.id)) !== "off"), targets: live.length > 1 };
+      const commands = live.some(e => safeState(commandsOf(e.id)) !== "off");
+      // Off everywhere, but somewhere only by the user's switch: the conversation may say where to turn them on (review #40).
+      const offered = !commands && live.some(e => safeCap(commandsOf(e.id))?.userOff === true);
+      return { commands, targets: live.length > 1, ...(offered ? { commandsOffered: true } : {}) };
     } catch (err) {
       log.warn("targets.caps_failed", { err });
       return { commands: false, targets: false };

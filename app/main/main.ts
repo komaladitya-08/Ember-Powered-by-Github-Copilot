@@ -46,11 +46,12 @@ import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
-import { AgentHost, explainStartError, gitHubReachable, idleWord, type Hands } from "./agent/host";
+import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
 import { expandedBubble } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
-import { TokenStore, resolveToken, startDeviceFlow, pollDeviceFlow } from "./agent/auth";
+import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken } from "./agent/auth";
+import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { endsWithQuestion, spokenText } from "../voice/spoken";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
@@ -175,6 +176,10 @@ function voiceModelsRoot(): { root: string; bundled: boolean } {
 
 /** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
 const ghOptions = () => ({ path: sys.ghCliPath() ?? undefined, spawn: sys.spawnDefaults });
+/** Whether the GitHub CLI is installed (the platform's own path for it, else on PATH): sign-in messages say how to get it. */
+const ghInstalled = () => !!(sys.ghCliPath() ?? sys.which("gh"));
+/** How this build signs in: Ember's own GitHub App when it has a client id (github-app.ts), else the GitHub CLI. */
+const signInWith = (): SignInWith => githubClientId() ? "github" : "github-cli";
 
 // Packaged builds ship the sidecar under resources/; development runs it from the repo.
 const sidecarScript = () => app.isPackaged
@@ -233,6 +238,7 @@ async function runDoctor(): Promise<void> {
     const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
     if (t && !ignored) auth = { kind: "github", source: t.source };
   }
+  const signIn = { with: signInWith(), ghInstalled: ghInstalled() };
   const models = voiceModelsRoot();
   const probes = await sys.doctorProbes();
   // Input that can't reach apps counts as missing. Asked about the window the user is in, not window 0: macOS answers
@@ -247,7 +253,7 @@ async function runDoctor(): Promise<void> {
     xtest: ws ? !!input && !blocked : null,
     speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
     voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
-    runtime: runtime.exists, auth, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
+    runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
     // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
     extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
     shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
@@ -824,8 +830,9 @@ function start(): void {
   /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu") => {
     const pulled = killSwitch.pull(source);
-    // Failure cards stay until closed, and only a click closes them: Stop everything clears them too
-    // (the keyboard's way, and the screen reader's).
+    // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
+    // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
+    // screen reader's).
     for (const t of agent?.tasks?.list() ?? []) if (t.status === "failed") agent?.tasks?.dismiss(t.id);
     const bubble = { visible: true, mood: "idle" as const, title: "Stopped", thought: "Okay, I've stopped everything.", step: null, streaming: false, actions: [] };
     statusBy.listen = statusBy.mic = null;
@@ -941,6 +948,29 @@ function start(): void {
   };
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
+  /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
+  const refusedTokens = new Set<string>();
+  /**
+   * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed an hour before, and Copilot
+   * reconnected with the new token once nothing is under way (review #138).
+   */
+  const keeper = new GrantKeeper({
+    fetch: (url, init) => net.fetch(url, init), store: () => tokens, inUse: () => currentToken, idle: () => agent?.idle ?? true,
+    reconnect: async token => { currentToken = token; await agent?.start(token, "stored"); },
+    log: (event, data) => log.info(event, data),
+  });
+  /** The sign-in to use: the first source whose token Copilot hasn't refused this run (a stored one that ran out renewed first). */
+  const findToken = async () => { await keeper.freshen(); return resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null); };
+  /**
+   * Connects with `found`, or the first sign-in after it that Copilot accepts: a refused token gives way to the next
+   * source (a token in the environment comes before the GitHub CLI's). Resolves to the phase and the sign-in used.
+   */
+  const connectWith = (found: ResolvedToken | null, how: "user" | "auto" = "user") => connectFirstAccepted(findToken, async f => {
+    currentToken = f?.token ?? null;
+    keeper.use(currentToken);
+    const phase = await agent?.start(currentToken, f?.source, how, f?.name);
+    return { phase, refused: phase === "error" && agent?.getStatus().reason === "sign-in" };
+  }, refusedTokens, found);
   let signInAbort: AbortController | null = null;
   const broadcast = (channel: string, value: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
@@ -955,28 +985,29 @@ function start(): void {
     await agent?.forgetConversation();
     tokens?.clear();
     currentToken = null;
+    keeper.use(null);
+    // Refusals don't outlive the sign-in: the account may have Copilot now, so the next sign-in tries every source afresh.
+    refusedTokens.clear();
     askHistory = [];
     await agent?.start(null);
   }));
   ipcMain.handle(IPC.cancelSignIn, guard(() => { signInAbort?.abort(); progress({ state: "cancelled" }); }));
-  /** The page of the sign-in under way, opened again on request (GitHub's own pages only). */
+  /** The page of the sign-in under way, opened again on request (GitHub's own pages, or the GitHub CLI's download page). */
   let signInPage: string | null = null;
-  const openSignInPage = () => { if (signInPage && /^https:\/\/github\.com\//.test(signInPage)) void shell.openExternal(signInPage); };
+  const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
-  /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"). */
-  const signInError = (err: unknown): string => {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
-    if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
-    return explainStartError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
-  };
-  /** "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. */
-  const retrySignIn = async (): Promise<{ found: boolean; source: string | null }> => {
+  /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
+  const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
+  /**
+   * "Check again": look for a sign-in (Ember's own, the environment, gh) and reconnect with it. Nothing found: `hint`
+   * says what signing in needs in this build (the GitHub CLI, and how to install it here, without Ember's own app).
+   */
+  const retrySignIn = async (): Promise<{ found: boolean; source: string | null; hint?: string }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
-    const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
-    currentToken = found?.token ?? null;
-    await agent?.start(currentToken, found?.source);
-    return { found: !!found, source: found?.source ?? null };
+    // Sign-ins refused before are passed over; with nothing else, the one refused is tried again (it may work now).
+    const first = await findToken() ?? (refusedTokens.size ? await resolveToken(tokens, process.env, ghOptions()).catch(() => null) : null);
+    const { found } = await connectWith(first);
+    return { found: !!found, source: found?.source ?? null, ...(found ? {} : { hint: noSignInMessage({ os: platform.os, with: signInWith(), ghInstalled: ghInstalled() }) }) };
   };
   ipcMain.handle(IPC.agentRetry, guard(retrySignIn));
   ipcMain.handle(IPC.signIn, guard(async () => {
@@ -992,22 +1023,28 @@ function start(): void {
       if (phase === "ready") say({ state: "done", message: note });
       else say({ state: "error", message: agent?.getStatus().detail ?? "Copilot didn't connect." });
     };
-    const clientId = process.env.EMBER_GITHUB_CLIENT_ID;
+    // Ember's own GitHub App (its client id is built in, or EMBER_GITHUB_CLIENT_ID overrides it): the device flow.
+    const clientId = githubClientId();
     if (!clientId) {
-      // No sign-in app yet: watch for a GitHub CLI sign-in instead, and connect as soon as one appears (no restart).
-      say({ state: "waiting", message: "In a terminal, run “gh auth login”. Ember will notice within a few seconds and connect; no restart needed." });
+      // A build without a client id (a fork): watch for a GitHub CLI sign-in instead, and connect as soon as one appears
+      // (no restart). The message says what that needs (a GitHub account with Copilot and the GitHub CLI) and how to
+      // install gh here.
+      // Without gh, an Open button shows where to get it (only that page, on request).
+      const start = cliWaitStart(platform.os, ghInstalled());
+      signInPage = start.page;
+      say(start.progress);
       const before = currentToken;
       for (let i = 0; i < 200 && !ac.signal.aborted; i++) {
-        const found = await resolveToken(tokens, process.env, ghOptions()).catch(() => null);
+        // (A refused token in the environment is passed over: the new GitHub CLI sign-in is found behind it.)
+        const found = await findToken();
         if (ac.signal.aborted) return;
         if (found && found.token !== before) {
-          currentToken = found.token;
-          await connected(await agent?.start(found.token, found.source));
+          await connected((await connectWith(found)).phase);
           return;
         }
         await new Promise(r => setTimeout(r, 3000));
       }
-      if (!ac.signal.aborted) say({ state: "error", message: "Ember didn't see a new GitHub sign-in. Run “gh auth login”, then press Check again." });
+      if (!ac.signal.aborted) say({ state: "error", message: cliTimedOutMessage(platform.os, ghInstalled()) });
       return;
     }
     const fetch = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => net.fetch(url, init);
@@ -1018,13 +1055,18 @@ function start(): void {
       // Only GitHub's own page is ever opened.
       signInPage = code.verificationUri;
       openSignInPage();
-      const token = await pollDeviceFlow(fetch, clientId, code, { signal: ac.signal });
+      // With what renews it, when the app's tokens expire.
+      const grant = await pollDeviceGrant(fetch, clientId, code, { signal: ac.signal, onBlip: err => log.warn("auth.poll_blip", { err }) });
+      const token = grant.token;
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
-      const kept = tokens?.save(token) ?? false;
-      if (!kept) log.warn("auth.not_persisted", { reason: "no keyring available; sign-in lasts until Ember quits" });
+      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
+      const kept = tokens?.saveResult(grant) ?? "no-keyring";
+      if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
       currentToken = token;
-      await connected(await agent?.start(token, "stored"), kept ? undefined : `Signed in. ${sys.words.keyringMissing}, so you'll need to sign in again next time.`);
+      keeper.use(token, grant);
+      const why = kept === "write-failed" ? "Ember couldn't save the sign-in on this computer" : sys.words.keyringMissing;
+      await connected(await agent?.start(token, "stored"), kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
     } catch (err) {
       if (!ac.signal.aborted) say({ state: "error", message: signInError(err) });
     }
@@ -1562,7 +1604,7 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
-      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy,
+      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       describeScreen: () => seeing.describe(), hands,
@@ -1575,6 +1617,8 @@ function start(): void {
         turnAnswer = "";
       },
       onStatus: status => {
+        // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
+        if (status.phase === "error" && status.reason === "sign-in" && currentToken) refusedTokens.add(currentToken);
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         showState({ idle: idleWord(status) });
@@ -1612,13 +1656,14 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
+      if (!provider) await keeper.freshen();
       const found = provider ? null : await resolveToken(tokens, process.env, ghOptions());
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none" });
-      currentToken = found?.token ?? null;
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
-      // (then "Sign in" may use it at once, so it isn't counted as the token in use).
-      const phase = await agent?.start(currentToken, found?.source, "auto");
-      if (phase === "signed-out") currentToken = null;
+      // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
+      // the next source.
+      const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto");
+      if (phase === "signed-out") { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
     settings.onChange(() => { const p = startBrain(); if (brainStarted) brainStart = brainStart.then(() => p); });

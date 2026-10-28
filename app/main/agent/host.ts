@@ -12,8 +12,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, type PresenterEvent } from "./presenter";
-import { chooseModels, mayUseRuntimeDefault, type ModelLike } from "./models";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type PresenterEvent } from "./presenter";
+import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
@@ -34,6 +34,8 @@ import type { TargetBinding, PromptCaps } from "../targets/types";
 import type { TargetId } from "../../shared/targets";
 import { placeName, whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
+import type { SignInWith } from "./github-app";
+import { SessionToolsTimeoutError } from "./session-config";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -97,7 +99,10 @@ export interface AgentStatus {
   login?: string;
   /** Where the sign-in came from: Ember's own, the environment, or the GitHub CLI. */
   source?: string;
-  models: { id: string; name: string; vision: boolean }[];
+  /** How this build signs in (HostOptions.signInWith): the settings window labels its button by it. */
+  signInWith?: SignInWith;
+  /** `cost`: the premium-request multiplier, when Copilot gives one (the settings window marks the costly ones). */
+  models: { id: string; name: string; vision: boolean; cost?: number }[];
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
@@ -177,6 +182,11 @@ export interface HostOptions {
   emberPids?: () => number[];
   /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
   onAnnounce?: (text: string) => void;
+  /**
+   * How this build signs in (github-app.ts): with Ember's own GitHub App (default, "Sign in with GitHub"), or, while it
+   * has none, through the GitHub CLI: the signed-out line then says so, and the status tells the settings window.
+   */
+  signInWith?: SignInWith;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -231,6 +241,8 @@ export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
 
 const NETWORK = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network is unreachable|fetch failed|socket hang up|net::ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|CONNECTION_\w+|ADDRESS_UNREACHABLE|NETWORK_\w+|TIMED_OUT|PROXY_\w+|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE)/i;
 const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
+/** The same without Ember's own GitHub App: the sign-in is the GitHub CLI's (S1). */
+const SIGNED_OUT_CLI = "Not connected to Copilot. Signing in needs a GitHub account with Copilot and the GitHub CLI: see below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
 const RUNTIME_WAIT_MS = 5000;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
@@ -292,18 +304,54 @@ function proxyNote(p?: { url: string | null; socks?: string }): string {
   return "";
 }
 
+/**
+ * A problem on Copilot's or GitHub's side that passes (review #137): a 5xx, a rate limit, a request or the runtime's
+ * own start that timed out ("Timeout waiting for CLI server to start", SessionToolsTimeoutError). A start that fails
+ * with one is retried with the offline backoff, and asking retries at once, as offline.
+ */
+const TRANSIENT = /\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|\b429\b|too many requests|rate.?limit|timed? ?out|timeout/i;
+/** One of those: a TRANSIENT message, or the conversation's tools not reported in time (its message says neither). */
+const transient = (err: unknown, msg: string) => err instanceof SessionToolsTimeoutError || TRANSIENT.test(msg);
+/** What settings show for one, while the retry waits. */
+const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
+
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
 const NO_MODEL = /^(None of the models|Copilot lists no models)/;
 
-/** Why a start failed, in the order explainStartError judges it. */
-export function startErrorReason(err: unknown, ctx: { online?: boolean } = {}): AgentReason {
+/**
+ * The runtime can't start: starting it failed ("spawn … ENOENT"), the SDK didn't find it, or a file error names the
+ * runtime's own path (`runtime`). Any other file error is about a file of Ember's (fileTrouble).
+ */
+function runtimeMissing(msg: string, runtime?: string): boolean {
+  return /not found at|spawn /i.test(msg) || (!!runtime && /\b(ENOENT|EACCES|EPERM)\b/.test(msg) && msg.includes(runtime));
+}
+
+/** A file Ember needs couldn't be used (not the runtime's): why, in a sentence naming the file; null for other errors. */
+function fileTrouble(msg: string): string | null {
+  const code = /\b(ENOENT|EACCES|EPERM|EBUSY|ENOSPC|EDQUOT|EROFS)\b/.exec(msg)?.[1];
+  if (!code) return null;
+  const file = /'([^']+)'/.exec(msg)?.[1];
+  const it = file ?? "one of its files";
+  switch (code) {
+    case "ENOSPC": case "EDQUOT": return `Ember couldn't save ${it}: the disk (or your storage quota) is full. Free some space, then press Check again.`;
+    case "EROFS": return `Ember couldn't save ${it}: the disk is read-only. Ask IT to check Ember's data folder, then press Check again.`;
+    case "EACCES": case "EPERM": return `Ember isn't allowed to use ${it}. Check that its folder belongs to you, then press Check again.`;
+    case "EBUSY": return `${file ?? "One of Ember's files"} is in use by another program. Close it, then press Check again.`;
+    default: return `Ember couldn't find ${it}. Press Check again; if it keeps happening, restart Ember.`;
+  }
+}
+
+/** Why a start failed, in the order explainStartError judges it. `runtime`: the runtime's path (a file error naming it is its). */
+export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?: string } = {}): AgentReason {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return "runtime";
+  if (runtimeMissing(msg, ctx.runtime)) return "runtime";
+  if (fileTrouble(msg)) return "other";
   if (NO_MODEL.test(msg)) return "models";
   if (ctx.online === false || NETWORK.test(msg) || /certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "network";
   if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "runtime";
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic|\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "no-access";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) return "sign-in";
+  if (transient(err, msg)) return "not-answering";
   return "other";
 }
 
@@ -341,10 +389,12 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
  * Why a start failed, in one plain sentence for the settings window. `reinstall`: how this OS says to install Ember
  * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
  */
-export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string } = {}): string {
+export function explainStartError(err: unknown, ctx: { source?: string; sourceName?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string; runtime?: string } = {}): string {
   const msg = err instanceof Error ? err.message : String(err);
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
+  if (runtimeMissing(msg, ctx.runtime)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
+  const files = fileTrouble(msg);
+  if (files) return files;
   if (NO_MODEL.test(msg)) return msg;
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. It will try again when the network is back.";
   if (/certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.";
@@ -352,9 +402,28 @@ export function explainStartError(err: unknown, ctx: { source?: string; online?:
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Copilot is turned off for your account by an organisation policy. Ask your GitHub admin to enable the Copilot CLI policy.";
   if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account has no Copilot access. Check your Copilot subscription or seat.";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) {
+    // A token from the environment comes before every other sign-in: only taking it out of Ember's environment (or
+    // fixing it) gets past it for good. (Ember tried the other sign-ins it found before saying this: main.)
+    if (ctx.source === "environment" && ctx.sourceName && /^[A-Z_]+$/.test(ctx.sourceName)) {
+      return `Copilot didn't accept the GitHub token in ${ctx.sourceName} (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove ${ctx.sourceName}, then restart Ember; or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
+    }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
   }
+  if (transient(err, msg)) return TRANSIENT_DETAIL;
   return msg;
+}
+
+/**
+ * Why a sign-in (the device flow) failed, in one plain sentence for the settings window. Nothing retries a sign-in, so
+ * unlike a start's error it never promises one; a reply that wasn't GitHub's (a proxy's error page) isn't shown raw.
+ */
+export function explainSignInError(err: unknown, ctx: { online?: boolean; reinstall?: string } = {}): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
+  if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
+  if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. Check the network, then sign in again.";
+  if (/refused the sign-in request \(5\d\d\)|is not valid JSON|Unexpected token|JSON/i.test(msg) || TRANSIENT.test(msg)) return "GitHub's sign-in page didn't answer properly (a proxy or a problem on GitHub's side). Try signing in again in a moment.";
+  return explainStartError(err, ctx);
 }
 
 /** How long main's own bubble holds off everything else at most, if main doesn't give it back sooner. */
@@ -422,16 +491,15 @@ export class AgentHost {
   private client: CopilotClient | null = null;
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
-  private status: AgentStatus = {
-    phase: "signed-out", detail: SIGNED_OUT, models: [], conductorModel: null, workerModel: null,
-    usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
-  };
+  private status: AgentStatus;
   /** Bumped by every start() and stop(): an older start gives up at its next step. */
   private gen = 0;
   /** Starts and stops run one after another. */
   private chain: Promise<void> = Promise.resolve();
   private token: string | null = null;
   private source: string | undefined;
+  /** The environment variable the token came from (source "environment"). */
+  private sourceName: string | undefined;
   private health: ReturnType<typeof setInterval> | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   /** When the runtime died lately (five in ten minutes: Ember stops trying). */
@@ -467,6 +535,10 @@ export class AgentHost {
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
   private carried: string[] = [];
+  /** "Commands are off" with Open settings was offered this run (review #40: once per run). */
+  private commandsHinted = false;
+  /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
+  private checkingSignIn = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
@@ -512,7 +584,14 @@ export class AgentHost {
   /** The Confirmer tasks ask with: the hands', or without them (no window system) the task base's (§2.6). */
   private get confirmer(): Confirmer | undefined { return this.o.hands?.confirmer ?? this.o.taskBase?.confirmer; }
 
+  /** The signed-out line for how this build signs in. */
+  private get signedOut(): string { return this.o.signInWith === "github-cli" ? SIGNED_OUT_CLI : SIGNED_OUT; }
+
   constructor(private o: HostOptions) {
+    this.status = {
+      phase: "signed-out", detail: this.signedOut, models: [], conductorModel: null, workerModel: null,
+      usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, ...(o.signInWith ? { signInWith: o.signInWith } : {}),
+    };
     this.stateFile = path.join(o.userData, "agent.json");
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
@@ -529,6 +608,8 @@ export class AgentHost {
    * takes none of their context.
    */
   private conversationEvent(e: PresenterEvent): void {
+    // Copilot refused the sign-in mid-session (revoked, expired, the seat removed): it is asked whether it still holds.
+    if (e.type === "session.error" && (e.data?.errorType === "authentication" || e.data?.statusCode === 401)) void this.checkSignIn(this.gen);
     if (e.type !== "user.message" || (e as { agentId?: string }).agentId) return;
     const said = typeof e.data?.content === "string" ? e.data.content.trimEnd() : "";
     const i = this.queued.findIndex(r => said.endsWith(r.words.trim()));
@@ -551,6 +632,49 @@ export class AgentHost {
     const bare = b.mood === "idle" && b.thought.length <= ANNOUNCEMENT_CHARS;
     // (At a task's end a reply already seen may still be on screen: it keeps its own time.)
     if (p.waiting ? bare : !task) p.drop();
+  }
+
+  /**
+   * A turn or a task failed on a refused sign-in (review #138): Copilot is asked whether the sign-in still holds. If it
+   * doesn't (the token was revoked or expired, or the account lost Copilot), Ember leaves Ready for the sign-in error:
+   * the handle says "Sign-in refused", settings offer Sign in and Check again, a question says why instead of failing
+   * the same way again, and the bubble gets its Open settings button. A passing 401 changes nothing.
+   */
+  private async checkSignIn(gen: number): Promise<void> {
+    const client = this.client;
+    if (this.o.provider || this.checkingSignIn || gen !== this.gen || this.status.phase !== "ready" || !client) return;
+    this.checkingSignIn = true;
+    try {
+      const auth = await within(client.getAuthStatus(), 10_000);
+      if (gen !== this.gen || this.status.phase !== "ready" || auth === "timeout" || auth.isAuthenticated) return;
+      this.o.log.warn("agent.sign_in_refused", { source: this.source });
+      const detail = explainStartError(new Error("not authenticated"), { source: this.source, sourceName: this.sourceName, proxy: this.proxy });
+      this.setStatus({ phase: "error", reason: "sign-in", detail });
+      this.presenter.notice({ title: NOTICE_TITLE["sign-in"], text: SIGN_IN_REFUSED, actions: [{ id: "ui:settings", label: "Open settings" }] });
+    } catch (err) {
+      this.o.log.warn("agent.sign_in_check_failed", { err });
+    } finally {
+      this.checkingSignIn = false;
+    }
+  }
+
+  /**
+   * Commands are off only by the user's switch (caps.commandsOffered) and the user asked for a terminal or a command, or
+   * the answer said where to turn them on: once per run, after the answer, a bubble says commands are off, with Open
+   * settings (review #40). Never where the administrator turned commands off, or once they're on.
+   */
+  private hintCommands(): void {
+    if (this.commandsHinted) return;
+    let caps: PromptCaps | undefined;
+    try { caps = this.o.targets?.caps(); } catch { return; }
+    if (!caps?.commandsOffered || caps.commands) return;
+    this.commandsHinted = true;
+    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short).
+    const p = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, { shortcuts: this.sys.shortcuts });
+    p.outcome({
+      title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
+      emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
+    });
   }
 
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
@@ -706,9 +830,11 @@ export class AgentHost {
    *
    * `how`: "auto" for Ember's own start at launch. After the user signed out, a GitHub CLI or
    * environment sign-in found then isn't used until they sign in again ("user", the default).
+   * `name`: the environment variable a token from the environment came from (a refusal names it).
    */
-  start(token: string | null, source?: string, how: "user" | "auto" = "user"): Promise<AgentPhase> {
+  start(token: string | null, source?: string, how: "user" | "auto" = "user", name?: string): Promise<AgentPhase> {
     this.quitting = false;
+    this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
     if (token && how === "user") this.setSignedOut(false);
     else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
@@ -765,7 +891,7 @@ export class AgentHost {
       return;
     }
     if (!token && !this.o.provider) {
-      this.setStatus({ phase: "signed-out", detail: SIGNED_OUT, login: undefined, source: undefined });
+      this.setStatus({ phase: "signed-out", detail: this.signedOut, login: undefined, source: undefined });
       return;
     }
     this.setStatus({ phase: "starting", detail: "Connecting to Copilot…", source: this.source });
@@ -848,7 +974,7 @@ export class AgentHost {
       }
       if (runtimeDefault) this.o.log.info("agent.runtime_default_model");
       this.models = models;
-      // Sessions of tasks from an earlier run (Ember quit or restarted before their 10 minutes were up).
+      // Sessions of tasks from an earlier run (Ember crashed or was killed before it could delete them).
       // Housekeeping must not hold up the first answer: sweep alongside the session setup, not before it.
       void this.sweepTaskSessions(client);
 
@@ -871,6 +997,8 @@ export class AgentHost {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
           const summary = task.result?.summary ?? "";
+          // A task failed on a refused sign-in: is it still signed in (checkSignIn)?
+          if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
           const text = taskOutcome(task);
           const binding = this.taskBindings.get(task.id);
           this.taskBindings.delete(task.id);
@@ -950,7 +1078,8 @@ export class AgentHost {
           offerConnect: (name: string) => targets.offerConnect(name, this.userWordsOf(this.turn).words ?? ""),
         } : {}),
         onUsage: (i, o) => this.recordUsage(i, o),
-        onAnswer: this.o.onAnswer,
+        // An answer that tells the user where to turn commands on gets the button for it (once per run).
+        onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
         onTurnEnd: this.o.onTurnEnd,
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
@@ -1053,9 +1182,13 @@ export class AgentHost {
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
           const t = tasks.start(goal, { target, mode: "guide" });
           this.announced.add(t.id);
+          // Guides have a limit of their own: this one waits for one before it to end (nothing points yet, so no "follow me").
+          if (t.status === "queued") return `Guide ${t.id} is waiting: other guides are still showing the user something, and this one starts when one of them ends. Tell the user that, in a few words; don't tell them to follow Ember's pointer yet.`;
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
         takeReports: () => [...this.carried.splice(0), ...(tasks?.takeReports().map(report) ?? [])],
+        // Taken for a request that couldn't be sent (the runtime died): kept for the next conductor after the reconnect.
+        returnReports: reports => { this.carried.unshift(...reports); },
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
@@ -1077,7 +1210,7 @@ export class AgentHost {
         defaultModel: runtimeDefault,
         login,
         source: this.source,
-        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true })),
+        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true, ...(m.billing?.multiplier !== undefined ? { cost: costOf(m) } : {}) })),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
       });
@@ -1091,12 +1224,14 @@ export class AgentHost {
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
-      const ctx = { source: this.source, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall };
-      this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason: startErrorReason(err, ctx) });
+      const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall, runtime: this.o.runtimePath };
+      const reason = startErrorReason(err, ctx);
+      this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason });
       await this.doStop();
-      // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the
-      // sign-in. Not if a newer start or stop came meanwhile: a stale retry would restart a working connection.
-      if (offline && gen === this.gen) this.retryLater();
+      // Offline (e.g. started at login before the network or the VPN), or a problem on Copilot's side that passes (a
+      // 5xx, a rate limit, a timeout): try again later rather than blaming the sign-in. Not if a newer start or stop
+      // came meanwhile: a stale retry would restart a working connection.
+      if ((offline || reason === "not-answering") && gen === this.gen) this.retryLater();
     }
   }
 
@@ -1322,6 +1457,14 @@ export class AgentHost {
     return null;
   }
 
+  /**
+   * Nothing a reconnect would cut off: no start under way, no answer or guide step, no request waiting for its turn,
+   * no task running or queued. A renewed sign-in waits for this before Copilot is reconnected with it (review #138).
+   */
+  get idle(): boolean {
+    return this.starting === 0 && !this.presenter.atWork && !this.queued.length && !this.tasksAtWork();
+  }
+
   /** Tasks running or waiting to run. */
   private tasksAtWork(): boolean {
     return this.tasks?.list().some(t => t.status === "running" || t.status === "queued") ?? false;
@@ -1384,6 +1527,9 @@ export class AgentHost {
     const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}) };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
+    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once).
+    const terminal = terminalRequest(this.sys.os, this.wslOn());
+    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintCommands();
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {

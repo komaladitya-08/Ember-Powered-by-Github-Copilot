@@ -37,6 +37,11 @@ const sim = vi.hoisted(() => ({
   models: null as any[] | null,
   /** Task sessions left in the runtime's store by an earlier run. */
   taskSessions: [] as string[],
+  /** What client.start() and client.listModels() throw (a GitHub 5xx, the SDK's own timeouts), or nothing. */
+  startError: null as Error | null,
+  modelsError: null as Error | null,
+  /** The runtime never says which tools a session has (verifySessionTools times out). */
+  toolsHang: false,
 }));
 
 vi.mock("@github/copilot-sdk", async importOriginal => {
@@ -46,7 +51,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     listeners = new Set<(e: any) => void>();
     sent: string[] = [];
     aborted = 0;
-    rpc = { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: (this.config.tools ?? []).map((t: any) => ({ name: t.name })) }) } };
+    rpc = { tools: { initializeAndValidate: async () => { if (sim.toolsHang) await hang(); return {}; }, getCurrentMetadata: async () => ({ tools: (this.config.tools ?? []).map((t: any) => ({ name: t.name })) }) } };
     constructor(public sessionId: string, public config: any) {}
     on(fn: (e: any) => void) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
     emit(type: string, data: Record<string, unknown> = {}) { for (const l of [...this.listeners]) l({ type, data }); }
@@ -75,11 +80,11 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
     stopped = false;
     forced = false;
     constructor(public opts: any) { sim.clients.push(this); }
-    async start() { /* nothing */ }
+    async start() { if (sim.startError) throw sim.startError; }
     async stop() { if (sim.stopHangs) await hang(); this.stopped = true; return []; }
     async forceStop() { this.forced = true; }
     getAuthStatus() { return sim.auth(); }
-    async listModels() { return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
+    async listModels() { if (sim.modelsError) throw sim.modelsError; return sim.models ?? [{ id: "gpt-5-mini", name: "mini", capabilities: { supports: { vision: true } } }]; }
     async listSessions() { return sim.taskSessions.map(sessionId => ({ sessionId })); }
     async deleteSession(id: string) { sim.deleted.push(id); if (sim.deleteHangs) await hang(); }
     ping() { return sim.ping(); }
@@ -134,6 +139,9 @@ beforeEach(() => {
   sim.stall = () => false;
   sim.abortEnds = false;
   sim.models = null;
+  sim.startError = null;
+  sim.modelsError = null;
+  sim.toolsHang = false;
 });
 afterEach(() => { vi.useRealTimers(); });
 
@@ -2241,5 +2249,223 @@ describe("live retest: 'Read all' stays open until it's closed", () => {
       expect(screen().bubble).toMatchObject({ visible: true, thought: "Saved." });
       expect((host as any).owner.holder).not.toBe((host as any).mainBubble);
     });
+  });
+});
+
+describe("a passing problem while connecting (review #137)", () => {
+  it("GitHub's 5xx, a rate limit or a timeout is retried with the offline backoff and said plainly, not shown raw", async () => {
+    vi.useFakeTimers();
+    for (const raw of ["Request models.list failed with message: 503 Service Unavailable", "Request models.list failed with message: 429 Too Many Requests", "Request timed out after 30000ms"]) {
+      sim.clients = [];
+      sim.modelsError = new Error(raw);
+      const { host } = makeHost({ isOnline: () => true });
+      expect(await host.start(TOKEN, "stored")).toBe("error");
+      const s = host.getStatus();
+      expect(s.reason).toBe("not-answering");
+      expect(s.detail).not.toContain("Request ");
+      expect(s.detail).toMatch(/try again/);
+      expect(idleWord(s)).toBe("Reconnecting…");
+      // It tries again on its own.
+      sim.modelsError = null;
+      await vi.advanceTimersByTimeAsync(16_000);
+      expect(sim.clients).toHaveLength(2);
+      expect(host.getStatus().phase).toBe("ready");
+      await host.stop();
+    }
+  });
+
+  it("a slow first launch (the runtime's start timeout) is retried too, and asking retries at once", async () => {
+    vi.useFakeTimers();
+    sim.startError = new Error("Timeout waiting for CLI server to start");
+    const { host } = makeHost({ isOnline: () => true });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    expect(host.getStatus().reason).toBe("not-answering");
+    sim.startError = null;
+    // The user asks before the retry's time: it tries now, and the question waits for it.
+    const asked = host.ask("hello");
+    await vi.advanceTimersByTimeAsync(100);
+    expect(sim.clients).toHaveLength(2);
+    await asked;
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a conversation whose tools Copilot doesn't report in time is retried too, and said plainly", async () => {
+    vi.useFakeTimers();
+    sim.toolsHang = true;
+    const { host } = makeHost({ isOnline: () => true });
+    const started = host.start(TOKEN, "stored");
+    // verifySessionTools gives up after 10 s.
+    await vi.advanceTimersByTimeAsync(10_500);
+    expect(await started).toBe("error");
+    const s = host.getStatus();
+    expect(s.reason).toBe("not-answering");
+    expect(s.detail).not.toMatch(/session tools/);
+    expect(s.detail).toMatch(/try again/);
+    expect(idleWord(s)).toBe("Reconnecting…");
+    // It tries again on its own after about 15 s, and connects.
+    sim.toolsHang = false;
+    const before = sim.clients.length;
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(sim.clients).toHaveLength(before);
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(sim.clients).toHaveLength(before + 1);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a real refusal still isn't retried on its own", async () => {
+    vi.useFakeTimers();
+    sim.modelsError = new Error("Request models.list failed with message: 403 Forbidden: Copilot policy");
+    const { host } = makeHost({ isOnline: () => true });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(sim.clients).toHaveLength(1);
+  });
+});
+
+describe("a sign-in refused after connecting (review #138)", () => {
+  it("the conversation's 401: Copilot is asked, and a refused sign-in leaves Ready for the sign-in error with a way to settings", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    // The token was revoked: the next turn fails, and Copilot now says it isn't signed in.
+    sim.auth = async () => ({ isAuthenticated: false });
+    conductorSession().emit("session.error", { errorType: "authentication", message: "Unauthorized", statusCode: 401 });
+    await vi.advanceTimersByTimeAsync(50);
+    const s = host.getStatus();
+    expect(s).toMatchObject({ phase: "error", reason: "sign-in" });
+    expect(s.detail).toMatch(/didn't accept the GitHub sign-in Ember found \(Ember's saved sign-in\)/);
+    expect(idleWord(s)).toBe("Sign-in refused");
+    expect(screen().bubble?.actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
+    // The next question isn't sent into a sign-in that fails: Ember says why, with the button.
+    const sent = conductorSession().sent.length;
+    await host.ask("what time is it?");
+    expect(conductorSession().sent).toHaveLength(sent);
+    expect(screen().bubble).toMatchObject({ title: "Copilot didn't accept the sign-in", actions: [{ id: "ui:settings", label: "Open settings" }] });
+    await host.stop();
+  });
+
+  it("a 401 Copilot still signs in after (a passing one) changes nothing", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost();
+    await host.start(TOKEN, "stored");
+    conductorSession().emit("session.error", { errorType: "authentication", message: "Unauthorized", statusCode: 401 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+
+  it("a task that fails on a refused sign-in is checked the same way", async () => {
+    vi.useFakeTimers();
+    sim.onSend = (s, prompt) => { if (s.sessionId.startsWith("ember-task-") && prompt.startsWith("Task:")) setTimeout(() => { sim.auth = async () => ({ isAuthenticated: false }); s.emit("session.error", { message: "Request failed: 401 Unauthorized: bad credentials" }); }, 10); };
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "github-cli");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(200);
+    expect(host.tasks?.get(t.id)?.status).toBe("failed");
+    expect(host.getStatus()).toMatchObject({ phase: "error", reason: "sign-in" });
+    expect(host.getStatus().detail).toMatch(/\(the GitHub CLI sign-in\)/);
+    await host.stop();
+  });
+
+  it("says it is idle only when reconnecting with a renewed sign-in would cut nothing off", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ hands: hands() });
+    const starting = host.start(TOKEN, "stored");
+    expect(host.idle).toBe(false);
+    await starting;
+    expect(host.idle).toBe(true);
+    // An answer under way.
+    await host.ask("what time is it?");
+    expect(host.idle).toBe(false);
+    conductorSession().emit("assistant.message", { content: "It's noon." });
+    conductorSession().emit("session.idle", {});
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.idle).toBe(true);
+    // A task running.
+    host.tasks!.start("tidy my desktop");
+    expect(host.idle).toBe(false);
+    host.tasks!.cancelAll();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.idle).toBe(true);
+    await host.stop();
+  });
+
+  it("an organisation's own endpoint has no GitHub sign-in to check", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ provider: { type: "openai", baseUrl: "http://127.0.0.1:9/v1" } as never });
+    await host.start(null);
+    sim.auth = async () => ({ isAuthenticated: false });
+    conductorSession().emit("session.error", { errorType: "authentication", message: "Unauthorized", statusCode: 401 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(host.getStatus().phase).toBe("ready");
+    await host.stop();
+  });
+});
+
+describe("show_me beside running tasks (review #142)", () => {
+  const showMe = () => conductorSession().config.tools.find((t: any) => t.name === "show_me").handler({ goal: "change the font" }, {});
+
+  it("a guide starts at once while two tasks act; one over the guides' own limit is said to wait, without promising the pointer", async () => {
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("tidy the desktop");
+    host.tasks!.start("rename the photos");
+    await host.ask("show me how to change the font");
+    expect(await showMe()).toMatch(/^Guide .* started/);
+    expect(await showMe()).toMatch(/^Guide .* started/);
+    const third = await showMe();
+    expect(third).toMatch(/^Guide .* is waiting/);
+    expect(third).toMatch(/don't tell them to follow Ember's pointer yet/);
+    await host.stop();
+  });
+});
+
+describe("a task's result when the request can't be sent (review #150)", () => {
+  it("goes back to the queue, and the next conversation hears it after the reconnect", async () => {
+    vi.useFakeTimers();
+    const { host } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    // A task finished: its result waits for the user's next message.
+    sim.onSend = (s, prompt) => { if (s.sessionId.startsWith("ember-task-") && prompt.startsWith("Task:")) setTimeout(() => s.emit("session.error", { message: "boom" }), 10); };
+    host.tasks!.start("save the report as report.txt");
+    await vi.advanceTimersByTimeAsync(200);
+    sim.onSend = () => undefined;
+    // The runtime just died: the next request isn't sent.
+    let fail = true;
+    sim.sendGate = null;
+    const first = conductorSession();
+    first.send = async (m: { prompt: string }) => { first.sent.push(m.prompt); if (fail) throw new Error("Connection is disposed."); return "m"; };
+    await host.ask("how did it go?");
+    expect(first.sent.at(-1)).toContain("<task_results");
+    fail = false;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(host.getStatus().phase).toBe("ready");
+    const next = conductorSession();
+    expect(next).not.toBe(first);
+    await host.ask("how did it go?");
+    expect(next.sent.at(-1)).toContain("<task_results");
+    expect(next.sent.at(-1)).toContain("save the report as report.txt");
+    await host.stop();
+  });
+});
+
+describe("the models' cost in the status (review #144)", () => {
+  it("passes on Copilot's premium-request multiplier, and the default worker is a standard model", async () => {
+    sim.models = [
+      { id: "delta-ultra", name: "Delta Ultra", capabilities: { supports: { vision: true } }, billing: { multiplier: 10 } },
+      { id: "delta-pro", name: "Delta Pro", capabilities: { supports: { vision: true } }, billing: { multiplier: 1 } },
+      { id: "delta-mini", name: "Delta Mini", capabilities: { supports: { vision: true } } },
+    ];
+    const { host } = makeHost();
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(host.getStatus().models).toEqual([
+      { id: "delta-ultra", name: "Delta Ultra", vision: true, cost: 10 },
+      { id: "delta-pro", name: "Delta Pro", vision: true, cost: 1 },
+      { id: "delta-mini", name: "Delta Mini", vision: true },
+    ]);
+    expect(host.getStatus()).toMatchObject({ conductorModel: "delta-mini", workerModel: "delta-pro" });
+    await host.stop();
   });
 });

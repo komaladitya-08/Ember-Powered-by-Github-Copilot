@@ -1,9 +1,9 @@
 /**
  * TaskManager: runs workers in the background while the user keeps working.
  * Plain TypeScript (no model decides scheduling): at most `maxRunning` tasks
- * run at once, the rest queue; two tasks never act in the same window at the
- * same moment (window leases); finished worker sessions are deleted after
- * ten minutes (or at once when Ember stops); results wait for the conductor
+ * act at once, the rest queue (guides have a limit of their own beside them); two tasks never act in the same window at the
+ * same moment (window leases); a finished worker's session is deleted as soon
+ * as it ends (nothing resumes it, and it holds what the task read); results wait for the conductor
  * to pick them up. Every finished card can be closed; a failure stays longer so
  * the user can read it, then it goes on its own too.
  */
@@ -60,8 +60,9 @@ export interface TaskManagerDeps {
   settingsKey?: string;
   /** The audit log gets each task's request and outcome. */
   audit?: AuditLog;
+  /** How many tasks that act run at once (default 2); guides don't count towards it (they have the same limit of their own). */
   maxRunning?: number;
-  /** How long a finished worker session is kept for follow-up questions. */
+  /** How long a finished worker's session is kept before it is deleted (default 0: at once; no follow-up resumes it). */
   keepMs?: number;
   /** How long finished cards stay on screen. */
   cardMs?: number;
@@ -223,10 +224,17 @@ export class TaskManager {
     };
   }
 
+  /**
+   * Starts what may start now, in order: at most `maxRunning` tasks that act, and beside them at most `maxRunning`
+   * guides (a guide only points and waits for the user's clicks, so it never waits behind tasks that may run for minutes).
+   */
   private pump(): void {
     const max = this.d.maxRunning ?? 2;
-    while (this.running.size < max && this.queue.length) {
-      const { task, spec } = this.queue.shift()!;
+    const running = (guide: boolean) => [...this.running.keys()].filter(id => (this.tasks.get(id)?.mode === "guide") === guide).length;
+    for (let i = 0; i < this.queue.length;) {
+      const { task, spec } = this.queue[i];
+      if (running(spec.mode === "guide") >= max) { i++; continue; }
+      this.queue.splice(i, 1);
       // run() ends every task on screen whatever happens (review #79); anything left over is logged, never unhandled.
       const run = this.run(task, spec).catch(err => this.d.log.error("task.run_failed", { id: task.id, err }));
       this.runs.add(run);
@@ -236,7 +244,17 @@ export class TaskManager {
 
   private async run(task: Task, spec: TaskSpec): Promise<void> {
     const abort = new AbortController();
-    const worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    let worker: WorkerLike;
+    try {
+      worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    } catch (err) {
+      // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
+      // Stop that does nothing, and what queued behind it gets its turn.
+      this.d.log.error("task.error", { id: task.id, err });
+      this.finish(task, "failed", { success: false, summary: "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." });
+      this.pump();
+      return;
+    }
     task.mode = spec.mode ?? "do";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
@@ -265,7 +283,7 @@ export class TaskManager {
           const timer = setTimeout(() => {
             this.toDelete.delete(sessionId);
             void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
-          }, this.d.keepMs ?? 10 * 60_000);
+          }, this.d.keepMs ?? 0);
           timer.unref?.();
           this.toDelete.set(sessionId, timer);
         }

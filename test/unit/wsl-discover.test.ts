@@ -145,7 +145,7 @@ describe("createWslExec", () => {
     const { spawn, calls } = fakeSpawn(() => undefined);
     const exec = createWslExec({ exe: () => EXE, env: ENV, jobHost: null, spawn, log: fakeLog() });
     const r = await exec.run(["-d", "Ubuntu", "--exec", "/bin/sh", "-s"], { stdin: "exit\n", timeoutMs: 1000, inDistro: true });
-    expect(r.error).toMatch(/job host/);
+    expect(r.error).toMatch(/Part of Ember.s install is missing/);
     expect(calls).toHaveLength(0);
   });
 

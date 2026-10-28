@@ -32,6 +32,9 @@ export function plainText(s: string): string {
  * is configured (there is no GitHub sign-in to blame then). `settingsKey`: the settings
  * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E").
  */
+/** friendlyError's sentence for a sign-in Copilot refused (the host then asks Copilot whether the sign-in still holds). */
+export const SIGN_IN_REFUSED = "Copilot didn't accept the sign-in. Open settings to sign in again.";
+
 export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string } = {}): string {
   const m = `${errorType ?? ""} ${raw}`;
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
@@ -43,17 +46,24 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   }
   const refused = "Copilot refused this for your account (an organisation policy or a missing Copilot seat).";
   if (status === 403) return refused;
-  if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return "Copilot didn't accept the sign-in. Open settings to sign in again.";
+  if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return SIGN_IN_REFUSED;
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The AI endpoint's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
   if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one in settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
+  // The whole conversation (not this request) went over the model's limit: a new conversation starts when Ember restarts.
+  if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return "That's more than the model can take in at once: this conversation may have got too long. Try a shorter request, or quit and reopen Ember to start a new conversation.";
   if (/context.?(length|limit|window)|too (long|large)|max.?tokens/i.test(m)) return "That was too much for me to handle at once. Try a shorter request.";
   // The runtime's own connection went away ("Pending response rejected since connection got disposed").
   if (/ECONN|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|network|fetch failed|socket|could not connect|connection (is |got |was )?(disposed|closed|lost|refused)|pending response rejected|disconnected/i.test(m)) return `I can't reach ${service} right now. Check the network, then ask again.`;
   if (/\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded/i.test(m)) return `${ctx.provider ? "Your organisation's AI endpoint" : "Copilot"} had a problem on its side. Try again in a moment.`;
+  // A request that timed out (not the network's ETIMEDOUT, which is above).
+  if (/timed? ?out|timeout|took too long/i.test(m)) return `${ctx.provider ? "The AI endpoint" : "Copilot"} took too long to answer. Try again in a moment.`;
   const short = raw.replace(/\{[\s\S]*\}/g, "").replace(/^\w*Error:\s*/, "").trim();
   const who = ctx.provider ? "The AI endpoint" : "Copilot";
-  return short ? `${who} reported a problem: ${short.length > 140 ? short.slice(0, 139) + "…" : short}` : `${who} reported a problem.`;
+  // Only a status code is left (a JSON body said nothing more): a refused request.
+  if (/^\(?4\d\d\)?$/.test(short)) return `${who} refused that request (${short.replace(/[()]/g, "")}). Try asking in other words.`;
+  // Anything else: no raw text (it reads as a code error, and is spoken when speech is on); the caller logs it.
+  return `${who} reported a problem. Try again; if it keeps happening, check ${ctx.provider ? "the model service" : "Copilot"} in Ember's settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
 }
 
 /** How long a question's answer ("Okay, I won't.") stays before what waited behind the question shows. */
@@ -660,14 +670,14 @@ export class Presenter {
   }
 
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
-  outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"] }): void {
+  outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"]; actions?: BubbleState["actions"] }): void {
     if (this.silent) return;
     this.cancelHide();
     this.answering = false;
     this.guiding = false;
     this.apply({
       emotion: o.emotion, talking: false, gesture: o.gesture,
-      bubble: { visible: true, mood: o.mood, title: o.title, thought: o.text, step: null, streaming: false, actions: [] },
+      bubble: { visible: true, mood: o.mood, title: o.title, thought: o.text, step: null, streaming: false, actions: o.actions ?? [] },
     }, "reply");
     this.hideLater(Math.min(30000, (o.mood === "error" ? 12000 : 6000) + o.text.length * 50));
   }

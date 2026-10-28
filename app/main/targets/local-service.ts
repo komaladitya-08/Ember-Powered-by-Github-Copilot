@@ -50,7 +50,7 @@ export function commandCapability(o: {
   const askEvery: CommandCapability["askEvery"] = o.privileged ? "root" : o.mode === "ask" ? "admin" : o.setting?.askEvery ? "user" : o.tool ? "tool" : null;
   if (o.mode === "off") return { state: "off", why: ADMIN_OFF[o.kind], askEvery };
   if (o.unavailable) return { state: "off", why: o.unavailable, askEvery };
-  if (!o.setting?.on) return { state: "off", why: `Commands are off ${placeWords(o.kind, o.label)}. The user can turn them on in Ember's settings (Commands).`, askEvery };
+  if (!o.setting?.on) return { state: "off", why: `Commands are off ${placeWords(o.kind, o.label)}. The user can turn them on in Ember's settings (Commands).`, askEvery, userOff: true };
   if (!consentCurrent("commands", o.setting.consent)) return { state: "needs-consent", askEvery };
   return { state: "on", askEvery };
 }

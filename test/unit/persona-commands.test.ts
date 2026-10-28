@@ -17,7 +17,7 @@ import type { SettingsStore } from "../../app/main/settings";
 import type { TargetBinding } from "../../app/main/targets/types";
 
 /** SHA-256 of JSON.stringify of each system message before the port (as persona-platform.test.ts pins them). */
-const FROZEN_HASHES = { ember: "e96a17a95ad670b40e1d0ae09f71a728b30d63637dca6a560833bbfba4d387ec", worker: "22d415a2f94ff7bf3eb0bb1424f66477c7bf8e023fe54d9c5144307429cf1b08" };
+const FROZEN_HASHES = { ember: "e96a17a95ad670b40e1d0ae09f71a728b30d63637dca6a560833bbfba4d387ec", worker: "8e0d7f2d0cab3ea12d44e280076f49cd4d4d8af6bd8082e52557d88af3a2cfa2" };
 const sha = (x: unknown) => crypto.createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const sections = (m: ReturnType<typeof workerSystemMessage>) => m.sections as Record<string, { content?: string }>;
@@ -127,5 +127,28 @@ describe("a worker with commands, on a computer without a desktop, or on another
     expect(workerIdentity(PLATFORM_WORDS.linux, REMOTE)).toBe(`${WORKER_IDENTITY} You work on build-01, another computer: the user can't see its screen, so every step there is asked about.`);
     const wsl: TargetBinding = { id: "wsl:Ubuntu", kind: "wsl", label: "Ubuntu (WSL)", screenOs: "win32", shellOs: "linux", desktop: "screen" };
     expect(workerIdentity(PLATFORM_WORDS.win32, wsl)).toBe(workerIdentity(PLATFORM_WORDS.win32));
+  });
+});
+
+describe("commands off but the user could turn them on (review #40)", () => {
+  const OFFERED = { commands: false, targets: false, commandsOffered: true };
+
+  it("the conversation is told to point to Ember's settings (Commands), not that Ember doesn't act in terminals", () => {
+    for (const os of OSES) {
+      const w = PLATFORM_WORDS[os];
+      const rules = toolRules(w, OFFERED);
+      expect(rules, os).toMatch(/turn commands on in Ember's settings \(Commands\)/);
+      expect(rules, os).not.toMatch(/it doesn't act in terminals/);
+      expect(rules, os).toMatch(/Never quietly swap it for another app or route/);
+      const id = identity(w, OFFERED);
+      expect(id, os).not.toContain(TODAY_PARAGRAPH);
+      expect(id, os).toMatch(/Commands are off/);
+    }
+  });
+
+  it("with commands on, or nothing to offer, the prompts are as before", () => {
+    expect(toolRules(PLATFORM_WORDS.linux, { commands: true, targets: false, commandsOffered: true })).toBe(toolRules(PLATFORM_WORDS.linux, { commands: true, targets: false }));
+    expect(toolRules(PLATFORM_WORDS.linux, { commands: false, targets: false, commandsOffered: false })).toBe(TOOL_RULES);
+    expect(sha(emberSystemMessage(PLATFORM_WORDS.linux, NO_CAPS))).toBe(FROZEN_HASHES.ember);
   });
 });

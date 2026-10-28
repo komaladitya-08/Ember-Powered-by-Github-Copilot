@@ -140,8 +140,8 @@ describe("Linux setup checks", () => {
     expect(inspectEnvironment({ ...linux, windows: win().windows, mac: mac().mac })).toEqual(inspectEnvironment(linux));
   });
 
-  it("keep failing other Linux machines as before (arm64: not supported in v1)", () => {
-    expect(check({ ...linux, arch: "arm64" }, "platform")).toEqual({ id: "platform", label: "Platform", status: "fail", detail: "linux/arm64 is not supported in v1" });
-    expect(check({ ...linux, platform: "freebsd" }, "platform")?.detail).toBe("freebsd/x64 is not supported in v1");
+  it("keep failing other Linux machines as before (arm64 isn't supported)", () => {
+    expect(check({ ...linux, arch: "arm64" }, "platform")).toEqual({ id: "platform", label: "Platform", status: "fail", detail: "linux/arm64 isn't supported" });
+    expect(check({ ...linux, platform: "freebsd" }, "platform")?.detail).toBe("freebsd/x64 isn't supported");
   });
 });

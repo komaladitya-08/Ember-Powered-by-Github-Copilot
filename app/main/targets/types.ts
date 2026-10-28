@@ -67,6 +67,11 @@ export interface PromptCaps {
   commands: boolean;
   /** A targets runtime with more than "local" exists, or SSH is allowed: list_computers and offer_connect are offered. */
   targets: boolean;
+  /**
+   * Commands are off everywhere, but only because the user hasn't turned them on (the administrator allows them): the
+   * conversation says where to turn them on instead of "Ember doesn't act in terminals" (review #40). Absent: false.
+   */
+  commandsOffered?: boolean;
 }
 
 /** What AgentHost asks of the targets runtime (HostOptions.targets). */

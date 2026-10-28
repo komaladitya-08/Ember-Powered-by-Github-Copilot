@@ -14,8 +14,12 @@ import type { TargetBinding } from "../targets/types";
 import type { ShellId } from "../commands/types";
 import { placeName } from "../commands/flow";
 
-/** How the worker operates apps (today's sentence), replaced or followed by §3.15's when the target says so. */
-const OPERATES = "They operate applications through the accessibility system, without moving the user's mouse or typing on their keyboard.";
+/**
+ * How the worker operates apps, replaced or followed by §3.15's when the target says so. It may borrow the mouse or
+ * keyboard (press_keys, scroll, a click the accessibility system can't make), always after asking: the identity says so,
+ * so the model neither avoids those tools nor tells the user it won't touch their mouse just before Ember asks to.
+ */
+const OPERATES = "You work through the accessibility system first; only when an app needs it do you borrow the user's mouse or keyboard, and the user is always asked first.";
 
 /**
  * A worker's identity: one task, in the user's real apps (`words.apps`), through the tools it is given. `target`

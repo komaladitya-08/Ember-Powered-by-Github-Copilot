@@ -84,7 +84,7 @@ describe("ember doctor", () => {
       const p = probes();
       return byId(doctorChecks({ ...p, env: { ...p.env, checks: [...p.env.checks.filter(c => c.id !== "session"), { id: "session", label: "Desktop session", status: "fail", detail }] } }), "session").fix;
     };
-    expect(withSession("Wayland session. Ember v1 needs “GNOME on Xorg”")).toMatch(/GNOME on Xorg/);
+    expect(withSession("Wayland session. Ember needs “GNOME on Xorg”")).toMatch(/GNOME on Xorg/);
     expect(withSession("Ember can't connect to the X display :0.")).toMatch(/terminal inside your desktop/);
     expect(withSession("No X display. Start Ember from inside your desktop session")).not.toMatch(/Xorg/);
   });

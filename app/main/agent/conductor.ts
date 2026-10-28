@@ -45,6 +45,8 @@ export interface ConductorDeps {
   showMe?: (goal: string) => string | Promise<string>;
   /** Finished-task results the conductor hasn't heard about yet. */
   takeReports?: () => string[];
+  /** Reports taken for a request that couldn't be sent: they go back, so the next request (or conversation) hears them. */
+  returnReports?: (reports: string[]) => void;
   /** Running and recent tasks, for "how's it going?", "stop the email one" and "use Firefox instead". */
   tasks?: ConductorTasks;
   /** Called for every model call with its token counts (usage meter). */
@@ -128,7 +130,9 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
   const noTasks = "Ember cannot operate applications in this session (no desktop access). Tell the user and offer to explain how to do it instead.";
-  const goal = z.string().min(3).max(500).describe("One clear goal, in the user's words, with any details they gave");
+  // Room for everything the ask box takes (2,000 characters: text the user wants typed) and the instruction around it:
+  // the worker sees only the goal, and its type_text takes 5,000.
+  const goal = z.string().min(3).max(4000).describe("One clear goal, in the user's words, with any details they gave");
   return [
     checkedTool("set_appearance", "Change how Ember looks: one of cinder, wisp, glassling, glint; optionally its size in pixels (36-110).",
       z.object({
@@ -501,7 +505,12 @@ export class Conductor {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
         if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
       }
-      if (e.type === "session.error") this.busy = false;
+      if (e.type === "session.error") {
+        this.busy = false;
+        // The bubble says it in plain words (friendlyError); the raw error is kept here for whoever reads the log.
+        const err = e.data as { errorType?: unknown; statusCode?: unknown; message?: unknown };
+        d.log.warn("conductor.session_error", { errorType: err.errorType, statusCode: err.statusCode, message: String(err.message ?? "").slice(0, 300) });
+      }
       if (e.type === "session.idle") { this.busy = false; this.stopping = false; d.onTurnEnd?.((e.data as { aborted?: boolean }).aborted === true); }
     });
   }
@@ -514,7 +523,7 @@ export class Conductor {
     // A turn that went silent is being ended: a request sent now would run (and show) only after it.
     if (this.endingTurn) await this.endingTurn;
     const session = this.session;
-    if (!session) throw new Error("Ember's brain is not connected yet.");
+    if (!session) throw new Error("Ember isn't connected to Copilot yet.");
     // A new request: an earlier Stop doesn't refuse what the user asks for now.
     this.stopping = false;
     this.deps.presenter.userPrompt(text);
@@ -536,6 +545,8 @@ export class Conductor {
     } catch (err) {
       watch?.unsent();
       this.busy = false;
+      // The finished tasks' results were in the request that never went: they wait for the next one.
+      if (reports.length) this.deps.returnReports?.(reports);
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);

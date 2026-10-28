@@ -134,7 +134,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
 
   checks.push(i.platform === "linux" && i.arch === "x64"
     ? { id: "platform", label: "Platform", status: "ok", detail: "Linux x86-64" }
-    : { id: "platform", label: "Platform", status: "fail", detail: `${i.platform}/${i.arch} is not supported in v1` });
+    : { id: "platform", label: "Platform", status: "fail", detail: `${i.platform}/${i.arch} isn't supported` });
 
   const isRhel8 = /^(rhel|rocky|almalinux|ol|centos)$/.test(os.ID ?? "") && (os.VERSION_ID ?? "").startsWith("8");
   checks.push({
@@ -147,7 +147,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
   if (sessionType === "wayland" || (!!i.env.WAYLAND_DISPLAY && sessionType !== "x11")) {
     checks.push({
       id: "session", label: "Desktop session", status: "fail",
-      detail: "Wayland session. Ember v1 needs “GNOME on Xorg”: log out, click the gear on the login screen, choose it, and log in again.",
+      detail: "Wayland session. Ember needs “GNOME on Xorg”: log out, click the gear on the login screen, choose it, and log in again.",
     });
   } else if (display && (sessionType === "x11" || i.x11 !== false)) {
     // An X display Ember can use is what matters (the session type is often unset on Xvfb, xrdp or ssh -X).

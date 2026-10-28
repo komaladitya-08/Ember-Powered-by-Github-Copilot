@@ -1,0 +1,185 @@
+/**
+ * Sign-in (review #93, #136, #199, #213; owner decision S1): Ember's GitHub App's client id in one checked-in place,
+ * EMBER_GITHUB_CLIENT_ID overriding it; and in a build without one, every sign-in message, the doctor row and the
+ * settings window saying that signing in needs a GitHub account with Copilot and the GitHub CLI (and how to install it).
+ */
+
+import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { AgentHost } from "../../app/main/agent/host";
+import { SettingsStore } from "../../app/main/settings";
+import type { Logger } from "../../app/main/logger";
+import { GH_INSTALL, GITHUB_CLIENT_ID, cliSignInNeeds, cliTimedOutMessage, cliWaitingMessage, githubClientId, noSignInMessage } from "../../app/main/agent/github-app";
+import { doctorChecks, type DoctorProbes } from "../../app/main/doctor";
+import { inspectEnvironment } from "../../app/main/environment";
+import { AdminPolicySchema } from "../../app/main/admin";
+import { retryMessage, signInLabel } from "../../app/renderer/home/copy";
+import { SHORTCUTS } from "../../app/shared/shortcuts";
+import { PLATFORM_WORDS } from "../../app/shared/words";
+
+const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+
+describe("the GitHub App's client id", () => {
+  it("is Ember's own GitHub App's, checked in, so every build signs in with the device flow", () => {
+    // A GitHub App's client id: "Iv23" and 16 letters or digits (public by design, not a secret).
+    expect(GITHUB_CLIENT_ID).toMatch(/^Iv23[A-Za-z0-9]{16}$/);
+    expect(githubClientId({})).toBe(GITHUB_CLIENT_ID);
+  });
+
+  it("a build without one (a fork, a development build) has no device flow: sign-in goes through the GitHub CLI", () => {
+    expect(githubClientId({}, "")).toBeNull();
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "  " }, "")).toBeNull();
+  });
+
+  it("EMBER_GITHUB_CLIENT_ID overrides the built-in one at run time", () => {
+    expect(githubClientId({}, "Iv1.0123456789abcdef")).toBe("Iv1.0123456789abcdef");
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: " Ov23liABCDEF " }, "Iv1.0123456789abcdef")).toBe("Ov23liABCDEF");
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "Ov23liABCDEF" }, "")).toBe("Ov23liABCDEF");
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "" }, "Iv1.0123456789abcdef")).toBe("Iv1.0123456789abcdef");
+  });
+
+  it("ignores an override that isn't a client id rather than sending it to GitHub (the built-in one stays)", () => {
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "a b&scope=repo" }, "")).toBeNull();
+    expect(githubClientId({ EMBER_GITHUB_CLIENT_ID: "a b&scope=repo" }, "Iv1.0123456789abcdef")).toBe("Iv1.0123456789abcdef");
+  });
+});
+
+describe("what sign-in says without Ember's own GitHub App", () => {
+  it("names the account, Copilot and the GitHub CLI, with this OS's way to install it", () => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      const needs = cliSignInNeeds(os);
+      expect(needs).toMatch(/GitHub account with Copilot/);
+      expect(needs).toMatch(/GitHub CLI/);
+      expect(needs).toContain(GH_INSTALL[os]);
+    }
+    expect(GH_INSTALL.win32).toMatch(/winget install --id GitHub\.cli/);
+    expect(GH_INSTALL.darwin).toMatch(/brew install gh/);
+    expect(GH_INSTALL.linux).toMatch(/sudo dnf install gh/);
+  });
+
+  it("says the GitHub CLI isn't installed, and how to get it, when it is missing", () => {
+    const waiting = cliWaitingMessage("win32", false);
+    expect(waiting).toMatch(/GitHub CLI isn't installed/);
+    expect(waiting).toContain("winget install --id GitHub.cli");
+    expect(waiting).toMatch(/gh auth login/);
+    expect(waiting).toMatch(/no restart needed/);
+    // Installed: only the sign-in step (and still the requirement).
+    expect(cliWaitingMessage("darwin", true)).toMatch(/GitHub account with Copilot and the GitHub CLI\. In a terminal, run “gh auth login”/);
+    expect(cliWaitingMessage("darwin", true)).not.toMatch(/isn't installed/);
+    expect(cliTimedOutMessage("linux", false)).toMatch(/isn't installed[\s\S]*sudo dnf install gh[\s\S]*Check again/);
+  });
+
+  it("Check again that finds nothing says the same (and a build with the app points to its button)", () => {
+    expect(noSignInMessage({ os: "darwin", with: "github-cli", ghInstalled: false })).toMatch(/No GitHub sign-in found[\s\S]*isn't installed[\s\S]*brew install gh/);
+    expect(noSignInMessage({ os: "linux", with: "github", ghInstalled: true })).toMatch(/Press Sign in with GitHub/);
+  });
+
+  it("the settings window shows the message main sends with Check again's answer", () => {
+    const hint = noSignInMessage({ os: "win32", with: "github-cli", ghInstalled: false });
+    expect(retryMessage({ found: false, source: null, hint })).toBe(hint);
+    // A main that sends none: as before.
+    expect(retryMessage({ found: false, source: null })).toMatch(/No GitHub sign-in found/);
+  });
+});
+
+describe("the doctor's Copilot row without Ember's own GitHub App", () => {
+  const versions = { electron: "44.5.0", chrome: "152", node: "24" };
+  const env = inspectEnvironment({ env: {}, osRelease: null, glibc: null, versions, platform: "win32", arch: "x64",
+    windows: { build: 22631, elevated: false, session: "console", powershell: "full", dpiMixed: false } });
+  const probes = (over: Partial<DoctorProbes>): DoctorProbes => ({
+    os: "win32", env, compositor: true, xtest: true, speechDispatcher: true, microphones: null, voiceModels: "bundled", runtime: true,
+    auth: null, admin: { policy: AdminPolicySchema.parse({}), source: null }, desk: null, sandbox: null,
+    shortcuts: SHORTCUTS.win32, words: PLATFORM_WORDS.win32, extra: [], ...over,
+  });
+  const copilot = (over: Partial<DoctorProbes>) => doctorChecks(probes(over)).find(c => c.id === "copilot");
+
+  it("says sign-in needs a GitHub account with Copilot and the GitHub CLI, with the install command", () => {
+    const row = copilot({ signIn: { with: "github-cli", ghInstalled: false } });
+    expect(row?.status).toBe("warn");
+    expect(row?.fix).toMatch(/GitHub account with Copilot/);
+    expect(row?.fix).toContain("winget install --id GitHub.cli");
+    expect(row?.fix).toMatch(/gh auth login/);
+    expect(row?.fix).not.toMatch(/Sign in with GitHub/);
+  });
+
+  it("with gh installed, only the sign-in step", () => {
+    expect(copilot({ signIn: { with: "github-cli", ghInstalled: true } })?.fix).toMatch(/^Signing in needs a GitHub account with Copilot and the GitHub CLI\. In a terminal, run “gh auth login”/);
+  });
+
+  it("with the app built in, offers its button as before", () => {
+    expect(copilot({ signIn: { with: "github", ghInstalled: false } })?.fix).toBe("Open Ember's settings (Win+Alt+E) and choose “Sign in with GitHub”, or run “gh auth login”.");
+  });
+});
+
+describe("the Copilot section without Ember's own GitHub App", () => {
+  it("labels the button for the GitHub CLI, not a browser sign-in", () => {
+    expect(signInLabel("github-cli")).toBe("Connect with GitHub CLI");
+    expect(signInLabel("github")).toBe("Sign in with GitHub");
+    expect(signInLabel(undefined)).toBe("Sign in with GitHub");
+  });
+
+  it("the signed-out line says what signing in needs, and the status says how this build signs in", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-signin-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const make = (signInWith?: "github" | "github-cli") => new AgentHost({
+      userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, ...(signInWith ? { signInWith } : {}),
+    });
+    const cli = make("github-cli");
+    expect(cli.getStatus()).toMatchObject({ phase: "signed-out", signInWith: "github-cli" });
+    expect(cli.getStatus().detail).toMatch(/GitHub account with Copilot and the GitHub CLI/);
+    expect(await cli.start(null)).toBe("signed-out");
+    expect(cli.getStatus().detail).toMatch(/GitHub CLI/);
+    // A build with the app (and a host told nothing): as before.
+    expect(make("github").getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
+    expect(make().getStatus().detail).toBe("Not connected to Copilot: sign in with GitHub below.");
+  });
+});
+
+describe("the GitHub CLI's download page (review #136)", () => {
+  it("the wait for a GitHub CLI sign-in offers it, with an Open button, only while gh is missing", async () => {
+    const { GH_CLI_PAGE, cliWaitStart, mayOpenSignInPage } = await import("../../app/main/agent/github-app");
+    const missing = cliWaitStart("win32", false);
+    expect(missing.progress).toEqual({ state: "waiting", message: cliWaitingMessage("win32", false), link: "Open cli.github.com" });
+    expect(missing.progress.message).toMatch(/GitHub CLI isn't installed[\s\S]*winget install --id GitHub\.cli/);
+    expect(missing.page).toBe(GH_CLI_PAGE);
+    expect(mayOpenSignInPage(missing.page)).toBe(true);
+    // Installed: only the sign-in step, no button and no page to open.
+    const present = cliWaitStart("darwin", true);
+    expect(present.progress).toEqual({ state: "waiting", message: cliWaitingMessage("darwin", true) });
+    expect(present.page).toBeNull();
+    expect(mayOpenSignInPage(present.page)).toBe(false);
+  });
+
+  it("is offered by the settings window's Open button, which asks main to open the one page it allows", () => {
+    // Source wiring (the preload, the renderer and main can't be loaded in a unit test): comments dropped, white space
+    // made one space.
+    const src = (file: string) => fs.readFileSync(path.resolve(file), "utf8").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1").replace(/\s+/g, " ");
+    expect(src("app/preload/home.ts")).toContain("openSignInPage: () => ipcRenderer.invoke(IPC.openSignInPage)");
+    // The renderer: a waiting message that names a page gets a button with that label, which asks main to open it.
+    const home = src("app/renderer/home/main.ts");
+    expect(home).toMatch(/if \(p\.state === "waiting"\) \{ setSigningIn\(true\); signInMsg\(p\.message \?\? ""\); if \(p\.link\) addOpenButton\(p\.link\); return; \}/);
+    const button = /function addOpenButton\(label: string\): void \{(.*?)\$\("sign-in-msg"\)\.append\(" ", btn\); \}/.exec(home)?.[1] ?? "";
+    expect(button).toContain(".openSignInPage;");
+    expect(button).toContain("textContent: label");
+    expect(button).toContain('btn.addEventListener("click", () => { void open(); });');
+    // Main: the wait's first progress and its page come from cliWaitStart, and only a page mayOpenSignInPage allows opens.
+    const main = src("app/main/main.ts");
+    expect(main).toContain("const start = cliWaitStart(platform.os, ghInstalled()); signInPage = start.page; say(start.progress);");
+    expect(main).toContain("const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };");
+    expect(main).toContain("ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));");
+  });
+
+  it("is the one page besides GitHub's own sign-in pages that the Open button may show", async () => {
+    const { GH_CLI_PAGE, mayOpenSignInPage } = await import("../../app/main/agent/github-app");
+    expect(GH_CLI_PAGE).toBe("https://cli.github.com/");
+    expect(mayOpenSignInPage(GH_CLI_PAGE)).toBe(true);
+    expect(mayOpenSignInPage("https://github.com/login/device")).toBe(true);
+    expect(mayOpenSignInPage("https://cli.github.com.evil.example/")).toBe(false);
+    expect(mayOpenSignInPage("http://cli.github.com/")).toBe(false);
+    expect(mayOpenSignInPage("https://example.com/")).toBe(false);
+    expect(mayOpenSignInPage(null)).toBe(false);
+  });
+});

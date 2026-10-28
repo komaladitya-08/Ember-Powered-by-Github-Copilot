@@ -12,7 +12,7 @@ import { useAppNames } from "../../shared/apps";
 import type { Settings, SettingsPatch } from "../../main/settings";
 import {
   dayLabel, describeEntry, entryWords, friendlyApp, homePatches, ipcErrorText, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus,
-  retryMessage, saveFailedText, tagline, usageLine, type HomePatch, type Segment,
+  modelLabel, retryMessage, saveFailedText, signInLabel, tagline, usageLine, type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
@@ -488,6 +488,8 @@ function renderAgent(a: AgentStatus | null): void {
   // fix, and reconnecting now stops the tasks: the button says so.
   const waiting = a.waitingForTasks === true;
   $("sign-in").hidden = !notConnected || signingIn || waiting;
+  // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
+  $("sign-in").textContent = signInLabel(a.signInWith);
   $("retry").hidden = !notConnected || signingIn;
   $("retry").textContent = waiting ? "Reconnect now (stops the tasks running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
@@ -501,7 +503,7 @@ function renderAgent(a: AgentStatus | null): void {
       const sel = $(id) as HTMLSelectElement;
       sel.replaceChildren(...list.map(m => {
         const o = document.createElement("option");
-        o.value = m.id; o.textContent = m.name; o.selected = m.id === current;
+        o.value = m.id; o.textContent = modelLabel(m); o.selected = m.id === current;
         return o;
       }));
     };
@@ -555,7 +557,7 @@ $("sign-in").addEventListener("click", () => {
   });
 });
 /** What "Check again" found, while its message shows (it changes to "connected" when Copilot is ready). */
-let retryFound: { found: boolean; source: string | null } | null = null;
+let retryFound: { found: boolean; source: string | null; hint?: string } | null = null;
 $("retry").addEventListener("click", () => {
   signInMsg("Checking…");
   window.ember.retrySignIn().then(r => {
@@ -589,9 +591,17 @@ function showCode(userCode: string, uri: string): void {
   const wait = Object.assign(document.createElement("span"), { className: "wait", textContent: "Your browser should have opened it. Waiting for you to approve…" });
   msg.replaceChildren(...parts, wait);
 }
+/** A button after the sign-in message that opens the page main offers (the GitHub CLI's download page). */
+function addOpenButton(label: string): void {
+  const open = (window.ember as EmberHomeApi & { openSignInPage?: () => Promise<void> }).openSignInPage;
+  if (typeof open !== "function") return;
+  const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: label });
+  btn.addEventListener("click", () => { void open(); });
+  $("sign-in-msg").append(" ", btn);
+}
 window.ember.onSignInProgress(p => {
   if (p.state === "code") { showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
-  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); return; }
+  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); if (p.link) addOpenButton(p.link); return; }
   setSigningIn(false);
   if (p.state === "cancelled") { signInMsg(""); return; }
   if (p.state === "done" && !p.message) { say("Signed in.", 3000); return; }

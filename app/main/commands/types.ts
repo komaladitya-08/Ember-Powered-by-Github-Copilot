@@ -324,6 +324,8 @@ export interface CommandCapability {
   why?: string;
   /** Every command asks: the administrator's "ask" mode, the user's own switch, root (D4.6), or a tool-owned distro (§2.2). */
   askEvery: "admin" | "user" | "root" | "tool" | null;
+  /** Off only because the user hasn't turned commands on here (the administrator allows them): Ember can say where to. */
+  userOff?: boolean;
 }
 
 /** The command window as the command flow drives it (UI implements it: app/main/commands/window.ts). */
