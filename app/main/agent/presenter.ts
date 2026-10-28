@@ -728,10 +728,14 @@ export class Presenter {
     if (this.visible) this.hide();
   }
 
-  /** A notice still up that says `text` goes (what it said no longer holds: Copilot is back). Anything else stays. */
+  /**
+   * A notice still up that says `text` goes (what it said no longer holds: Copilot is back, the user signed in). It is
+   * matched as notice() put it on screen (in Ember's voice, and "Needs you" when signing in is what to do next).
+   * Anything else stays.
+   */
   withdraw(text: string): void {
     const b = this.state.bubble;
-    if (b.visible && b.mood === "error" && b.thought === text && !this.busy) this.hide();
+    if (b.visible && (b.mood === "error" || b.mood === "attention") && b.thought === forBubble(text) && !this.busy) this.hide();
   }
 
   /** The session went away mid-turn (restart, sign-out): nothing is left streaming or "thinking". */

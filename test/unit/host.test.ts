@@ -2260,3 +2260,34 @@ describe("the runtime's bubbles (AgentHost.notices, review #9, #10)", () => {
     await host.stop();
   });
 });
+
+describe("a notice saying why Ember couldn't answer goes once that no longer holds", () => {
+  it("offline: the network comes back, and the notice goes at once rather than at the end of its time", async () => {
+    vi.useFakeTimers();
+    let reach = false;
+    sim.auth = async () => ({ isAuthenticated: reach, login: "octo" });
+    const { host, screen } = makeHost({ reachable: async () => reach });
+    expect(await host.start(TOKEN, "stored")).toBe("error");
+    const asked = host.ask("what time is it?");
+    await vi.advanceTimersByTimeAsync(100);
+    await asked;
+    expect(screen().bubble).toMatchObject({ visible: true, title: "I can't reach Copilot", thought: expect.stringMatching(/^I can't reach GitHub right now/) });
+    reach = true;
+    host.networkChanged(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(host.getStatus().phase).toBe("ready");
+    expect(screen().bubble?.visible).toBe(false);
+    await host.stop();
+  });
+
+  it("signed out: the user signs in, and \"I need Copilot first\" goes at once", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    await host.start(null);
+    await host.ask("hi");
+    expect(screen().bubble).toMatchObject({ visible: true, title: "I need Copilot first", mood: "attention" });
+    expect(await host.start(TOKEN, "stored")).toBe("ready");
+    expect(screen().bubble?.visible).toBe(false);
+    await host.stop();
+  });
+});
