@@ -303,8 +303,9 @@ function connectionLine(e: ActivityEntry): EntryView | null {
     case "lost": return { tag: "Lost", cls: "no", what: name, why: "The connection dropped." };
     // "Disconnected" is too wide for the tag column.
     case "disconnected": return { tag: "Ended", cls: "", what: `Connection to ${name}` };
-    case "failed": return { tag: "Didn't work", cls: "no", what: e.uninstall === true ? `Remove Ember from ${name}` : `Connect to ${name}`, ...(why ? { why } : {}) };
-    case "uninstalled": return { tag: "Removed", cls: "ok", what: `Ember from ${name}` };
+    // Removal is called what settings' button calls it: "Remove Ember's helper from build-01" (review #191).
+    case "failed": return { tag: "Didn't work", cls: "no", what: e.uninstall === true ? `Remove Ember's helper from ${name}` : `Connect to ${name}`, ...(why ? { why } : {}) };
+    case "uninstalled": return { tag: "Removed", cls: "ok", what: `Ember's helper from ${name}` };
     // A card shown, a connection starting: the line after it says how it went.
     default: return null;
   }

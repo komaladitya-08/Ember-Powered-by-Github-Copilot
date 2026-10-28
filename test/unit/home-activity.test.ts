@@ -66,8 +66,9 @@ describe("What Ember did: other computers", () => {
     expect(describeEntry(remote({ step: "disconnected" }))).toEqual({ tag: "Ended", cls: "", what: "Connection to build-01" });
     expect(describeEntry(remote({ step: "failed", kind: "auth" }))).toEqual({ tag: "Didn't work", cls: "no", what: "Connect to build-01", why: "It needed you to sign in." });
     expect(describeEntry(remote({ step: "failed", kind: "protocol" }))).toEqual({ tag: "Didn't work", cls: "no", what: "Connect to build-01" });
-    expect(describeEntry(remote({ step: "failed", kind: "cancelled", uninstall: true }))).toMatchObject({ what: "Remove Ember from build-01", why: "You cancelled it." });
-    expect(describeEntry(remote({ step: "uninstalled" }))).toEqual({ tag: "Removed", cls: "ok", what: "Ember from build-01" });
+    // The act has one name everywhere: settings' "Remove helper" button is "Remove Ember's helper from build-01" (#191).
+    expect(describeEntry(remote({ step: "failed", kind: "cancelled", uninstall: true }))).toMatchObject({ what: "Remove Ember's helper from build-01", why: "You cancelled it." });
+    expect(describeEntry(remote({ step: "uninstalled" }))).toEqual({ tag: "Removed", cls: "ok", what: "Ember's helper from build-01" });
     // A card shown, and the start of a connection: the line after it says how it went.
     expect(describeEntry(remote({ step: "prompt", kind: "password" }))).toBeNull();
     expect(describeEntry(remote({ step: "connect", interactive: true, reconnect: false }))).toBeNull();
