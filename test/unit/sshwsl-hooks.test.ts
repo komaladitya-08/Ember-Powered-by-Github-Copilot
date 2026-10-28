@@ -33,6 +33,7 @@ vi.mock("electron", () => ({
     loadFile(file: string) { this.calls.push(["loadFile", file]); return Promise.resolve(); }
     once() { /* not shown by the factories */ }
     on(event: string) { this.calls.push(["on", event]); }
+    setVisibleOnAllWorkspaces(on: boolean, o?: unknown) { this.calls.push(["setVisibleOnAllWorkspaces", on, o]); }
   },
   // The command window's close guard listens for Ember quitting (review #262); its placement reads the screen (#272).
   app: { on: () => undefined, removeListener: () => undefined },
@@ -615,6 +616,22 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       // Its close button asks the controller first (review #262).
       expect(calls).toContainEqual(["on", "close"]);
     }
+  });
+
+  it("puts the command window on every workspace while a card is up, except the macOS panel, which is on every Space already (review #272)", () => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      const win = createCommandWindow(os);
+      win.setOnAllWorkspaces(true);
+      win.setOnAllWorkspaces(false);
+      const set = made().calls.filter(c => c[0] === "setVisibleOnAllWorkspaces");
+      // On macOS clearing it would take the panel's every-Space behaviour away once a card goes.
+      if (os === "darwin") expect(set, os).toEqual([]);
+      else expect(set.map(c => c[1]), os).toEqual([true, false]);
+    }
+    // The prompt window is no panel: it is put on every workspace on macOS too.
+    const prompt = createPromptWindow("darwin");
+    prompt.setOnAllWorkspaces(true);
+    expect(made().calls.filter(c => c[0] === "setVisibleOnAllWorkspaces").map(c => c[1])).toEqual([true]);
   });
 
   it("makes the prompt window small, fixed, always on top at floating, in the taskbar, sandboxed, with its own preload and page", () => {

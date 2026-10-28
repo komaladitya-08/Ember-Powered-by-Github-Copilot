@@ -49,15 +49,18 @@ const webPreferences = (page: string) => ({
 
 /**
  * What the command and prompt windows get to come up where the user is (review #272): the display nearest the pointer,
- * and every workspace (over a full-screen app on macOS) while a card is up. Their controllers call these.
+ * and every workspace (over a full-screen app on macOS) while a card is up. Their controllers call these. A macOS
+ * panel (`panel`) is on every Space and over full-screen apps already (platform/compose.ts): it is left alone, as
+ * clearing it once a card goes would tie the panel to one Space.
  */
-function placeable(win: BrowserWindow): Placeable {
+function placeable(win: BrowserWindow, panel = false): Placeable {
   return {
     placeNearUser() {
       const to = placeOnDisplay(win.getBounds(), screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea);
       if (to) win.setBounds(to);
     },
     setOnAllWorkspaces(on) {
+      if (panel) return;
       win.setVisibleOnAllWorkspaces(on, { visibleOnFullScreen: true, skipTransformProcessType: true });
     },
   };
@@ -95,7 +98,7 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
     try { return !leaving && guard?.() === true; } catch { return false; } // a guard that fails never holds the window
   };
   win.on("close", e => { if (keep()) e.preventDefault(); });
-  return Object.assign(win, { setCloseGuard: (fn: () => boolean) => { guard = fn; } }, placeable(win));
+  return Object.assign(win, { setCloseGuard: (fn: () => boolean) => { guard = fn; } }, placeable(win, os === "darwin"));
 }
 
 /**
