@@ -75,6 +75,19 @@ describe("What Ember did: other computers", () => {
     expect(describeEntry({ t, event: "wsl", step: "connected", distro: "Ubuntu" })).toEqual({ tag: "Connected", cls: "ok", what: "Ubuntu (WSL)" });
   });
 
+  it("shows a reconnect's tries as one line, when it gives up, so they don't crowd out the rest (review #152)", () => {
+    // Newest first, as main sends them: lost, then about 24 tries over 10 minutes, then the end of trying.
+    const tries = Array.from({ length: 24 }, () => remote({ step: "failed", kind: "network", reconnect: true }));
+    const entries = [remote({ step: "gave-up", kind: "network" }), ...tries, remote({ step: "lost" }), remote({ step: "connected", ms: 900 })];
+    expect(entries.map(e => describeEntry(e)).filter(Boolean)).toEqual([
+      { tag: "Didn't work", cls: "no", what: "Reconnect to build-01", why: "Ember couldn't reach it." },
+      { tag: "Lost", cls: "no", what: "build-01", why: "The connection dropped." },
+      { tag: "Connected", cls: "ok", what: "build-01" },
+    ]);
+    // A connect the user started still says how it went.
+    expect(describeEntry(remote({ step: "failed", kind: "network" }))).toMatchObject({ tag: "Didn't work", what: "Connect to build-01" });
+  });
+
   it("asks main for every entry it keeps, so lines it can't show don't empty the list", () => {
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     const audit = readFileSync(new URL("../../app/main/policy/audit.ts", import.meta.url), "utf8");

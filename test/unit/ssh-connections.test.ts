@@ -701,6 +701,10 @@ describe("a live link (§5.1.10-§5.1.13)", () => {
     await new Promise(res => setTimeout(res, 150));
     expect(failed().map(p => [p.kind, p.retry])).toEqual([["network", true], ["auth", false]]);
     expect(timers).toHaveLength(0);
+    // The audit keeps every try, marked as a reconnect's, and says once that it gave up (What Ember did shows only
+    // that: a link that drops for good tries about 24 times in 10 minutes, review #152).
+    expect(r.audits.filter(a => a.step === "failed" || a.step === "gave-up").map(a => [a.step, a.kind, a.reconnect]))
+      .toEqual([["failed", "network", true], ["failed", "auth", true], ["gave-up", "auth", undefined]]);
   });
 
   it("disconnects with bye and EOF, and doesn't reconnect", async () => {

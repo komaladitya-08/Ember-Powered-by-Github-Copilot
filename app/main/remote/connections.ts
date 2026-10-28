@@ -615,7 +615,8 @@ export function createConnections(o: {
     } catch (err) {
       const e = err instanceof ConnectError ? err : new ConnectError(MESSAGES.unknown(h), "unknown", undefined, true);
       if (!(err instanceof ConnectError)) log?.warn("remote.connect_crashed", { err });
-      audit({ step: "failed", host: host.id, kind: e.kind });
+      // A reconnect's try is marked: What Ember did shows only its end ("gave-up"), not each of its ~24 tries.
+      audit({ step: "failed", host: host.id, kind: e.kind, ...(mode.reconnect ? { reconnect: true } : {}) });
       log?.info("remote.connect_failed", { host: host.id, kind: e.kind });
       // A reconnect's failure is told by onLost, which knows whether it tries again.
       if (!mode.reconnect) progress(host.id, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: e.retry, kind: e.kind });
@@ -656,7 +657,10 @@ export function createConnections(o: {
         const e = err instanceof ConnectError ? err : new ConnectError(MESSAGES.unknown(hostLabel(host.dest)), "unknown", undefined, true);
         const again = RETRYABLE.has(e.kind) && now() - since < RECONNECT_GIVE_UP_MS;
         progress(hostId, { step: "failed", message: e.message, ...(e.fix ? { fix: e.fix } : {}), retry: again, kind: e.kind });
-        if (!again) return end();
+        if (!again) {
+          audit({ step: "gave-up", host: hostId, kind: e.kind });
+          return end();
+        }
         next();
       }
     };

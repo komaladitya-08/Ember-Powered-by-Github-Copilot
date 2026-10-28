@@ -294,7 +294,10 @@ const CONNECT_WHY: Readonly<Record<string, string>> = {
   "not-allowed": "Your organisation doesn't allow it.",
 };
 
-/** A connection's line (remote/connections.ts's audit; WSL's in the same steps): made, lost, ended, failed or removed. */
+/**
+ * A connection's line (remote/connections.ts's audit; WSL's in the same steps): made, lost, ended, failed, given up
+ * reconnecting, or removed.
+ */
 function connectionLine(e: ActivityEntry): EntryView | null {
   const name = computerOf(e);
   const why = typeof e.kind === "string" ? CONNECT_WHY[e.kind] : undefined;
@@ -303,9 +306,13 @@ function connectionLine(e: ActivityEntry): EntryView | null {
     case "lost": return { tag: "Lost", cls: "no", what: name, why: "The connection dropped." };
     // "Disconnected" is too wide for the tag column.
     case "disconnected": return { tag: "Ended", cls: "", what: `Connection to ${name}` };
-    // Removal is called what settings' button calls it: "Remove Ember's helper from build-01" (review #191).
-    case "failed": return { tag: "Didn't work", cls: "no", what: e.uninstall === true ? `Remove Ember's helper from ${name}` : `Connect to ${name}`, ...(why ? { why } : {}) };
+    case "failed":
+      // A reconnect's tries (about 24 in its 10 minutes) make one line, "gave-up", when it stops (review #152).
+      if (e.reconnect === true) return null;
+      // Removal is called what settings' button calls it: "Remove Ember's helper from build-01" (review #191).
+      return { tag: "Didn't work", cls: "no", what: e.uninstall === true ? `Remove Ember's helper from ${name}` : `Connect to ${name}`, ...(why ? { why } : {}) };
     case "uninstalled": return { tag: "Removed", cls: "ok", what: `Ember's helper from ${name}` };
+    case "gave-up": return { tag: "Didn't work", cls: "no", what: `Reconnect to ${name}`, ...(why ? { why } : {}) };
     // A card shown, a connection starting: the line after it says how it went.
     default: return null;
   }

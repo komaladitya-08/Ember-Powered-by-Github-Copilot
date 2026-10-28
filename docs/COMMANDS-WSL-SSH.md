@@ -640,7 +640,7 @@ recorded with secrets hidden as in §2.7 (at most 2000 characters, and sizes onl
 command's text isn't recorded at all. What the user types into a command, and every SSH password, passphrase or code,
 are never recorded anywhere. Settings › **What Ember did** shows a line for each command question, answer, refusal and
 end (where it ran, the shell and how it ended, never the command's text) and for each connection made, lost, ended or
-failed.
+failed. A reconnect's tries make one line, when it stops trying; the audit log keeps each try.
 
 ## 7. Known limits
 
