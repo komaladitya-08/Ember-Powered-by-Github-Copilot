@@ -128,7 +128,7 @@ function rig(o: RigOptions = {}) {
   } : o.hands;
   const local = fakeRunner("local");
   const wslRunners = new Map<string, ReturnType<typeof fakeRunner>>();
-  let onAnswer: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => void) | null = null;
+  let onAnswer: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => boolean | void) | null = null;
   let onConsent: ((a: { n: number; answer: "once" | "deny"; sha256: string }) => void) | null = null;
   const cw = {
     showCard: vi.fn(), hideCard: vi.fn(), cardReady: vi.fn(() => true), announce: vi.fn(async () => true), cancelAnnounce: vi.fn(), attach: vi.fn(),
@@ -1115,6 +1115,16 @@ describe("question panels (§3.9)", () => {
       { id: "q5:once", via: "panel", proof: { sha256: consent.sha256 } },
       { id: "q5:deny", via: "panel", proof: { sha256: consent.sha256 } },
     ]);
+  });
+
+  it("tells the window whether the Confirmer took the card's answer, so a refused click doesn't leave its buttons dead (review #271)", () => {
+    const r = rig();
+    r.t.questionChanged({ n: 3, question: commandQ });
+    expect(r.onAnswer()!({ n: 3, answer: "once", sha256: card.sha256 })).toBe(true);
+    (r.confirmer.answer as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(false);
+    expect(r.onAnswer()!({ n: 3, answer: "once", sha256: card.sha256 })).toBe(false);
+    // Not the question up now: not taken either.
+    expect(r.onAnswer()!({ n: 4, answer: "once", sha256: card.sha256 })).toBe(false);
   });
 
   it("lets each window allow only its own kind of question, and only the one up now (R7)", () => {

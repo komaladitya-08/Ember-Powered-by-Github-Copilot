@@ -33,7 +33,12 @@ vi.mock("electron", () => ({
     setAlwaysOnTop(on: boolean, level?: string) { this.calls.push(["setAlwaysOnTop", on, level]); }
     loadFile(file: string) { this.calls.push(["loadFile", file]); return Promise.resolve(); }
     once() { /* not shown by the factories */ }
+    on(event: string) { this.calls.push(["on", event]); }
+    setVisibleOnAllWorkspaces(on: boolean, o?: unknown) { this.calls.push(["setVisibleOnAllWorkspaces", on, o]); }
   },
+  // The command window's close guard listens for Ember quitting (review #262); its placement reads the screen (#272).
+  app: { on: () => undefined, removeListener: () => undefined },
+  screen: {},
 }));
 
 /** targetRules as main's policy calls it: S0a's stub, unless a test puts a rule of its own in. */
@@ -444,9 +449,10 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     expect(today).toHaveLength(78);
     // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out; since
     // the release review a choice in GNOME Settings is asked about every time (review #111), the remote-window reason
-    // names virtual machines (review #118) and the terminal refusals are reworded (review #216; with the old three reasons
-    // put back the hash is c71a3e7d2180151d): the only decisions that differ from 89657f8's.
-    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("bed6b547edcbe341");
+    // names virtual machines (review #118), the terminal refusals are reworded (review #216; with the old three reasons
+    // put back the hash is c71a3e7d2180151d) and the questions use plain role words (review #220: "the “Save” button",
+    // not "“Save” push button"): the only decisions that differ from 89657f8's.
+    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("1fb121aca52c9b51");
     expect(seam.calls).toHaveLength(3 * CORPUS.length);
     expect(seam.calls.slice(0, 3).map(([, o]) => o)).toEqual(["linux", "linux", "linux"]);
     expect(seam.calls.at(-1)?.[1]).toBe("darwin");
@@ -611,7 +617,25 @@ describe("the command and prompt windows' factories (§3.10, §8.6)", () => {
       expect(calls.some(c => c[0] === "setContentProtection" && c[1] === true), os).toBe(os !== "linux");
       // Never shown by its factory: the controller shows it (inactive on Windows).
       expect(calls.some(c => c[0] === "show" || c[0] === "focus")).toBe(false);
+      // Its close button asks the controller first (review #262).
+      expect(calls).toContainEqual(["on", "close"]);
     }
+  });
+
+  it("puts the command window on every workspace while a card is up, except the macOS panel, which is on every Space already (review #272)", () => {
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      const win = createCommandWindow(os);
+      win.setOnAllWorkspaces(true);
+      win.setOnAllWorkspaces(false);
+      const set = made().calls.filter(c => c[0] === "setVisibleOnAllWorkspaces");
+      // On macOS clearing it would take the panel's every-Space behaviour away once a card goes.
+      if (os === "darwin") expect(set, os).toEqual([]);
+      else expect(set.map(c => c[1]), os).toEqual([true, false]);
+    }
+    // The prompt window is no panel: it is put on every workspace on macOS too.
+    const prompt = createPromptWindow("darwin");
+    prompt.setOnAllWorkspaces(true);
+    expect(made().calls.filter(c => c[0] === "setVisibleOnAllWorkspaces").map(c => c[1])).toEqual([true]);
   });
 
   it("makes the prompt window small, fixed, always on top at floating, in the taskbar, sandboxed, with its own preload and page", () => {

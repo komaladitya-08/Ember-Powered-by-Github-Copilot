@@ -8,13 +8,18 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import type { CommandTabView, CommandWindowState } from "../../shared/commands";
+import type { OS } from "../../shared/shortcuts";
 import { READ_ALL_HINT } from "./copy";
 
 /**
  * Channels of the command window beyond COMMANDS_IPC (they share its "commands:" prefix, so the trusted-sender rule
  * covers them): the page reports the terminal size that fits it, so new runs start at that size (§3.10).
  */
-export const COMMANDS_EXTRA_IPC = { size: "commands:size" } as const;
+export const COMMANDS_EXTRA_IPC = {
+  size: "commands:size",
+  /** Page → main: the answer to "close while a command runs" (review #262): `{ stop: true }` stops them and closes. */
+  closeWindow: "commands:close-window",
+} as const;
 
 /** A run's tab as main sends it: the contract's view plus what the page needs to draw it. */
 export interface TabView extends CommandTabView {
@@ -29,6 +34,10 @@ export interface TabView extends CommandTabView {
   rows: number;
   /** How it is going, for the tab's symbol (its words are the status line). */
   outcome: "running" | "done" | "failed" | "stopped";
+  /** The computer it runs on when it isn't this one ("build-01", "Ubuntu (WSL)"): a badge on the tab (review #275). */
+  where?: string;
+  /** Its output has sat at a prompt for a moment: it waits for the user to type (review #263). */
+  waiting?: boolean;
 }
 
 /** A task whose command has no tab yet, and its line ("Starting Ubuntu…"). */
@@ -37,10 +46,20 @@ export interface PendingView { taskId: string; text: string }
 /** Everything the window draws, pushed whole on every change (the contract's state with richer tabs). */
 export interface WindowView extends CommandWindowState {
   tabs: TabView[];
+  /** The question's card; `retry` grows each time an answer from its buttons wasn't taken (its buttons come back). */
+  card: (CommandCard & { n: number; retry?: number }) | null;
   /** Grows with every push: the page ignores an older state that arrives late. */
   rev: number;
   /** Lines for tasks whose command has no tab yet, until the tab comes (absent: none). */
   pending?: PendingView[];
+  /** The PC's OS, for its keys in a run's terminal (keys.ts; absent: not a Mac). */
+  os?: OS;
+  /** A screen reader runs on the PC: each terminal mirrors its output for it (review #43; absent: none). */
+  screenReader?: boolean;
+  /** Under the announcement's countdown: the stop chord ("Or press Ctrl+Alt+X to stop everything."), while one is up. */
+  announceKeys?: string;
+  /** The user closed the window while commands run: the page asks whether to stop them (review #262). */
+  closing?: { running: number } | null;
 }
 
 /** At most this many pending lines are drawn. */
@@ -58,6 +77,15 @@ export function pendingLines(view: WindowView | null): string[] {
     if (out.length >= MAX_PENDING_LINES) break;
   }
   return out;
+}
+
+/**
+ * Whether two status lines say the same thing but for their numbers ("This command stops in 14 s…" and "… 13 s…"): a
+ * screen reader is told a tab's status once, not every second of a countdown (review #276).
+ */
+export function sameAnnouncement(a: string, b: string): boolean {
+  const gist = (s: string) => s.replace(/\d+(?:[.,]\d+)?/g, "#");
+  return gist(a) === gist(b);
 }
 
 /** A run's output bytes from byte `at` of its output (offsets let the page drop what it already wrote). */
@@ -83,6 +111,8 @@ export interface CommandsApi {
   cardSeen(m: SeenMsg): void;
   close(runId: string): void;
   size(s: { cols: number; rows: number }): void;
+  /** The answer to closing while commands run: stop them and close, or keep the window open. */
+  closeWindow(stop: boolean): void;
 }
 
 /** The card's command block and its window as the page measured them (CSS px; `visible`: the page can be seen). */

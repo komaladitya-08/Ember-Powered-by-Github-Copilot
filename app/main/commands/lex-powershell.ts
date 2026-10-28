@@ -312,7 +312,7 @@ class Parser {
     if (/\.[A-Za-z_][A-Za-z0-9_]*\s*\(/.test(raw.replace(/'[^']*'/g, "''")) || /\[[A-Za-z_.]+\]/.test(raw.replace(/'[^']*'/g, "''"))) {
       this.note("method-call", "It calls a .NET method Ember can't follow.");
     }
-    if (/\$executioncontext/i.test(raw)) this.note("execution-context", "It uses $ExecutionContext.");
+    if (/\$executioncontext/i.test(raw)) this.note("execution-context", "It uses PowerShell's $ExecutionContext, which Ember can't follow.");
     return { kind: "expr", subs, raw, segs, redirs };
   }
 
@@ -595,7 +595,7 @@ class Parser {
       name = m[1];
     }
     this.i += m[0].length;
-    if (/^executioncontext$/i.test(name)) this.note("execution-context", "It uses $ExecutionContext.");
+    if (/^executioncontext$/i.test(name)) this.note("execution-context", "It uses PowerShell's $ExecutionContext, which Ember can't follow.");
     let member = "";
     if (!inString) {
       while (this.peek() === "." && /[A-Za-z_]/.test(this.peek(1))) {

@@ -213,7 +213,7 @@ describe("tier 3 policy", () => {
   const e = new PolicyEngine({ neverLook: () => [], grants: () => ({ gedit: "act" }) });
   it("asks every time Ember needs the mouse or keyboard, even with a grant", () => {
     const d = e.decide({ taskId: "t", kind: "cursor_click", app: "gedit", window: "notes", element: { role: "panel", name: "Canvas" } });
-    expect(d).toMatchObject({ verdict: "confirm", tier: "confirm", risky: true, prompt: "Borrow your mouse to click “Canvas” panel in gedit?" });
+    expect(d).toMatchObject({ verdict: "confirm", tier: "confirm", risky: true, prompt: "Borrow your mouse to click the “Canvas” panel in gedit?" });
     expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "notes", value: "ctrl+s" }).prompt).toBe("Borrow your keyboard to press Ctrl+S in gedit?");
   });
   it("still refuses secrets", () => {

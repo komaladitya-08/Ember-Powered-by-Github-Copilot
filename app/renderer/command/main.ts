@@ -11,11 +11,13 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import {
-  ALLOW_LABEL, ANNOUNCE_HEADING, ASK_HEADING, CLOSE_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_TOKENS, NOT_NOW_LABEL, STOP_LABEL,
-  cardLines, countdownText, headerLine, tabLabel,
+  ALLOW_LABEL, ANNOUNCE_HEADING, ANSWER_RETRY_HINT, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
+  KEEP_OPEN_LABEL, NOT_NOW_LABEL, STOP_AND_CLOSE_LABEL, STOP_LABEL, askHeading, cardLines, closeHeading, closeLine, countdownText, headerLine, isRiskyCard,
+  tabLabel,
 } from "./copy";
+import { shouldFocusTerminal } from "./keys";
 import {
-  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
+  INITIAL_MODEL, allowAnswer, allowEnabled, allowHint, pendingLines, reduce, sameAnnouncement, type CardMetrics, type CommandsApi, type Effect, type PageEvent, type TabView,
   type WindowView,
 } from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
@@ -45,7 +47,7 @@ function visibleNodes(s: string): { nodes: Node[]; legend: string[] } {
     if (breaksLine(seg)) nodes.push(document.createTextNode("\n"));
   }
   const l = legendFor(segs);
-  return { nodes, legend: [...(l.tokens ? [LEGEND_TOKENS] : []), ...(l.mixed ? [LEGEND_MIXED] : [])] };
+  return { nodes, legend: [...(l.tokens ? [LEGEND_TOKENS] : []), ...(l.mixed ? [LEGEND_MIXED] : []), ...(l.rtl ? [LEGEND_RTL] : [])] };
 }
 
 /**
@@ -59,35 +61,26 @@ function headerNode(header: string): { node: HTMLElement; legend: string[] } {
   return { node: p, legend: v.legend };
 }
 
-/** A command block: the whole command, wrapping, scrolling when long (never cut). */
-function commandBlock(command: string, label: string): { block: HTMLPreElement; legend: string[] } {
+/**
+ * A command block: the whole command, wrapping, scrolling when long (never cut). It is focusable (so it can be scrolled
+ * from the keyboard) and exposed as a read-only text box named `label`, so a screen reader reads the command itself as
+ * its value, every visible token included, rather than only the label (a named generic, review #48).
+ */
+function commandBlock(command: string, label: string, id?: string): { block: HTMLPreElement; legend: string[] } {
   const block = el("pre", "command");
+  if (id) block.id = id;
   block.tabIndex = 0;
+  block.setAttribute("role", "textbox");
+  block.setAttribute("aria-readonly", "true");
+  block.setAttribute("aria-multiline", "true");
   block.setAttribute("aria-label", label);
   const v = visibleNodes(command);
   block.append(...v.nodes);
   return { block, legend: v.legend };
 }
 
-// ───── The question card ─────
-interface AskEls {
-  key: string; root: HTMLElement; block: HTMLPreElement; allow: HTMLButtonElement; deny: HTMLButtonElement;
-  hint: HTMLElement; keys: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
-}
-let ask: AskEls | null = null;
-let armTimer: ReturnType<typeof setTimeout> | null = null;
-
-function buildAsk(card: CommandCard & { n: number }): AskEls {
-  const root = el("section", "card ask");
-  root.setAttribute("aria-labelledby", "ask-h");
-  const where = headerNode(headerLine(card));
-  root.append(where.node);
-  const h = el("h1", "heading", ASK_HEADING);
-  h.id = "ask-h";
-  root.append(h);
-  const { block, legend } = commandBlock(card.command, "The command, every character shown");
-  root.append(block);
-  for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
+/** The card's lines under the command (what it does, why it asks) and the model's reason, small and grey. */
+function appendLines(root: HTMLElement, card: CommandCard): void {
   const { lines, why } = cardLines(card);
   if (lines.length) {
     const ul = el("ul", "lines");
@@ -103,20 +96,53 @@ function buildAsk(card: CommandCard & { n: number }): AskEls {
     p.append(...visibleNodes(why).nodes);
     root.append(p);
   }
+}
+
+// ───── The question card ─────
+interface AskEls {
+  key: string; root: HTMLElement; block: HTMLPreElement; allow: HTMLButtonElement; deny: HTMLButtonElement;
+  hint: HTMLElement; keys: HTMLElement; actions: HTMLElement; card: CommandCard & { n: number }; sent: boolean;
+  /** The card's retry count this page last saw: a higher one gives the buttons back (review #271). */
+  retry: number;
+}
+let ask: AskEls | null = null;
+let armTimer: ReturnType<typeof setTimeout> | null = null;
+
+function buildAsk(card: CommandCard & { n: number; retry?: number }): AskEls {
+  const root = el("section", "card ask");
+  root.setAttribute("aria-labelledby", "ask-h");
+  const where = headerNode(headerLine(card));
+  root.append(where.node);
+  const h = el("h1", "heading", askHeading(card));
+  h.id = "ask-h";
+  root.append(h);
+  const { block, legend } = commandBlock(card.command, "The command, every character shown", "ask-cmd");
+  root.append(block);
+  for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
+  appendLines(root, card);
   const hint = el("p", "hint");
   hint.setAttribute("aria-live", "polite");
   hint.hidden = true;
   const row = el("div", "buttons");
-  const allow = el("button", "btn", ALLOW_LABEL);
+  // A command that deletes data gets a quiet marker on its card, and its Allow doesn't stand out (as the host-key card's
+  // "Trust and connect" doesn't): habit shouldn't carry the user through it (review #275).
+  const risky = isRiskyCard(card);
+  root.classList.toggle("risky", risky);
+  const allow = el("button", risky ? "btn quiet" : "btn", ALLOW_LABEL);
   allow.type = "button";
   allow.disabled = true;
+  // Allow says what it allows: the command is its description.
+  allow.setAttribute("aria-describedby", "ask-cmd");
   const deny = el("button", "btn quiet", NOT_NOW_LABEL);
   deny.type = "button";
   row.append(allow, deny);
   const keys = el("p", "keys");
   keys.hidden = true;
-  root.append(hint, row, keys);
-  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, card, sent: false };
+  // Allow, Not now and their hints stay at the bottom of the card area while the rest scrolls (review #265).
+  const actions = el("div", "actions");
+  actions.append(hint, row, keys);
+  root.append(actions);
+  const els: AskEls = { key: `${card.n}:${card.sha256}`, root, block, allow, deny, hint, keys, actions, card, sent: false, retry: card.retry ?? 0 };
   allow.addEventListener("click", e => {
     if (!e.isTrusted || ask !== els || els.sent) return;
     const a = allowAnswer(els.card, model.card, Date.now());
@@ -161,10 +187,13 @@ function measureCard(): void {
   if (!ask) return;
   const b = ask.block;
   const r = b.getBoundingClientRect();
+  // The card's buttons stay over the bottom of the card area: what they cover isn't in view.
+  const clip = clipOf(b);
+  clip.bottom = Math.min(clip.bottom, ask.actions.getBoundingClientRect().top);
   const metrics: CardMetrics = {
     scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight, scrollWidth: b.scrollWidth, clientWidth: b.clientWidth,
     top: r.top, bottom: r.bottom, left: r.left, right: r.right, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
-    clip: clipOf(b), visible: document.visibilityState === "visible",
+    clip, visible: document.visibilityState === "visible",
   };
   dispatch({ type: "card-metrics", n: ask.card.n, metrics });
   paintAllow();
@@ -180,7 +209,7 @@ function paintAllow(): void {
   const now = Date.now();
   const on = allowEnabled(model.card, now);
   if (!ask.sent) ask.allow.disabled = !on;
-  const hint = allowHint(model.card) ?? "";
+  const hint = allowHint(model.card) ?? (ask.retry > 0 && !ask.sent ? ANSWER_RETRY_HINT : "");
   if (ask.hint.textContent !== hint) ask.hint.textContent = hint;
   ask.hint.hidden = !hint;
   // The approve keys work only while the whole command is in view (R7): their hint shows only then.
@@ -200,7 +229,7 @@ interface AnnounceEls { key: string; root: HTMLElement; count: HTMLElement; ends
 let announce: AnnounceEls | null = null;
 let countTimer: ReturnType<typeof setInterval> | null = null;
 
-function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
+function buildAnnounce(card: CommandCard, endsAt: number, keys: string): AnnounceEls {
   const root = el("section", "card announce");
   root.setAttribute("aria-labelledby", "announce-h");
   const where = headerNode(headerLine(card));
@@ -208,21 +237,27 @@ function buildAnnounce(card: CommandCard, endsAt: number): AnnounceEls {
   const h = el("h1", "heading", ANNOUNCE_HEADING);
   h.id = "announce-h";
   root.append(h);
-  const { block, legend } = commandBlock(card.command, "The command, every character shown");
+  const { block, legend } = commandBlock(card.command, "The command, every character shown", "announce-cmd");
   root.append(block);
   for (const line of new Set([...where.legend, ...legend])) root.append(el("p", "legend", line));
+  // What it does in plain words and the model's reason, as on the question card (review #269).
+  appendLines(root, card);
   const count = el("p", "count", countdownText(endsAt, Date.now()));
   count.setAttribute("role", "timer");
+  // Stop is the one thing to do here: the prominent button.
   const row = el("div", "buttons");
-  const stop = el("button", "btn quiet", STOP_LABEL);
+  const stop = el("button", "btn", STOP_LABEL);
   stop.type = "button";
+  stop.setAttribute("aria-describedby", "announce-cmd");
   stop.addEventListener("click", e => {
     if (!e.isTrusted) return;
     stop.disabled = true;
     api.stop(card.runId);
   });
   row.append(stop);
-  root.append(count, row);
+  root.append(count);
+  if (keys) root.append(el("p", "keys", keys));
+  root.append(row);
   return { key: `${card.runId}:${endsAt}`, root, count, endsAt };
 }
 
@@ -232,13 +267,44 @@ function tickCountdown(): void {
   if (announce.count.textContent !== t) announce.count.textContent = t;
 }
 
+// ───── Closing while commands run (review #262) ─────
+interface ClosingEls { running: number; root: HTMLElement }
+let closingCard: ClosingEls | null = null;
+
+/** The question the window asks when the user closes it while commands run: stop them and close, or keep it open. */
+function buildClosing(running: number): ClosingEls {
+  const root = el("section", "card closing");
+  root.setAttribute("role", "alertdialog");
+  root.setAttribute("aria-labelledby", "closing-h");
+  root.setAttribute("aria-describedby", "closing-d");
+  const h = el("h1", "heading", closeHeading(running));
+  h.id = "closing-h";
+  const d = el("p", "closing-line", closeLine(running));
+  d.id = "closing-d";
+  const row = el("div", "buttons");
+  const stop = el("button", "btn", STOP_AND_CLOSE_LABEL);
+  stop.type = "button";
+  const keep = el("button", "btn quiet", KEEP_OPEN_LABEL);
+  keep.type = "button";
+  stop.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(true); } });
+  keep.addEventListener("click", e => { if (e.isTrusted) { stop.disabled = keep.disabled = true; api.closeWindow(false); } });
+  row.append(stop, keep);
+  root.append(h, d, row);
+  // The safe answer has the keyboard: Enter keeps the commands running.
+  requestAnimationFrame(() => keep.focus());
+  return { running, root };
+}
+
 // ───── Tabs ─────
 interface TabEls {
   seq: number; runId: string; command: string; tab: HTMLButtonElement; panel: HTMLElement; status: HTMLElement; typing: HTMLElement;
   action: HTMLButtonElement; host: HTMLElement; term: RunTerminal; ended: boolean;
+  /** The hidden live line: what a screen reader was last told of the status (review #276). */
+  live: HTMLElement;
 }
 const tabEls = new Map<number, TabEls>();
 const OUTCOME_WORD: Record<TabView["outcome"], string> = { running: "Running: ", done: "Finished: ", failed: "Ended: ", stopped: "Stopped: " };
+const WAITING_WORD = "Waiting for you: ";
 
 function buildTab(t: TabView): TabEls {
   const tab = el("button", "tab");
@@ -246,7 +312,9 @@ function buildTab(t: TabView): TabEls {
   tab.id = `tab-${t.seq}`;
   tab.setAttribute("role", "tab");
   tab.setAttribute("aria-controls", `panel-${t.seq}`);
-  tab.append(el("span", "sr"), el("span", "tab-label", visibleText(tabLabel(t.command)).map(segmentLabel).join("")));
+  // The computer's badge reads "build-01: make test" to a screen reader.
+  const where = t.where ? [el("span", "tab-where", t.where), el("span", "sr", ": ")] : [];
+  tab.append(el("span", "sr"), ...where, el("span", "tab-label", visibleText(tabLabel(t.command)).map(segmentLabel).join("")));
   tab.title = t.title;
   tab.addEventListener("click", () => select(t.runId));
   tab.addEventListener("keydown", tabKeys);
@@ -256,15 +324,33 @@ function buildTab(t: TabView): TabEls {
   panel.setAttribute("role", "tabpanel");
   panel.setAttribute("aria-labelledby", tab.id);
   panel.hidden = true;
-  const { block } = commandBlock(t.command, "The command");
+  const header = headerNode(t.header);
+  const { block, legend } = commandBlock(t.command, "The command");
   block.classList.add("small");
+  // What the marks in the header and the command mean, as on the card (review #266).
+  const legends = [...new Set([...header.legend, ...legend])].map(line => el("p", "legend", line));
   const host = el("div", "term");
   host.setAttribute("aria-roledescription", "terminal");
   host.setAttribute("aria-label", "What the command shows");
   const typing = el("p", "typing", t.typing);
   const foot = el("div", "foot");
+  // The visible status counts down every second while a link is quiet; a screen reader hears each new status once,
+  // from a hidden live line updated only when the status says something new (review #276).
   const status = el("p", "status", t.status);
-  status.setAttribute("role", "status");
+  const live = el("p", "sr status-live", t.status);
+  live.setAttribute("role", "status");
+  // What the terminal shows, to the clipboard (Ctrl+C copies a selection; this copies it all, review #268).
+  const copy = el("button", "btn quiet copy", COPY_OUTPUT_LABEL);
+  copy.type = "button";
+  let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+  copy.addEventListener("click", e => {
+    if (!e.isTrusted) return;
+    const cur = tabEls.get(t.seq);
+    if (!cur?.term.copyAll()) return;
+    copy.textContent = COPIED_LABEL;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => { copy.textContent = COPY_OUTPUT_LABEL; }, 1500);
+  });
   const action = el("button", "btn quiet", t.ended ? CLOSE_LABEL : STOP_LABEL);
   action.type = "button";
   action.addEventListener("click", e => {
@@ -274,10 +360,15 @@ function buildTab(t: TabView): TabEls {
     if (cur.ended) api.close(cur.runId);
     else { action.disabled = true; api.stop(cur.runId); }
   });
-  foot.append(status, action);
-  panel.append(headerNode(t.header).node, block, host, typing, foot);
-  const term = createRunTerminal({ cols: t.cols, rows: t.rows, interactive: t.interactive, onInput: data => api.input(t.runId, data) });
-  return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended };
+  foot.append(status, live, copy, action);
+  // The status line and Stop come before the terminal, on screen and in the Tab order: they are reached without
+  // passing through it (reviews #42, #261).
+  panel.append(header.node, block, ...legends, foot, host, typing);
+  const term = createRunTerminal({
+    cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", screenReader: model.view?.screenReader === true,
+    onInput: data => api.input(t.runId, data),
+  });
+  return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended, live };
 }
 
 /** The tab list's keys: ←/→ move between tabs, Home/End to the ends (WAI-ARIA tabs). */
@@ -301,13 +392,22 @@ function select(runId: string): void {
 // ───── Rendering from the model ─────
 function render(): void {
   const v = model.view;
-  // The card area: the announcement (counting down) above the question.
+  // The card area: the question about closing first, then the announcement (counting down), then the question.
+  const closingRunning = v?.closing?.running ?? 0;
+  if ((closingCard?.running ?? 0) !== closingRunning) {
+    closingCard?.root.remove();
+    closingCard = closingRunning > 0 ? buildClosing(closingRunning) : null;
+    if (closingCard) $("cards").prepend(closingCard.root);
+  }
   const ann = v?.announce ?? null;
   const annKey = ann ? `${ann.card.runId}:${ann.endsAt}` : "";
   if ((announce?.key ?? "") !== annKey) {
     announce?.root.remove();
-    announce = ann ? buildAnnounce(ann.card, ann.endsAt) : null;
-    if (announce) $("cards").prepend(announce.root);
+    announce = ann ? buildAnnounce(ann.card, ann.endsAt, v?.announceKeys ?? "") : null;
+    if (announce) {
+      if (closingCard) closingCard.root.after(announce.root);
+      else $("cards").prepend(announce.root);
+    }
   }
   if (announce && !countTimer) countTimer = setInterval(tickCountdown, 250);
   if (!announce && countTimer) { clearInterval(countTimer); countTimer = null; }
@@ -322,7 +422,13 @@ function render(): void {
       requestAnimationFrame(measureCard);
     }
   }
-  $("cards").hidden = !announce && !ask;
+  $("cards").hidden = !announce && !ask && !closingCard;
+  // An answer the card sent that wasn't taken: its buttons work again (review #271).
+  if (ask && card && (card.retry ?? 0) > ask.retry) {
+    ask.retry = card.retry ?? 0;
+    ask.sent = false;
+    ask.deny.disabled = false;
+  }
   // Anything drawn may have moved the card: measure it again once laid out.
   if (ask) { paintAllow(); requestAnimationFrame(measureCard); }
 
@@ -362,13 +468,17 @@ function render(): void {
     const on = t.runId === model.selected;
     e.tab.setAttribute("aria-selected", String(on));
     e.tab.tabIndex = on ? 0 : -1;
-    e.tab.dataset.status = t.outcome === "running" ? "running" : t.outcome;
-    const sr = e.tab.querySelector(".sr")!;
-    if (sr.textContent !== OUTCOME_WORD[t.outcome]) sr.textContent = OUTCOME_WORD[t.outcome];
+    // A run waiting at a prompt for the user's typing shows the waiting symbol and says so (review #263).
+    e.tab.dataset.status = t.waiting ? "waiting" : t.outcome;
+    const word = t.waiting ? WAITING_WORD : OUTCOME_WORD[t.outcome];
+    const sr = e.tab.querySelector(".sr")!; // the first .sr: how it is going
+    if (sr.textContent !== word) sr.textContent = word;
     if (e.status.textContent !== t.status) e.status.textContent = t.status;
+    if (!sameAnnouncement(e.live.textContent ?? "", t.status)) e.live.textContent = t.status;
     if (e.typing.textContent !== t.typing) e.typing.textContent = t.typing;
     e.typing.hidden = !t.typing;
     e.term.setInteractive(t.interactive);
+    e.term.setScreenReader(v?.screenReader === true);
     if (e.ended !== t.ended) {
       e.ended = t.ended;
       e.action.textContent = t.ended ? CLOSE_LABEL : STOP_LABEL;
@@ -384,7 +494,23 @@ function render(): void {
   });
   list.hidden = tabs.length === 0;
   $("empty").hidden = tabs.length > 0 || !!announce || !!ask || lines.length > 0;
+  // Nothing below the card area: it may take the whole window (review #265).
+  document.querySelector("main.window")?.classList.toggle("cards-only", tabs.length === 0 && lines.length === 0);
+  focusTerminal();
   reportSize();
+}
+
+/**
+ * Puts the keyboard in the selected run's terminal when it takes typing and nothing else wants it (keys.ts), so the
+ * answer to "[sudo] password for ana:" typed at once reaches the run (review #264). It never takes the focus from
+ * another window: the page's own focus only follows when the user brings the window up.
+ */
+function focusTerminal(): void {
+  const t = model.view?.tabs.find(x => x.runId === model.selected);
+  const e = t ? tabEls.get(t.seq) : undefined;
+  if (!t || !e?.term.opened) return;
+  const a = document.activeElement;
+  if (shouldFocusTerminal({ interactive: t.interactive, ended: t.ended, cardUp: !!ask || !!announce || !!closingCard, focusIdle: !a || a === document.body })) e.term.focus();
 }
 
 /** The window's height taken by everything around a run's terminal: padding, tabs, header, command, hint, status. */
@@ -423,6 +549,7 @@ $("empty").textContent = EMPTY_TEXT;
 api.onState(onState);
 api.onOutput(msg => dispatch({ type: "output", msg }));
 window.addEventListener("resize", () => { measureCard(); reportSize(); });
+window.addEventListener("focus", () => focusTerminal());
 // A scroll anywhere on the page (the card area, not only the command block) can move the card out of view.
 document.addEventListener("scroll", () => measureCard(), { capture: true, passive: true });
 document.addEventListener("visibilitychange", () => measureCard());

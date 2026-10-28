@@ -64,15 +64,28 @@ Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop ev
 
 Commands run in Ember's own window, **Ember commands**, never in your own terminal windows: Ember still never types
 into a terminal of yours. Each command gets a tab (the newest first, the last 20 kept) with a header such as
-"On build-01 as deploy · bash · in ~/src/app", its live output, a status line ("Running…", "Finished in 3.2 s.",
-"Ended with exit code 2 after 1.1 s.") and a **Stop** button. What a command already changed stays changed when you
-stop it.
+"On build-01 as deploy · bash · in ~/src/app", a status line ("Running…", "Finished in 3.2 s.", "Ended with exit
+code 2 after 1.1 s.") with **Copy output** and **Stop**, then its live output. What a command already changed stays
+changed when you stop it. Closing the window while a command runs asks first ("A command is still running"): **Stop
+and close** stops it and closes the window, **Keep it open** leaves both, and closing it again stops and closes, so a
+command never runs on where you can't see it. Quitting Ember asks its own question.
 
-When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command.
-Ember never sees what you type." What you type goes only to the command: it never reaches Copilot, the log or the
-audit. Commands without a terminal (on Windows, or where `script` isn't installed) say "This command can't take
-typing here."; programs there run with their non-interactive settings, so one that wants a password fails at once
-instead of waiting.
+When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command;
+paste with Ctrl+V. Ember never sees what you type." (Command+V on a Mac). The keyboard is already in the command's
+terminal when its tab comes up, so what you type there goes straight to it. Every new command brings the window above
+your other windows without taking the keyboard, and when a command's output stops at a question for a couple of
+seconds ("Password:", "Username for 'https://github.com':", "[y/N]"), its tab says "Waiting for you to type in this
+window.", the window comes up and flashes in the taskbar or Dock, and the task's bubble says "A command is waiting for
+you to type in the command window." until you type or the command ends. The command's time limit still runs while it waits; if it runs out, the tab says
+it was waiting for you. What you type goes only to the command: it
+never reaches Copilot, the log or the audit. Tab and Shift+Tab always move on to the window's buttons and tabs, never
+into the command (Ctrl+I types a tab for a program that wants one). Off a Mac, Ctrl+C copies the text you selected
+(without a selection it interrupts the command, as in any terminal) and Ctrl+Shift+C always copies; **Copy output**
+copies everything the command printed. Commands without a terminal (on Windows, or where `script` isn't installed)
+say "This command can't take typing here." and are left out of the Tab order; programs there run with their
+non-interactive settings, so one that wants a password fails at once instead of waiting. While a screen reader runs
+(Orca, NVDA, JAWS, Narrator, VoiceOver), what a command prints is read out as it comes and can be read again line by
+line.
 
 The window never reaches Copilot as a picture: Ember blacks out its own windows in every screenshot.
 
@@ -148,30 +161,38 @@ cmd) takes `..` out of a name before anything opens it, as Ember does, so nothin
 asks), and so is an overwrite (`echo x > sub/../notes.txt` asks when the notes.txt it would really overwrite exists).
 
 **How it asks.** The bubble says "May I run a command?" with **Show the command** and **Not now**, and the command
-window shows the card "Ember wants to run this command": the whole command in monospace, nothing cut, with characters
-you wouldn't see shown in ⟨ ⟩ and letters from another alphabet underlined; then why it asks ("Deletes build and
-everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.", "This can reach your Windows files.");
-then the model's reason, quoted. **Allow** stays off until the whole command has been in view ("Read the whole
-command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works only while that card
-shows the whole command; **Not now** and the deny chord always work. There is never an "Always" for commands, a voice
-"yes" never approves one, and a notification only says "Ember wants to run a command on build-01." A question nobody
-answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that computer, in that folder, for
-that task: any change asks again. After a "no", Ember doesn't try again or work around it.
+window shows the card "Ember wants to run this command" ("… on build-01", "… in Ubuntu (WSL)" for another computer; a
+tab there carries the computer's name too): the whole command in monospace, nothing cut, with characters you wouldn't
+see shown in ⟨ ⟩, letters from another alphabet inside a word underlined (each folder of a path is judged on its own,
+so `C:\Users\Иван` marks nothing, while letters that only look Latin, as in `https://аррӏе.com` or `deploy@аррӏе`,
+are underlined), and Hebrew or Arabic text shown in the order it runs, as the terminal shows it;
+then why it asks ("Deletes build and everything in it.", "Pushes feature-x to origin.", "You didn't ask for this.",
+"This can reach your Windows files."); then the model's reason, quoted. A command that deletes data has a yellow bar
+on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
+stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
+view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y) works
+only while that card shows the whole command; **Not now** and the deny chord always work. There is never an "Always"
+for commands, a voice "yes" never approves one, and a notification only says "Ember wants to run a command on
+build-01." A question nobody answers counts as "no" after 2 minutes. Your yes covers exactly that command, on that
+computer, in that folder, for that task: any change asks again. After a "no", Ember doesn't try again or work around
+it.
 
 ### 2.5 When you asked for exactly that
 
 If your own words for this task asked for that kind of operation on that computer and that object, a dangerous
 command runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to
 GitHub" covers `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the
-announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds." and **Stop**), the command
-window shows "Running this, as you asked" with the command and "Starts in 4 s.", and when Ember speaks (**Speak replies,
-questions and results out loud** set to Always, or a screen reader running with it on When a screen reader runs, the
-default), Ember says it and adds how to cancel it: "Say 'Ember, stop' to cancel." only where Ember can
+announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything
+at once." and **Stop**), the command window shows "About to run this, as you asked" with the command, what it does and
+the model's reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**, and when Ember speaks
+(**Speak replies, questions and results out loud** set to Always, or a screen reader running with it on When a screen
+reader runs, the default), Ember says it and adds how to cancel it: "Say 'Ember, stop' to cancel." only where Ember can
 tell its own voice from yours (Linux with speaker rejection on and parec installed); elsewhere it names the stop chord
 ("Press Windows key, Alt, X to cancel."), because its own microphone would hear it say the phrase and stop everything.
 There it never says "Ember, stop" or "Hey Ember" out loud at all (it says "the stop phrase" and "the wake phrase";
 the bubble still shows them). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds cancels
-it. The audit log records it as requested by you.
+it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. The audit
+log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. What you said counts only where Ember can tell your voice from
@@ -231,8 +252,8 @@ in URLs and the like). Hiding is best effort: a secret in a form Ember doesn't r
 secrets on purpose.
 
 Output that reads like instructions to Ember ("ignore previous instructions", "you are an AI assistant", `curl … |
-sh`) is not followed: it marks the task, and every further command in that task asks you ("I'm checking each step: an
-earlier command printed text that looked like instructions.").
+sh`) is not followed: it marks the task, and every further command in that task asks you ("Ember is checking each step:
+an earlier command printed text that looked like instructions.").
 
 ### 2.8 Stopping, timeouts and the working folder
 
@@ -463,7 +484,10 @@ first click **Allow**.
 ### 4.5 Commands on build-01
 
 They follow §2. build-01's helper also checks each command with its own rules and its own administrator's policy;
-when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words). A shell
+when it finds more than this computer did, it asks you ("build-01's own check also found:", then its words), and the
+command's tab says "Not run: build-01's own check asks for your OK first." until the run you allow takes its place
+("Not run: you didn't allow it." if you don't; if build-01 sends the allowed run back too, its tab says build-01 refused
+it, and Ember doesn't ask again). A shell
 script the command runs (`sh build.sh`, `./tools/gen.sh`) is read by that check on build-01, not by this computer, which
 can't see build-01's files: anything dangerous in the script asks this way, and so does a script this task wrote or
 downloaded there that can't be read in full. Both computers record the command in their audit logs.

@@ -107,7 +107,7 @@ interface Harness {
   starts: RunSpec[];
   runs: ReturnType<typeof scriptedRun>[];
   attached: { card: CommandCard; run: RunningCommand }[];
-  announced: { text: string; stopId: string }[];
+  announced: { text: string; stopId: string; ms?: number }[];
   ended: string[];
   windowAnnounce: { card: CommandCard; ms: number }[];
   declined: () => number;
@@ -120,6 +120,7 @@ function harness(o: {
   binding?: TargetBinding; cap?: () => CommandCapability; answers?: (string | null)[]; words?: string; facts?: Partial<RunnerFacts>;
   paths?: (p: string) => PathFact; git?: GitFacts | null; run?: (spec: RunSpec, n: number) => Parameters<typeof scriptedRun>[1];
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
+  announceMs?: (base: number) => number;
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
@@ -130,7 +131,7 @@ function harness(o: {
   const starts: RunSpec[] = [];
   const runs: ReturnType<typeof scriptedRun>[] = [];
   const attached: { card: CommandCard; run: RunningCommand }[] = [];
-  const announced: { text: string; stopId: string }[] = [];
+  const announced: { text: string; stopId: string; ms?: number }[] = [];
   const ended: string[] = [];
   const windowAnnounce: { card: CommandCard; ms: number }[] = [];
   const tainted: string[] = [];
@@ -159,7 +160,8 @@ function harness(o: {
       announce: async (card, ms) => { windowAnnounce.push({ card, ms }); return o.announce ?? true; },
       cancelAnnounce: () => undefined,
       attach: (card, run) => { attached.push({ card, run }); },
-    },
+      ...(o.announceMs ? { announceMs: o.announceMs } : {}),
+    } as CommandService["window"],
     consented: () => { consented++; },
     userAskEvery: () => o.askEvery ?? false,
     mode: () => o.mode ?? "on",
@@ -177,7 +179,7 @@ function harness(o: {
     },
     service,
     confirmer: { ask: async (q: Record<string, unknown>) => { asked.push(q); return answers.length ? answers.shift()! : "once"; } } as never,
-    presenter: { announce: (text: string, stopId: string) => { announced.push({ text, stopId }); }, endAnnouncement: (id: string) => { ended.push(id); } } as never,
+    presenter: { announce: (text: string, stopId: string, ms?: number) => { announced.push({ text, stopId, ms }); }, endAnnouncement: (id: string) => { ended.push(id); } } as never,
     audit: e => audit.push(e), log: quiet, signal: abort.signal, isOver: () => abort.signal.aborted,
     state: o.state ?? { cwd: null, downloaded: new Set(), running: false },
     size: () => ({ cols: 100, rows: 30 }), emberPids: () => [4242],
@@ -453,7 +455,7 @@ describe("reading a shell script before it runs (L8, the lead's ruling)", () => 
     };
     expect(await lines('eval "$CMD"\n')).toContain("In build.sh: Runs code Ember can't see.");
     expect(await lines("read -r name\n")).toContain("In build.sh: This opens an interactive program; you'd have to use it yourself in the command window.");
-    expect(await lines('cat "$1"\n')).toContain("In build.sh: Ember can't tell what cat is given.");
+    expect(await lines('cat "$1"\n')).toContain("In build.sh: Ember can't tell which arguments cat gets.");
     for (const script of ['eval "$CMD"\n', "read -r name\n", 'cat "$1"\n']) {
       expect((await lines(script)).filter(l => l.startsWith("Ember can't read all of")), script).toEqual([]);
     }
@@ -1099,10 +1101,81 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(h.announced[0].text).toBe("Pushing feature-x to origin, as you asked.");
     expect(h.announced[0].stopId).toBe(`ui:cmdstop:${h.windowAnnounce[0].card.runId}`);
     expect(h.windowAnnounce[0]).toMatchObject({ ms: ANNOUNCE_MS, card: { mode: "announce", command: "git push origin feature-x" } });
+    // The bubble says the same time the window counts down.
+    expect(h.announced[0].ms).toBe(ANNOUNCE_MS);
     expect(h.ended).toEqual([h.announced[0].stopId]);
     expect(r.resultType).toBe("success");
     expect(h.starts[0].stamp).toMatchObject({ verdict: "announce", rules: ["git.push"], approval: null });
     expect(h.audit.find(e => e.phase === "decided")).toMatchObject({ requested: "user", intent: "git.push" });
+  });
+
+  it("says in the task's bubble when its command waits for the user to type (review #263)", async () => {
+    let tell: ((runId: string, waiting: boolean) => void) | null = null;
+    const h = harness({ run: () => ({ hang: true }) });
+    (h.ctx.service.window as unknown as { onWaiting: (fn: (runId: string, waiting: boolean) => void) => () => void }).onWaiting = fn => { tell = fn; return () => { tell = null; }; };
+    const progress: string[] = [];
+    // The bubble as the presenter shows it: what the task said before, then each progress line.
+    const bubble = { thought: "Cloning the private repository." };
+    Object.assign(h.ctx.presenter as object, { progress: (t: string) => { progress.push(t); bubble.thought = t; }, bubble });
+    const done = call(h, { command: "git clone https://github.com/acme/private" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    const runId = h.starts[0].runId;
+    tell!(runId, true);
+    tell!("ffffffffffffffff", true);
+    expect(progress).toEqual(["A command is waiting for you to type in the command window."]);
+    // Once the user has typed, the bubble says again what it said before.
+    tell!(runId, false);
+    expect(progress.at(-1)).toBe("Cloning the private repository.");
+    // Waiting again, then something newer in the bubble (the task's next words): that stays.
+    tell!(runId, true);
+    bubble.thought = "Checking out main.";
+    tell!(runId, false);
+    expect(progress).toEqual(["A command is waiting for you to type in the command window.", "Cloning the private repository.",
+      "A command is waiting for you to type in the command window."]);
+    // The run ends while it waits: the bubble doesn't keep saying a command waits.
+    tell!(runId, true);
+    expect(progress.at(-1)).toBe("A command is waiting for you to type in the command window.");
+    h.abort.abort();
+    await done;
+    expect(tell).toBeNull();
+    expect(progress.at(-1)).toBe("Checking out main.");
+  });
+
+  it("puts a plain running line back after the wait when the bubble said nothing before it (review #263)", async () => {
+    let tell: ((runId: string, waiting: boolean) => void) | null = null;
+    const h = harness({ run: () => ({ hang: true }) });
+    (h.ctx.service.window as unknown as { onWaiting: (fn: (runId: string, waiting: boolean) => void) => () => void }).onWaiting = fn => { tell = fn; return () => { tell = null; }; };
+    const progress: string[] = [];
+    const bubble = { thought: "" };
+    Object.assign(h.ctx.presenter as object, { progress: (t: string) => { progress.push(t); bubble.thought = t; }, bubble });
+    const done = call(h, { command: "sudo apt install htop" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    tell!(h.starts[0].runId, true);
+    tell!(h.starts[0].runId, false);
+    expect(progress).toEqual(["A command is waiting for you to type in the command window.", "The command is running."]);
+    h.abort.abort();
+    await done;
+  });
+
+  it("tells the card what kind of danger it asks about, for its marker (review #275)", async () => {
+    makeJudge({ decide: () => decision({ verdict: "ask", classes: ["destroy"], rules: ["rm.recursive"], says: ["Deletes build and everything in it."] }) });
+    const h = harness();
+    await call(h, { command: "rm -r build" });
+    expect((h.asked[0].panel as { card: CommandCard }).card.classes).toEqual(["destroy"]);
+  });
+
+  it("counts down as long as the command window says (longer while a screen reader runs), in the bubble too (review #46)", async () => {
+    makeJudge({ decide: () => decision({ verdict: "announce", classes: ["publish"], rules: ["git.push"], says: ["Pushes feature-x to origin."], requested: { intent: "git.push", announce: "Pushing feature-x to origin, as you asked." } }) });
+    const h = harness({ words: "push my branch to GitHub", announceMs: base => Math.max(base, 15_000) });
+    await call(h, { command: "git push origin feature-x" });
+    expect(h.windowAnnounce[0].ms).toBe(15_000);
+    expect(h.announced[0].ms).toBe(15_000);
+    // A window that says something odd (or throws) leaves the usual time.
+    for (const announceMs of [() => Number.NaN, () => 1, () => { throw new Error("x"); }, () => 10 * 60_000]) {
+      const g = harness({ words: "push my branch to GitHub", announceMs });
+      await call(g, { command: "git push origin feature-x" });
+      expect(g.windowAnnounce[0].ms).toBe(ANNOUNCE_MS);
+    }
   });
 
   it("Stop during the announcement: nothing runs, and the model hears the user stopped it", async () => {
@@ -1676,20 +1749,51 @@ describe("a remote's own check (§3.8.3 step 13, §3.16)", () => {
     ]);
   });
 
+  /** The window's word on each run sent back for an OK, once no OK is coming for it (review #274). */
+  const reaskEnds = (h: Harness): [string, string][] => {
+    const ends: [string, string][] = [];
+    (h.ctx.service.window as unknown as { reaskEnded: (runId: string, why: string) => void }).reaskEnded = (runId, why) => { ends.push([runId, why]); };
+    return ends;
+  };
+
   it("asks only once: a second needs_confirm is the remote's refusal", async () => {
     makeJudge();
     const h = harness({ run: () => needsConfirm() });
+    const ends = reaskEnds(h);
     const r = await call(h);
     expect(h.asked).toHaveLength(1);
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "build-01 refused it: \"needs a yes\". Don't try another way; tell the user in finish_task." });
+    // The retry's tab says it was refused, not that an OK is awaited.
+    expect(ends).toEqual([[h.starts[1].runId, "refused"]]);
   });
 
   it("a no to the remote's question runs nothing more", async () => {
     makeJudge();
     const h = harness({ run: () => needsConfirm(), answers: ["deny"] });
+    const ends = reaskEnds(h);
     expect((await call(h)).resultType).toBe("denied");
     expect(h.starts).toHaveLength(1);
     expect(h.declined()).toBe(1);
+    // Its tab stops saying an OK is awaited.
+    expect(ends).toEqual([[h.starts[0].runId, "no"]]);
+  });
+
+  it("tells the window nothing more about the sent-back run when the user allows it: the retry's tab replaces it", async () => {
+    makeJudge();
+    const h = harness({ run: (_s, n) => (n === 1 ? needsConfirm() : {}) });
+    const ends = reaskEnds(h);
+    expect((await call(h)).resultType).toBe("success");
+    expect(ends).toEqual([]);
+  });
+
+  it("says the task stopped on the sent-back run's tab when it stops during the question", async () => {
+    makeJudge();
+    const abort = new AbortController();
+    const h = harness({ run: () => needsConfirm(), abort });
+    const ends = reaskEnds(h);
+    (h.ctx.confirmer as unknown as { ask: () => Promise<string | null> }).ask = async () => { abort.abort(); return null; };
+    await call(h);
+    expect(ends).toEqual([[h.starts[0].runId, "stopped"]]);
   });
 
   it("a remote's lines are quoted with every hidden character shown", () => {

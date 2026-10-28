@@ -24,8 +24,10 @@ vi.mock("electron", () => {
     loadFile(): Promise<void> { return Promise.resolve(); }
     isDestroyed(): boolean { return this.destroyed; }
     destroy(): void { this.destroyed = true; }
+    on(): void { /* the command window's close guard listens (review #262) */ }
   }
-  return { BrowserWindow, app: { getAppPath: () => "/app" } };
+  // The command window's close guard also listens for Ember quitting (#262); placement reads the screen (#272).
+  return { BrowserWindow, app: { getAppPath: () => "/app", on: () => undefined, removeListener: () => undefined }, screen: {} };
 });
 
 describe("crashes in ember.log (review #91)", () => {

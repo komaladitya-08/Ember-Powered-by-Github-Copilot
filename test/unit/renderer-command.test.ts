@@ -8,10 +8,11 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { INERT_LINKS, XTERM_OPTIONS, terminalOptions } from "../../app/renderer/command/terminal-options";
 import {
-  INITIAL_MODEL, MAX_PENDING_LINES, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
+  INITIAL_MODEL, MAX_PENDING_LINES, sameAnnouncement, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
   type TabView, type WindowView,
 } from "../../app/renderer/command/model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "../../app/renderer/command/visible";
+import { shouldFocusTerminal, termKeyAction, type KeyLike } from "../../app/renderer/command/keys";
 import type { CommandCard } from "../../app/main/commands/types";
 
 const read = (f: string) => readFileSync(new URL(`../../app/renderer/command/${f}`, import.meta.url), "utf8");
@@ -34,6 +35,16 @@ describe("the terminal's options (\u00a73.10)", () => {
     expect(INERT_LINKS.allowNonHttpProtocols).toBe(false);
     expect(INERT_LINKS.activate({} as MouseEvent, "javascript:alert(1)", { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } })).toBeUndefined();
     expect(INERT_LINKS.hover).toBeUndefined();
+  });
+
+  it("expose the output to a screen reader when one is running, and only then (review #43)", () => {
+    expect(XTERM_OPTIONS.screenReaderMode).toBe(false);
+    expect(terminalOptions({ interactive: false, cols: 100, rows: 30, screenReader: true }).screenReaderMode).toBe(true);
+    expect(terminalOptions({ interactive: true, cols: 100, rows: 30, screenReader: false }).screenReaderMode).toBe(false);
+    expect(terminalOptions({ interactive: true, cols: 100, rows: 30 }).screenReaderMode).toBe(false);
+    const term = read("terminal.ts"), main = read("main.ts");
+    expect(term).toMatch(/options\.screenReaderMode = /);
+    expect(main).toMatch(/setScreenReader\(/);
   });
 
   it("take typing only for a run that takes it, at the run's size", () => {
@@ -309,10 +320,10 @@ describe("visibleText (critique security-10)", () => {
   });
 
   it("says which legend lines a string needs, and breaks lines after a newline token", () => {
-    expect(legendFor(visibleText("ls"))).toEqual({ tokens: false, mixed: false });
-    expect(legendFor(visibleText("ls\u200b"))).toEqual({ tokens: true, mixed: false });
-    expect(legendFor(visibleText("bu\u0456ld"))).toEqual({ tokens: false, mixed: true });
-    expect(legendFor(visibleText("a\tb"))).toEqual({ tokens: false, mixed: false });
+    expect(legendFor(visibleText("ls"))).toEqual({ tokens: false, mixed: false, rtl: false });
+    expect(legendFor(visibleText("ls\u200b"))).toEqual({ tokens: true, mixed: false, rtl: false });
+    expect(legendFor(visibleText("bu\u0456ld"))).toEqual({ tokens: false, mixed: true, rtl: false });
+    expect(legendFor(visibleText("a\tb"))).toEqual({ tokens: false, mixed: false, rtl: false });
     // A newline is the command's own line break (a here-document spans lines): kept as itself, the page's pre-wrap
     // block ends the line there; a segment that carries it as a control still ends its line.
     expect(kinds("a\nb")).toEqual([["plain", "a\nb"]]);
@@ -328,5 +339,162 @@ describe("visibleText (critique security-10)", () => {
     expect(segmentLabel({ kind: "nbsp", text: "\u00a0" })).toBe("⟨NBSP⟩");
     expect(segmentLabel({ kind: "invisible", text: "⟨ZWSP⟩" })).toBe("⟨ZWSP⟩");
     expect(segmentLabel({ kind: "mixed", text: "\u0456" })).toBe("\u0456");
+  });
+});
+
+describe("right-to-left letters in a command (review #273)", () => {
+  it("are noted by a legend line, so the user knows the card shows the order that runs", () => {
+    expect(legendFor(visibleText("chmod -R 755 \u05e9\u05dc\u05d5\u05dd 777 /srv/data")).rtl).toBe(true);
+    expect(legendFor(visibleText("cat \u0645\u0644\u0641.txt")).rtl).toBe(true);
+    expect(legendFor(visibleText("rm -r build")).rtl).toBe(false);
+    expect(legendFor(visibleText("ls \u043f\u0430\u043f\u043a\u0430")).rtl).toBe(false);
+  });
+
+  it("are drawn in the order the shell reads them: the command, the header and a tab's label override bidi", () => {
+    const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const sel of [".command", ".where", ".tab-label"]) {
+      const block = css.split("}").find(b => b.split("{")[0].split(",").map(x => x.trim()).includes(sel) && /unicode-bidi/.test(b)) ?? "";
+      expect(block, sel).toMatch(/direction:\s*ltr/);
+      expect(block, sel).toMatch(/unicode-bidi:\s*bidi-override/);
+    }
+  });
+});
+
+describe("the command block's semantics (review #48)", () => {
+  it("is a read-only text box whose value is the command, and Allow and Stop are described by it", () => {
+    const main = read("main.ts");
+    const block = /function commandBlock[\s\S]*?\n}/.exec(main)?.[0] ?? "";
+    expect(block).toMatch(/setAttribute\("role", "textbox"\)/);
+    expect(block).toMatch(/setAttribute\("aria-readonly", "true"\)/);
+    expect(block).toMatch(/setAttribute\("aria-multiline", "true"\)/);
+    expect(main).toMatch(/allow\.setAttribute\("aria-describedby", "ask-cmd"\)/);
+    expect(main).toMatch(/commandBlock\(card\.command, "[^"]+", "ask-cmd"\)/);
+    expect(main).toMatch(/stop\.setAttribute\("aria-describedby", "announce-cmd"\)/);
+  });
+});
+
+describe("a run's terminal and the keyboard (reviews #42, #261, #264, #268)", () => {
+  const k = (key: string, mods: Partial<KeyLike> = {}): KeyLike => ({ key, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods });
+  const on = (mac = false, hasSelection = false) => ({ mac, hasSelection });
+
+  it("lets Tab and Shift+Tab move the focus on every OS, so the terminal never traps the keyboard or types a tab into a prompt", () => {
+    for (const mac of [false, true]) {
+      expect(termKeyAction(k("Tab"), on(mac))).toBe("browser");
+      expect(termKeyAction(k("Tab", { shiftKey: true }), on(mac))).toBe("browser");
+    }
+    // Ctrl+I is the tab character for a program that needs one; Esc and ordinary keys stay the terminal's.
+    expect(termKeyAction(k("i", { ctrlKey: true }), on())).toBe("terminal");
+    expect(termKeyAction(k("Escape"), on())).toBe("terminal");
+    expect(termKeyAction(k("a"), on())).toBe("terminal");
+    expect(termKeyAction(k("Enter"), on())).toBe("terminal");
+  });
+
+  it("pastes with Ctrl+V off the Mac (the browser's own paste, sent to the run as typing), never ^V", () => {
+    expect(termKeyAction(k("v", { ctrlKey: true }), on())).toBe("browser");
+    expect(termKeyAction(k("V", { ctrlKey: true, shiftKey: true }), on())).toBe("browser");
+    // On a Mac, Command+V is the Edit menu's and Ctrl+V stays the terminal's.
+    expect(termKeyAction(k("v", { ctrlKey: true }), on(true))).toBe("terminal");
+  });
+
+  it("copies a selection with Ctrl+C, interrupts without one, and always copies with Ctrl+Shift+C", () => {
+    expect(termKeyAction(k("c", { ctrlKey: true }), on(false, true))).toBe("browser");
+    expect(termKeyAction(k("c", { ctrlKey: true }), on(false, false))).toBe("terminal");
+    expect(termKeyAction(k("C", { ctrlKey: true, shiftKey: true }), on(false, false))).toBe("copy");
+    expect(termKeyAction(k("c", { ctrlKey: true }), on(true, true))).toBe("terminal");
+    expect(termKeyAction(k("c", { ctrlKey: true, altKey: true }), on(false, true))).toBe("terminal");
+  });
+
+  it("puts the keyboard in a run's terminal only when it takes typing, no card is up and nothing else has the focus", () => {
+    const base = { interactive: true, ended: false, cardUp: false, focusIdle: true };
+    expect(shouldFocusTerminal(base)).toBe(true);
+    expect(shouldFocusTerminal({ ...base, interactive: false })).toBe(false);
+    expect(shouldFocusTerminal({ ...base, ended: true })).toBe(false);
+    expect(shouldFocusTerminal({ ...base, cardUp: true })).toBe(false);
+    expect(shouldFocusTerminal({ ...base, focusIdle: false })).toBe(false);
+  });
+
+  it("wires those keys into xterm, keeps a run that takes no typing out of the Tab order, and puts Stop before the terminal", () => {
+    const term = read("terminal.ts"), main = read("main.ts"), css = read("styles.css");
+    expect(term).toMatch(/attachCustomKeyEventHandler\(/);
+    expect(term).toMatch(/termKeyAction\(e, /);
+    expect(term).toMatch(/tabIndex = interactive \? 0 : -1/);
+    expect(main).toMatch(/panel\.append\(header\.node, block, \.\.\.legends, foot, host, typing\)/);
+    expect(main).toMatch(/foot\.append\(status, live, copy, action\)/);
+    expect(css).toMatch(/\.term:focus-within\s*\{[^}]*--focus-ring/);
+  });
+});
+
+describe("the question card's layout (review #265)", () => {
+  it("keeps Allow and Not now in view at the bottom of the card area, and counts nothing under them as in view", () => {
+    const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const block = (sel: string) => css.split("}").find(b => b.split("{")[0].split(",").map(x => x.trim()).includes(sel)) ?? "";
+    expect(block(".card .actions")).toMatch(/position:\s*sticky/);
+    expect(block(".card .actions")).toMatch(/bottom:\s*0/);
+    expect(block(".window.cards-only .cards")).toMatch(/max-height:\s*none/);
+    const main = read("main.ts");
+    expect(main).toMatch(/actions\.append\(hint, row, keys\)/);
+    expect(main).toMatch(/clip\.bottom = Math\.min\(clip\.bottom, ask\.actions\.getBoundingClientRect\(\)\.top\)/);
+    expect(main).toMatch(/classList\.toggle\("cards-only"/);
+  });
+
+  it("judges a command block that runs under the buttons as not in view", () => {
+    // The block's bottom (300) is below the top of the buttons' bar (280): the clip says so.
+    const m = { scrollTop: 0, scrollHeight: 100, clientHeight: 100, scrollWidth: 500, clientWidth: 500, top: 200, bottom: 300, left: 12, right: 512, viewWidth: 760, viewHeight: 480, visible: true };
+    expect(judgeMetrics({ ...m, clip: { top: 0, bottom: 280, left: 0, right: 760 } }).onScreen).toBe(false);
+    expect(judgeMetrics({ ...m, clip: { top: 0, bottom: 320, left: 0, right: 760 } }).onScreen).toBe(true);
+  });
+});
+
+describe("a tab's status line and a screen reader (review #276)", () => {
+  it("announces a status once, not each second of a countdown", () => {
+    const stalled = (n: number) => `build-01 isn't answering. This command stops in ${n} s unless the link comes back.`;
+    expect(sameAnnouncement(stalled(14), stalled(13))).toBe(true);
+    expect(sameAnnouncement(stalled(1), stalled(0))).toBe(true);
+    expect(sameAnnouncement(stalled(5), "Running…")).toBe(false);
+    expect(sameAnnouncement("Running…", "Finished in 3.2 s.")).toBe(false);
+    expect(sameAnnouncement("Finished in 3.2 s.", "Ended with exit code 2 after 1.1 s.")).toBe(false);
+  });
+
+  it("keeps the visible status out of the live region; a hidden live line says each new status once", () => {
+    const main = read("main.ts");
+    const buildTab = /function buildTab[\s\S]*?\n}/.exec(main)?.[0] ?? "";
+    expect(buildTab).not.toMatch(/status\.setAttribute\("role", "status"\)/);
+    expect(buildTab).toMatch(/el\("p", "sr status-live"/);
+    expect(buildTab).toMatch(/setAttribute\("role", "status"\)/);
+    expect(main).toMatch(/sameAnnouncement\(/);
+  });
+});
+
+describe("the page's wiring that only a real window shows (reviews #262, #264, #271)", () => {
+  const main = read("main.ts");
+  /** A top-level function's source, from its declaration to its closing brace at the start of a line. */
+  const fn = (name: string) => new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n}`).exec(main)?.[0] ?? "";
+
+  it("asks before closing with an alert dialog whose keyboard starts on Keep it open, and answers main both ways (#262)", () => {
+    const closing = fn("buildClosing");
+    expect(closing).toMatch(/setAttribute\("role", "alertdialog"\)/);
+    expect(closing).toMatch(/requestAnimationFrame\(\(\) => keep\.focus\(\)\)/);
+    expect(closing).toMatch(/stop\.addEventListener\("click", [^\n]*api\.closeWindow\(true\)/);
+    expect(closing).toMatch(/keep\.addEventListener\("click", [^\n]*api\.closeWindow\(false\)/);
+    // Only the user's own click answers it.
+    expect(closing.match(/e\.isTrusted/g)).toHaveLength(2);
+    expect(fn("render")).toMatch(/buildClosing\(closingRunning\)/);
+  });
+
+  it("gives the card's buttons back when main says the answer wasn't taken (#271)", () => {
+    const render = fn("render");
+    expect(render).toMatch(/\(card\.retry \?\? 0\) > ask\.retry/);
+    expect(render).toMatch(/ask\.sent = false;/);
+    expect(render).toMatch(/ask\.deny\.disabled = false;/);
+    // Allow comes back through paintAllow, which enables it once nothing has been sent.
+    expect(render).toMatch(/paintAllow\(\)/);
+    expect(fn("paintAllow")).toMatch(/if \(!ask\.sent\) ask\.allow\.disabled = !on;/);
+  });
+
+  it("puts the keyboard in a run that takes typing after each render and when the window comes up (#264)", () => {
+    expect(fn("render")).toMatch(/\n {2}focusTerminal\(\);/);
+    expect(main).toMatch(/window\.addEventListener\("focus", \(\) => focusTerminal\(\)\)/);
+    expect(fn("focusTerminal")).toMatch(/shouldFocusTerminal\(/);
+    expect(fn("focusTerminal")).toMatch(/e\.term\.focus\(\)/);
   });
 });

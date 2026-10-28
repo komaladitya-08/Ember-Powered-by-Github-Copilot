@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../app/shared/commands";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
-import { MAX_TABS, cardSha256, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, placeOnDisplay, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
 import { statusLine } from "../../app/renderer/command/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
@@ -59,6 +59,14 @@ class FakeWindow implements BrowserWindowLike {
   setContentProtection() { /* windows.ts sets it */ }
   on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
   emit(event: string) { for (const fn of this.handlers.get(event) ?? []) fn(); }
+  flashFrame(flag: boolean) { this.calls.push(`flash:${flag}`); }
+  placeNearUser() { this.calls.push("place"); }
+  setOnAllWorkspaces(on: boolean) { this.calls.push(`workspaces:${on}`); }
+  /** createCommandWindow's guard on the window's close button (review #262). */
+  guard: (() => boolean) | null = null;
+  setCloseGuard(fn: () => boolean) { this.guard = fn; }
+  /** The user's close button: the guard may keep the window open. */
+  requestClose() { if (this.guard?.() === true) { this.calls.push("close-kept"); return; } this.close(); }
 }
 
 const logs: { level: string; msg: string; fields?: unknown }[] = [];
@@ -99,19 +107,20 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
     create: () => { const w = new FakeWindow(); windows.push(w); return w; },
     ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
+    ...(o.screenReader ? { screenReader: o.screenReader } : {}),
   });
   const win = () => windows[windows.length - 1];
   const page = () => win().webContents;
   /** The page says the card's whole command is (or isn't) in view. */
   const seen = (n: number, inView = true, isSeen = true) => ipc.send(COMMANDS_IPC.cardSeen, page(), { n, inView, seen: isSeen });
   const answers: AnswerMsg[] = [];
-  ctl.onAnswer(a => answers.push(a));
+  ctl.onAnswer(a => { answers.push(a); });
   return { ipc, ctl, windows, win, page, seen, answers };
 }
 
@@ -354,7 +363,7 @@ describe("one card at a time", () => {
   it("brings the window up without taking the keyboard, on top while the card shows, and lets it go after", () => {
     const { ctl, win } = setup();
     ctl.showCard(1, card());
-    expect(win().calls).toEqual(["top:true", "showInactive", "moveTop"]);
+    expect(win().calls).toEqual(["place", "top:true", "workspaces:true", "showInactive", "moveTop"]);
     expect(win().focused).toBe(false);
     ctl.hideCard(1);
     expect(win().onTop).toBe(false);
@@ -470,7 +479,7 @@ describe("a run's tab", () => {
     ctl.attach(card(), run);
     expect(page().last().tabs[0]).toMatchObject({
       runId: run.runId, header: "On build-01 as deploy · bash · in /home/deploy/src/app", status: "Running…", interactive: true, ended: false,
-      title: "Clean the build", typing: "Type here to answer the command. Ember never sees what you type.", outcome: "running",
+      title: "Clean the build", typing: "Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.", outcome: "running",
     });
     run.finish({ code: 2, ms: 1100 });
     await vi.runAllTimersAsync();
@@ -540,7 +549,7 @@ describe("a run's tab", () => {
     expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays.");
     looked(["sleep", "\u202emalware"]);
     await vi.runAllTimersAsync();
-    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware.");
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12 s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware. Ask Ember to stop them, or end them yourself.");
     // A run that says nothing (a remote's) keeps its line as it was.
     const quiet = new FakeRun("00000000000000aa");
     ctl.attach(card({ runId: quiet.runId }), quiet);
@@ -603,7 +612,7 @@ describe("a run's tab", () => {
     ctl.pending("t1", "Starting Ubuntu…");
     // It brings the window up without taking the keyboard, and not on top (no card is asking).
     expect(windows).toHaveLength(1);
-    expect(win().calls).toEqual(["showInactive"]);
+    expect(win().calls).toEqual(["place", "showInactive"]);
     expect(page().last().pending).toEqual([{ taskId: "t1", text: "Starting Ubuntu…" }]);
     ctl.pending("t2", "Starting Debian…");
     expect(page().last().pending?.map(p => p.taskId)).toEqual(["t1", "t2"]);
@@ -683,7 +692,7 @@ describe("a run's tab", () => {
     expect(status).not.toMatch(/[\u202e\n]/);
     expect([...status].length).toBeLessThan(400);
     const names = statusLine({ code: 0, signal: null, ended: "exit", ms: 1000, stragglers: ["ma\u200bke", "y".repeat(500)] } as RunExit, { label: "build-01", os: "linux" });
-    expect(names).toBe(`Finished in 1 s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}….`);
+    expect(names).toBe(`Finished in 1 s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}…. Ask Ember to stop them, or end them yourself.`);
   });
 
   it("names how a run ended for its tab's symbol", () => {
@@ -734,5 +743,302 @@ describe("the window's life", () => {
     for (const k of ["showCard", "hideCard", "cardReady", "announce", "cancelAnnounce", "attach", "show", "owns", "dispose"]) {
       expect(typeof (port as unknown as Record<string, unknown>)[k]).toBe("function");
     }
+  });
+});
+
+describe("the command window and a screen reader (review #43)", () => {
+  it("tells the page whether a screen reader is running, so the terminal's output is read to it", () => {
+    let on = false;
+    const { ctl, page } = setup({ screenReader: () => on });
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(page().last().screenReader).toBe(false);
+    on = true;
+    ctl.note("0123456789abcdef", "Starting Ubuntu…");
+    expect(page().last().screenReader).toBe(true);
+  });
+
+  it("says no screen reader when it isn't told, or when asking fails", () => {
+    const a = setup();
+    a.ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(a.page().last().screenReader).toBe(false);
+    const b = setup({ screenReader: () => { throw new Error("no a11y"); } });
+    b.ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(b.page().last().screenReader).toBe(false);
+  });
+});
+
+describe("the announcement's time and keys (reviews #46, #269)", () => {
+  it("gives the countdown more time while a screen reader runs", () => {
+    let on = false;
+    const { ctl } = setup({ screenReader: () => on });
+    expect(ctl.announceMs(4000)).toBe(4000);
+    on = true;
+    expect(ctl.announceMs(4000)).toBe(ANNOUNCE_SCREEN_READER_MS);
+    expect(ANNOUNCE_SCREEN_READER_MS).toBe(15_000);
+    expect(ctl.announceMs(20_000)).toBe(20_000);
+  });
+
+  it("names the stop chord with the countdown", async () => {
+    const { ctl, page } = setup();
+    void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).not.toBeNull();
+    expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+  });
+});
+
+describe("an answer the card's buttons sent that wasn't taken (review #271)", () => {
+  it("brings the card's buttons back: the state says so with a new retry count", () => {
+    const ipc = new FakeIpc();
+    const windows: FakeWindow[] = [];
+    const ctl = createCommandWindowController({ create: () => { const w = new FakeWindow(); windows.push(w); return w; }, ipc, log, os: "linux", keyHint: () => null });
+    let take = false;
+    ctl.onAnswer(() => take);
+    ctl.showCard(1, card());
+    const page = () => windows[0].webContents;
+    ipc.send(COMMANDS_IPC.cardSeen, page(), { n: 1, inView: true, seen: true });
+    vi.advanceTimersByTime(1000);
+    expect(page().last().card?.retry ?? 0).toBe(0);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().last().card?.retry).toBe(1);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "deny", sha256: SHA });
+    expect(page().last().card?.retry).toBe(2);
+    take = true;
+    const pushes = page().states().length;
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().states().length).toBe(pushes);
+  });
+
+  it("brings them back after an Allow that came too early too", () => {
+    const { ipc, ctl, page } = setup();
+    ctl.showCard(1, card());
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().last().card?.retry).toBe(1);
+  });
+});
+
+describe("a run the remote's own check sent back for the user's OK (review #274)", () => {
+  it("says it didn't run and waits for the OK, then gives way to the run the user allowed", async () => {
+    const { ctl, page } = setup();
+    const first = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), first);
+    first.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true, error: "build-01's own check wants the user's yes first" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs).toHaveLength(1);
+    expect(page().last().tabs[0]).toMatchObject({ outcome: "stopped", status: "Not run: build-01's own check asks for your OK first." });
+    // The retry: a new run of the same command for the same task takes its place.
+    ctl.attach(card({ runId: "fedcba9876543210" }), new FakeRun("fedcba9876543210"));
+    expect(page().last().tabs.map(t => t.runId)).toEqual(["fedcba9876543210"]);
+  });
+
+  it("says the run didn't happen once no OK is coming: a no, a stopped task, or the remote refusing the retry too", async () => {
+    const { ctl, page } = setup();
+    const ask = async (runId: string, command: string) => {
+      const run = new FakeRun(runId);
+      ctl.attach(card({ runId, command }), run);
+      run.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true, error: "needs a yes" });
+      await vi.advanceTimersByTimeAsync(0);
+      return () => page().last().tabs.find(t => t.runId === runId);
+    };
+    // Not now, or the question left to expire.
+    const no = await ask("1111111111111111", "rm -r a");
+    ctl.reaskEnded("1111111111111111", "no");
+    expect(no()).toMatchObject({ outcome: "stopped", status: "Not run: you didn't allow it." });
+    // The same command again later is a run of its own: the answered tab stays.
+    ctl.attach(card({ runId: "4444444444444444", command: "rm -r a" }), new FakeRun("4444444444444444"));
+    expect(no()).toBeDefined();
+    const stopped = await ask("2222222222222222", "rm -r b");
+    ctl.reaskEnded("2222222222222222", "stopped");
+    expect(stopped()).toMatchObject({ outcome: "stopped", status: "Not run: the task was stopped." });
+    // The retry the user allowed was sent back again: that is the remote's refusal, said as one.
+    const again = await ask("3333333333333333", "rm -r c");
+    ctl.reaskEnded("3333333333333333", "refused");
+    expect(again()).toMatchObject({ outcome: "failed", status: "build-01 refused it: needs a yes." });
+    // A run that isn't waiting for an OK is left as it is.
+    const pushes = page().states().length;
+    ctl.reaskEnded("4444444444444444", "no");
+    ctl.reaskEnded("ffffffffffffffff", "no");
+    expect(page().states().length).toBe(pushes);
+  });
+
+  it("keeps a refusal that needs no OK, and a waiting tab when another command comes", async () => {
+    const { ctl, page } = setup();
+    const refused = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), refused);
+    refused.finish({ ended: "refused-remote", code: null, ms: 40, error: "its policy turns commands off" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs[0].outcome).toBe("failed");
+    const waiting = new FakeRun("1111111111111111");
+    ctl.attach(card({ runId: "1111111111111111", command: "rm -r dist" }), waiting);
+    waiting.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    ctl.attach(card({ runId: "2222222222222222", command: "ls" }), new FakeRun("2222222222222222"));
+    expect(page().last().tabs.map(t => t.runId)).toEqual(["2222222222222222", "1111111111111111", "0123456789abcdef"]);
+  });
+});
+
+describe("where a command runs, and what kind it is, on the card and the tab (review #275)", () => {
+  it("names the computer on a tab that isn't this computer's", () => {
+    const { ctl, page } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    ctl.attach(card({ runId: "1111111111111111", target: "local", targetLabel: "This computer", login: undefined }), new FakeRun("1111111111111111"));
+    ctl.attach(card({ runId: "2222222222222222", target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", login: undefined }), new FakeRun("2222222222222222"));
+    expect(page().last().tabs.map(t => t.where ?? null)).toEqual(["Ubuntu (WSL)", null, "build-01"]);
+  });
+
+  it("takes a card's danger classes, and refuses a card with ones Ember doesn't know", () => {
+    expect(validCard(card({ classes: ["destroy", "publish"] }))).toBe(true);
+    expect(validCard(card({ classes: ["nuke" as never] }))).toBe(false);
+    expect(validCard({ ...card(), classes: "destroy" })).toBe(false);
+  });
+});
+
+describe("closing the window while a command runs (review #262)", () => {
+  it("keeps the window and asks first; Stop and close stops every running command and closes it", () => {
+    const { ipc, ctl, win, page } = setup();
+    const a = new FakeRun("0123456789abcdef");
+    const b = new FakeRun("1111111111111111");
+    ctl.attach(card(), a);
+    ctl.attach(card({ runId: "1111111111111111", command: "make" }), b);
+    win().requestClose();
+    expect(win().destroyed).toBe(false);
+    expect(win().calls).toContain("close-kept");
+    expect(page().last().closing).toEqual({ running: 2 });
+    expect(win().calls.slice(-3)).toEqual(expect.arrayContaining(["show", "focus"]));
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, page(), { stop: true });
+    expect(a.stops).toEqual(["user"]);
+    expect(b.stops).toEqual(["user"]);
+    expect(win().destroyed).toBe(true);
+  });
+
+  it("Keep it open takes the question away and stops nothing; a second close while it asks stops and closes", () => {
+    const { ipc, ctl, win, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    win().requestClose();
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, page(), { stop: false });
+    expect(page().last().closing ?? null).toBeNull();
+    expect(run.stops).toEqual([]);
+    expect(win().destroyed).toBe(false);
+    win().requestClose();
+    win().requestClose();
+    expect(run.stops).toEqual(["user"]);
+    expect(win().destroyed).toBe(true);
+  });
+
+  it("closes at once when nothing runs, and never holds the window when Ember closes it itself", async () => {
+    const a = setup();
+    const done = new FakeRun("0123456789abcdef");
+    a.ctl.attach(card(), done);
+    done.finish();
+    await vi.advanceTimersByTimeAsync(0);
+    a.win().requestClose();
+    expect(a.win().destroyed).toBe(true);
+    const b = setup();
+    const run = new FakeRun("0123456789abcdef");
+    b.ctl.attach(card(), run);
+    b.ctl.dispose();
+    expect(b.win().destroyed).toBe(true);
+    expect(b.win().guard?.() ?? false).toBe(false);
+  });
+
+  it("takes the answer only from its own page", () => {
+    const { ipc, ctl, win } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    win().requestClose();
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, new FakeContents(9999), { stop: true });
+    expect(run.stops).toEqual([]);
+    expect(win().destroyed).toBe(false);
+  });
+});
+
+describe("a command waiting for the user to type (review #263)", () => {
+  it("knows a prompt from ordinary output", () => {
+    for (const t of ["[sudo] password for ana: ", "Username for 'https://github.com': ", "Password:", "Proceed ([y]/n)? ",
+      "Are you sure you want to continue connecting (yes/no/[fingerprint])? ", "Enter passphrase (empty for no passphrase): ", "\x1b[1mPassword:\x1b[0m ", "Overwrite x? [y/N] "]) {
+      expect(awaitsTyping(`some output\n${t}`), t).toBe(true);
+    }
+    for (const t of ["Downloading 45%", "Compiling src/foo.ts", "done.\n", "", "Building...", "line\n\n", "x".repeat(300) + ":"]) expect(awaitsTyping(t), t).toBe(false);
+  });
+
+  it("raises the window on every run, without taking the keyboard", () => {
+    const { ctl, win } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    win().calls.length = 0;
+    ctl.attach(card({ runId: "1111111111111111" }), new FakeRun("1111111111111111"));
+    expect(win().calls).toContain("moveTop");
+    expect(win().calls).not.toContain("focus");
+    expect(win().calls).not.toContain("show");
+  });
+
+  it("says so on the tab, raises and flashes the window, and tells who listens; typing clears it", () => {
+    const { ipc, ctl, win, page } = setup();
+    const heard: [string, boolean][] = [];
+    ctl.onWaiting((runId, waiting) => heard.push([runId, waiting]));
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("Cloning into 'private'...\nUsername for 'https://github.com': ");
+    vi.advanceTimersByTime(WAITING_MS - 100);
+    expect(page().last().tabs[0].waiting ?? false).toBe(false);
+    win().calls.length = 0;
+    vi.advanceTimersByTime(200);
+    expect(page().last().tabs[0]).toMatchObject({ waiting: true, status: "Waiting for you to type in this window." });
+    expect(win().calls).toEqual(expect.arrayContaining(["moveTop", "flash:true"]));
+    expect(heard).toEqual([["0123456789abcdef", true]]);
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "ana\r" });
+    expect(page().last().tabs[0].waiting ?? false).toBe(false);
+    expect(page().last().tabs[0].status).toBe("Running…");
+    expect(win().calls).toContain("flash:false");
+    expect(heard).toEqual([["0123456789abcdef", true], ["0123456789abcdef", false]]);
+  });
+
+  it("doesn't wait on a run that can't take typing, or on output that isn't a prompt", () => {
+    const { ctl, page } = setup();
+    const piped = new FakeRun("0123456789abcdef", false);
+    ctl.attach(card(), piped);
+    piped.emit("Password: ");
+    const busy = new FakeRun("1111111111111111");
+    ctl.attach(card({ runId: "1111111111111111" }), busy);
+    busy.emit("Downloading 45%");
+    vi.advanceTimersByTime(WAITING_MS * 3);
+    expect(page().last().tabs.map(t => t.waiting ?? false)).toEqual([false, false]);
+  });
+
+  it("says a run that hit its time limit while waiting was waiting for the user", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("Password: ");
+    vi.advanceTimersByTime(WAITING_MS + 10);
+    run.finish({ ended: "timeout", code: null, ms: 120_000 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs[0].status).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
+  });
+});
+
+describe("where the window comes up (review #272)", () => {
+  it("moves a window whose centre is off the user's display to the middle of it, shrunk to fit; leaves one already there", () => {
+    const area = { x: 1920, y: 0, width: 1600, height: 900 };
+    expect(placeOnDisplay({ x: 580, y: 300, width: 760, height: 480 }, area)).toEqual({ x: 2340, y: 210, width: 760, height: 480 });
+    expect(placeOnDisplay({ x: 2000, y: 100, width: 760, height: 480 }, area)).toBeNull();
+    expect(placeOnDisplay({ x: -3000, y: 0, width: 2000, height: 1200 }, { x: 0, y: 0, width: 1280, height: 720 })).toEqual({ x: 0, y: 0, width: 1280, height: 720 });
+    // Negative coordinates are real displays (left of the primary on Windows and macOS).
+    expect(placeOnDisplay({ x: 100, y: 100, width: 760, height: 480 }, { x: -1600, y: -200, width: 1600, height: 900 })).toEqual({ x: -1180, y: 10, width: 760, height: 480 });
+  });
+
+  it("brings a card to the user's display and every workspace, and lets go of the workspaces when it goes", () => {
+    const { ctl, win } = setup();
+    ctl.showCard(1, card());
+    expect(win().calls).toEqual(expect.arrayContaining(["place", "workspaces:true"]));
+    win().calls.length = 0;
+    ctl.hideCard(1);
+    expect(win().calls).toContain("workspaces:false");
+  });
+
+  it("places a window that was hidden when a run shows, without putting it on every workspace", () => {
+    const { ctl, win } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(win().calls).toContain("place");
+    expect(win().calls).not.toContain("workspaces:true");
   });
 });

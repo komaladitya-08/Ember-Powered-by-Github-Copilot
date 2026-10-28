@@ -162,6 +162,8 @@ export function createPromptWindowController(o: { create: () => BrowserWindowLik
       return;
     }
     push();
+    // On the display the user is on, and every workspace (windows.ts's placement: review #272).
+    safe("place", () => { const p = w as typeof w & { placeNearUser?: () => void; setOnAllWorkspaces?: (on: boolean) => void }; p.placeNearUser?.(); p.setOnAllWorkspaces?.(true); });
     safe("show", () => { w.show(); w.moveTop(); w.focus(); });
   }
 

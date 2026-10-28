@@ -315,6 +315,8 @@ export interface CommandCard {
   says: string[];
   unasked: boolean;
   armMs: number;
+  /** The decision's danger classes (an ask or an announcement): the card marks deleting ones (review #275). */
+  classes?: DangerClass[];
 }
 
 /** What a target offers for commands right now. */

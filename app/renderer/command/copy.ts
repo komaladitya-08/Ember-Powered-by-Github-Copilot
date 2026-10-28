@@ -14,19 +14,56 @@ export const WINDOW_TITLE = "Ember commands";
 export const EMPTY_TEXT = "No commands yet.";
 
 export const ASK_HEADING = "Ember wants to run this command";
-export const ANNOUNCE_HEADING = "Running this, as you asked";
+
+/** The question card's heading, naming the computer when it isn't this one (review #275): "… on build-01", "… in Ubuntu (WSL)". */
+export function askHeading(card: Pick<CommandCard, "target" | "targetLabel">): string {
+  const kind = parseTargetId(card.target)?.kind;
+  if (!kind || kind === "local") return ASK_HEADING;
+  return `${ASK_HEADING} ${kind === "wsl" ? "in" : "on"} ${outsideText(card.targetLabel, 64)}`;
+}
+
+/** A card for a command that deletes data (here or in a remote service): it gets a quiet marker and no prominent Allow (review #275). */
+export function isRiskyCard(card: Pick<CommandCard, "classes">): boolean {
+  return Array.isArray(card.classes) && card.classes.some(c => c === "destroy" || c === "remote-delete");
+}
+/** The announcement's heading: nothing runs yet, it starts when the countdown ends (review #269). */
+export const ANNOUNCE_HEADING = "About to run this, as you asked";
 export const ALLOW_LABEL = "Allow";
 export const NOT_NOW_LABEL = "Not now";
 export const STOP_LABEL = "Stop";
 export const CLOSE_LABEL = "Close";
 /** Under a disarmed Allow when the command must be scrolled through first. */
 export const READ_ALL_HINT = "Read the whole command to allow it.";
+/** Under the buttons when Ember couldn't take an answer just then (another task held the mouse): they work again. */
+export const ANSWER_RETRY_HINT = "Ember couldn't take that answer just now. Try again.";
 export const UNASKED_LINE = "You didn't ask for this.";
 export const LEGEND_TOKENS = "Characters you wouldn't see are shown in ⟨ ⟩.";
 export const LEGEND_MIXED = "Letters from another alphabet are underlined.";
-export const TYPING_HINT = "Type here to answer the command. Ember never sees what you type.";
+/** Under a command with Hebrew or Arabic letters: the card draws them in the order the shell reads them (review #273). */
+export const LEGEND_RTL = "Right-to-left text is shown in the order it runs.";
+/** Under a run that takes typing: where typing goes, how to paste there (review #264), and that Ember never sees it. */
+export const typingHintFor = (os: OS) => `Type here to answer the command; paste with ${os === "darwin" ? "Command+V" : "Ctrl+V"}. Ember never sees what you type.`;
+export const TYPING_HINT = typingHintFor("linux");
 export const NO_TYPING_HINT = "This command can't take typing here.";
+/** The question when the user closes the window while commands run (review #262): "A command is still running". */
+export function closeHeading(running: number): string {
+  return running === 1 ? "A command is still running" : `${running} commands are still running`;
+}
+/** What closing does, under that heading. */
+export function closeLine(running: number): string {
+  return `Closing this window stops ${running === 1 ? "it" : "them"}. What ${running === 1 ? "it" : "they"} already changed stays.`;
+}
+export const STOP_AND_CLOSE_LABEL = "Stop and close";
+export const KEEP_OPEN_LABEL = "Keep it open";
+
+/** The button beside Stop that copies what a run's terminal shows (review #268), and what it says once it has. */
+export const COPY_OUTPUT_LABEL = "Copy output";
+export const COPIED_LABEL = "Copied";
 export const RUNNING_STATUS = "Running…";
+/** A run whose output has sat at a prompt (a password, a user name, a yes/no) for a moment (review #263). */
+export const WAITING_STATUS = "Waiting for you to type in this window.";
+/** The status line of a run that hit its time limit while it waited at such a prompt. */
+export const waitingTimeoutText = (ms: number) => `Stopped after ${durationText(ms)}: it was waiting for you to type, and took too long.`;
 
 /** How a shell is named in the header. */
 const SHELL_NAME: Readonly<Record<ShellId, string>> = { bash: "bash", zsh: "zsh", sh: "sh", powershell: "PowerShell", cmd: "cmd" };
@@ -79,11 +116,16 @@ export function outsideText(s: unknown, max: number): string {
 /** One clause of outside text, its own closing full stop dropped (also inside a closing quote: "…Ember." becomes "…Ember"). */
 const clause = (s: string | undefined) => outsideText(s, 300).replace(/[.!]+(["'”’)\]]*)$/, "$1");
 
-/** "1 program it started is still running: make." / "2 programs it started are still running: a, b." */
+/**
+ * "1 program it started is still running: make. Ask Ember to stop it, or end it yourself." / "2 programs it started
+ * are still running: a, b. Ask Ember to stop them, or end them yourself." (what to do about them: review #275).
+ */
 export function stragglerText(names: readonly string[]): string {
   if (!names.length) return "";
   const list = names.slice(0, 3).join(", ") + (names.length > 3 ? ", …" : "");
-  return names.length === 1 ? `1 program it started is still running: ${list}.` : `${names.length} programs it started are still running: ${list}.`;
+  return names.length === 1
+    ? `1 program it started is still running: ${list}. Ask Ember to stop it, or end it yourself.`
+    : `${names.length} programs it started are still running: ${list}. Ask Ember to stop them, or end them yourself.`;
 }
 
 /**
@@ -116,15 +158,31 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
   return more ? `${line} ${more}` : line;
 }
 
+/**
+ * The status line of a run the remote's own check sent back for the user's OK (§3.16, review #274): it didn't run, and
+ * the question is up; the run the user then allows takes this tab's place.
+ */
+export function reaskText(label: string): string {
+  return `Not run: ${outsideText(label, 64)}'s own check asks for your OK first.`;
+}
+
+/**
+ * The status line of a run sent back for the user's OK once no OK is coming for it (review #274): the user said Not
+ * now or let the question go, or the task was stopped while it was up.
+ */
+export function reaskEndText(why: "no" | "stopped"): string {
+  return why === "no" ? "Not run: you didn't allow it." : "Not run: the task was stopped.";
+}
+
 /** The approve keys' hint under the card (§8.5), in the PC's own labels: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now". */
 export function keyHintText(os: OS): string {
   return `${SHORTCUTS[os].allow.label} allow · ${SHORTCUTS[os].deny.label} not now`;
 }
 
 /** The hint under a run's terminal: typing goes to the command, or it can't take any; nothing once it has ended. */
-export function typingHint(t: { interactive: boolean; ended: boolean }): string {
+export function typingHint(t: { interactive: boolean; ended: boolean }, os: OS = "linux"): string {
   if (t.ended) return "";
-  return t.interactive ? TYPING_HINT : NO_TYPING_HINT;
+  return t.interactive ? typingHintFor(os) : NO_TYPING_HINT;
 }
 
 /** While a WSL distro boots for its first command (the status line). */
@@ -132,6 +190,11 @@ export const startingText = (distro: string) => `Starting ${distro}…`;
 /** A silent SSH link (the status line, counting down). */
 export const stalledText = (label: string, seconds: number) =>
   `${label} isn't answering. This command stops in ${Math.max(0, Math.ceil(seconds))} s unless the link comes back.`;
+
+/** Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269). */
+export function announceKeyText(os: OS): string {
+  return `Or press ${SHORTCUTS[os].stop.label} to stop everything.`;
+}
 
 /** The announcement's countdown: "Starts in 4 s." */
 export function countdownText(endsAt: number, now: number): string {

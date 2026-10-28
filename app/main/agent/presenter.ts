@@ -368,6 +368,8 @@ export class Presenter {
   private readonly onAnnounce?: (text: string) => void;
   /** The settings shortcut as this OS writes it, for the errors that send the user there. */
   private readonly settingsKey: string;
+  /** The stop chord's label on this OS ("Ctrl+Alt+X"), named by an announcement. */
+  private readonly stopKey: string;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
   private stalledTitle = "";
   /** The words of the latest request asked (userPrompt), until its turn begins (its user.message). */
@@ -396,6 +398,7 @@ export class Presenter {
     this.onEvent = opts.onEvent;
     this.onProblem = opts.onProblem;
     this.settingsKey = (opts.shortcuts ?? SHORTCUTS.linux).settings.label;
+    this.stopKey = (opts.shortcuts ?? SHORTCUTS.linux).stop.label;
     if (typeof opts.task === "string") this.taskId = opts.task;
     if (opts.where) this.where = opts.where;
     this.onAnnounce = opts.onAnnounce;
@@ -641,7 +644,7 @@ export class Presenter {
    * origin, as you asked.") shows now with one action, Stop (`stopId`, `ui:cmdstop:<runId>`), which stops only this
    * announcement. The command window's countdown is the authoritative Stop: this copy may wait behind a question.
    */
-  announce(text: string, stopId: string): void {
+  announce(text: string, stopId: string, ms: number = ANNOUNCE_MS): void {
     this.beforeAnnounce = { stopId, bubble: this.state.bubble };
     this.cancelHide();
     this.guiding = false;
@@ -651,7 +654,8 @@ export class Presenter {
     const where = this.where ? `${this.where.charAt(0).toUpperCase()}${this.where.slice(1)}` : "On this computer";
     this.apply({
       emotion: "focused", talking: false,
-      bubble: { visible: true, mood: "attention", title, thought: `${where}. It starts in ${Math.round(ANNOUNCE_MS / 1000)} seconds.`, step: null, streaming: false, actions: [{ id: stopId, label: "Stop" }] },
+      // The time it is given (longer while a screen reader runs) and the stop chord, also read by the live region (review #46).
+      bubble: { visible: true, mood: "attention", title, thought: `${where}. It starts in ${Math.round(ms / 1000)} seconds. ${this.stopKey} stops everything at once.`, step: null, streaming: false, actions: [{ id: stopId, label: "Stop" }] },
     }, "take");
     this.onAnnounce?.(text);
   }

@@ -6,10 +6,11 @@
  * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them.
  */
 
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow, screen } from "electron";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import type { SettingsPatch } from "./settings";
+import { placeOnDisplay, type CloseGuarded, type Placeable } from "./commands/window";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -47,11 +48,30 @@ const webPreferences = (page: string) => ({
 });
 
 /**
+ * What the command and prompt windows get to come up where the user is (review #272): the display nearest the pointer,
+ * and every workspace (over a full-screen app on macOS) while a card is up. Their controllers call these. A macOS
+ * panel (`panel`) is on every Space and over full-screen apps already (platform/compose.ts): it is left alone, as
+ * clearing it once a card goes would tie the panel to one Space.
+ */
+function placeable(win: BrowserWindow, panel = false): Placeable {
+  return {
+    placeNearUser() {
+      const to = placeOnDisplay(win.getBounds(), screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea);
+      if (to) win.setBounds(to);
+    },
+    setOnAllWorkspaces(on) {
+      if (panel) return;
+      win.setVisibleOnAllWorkspaces(on, { visibleOnFullScreen: true, skipTransformProcessType: true });
+    },
+  };
+}
+
+/**
  * The command window ("Ember commands", §3.10, §8.5): hidden until its controller shows it. macOS: a non-activating panel
  * whose first click counts (one click allows; the user's app stays active). Windows: its controller shows it inactive.
  * On Windows and macOS it is left out of screen captures too (Linux has no such switch: Perception masks it, §3.10).
  */
-export function createCommandWindow(os: OS): BrowserWindow {
+export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Placeable {
   const win = new BrowserWindow({
     width: 760,
     height: 480,
@@ -67,7 +87,19 @@ export function createCommandWindow(os: OS): BrowserWindow {
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
-  return win;
+  // Its close button asks the controller's guard first, so a command never runs on unseen (review #262). Never while
+  // Ember quits or the session ends: then nothing holds the window (a held window would stop the quit).
+  let guard: (() => boolean) | null = null;
+  let leaving = false;
+  const onLeave = () => { leaving = true; };
+  app.on("before-quit", onLeave);
+  win.on("session-end", onLeave);
+  win.on("closed", () => app.removeListener("before-quit", onLeave));
+  const keep = (): boolean => {
+    try { return !leaving && guard?.() === true; } catch { return false; } // a guard that fails never holds the window
+  };
+  win.on("close", e => { if (keep()) e.preventDefault(); });
+  return Object.assign(win, { setCloseGuard: (fn: () => boolean) => { guard = fn; } }, placeable(win, os === "darwin"));
 }
 
 /**
@@ -83,7 +115,7 @@ function closeWhenGone(win: BrowserWindow): void {
  * The prompt window ("Ember", §8.6): one small card at a time (a host key, a password, a consent card), always on top.
  * It takes focus, as it takes typing. On Windows and macOS it is left out of screen captures.
  */
-export function createPromptWindow(os: OS): BrowserWindow {
+export function createPromptWindow(os: OS): BrowserWindow & Placeable {
   const win = new BrowserWindow({
     width: 440,
     height: 300,
@@ -103,7 +135,7 @@ export function createPromptWindow(os: OS): BrowserWindow {
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
   void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
-  return win;
+  return Object.assign(win, placeable(win));
 }
 
 /**

@@ -117,7 +117,7 @@ export function setCommandJudge(j: CommandJudge | null): void {
 export const SPOKEN_LINE = "You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.";
 
 /** The card's taint line when what tainted the task was a command's own output (§3.8.4). */
-export const OUTPUT_TAINT_LINE = "I'm checking each step: an earlier command printed text that looked like instructions.";
+export const OUTPUT_TAINT_LINE = "Ember is checking each step: an earlier command printed text that looked like instructions.";
 
 /** A command service that can show its first-use commands card (§8.4.3; built by the targets runtime). */
 export interface CommandConsentSource {
@@ -217,8 +217,25 @@ function placesNamedIn(svc: CommandService, words: string, binding: TargetBindin
   return got.filter(p => !said.has(normalName(p)));
 }
 
-/** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7). */
+/** How long an announced command waits for the user's Stop before it runs (D4.4, §3.7), unless the window says longer. */
 export const ANNOUNCE_MS = 4000;
+/** The longest countdown a command window may ask for. */
+const ANNOUNCE_MAX_MS = 60_000;
+
+/**
+ * How long an announcement counts down: what the command window says (UI's announceMs: longer while a screen reader
+ * runs, review #46), never less than ANNOUNCE_MS nor more than a minute; ANNOUNCE_MS when it doesn't say.
+ */
+function announceTime(w: CommandService["window"]): number {
+  const ask = (w as CommandService["window"] & { announceMs?: (base: number) => unknown }).announceMs;
+  if (typeof ask !== "function") return ANNOUNCE_MS;
+  try {
+    const ms = ask.call(w, ANNOUNCE_MS);
+    return typeof ms === "number" && Number.isFinite(ms) && ms >= ANNOUNCE_MS && ms <= ANNOUNCE_MAX_MS ? ms : ANNOUNCE_MS;
+  } catch {
+    return ANNOUNCE_MS; // a window that can't say: the usual time
+  }
+}
 /** Runs one target runs at once; a fourth waits for a slot, honouring its task's stop (§3.8.3). */
 export const MAX_RUNS_PER_TARGET = 3;
 /** A run_command call's default time limit (§3.13), and its longest. */
@@ -253,7 +270,7 @@ export const CARD_LINES = {
   adminAsk: "Your organisation asks you to approve every command.",
   userAsk: "You asked Ember to check every command with you.",
   tool: "Podman uses this distro: Ember asks before every command here.",
-  tainted: "I'm checking each step: a step came up that you didn't ask for.",
+  tainted: "Ember is checking each step: a step came up that you didn't ask for.",
   carried: (places: string[]) => `This command may carry text Ember read in ${listOf(places)}.`,
 } as const;
 
@@ -737,6 +754,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   const card = (cardMode: CommandCard["mode"], says: string[]): CommandCard => ({
     runId, target, targetLabel: binding.label, ...(binding.login ? { login: binding.login } : {}), shell, cwd, command: a.command, sha256, taskId: task,
     taskTitle: ctx.task.title, mode: cardMode, says, unasked: cardMode === "ask" && d.unasked, armMs: d.armMs,
+    ...(cardMode !== "run" && d.classes.length ? { classes: d.classes } : {}),
   });
   /** Asks with the command card; "once", "no" (said no or let it expire) or "stopped". */
   const askCard = async (says: string[], q: string, prompt = `On ${place}: ${firstLine(says)}`): Promise<"once" | "no" | "stopped"> => {
@@ -771,10 +789,11 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     // Step 11: an announcement with its Stop window (D4.4).
     if (d.verdict === "announce" && d.requested) {
       const stopId = `ui:cmdstop:${runId}`;
-      ctx.presenter.announce(d.requested.announce, stopId);
+      const ms = announceTime(svc.window);
+      ctx.presenter.announce(d.requested.announce, stopId, ms);
       let go = false;
       try {
-        go = await svc.window.announce(card("announce", [...d.says, why]), ANNOUNCE_MS, ctx.signal);
+        go = await svc.window.announce(card("announce", [...d.says, why]), ms, ctx.signal);
       } catch (err) {
         ctx.log.warn("commands.announce_failed", { task, err });
       } finally {
@@ -810,8 +829,14 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         const own = [`${binding.label}'s own check also found:`, ...theirs];
         const at = d.says.findIndex(l => l === LINES.unasked || l === LINES.windows);
         const lines = at < 0 ? [...d.says, ...own] : [...d.says.slice(0, at), ...own, ...d.says.slice(at)];
-        const answer = await askCard(lines, "remote",
-          `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
+        let answer: "once" | "no" | "stopped" = "stopped";
+        try {
+          answer = await askCard(lines, "remote",
+            `On ${place}: ${d.says.length ? firstLine(d.says) : `${binding.label}'s own check wants your OK first.`}`);
+        } finally {
+          // No OK is coming: the sent-back run's tab says so instead of waiting for one (review #274).
+          if (answer !== "once") reaskEnded(svc, runId, answer);
+        }
         if (answer === "stopped") return STOPPED();
         if (answer === "no") return denied(SAID_NO);
         approvedAt = performance.now();
@@ -821,6 +846,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         continue;
       }
       if (exit.ended === "lost") factsCache.delete(ctx.state);
+      // The retry sent back too: that is the remote's refusal, and its tab says so (review #274).
+      if (exit.ended === "refused-remote" && exit.needsConfirm) reaskEnded(svc, runId, "refused");
       if (exit.ended === "refused-remote") return resultOf(exit, "", { label: binding.label, timeoutS, redact: j.redactSecrets });
       return finishRun(ctx, j, run, { cls, label: binding.label, shell, timeoutS, runId });
     }
@@ -912,6 +939,8 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
   }
   // What the runner says while the run starts ("Starting Ubuntu…": a WSL distro that has to boot) shows on its tab.
   const offStatus = followStatus(svc, o.runId);
+  // A run waiting at a prompt for the user's typing says so in the task's bubble too (review #263).
+  const offWaiting = followWaiting(svc, o.runId, ctx.presenter);
   // The task's stop stops the run; the tool returns once it ended, or STOP_GRACE_MS later whatever the runner does.
   let onStop = () => undefined as void;
   const stopped = new Promise<RunExit | null>(resolve => {
@@ -935,6 +964,58 @@ async function runOnce(ctx: CommandFlowContext, j: CommandJudge, o: {
     ctx.signal.removeEventListener("abort", onStop);
     unsubscribe();
     offStatus();
+    offWaiting();
+  }
+}
+
+/**
+ * Tells the command window (UI's reaskEnded) that no OK is coming for run `runId`, which the remote's own check sent back
+ * for one; nothing when the window doesn't have it.
+ */
+function reaskEnded(svc: CommandService, runId: string, why: "no" | "stopped" | "refused"): void {
+  const w = svc.window as CommandService["window"] & { reaskEnded?: (runId: string, why: "no" | "stopped" | "refused") => void };
+  if (typeof w.reaskEnded !== "function") return;
+  try { w.reaskEnded(runId, why); } catch { /* its tab only says it less well */ }
+}
+
+/** The task's bubble while its command waits at a prompt for the user to type (review #263). */
+export const WAITING_BUBBLE = "A command is waiting for you to type in the command window.";
+/** The task's bubble after the wait, when it said nothing before it. */
+export const RUNNING_BUBBLE = "The command is running.";
+
+/**
+ * The command window's word that run `runId` waits for the user's typing (UI's onWaiting), said in the task's bubble;
+ * nothing when the window doesn't have it. Once the run stops waiting (the user typed, or it ended), the bubble says
+ * again what it said before, unless something newer has replaced the waiting line since. Returns the unsubscribe.
+ */
+function followWaiting(svc: CommandService, runId: string, presenter: Presenter): () => void {
+  const window = svc.window as CommandService["window"] & { onWaiting?: (fn: (runId: string, waiting: boolean) => void) => () => void };
+  if (typeof window.onWaiting !== "function") return () => undefined;
+  const thought = (): string | null => {
+    try { const t = (presenter as Partial<Pick<Presenter, "bubble">>).bubble?.thought; return typeof t === "string" ? t : null; } catch { return null; }
+  };
+  /** What the bubble said before the waiting line, while it shows that line. */
+  let before: string | null = null;
+  const restore = (): void => {
+    if (before === null) return;
+    const back = before;
+    before = null;
+    if (thought() !== WAITING_BUBBLE) return; // something newer is in the bubble: it stays
+    try { presenter.progress(back.trim() ? back : RUNNING_BUBBLE); } catch { /* the bubble is only a pointer */ }
+  };
+  try {
+    const off = window.onWaiting((id, waiting) => {
+      if (id !== runId) return;
+      if (!waiting) { restore(); return; }
+      if (before === null) { const t = thought(); before = t !== null && t !== WAITING_BUBBLE ? t : ""; }
+      try { presenter.progress(WAITING_BUBBLE); } catch { /* the bubble is only a pointer: the window says it too */ }
+    });
+    return () => {
+      try { off(); } catch { /* already gone */ }
+      restore();
+    };
+  } catch {
+    return () => undefined;
   }
 }
 

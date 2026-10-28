@@ -95,7 +95,7 @@ describe("the command window's channels", () => {
     ctl.show();
     refusals.length = 0;
     const channels = [...ons.keys(), ...handles.keys()];
-    expect(channels.sort()).toEqual([COMMANDS_IPC.answer, COMMANDS_IPC.cardSeen, COMMANDS_IPC.close, COMMANDS_IPC.input, COMMANDS_EXTRA_IPC.size, COMMANDS_IPC.state, COMMANDS_IPC.stop].sort());
+    expect(channels.sort()).toEqual([COMMANDS_IPC.answer, COMMANDS_IPC.cardSeen, COMMANDS_IPC.close, COMMANDS_IPC.input, COMMANDS_EXTRA_IPC.size, COMMANDS_EXTRA_IPC.closeWindow, COMMANDS_IPC.state, COMMANDS_IPC.stop].sort());
     for (const c of channels) deliver(c, home, {});
     expect(refusals.sort()).toEqual(channels.sort());
     expect(ctl.owns(home)).toBe(false);
@@ -132,7 +132,7 @@ describe("each preload bridges only its own window's channels", () => {
     const used = await channelsOf("../../app/preload/command", "emberCommands");
     expect(used.length).toBeGreaterThan(0);
     for (const c of used) expect(c).toMatch(/^commands:/);
-    expect(new Set(used)).toEqual(new Set([...Object.values(COMMANDS_IPC), COMMANDS_EXTRA_IPC.size]));
+    expect(new Set(used)).toEqual(new Set([...Object.values(COMMANDS_IPC), ...Object.values(COMMANDS_EXTRA_IPC)]));
   });
 
   it("the prompt window's: prompt:* only", async () => {

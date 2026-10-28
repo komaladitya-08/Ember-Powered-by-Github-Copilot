@@ -505,3 +505,24 @@ describe("the classifier's speed", () => {
     });
   }
 });
+
+describe("the card's words from the classifier (review #214)", () => {
+  const says = (cmd: string, shell: ShellId = "bash", ctx: Parameters<typeof contextOf>[0] = "linux") => classifyCommand(cmd, shell, contextOf(ctx)).findings.map(f => f.says);
+
+  it("never names a tool or gives the model advice: an app window says what to do instead", () => {
+    for (const [cmd, shell, ctx] of [["gedit notes.txt", "bash", "linux"], ["firefox https://example.com", "bash", "linux"], ["notepad", "powershell", "win32"], ["regedit", "powershell", "win32"], ["Get-Process | Out-GridView", "powershell", "win32"]] as const) {
+      const lines = says(cmd, shell, ctx);
+      expect(lines, cmd).toContain("This opens an app window, which Ember can do itself without a command. Say no and ask Ember to open it.");
+      for (const l of lines) expect(l, cmd).not.toMatch(/open_app|[a-z]+_[a-z]+\b|\binstead\.$/);
+    }
+  });
+
+  it("says what Ember can't tell in plain words", () => {
+    expect(says("ls $(pwd)")).toContain("Ember can't tell which arguments ls gets.");
+    expect(says("echo $\"hi\"")).toContain("It uses locale-translated text ($\"…\"), which Ember can't check.");
+    expect(says("$ExecutionContext.InvokeCommand.InvokeScript('ls')", "powershell", "win32")).toContain("It uses PowerShell's $ExecutionContext, which Ember can't follow.");
+    expect(says("^d^e^l x.txt", "cmd", "win32")).toContain("It hides the program's name with ^ characters, so Ember can't tell what runs.");
+    const all = [...says("ls $(pwd)"), ...says("echo $\"hi\""), ...says("^d^e^l x.txt", "cmd", "win32")];
+    for (const l of all) expect(l).not.toMatch(/is given\.|a translated string|\^ escapes/);
+  });
+});

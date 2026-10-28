@@ -9,6 +9,8 @@ import { HOST_OS } from "../../app/main/platform/os";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS } from "../../app/shared/never-look";
 import { IDLE_BUBBLE, type BubbleState, type TaskCard } from "../../app/shared/overlay";
 import * as commandCopy from "../../app/renderer/command/copy";
+import { LINES } from "../../app/main/commands/decide";
+import { CARD_LINES, OUTPUT_TAINT_LINE, WAITING_BUBBLE } from "../../app/main/commands/flow";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
 import { targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
@@ -235,7 +237,7 @@ describe("What Ember did, review round 11", () => {
 const NEW_STRINGS: string[] = [];
 const keep = <T extends string>(s: T): T => { NEW_STRINGS.push(s); return s; };
 /** Words that keep their capital inside a sentence. */
-const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
+const PROPER = /^(Ember|Ember's|WSL|SSH|GitHub|Copilot|PowerShell|Windows|Windows'|Linux|Ubuntu|Ubuntu's|Mac|Mac's|Desktop|Documents|Downloads|System|Settings|General|Sharing|Remote|Login|Podman|Stop|Allow|Ctrl\+Alt\+X\.?|Win\+Alt\+X\.?|Control\+Shift\+Command\+X\.?|Ctrl\+Alt\+Y|Ctrl\+Alt\+N|Ctrl\+V\.?|Command\+V\.?|U\+[0-9A-F]+|I|I'll|OK|SHA256:abc|RLO|ZWSP|NBSP|ⓘ\)?\.?)$/;
 
 describe("the command window's words (§8.5)", () => {
   const exit = (e: Partial<Parameters<typeof commandCopy.statusLine>[0]>) => ({ code: 0, signal: null, ended: "exit" as const, ms: 3200, ...e });
@@ -245,11 +247,28 @@ describe("the command window's words (§8.5)", () => {
     expect(keep(commandCopy.WINDOW_TITLE)).toBe("Ember commands");
     expect(keep(commandCopy.EMPTY_TEXT)).toBe("No commands yet.");
     expect(keep(commandCopy.ASK_HEADING)).toBe("Ember wants to run this command");
-    expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("Running this, as you asked");
+    expect(keep(commandCopy.askHeading({ target: "local", targetLabel: "This computer" }))).toBe("Ember wants to run this command");
+    expect(keep(commandCopy.askHeading({ target: "ssh:build-01", targetLabel: "build-01" }))).toBe("Ember wants to run this command on build-01");
+    expect(keep(commandCopy.askHeading({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe("Ember wants to run this command in Ubuntu (WSL)");
+    expect(commandCopy.isRiskyCard({ classes: ["destroy"] })).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: ["remote-delete", "publish"] })).toBe(true);
+    expect(commandCopy.isRiskyCard({ classes: ["publish"] })).toBe(false);
+    expect(commandCopy.isRiskyCard({})).toBe(false);
+    expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
+    expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
+    expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
+    expect(keep(commandCopy.announceKeyText("darwin"))).toBe("Or press Control+Shift+Command+X to stop everything.");
     expect([commandCopy.ALLOW_LABEL, commandCopy.NOT_NOW_LABEL, commandCopy.STOP_LABEL, commandCopy.CLOSE_LABEL].map(keep)).toEqual(["Allow", "Not now", "Stop", "Close"]);
     expect(keep(commandCopy.READ_ALL_HINT)).toBe("Read the whole command to allow it.");
+    expect(keep(commandCopy.ANSWER_RETRY_HINT)).toBe("Ember couldn't take that answer just now. Try again.");
+    expect(keep(commandCopy.closeHeading(1))).toBe("A command is still running");
+    expect(keep(commandCopy.closeHeading(2))).toBe("2 commands are still running");
+    expect(keep(commandCopy.closeLine(1))).toBe("Closing this window stops it. What it already changed stays.");
+    expect(keep(commandCopy.closeLine(3))).toBe("Closing this window stops them. What they already changed stays.");
+    expect([commandCopy.STOP_AND_CLOSE_LABEL, commandCopy.KEEP_OPEN_LABEL].map(keep)).toEqual(["Stop and close", "Keep it open"]);
     expect(keep(commandCopy.LEGEND_TOKENS)).toBe("Characters you wouldn't see are shown in ⟨ ⟩.");
     expect(keep(commandCopy.LEGEND_MIXED)).toBe("Letters from another alphabet are underlined.");
+    expect(keep(commandCopy.LEGEND_RTL)).toBe("Right-to-left text is shown in the order it runs.");
     expect(keep(commandCopy.countdownText(10_000, 6_000))).toBe("Starts in 4 s.");
     expect(commandCopy.countdownText(10_000, 9_001)).toBe("Starts in 1 s.");
     expect(commandCopy.countdownText(10_000, 12_000)).toBe("Starts in 0 s.");
@@ -264,6 +283,9 @@ describe("the command window's words (§8.5)", () => {
 
   it("says how a run ended in its status line", () => {
     expect(keep(commandCopy.RUNNING_STATUS)).toBe("Running…");
+    expect(keep(commandCopy.WAITING_STATUS)).toBe("Waiting for you to type in this window.");
+    expect(keep(commandCopy.waitingTimeoutText(120_000))).toBe("Stopped after 2 min: it was waiting for you to type, and took too long.");
+    expect(keep(WAITING_BUBBLE)).toBe("A command is waiting for you to type in the command window.");
     expect(say({ ms: 3200 })).toBe("Finished in 3.2 s.");
     expect(say({ code: 2, ms: 1100 })).toBe("Ended with exit code 2 after 1.1 s.");
     expect(say({ ended: "stopped-user", code: null, ms: 12_000 })).toBe("You stopped it after 12 s. What it already changed stays.");
@@ -276,15 +298,21 @@ describe("the command window's words (§8.5)", () => {
     expect(say({ ended: "refused-remote", code: null, error: "it said \"no commands.\"" })).toBe("build-01 refused it: it said \"no commands\".");
     expect(say({ ended: "stopped-task", code: null, ms: 900 })).toBe("Stopped with its task after 0.9 s. What it already changed stays.");
     expect(say({ ended: "exit", code: null, signal: "SIGKILL", ms: 61_000 })).toBe("Ended by SIGKILL after 1 min 1 s.");
-    expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make.");
-    expect(keep(commandCopy.stragglerText(["a", "b"]))).toBe("2 programs it started are still running: a, b.");
+    expect(say({ ms: 500, ...{ stragglers: ["make"] } } as never)).toBe("Finished in 0.5 s. 1 program it started is still running: make. Ask Ember to stop it, or end it yourself.");
+    expect(keep(commandCopy.stragglerText(["a", "b"]))).toBe("2 programs it started are still running: a, b. Ask Ember to stop them, or end them yourself.");
+    expect(keep(commandCopy.reaskText("build-01"))).toBe("Not run: build-01's own check asks for your OK first.");
+    expect(keep(commandCopy.reaskEndText("no"))).toBe("Not run: you didn't allow it.");
+    expect(keep(commandCopy.reaskEndText("stopped"))).toBe("Not run: the task was stopped.");
     expect(commandCopy.durationText(9_960)).toBe("10 s");
     expect(commandCopy.durationText(59_600)).toBe("1 min");
     expect(commandCopy.durationText(2_000)).toBe("2 s");
   });
 
   it("says whether typing reaches the command, and what it waits for", () => {
-    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }))).toBe("Type here to answer the command. Ember never sees what you type.");
+    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }))).toBe("Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.");
+    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }, "win32"))).toBe("Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.");
+    expect(keep(commandCopy.typingHint({ interactive: true, ended: false }, "darwin"))).toBe("Type here to answer the command; paste with Command+V. Ember never sees what you type.");
+    expect([commandCopy.COPY_OUTPUT_LABEL, commandCopy.COPIED_LABEL].map(keep)).toEqual(["Copy output", "Copied"]);
     expect(keep(commandCopy.typingHint({ interactive: false, ended: false }))).toBe("This command can't take typing here.");
     expect(commandCopy.typingHint({ interactive: true, ended: true })).toBe("");
     expect(keep(commandCopy.startingText("Ubuntu"))).toBe("Starting Ubuntu…");
@@ -295,6 +323,14 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.tabLabel("git status")).toBe("git status");
     expect(commandCopy.tabLabel("x".repeat(41))).toBe(`${"x".repeat(40)}…`);
     expect(commandCopy.tabLabel("make\n  test")).toBe("make test");
+  });
+
+  it("speaks of Ember in the third person on every fixed line of the card (bubbles are first person, the card isn't)", () => {
+    const lines: string[] = [...Object.values(LINES), ...Object.values(CARD_LINES as Record<string, unknown>).filter((l): l is string => typeof l === "string"), OUTPUT_TAINT_LINE];
+    for (const l of lines) expect(l, l).not.toMatch(/(^|\s)I('m|'ll|'ve|'d)?\s/);
+    expect(keep(LINES.tainted)).toBe("Ember is checking each step: a step came up that you didn't ask for.");
+    expect(CARD_LINES.tainted).toBe(LINES.tainted);
+    expect(keep(OUTPUT_TAINT_LINE)).toBe("Ember is checking each step: an earlier command printed text that looked like instructions.");
   });
 
   it("puts \"You didn't ask for this.\" where §3.8.4 puts it, and the model's reason apart", () => {

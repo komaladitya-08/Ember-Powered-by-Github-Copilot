@@ -17,6 +17,7 @@
 import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
+import { roleWord } from "../../shared/role-words";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
 import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
@@ -1527,8 +1528,9 @@ const UNNAMED: Record<string, string> = { text: "text area", "document text": "d
 
 function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.linux): string {
   const cell = !!r.element && isSheetCell(r.element);
-  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on ${quote(r.place.name, 40)} ${r.place.role}`;
-  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}${r.element.withheld ? "" : place}`;
+  // Controls are called by the plain words the activity list uses ("the “Save” button", not "“Save” push button").
+  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${roleWord(r.place.role)}`;
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `the ${quote(r.element.name)} ${roleWord(r.element.role)}` : `the ${UNNAMED[r.element.role] ?? roleWord(r.element.role)}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";
@@ -1539,7 +1541,12 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
   const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
   switch (r.kind) {
     case "click": return `Click ${el}${where}${desk}?`;
-    case "toggle": return `Switch ${el}${where}${desk}?`;
+    // Which way it goes, in words that fit the control: "Turn on the “Night Light” switch", "Tick the “Bold” checkbox".
+    case "toggle": {
+      const box = r.element?.role === "check box";
+      const verb = r.value === "on" ? (box ? "Tick" : "Turn on") : r.value === "off" ? (box ? "Untick" : "Turn off") : "Flip";
+      return `${verb} ${el}${where}${desk}?`;
+    }
     case "text": return `${typed.charAt(0).toUpperCase()}${typed.slice(1)}`;
     case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}${desk}?`;
     case "value": return `Set ${el} to ${quote(r.value ?? "", 40)}${where}${desk}?`;

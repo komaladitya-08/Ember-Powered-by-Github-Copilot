@@ -582,7 +582,7 @@ class Parser {
       return { segs: [{ t: "lit", s: decoded, q: true }], subs: [], quoted: true };
     }
     if (n === "\"" && !inDq) {
-      this.note("locale-string", "It uses a translated string.");
+      this.note("locale-string", "It uses locale-translated text ($\"…\"), which Ember can't check.");
       this.i++;
       const segs: Seg[] = [];
       const subs: PList[] = [];

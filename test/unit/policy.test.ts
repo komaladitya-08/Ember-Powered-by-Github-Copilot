@@ -48,12 +48,12 @@ describe("PolicyEngine", () => {
   it("always asks for risky clicks, even with a grant", () => {
     const d = engine({ mousepad: "act" }).decide(req({ element: { role: "push button", name: "Delete" } }));
     expect(d).toMatchObject({ verdict: "confirm", tier: "confirm", risky: true });
-    expect(d.prompt).toBe("Click “Delete” push button in Mousepad?");
+    expect(d.prompt).toBe("Click the “Delete” button in Mousepad?");
   });
 
   it("builds the prompt from the request, not from model text", () => {
     const d = engine().decide(req({ kind: "text", element: { role: "text", name: "Subject" }, value: "Hello" }));
-    expect(d.prompt).toBe("Let me work in Mousepad? First step: type “Hello” into “Subject” text.");
+    expect(d.prompt).toBe("Let me work in Mousepad? First step: type “Hello” into the “Subject” text field.");
   });
 
   it("runs tier-0 settings and app launches without asking", () => {
@@ -107,7 +107,7 @@ describe("policy: review fixes (screen text can't hide risk)", () => {
   it("Enter on a focused risky button is a click on it, and destructive shortcuts are asked about on the desk too", () => {
     const keys = (value: string, element?: { role: string; name: string }, onDesk = false) =>
       e.decide({ taskId: "k", kind: "keys", app: "Files", window: "Home", element, value, onDesk, goal: "tidy my downloads" });
-    expect(keys("Return", { role: "push button", name: "Delete all" }).prompt).toMatch(/press Enter on “Delete all” push button/);
+    expect(keys("Return", { role: "push button", name: "Delete all" }).prompt).toMatch(/press Enter on the “Delete all” button/);
     expect(keys("Return", { role: "push button", name: "Delete all" }).aligned).toBe(false);
     expect(keys("shift+Delete", undefined, true).verdict).toBe("confirm");
     expect(keys("ctrl+Return", { role: "text", name: "Message" }, true).verdict).toBe("confirm");
@@ -170,7 +170,7 @@ describe("policy: review round 2", () => {
   });
   it("the risky verb must be asked for, and what it acts on named: “Send money to Bob” isn't “send the report to Ana” (SEC8-1)", () => {
     const other = e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "send the report to Ana" });
-    expect(other).toMatchObject({ verdict: "confirm", risky: true, aligned: false, prompt: "Click “Send money to Bob” push button in Firefox? You didn't ask for this, so say no if it looks wrong." });
+    expect(other).toMatchObject({ verdict: "confirm", risky: true, aligned: false, prompt: "Click the “Send money to Bob” button in Firefox? You didn't ask for this, so say no if it looks wrong." });
     expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Mail", element: { role: "push button", name: "Send report" }, goal: "send the report to Ana" }).aligned).toBeUndefined();
     // A verb the user didn't ask for still is.
     expect(e.decide({ taskId: "a", kind: "click", app: "Firefox", window: "Bank", element: { role: "push button", name: "Send money to Bob" }, goal: "check my balance" }).aligned).toBe(false);
@@ -305,7 +305,7 @@ describe("policy: review round 3", () => {
 
   it("the question about answering a dialog says what it asks, also on the desk", () => {
     const d = e.decide({ taskId: "q", kind: "click", app: "Files", window: "Files", element: { role: "push button", name: "OK" }, dialog: { name: "Confirm", text: "Delete all 2,341\nmessages?" }, onDesk: true, goal: "delete my old messages" });
-    expect(d.prompt).toBe("Click “OK” push button in Files on my desk? It says: “Delete all 2,341 messages?”.");
+    expect(d.prompt).toBe("Click the “OK” button in Files on my desk? It says: “Delete all 2,341 messages?”.");
   });
 
   it("whether a risky word was asked for is judged in every language", () => {
@@ -470,8 +470,8 @@ describe("policy: review round 4", () => {
       e.decide({ taskId: "x", kind: "text", app: "Firefox", window: "Survey", windowId: { pid: 7, path: SURVEY.path, role: "frame" }, element: { role: "entry", name: "Comments" }, value: "84,000 EUR", mode: "replace", goal: "fill in the survey", readFrom, onDesk, ...o });
     const typed = act({}, [SURVEY, MAIL]);
     expect(typed).toMatchObject({ verdict: "confirm", risky: true, remember: false });
-    expect(typed.prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
-    expect(act({}, [MAIL], true).prompt).toBe("Type “84,000 EUR” into “Comments” entry in Firefox on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
+    expect(typed.prompt).toBe("Type “84,000 EUR” into the “Comments” text field in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
+    expect(act({}, [MAIL], true).prompt).toBe("Type “84,000 EUR” into the “Comments” text field in Firefox on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.");
     // A paste can carry anything: asked once another window was read.
     for (const o of [{ kind: "click" as const, element: { role: "menu item", name: "Paste" } }, { kind: "click" as const, element: { role: "menu item", name: "Einfügen" } }]) {
       expect(act(o, [MAIL]).verdict, o.element.name).toBe("confirm");
@@ -696,8 +696,8 @@ describe("policy: review round 5", () => {
     // (A page's button: a switch in Settings is asked about every time, review #111.)
     const d = fresh.decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "push button", name: "Displays" } });
     expect(d).toMatchObject({ verdict: "confirm", needsGrant: true, reason: "first action in Settings" });
-    expect(d.prompt).toBe("Let me work in Settings? First step: click “Displays” push button.");
-    expect(fresh.decide({ taskId: "f", kind: "click", app: "soffice.bin", window: "report.odt", element: { role: "push button", name: "Delete" } }).prompt).toBe("Click “Delete” push button in LibreOffice?");
+    expect(d.prompt).toBe("Let me work in Settings? First step: click the “Displays” button.");
+    expect(fresh.decide({ taskId: "f", kind: "click", app: "soffice.bin", window: "report.odt", element: { role: "push button", name: "Delete" } }).prompt).toBe("Click the “Delete” button in LibreOffice?");
     expect(e({ "gnome-control-center": "act" }).decide({ taskId: "f", kind: "click", app: "gnome-control-center", window: "Settings", element: { role: "push button", name: "Displays" } }))
       .toMatchObject({ verdict: "allow", reason: "Ember may act in Settings" });
   });
@@ -1053,7 +1053,7 @@ describe("policy: review round 8", () => {
     expect(alignedWithGoal(goal, label)).toBe(true);
   });
 
-  it("dialog OKs are judged by their verb, and a “…” menu item isn't risky in itself (W7-1 kept)", () => {
+  it("dialog OKs are judged by their verb, and a the “…” menu item isn't risky in itself (W7-1 kept)", () => {
     const ok = e.decide({ taskId: "o", kind: "click", app: "nautilus", window: "Files", element: { role: "push button", name: "OK" }, dialog: { name: "", text: "Delete all 2,341 messages? This cannot be undone." }, goal: "delete my old messages" });
     expect(ok).toMatchObject({ verdict: "confirm", risky: true });
     expect(ok.aligned).toBeUndefined();
@@ -1166,7 +1166,7 @@ describe("policy: review round 8", () => {
         expect(enter(role, keys), `${role} ${keys}`).toMatchObject({ verdict: "confirm", reason: "Enter in a text field can send or submit what is in it" });
       }
     }
-    expect(enter("entry").prompt).toBe("Press Enter on “Message” entry in Firefox on my desk? Enter there may send or submit it.");
+    expect(enter("entry").prompt).toBe("Press Enter on the “Message” text field in Firefox on my desk? Enter there may send or submit it.");
     // Space types a space; Enter in a spreadsheet's cell enters what was typed; a button's harmless Enter stays a click.
     expect(enter("entry", "space").verdict).toBe("allow");
     expect(enter("table cell", "Return", { element: { role: "table cell", name: "B4" } }).verdict).toBe("allow");
@@ -1179,7 +1179,7 @@ describe("policy: review round 8", () => {
 
   it("the first step in an app also carries its plain question, for an app the user already allowed (W8-4)", () => {
     const d = new PolicyEngine({ neverLook: () => [], grants: () => ({}) }).decide({ taskId: "g", kind: "click", app: "mousepad", window: "notes", element: { role: "push button", name: "Bold" } });
-    expect(d).toMatchObject({ prompt: "Let me work in Mousepad? First step: click “Bold” push button.", stepPrompt: "Click “Bold” push button in Mousepad?" });
+    expect(d).toMatchObject({ prompt: "Let me work in Mousepad? First step: click the “Bold” button.", stepPrompt: "Click the “Bold” button in Mousepad?" });
   });
 
   it.each([["sign up for the newsletter", "Subscribe"], ["write back to Ana saying thanks", "Send"], ["write back to Ana", "Reply"], ["put the settings back to default", "Reset to Defaults"],
@@ -1228,9 +1228,9 @@ describe("policy: review round 9", () => {
     expect(keys({ afterSelectAll: true, currentText: "short", selection: "short" }).verdict).toBe("allow");
     const type = (kind: "text" | "cursor_text", onDesk: boolean) => e.decide({ taskId: "t", kind, app: "electron", window: "Compose", element: { role: "entry", name: "Notes" },
       value: "hello", mode: "replace", currentText: "\ufffc\ufffc", goal: "fix the typo", onDesk });
-    expect(type("cursor_text", true)).toMatchObject({ verdict: "confirm", prompt: "Replace the text in “Notes” entry in Electron with “hello” on my desk? It holds more than I can read, so this may replace a lot." });
+    expect(type("cursor_text", true)).toMatchObject({ verdict: "confirm", prompt: "Replace the text in the “Notes” text field in Electron with “hello” on my desk? It holds more than I can read, so this may replace a lot." });
     expect(type("text", false).verdict).toBe("confirm");
-    expect(type("cursor_text", false).prompt).toMatch(/^Borrow your mouse and keyboard to replace the text in “Notes” entry in Electron with “hello”\? It holds more than I can read/);
+    expect(type("cursor_text", false).prompt).toMatch(/^Borrow your mouse and keyboard to replace the text in the “Notes” text field in Electron with “hello”\? It holds more than I can read/);
   });
 
   it("a formula that names another file by a relative path, or a localized outside function, reaches out (W9-SEC3)", () => {
@@ -1377,7 +1377,7 @@ describe("policy: review round 10", () => {
       }
       expect(inDialog(dialog, { element: button("OK"), goal: "set the macro security to medium" }).aligned, dialog.name).toBeUndefined();
     }
-    expect(inDialog(MACRO, { element: button("OK"), onDesk: true }).prompt).toMatch(/^Click “OK” push button in LibreOffice on my desk\? It applies what is set in “Macro Security”\. You didn't ask for this/);
+    expect(inDialog(MACRO, { element: button("OK"), onDesk: true }).prompt).toMatch(/^Click the “OK” button in LibreOffice on my desk\? It applies what is set in “Macro Security”\. You didn't ask for this/);
   });
 
   it("any other dialog's OK is asked too, but for one that only formats the document (SEC10-1, DSK9-3)", () => {
@@ -1675,10 +1675,10 @@ describe("policy: review round 11", () => {
 describe("questions about an element without a name (live retest: 'Borrow your mouse to click the Icon in Mousepad?')", () => {
   it("say where it is: the named control it sits on, or its place in the window", () => {
     const icon = { role: "icon", name: "" };
-    expect(plainQuestion(req({ kind: "cursor_click", element: icon, place: { role: "push button", name: "Save" } }))).toBe("Borrow your mouse to click the icon on “Save” push button in Mousepad?");
+    expect(plainQuestion(req({ kind: "cursor_click", element: icon, place: { role: "push button", name: "Save" } }))).toBe("Borrow your mouse to click the icon on the “Save” button in Mousepad?");
     expect(plainQuestion(req({ kind: "cursor_click", element: icon, place: { at: "top right" } }))).toBe("Borrow your mouse to click the icon at the top right of the window in Mousepad?");
     // A named element, or one whose name was withheld, says nothing more.
-    expect(plainQuestion(req({ kind: "click", element: { role: "push button", name: "Open" }, place: { at: "top right" } }))).toBe("Click “Open” push button in Mousepad?");
+    expect(plainQuestion(req({ kind: "click", element: { role: "push button", name: "Open" }, place: { at: "top right" } }))).toBe("Click the “Open” button in Mousepad?");
     expect(plainQuestion(req({ kind: "click", element: { role: "icon", name: "", withheld: true }, place: { role: "push button", name: "x" } }))).toBe("Click the icon in Mousepad?");
   });
   it("an unnamed text area isn't 'the text in the text'", () => {

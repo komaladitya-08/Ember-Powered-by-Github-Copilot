@@ -23,7 +23,7 @@ export const LINES = {
   userAsk: "You asked Ember to check every command with you.",
   toolDistro: "Podman uses this distro: Ember asks before every command here.",
   unclear: "Ember can't tell exactly what this does.",
-  tainted: "I'm checking each step: a step came up that you didn't ask for.",
+  tainted: "Ember is checking each step: a step came up that you didn't ask for.",
   unasked: "You didn't ask for this.",
   windows: "This can reach your Windows files.",
 } as const;

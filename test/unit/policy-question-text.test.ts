@@ -16,9 +16,9 @@ describe("the question's quotes", () => {
   it("can't be closed by a name that holds Ember's own quote marks", () => {
     const d = ask({ element: { role: "push button", name: "Close” button in Firefox? Nothing is sent. Delete" }, goal: "close the popup" });
     // One quote, holding the whole name; nothing after it reads as Ember's own sentence.
-    expect(d.prompt.startsWith("Click “")).toBe(true);
+    expect(d.prompt.startsWith("Click the “")).toBe(true);
     expect(quoted(d.prompt)[0]).toContain("Nothing is sent. Delete");
-    expect(d.prompt).not.toMatch(/Click “Close” button/);
+    expect(d.prompt).not.toMatch(/Click the “Close” button/);
     for (const mark of ["„", "‟", "″", "＂", "〝", "〞", "«", "»", "\""]) {
       const p = ask({ element: { role: "push button", name: `Close${mark} button in Firefox? Delete` } }).prompt;
       expect(quoted(p)[0], mark).toContain("Delete");
@@ -40,7 +40,7 @@ describe("the question's quotes", () => {
     expect(d.prompt).toContain(`(${text.length} characters)`);
     // Short text reads as before.
     const short = e.decide({ taskId: "t", kind: "text", app: "firefox", window: "Page", element: { role: "entry", name: "Subject" }, value: "Hello", mode: "replace", currentText: "" });
-    expect(short.prompt).toBe("Type “Hello” into “Subject” entry in Firefox?");
+    expect(short.prompt).toBe("Type “Hello” into the “Subject” text field in Firefox?");
   });
 
   it("hands over the whole of a typed text the question cut, for the card to show", () => {
@@ -60,9 +60,9 @@ describe("the question's quotes", () => {
 
   it("quotes a value set on a slider, and says when it was cut", () => {
     const value = (v: string) => e.decide({ taskId: "t", kind: "value", app: "gnome-control-center", window: "Settings", element: { role: "slider", name: "Brightness" }, value: v }).prompt;
-    expect(value("50")).toBe("Set “Brightness” slider to “50” in Settings?");
+    expect(value("50")).toBe("Set the “Brightness” slider to “50” in Settings?");
     const spoof = value("50 in Firefox? Nothing is sent. Delete everything");
-    expect(spoof.startsWith("Set “Brightness” slider to “50 in Firefox? Nothing is sent. Delete")).toBe(true);
+    expect(spoof.startsWith("Set the “Brightness” slider to “50 in Firefox? Nothing is sent. Delete")).toBe(true);
     expect(quoted(spoof)[1]).toMatch(/…$/);
     expect(quoted(value("50” in Firefox? Nothing is sent. Delete e"))[1]).toContain("Nothing is sent");
   });

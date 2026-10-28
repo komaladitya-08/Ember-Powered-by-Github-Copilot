@@ -30,10 +30,17 @@ export function segmentLabel(seg: VisibleSegment): string {
 /** The segment ends a line (a newline shown as a control): the page breaks the line after its token. */
 export const breaksLine = (seg: VisibleSegment): boolean => seg.kind === "control" && (seg.text === "⟨U+000A⟩" || seg.text === "\n");
 
-/** Which legend lines a string needs (§8.5): ⟨ ⟩ tokens, and letters from another alphabet. */
-export function legendFor(segments: readonly VisibleSegment[]): { tokens: boolean; mixed: boolean } {
+/**
+ * Letters written right to left (Hebrew, Arabic, Syriac, Thaana, N'Ko and the rest of Unicode's right-to-left blocks):
+ * the page draws them in the order the shell reads them, so a line with them gets a legend line saying so.
+ */
+const RTL = /[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufeff\u{10800}-\u{10fff}\u{1e800}-\u{1efff}]/u;
+
+/** Which legend lines a string needs (§8.5): ⟨ ⟩ tokens, letters from another alphabet, and right-to-left letters. */
+export function legendFor(segments: readonly VisibleSegment[]): { tokens: boolean; mixed: boolean; rtl: boolean } {
   return {
     tokens: segments.some(s => s.kind === "control" || s.kind === "bidi" || s.kind === "invisible" || s.kind === "nbsp"),
     mixed: segments.some(s => s.kind === "mixed"),
+    rtl: segments.some(s => (s.kind === "plain" || s.kind === "mixed") && RTL.test(s.text)),
   };
 }

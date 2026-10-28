@@ -267,7 +267,7 @@ export const INTERACTIVE = new Set([
   "minicom", "picocom", "nmtui", "alsamixer", "cfdisk", "tty-clock", "sl", "aptitude", "debconf", "dpkg-reconfigure", "passwd", "choice",
 ]);
 
-/** GUI programs in command position (§3.4.7): unclear, "Open apps with open_app instead." */
+/** GUI programs in command position (§3.4.7): unclear, "This opens an app window, which Ember can do itself …" */
 export const GUI_PROGRAMS = new Set([
   "gedit", "kate", "kwrite", "mousepad", "leafpad", "pluma", "xed", "gnome-text-editor", "notepad", "notepad++", "write", "wordpad",
   "mspaint", "paint", "calc", "gnome-calculator", "kcalc", "firefox", "firefox-esr", "chrome", "google-chrome", "google-chrome-stable",
