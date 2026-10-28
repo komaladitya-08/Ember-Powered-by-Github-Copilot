@@ -1880,7 +1880,6 @@ function start(): void {
         });
       },
     });
-    app.on("will-quit", unwatchPolicy);
 
     // ───── Screen lock (review #81) ─────
     // While this computer's screen is locked, or its session isn't the one in front, whoever is there isn't the user:
@@ -1901,7 +1900,8 @@ function start(): void {
     });
     screenLock.start();
     if (screenLock.locked) lockControl.change(true);
-    app.on("will-quit", () => { screenLock?.stop(); lockControl.dispose(); });
+    // One listener for the policy watch and the screen lock, in that order: an 11th will-quit listener warns of a leak.
+    app.on("will-quit", () => { unwatchPolicy(); screenLock?.stop(); lockControl.dispose(); });
 
     // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets,
     // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
