@@ -13,11 +13,29 @@ const req = (r: Partial<ActionRequest>): ActionRequest => ({ taskId: "t1", kind:
 describe("the question's words for a control", () => {
   it("names a control by its name and a plain word for what it is", () => {
     expect(plainQuestion(req({ element: { role: "push button", name: "Save" } }))).toBe("Click the “Save” button in Mousepad?");
-    expect(plainQuestion(req({ kind: "toggle", app: "Settings", element: { role: "toggle button", name: "Night Light" } }))).toBe("Switch the “Night Light” switch in Settings?");
+    expect(plainQuestion(req({ kind: "toggle", app: "Settings", element: { role: "toggle button", name: "Night Light" }, value: "on" }))).toBe("Turn on the “Night Light” switch in Settings?");
     expect(plainQuestion(req({ kind: "select", app: "Firefox", element: { role: "combo box", name: "Meal" }, value: "Vegetarian" }))).toBe("Choose “Vegetarian” in the “Meal” drop-down in Firefox?");
     expect(plainQuestion(req({ element: { role: "page tab", name: "Advanced" } }))).toBe("Click the “Advanced” tab in Mousepad?");
-    expect(plainQuestion(req({ kind: "toggle", element: { role: "check box", name: "Bold" } }))).toBe("Switch the “Bold” checkbox in Mousepad?");
+    expect(plainQuestion(req({ kind: "toggle", element: { role: "check box", name: "Bold" }, value: "on" }))).toBe("Tick the “Bold” checkbox in Mousepad?");
     expect(plainQuestion(req({ kind: "cursor_click", element: { role: "push button", name: "Send" } }))).toBe("Borrow your mouse to click the “Send” button in Mousepad?");
+  });
+
+  it("says which way a switch or checkbox goes, never \"Switch the … switch\"", () => {
+    const toggle = (role: string, name: string, value?: string): string => plainQuestion(req({ kind: "toggle", app: "Settings", element: { role, name }, ...(value ? { value } : {}) }));
+    expect(toggle("toggle button", "Night Light", "off")).toBe("Turn off the “Night Light” switch in Settings?");
+    expect(toggle("switch", "Wi-Fi", "on")).toBe("Turn on the “Wi-Fi” switch in Settings?");
+    expect(toggle("check box", "Urgent", "off")).toBe("Untick the “Urgent” checkbox in Settings?");
+    expect(toggle("switch", "", "on")).toBe("Turn on the switch in Settings?");
+    // A toggle that names no way to go flips it.
+    expect(toggle("toggle button", "Bold")).toBe("Flip the “Bold” switch in Settings?");
+    for (const role of ["toggle button", "switch", "check box"]) for (const v of ["on", "off", undefined]) expect(toggle(role, "X", v)).not.toMatch(/^Switch/);
+  });
+
+  it("calls a window and a piece of text by plain words, not \"root pane\" or \"static\"", () => {
+    expect(plainQuestion(req({ kind: "keys", value: "Down", element: { role: "root pane", name: "budget.ods — LibreOffice Calc" } }))).toBe("Borrow your keyboard to press Down on the “budget.ods — LibreOffice Calc” window in Mousepad?");
+    expect(plainQuestion(req({ element: { role: "static", name: "Remove" } }))).toBe("Click the “Remove” text in Mousepad?");
+    expect(roleWord("root pane")).toBe("window");
+    expect(roleWord("static")).toBe("text");
   });
 
   it("calls an unnamed control and the control it sits in by the same plain words", () => {
@@ -30,7 +48,7 @@ describe("the question's words for a control", () => {
   });
 
   it("never uses the screen reader's own role names", () => {
-    for (const role of ["push button", "toggle button", "combo box", "page tab", "check box", "radio button", "spin button"]) {
+    for (const role of ["push button", "toggle button", "combo box", "page tab", "check box", "radio button", "spin button", "root pane", "static"]) {
       expect(plainQuestion(req({ element: { role, name: "X" } }))).not.toContain(role);
     }
   });

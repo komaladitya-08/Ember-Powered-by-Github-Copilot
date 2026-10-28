@@ -11,6 +11,7 @@ export const ROLE_WORDS: Readonly<Record<string, string>> = Object.freeze({
   "radio button": "option", text: "text field", entry: "text field", "password text": "password field",
   "combo box": "drop-down", "menu item": "menu item", "list item": "list item", link: "link", slider: "slider",
   "spin button": "number field", "page tab": "tab", "page tab list": "tab list", "tool bar": "toolbar",
+  "root pane": "window", static: "text",
 });
 
 /** What a control is called in a sentence: "button", "drop-down", or the role itself when the table has no word. */

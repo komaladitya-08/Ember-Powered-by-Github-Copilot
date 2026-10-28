@@ -1462,7 +1462,12 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
   const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
   switch (r.kind) {
     case "click": return `Click ${el}${where}${desk}?`;
-    case "toggle": return `Switch ${el}${where}${desk}?`;
+    // Which way it goes, in words that fit the control: "Turn on the “Night Light” switch", "Tick the “Bold” checkbox".
+    case "toggle": {
+      const box = r.element?.role === "check box";
+      const verb = r.value === "on" ? (box ? "Tick" : "Turn on") : r.value === "off" ? (box ? "Untick" : "Turn off") : "Flip";
+      return `${verb} ${el}${where}${desk}?`;
+    }
     case "text": return `${typed.charAt(0).toUpperCase()}${typed.slice(1)}`;
     case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}${desk}?`;
     case "value": return `Set ${el} to ${r.value}${where}${desk}?`;

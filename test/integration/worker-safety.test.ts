@@ -1854,7 +1854,7 @@ describe("review round 9: policy and selections", () => {
     const asked: string[] = [];
     const keys: string[] = [];
     await makeWorker(screen, "Go down a cell", { confirmer: asking(["once"], asked), cursor: borrowing(keys, x) }).run(new AbortController().signal);
-    expect(asked).toEqual(["Borrow your keyboard to press Down on “budget.ods — LibreOffice Calc” root pane in Testapp?"]);
+    expect(asked).toEqual(["Borrow your keyboard to press Down on the “budget.ods — LibreOffice Calc” window in Testapp?"]);
     expect(keys).toEqual(["Down"]);
   }, 60_000);
 

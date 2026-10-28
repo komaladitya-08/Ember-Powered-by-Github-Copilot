@@ -356,7 +356,7 @@ describe("a click goes to the control that handles it (SEC7-1)", () => {
     const row = makeWorker({ role: "static", name: "Remove", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "list item", name: "Ana Silva" } }) });
     await row.call("perceive_window", {});
     await row.call("click", { id: 1 });
-    expect(row.asked).toEqual([expect.stringMatching(/^Click the “Remove” static/)]);
+    expect(row.asked).toEqual([expect.stringMatching(/^Click the “Remove” text/)]);
     // Nothing risky either way: the app's grant covers it, and the journal names the link.
     const plain = makeWorker({ role: "static", name: "Docs", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "link", name: "Help" } }) });
     await plain.call("perceive_window", {});
