@@ -59,7 +59,7 @@ function desktop(o: {
   screen?: Bounds; neverLook?: string[];
   screenRecording?: () => boolean;
   secretFields?: (w: { pid: number; path: string }) => { fields: { id: number; bounds: Bounds }[]; complete: boolean; busy?: boolean };
-} & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay" | "onNoScreenAccess">) {
+} & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay" | "onNoScreenAccess" | "os">) {
   const screen = o.screen ?? { x: 0, y: 0, width: 300, height: 200 };
   const captures: number[][] = [];
   let shellAsked = 0;
@@ -93,6 +93,7 @@ function desktop(o: {
     sidecar, x11: ws, log, neverLook: () => o.neverLook ?? [], screenBounds: () => screen, ownPid: 999,
     ...(o.words ? { words: o.words } : {}), ...(o.isSecurityWindow ? { isSecurityWindow: o.isSecurityWindow } : {}),
     ...(o.hideOverlay ? { hideOverlay: o.hideOverlay } : {}), ...(o.onNoScreenAccess ? { onNoScreenAccess: o.onNoScreenAccess } : {}),
+    ...(o.os ? { os: o.os } : {}),
   });
   return { perception, captures, warnings, infos, shellAsked: () => shellAsked };
 }
@@ -576,11 +577,11 @@ describe("the app's own popups in its window's picture (review #7)", () => {
   });
 
   it("logs such a popup, once a run for each app and size, so CI and the field show which popups go unscanned", async () => {
-    const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), { ...popup, wmClass: "gedit" }], listed: [window] });
+    const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), { ...popup, wmClass: "gedit" }], listed: [window], os: "darwin" });
     await d.perception.perceive({ image: true, scope: "window" });
     await d.perception.perceive({ image: true, scope: "window" });
     // With the OS: the field's logs come from all three, and each OS lists different popups as windows.
-    expect(d.infos.filter(([e]) => e === "perception.popup_unmatched")).toEqual([["perception.popup_unmatched", { app: "gedit", width: 120, height: 80, os: process.platform }]]);
+    expect(d.infos.filter(([e]) => e === "perception.popup_unmatched")).toEqual([["perception.popup_unmatched", { app: "gedit", width: 120, height: 80, os: "darwin" }]]);
     // A popup that was looked through isn't.
     const listed = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), popup], listed: [window, popupWin] });
     await listed.perception.perceive({ image: true, scope: "window" });

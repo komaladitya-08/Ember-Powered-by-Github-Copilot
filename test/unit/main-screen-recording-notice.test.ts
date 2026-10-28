@@ -1,9 +1,10 @@
 /**
  * main.ts's notice when macOS refuses Ember the screen (review #96): Perception calls onNoScreenAccess the first time in
- * a run (perception-platform.test.ts), and main shows "I can't take screenshots" with the button that opens System
- * Settings' Screen Recording pane. It comes mid-task, so main holds the bubble while it shows: a task's progress would
- * replace it, and its button, at once. main.ts can't be loaded in a unit test (it is Electron's entry point), so the
- * wiring is read from its source, as main-privacy-wiring.test.ts does.
+ * a run (perception-platform.test.ts), and main shows "I can't take screenshots" with a button to the setup check, whose
+ * Screen Recording row opens System Settings (only the settings window applies a fix: setup-check.test.ts). It comes
+ * mid-task, so main holds the bubble while it shows: a task's progress would replace it, and its button, at once.
+ * main.ts can't be loaded in a unit test (it is Electron's entry point), so the wiring is read from its source, as
+ * main-privacy-wiring.test.ts does.
  */
 
 import { describe, expect, it } from "vitest";
@@ -22,18 +23,23 @@ function notice(): string {
 }
 
 describe("main.ts's Screen Recording notice (review #96)", () => {
-  it("offers the Screen Recording pane, only where the OS has that fix", () => {
+  it("offers the setup check, where the OS has the Screen Recording fix, and applies no fix itself", () => {
     const body = notice();
     expect(body).toContain('if (!sys.fixes.ids.includes("open-screen-recording-settings")) return;');
     expect(body).toContain('title: "I can\'t take screenshots"');
-    expect(body).toContain('actions: [{ id: "ui:screen-recording", label: sys.fixes.label("open-screen-recording-settings") }]');
-    // The button opens the pane through the setup check's own fix.
-    expect(MAIN).toContain('if (id === "ui:screen-recording") { sys.fixes.apply("open-screen-recording-settings")');
+    expect(body).toContain('actions: [{ id: "ui:setup-check", label: "Open setup check" }]');
+    expect(body).not.toMatch(/\.apply\(|applyFix|applySetupFix/);
+    // The button opens the settings window at the setup check, and lets the bubble go.
+    expect(MAIN).toContain('if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }');
   });
 
   it("holds the bubble while it shows, then lets the task's progress back or hides", () => {
     const body = notice();
     expect(body).toMatch(/agent\?\.claimBubble\(\); setState\(\{ bubble \}\);/);
     expect(body).toContain("if (lastState.bubble === bubble && !(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: \"neutral\", bubble: IDLE_BUBBLE });");
+  });
+
+  it("tells Perception the OS, for its log", () => {
+    expect(MAIN).toContain("isRemoteSurface: remoteSurfaceCheck(platform.os), os: platform.os,");
   });
 });

@@ -17,7 +17,7 @@ import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
 import { scaleBounds, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
-import type { PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
+import type { OS, PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
 import type { PerceptionSidecar } from "./ports";
 import type { TargetId } from "../../shared/targets";
@@ -56,6 +56,8 @@ export interface PerceptionOptions {
    * Recording): Ember says so itself, with a way to the setting (main.ts). The worker's text says so every time.
    */
   onNoScreenAccess?: () => void;
+  /** The OS Ember runs on, for the log (perception.popup_unmatched); main.ts passes it. */
+  os?: OS;
 }
 
 /**
@@ -605,7 +607,7 @@ export class Perception {
     const key = `${p.wmClass} ${p.width}x${p.height}`;
     if (this.unmatchedPopups.has(key) || this.unmatchedPopups.size >= UNMATCHED_POPUPS_LOGGED) return;
     this.unmatchedPopups.add(key);
-    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height, os: process.platform });
+    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height, ...(this.o.os ? { os: this.o.os } : {}) });
   }
 
   /**
