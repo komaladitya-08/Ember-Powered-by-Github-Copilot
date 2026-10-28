@@ -2070,8 +2070,18 @@ reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "ex
 });
 // grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
 reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], h => {
-  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace"] });
-  if (values(p, "pre").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
+  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", "pager", "filter", "hostname-bin", "open-files-in-pager"] });
+  // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
+  // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
+  if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
+  const pagerCmds = [...values(p, "pager", "open-files-in-pager"), ...values(p, "filter")];
+  if (h.key === "git-grep") for (const a of h.args) { const m = /^-O(.+)$/.exec(a.v ?? ""); if (m) pagerCmds.push(m[1]); else if (a.v === "-O") pagerCmds.push(null); }
+  for (const cmd of pagerCmds) {
+    if (cmd === null) { h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see."); continue; }
+    // ugrep's filter is `glob:command,glob:command`; the pager options are a plain command line.
+    const text = h.key === "ugrep" && /^[^:,]*:/.test(cmd) ? cmd.split(",").map(part => part.replace(/^[^:]*:/, "")).join("; ") : cmd;
+    h.e.nested(text, "sh", h.sc, `${h.prog} pager`);
+  }
   const patternGiven = values(p, "e", "regexp", "f", "file").length > 0;
   for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const files = patternGiven ? p.operands : p.operands.slice(1);
@@ -3299,6 +3309,8 @@ git(["submodule"], h => {
   if (rest.some(a => a.v === null)) { h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see."); return; }
   h.e.nested(rest.map(a => a.v).join(" "), "sh", h.sc, "git submodule foreach");
 });
+// `git grep` is the grep family, so its -O/--open-files-in-pager runs a program on the matches, like rg's --pre (review #165).
+git(["grep"], h => { NATIVE["git-grep"]({ ...h, key: "git-grep", prog: "git grep" }); });
 git(["bisect"], h => { if (h.args[0]?.v === "run") h.e.payload(h.args.slice(1), h.sc, "git bisect run"); });
 git(["rebase"], h => {
   const p = opts(h, { shortValue: "xsX", longValue: ["exec", "onto", "strategy", "strategy-option", "gpg-sign", "whitespace", "empty"] });
@@ -4708,7 +4720,13 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
     h.e.payload(p.operands, h.sc, `perf ${h.args[0].v}`);
     return;
   }
-  if ((h.key === "gdb" || h.key === "lldb") && !h.args.some(a => /^-?-batch$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
+  // gdb/lldb command and script options run debugger commands (which can `shell`/`platform shell`), from the line or a
+  // file or stdin: Ember can't vouch for them, so batch mode runs only when none is present (reviews #165, #166).
+  if (h.key === "gdb" || h.key === "lldb") {
+    const code = h.args.some(a => a.v !== null && /^(-ex|-iex|-x|-o|-O|-s|-S|--eval-command|--command|--source)(=|$)/.test(a.v));
+    if (code) h.e.unclear("unclear.inline-code", "It runs debugger commands Ember can't see.");
+    else if (!h.args.some(a => /^-?-batch$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
+  }
 });
 reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapon", "swapoff", "mountvol", "bcdedit", "bcdboot", "csrutil", "kextload", "kextunload", "kmutil", "nvram", "hdiutil", "fsutil", "sfc", "chkdsk", "defrag", "powercfg", "w32tm", "label", "subst", "dmsetup", "zfs", "btrfs", "lvcreate", "lvextend", "vgcreate", "pvcreate", "tune2fs", "e2fsck", "fsck", "xfs_repair", "update-grub", "grub-install", "grub2-mkconfig", "dracut", "mkinitcpio", "update-initramfs", "depmod", "sysctl", "setcap", "systemd-tmpfiles", "ldconfig", "update-alternatives", "alternatives"], h => {
   const a = h.args.map(x => x.v ?? "");
