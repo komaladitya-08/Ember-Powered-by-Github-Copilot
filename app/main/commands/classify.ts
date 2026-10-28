@@ -1909,11 +1909,16 @@ const KNOWN_ORDINARY = new Set([
   "terraform", "aws", "az", "gcloud",
 ]);
 
+/**
+ * Programs with a handler whose names are common words or tools no wrapper runs: as an unknown program's operand
+ * (`mise trust`, `somecli trust list`) they are words, as they were before these handlers existed.
+ */
+const NOT_RUNNERS = new Set(["trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk"]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
 function runners(): ReadonlySet<string> {
   if (!RUNNERS) {
-    const s = new Set<string>(Object.keys(NATIVE).filter(k => !KNOWN_ORDINARY.has(k) && !TEXT.has(k)));
+    const s = new Set<string>(Object.keys(NATIVE).filter(k => !KNOWN_ORDINARY.has(k) && !TEXT.has(k) && !NOT_RUNNERS.has(k)));
     for (const k of ["git", "docker", "kubectl", "npm", "curl", "wget", "python", "python3", "node", "perl", "ruby"]) s.add(k);
     RUNNERS = s;
   }

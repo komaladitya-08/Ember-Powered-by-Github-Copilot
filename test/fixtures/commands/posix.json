@@ -11622,6 +11622,55 @@
    "verdict": "run",
    "context": "darwin",
    "shell": "zsh"
+  },
+  {
+   "cmd": "mise trust",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mise trust .mise.toml",
+   "verdict": "run"
+  },
+  {
+   "cmd": "somecli trust list",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo bazelisk",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo systemsetup",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo plutil",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo update-ca-trust",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo update-ca-certificates",
+   "verdict": "run"
+  },
+  {
+   "cmd": "mytool plistbuddy",
+   "verdict": "run"
+  },
+  {
+   "cmd": "foo PlistBuddy",
+   "verdict": "run",
+   "context": "darwin",
+   "shell": "zsh"
+  },
+  {
+   "cmd": "mise exec -- rm -rf build",
+   "verdict": "ask",
+   "classes": [
+    "unclear"
+   ]
   }
  ]
 }
