@@ -14,6 +14,7 @@ interface FakeWindow {
   contents: Map<string, (e: unknown, ...a: unknown[]) => void>;
   webContents: { on(e: string, fn: (e: unknown, ...a: unknown[]) => void): void; send(ch: string, t: unknown): void; isLoading(): boolean };
   emit(e: string): void;
+  isFocused(): boolean;
 }
 
 vi.mock("electron", () => {
@@ -174,13 +175,59 @@ describe("the ask box", () => {
     expect(menus[0].items.map(i => [i.role, i.label, i.enabled])).toEqual([
       ["cut", "Cut", false], ["copy", "Copy", false], ["paste", "Paste", true], [undefined, undefined, undefined], ["selectAll", "Select all", true],
     ]);
-    // The menu takes the keyboard: the box doesn't close under it, and has the keyboard again once it closes.
+    // The menu may take the keyboard: the box doesn't close under it, and keeps the keyboard once it closes.
+    vi.useFakeTimers();
     win.emit("blur");
     expect(win.visible).toBe(true);
+    win.emit("focus");
     const focused = win.focused;
     menus[0].popup!.callback!();
+    vi.advanceTimersByTime(500);
     expect(win.focused).toBe(focused);
+    expect(win.visible).toBe(true);
     win.emit("blur");
     expect(win.visible).toBe(false);
+  });
+
+  /** A box with its right-click menu up; `focused` is whether it has the keyboard when the menu has closed. */
+  function withMenu(focused: () => boolean) {
+    vi.useFakeTimers();
+    const ask = new AskWindow();
+    ask.show({ x: 400, y: 500 });
+    const [win] = made;
+    win.emit("ready-to-show");
+    win.isFocused = () => win.visible && focused();
+    win.contents.get("context-menu")!({}, { editFlags: { canCut: true, canCopy: true, canPaste: true, canSelectAll: true } });
+    return { win, closeMenu: () => menus[menus.length - 1].popup!.callback!() };
+  }
+
+  it("goes away, instead of taking the keyboard back, when the user dismissed its menu by clicking another app (review #77)", () => {
+    // The click on the other app took the keyboard while the menu was up: a blur, and no focus since.
+    const { win, closeMenu } = withMenu(() => false);
+    win.emit("blur");
+    const focused = win.focused;
+    closeMenu();
+    vi.advanceTimersByTime(500);
+    expect(win.visible).toBe(false);
+    expect(win.focused).toBe(focused);
+  });
+
+  it("goes away when that click's blur comes just after the menu has closed (review #77)", () => {
+    const { win, closeMenu } = withMenu(() => false);
+    const focused = win.focused;
+    closeMenu();
+    win.emit("blur");
+    vi.advanceTimersByTime(500);
+    expect(win.visible).toBe(false);
+    expect(win.focused).toBe(focused);
+  });
+
+  it("takes the keyboard back when the menu closed and nothing else took it", () => {
+    const { win, closeMenu } = withMenu(() => false);
+    const focused = win.focused;
+    closeMenu();
+    vi.advanceTimersByTime(500);
+    expect(win.visible).toBe(true);
+    expect(win.focused).toBe(focused + 1);
   });
 });

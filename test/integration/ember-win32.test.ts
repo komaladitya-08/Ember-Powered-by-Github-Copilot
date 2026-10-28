@@ -11,7 +11,8 @@
  * accessibility host answers a ping when run as Ember.exe in node mode (EMBER_PACKAGED_APP, after staging). Last, Ember
  * itself (the development build, npm run build) started as at login: the real ask chord (Win+Alt+Space through
  * SendInput) opens the box, and what it holds of letters typed straight after is printed (review #78: Windows has no
- * typed-ahead hold; typeahead-probe.ts).
+ * typed-ahead hold; typeahead-probe.ts); then its right-click menu dismissed by a click on the bench leaves the bench
+ * the keyboard (review #77).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -328,7 +329,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     }
   });
 
-  it("opens the ask box from the real ask chord, and says what it holds of letters typed straight after (review #78 probe)", async () => {
+  it("opens the ask box from the real ask chord, says what it holds of letters typed straight after (review #78 probe), and leaves the bench the keyboard when a click there dismisses its right-click menu (review #77)", async () => {
     const main = path.join(root, "dist", "app", "main.cjs");
     if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
     const userData = path.join(dir, "ember-userData");
@@ -376,6 +377,28 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       const verdict = probeVerdict("Windows", PROBE_TEXT, held);
       console.log(verdict.line);
       expect(verdict.inOrder, verdict.line).toBe(true);
+
+      // Review #77: right-click in the box's field (its Cut, Copy, Paste menu comes up), then click the bench's Name
+      // field. If that click activates the bench, the box goes away and leaves it the keyboard; if the menu's loop
+      // swallowed the click, the box keeps the keyboard. Never: the box shown while the bench is active, or the box
+      // taking the keyboard back from it.
+      const box = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getBounds());
+      x.move(box.x + 200, box.y + 33);
+      await sleep(150);
+      x.button(3, true);
+      x.button(3, false);
+      await sleep(800);
+      const name = ready.controls.Name;
+      x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+      await sleep(150);
+      x.button(1, true);
+      x.button(1, false);
+      await sleep(1500);
+      const after = await askWindow();
+      const benchActive = ws.activeWindow()?.id === ready.hwnd;
+      console.log(`right-click menu dismissed by a click on the bench (review #77): bench active ${benchActive}, ask box ${JSON.stringify(after)}`);
+      if (benchActive) expect(after?.visible, "the box after the click activated the bench").toBe(false);
+      else expect(after?.visible && after.focused, "the box kept the keyboard (the menu swallowed the click)").toBe(true);
     } finally {
       const proc = ember.process();
       await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);

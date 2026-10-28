@@ -24,6 +24,11 @@ const EMBER_SIZE = 60;
 const GAP = 8;
 /** A box asked for that is still loading after this long isn't shown (the user has moved on: their keys went elsewhere). */
 const LATE_MS = 1500;
+/**
+ * After the field's right-click menu closes, how long the OS has to say where the keyboard went (a click on another app
+ * that dismissed the menu activates that app) before the box takes it back or goes away.
+ */
+const MENU_SETTLE_MS = 120;
 
 type Box = { x: number; y: number; width: number; height: number };
 const overlap = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -111,6 +116,8 @@ export class AskWindow {
   private up = true;
   /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
   private menuUp = false;
+  /** The box lost the keyboard while that menu was up and hasn't had it back since. */
+  private menuBlur = false;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -157,7 +164,12 @@ export class AskWindow {
     win.setAlwaysOnTop(true, "screen-saver");
     if (this.o.floating) applyAllWorkspaces(win, this.o.floating.allWorkspaces);
     try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
-    win.on("blur", () => { if (this.win === win && !this.menuUp) this.hide(); });
+    win.on("blur", () => {
+      if (this.win !== win) return;
+      if (this.menuUp) this.menuBlur = true;
+      else this.hide();
+    });
+    win.on("focus", () => { if (this.win === win) this.menuBlur = false; });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
     win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
     // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
@@ -216,15 +228,25 @@ export class AskWindow {
     if (this.loaded) this.reveal(this.win);
   }
 
-  /** The field's right-click menu; the box stays open while it is up, and has the keyboard again after. */
+  /**
+   * The field's right-click menu; the box stays open while it is up. Once it has closed (and the OS has said where the
+   * keyboard went): the box keeps or takes back the keyboard, or, when the user dismissed the menu by clicking another
+   * app, goes away as on any click away, instead of taking the keyboard back from that app.
+   */
   private editMenu(win: BrowserWindow, flags: EditFlags): void {
     if (this.win !== win || win.isDestroyed() || !win.isVisible()) return;
     this.menuUp = true;
+    this.menuBlur = false;
     Menu.buildFromTemplate(editMenuItems(flags)).popup({
       window: win,
       callback: () => {
+        // A blur from here on closes the box as usual; one that came while the menu was up is decided below.
         this.menuUp = false;
-        if (this.win === win && !win.isDestroyed() && win.isVisible() && !win.isFocused()) win.focus();
+        setTimeout(() => {
+          if (this.win !== win || win.isDestroyed() || !win.isVisible() || win.isFocused()) return;
+          if (this.menuBlur) this.hide();
+          else win.focus();
+        }, MENU_SETTLE_MS);
       },
     });
   }
