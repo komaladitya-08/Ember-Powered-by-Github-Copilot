@@ -174,7 +174,7 @@ what your speakers play (Linux with speaker rejection on and parec installed): o
 without it, a call, a video or Ember's own voice could say the same words, so a dangerous command you asked for by
 voice asks ("You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.");
 typed words still count. Your words have to ask for it: "delete build/", "please delete
-build/", "Ember, delete build/" and "can you delete build/?" do; a question ("should I delete build/?", "how do I push
+build/", "Ember, delete build/", "can you delete build/?" and "I want to delete build/" do; a question ("should I delete build/?", "how do I push
 my branch?"), something already done ("I pushed my branch"), a maybe ("I might delete build/ later") and words about
 something else ("fix the script that deletes build/") don't, so the command asks. Anything broader than what you named asks: a force flag, a
 wildcard, a folder outside the one you named, another branch, remote, changelist, package or computer. Name a folder

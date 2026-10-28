@@ -273,6 +273,9 @@ describe("matchIntent: only a request counts (review #28)", () => {
     ["rm -r build", "deleting build/ is what the clean target does"],
     [PUSH, "I pushed my branch to GitHub already"],
     [PUSH, "I pushed feature-x to origin, now run the tests"],
+    ["rm -r build", "I wanted to delete build/ yesterday"],
+    ["rm -r build", "do I want to delete build/?"],
+    ["rm -r build", "I want to know how to delete build/"],
   ])("asks for `%s` after %j", (cmd, words) => {
     expect(announce(cmd, words, { git: FEATURE })).toBeNull();
   });
@@ -285,6 +288,11 @@ describe("matchIntent: only a request counts (review #28)", () => {
     ["rm -r build", "can you delete build/?", "Deleting build, as you asked."],
     ["rm -r build", "could you please delete the build folder", "Deleting build, as you asked."],
     ["rm -r build", "I want you to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I want to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I need to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I'd like to delete build/", "Deleting build, as you asked."],
+    ["rm -r build", "I would like to delete the build folder", "Deleting build, as you asked."],
+    [PUSH, "I want to push feature-x to origin", "Pushing feature-x to origin, as you asked."],
     ["rm -r build", "go ahead and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "fix line 12 in main.ts and delete build/", "Deleting build, as you asked."],
     ["rm -r build", "list the files, then delete build/", "Deleting build, as you asked."],

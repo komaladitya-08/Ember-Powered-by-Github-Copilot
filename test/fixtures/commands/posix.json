@@ -8641,6 +8641,46 @@
    ]
   },
   {
+   "cmd": "rm -r build",
+   "words": "I want to delete build/",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -r build",
+   "words": "I need to delete build/",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -r build",
+   "words": "I'd like to delete build/",
+   "verdict": "announce",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -r build",
+   "words": "I wanted to delete build/ yesterday",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
+   "cmd": "rm -r build",
+   "words": "do I want to delete build/?",
+   "verdict": "ask",
+   "classes": [
+    "destroy"
+   ]
+  },
+  {
    "cmd": "git push origin feature-x",
    "words": "should I push feature-x to origin?",
    "verdict": "ask",

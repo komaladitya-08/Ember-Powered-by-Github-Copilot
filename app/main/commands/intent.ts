@@ -170,6 +170,7 @@ const FILLERS = new Set([
 const POLITE: readonly (readonly string[])[] = [
   ["can", "you"], ["could", "you"], ["would", "you"], ["will", "you"], ["can", "u"], ["could", "u"],
   ["i", "want", "you", "to"], ["i", "need", "you", "to"], ["i", "d", "like", "you", "to"], ["i", "would", "like", "you", "to"],
+  ["i", "want", "to"], ["i", "need", "to"], ["i", "d", "like", "to"], ["i", "would", "like", "to"],
   ["let", "s"], ["let", "us"], ["lets"], ["help", "me"],
 ];
 /** Words that make a clause a maybe rather than a request ("I might delete build/ later"). */
@@ -194,9 +195,10 @@ function skipLead(c: readonly string[], k: number): [number, boolean] {
  * Where a request's verb can stand in the user's words (review #28: "should I delete build/?", "how do I push my
  * branch", "I deleted build/ yesterday" and "the script that deletes build/" ask for nothing). The words are cut into
  * sentences and each sentence into clauses (at commas, colons and "and", "then", "but"…); a clause asks for something
- * when, after fillers ("please", "Ember", "go ahead and") and a way of asking ("can you", "I want you to", "let's"), its
- * next word is a verb, or the verb follows a short leading place ("on the desktop delete build/"). A question counts
- * only when it is a way of asking ("can you delete build/?"); a clause with "might", "maybe" or "later" never counts.
+ * when, after fillers ("please", "Ember", "go ahead and") and a way of asking ("can you", "I want you to", "I want to",
+ * "let's"), its next word is a verb, or the verb follows a short leading place ("on the desktop delete build/"). A
+ * question counts only when it is a way of asking ("can you delete build/?"); a clause with "might", "maybe" or
+ * "later" never counts.
  * Each start is returned as the clause's words from the verb on; the rows compare their verbs' base forms with it.
  */
 function requestStarts(raw: string): string[][] {
