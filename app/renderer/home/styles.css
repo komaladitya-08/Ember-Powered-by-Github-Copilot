@@ -107,14 +107,17 @@ h2[tabindex="-1"]:focus { outline: none; }
    Start are never below the fold (review #104); focus scrolls clear of it (WCAG 2.4.11). A soft shadow sets it apart.
    From the card's top down, the window's own background covers everything around it, across the whole window, so
    nothing scrolls into view beside or below the card or through its rounded corners: a shadow spread from a box the
-   card's shape, behind its content, clipped to start at its top (a shadow, so the window never scrolls sideways). */
+   card's shape, behind its content, moved down by its spread so it starts at the card's top (a shadow, so the window
+   never scrolls sideways). The box lies a pixel inside the card's, so nothing behind shows through where their rounded
+   edges meet, and the card's edge is drawn over it there, so it shows all round (in increased contrast, its only
+   edge). */
 body.first-run .start-row {
   position: sticky; bottom: 12px; z-index: 1;
-  box-shadow: var(--group-edge), 0 -10px 24px -8px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 -10px 24px -8px rgba(0, 0, 0, 0.6);
 }
 body.first-run .start-row::before {
-  content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
-  box-shadow: 0 0 0 100vmax var(--bg); clip-path: inset(0 -100vmax -100vmax);
+  content: ""; position: absolute; inset: 1px; z-index: -1; border-radius: inherit; pointer-events: none;
+  box-shadow: var(--group-edge), 0 100vmax 0 100vmax var(--bg);
 }
 html:has(> body.first-run) { scroll-padding-bottom: 150px; }
 .start-row .hint { margin: 0; flex-basis: 100%; }

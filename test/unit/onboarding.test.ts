@@ -107,11 +107,17 @@ describe("the first-run window", () => {
     // In first run it sticks to the window's foot, and focus scrolls clear of it (WCAG 2.4.11).
     expect(STYLES).toMatch(/body\.first-run \.start-row \{[^}]*position: sticky; bottom: \d+px;/);
     expect(STYLES).toMatch(/html:has\(> body\.first-run\) \{ scroll-padding-bottom: \d+px; \}/);
-    // Nothing shows around it from its top down, across the whole window (a clipped shadow, so no sideways scrolling).
+    // Nothing shows around it from its top down, across the whole window: a shadow moved down by its spread, so it
+    // starts at the card's top (a shadow, so no sideways scrolling), behind the card's content.
     const band = /body\.first-run \.start-row::before \{([^}]*)\}/.exec(STYLES)?.[1] ?? "";
-    expect(band).toContain("box-shadow: 0 0 0 100vmax var(--bg)");
-    expect(band).toContain("clip-path: inset(0 -100vmax -100vmax)");
+    expect(band).toContain("0 100vmax 0 100vmax var(--bg)");
     expect(band).toContain("z-index: -1");
+    // The card's edge (--group-edge's ring, its only edge in increased contrast) is drawn over that background, so it
+    // shows all round; the card itself no longer draws it, where the background would cover it at the sides and foot.
+    expect(band).toMatch(/box-shadow: var\(--group-edge\), 0 100vmax/);
+    expect(/body\.first-run \.start-row \{([^}]*)\}/.exec(STYLES)?.[1]).not.toContain("--group-edge");
+    // Its box lies a pixel inside the card's, so where the two rounded edges meet, nothing behind the card shows through.
+    expect(band).toContain("inset: 1px");
   });
 
   it("doesn't point to sections that aren't shown before Start (review #104)", () => {
