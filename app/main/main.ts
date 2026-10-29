@@ -1768,7 +1768,8 @@ function start(): void {
       },
       onStatus: status => {
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
-        if (status.phase === "error" && status.reason === "sign-in" && currentToken) refusedTokens.add(currentToken);
+        // Ember's own that ran out unnoticed (the computer slept) is renewed and reconnected instead (cross-review X12).
+        if (status.phase === "error" && status.reason === "sign-in" && currentToken) { refusedTokens.add(currentToken); keeper.refused(currentToken); }
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
@@ -1803,7 +1804,9 @@ function start(): void {
     let wasOnline = net.isOnline();
     const netWatch = setInterval(() => { const on = net.isOnline(); if (on !== wasOnline) { wasOnline = on; agent?.networkChanged(on); } }, 5000);
     netWatch.unref?.();
-    powerMonitor.on("resume", () => agent?.networkChanged(true));
+    // Timers stood still while the computer slept: its own sign-in may be due for renewal, or have run out (cross-review X12).
+    powerMonitor.on("resume", () => { keeper.wake(); agent?.networkChanged(true); });
+    powerMonitor.on("unlock-screen", () => keeper.wake());
     // The brain connects once the user has agreed to what Ember does (first run asks).
     let brainStarted = false;
     const startBrain = async () => {

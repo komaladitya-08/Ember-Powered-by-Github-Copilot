@@ -405,6 +405,11 @@ const IDLE_CHECK_MS = 30_000;
 const FORCE_BEFORE_MS = 2 * 60_000;
 /** A renewal that failed in passing (no network) is tried again after this. */
 const RENEW_RETRY_MS = 60_000;
+/**
+ * The keeper's timer waits at most this long before the clock is looked at again: timers stand still while the computer
+ * sleeps (Linux, macOS), so one armed for hours could fire long after the token ran out (cross-review X12).
+ */
+const RECHECK_MS = 5 * 60_000;
 
 export interface GrantKeeperDeps {
   fetch: Fetch;
@@ -493,9 +498,31 @@ export class GrantKeeper {
 
   private after(ms: number, fn: () => void): void {
     if (this.timer) clearTimeout(this.timer);
-    // (setTimeout can't wait longer than about 24 days: a longer wait is cut, and the time looked at again then.)
-    this.timer = setTimeout(fn, Math.min(Math.max(0, ms), 2 ** 31 - 1));
+    // A longer wait is cut, and the time looked at again then (due() re-arms when it fires early).
+    this.timer = setTimeout(fn, Math.min(Math.max(0, ms), RECHECK_MS));
     this.timer.unref?.();
+  }
+
+  /**
+   * The computer woke from sleep, or its screen was unlocked: timers stood still while it slept, so the renewal time may
+   * have passed unnoticed (the token may even have run out). The clock is looked at now (cross-review X12).
+   */
+  wake(): void {
+    if (this.grant) this.due(this.grant);
+  }
+
+  /**
+   * Copilot refused the sign-in in use. Ember's own whose renewal time has come (it ran out while the computer slept,
+   * before the clock was looked at) is renewed now and Copilot reconnected with the new one, without waiting for what's
+   * under way: that failed already. Any other refusal stands: the account may have lost Copilot, and a renewed token
+   * would be refused too (cross-review X12).
+   */
+  refused(token: string): void {
+    const g = this.grant;
+    if (!g || g.token !== token || this.d.inUse() !== token || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    void this.renew(g);
   }
 
   /**

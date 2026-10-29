@@ -218,6 +218,61 @@ describe("keeping Ember's own sign-in alive", () => {
     keeper.stop();
   });
 
+  it("renews at once when the computer wakes past the renewal time (timers stand still while it sleeps) (cross-review X12)", async () => {
+    const { keeper, calls, reconnected } = setup({ idle: () => false });
+    keeper.use(OLD);
+    // Half an hour awake, then the lid closes for 14 hours: the wall clock moves on, the timers don't.
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    vi.setSystemTime(Date.now() + 14 * HOUR);
+    keeper.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    // The token ran out while it slept: renewed and switched to at once, whatever is under way.
+    expect(calls).toHaveLength(1);
+    expect(reconnected).toEqual([NEW]);
+    keeper.stop();
+  });
+
+  it("looks at the clock again every few minutes, so a wake it wasn't told about is noticed too (cross-review X12)", async () => {
+    const { keeper, calls, reconnected } = setup();
+    keeper.use(OLD);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    vi.setSystemTime(Date.now() + 14 * HOUR);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(calls).toHaveLength(1);
+    expect(reconnected).toEqual([NEW]);
+    keeper.stop();
+  });
+
+  it("renews when Copilot refuses a sign-in whose renewal time has come, and leaves any other refusal alone (cross-review X12)", async () => {
+    const early = setup();
+    early.keeper.use(OLD);
+    await vi.advanceTimersByTimeAsync(60_000);
+    // Hours left: the refusal is the account's (no Copilot now); a renewed token would be refused too, so none is asked.
+    early.keeper.refused(OLD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(early.calls).toHaveLength(0);
+    early.keeper.stop();
+
+    const due = setup({ idle: () => false });
+    due.keeper.use(OLD);
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.setSystemTime(Date.now() + 9 * HOUR);
+    // Another sign-in's refusal (the GitHub CLI's) isn't this one's.
+    due.keeper.refused("gho_" + "c".repeat(36));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(due.calls).toHaveLength(0);
+    // Its own: renewed now, and Copilot reconnected with the new token, though the refused work is still winding down.
+    due.keeper.refused(OLD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(due.calls).toHaveLength(1);
+    expect(due.reconnected).toEqual([NEW]);
+    // The new one refused too (the account lost Copilot): no second renewal.
+    due.keeper.refused(NEW);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(due.calls).toHaveLength(1);
+    due.keeper.stop();
+  });
+
   it("tries again a minute later when GitHub can't be reached, and gives up when GitHub refuses", async () => {
     const offline = setup({ replies: [new TypeError("fetch failed"), renewed()] });
     offline.keeper.use(OLD);
@@ -373,5 +428,11 @@ describe("main's sign-in wiring", () => {
     expect(MAIN).toContain("if (!provider) await keeper.freshen();");
     // Copilot is reconnected only when nothing is under way.
     expect(MAIN).toContain("idle: () => agent?.idle ?? true,");
+  });
+
+  it("tells the keeper when the computer wakes or Copilot refuses the sign-in in use (cross-review X12)", () => {
+    expect(MAIN).toContain(`powerMonitor.on("resume", () => { keeper.wake(); agent?.networkChanged(true); });`);
+    expect(MAIN).toContain(`powerMonitor.on("unlock-screen", () => keeper.wake());`);
+    expect(MAIN).toContain(`if (status.phase === "error" && status.reason === "sign-in" && currentToken) { refusedTokens.add(currentToken); keeper.refused(currentToken); }`);
   });
 });
