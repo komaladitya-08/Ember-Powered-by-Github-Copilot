@@ -23,6 +23,7 @@ import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
+import { ISSUES_URL } from "../../app/shared/support";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -367,6 +368,30 @@ describe("README.md", () => {
       for (let v = from; v <= to; v++) covered.add(v);
     }
     for (let v = 13; v <= newest; v++) expect(covered.has(v), `macOS ${v}`).toBe(true);
+  });
+
+  it("says to start Ember again after an RPM update, since it starts at login only when that switch is on", () => {
+    // Start Ember when I log in is off unless the user turns it on (settings.ts), and the RPM adds no login entry of
+    // its own: after quitting to update, nothing starts Ember again by itself.
+    expect(DEFAULT_SETTINGS.startAtLogin).toBe(false);
+    const login = /<input type="checkbox" id="login" role="switch"><span>([^<]+)<\/span>/.exec(homePage)?.[1] ?? "";
+    expect(login).toBe("Start Ember when I log in");
+    const update = flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)")).split("To update")[1]?.split(". ")[0] ?? "";
+    expect(update).toContain(`; then start Ember again (it starts by itself at your next login when **${login}** is on)`);
+    expect(flat(readme)).not.toMatch(/; Ember starts again at your next login/);
+  });
+
+  it("says where settings show the address to report a problem, in the window's own words", () => {
+    // The settings window's About this build section lists the issue tracker's address as text to copy: the window
+    // never opens links (home/main.ts).
+    const about = /<h2 id="about-h">([^<]+)<\/h2>/.exec(homePage)?.[1] ?? "";
+    expect(about).toBe("About this build");
+    const row = /\["(Report a problem)", ISSUES_URL\]/.exec(read("app/renderer/home/main.ts"))?.[1] ?? "";
+    expect(row).toBe("Report a problem");
+    const report = flat(section(readme, "Report a problem"));
+    expect(report).toContain(`(${ISSUES_URL})`);
+    expect(report).toContain(`Settings' **${about}** shows the same address under **${row}**, to copy, and the setup check's advice points there when only a report can help.`);
+    expect(report).not.toMatch(/same link/);
   });
 });
 

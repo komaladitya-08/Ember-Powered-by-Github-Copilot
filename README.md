@@ -64,13 +64,14 @@ The AppImage downloads the speech models when voice is turned on (the models RPM
 namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,
-with the new `ember-voice-models` RPM if you installed it); Ember starts again at your next login. If Ember was running
-during an update (GNOME Software or automatic updates included), it asks the next time it opens a window: choose
-**Restart Ember** to finish the update. To remove Ember, first remove its helper from the computers you added over SSH
-(below). Then turn off **Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`),
-quit it, run `sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete
-`~/.config/ember` (its settings, logs, audit log, speech models, sign-in and the Node.js it downloaded for other
-computers, in `remote/runtime`) and `~/Ember` (what it made on its desk).
+with the new `ember-voice-models` RPM if you installed it); then start Ember again (it starts by itself at your next
+login when **Start Ember when I log in** is on). If Ember was running during an update (GNOME Software or automatic
+updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To remove
+Ember, first remove its helper from the computers you added over SSH (below). Then turn off
+**Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
+`sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete `~/.config/ember` (its
+settings, logs, audit log, speech models, sign-in and the Node.js it downloaded for other computers, in
+`remote/runtime`) and `~/Ember` (what it made on its desk).
 
 ## Install on Windows
 
@@ -304,8 +305,9 @@ sh ~/Library/Application\ Support/Ember\ Remote/versions/*/uninstall.sh    # mac
 ## Report a problem
 
 Report what doesn't work, or what is hard to use, on the
-[issue tracker](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues). Settings' **About** has the
-same link (**Report a problem**), and the setup check's advice points there when only a report can help.
+[issue tracker](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues). Settings'
+**About this build** shows the same address under **Report a problem**, to copy, and the setup check's advice points
+there when only a report can help.
 
 ## Develop
 
