@@ -11,6 +11,8 @@
  * - the real ask chord (⌃⇧⌘Space as CGEvents) opens the box, and what it holds of letters typed straight after is
  *   printed (review #78: no typed-ahead hold on macOS; typeahead-probe.ts), with when Ember heard the chord, showed the
  *   box and had the keyboard (its log), and the box's tip to wait for it (its first openings);
+ * - with Text size set to Larger through Ember's settings, the box opens 728 × 111 points (142 with the tip's row), its
+ *   page and field at that size, the user's app still the active one (review #57; ask-size.ts);
  * - no system dialog is open at rest, as the window system and as Perception see it;
  * - a window-scope screenshot of the bench through Ember's Perception (its accessibility host started as Ember starts
  *   it) has the bench's pixels and its password field blacked out;
@@ -39,6 +41,7 @@ import {
   BENCH_TITLE, ROOT, activePid, alertReport, appWindow, frontmostPid, pidsOf, sleep, startBench, waitFor, warn, whyNoWindow, type Bench,
 } from "./darwin-support";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
+import { askWant, closeAsk, openAskAt, setTextSize } from "./ask-size";
 
 const required = process.env.EMBER_DARWIN_TEST === "1";
 const onMac = process.platform === "darwin";
@@ -273,6 +276,22 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     await inEmber(async ({ BrowserWindow }) => {
       await BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")?.webContents.executeJavaScript("window.emberAsk.close()");
     }, null);
+  });
+
+  it("opens the ask box as large as its words at Larger text, its panel wider and taller, the tip's row too (review #57)", async () => {
+    // macOS's box is a panel that, before the text size reached it, only ever changed height: this proves it takes the
+    // wider bounds (ask-size.ts: the steps handle-menu-live takes on Linux).
+    try {
+      const seen = await openAskAt(inEmber, "larger");
+      console.log(`ember-darwin: the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
+      // 728 × 111 points, and a row of round(24 × 1.3) = 31 more while it says to wait for it (its first openings here).
+      expect(seen, JSON.stringify(seen)).toMatchObject(askWant("larger", seen.tip));
+      expect(seen.room, JSON.stringify(seen)).toBeGreaterThanOrEqual(8);
+      expect(activePid(), "the active app while the box is up").toBe(user.pid);
+    } finally {
+      await closeAsk(inEmber);
+      await setTextSize(inEmber, "default");
+    }
   });
 
   it("says no system dialog is open at rest, from the window system and through Perception", async () => {
