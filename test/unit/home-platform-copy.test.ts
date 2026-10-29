@@ -176,7 +176,7 @@ describe("the settings window before a status names an OS", () => {
     expect(tagline(base)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Space to ask it anything.");
     expect(micOffText()).toBe("Microphone off (Ctrl+Alt+M to turn on)");
     expect(emptyConversationText()).toBe("Nothing yet. Press Ctrl+Alt+Space and ask Ember something.");
-    expect(describeEntry({ t, event: "stop", source: "hotkey" })?.what).toBe("Everything stopped (Ctrl+Alt+X)");
+    expect(describeEntry({ t, event: "stop", source: "hotkey" })?.what).toBe("Everything stopped (stop shortcut)");
     expect(describeEntry({ t, event: "stop", source: "voice" })?.what).toBe("Everything stopped (“Ember, stop”)");
     expect(entryWords(undefined)).toBe(LINUX_ENTRY_WORDS);
     expect([...NEVER_LOOK_DEFAULTS]).toEqual(["keepassxc", "seahorse", "passwords and keys", "1password", "bitwarden", "polkit"]);
@@ -265,8 +265,9 @@ describe("the settings window with a Windows or macOS status", () => {
     expect(tagline(base, MAC.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Control+Shift+Command+Space to ask it anything.");
     expect(micOffText(WINDOWS.shortcuts.mute.label)).toBe("Microphone off (Win+Alt+M to turn on)");
     expect(byId(apply(page(), homePatches(MAC)), "conversation").attrs["data-empty"]).toBe("Nothing yet. Press Control+Shift+Command+Space and ask Ember something.");
-    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(WINDOWS))?.what).toBe("Everything stopped (Win+Alt+X)");
-    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(MAC))?.what).toBe("Everything stopped (Control+Shift+Command+X)");
+    // The record doesn't keep which chord was pressed (default or fallback, maybe in an earlier run): it names none.
+    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(WINDOWS))?.what).toBe("Everything stopped (stop shortcut)");
+    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(MAC))?.what).toBe("Everything stopped (stop shortcut)");
   });
 
   it("names keys the way each OS does", () => {
@@ -447,7 +448,8 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(sentence(root, "stop")).toBe(CHORD_SENTENCES.stop.replace("Ctrl+Alt+X", "Ctrl+Alt+Shift+X"));
     expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Shift+Space to ask it anything.");
     expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Press Ctrl+Alt+Shift+Space and ask Ember something.");
-    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (Ctrl+Alt+Shift+X)");
+    // A stop pressed with Ctrl+Alt+X (in this run or an earlier one) isn't renamed by the fallback Ember holds now.
+    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (stop shortcut)");
     // No sentence for a key Ember doesn't have.
     for (const line of readable(root)) expect(line).not.toMatch(/another app has/i);
   });
@@ -467,7 +469,7 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Ask it anything with Ask Ember…, under Comfort & access.");
     expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Use Ask Ember…, under Comfort & access, to ask Ember something.");
     expect(micOffText(st.shortcuts.mute.label)).toBe("Microphone off");
-    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped");
+    expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (stop shortcut)");
     // Each OS's own way back, and the page as it was once Ember holds them again.
     expect(readable(apply(page(), homePatches(held(MAC, Object.values(SHORTCUTS.darwin).map(d => d.accel).concat(Object.values(FALLBACK_SHORTCUTS.darwin).map(d => d.accel)))))).join("\n"))
       .toContain("Open Ember again from Applications any time to come back here, or click Ember's handle.");

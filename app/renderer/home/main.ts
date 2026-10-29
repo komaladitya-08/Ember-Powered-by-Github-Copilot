@@ -348,7 +348,7 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   for (const patch of homePatches(p)) applyPatch(patch);
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
-  // Keys and the stop shortcut read differently on this OS: the lines already shown are written again.
+  // Keys read differently on this OS: the lines already shown are written again.
   if (JSON.stringify(entryWords(p)) !== before) { shownActivity = ""; void refreshActivity(); }
   renderTagline();
 }

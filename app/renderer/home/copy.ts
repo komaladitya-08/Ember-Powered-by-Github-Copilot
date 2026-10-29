@@ -265,13 +265,16 @@ export function keyLabel(key: string, os: OS = "linux"): string {
   }).join("+");
 }
 
-/** What "What Ember did" lines depend on beyond the entry: the OS (for key names) and the stop shortcut's label. */
-export interface EntryWords { readonly os: OS; readonly stopLabel: string }
+/**
+ * What "What Ember did" lines depend on beyond the entry: the OS (for key names). Not the stop chord: the record doesn't
+ * keep which one was pressed, and the one Ember holds now (its default, its fallback or none, D-45b) may not be it.
+ */
+export interface EntryWords { readonly os: OS }
 /** Linux's, today's words: what a line uses while the status names no OS. */
-export const LINUX_ENTRY_WORDS: EntryWords = { os: "linux", stopLabel: SHORTCUTS.linux.stop.label };
+export const LINUX_ENTRY_WORDS: EntryWords = { os: "linux" };
 /** The entry words for the OS a status names (Linux's without one). */
 export function entryWords(p?: StatusPlatform): EntryWords {
-  return p ? { os: p.os, stopLabel: p.shortcuts.stop.label } : LINUX_ENTRY_WORDS;
+  return p ? { os: p.os } : LINUX_ENTRY_WORDS;
 }
 
 /** The tools Ember's model is told to call: a sentence that names one is advice to the model, not news for the user. */
@@ -476,7 +479,7 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       // What pulled it: a control the user used, or the administrator's policy changing while Ember ran (killswitch.ts
       // StopSource). A source this page doesn't know is put on no control (cross-review X10).
       if (e.source === "policy") return { tag: "Stopped", cls: "no", what: "Everything stopped: your organisation changed Ember's policy" };
-      const how = e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
+      const how = e.source === "hotkey" ? "stop shortcut" : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
       return { tag: "Stopped", cls: "no", what: how ? `Everything stopped (${how})` : "Everything stopped" };
     }
     case "command":
