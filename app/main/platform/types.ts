@@ -104,6 +104,14 @@ export interface WindowSystem extends Omit<X11, "capture"> {
    * Absent (Linux, Windows): callers make the two calls. A wrapper that renames windows renames both.
    */
   focusAndActive?(): { focus: ReturnType<X11["focusWindow"]>; active: ReturnType<X11["activeWindow"]> };
+  /**
+   * (Added by the release fixes; optional.) The native element with the keyboard in the foreground window now (Windows:
+   * its thread's focused child window, GetGUIThreadInfo's hwndFocus), 0 when none or it can't be told. Taken with the
+   * windows just before the ask box shows: once the box has the keyboard nothing in the user's window says what had it,
+   * so the box's read is told (cross-review P1). Absent: Linux (it reads before the box shows) and macOS (the app keeps
+   * its own focus, which the accessibility host asks).
+   */
+  keyboardFocus?(): number;
 }
 
 /**

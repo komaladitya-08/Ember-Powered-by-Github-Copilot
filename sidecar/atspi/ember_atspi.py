@@ -2238,23 +2238,31 @@ def find_window(params, until=None):
     return best_window(frames(until=until), None, title)[0]
 
 
-# Never-look entries that are everyday words ("Seahorse facts", "Housekeeper wanted"): they name a password manager's
-# program, so they match the window's app only, never its title. The same set as app/shared/never-look.ts
-# NEVER_LOOK_APP_ONLY (test/unit/never-look-app-only.test.ts checks that the two agree).
+# Never-look entries that are everyday words ("Housekeeper wanted"): they name a password manager, so they match the
+# window's app, and its title only where a word there starts with them ("My Vault | Keeper"), as main's isNeverLook.
+# The same set as app/shared/never-look.ts NEVER_LOOK_APP_ONLY (test/unit/never-look-app-only.test.ts checks that the
+# two agree).
 NEVER_LOOK_APP_ONLY = frozenset(["keeper", "seahorse", "strongbox"])
 
 
 def never_looked(window, params):
     """Is this window on the user's never-look list (by app name or title, or by process, which Ember
     found by the window's X11 class)? Then it is not read at all. An everyday word (NEVER_LOOK_APP_ONLY)
-    is matched against the app only."""
+    is matched against the app, and against a word of the title that starts with it (not right after a
+    letter or digit)."""
     if window["pid"] is not None and window["pid"] in (params.get("skipPids") or []):
         return True
     app = ("%s" % window["app"]).lower()
-    hay = ("%s %s" % (window["app"], window["name"])).lower()
+    title = ("%s" % window["name"]).lower()
+    hay = "%s %s" % (app, title)
     for t in params.get("neverLook") or []:
         t = t.strip().lower()
-        if t and t in (app if t in NEVER_LOOK_APP_ONLY else hay):
+        if not t:
+            continue
+        if t in NEVER_LOOK_APP_ONLY:
+            if t in app or re.search(r"(?<![^\W_])" + re.escape(t), title):
+                return True
+        elif t in hay:
             return True
     return False
 

@@ -1961,18 +1961,25 @@ class Windows(unittest.TestCase):
         self.assertTrue(e.read_window({"pid": 20, "neverLook": ["keepassxc"], "skipPids": [20]})["blocked"])
         self.assertNotIn("blocked", e.read_window({"pid": 20, "neverLook": ["keepassxc"]}))
 
-    def test_never_look_entries_that_are_everyday_words_match_the_app_only(self):
-        # "seahorse" names GNOME's Passwords and Keys, "keeper" a password manager: a page titled with the word is read.
+    def test_never_look_entries_that_are_everyday_words_match_a_title_only_where_a_word_starts_with_them(self):
+        # "seahorse" names GNOME's Passwords and Keys, "keeper" a password manager: a page titled with a longer word is read.
         defaults = {"neverLook": ["keepassxc", "seahorse", "keeper", "bitwarden"]}
-        page = {"app": "Firefox", "name": "Seahorse facts - Mozilla Firefox", "pid": 30}
+        page = {"app": "Firefox", "name": "Housekeeper wanted - Mozilla Firefox", "pid": 30}
         self.assertFalse(e.never_looked(page, defaults))
-        self.assertFalse(e.never_looked(dict(page, name="Housekeeper wanted - Mozilla Firefox"), defaults))
-        # The password managers' own windows stay private, by their program.
+        self.assertFalse(e.never_looked(dict(page, name="Goalkeeper gloves - Mozilla Firefox"), defaults))
+        # The password managers' own windows stay private, by their program, and Keeper's web vault by its title,
+        # whoever put the word on the list (cross-review S3).
         self.assertTrue(e.never_looked({"app": "seahorse", "name": "Passwords and Keys", "pid": 31}, defaults))
         self.assertTrue(e.never_looked({"app": "keeperpasswordmanager", "name": "Keeper", "pid": 32}, defaults))
-        # The other entries, and the user's own, still match the title too.
+        vault = dict(page, name="My Vault | Keeper - Mozilla Firefox")
+        self.assertTrue(e.never_looked(vault, defaults))
+        self.assertTrue(e.never_looked(vault, {"neverLook": ["Keeper"]}))
+        self.assertTrue(e.never_looked(dict(page, name="keepersecurity.com/vault"), {"neverLook": ["Keeper"]}))
+        self.assertTrue(e.never_looked(dict(page, name="Seahorse facts - Mozilla Firefox"), defaults))
+        # The other entries, and the user's own, still match the title anywhere.
         self.assertTrue(e.never_looked(dict(page, name="Bitwarden - Mozilla Firefox"), defaults))
-        self.assertTrue(e.never_looked(page, {"neverLook": ["seahorse facts"]}))
+        self.assertTrue(e.never_looked(dict(page, name="Seahorse facts"), {"neverLook": ["seahorse facts"]}))
+        self.assertTrue(e.never_looked(dict(page, name="Online banking"), {"neverLook": ["bank"]}))
         self.assertEqual(sorted(e.NEVER_LOOK_APP_ONLY), ["keeper", "seahorse", "strongbox"])
 
     def test_the_apps_other_windows_are_named(self):

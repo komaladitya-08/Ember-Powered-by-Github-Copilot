@@ -31,13 +31,13 @@ import { HandleWindow } from "./handle";
 import { otherSide } from "../shared/handle-place";
 import { revive } from "./revive";
 import { useAppNames } from "../shared/apps";
-import { AtspiSidecar } from "./perception/sidecar";
+import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
-import { openAskInOrder, userWindowsNow } from "./ask-open";
+import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
@@ -735,10 +735,12 @@ function start(): void {
     // under an open menu closes it.
     // The window with the keyboard, and what "Ask Ember…" will read there, taken now: once the handle has focus
     // they're gone. From settings (or another of Ember's windows) Ember reads nothing; from the ask box, what the
-    // box was opened over still stands. The ask box hides when it loses focus, so focus goes back past it.
+    // box was opened over still stands. The ask box hides when it loses focus, so focus goes back past it. The read
+    // runs once the handle has the keyboard, so where Ember can't hold it (Windows, macOS) it is told what had it
+    // (cross-review P1).
     const had = focusNow();
     const fromAskBox = had.ember && askWindow.isWindow(had.id);
-    if (!fromAskBox) captureContext();
+    if (!fromAskBox) captureContext(undefined, focusBeforeNow(wsSeenRef ?? wsRef, !!platform.keyboardHold));
     // From the ask box (it hides when it loses focus), focus goes back to what the box was opened over.
     const fromDesk = had.ember && !!deskViewRef?.isWindow(had.id);
     const back = fromAskBox ? askOver : had.id;
@@ -949,9 +951,10 @@ function start(): void {
   const consented = () => hasConsent(settings.get());
   /**
    * `taken`: the window the user was in, read before the ask box took the keyboard (where the box opens before the
-   * screen is read: ask-open.ts); undefined: the window active now.
+   * screen is read: ask-open.ts), and `before`, what had the keyboard in it then (cross-review P1); undefined: the window
+   * active now.
    */
-  const captureContext = (taken?: NonNullable<ReturnType<WindowSystem["activeWindow"]>>) => {
+  const captureContext = (taken?: NonNullable<ReturnType<WindowSystem["activeWindow"]>>, before?: FocusBefore) => {
     if (!consented()) { callContext = Promise.resolve(null); return; }
     // Set to work on another computer: its context (never this screen's: the user's window is the terminal they reached
     // it from, §2.8). Asked first, so it works without a window system here too.
@@ -963,7 +966,7 @@ function start(): void {
     const active = taken ?? wsRef?.activeWindow();
     const clip = platform.clipboard;
     const selected = active && active.pid !== process.pid && clip ? clip.readSelection(active.id).catch(() => "") : Promise.resolve("");
-    callContext = Promise.all([perception.quickContext(taken), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
+    callContext = Promise.all([perception.quickContext(taken, before), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
   /**
    * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
@@ -1016,11 +1019,12 @@ function start(): void {
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
     askAsked = asked;
     // Linux holds the keyboard, so the screen is read first, as always. Windows and macOS can't: the box shows first,
-    // and the screen is read after it, of the window the user was in (ask-open.ts).
+    // and the screen is read after it, of the window the user was in, told what had the keyboard there (ask-open.ts).
     openAskInOrder({
       holding: !!platform.keyboardHold, look,
       activeWindow: () => where?.active ?? null,
-      read: active => captureContext(active),
+      keyboard: () => where?.keyboard ?? 0,
+      read: (active, before) => captureContext(active, before),
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
         sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened),

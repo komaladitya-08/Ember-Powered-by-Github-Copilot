@@ -460,15 +460,21 @@ export function focusedElement(nodes: AxNode[]): AxNode | null {
  */
 const lookFold = (s: string) => s.replace(/\p{Cf}/gu, "").normalize("NFC").toLowerCase();
 
+/** Each everyday word, where it begins a word of a title: not right after a letter or digit ("my vault | keeper"). */
+const WORD_START: ReadonlyMap<string, RegExp> = new Map([...NEVER_LOOK_APP_ONLY].map(w => [w, new RegExp(`(?<![\\p{L}\\p{N}])${w}`, "u")]));
+
 /**
- * True when the app or window matches the user's "never look at" list. A default entry that is an everyday word
- * (NEVER_LOOK_APP_ONLY: "keeper", "seahorse") is matched against the app only, never the title.
+ * True when the app or window matches the user's "never look at" list. An entry that is an everyday word
+ * (NEVER_LOOK_APP_ONLY: "keeper", "seahorse", "strongbox") matches the app, and the title only where a word there starts
+ * with it: "Housekeeper wanted" is read, Keeper's web vault ("My Vault | Keeper") isn't, whether the word is a default or
+ * the user typed it (the list can't tell them apart; cross-review S3).
  */
 export function isNeverLook(window: { app: string; name: string }, list: string[]): boolean {
   const app = lookFold(window.app);
-  const hay = `${app} ${lookFold(window.name)}`;
+  const title = lookFold(window.name);
+  const hay = `${app} ${title}`;
   return list.some(item => {
     const i = lookFold(item).trim();
-    return !!i && (NEVER_LOOK_APP_ONLY.has(i) ? app.includes(i) : hay.includes(i));
+    return !!i && (NEVER_LOOK_APP_ONLY.has(i) ? app.includes(i) || WORD_START.get(i)!.test(title) : hay.includes(i));
   });
 }

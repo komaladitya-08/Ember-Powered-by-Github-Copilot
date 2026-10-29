@@ -12,7 +12,8 @@
  * through LaunchServices is (design §10 item 3); this test checks the provider itself. It records the design's "verify
  * in CI" items as it goes: that JXA's target-action works on this macOS (else Save's click can't be heard, said as
  * "not testable on this runner"), and that CFHash keys agree between two host processes (else KEY_MODE must become
- * "path", R4).
+ * "path", R4). It also checks the ask box's read: the field that had the keyboard, and its selection, once another app
+ * has it.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -345,6 +346,34 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     } finally {
       owner.stop();
     }
+  });
+
+  it("tells the ask box's read which field had the keyboard once another app has it, and reads its selection (cross-review P1)", async () => {
+    // The ask box shows before the screen is read, and its panel takes the keyboard: the read of the user's window is
+    // told that something had it there (focusBefore {}), and the host asks the app which element (its
+    // AXFocusedUIElement). Here the Name field has the keyboard with its text selected, and Finder takes it, as the box
+    // would.
+    const api = openAxApi();
+    const app = api?.app(benchPid) ?? null;
+    expect(app, `the bench's app element (${String(axApiError)})`).toBeTruthy();
+    const frontmost = () => api!.attr(app!, "AXFrontmost") === true;
+    if (!frontmost()) api!.set(app!, "AXFrontmost", true);
+    await waitFor("the bench in front", frontmost, 5_000);
+    await reread();
+    await s.request("focus", { id: node("Name", "entry").id });
+    // A text field that takes the keyboard selects all of its text.
+    const had = await waitFor("the Name field with the keyboard and its text selected", async () => {
+      await reread();
+      const n = node("Name", "entry");
+      return n.states.includes("focused") && n.selection ? n : null;
+    }, 5_000);
+    console.log(`ax-sidecar-darwin: the Name field has the keyboard, with ${JSON.stringify(had.selection)} selected`);
+    spawnSync("/usr/bin/open", ["-a", "Finder"]);
+    await waitFor("another app in front", () => !frontmost(), 10_000);
+    await reread();
+    console.log(`ax-sidecar-darwin: with Finder in front, the bench's own read says focused: ${JSON.stringify(read.nodes.filter(n => n.states.includes("focused")).map(n => [n.role, n.name]))}`);
+    read = await s.readWindow({ pid: benchPid, path: String(windowId), ownPid: process.pid, focusBefore: {} });
+    expect(node("Name", "entry"), "the Name field, in the read told something had the keyboard").toMatchObject({ states: expect.arrayContaining(["focused"]), selection: had.selection });
   });
 
   it("writes only protocol lines on stdout and notes, never screen text, on stderr", () => {

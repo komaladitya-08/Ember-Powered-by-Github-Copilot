@@ -62,6 +62,13 @@ export interface FakeElementSpec {
   labelledBy?: string;
   help?: string;
   placeholder?: string;
+  /** Its own native window (a Win32 child window: an edit box, a document's own window). */
+  native?: number;
+  /**
+   * Its app says it has its keyboard while another app's window has it (macOS: the app's AXFocusedUIElement while
+   * Ember's ask box has the keyboard): what focusedKey answers.
+   */
+  appFocus?: boolean;
   /** Every call about it takes this long (an app that is slow to answer). */
   slowMs?: number;
   /** What invoking it does (besides logging it). */
@@ -320,6 +327,17 @@ export class FakeProvider implements AxProvider {
     return { element: null, window: null };
   }
 
+  /** The element app `pid` says has its keyboard (`appFocus`), as a macOS app keeps it while another app has it. */
+  async focusedKey(pid: number): Promise<string | null> {
+    for (const w of this.windows) {
+      if ((w.spec as FakeWindowSpec).pid !== pid) continue;
+      this.ensureAnswering(w);
+      const f = this.findIn(w, e => !!e.spec.appFocus);
+      if (f) return `${pid}:${f.uid}`; // its key, as raw() gives it
+    }
+    return null;
+  }
+
   async children(h: Handle, max: number): Promise<RawNode[]> {
     const el = this.get(h);
     this.ensureAnswering(el);
@@ -501,7 +519,7 @@ export class FakeProvider implements AxProvider {
     for (const k of copy) if (s[k] !== undefined) (n as unknown as Record<string, unknown>)[k === "subrole" ? "platformSubrole" : k] = s[k];
     if (s.value !== undefined && !s.password) n.value = s.value.slice(0, 2000);
     if (s.text !== undefined && !s.password) n.hasText = true;
-    if (depth === 0 && (s as FakeWindowSpec).native !== undefined) n.native = (s as FakeWindowSpec).native;
+    if (s.native !== undefined) n.native = s.native;
     return n;
   }
 }

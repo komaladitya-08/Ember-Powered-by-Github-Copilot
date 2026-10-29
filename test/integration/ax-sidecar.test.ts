@@ -3,7 +3,9 @@
  * (hostLaunch: its own binary as plain Node, the UI Automation bridge's script and cache in its environment) and driven
  * through Ember's real client (AtspiSidecar) against the shared WinForms bench (test/fixtures/win_bench.ps1), whose log
  * says what each action did. Windows only: skipped elsewhere, and failing instead of skipping when EMBER_UIA_TEST=1
- * and something it needs is missing. macOS has its own, against its AppKit bench: ax-sidecar-darwin.test.ts.
+ * and something it needs is missing. macOS has its own, against its AppKit bench: ax-sidecar-darwin.test.ts. Last, it
+ * checks the ask box's read with a real keyboard (Ember's input backend): the field that had it, and its selection,
+ * once another window has it.
  *
  * The bench labels each control with the control's own accessible name (the label "Theme" beside the drop-down
  * "Theme"), so controls are looked up by name and role, never by name alone: the label comes first in the tree.
@@ -18,6 +20,8 @@ import path from "node:path";
 import { AtspiSidecar, type AxNode, type AxWindow, type ReadWindowResult, type SidecarLaunch, type SidecarStatus } from "../../app/main/perception/sidecar";
 import { hostLaunch } from "../../app/sidecar-host/launch";
 import { bridgeEnv, powershellPath } from "../../app/sidecar-host/providers/uia";
+import { openWin32Input, openWin32Windows, win32Error } from "../../app/main/platform/win32";
+import type { ScreenLike } from "../../app/main/platform/types";
 import type { Logger } from "../../app/main/logger";
 
 const SCRIPT = path.resolve("sidecar/uia/ember_uia.ps1");
@@ -296,5 +300,73 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     const done = await s.doAction(ok!.id, "click").catch((e: Error) => e);
     if (done instanceof Error) expect(done.message).toMatch(IS_BUSY);
     await waitFor("the bench's dialog answer", () => logged(log, { event: "dialog", result: "OK" }));
+  });
+
+  it("tells the ask box's read which field had the keyboard once another window has it, and reads its selection (cross-review P1)", async () => {
+    // The ask box shows before the screen is read: main takes what has the keyboard first (WindowSystem.keyboardFocus:
+    // the foreground thread's focused window), the box takes it, and the read of the user's window is told what had it
+    // (focusBefore), since UI Automation's focus is the whole system's by then. Here the Name field has the keyboard with
+    // its text selected, and another bench takes it, as the box would.
+    const screen: ScreenLike = { getPrimaryDisplay: () => ({ bounds: { x: 0, y: 0, width: 1, height: 1 }, scaleFactor: 1 }), getAllDisplays: () => [] };
+    const ws = openWin32Windows({ screen });
+    const x = openWin32Input();
+    expect(ws, `the Windows window system (${String(win32Error)})`).toBeTruthy();
+    expect(x, `Windows input (${String(win32Error)})`).toBeTruthy();
+    const otherLog = path.join(dir, "other-bench.log");
+    let other: ChildProcess | undefined;
+    let otherPid = 0;
+    const tap = async (key: string) => {
+      const k = x!.keysymOf(key);
+      x!.keysym(k, true);
+      await sleep(30);
+      x!.keysym(k, false);
+      await sleep(30);
+    };
+    try {
+      const hwnd = benchHwnd >>> 0;
+      x!.activate(hwnd);
+      await waitFor("the bench in front", () => x!.activeWindow() === hwnd, 5_000);
+      await reread();
+      expect((await s.setText(nameField().id, "Ember 1")).ok).toBe(true);
+      await s.request("focus", { id: nameField().id });
+      // End, then Shift+Home: the whole line selected, as the user would select it.
+      await tap("End");
+      const shift = x!.keysymOf("Shift_L");
+      x!.keysym(shift, true);
+      await sleep(30);
+      await tap("Home");
+      x!.keysym(shift, false);
+      const had = await waitFor("the Name field with the keyboard and its text selected", async () => {
+        await reread();
+        const n = nameField();
+        return n.states.includes("focused") && n.selection === "Ember 1" ? n : null;
+      }, 5_000);
+      // What main takes just before the box shows.
+      const native = ws!.keyboardFocus();
+      expect(native, "the bench's focused window").toBeGreaterThan(0);
+      other = spawn(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Sta", "-File", BENCH, "-Log", otherLog, "-Seconds", "300"], { stdio: "ignore", env: bridgeEnv(process.env) });
+      const otherReady = await waitFor("the other bench's ready line", () => logged(otherLog, { event: "ready" }), 60_000);
+      otherPid = Number(otherReady.pid);
+      const otherHwnd = Number(otherReady.hwnd) >>> 0;
+      x!.activate(otherHwnd);
+      await waitFor("the other bench in front", () => x!.activeWindow() === otherHwnd, 5_000);
+      await reread();
+      console.log(`ax-sidecar: with another window in front, the bench's own read says focused: ${JSON.stringify(read.nodes.filter(n => n.states.includes("focused")).map(n => [n.role, n.name]))}`);
+      read = await s.readWindow({ pid: benchPid, path: String(benchHwnd), ownPid: process.pid, focusBefore: { native } });
+      expect(nameField(), "the Name field, in the read told what had the keyboard").toMatchObject({ states: expect.arrayContaining(["focused"]), selection: had.selection });
+    } finally {
+      x?.releaseAll();
+      x?.close();
+      ws?.close();
+      if (other && other.exitCode === null) other.kill();
+      // The bench compiled to its own program outlives the script that started it.
+      if (otherPid && otherPid !== other?.pid) {
+        try {
+          process.kill(otherPid);
+        } catch {
+          // Gone already.
+        }
+      }
+    }
   });
 });

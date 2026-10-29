@@ -68,6 +68,15 @@ export interface AxWindow {
 /** Another window of the app read: one the user is in, or must answer first (an Open dialog). */
 export interface OtherWindow { name: string; role: string; active: boolean; modal: boolean }
 
+/**
+ * What had the keyboard in the user's window when the ask box showed before the screen was read (Windows, macOS:
+ * ask-open.ts), so read_window can still say it once the box has the keyboard (cross-review P1): `native`, the window
+ * system's element with it then (Windows: the focused child window, matched to the element whose own window it is);
+ * without it the accessibility host asks the app, which keeps its own focus (macOS). Linux reads before the box shows
+ * and never sends it (the Python sidecar ignores it).
+ */
+export interface FocusBefore { native?: number }
+
 export interface ReadWindowResult {
   window: AxWindow | null;
   nodes: AxNode[];
@@ -624,9 +633,9 @@ export class AtspiSidecar {
    * or title matches `neverLook`, or whose process is in `skipPids`, is found but not read. `ownPid`'s
    * windows (Ember's own) are never found, not even as the active window. `keep: false`: a quick look whose ids
    * aren't acted on (what has the keyboard before a key): it doesn't push the reads acted on out of the sidecar's
-   * last few, so the ids of the latest perceive_window stay known.
+   * last few, so the ids of the latest perceive_window stay known. `focusBefore`: the ask box's quick look (FocusBefore).
    */
-  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[] } = {}): Promise<ReadWindowResult> {
+  readWindow(params: { pid?: number; title?: string; path?: string; maxDepth?: number; maxNodes?: number; neverLook?: string[]; skipPids?: number[]; ownPid?: number; keep?: boolean; cells?: string[]; focusBefore?: FocusBefore } = {}): Promise<ReadWindowResult> {
     return this.request<ReadWindowResult & { secretKeys?: unknown; withheldKeys?: unknown }>("read_window", params).then(({ secretKeys, withheldKeys, ...r }) => {
       this.remember(secretKeys);
       this.remember(withheldKeys, this.withheld);

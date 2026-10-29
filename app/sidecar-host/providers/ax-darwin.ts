@@ -497,6 +497,27 @@ export class AxDarwinProvider implements AxProvider {
     return { element, window: this.give(win, { pid, role: "AXWindow", subrole: "", frame: null, depth: 0, path: [], windowId, clip: null, key: wkey }) };
   }
 
+  /**
+   * The key of the element app `pid` says has its keyboard (its AXFocusedUIElement, which the app keeps while Ember's ask
+   * box, another app's panel, has the keyboard), as a snapshot keys it; null when it has none or AX can't say.
+   */
+  async focusedKey(pid: number): Promise<string | null> {
+    const api = this.ready();
+    const s = this.session(api, pid);
+    const app = api.app(pid);
+    if (!app) return null;
+    const el = s.attr(app, "AXFocusedUIElement");
+    if (typeof el !== "bigint") {
+      releaseValue(api, el);
+      return null;
+    }
+    try {
+      return this.keysFor(api, [{ ref: el, pid, path: null, windowId: 0, role: "" }])[0] ?? null;
+    } finally {
+      api.release(el);
+    }
+  }
+
   async children(h: Handle, max: number): Promise<RawNode[]> {
     const api = this.ready();
     const held = this.held(h);

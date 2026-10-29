@@ -406,6 +406,19 @@ describe("the Windows window system", () => {
     expect(ws.focusWindow()).toBeNull();
   });
 
+  it("names the child window with the keyboard in the foreground window, for the ask box's read (cross-review P1)", () => {
+    const d = desktop();
+    const ws = windowsOn(d);
+    expect(ws.keyboardFocus()).toBe(0x41); // GetGUIThreadInfo's hwndFocus: Notepad's Edit child
+    d.win(0x40)!.focus = 0;
+    expect(ws.keyboardFocus()).toBe(0);
+    d.fg = 0;
+    expect(ws.keyboardFocus()).toBe(0);
+    ws.close();
+    d.fg = 0x40;
+    expect(ws.keyboardFocus()).toBe(0);
+  });
+
   it("reads the pointer with X's button bits for the logical buttons", () => {
     const d = desktop();
     const ws = windowsOn(d);

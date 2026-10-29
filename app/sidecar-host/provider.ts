@@ -218,6 +218,12 @@ export interface AxProvider {
   elementsAt(x: number, y: number, pid?: number): Promise<RawNode[]>;
   /** The element with the keyboard, and its top-level window. */
   focused(): Promise<{ element: RawNode | null; window: Handle | null }>;
+  /**
+   * (Optional.) The key of the element app `pid` itself says has its keyboard, null when none or it can't say (macOS:
+   * the app's AXFocusedUIElement, which it keeps while Ember's ask box has the keyboard), for the ask box's read
+   * (reading.ts focusBefore). Absent (UI Automation): only the whole system's focus is known, the box's by then.
+   */
+  focusedKey?(pid: number): Promise<string | null>;
   /** Its first `max` children as they are now (offscreen ones too: a closed drop-down's options). */
   children(h: Handle, max: number): Promise<RawNode[]>;
   perform(h: Handle, op: PerformOp, value?: unknown): Promise<void>;

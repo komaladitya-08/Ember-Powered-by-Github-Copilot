@@ -326,6 +326,20 @@ describe("the macOS AX provider's hit tests, looks and actions", () => {
     expect(fake.pidsAsked.has(EMBER)).toBe(false);
   });
 
+  it("names the element an app says has its keyboard, as its snapshot keys it, while another app is in front (cross-review P1)", async () => {
+    const { fake, p, windows } = await started();
+    // Ember's ask box has the keyboard: the bench still says its Name field has its own.
+    fake.frontmost = EMBER;
+    const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
+    const name = snap.nodes.find(n => n.platformRole === "AXTextField" && n.name === "Name")!;
+    expect(await p.focusedKey(BENCH)).toBe(name.key);
+    fake.apps.find(a => a.pid === BENCH)!.focusedId = undefined;
+    expect(await p.focusedKey(BENCH)).toBeNull();
+    // Never Ember's own.
+    await expect(p.focusedKey(EMBER)).rejects.toMatchObject({ code: "gone" });
+    expect(fake.pidsAsked.has(EMBER)).toBe(false);
+  });
+
   it("reads nothing of a secure field's text", async () => {
     const { fake, p, windows } = await started();
     const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
