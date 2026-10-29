@@ -474,7 +474,7 @@ describe("README.md's Accessibility section, against the release it describes", 
       expect(reach, place).toContain(place);
     }
     expect(hint).toMatch(/The Ask box keeps its size/);
-    expect(reach).toContain("the ask box keeps its size");
+    expect(reach).toContain("the Ask box keeps its size");
     // Windows' contrast themes (forced colours) and the handle's badges drawn per state.
     expect(read("app/renderer/shared/ember.css")).toMatch(/@media \(forced-colors: active\)/);
     expect(fs.existsSync(path.resolve("app/shared/mic.ts"))).toBe(true);
@@ -514,6 +514,7 @@ const ROUND2 = {
   auth2: /\n  wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
   lifecycle2: /const CARD_UNSHOWN = "/.test(read("app/main/targets/runtime.ts")),
   perception2: fs.existsSync(path.resolve("app/main/perception/text-warm.ts")),
+  css2: fs.existsSync(path.resolve("app/renderer/command/terminal-size.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -567,6 +568,19 @@ describe("round 2's docs lines (perception2)", () => {
       }
     }
     expect(flat(section(read("docs/COMMANDS-WSL-SSH.md"), "4.4 build-01's screen"))).toContain("even for a request already under way: it doesn't describe the screen, open apps on it or change its settings");
+  });
+});
+
+describe("round 2's docs lines (css2)", () => {
+  it.runIf(ROUND2.css2)("css2: says the text size reaches the command window's terminal, at its sizes", async () => {
+    const { termFontSize } = await load<{ termFontSize(scale: number): number }>("app/renderer/command/terminal-options.ts");
+    const px = [1, 1.15, 1.3].map(termFontSize);
+    expect(px).toEqual([13, 15, 17]);
+    const notes = flat(read("CHANGELOG.md"));
+    expect(notes).toContain(`Text size also reaches the command window's terminal (${px[0]}, ${px[1]} or ${px[2]} px, at once when you change it; a running command keeps its columns and rows)`);
+    expect(notes).toMatch(/first run's \*\*Start Ember\*\* row stays opaque/);
+    expect(flat(section(read("README.md"), "Accessibility"))).toContain("the command window and its terminal, and the password and consent cards; the Ask box keeps its size");
+    expect(flat(section(read("docs/DEVELOPING.md"), "Using Ember"))).toContain("the command window and its terminal, and Ember's password and consent cards; the Ask box keeps its size");
   });
 });
 
