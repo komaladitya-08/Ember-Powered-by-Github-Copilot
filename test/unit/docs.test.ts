@@ -515,6 +515,7 @@ const ROUND2 = {
   lifecycle2: /const CARD_UNSHOWN = "/.test(read("app/main/targets/runtime.ts")),
   perception2: fs.existsSync(path.resolve("app/main/perception/text-warm.ts")),
   css2: fs.existsSync(path.resolve("app/renderer/command/terminal-size.ts")),
+  ship2: /export function restartAfterUpdate\(/.test(read("app/main/install-watch.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -581,6 +582,22 @@ describe("round 2's docs lines (css2)", () => {
     expect(notes).toMatch(/first run's \*\*Start Ember\*\* row stays opaque/);
     expect(flat(section(read("README.md"), "Accessibility"))).toContain("the command window and its terminal, and the password and consent cards; the Ask box keeps its size");
     expect(flat(section(read("docs/DEVELOPING.md"), "Using Ember"))).toContain("the command window and its terminal, and Ember's password and consent cards; the Ask box keeps its size");
+  });
+});
+
+describe("round 2's docs lines (ship2)", () => {
+  it.runIf(ROUND2.ship2)("ship2: says when a restart starts the AppImage again, and what starts remote.yml", () => {
+    // restartOptions (admin-watch.ts): the AppImage only when execPath is inside APPDIR.
+    expect(read("app/main/policy/admin-watch.ts")).toMatch(/APPDIR/);
+    const s7 = flat(section(read("docs/DEVELOPING.md"), "7. Packages"));
+    expect(s7).toContain("starts the AppImage again (`$APPIMAGE`, with the same arguments) only when Ember runs from it, that is when `process.execPath` is inside `$APPDIR`");
+    // remote.yml's two paths lists, kept equal by remote-workflow.test.ts.
+    expect(fs.existsSync(path.resolve("test/unit/remote-workflow.test.ts"))).toBe(true);
+    const s144 = flat(section(read("docs/DEVELOPING.md"), "14.4 Tests and CI"));
+    expect(s144).toContain("(its two `paths` lists, which must stay equal; `test/unit/remote-workflow.test.ts` fails and names the file when one is left out, so add a pattern to both lists)");
+    const wf = read(".github/workflows/remote.yml");
+    for (const v of ["EMBER_SSH_TEST_EXPECT_HELLO: \"0\"", "EMBER_SSH_TEST_EXPECT_HELLO: \"1\""]) expect(wf).toContain(v);
+    expect(s144).toContain("`EMBER_SSH_TEST_EXPECT_HELLO` makes `ssh-windows` strict: `1` requires the hello, `0` requires the refusal of a kernel older than 4.18");
   });
 });
 

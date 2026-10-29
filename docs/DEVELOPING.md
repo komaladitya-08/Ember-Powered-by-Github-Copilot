@@ -376,6 +376,11 @@ RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package
 texts are in `packaging/licences/`; sherpa-onnx's is pinned to 1.13.8, whose WebAssembly was checked). `sudo ember
 doctor` works (it adds `--no-sandbox` only for the setup check run as root).
 
+A restart (**Restart Ember** after an update, or after the administrator's policy changed) starts the AppImage again
+(`$APPIMAGE`, with the same arguments) only when Ember runs from it, that is when `process.execPath` is inside
+`$APPDIR`. An RPM Ember started from a shell in another AppImage app's terminal inherits that app's `APPIMAGE` and
+`APPDIR`, and still restarts itself, as Electron does by default.
+
 `ember doctor` (or `npm run doctor` in a checkout) prints "Ember <v> setup check" with the settings window's rows: the
 session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
 or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (speech-dispatcher),
