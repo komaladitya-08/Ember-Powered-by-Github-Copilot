@@ -247,9 +247,9 @@ and VoiceOver on a Mac. While one runs:
 
 | To | From the keyboard |
 |---|---|
-| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds the shortcut: **Ask Ember…** in settings, under **Comfort & access › Ember on screen** |
+| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, jump list, Dock menu) |
 | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good |
-| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds the shortcut: **Stop everything** under **Comfort & access › Ember on screen** |
+| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds it and its fallback: **Stop everything** under **Comfort & access › Ember on screen** |
 | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
 | What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command |
