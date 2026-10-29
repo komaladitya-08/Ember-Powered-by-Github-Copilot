@@ -9,7 +9,7 @@
  */
 
 import crypto from "node:crypto";
-import type { TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
@@ -76,6 +76,9 @@ export const titleOf = (goal: string) => {
   return t.length > 40 ? t.slice(0, 39) + "…" : t;
 };
 
+/** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
+const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
+
 /** How a finished task went, in the user's words: "stopped", never "cancelled". */
 export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
 
@@ -101,6 +104,8 @@ export class TaskManager {
   private closed = false;
   /** Why every task was stopped when the user didn't stop them (Copilot stopped under them): they end as failed. */
   private cutOff: string | null = null;
+  /** Running tasks told to stop that are still winding down: their cards say so at once (a press that shows nothing gets pressed again). */
+  private stopping = new Set<string>();
 
   constructor(private d: TaskManagerDeps) {}
 
@@ -144,7 +149,11 @@ export class TaskManager {
       else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
       return;
     }
-    this.running.get(id)?.abort.abort();
+    const r = this.running.get(id);
+    if (!r) return;
+    r.abort.abort();
+    this.stopping.add(id);
+    this.publish();
   }
 
   /** Stops every task. `failed`: why, when it wasn't the user (they end as failed with that, not as stopped). */
@@ -298,9 +307,11 @@ export class TaskManager {
   }
 
   private finish(task: Task, status: TaskStatus, result: WorkerResult): void {
+    this.stopping.delete(task.id);
     task.status = status;
     task.result = result;
-    task.detail = result.summary;
+    // The card shows a card's worth; the whole summary goes to the conversation (task.result).
+    task.detail = detailOf(result.summary);
     task.finished = Date.now();
     this.unreported.push(task);
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
@@ -334,8 +345,8 @@ export class TaskManager {
     const cards: TaskCard[] = [...this.tasks.values()].map(t => ({
       id: t.id,
       title: t.title,
-      status: t.status === "queued" ? "waiting" : t.status === "cancelled" ? "stopped" : t.status,
-      detail: t.detail,
+      status: t.status === "cancelled" ? "stopped" : t.status,
+      detail: t.status === "running" && this.stopping.has(t.id) ? TASK_STOPPING : t.detail,
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
         : [{ id: `task:${t.id}:dismiss`, label: "Close" }],

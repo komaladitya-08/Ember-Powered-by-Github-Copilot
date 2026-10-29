@@ -18,6 +18,8 @@ export const OVERLAY = {
   handleFit: "handle:fit",
   /** Where the task cards are (global DIP), so Ember keeps off their buttons. */
   cards: "overlay:cards",
+  /** The desktop's reduce-motion preference changed (the overlay's page follows it live), for Ember's follow spring. */
+  motion: "overlay:motion",
 } as const;
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -26,6 +28,8 @@ export interface OverlayInit {
   displayId: number;
   /** This overlay's display bounds in global DIP. */
   bounds: Rect;
+  /** Its display's work area in global DIP (without the taskbar, Dock or top bar), when main says. */
+  workArea?: Rect;
   settings: Settings;
   /** True when this window is the small fallback buddy (no compositor). */
   fallback: boolean;
@@ -38,6 +42,8 @@ export interface OverlayFrame {
   ember: { x: number; y: number };
   cursor: { x: number; y: number };
   visible: boolean;
+  /** The display Ember is on (the one nearest its centre): only its overlay shows the bubble. */
+  on?: number;
 }
 
 export interface BubbleState {
@@ -59,13 +65,17 @@ export interface BubbleState {
 export interface TaskCard {
   id: string;
   title: string;
-  status: "running" | "waiting" | "done" | "failed" | "stopped";
+  /** "queued": in line behind the tasks running now (nothing is needed from the user); "waiting": waits for the user. */
+  status: "running" | "queued" | "waiting" | "done" | "failed" | "stopped";
   detail: string;
   /** Buttons on the card ("Stop" while it works, "Close" on a failure); clicks come back as bubble actions with these ids. */
   actions?: { id: string; label: string }[];
   /** Where the task acts, when not on this computer. */
   where?: string;
 }
+
+/** A running task's card detail from the moment its Stop is pressed until it has wound down. */
+export const TASK_STOPPING = "Stopping…";
 
 export interface EmberState {
   emotion: Emotion;
@@ -100,6 +110,8 @@ export interface OverlayApi {
   bubbleAction(id: string): void;
   /** The task cards' area in global DIP (null: no cards on this display). */
   setCards(rect: Rect | null): void;
+  /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */
+  setReducedMotion?(on: boolean): void;
 }
 
 export interface HandleApi {

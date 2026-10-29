@@ -5,8 +5,9 @@ body { font: var(--type-callout); color: var(--label); }
 #stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 
-/* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen. It fades in
-   from just above and out in place (main.ts keeps its words until it has gone). */
+/* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen (40 px down:
+   layout.ts's PILL_TOP), or at the bottom while the control Ember works on is under it at the top (main.ts sets
+   .low and how far up). It fades in from just above and out in place (main.ts keeps its words until it has gone). */
 .status {
   position: absolute; top: 40px; left: 50%; transform: translateX(-50%);
   display: inline-flex; align-items: center; gap: 9px; min-height: 34px; padding: 6px 16px 6px 13px; border-radius: var(--r-capsule);
@@ -15,15 +16,20 @@ body { font: var(--type-callout); color: var(--label); }
   transition: opacity 200ms ease, display 200ms allow-discrete, translate 420ms var(--spring-snappy);
 }
 @starting-style { .status { opacity: 0; translate: 0 -6px; } }
+.status.low { top: auto; }
 .status[hidden] { display: none; opacity: 0; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
 
-/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly); above Ember, which keeps off them. */
+/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly, in the bottom-left while
+   the control Ember works on is under them there); above Ember, which keeps off them. */
 .tasks {
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
-/* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. */
+/* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. The
+   scroller would cut the cards' outer shadows off at its edges (a hard-edged grey slab over a light app): while it
+   scrolls they keep only their sheen and rim, which it doesn't cut. */
 .tasks.scroll { overflow-y: auto; overscroll-behavior: contain; }
+.tasks.scroll .task { box-shadow: var(--glass-spec); }
 /* Its scrollbar is drawn over whatever app is behind: the thumb sits in a dark track, so it reads on a white app too. */
 .tasks.scroll::-webkit-scrollbar-track { border: 2px solid transparent; border-radius: var(--r-capsule); background: rgba(20, 17, 18, 0.85) padding-box; }
 .tasks.scroll::-webkit-scrollbar-thumb { border-width: 4px; }
@@ -35,12 +41,17 @@ body { font: var(--type-callout); color: var(--label); }
   transition: opacity 240ms ease;
 }
 /* A card that has just appeared fades in (opacity only: its buttons are measured where they stand). Cards moved
-   in the stack are not new, and don't blink. */
+   in the stack are not new, and don't blink: they slide to their new place, and a card that went fades where it was
+   (a copy of it, .gone, drawn by main.ts; neither in Calm mode or with reduced motion). */
 @starting-style { .task[data-fresh] { opacity: 0; } }
+.task.gone { position: fixed; z-index: 3; margin: 0; box-sizing: border-box; pointer-events: none; }
 .task b, .task span { overflow-wrap: anywhere; }
 .task b { font: var(--type-headline); letter-spacing: -0.006em; }
 .task span { color: var(--label-2); font: var(--type-callout); }
 .task span[hidden] { display: none; }
+/* A long result is kept to four lines, so one card never folds the others away (the whole text stays for screen
+   readers, and goes to the conversation). */
+.task .detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
 /* Where a task acts when it isn't this computer (§2.4): a small capsule before the title, on the bubble and the cards. */
 .where {
   display: inline-block; max-width: 136px; margin-right: 6px; padding: 0 6px; border-radius: var(--r-capsule); vertical-align: 1px;
@@ -74,15 +85,22 @@ body { font: var(--type-callout); color: var(--label); }
   transition: background-color 140ms ease, transform 220ms var(--spring-snappy);
 }
 @media (hover: hover) { .task-actions button:hover { background: rgba(255, 255, 255, 0.15); } }
+/* Stop, the safety control on a task under way: the larger capsule (28 px) with a red tint, never mistaken for Close. */
+.task-actions button.stop { min-height: 28px; padding: 5px 14px; font-size: 13px; background: color-mix(in srgb, var(--red) 26%, transparent); }
+@media (hover: hover) { .task-actions button.stop:hover { background: color-mix(in srgb, var(--red) 38%, transparent); } }
 .task-actions button:active { transform: scale(0.97); }
+/* A Stop being carried out ("Stopping…" on its card): it takes no second press. */
+.task-actions button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
+.task-actions button[aria-disabled="true"]:active { transform: none; }
 .task-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 @keyframes pulse { 50% { opacity: 0.35; } }
 
 /* The control Ember is working on: Apple's focus ring in Ember's colour, between two dark keylines so it reads on a
    white app as on a dark one (3:1 either way). The ring stays still; its glow (a layer of its own) breathes by
    opacity, so the pulse costs the compositor and never repaints. */
+/* Drawn above everything else of Ember's (the cards, the status pill): nothing of Ember's hides the control it works on. */
 .focus {
-  position: absolute; pointer-events: none; border-radius: var(--r-md);
+  position: absolute; z-index: 4; pointer-events: none; border-radius: var(--r-md);
   border: 2px solid var(--accent);
   box-shadow: 0 0 0 1px rgba(20, 12, 4, 0.75), inset 0 0 0 1px rgba(20, 12, 4, 0.45), 0 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent);
   transition: left 0.3s var(--spring-smooth), top 0.3s var(--spring-smooth), width 0.3s var(--spring-smooth), height 0.3s var(--spring-smooth), opacity 0.2s;
@@ -110,5 +128,7 @@ html.calm .focus::after, html.calm .status i { animation: none; }
    (the bubble's own rules are in BUBBLE_CSS). */
 html[data-text-size] .status { font-size: calc(13px * var(--text-scale)); }
 html[data-text-size] .task-actions button { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+/* Stop stays the larger of the card's buttons at every size. */
+html[data-text-size] .task-actions button.stop { font-size: calc(13px * var(--text-scale)); }
 /* The place's capsule grows with its words, so a shortened place (handle/badge.ts shortWhere) still shows whole. */
 html[data-text-size] .where { max-width: calc(136px * var(--text-scale)); }

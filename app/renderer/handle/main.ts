@@ -6,6 +6,7 @@ import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
+import { idleLine as tasksLine } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
 import { idleLine, micBadge } from "../../shared/mic";
 import { HandleLive } from "./live";
@@ -65,7 +66,7 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
 }
 
 /** The task row's state in words, for screen readers (its symbol says it to the eye). */
-const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
+const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 
 const thoughtEl = $("thought");
 let wasStreaming = false;
@@ -122,8 +123,8 @@ api.onState(s => {
   mic.title = micState?.label ?? "";
   mic.setAttribute("aria-label", micState?.label ?? "Microphone");
   const micNews = live.micNews(s.mic);
-  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work.
-  const idle = idleLine(s.idle, s.mic);
+  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work; while tasks run, their count in place of Ready.
+  const idle = tasksLine(idleLine(s.idle, s.mic), s.tasks) ?? "Ready";
   if (!fallback) {
     if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.

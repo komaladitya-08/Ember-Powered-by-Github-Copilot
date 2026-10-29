@@ -12,7 +12,7 @@
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
+import { Follower, followTarget, contains, besideRect, besideControl, overlapsBody, takesPointer } from "./follow";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
@@ -111,9 +111,19 @@ export class OverlayManager {
     return this.follower.position;
   }
 
-  /** Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion. */
+  /**
+   * Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion: read at start, then
+   * as the overlay's page sees it change (reducedMotionChanged), so the spring follows the switch without a restart.
+   */
   avoid: (() => Rect | null) | null = null;
   systemReducedMotion = false;
+
+  /** Called by IPC when an overlay's page sees the desktop's reduce-motion preference change. */
+  reducedMotionChanged(on: boolean): void {
+    if (on === this.systemReducedMotion) return;
+    this.systemReducedMotion = on;
+    this.log.info("overlay.reduced_motion", { on });
+  }
   /** A window of Ember's own the user is working in (settings): Ember waits beside it, or out of sight. */
   private aside: Rect | null = null;
 
@@ -147,9 +157,9 @@ export class OverlayManager {
       // the cursor (where it would be now, not wherever it was on its way), so its buttons don't run away.
       // Otherwise it follows the cursor again.
       const c = this.cursor();
-      const here = () => followTarget(c, size, screen.getDisplayNearestPoint(c).workArea, this.keepOff());
+      const here = () => { const d = screen.getDisplayNearestPoint(c); return followTarget(c, size, d.workArea, this.keepOff(d)); };
       // ("Stay put": it answers where it already is.)
-      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? (this.paused ? this.follower.position : here()) : null);
+      this.follower.park(f ? this.besideFocus(f) : now ? (this.paused ? this.follower.position : here()) : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
@@ -171,7 +181,7 @@ export class OverlayManager {
   }
 
   private lastHandleCheck = 0;
-  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; at: number } | null = null;
+  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; on: number; at: number } | null = null;
 
   getState(): EmberState {
     return this.state;
@@ -181,22 +191,46 @@ export class OverlayManager {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.settings, s);
   }
 
+  /** Where Ember holds still beside the control it works on (null: it isn't). */
+  private beside: { x: number; y: number } | null = null;
+
+  /** Beside the control Ember works on, off its handle and that display's task cards. */
+  private besideFocus(f: Rect): { x: number; y: number } {
+    const d = screen.getDisplayMatching(f);
+    this.beside = besideControl(f, this.settings().size, d.workArea, this.keepOff(d));
+    return this.beside;
+  }
+
   /** Called by IPC when a renderer reports where its task cards are. */
   setCards(sender: Electron.WebContents, r: Rect | null): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
+    // Cards that came up over where Ember holds still beside a control: it moves off them (only then: a question's
+    // buttons move with it).
+    const f = this.state.focus, at = this.beside;
+    const half = this.settings().size * 0.6;
+    if (f && at && this.keepOff(screen.getDisplayMatching(f)).some(r => overlapsBody(at, half, r))) this.follower.park(this.besideFocus(f));
   }
 
-  /** What Ember keeps off: its handle and the task cards stacked above it (one area: they touch). */
-  private keepOff(): Rect | null {
-    let r = this.avoid?.() ?? null;
-    for (const o of this.overlays.values()) {
-      const c = o.cards;
-      if (!c) continue;
-      if (!r) { r = c; continue; }
-      const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
-      r = { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
-    }
-    return r;
+  /**
+   * What Ember keeps off on `display`: its handle (when it is there) and that display's task cards, within the
+   * display's work area. Cards stacked above the handle make one area with it (Ember fits in no gap between them);
+   * cards moved to the other corner stay a separate area, as each display's cards do: one area round them all would
+   * be a band across the screen that Ember could not follow the cursor into.
+   */
+  private keepOff(display: Pick<Display, "id" | "workArea">): Rect[] {
+    const a = display.workArea;
+    const clip = (r: Rect | null | undefined): Rect | null => {
+      if (!r) return null;
+      const x = Math.max(r.x, a.x), y = Math.max(r.y, a.y);
+      const width = Math.min(r.x + r.width, a.x + a.width) - x, height = Math.min(r.y + r.height, a.y + a.height) - y;
+      return width > 0 && height > 0 ? { x, y, width, height } : null;
+    };
+    const r = clip(this.avoid?.());
+    const c = clip([...this.overlays.values()].find(o => o.display.id === display.id)?.cards);
+    if (!r || !c) return r ? [r] : c ? [c] : [];
+    if (c.x >= r.x + r.width || r.x >= c.x + c.width) return [r, c];
+    const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
+    return [{ x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y }];
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
@@ -253,7 +287,7 @@ export class OverlayManager {
     const h = this.avoid?.() ?? null;
     const b = o.display.bounds;
     const here = !!h && h.x < b.x + b.width && h.x + h.width > b.x && h.y < b.y + b.height && h.y + h.height > b.y;
-    return { displayId: o.display.id, bounds: b, settings: this.settings(), fallback: false, handle: here ? h : null };
+    return { displayId: o.display.id, bounds: b, workArea: o.display.workArea, settings: this.settings(), fallback: false, handle: here ? h : null };
   }
 
   /** The handle moved (another screen layout): every overlay is told where it is now. */
@@ -353,11 +387,13 @@ export class OverlayManager {
     const asking = this.state.bubble.visible && this.state.bubble.actions.length > 0;
     const ember = aside
       ? this.follower.step(aside, dt, true)
-      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff()), dt);
-    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
+      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff(display)), dt);
+    // Which display Ember is on (only its overlay shows the bubble; each display it straddles draws its body).
+    const on = screen.getDisplayNearestPoint({ x: Math.round(ember.x), y: Math.round(ember.y) }).id;
+    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking), on };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;
-    const still = !!p && p.visible === frame.visible && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
+    const still = !!p && p.visible === frame.visible && p.on === on && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
       && p.cursor.x === cursor.x && p.cursor.y === cursor.y && now - p.at < 1000;
     if (!still) this.lastFrame = { ...frame, ember: { ...ember }, at: now };
 

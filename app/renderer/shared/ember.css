@@ -94,11 +94,12 @@
   --glass-solid: #242022;
 
   /* Symbols, one family (as SF Symbols' filled circles): masks, drawn in whatever colour the element is.
-     working: a ring with its arc lit (static: nothing spins); waiting: Ember asks you; then done, failed,
-     stopped, more; the disclosure and pop-up chevrons; and the microphone, listening and struck out (the handle's
-     badge). */
+     working: a ring with its arc lit (static: nothing spins); queued: a clock (in line, nothing needed from you);
+     waiting: Ember asks you; then done, failed, stopped, more; the disclosure and pop-up chevrons; and the
+     microphone, listening and struck out (the handle's badge). */
   --sym-working: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='8.5' fill='none' stroke='black' stroke-opacity='0.32' stroke-width='3'/%3E%3Cpath d='M12 3.5a8.5 8.5 0 0 1 8.5 8.5' fill='none' stroke='black' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E");
   --sym-waiting: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Cpath d='M9.3 9.2a2.8 2.8 0 1 1 3.9 2.6c-.8.4-1.2 1-1.2 1.8v.4' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'/%3E%3Ccircle cx='12' cy='17.1' r='1.35' fill='black'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='12' cy='12' r='11' mask='url(%23m)'/%3E%3C/svg%3E");
+  --sym-queued: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Cpath d='M12 6.6V12l3.6 2.4' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/mask%3E%3C/defs%3E%3Ccircle cx='12' cy='12' r='11' mask='url(%23m)'/%3E%3C/svg%3E");
   --sym-done: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm5.2 7.3a1.2 1.2 0 0 0-1.7 0l-4.8 4.8-2.2-2.2a1.2 1.2 0 1 0-1.7 1.7l3 3a1.2 1.2 0 0 0 1.7 0l5.7-5.6a1.2 1.2 0 0 0 0-1.7z'/%3E%3C/svg%3E");
   --sym-failed: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zm0 5a1.3 1.3 0 0 0-1.3 1.3v5.4a1.3 1.3 0 0 0 2.6 0V7.3A1.3 1.3 0 0 0 12 6zm0 9.6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z'/%3E%3C/svg%3E");
   --sym-stopped: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 1a11 11 0 1 1 0 22 11 11 0 0 1 0-22zM9.5 8A1.5 1.5 0 0 0 8 9.5v5A1.5 1.5 0 0 0 9.5 16h5a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 14.5 8z'/%3E%3C/svg%3E");
@@ -176,6 +177,7 @@ html {
 
 /* A state symbol beside its words (never colour alone): set data-status, size it, and it draws in the state's colour. */
 [data-status] { --sym-tint: var(--accent); --sym: var(--sym-working); }
+[data-status="queued"] { --sym-tint: var(--gray); --sym: var(--sym-queued); }
 [data-status="waiting"] { --sym-tint: var(--purple); --sym: var(--sym-waiting); }
 [data-status="done"] { --sym-tint: var(--green); --sym: var(--sym-done); }
 [data-status="failed"] { --sym-tint: var(--red); --sym: var(--sym-failed); }
