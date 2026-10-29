@@ -18,7 +18,7 @@ const electron = vi.hoisted(() => {
     webContents = Object.assign(new Emitter(), { send: vi.fn(), postMessage: vi.fn() });
     destroyed = false;
     constructor(o: { title: string }) { this.title = o.title; windows.push(this); }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; }
   }

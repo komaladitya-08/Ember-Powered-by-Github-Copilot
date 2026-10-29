@@ -18,6 +18,7 @@ import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { scaledSize, textScale } from "./page-prefs";
+import { pageUrl } from "./page-url";
 
 const appDir = __dirname;
 /** At the default text size; it widens with the text (its two lines fit its height at every size). */
@@ -80,7 +81,7 @@ export class HandleWindow {
     revive(this.win);
     screen.on("display-metrics-changed", this.reposition);
     screen.on("display-removed", this.reposition);
-    void this.win.loadFile(path.join(appDir, "renderer", "handle", "index.html"));
+    void this.win.loadURL(pageUrl(path.join(appDir, "renderer", "handle", "index.html")));
   }
 
   private last: EmberState | null = null;

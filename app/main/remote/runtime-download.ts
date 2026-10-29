@@ -5,7 +5,8 @@
  * or the administrator's `ssh.runtimeMirror` (same layout, still checked), and keeps it in <userData>/remote/runtime/.
  * Every byte is hashed before anything is sent: a file that doesn't match is deleted and never sent anywhere. A download
  * that goes RUNTIME_STALL_MS without a byte is ended (request and all): the SSH attempt waits on it, and nothing else
- * would end a server or proxy that stops sending.
+ * would end a server or proxy that stops sending. After a runtime is in place, the archives of Node versions Ember no
+ * longer pins (and partial downloads a day old) are deleted from that folder, so updates don't pile them up.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -42,12 +43,14 @@ export class RuntimeError extends Error {
 
 /** The file system the cache uses (fs/promises in Ember; a temp folder in tests). */
 export interface RuntimeFs {
-  stat(p: string): Promise<{ size: number }>;
+  stat(p: string): Promise<{ size: number; mtimeMs?: number }>;
   open(p: string, flags: "w"): Promise<{ write(b: Uint8Array): Promise<unknown>; close(): Promise<void> }>;
   createReadStream(p: string): AsyncIterable<Uint8Array>;
   rename(from: string, to: string): Promise<void>;
   rm(p: string, o: { force: true }): Promise<void>;
   mkdir(p: string, o: { recursive: true; mode: number }): Promise<unknown>;
+  /** The folder's file names; without it old archives are left (pruneRuntimes does nothing). */
+  readdir?(p: string): Promise<string[]>;
 }
 
 /** SHA-256 of a file, streamed. */
@@ -69,6 +72,41 @@ export async function cachedOk(fs: RuntimeFs, file: string, want: { sha256: stri
   const st = await fs.stat(file).catch(() => null);
   if (!st || st.size !== want.bytes) return false;
   return (await sha256File(fs, file).catch(() => "")) === want.sha256;
+}
+
+/** A runtime archive's name in the cache, and a partial download's (ensureRuntime's `<file>.<8 hex>.part`). */
+const ARCHIVE = /^node-v\d{1,3}\.\d{1,3}\.\d{1,3}-(linux|darwin)-(x64|arm64)\.tar\.(xz|gz)$/;
+const PART = /^node-v\d{1,3}\.\d{1,3}\.\d{1,3}-(linux|darwin)-(x64|arm64)\.tar\.(xz|gz)\.[0-9a-f]{8}\.part$/;
+/** How old a partial download must be before it is deleted: younger ones may be another connection's, still going. */
+export const STALE_PART_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Deletes from the cache folder the runtime archives the manifest doesn't name (any target's pinned archive is kept:
+ * another computer may need it) and partial downloads older than STALE_PART_MS. Nothing else in the folder is
+ * touched, and it never throws: an archive it can't delete is simply still there next time.
+ */
+export async function pruneRuntimes(o: { manifest: RuntimeManifest; dir: string; file: (name: string) => string; fs: RuntimeFs; now?: number }): Promise<void> {
+  if (!o.fs.readdir) return;
+  const keep = new Set(Object.values(o.manifest.targets).flatMap(t => [t?.xz?.file, t?.gz?.file]).filter((f): f is string => !!f));
+  const now = o.now ?? Date.now();
+  let names: string[];
+  try {
+    names = await o.fs.readdir(o.dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    try {
+      if (ARCHIVE.test(name) ? keep.has(name) : !PART.test(name)) continue;
+      if (PART.test(name)) {
+        const st = await o.fs.stat(o.file(name));
+        if (st.mtimeMs === undefined || now - st.mtimeMs < STALE_PART_MS) continue;
+      }
+      await o.fs.rm(o.file(name), { force: true });
+    } catch {
+      // Gone already, or in use: harmless to leave until the next time.
+    }
+  }
 }
 
 /** Lets the server's connection go without waiting on it: a body that ignores its cancel can't hold the attempt. */
@@ -102,7 +140,10 @@ export async function ensureRuntime(o: {
   const entry = o.manifest.targets[o.target]?.[o.format];
   if (!entry) throw new RuntimeError("download", "no runtime for that computer");
   const dest = o.file(entry.file);
-  if (await cachedOk(o.fs, dest, entry)) return { path: dest, sha256: entry.sha256, bytes: entry.bytes };
+  if (await cachedOk(o.fs, dest, entry)) {
+    await pruneRuntimes(o);
+    return { path: dest, sha256: entry.sha256, bytes: entry.bytes };
+  }
   await o.fs.mkdir(o.dir, { recursive: true, mode: 0o700 });
   const url = runtimeUrl(o.manifest.pinned, entry.file, o.mirror);
   // The request's own signal: the caller's Cancel, or no byte for stallMs. Waits race it too, so a fetch or a read that
@@ -190,5 +231,6 @@ export async function ensureRuntime(o: {
     o.signal?.removeEventListener("abort", cancel);
   }
   await o.fs.rename(part as string, dest);
+  await pruneRuntimes(o);
   return { path: dest, sha256: entry.sha256, bytes: entry.bytes };
 }

@@ -16,7 +16,7 @@ vi.mock("electron", () => {
     setAlwaysOnTop(...a: unknown[]) { this.calls.push(["setAlwaysOnTop", ...a]); }
     setVisibleOnAllWorkspaces(...a: unknown[]) { this.calls.push(["setVisibleOnAllWorkspaces", ...a]); }
     setIgnoreMouseEvents(...a: unknown[]) { this.calls.push(["setIgnoreMouseEvents", ...a]); }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     isDestroyed() { return false; }
     destroy() {}
   }

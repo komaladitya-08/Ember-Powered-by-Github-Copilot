@@ -9,10 +9,13 @@
 
 Name:           ember
 Version:        %{ember_version}
-Release:        1%{?dist}
+# 1 unless rpm.sh is given another (EMBER_RPM_RELEASE: CI builds Release 2 to test an upgrade).
+Release:        %{?ember_release}%{!?ember_release:1}%{?dist}
 Summary:        A cursor companion that works visibly in your apps, powered by GitHub Copilot
 # Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
-# LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0), semver
+# LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0; its
+# WebAssembly also holds ONNX Runtime and piper-phonemize (MIT), Protocol Buffers and RE2 (BSD-3-Clause),
+# and eSpeak NG (GPL-3.0-or-later), part of a text-to-speech Ember never calls), semver
 # (ISC), koffi, zod and the Copilot SDK and runtime (MIT), and libvips (LGPL-3.0-or-later) with the
 # libraries @img/sharp-libvips bundles: cairo (MPL-1.1), aom, libarchive and libimagequant (BSD-2-Clause;
 # aom also grants the AOMedia Patent License 1.0), highway and libwebp (BSD-3-Clause), mozjpeg (IJG,
@@ -22,7 +25,7 @@ Summary:        A cursor companion that works visibly in your apps, powered by G
 # The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
 # a bundled package's licence, or a library one declares it bundles, is missing here
 # (scripts/package/licences.mjs).
-License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
+License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
 URL:            https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot
 Source0:        ember-%{version}-staged.tar
 ExclusiveArch:  x86_64
@@ -74,6 +77,7 @@ install -Dm644 ember.desktop %{buildroot}%{_datadir}/applications/ember.desktop
 install -Dm644 ember.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/ember.svg
 install -Dm644 ember.png %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/ember.png
 install -Dm644 policy.example.json %{buildroot}%{_docdir}/ember/policy.example.json
+install -Dm644 policy.README %{buildroot}%{_docdir}/ember/policy.README
 install -dm755 %{buildroot}%{_sysconfdir}/ember
 %if 0%{?with_models}
 mkdir -p %{buildroot}%{_datadir}/ember
@@ -99,6 +103,16 @@ fi
 
 %posttrans
 /usr/bin/gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
+# Ember stays running from login, so an upgrade usually replaces its files under it: it keeps the old version in
+# memory but would open its windows from the new files. Whoever upgrades is told to have it started again.
+for exe in /proc/[0-9]*/exe; do
+  case "$(readlink "$exe" 2>/dev/null)" in
+    "/opt/ember/ember"|"/opt/ember/ember (deleted)")
+      echo "Ember is still running the version before this update: quit Ember and start it again (each person using it on this computer) to finish the update."
+      break ;;
+  esac
+done
+:
 
 %files -f files.list
 %dir /opt/ember
@@ -110,6 +124,7 @@ fi
 %{_datadir}/icons/hicolor/256x256/apps/ember.png
 %dir %{_docdir}/ember
 %doc %{_docdir}/ember/policy.example.json
+%doc %{_docdir}/ember/policy.README
 %dir %{_sysconfdir}/ember
 
 %if 0%{?with_models}

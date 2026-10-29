@@ -102,6 +102,8 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, &, brackets and non-ASCII in it (its pages must load there)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Zoë's [x]"
       - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields, a click that runs a modal dialog)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
@@ -111,7 +113,7 @@ jobs:
     name: Package (RPM, AppImage) and install on rockylinux:8
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
     container:
       image: rockylinux:8
       options: --security-opt seccomp=unconfined
@@ -133,6 +135,13 @@ jobs:
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - run: npm run build
+      # The real models, so rpm.sh builds the ember-voice-models package too (the release builds it).
+      - name: Speech models (cached; verified by SHA-256)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/voice
+          key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs
       - name: Stage the app and check every binary against RHEL 8.4's glibc
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
@@ -140,8 +149,10 @@ jobs:
           node scripts/package/stage.mjs
           scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
           scripts/check-symvers.sh dist/package/ember > /dev/null
-      - name: Build the RPM
-        run: scripts/package/rpm.sh
+      - name: Build the RPMs (Ember and its speech models)
+        run: |
+          scripts/package/rpm.sh
+          ls dist/package/ember-voice-models-*.noarch.rpm
       - name: Build the AppImage
         run: scripts/package/appimage.sh
       - name: Install the RPM with dnf (resolves every Requires from the distribution)
@@ -174,7 +185,7 @@ jobs:
           # Without a display the check-up starts no GPU, so Chromium prints no GL errors over the report.
           if { sudo -u ci env HOME=/home/ci ember doctor 2>&1 || true; } | grep -E 'ANGLE|eglInitialize|GPU process'; then exit 1; fi
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor || true
-          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Sandbox'
+          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Window sandbox'
       - name: The installed Ember starts and shows its window (as a normal user)
         run: |
           sudo -u ci env HOME=/home/ci EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 ember > /tmp/ember.log 2>&1; true'
@@ -182,8 +193,34 @@ jobs:
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
-      # The packages are about 340 MB, so they're kept only when asked for (Run workflow, "packages"): uploading them on
-      # every run filled the account's artifact storage, after which no artifact could be uploaded at all.
+      - name: "RPM lifecycle: the speech models package, an upgrade to Release 2, rpm -V, and removal that keeps the admin's policy"
+        run: |
+          set -euo pipefail
+          v=$(node -p "require('./package.json').version")
+          # The models package needs the Ember it was built with (Requires: ember = version-release).
+          dnf -y install ./dist/package/ember-voice-models-$v-1.*.noarch.rpm
+          test -f /usr/share/ember/voice-models/silero_vad.onnx
+          rpm -V ember ember-voice-models
+          # An administrator's policy: no package owns it, so an upgrade and a removal leave it as it is.
+          cp packaging/policy.example.json /etc/ember/policy.json
+          EMBER_RPM_RELEASE=2 scripts/package/rpm.sh
+          dnf -y upgrade ./dist/package/ember-$v-2.*.x86_64.rpm ./dist/package/ember-voice-models-$v-2.*.noarch.rpm
+          test "$(rpm -q --qf '%{RELEASE}' ember | cut -d. -f1)" = 2
+          test "$(rpm -q --qf '%{RELEASE}' ember-voice-models | cut -d. -f1)" = 2
+          rpm -V ember ember-voice-models
+          stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
+          cmp packaging/policy.example.json /etc/ember/policy.json
+          rpm -e ember ember-voice-models
+          for p in /opt/ember /usr/share/ember /usr/bin/ember /usr/share/applications/ember.desktop /usr/share/doc/ember; do
+            if [ -e "$p" ]; then echo "::error::$p is still there after rpm -e"; find "$p" | head -20; exit 1; fi
+          done
+          cmp packaging/policy.example.json /etc/ember/policy.json
+          if rpm -qf /etc/ember/policy.json; then echo "::error::a package owns /etc/ember/policy.json"; exit 1; fi
+          # The packages kept for download are Release 1's.
+          rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm
+      # The packages are about 450 MB with the speech models, so they're kept only when asked for (Run workflow,
+      # "packages"): uploading them on every run filled the account's artifact storage, after which no artifact could be
+      # uploaded at all.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
@@ -336,6 +373,8 @@ jobs:
           done
       - name: Launch smoke test (development build)
         run: npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, & and brackets in it (its pages must load there)
+        run: node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Jo's [x]"
       - name: Desktop integration tests (window system and input, UI Automation bridge, accessibility host, system integration, vocabularies)
         run: >-
           node scripts/run-integration.mjs test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts
@@ -490,6 +529,9 @@ jobs:
       - name: Launch smoke test (development build)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, &, brackets and non-ASCII in it (its pages must load there)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Zoë's [x]"
       - name: Grant the processes that may be TCC's responsible one, and approve their screen capture
         id: grant
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}

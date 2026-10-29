@@ -23,11 +23,11 @@ export function launchCommand(o: { packaged: boolean; execPath: string; appPath:
   return [o.execPath, o.appPath];
 }
 
-/** One Exec argument, quoted per the Desktop Entry spec (and escaped again as a string value). */
+/** One Exec argument, quoted per the Desktop Entry spec (and escaped again as a string value; % doubled, as field codes reserve it). */
 export function execArg(a: string): string {
   if (/^[A-Za-z0-9_\-./=:+,@]+$/.test(a)) return a;
   const q = a.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/`/g, "\\`").replace(/\$/g, "\\$");
-  return `"${q.replace(/\\/g, "\\\\")}"`;
+  return `"${q.replace(/\\/g, "\\\\").replace(/%/g, "%%")}"`;
 }
 
 /** The line that marks an entry as Ember's own: only such an entry is rewritten or removed. */

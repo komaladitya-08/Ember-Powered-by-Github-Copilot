@@ -13,7 +13,7 @@
 //                                     and app/ in Contents/Resources; Info.plist edited, the icon, signed ad hoc
 //                                     last (mac-bundle.mjs)
 // Only the target's own platform builds are kept (no musl, no wasm fallbacks, no other OS). Licence and notice files
-// always are. The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
+// always are; a package that ships none gets the text licences.mjs supplies, or nothing is staged. The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
 // Every file the target needs must exist, or nothing is staged; --allow-missing-sidecar stages without the
 // accessibility host (dist/app/ax-sidecar.cjs) and the UIA bridge (sidecar/uia), an Ember that can't read apps, for a
 // local try only: CI never passes it.
@@ -29,7 +29,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { specLicenceIds, uncoveredLicences } from "./licences.mjs";
+import { specLicenceIds, suppliedLicence, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
 import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
@@ -89,6 +89,15 @@ const uncovered = uncoveredLicences(prod.map(src => {
   return { name: p.name, license: lic, readme: fs.existsSync(readme) ? fs.readFileSync(readme, "utf8") : null };
 }), specLicenceIds(fs.readFileSync(path.join(root, "packaging/rpm/ember.spec"), "utf8")));
 if (uncovered.length) throw new Error(`packaging/rpm/ember.spec "License:" doesn't cover ${uncovered.join(", ")}: add the licence there`);
+// Every bundled package's licence text goes with it: its own licence file, or the text Ember supplies (licences.mjs).
+const NOTICE = /^(licen[cs]es?|copying|notices?|copyrightnotice|third[-_]?party[-_]?notices)([-._].*)?$/i;
+const isNotice = (pkgDir, rel) => NOTICE.test(path.basename(rel)) || (/@img[\\/]sharp-(libvips-|win32-)/.test(pkgDir) && rel === "README.md");
+const noticeFiles = src => fs.readdirSync(src).filter(f => isNotice(src, f) && fs.statSync(path.join(src, f)).isFile()).sort();
+const noLicenceText = prod.filter(src => !noticeFiles(src).length).map(src => {
+  const { p } = licenseOf(src);
+  return suppliedLicence(p.name, p.version);
+}).filter(s => "error" in s).map(s => s.error);
+if (noLicenceText.length) throw new Error(noLicenceText.join("\n"));
 
 // The speech models to bundle. Linux: a sub-package beside the app; Windows and macOS: inside the app with
 // --with-models (otherwise Ember downloads them when "Hey Ember" is turned on).
@@ -160,8 +169,6 @@ fs.cpSync(builtDir, path.join(appDir, "dist/app"), {
 
 // Licence and notice files are how the licences are met: they always ship. libvips's LGPL notice is in its README
 // (sharp-libvips's, or sharp's own on Windows, where it carries libvips itself).
-const NOTICE = /^(licen[cs]es?|copying|notices?|copyrightnotice|third[-_]?party[-_]?notices)([-._].*)?$/i;
-const isNotice = (pkgDir, rel) => NOTICE.test(path.basename(rel)) || (/@img[\\/]sharp-(libvips-|win32-)/.test(pkgDir) && rel === "README.md");
 for (const src of prod) {
   const dest = path.join(appDir, path.relative(root, src));
   fs.cpSync(src, dest, {
@@ -226,13 +233,15 @@ if (modelsDest && !unverified.length) {
     + VOICE_MODELS.map(m => `${m.name}: ${m.target}\n  licence ${m.license}; from ${m.url}`).join("\n") + "\n");
 }
 
-// 5. Licences: every bundled package's licence and notices, beside Electron's (LICENSE, LICENSES.chromium.html).
+// 5. Licences: every bundled package's licence and notices, beside Electron's (LICENSE, LICENSES.chromium.html); for
+//    a package that ships none, the text Ember supplies (checked before staging).
 const sections = prod.map(src => {
   const { p, lic } = licenseOf(src);
-  const files = fs.readdirSync(src).filter(f => isNotice(src, f) && fs.statSync(path.join(src, f)).isFile()).sort();
+  const files = noticeFiles(src);
+  const texts = files.length ? [] : suppliedLicence(p.name, p.version).texts;
   return [`${p.name} ${p.version}: ${lic}`, ...(files.length
     ? files.map(f => `--- ${f} ---\n${fs.readFileSync(path.join(src, f), "utf8").trim()}`)
-    : ["(no licence file in the package; its package.json gives the licence above)"])].join("\n\n");
+    : texts.map(t => `--- ${path.posix.basename(t)} (the package ships no licence file; supplied with Ember) ---\n${fs.readFileSync(path.join(root, ...t.split("/")), "utf8").trim()}`))].join("\n\n");
 });
 const electronVersion = JSON.parse(fs.readFileSync(path.join(root, "node_modules/electron/package.json"), "utf8")).version;
 const fonts = path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/app/dist/app/renderer/fonts`);

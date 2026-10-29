@@ -39,9 +39,11 @@ here=$(dirname "$(readlink -f "$0")")
 platform=--ozone-platform=x11
 sandbox=
 # An AppImage can't carry a setuid sandbox helper. Where user namespaces are off
-# (STIG-hardened hosts) Chromium can't sandbox, so Ember runs without it; it only
-# ever shows its own local pages. The RPM installs the helper instead.
+# (STIG-hardened hosts; Debian's unprivileged_userns_clone switch) Chromium can't
+# sandbox, so Ember runs without it; it only ever shows its own local pages. The
+# RPM installs the helper instead. The same two files as the doctor's probe.
 if [ "$(cat /proc/sys/user/max_user_namespaces 2>/dev/null || echo 0)" = "0" ]; then sandbox=--no-sandbox; fi
+if [ "$(cat /proc/sys/kernel/unprivileged_userns_clone 2>/dev/null)" = "0" ]; then sandbox=--no-sandbox; fi
 if [ "$1" = "doctor" ]; then
   shift
   [ -z "$DISPLAY" ] && platform=--ozone-platform=headless
@@ -49,6 +51,11 @@ if [ "$1" = "doctor" ]; then
   # nothing, so no GPU: without a display Chromium's GL set-up only prints errors).
   [ "$(id -u)" = 0 ] && sandbox=--no-sandbox
   exec "$here/ember/ember" --doctor $platform --disable-gpu $sandbox "$@"
+fi
+# Without a display (an ssh session without -X, a text console) Chromium prints only its own error.
+if [ -z "$DISPLAY" ]; then
+  echo "Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '$(basename "${APPIMAGE:-Ember.AppImage}") doctor'." >&2
+  exit 1
 fi
 exec "$here/ember/ember" $platform $sandbox "$@"
 RUN

@@ -150,26 +150,3 @@ export function sshClientPath(os: OS, systemRoot?: string): string {
   const root = (systemRoot && /^[A-Za-z]:\\[^"<>|?*\u0000-\u001f]*$/.test(systemRoot) ? systemRoot : "C:\\Windows").replace(/\\+$/, ""); // eslint-disable-line no-control-regex -- a path with control characters is refused
   return `${root}\\System32\\OpenSSH\\ssh.exe`;
 }
-
-/**
- * The doctor's `ssh-client` row (§8.8) from what `ssh -V` said (null: no client at `path`). TG shows it only while SSH
- * is allowed; `askpass` says whether a Windows client's prompts can come through Ember (8.4+ and the helper built).
- */
-export function sshClientRow(os: OS, path: string, v: SshVersion | null, o: { askpass?: boolean } = {}): { id: "ssh-client"; status: "ok" | "warn" | "fail"; label: string; detail: string; fix?: string } {
-  const label = "SSH client";
-  if (!v) {
-    return { id: "ssh-client", status: "fail", label, detail: "No SSH client found", fix: "Ember can't find SSH on this computer. Install OpenSSH (Linux: `sudo dnf install openssh-clients`; Windows: Settings › Apps › Optional features › OpenSSH Client), then try again." };
-  }
-  const min = minimumVersion(os);
-  if (!versionAtLeast(v, min.major, min.minor)) {
-    return os === "win32"
-      ? { id: "ssh-client", status: "fail", label, detail: "OpenSSH is too old for Ember", fix: "Ember needs OpenSSH 8.1 or newer: update the OpenSSH Client in Settings › Apps › Optional features." }
-      : { id: "ssh-client", status: "fail", label, detail: "OpenSSH is too old for Ember", fix: "Ember needs OpenSSH 7.6 or newer." };
-  }
-  const version = `OpenSSH ${v.major}.${v.minor}`;
-  if (os === "win32") {
-    if (!askpassWorks(os, v) || o.askpass === false) return { id: "ssh-client", status: "warn", label, detail: "Passwords can't be asked here: keys and the ssh-agent only" };
-    return { id: "ssh-client", status: "ok", label, detail: `${version} (passwords through Ember's prompt)` };
-  }
-  return { id: "ssh-client", status: "ok", label, detail: `${version} at ${path}` };
-}

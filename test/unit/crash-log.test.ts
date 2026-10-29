@@ -21,7 +21,7 @@ vi.mock("electron", () => {
     emit(e: string, ...a: unknown[]): void { for (const fn of this.handlers.get(e) ?? []) fn(...a); }
     setAlwaysOnTop(): void {}
     setContentProtection(): void {}
-    loadFile(): Promise<void> { return Promise.resolve(); }
+    loadURL(): Promise<void> { return Promise.resolve(); }
     isDestroyed(): boolean { return this.destroyed; }
     destroy(): void { this.destroyed = true; }
     on(): void { /* the command window's close guard listens (review #262) */ }

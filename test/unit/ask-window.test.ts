@@ -33,7 +33,7 @@ vi.mock("electron", () => {
     once(e: string, fn: () => void) { return this.on(e, fn); }
     emit(e: string) { for (const fn of this.handlers.get(e) ?? []) fn(); }
     setAlwaysOnTop() {}
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     setBounds(b: { x: number; y: number; width: number; height: number }) { this.bounds = b; }
     getBounds() { return this.bounds; }
     show() { this.shown++; this.visible = true; this.ignoreMouse = false; }

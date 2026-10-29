@@ -17,7 +17,7 @@ vi.mock("electron", () => {
     isDestroyed() { return false; }
     setAlwaysOnTop() {}
     setIgnoreMouseEvents() {}
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     once() { return this; }
     on() { return this; }
     showInactive() {}

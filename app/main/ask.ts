@@ -10,6 +10,7 @@ import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { x11WindowId } from "./platform/linux/window-system";
+import { pageUrl } from "./page-url";
 
 const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
@@ -181,7 +182,7 @@ export class AskWindow {
     // update and the first box opened from the menu never showed "Ember will see: …").
     win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
     const query: Record<string, string> = { ...(opaque ? { opaque: "1" } : {}), ...(this.o.os ? { os: this.o.os } : {}) };
-    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), Object.keys(query).length ? { query } : {});
+    void win.loadURL(pageUrl(path.join(appDir, "renderer", "ask", "index.html"), query));
     win.once("ready-to-show", () => {
       if (this.win !== win) return;
       this.loaded = true;

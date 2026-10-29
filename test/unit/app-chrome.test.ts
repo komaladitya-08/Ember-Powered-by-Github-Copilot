@@ -29,7 +29,7 @@ vi.mock("electron", () => ({
     };
     constructor(options: Record<string, unknown>) { electron.made.push({ options, page: this.webContents }); }
     once() { /* shown by main */ }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     setContentProtection() { /* not what these tests look at */ }
     setAlwaysOnTop() { /* not what these tests look at */ }
     /** The window's own events (closed, close, session-end), which the command and prompt windows listen to. */

@@ -21,6 +21,7 @@ import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from ".
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
+import { UPDATED_QUESTION, createUpdateCheck, updatedDetail } from "./install-watch";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
@@ -595,6 +596,22 @@ function start(): void {
       if (quitAsking === mine) quitAsking = null;
     }
   };
+  // An update replaced Ember's files under it (an RPM upgrade): as a window opens, which would load the new version's
+  // pages, offer to restart (install-watch.ts; a packaged Ember only).
+  const updateCheck = app.isPackaged ? createUpdateCheck({
+    file: path.join(app.getAppPath(), "package.json"),
+    ask: async () => {
+      log.info("app.updated_while_running");
+      sys.lifecycle.focusOwnApp();
+      const { response } = await dialog.showMessageBox({
+        type: "info", buttons: [...UPDATED_QUESTION.buttons], defaultId: 0, cancelId: 1,
+        title: UPDATED_QUESTION.title, message: UPDATED_QUESTION.message, detail: updatedDetail(quitWords()),
+      });
+      return response === 0;
+    },
+    restart: () => { log.info("app.restart_after_update"); app.relaunch(); app.quit(); },
+  }) : null;
+  app.on("browser-window-created", () => updateCheck?.beforeWindow());
   /** The handle's menu is open (or opening): a second click doesn't open another one over it. */
   let menuOpen = false;
   /** The app window the user was last in (an X client window on Linux), for giving focus back after Ember's own windows. */

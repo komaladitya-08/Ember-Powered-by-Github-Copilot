@@ -16,6 +16,7 @@ import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
 import type { SettingsPatch } from "./settings";
 import { placeOnDisplay, type CloseGuarded, type Placeable } from "./commands/window";
 import { rescaledBounds, scaledSize } from "./page-prefs";
+import { pageUrl } from "./page-url";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -44,7 +45,7 @@ export function createHomeWindow(os: OS): BrowserWindow {
   });
   win.once("ready-to-show", () => win.show());
   zoomByKeys(win.webContents, os);
-  void win.loadFile(path.join(appDir, "renderer", "home", "index.html"));
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "home", "index.html")));
   return win;
 }
 
@@ -174,7 +175,7 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
   sizeForText(win, COMMAND_MIN);
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
-  void win.loadFile(path.join(appDir, "renderer", "command", "index.html"));
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "command", "index.html")));
   // Its close button asks the controller's guard first, so a command never runs on unseen (review #262). Never while
   // Ember quits or the session ends: then nothing holds the window (a held window would stop the quit).
   let guard: (() => boolean) | null = null;
@@ -232,7 +233,7 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
   win.setAlwaysOnTop(true, "floating");
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   closeWhenGone(win);
-  void win.loadFile(path.join(appDir, "renderer", "prompt", "index.html"));
+  void win.loadURL(pageUrl(path.join(appDir, "renderer", "prompt", "index.html")));
   const fit = (size: { width: number; height: number }) => {
     if (win.isDestroyed()) return;
     const now = win.getBounds();
@@ -414,9 +415,11 @@ export function quitQuestion(tasks: number, busy: { commands: number; connection
 }
 
 /**
- * True when an IPC message comes from one of our own bundled pages. File URLs use "/" on every OS: path.sep is "\" on
- * Windows, which never appears in one, so testing for it refused every settings request there.
+ * True when an IPC message comes from one of our own bundled pages (loaded by pageUrl, page-url.ts). File URLs use "/"
+ * on every OS: path.sep is "\" on Windows, which never appears in one, so testing for it refused every settings request
+ * there. The URL is read as it is, never decoded: decoding throws on a stray % (loadFile wrote "100% Free" as
+ * "100%%20Free", which failed every settings request there), and an encoded "/" (%2F) is no folder separator.
  */
 export function isTrustedSender(url: string): boolean {
-  return url.startsWith("file://") && decodeURIComponent(url).includes("/renderer/");
+  return url.startsWith("file://") && url.includes("/renderer/");
 }

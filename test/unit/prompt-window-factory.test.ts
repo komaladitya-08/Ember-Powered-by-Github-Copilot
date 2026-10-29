@@ -23,7 +23,7 @@ vi.mock("electron", () => ({
     }
     setContentProtection() { /* recorded elsewhere */ }
     setAlwaysOnTop() { /* recorded elsewhere */ }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     show() { this.rec.calls.push("show"); }
     focus() { this.rec.calls.push("focus"); }
     once() { /* not shown by the factory */ }

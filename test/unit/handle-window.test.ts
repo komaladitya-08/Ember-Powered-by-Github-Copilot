@@ -22,7 +22,7 @@ interface FakeWin {
   webContents: { on(e: string, fn: () => void): void; send(ch: string, ...args: unknown[]): void; isDestroyed(): boolean };
   setAlwaysOnTop(): void;
   setVisibleOnAllWorkspaces(): void;
-  loadFile(): Promise<void>;
+  loadURL(): Promise<void>;
   showInactive(): void;
   setIgnoreMouseEvents(): void;
   getBounds(): { x: number; y: number; width: number; height: number };
@@ -52,7 +52,7 @@ vi.mock("electron", () => {
     emitWebContents(event: string): void { for (const fn of this.handlers.get(event) ?? []) fn(); }
     setAlwaysOnTop(): void {}
     setVisibleOnAllWorkspaces(): void {}
-    loadFile(): Promise<void> { return Promise.resolve(); }
+    loadURL(): Promise<void> { return Promise.resolve(); }
     showInactive(): void { this.shown++; }
     setIgnoreMouseEvents(): void {}
     getBounds() { return this.bounds; }

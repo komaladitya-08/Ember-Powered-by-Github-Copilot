@@ -21,7 +21,7 @@ vi.mock("electron", () => ({
     }
     setContentProtection() { /* not here */ }
     setAlwaysOnTop() { /* not here */ }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     once() { /* not shown by the factories */ }
     on(event: string, fn: () => void) { (this.handlers[event] ??= []).push(fn); }
     isDestroyed() { return this.destroyed; }

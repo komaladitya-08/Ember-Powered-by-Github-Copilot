@@ -1,8 +1,10 @@
 {
-  "features": { "voice": true, "speak": true, "actions": true, "cursor": true, "desk": true, "screenImages": true },
+  "features": { "voice": true, "speak": true, "actions": true, "cursor": true, "desk": true, "screenImages": true, "wsl": true, "ssh": true },
   "neverLook": ["Thunderbird", "Remmina"],
   "confirmEveryAction": false,
   "allowGrants": true,
   "maxActionsPerMinute": 30,
-  "auditRetentionDays": 90
+  "auditRetentionDays": 90,
+  "commands": { "local": "on", "wsl": "on", "ssh": "on" },
+  "ssh": { "desktop": true }
 }

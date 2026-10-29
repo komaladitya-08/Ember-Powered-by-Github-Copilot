@@ -49,8 +49,8 @@ export interface DoctorProbes {
   admin: LoadedAdminPolicy;
   /** Ember's desk (Linux); null where there is none (the row is left out). */
   desk: { ok: boolean; missing: string[] } | null;
-  /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). */
-  sandbox: { userNamespaces: boolean; suidHelper: boolean } | null;
+  /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). appImage: running as an AppImage. */
+  sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
   fileWatchers?: { used: number; max: number } | null;
   /** Windows and macOS: the shared accessibility helper's status answer (null: it didn't answer); its own row. */
@@ -225,7 +225,10 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   if (p.sandbox) {
     out.push(p.sandbox.userNamespaces || p.sandbox.suidHelper
       ? { id: "sandbox", status: "ok", label: "Window sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
-      : { id: "sandbox", status: "fail", label: "Window sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
+      // The AppImage's AppRun runs Ember without the sandbox here on purpose (it can't carry the setuid helper).
+      : p.sandbox.appImage
+        ? { id: "sandbox", status: "warn", label: "Window sandbox", detail: "Ember runs without Chromium's sandbox here: user namespaces are off, and an AppImage can't carry the sandbox helper. Ember's windows show only its own pages.", fix: "On a hardened computer like this one, install Ember's RPM instead: it sets up the sandbox helper." }
+        : { id: "sandbox", status: "fail", label: "Window sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
   }
   // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
   // and never answers them.

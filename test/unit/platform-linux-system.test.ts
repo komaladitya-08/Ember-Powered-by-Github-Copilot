@@ -273,7 +273,7 @@ describe("fixes", () => {
 describe("the doctor's probes", () => {
   const io = (over: Partial<Parameters<typeof linuxDoctorProbes>[0]> = {}) => linuxDoctorProbes({
     execPath: "/opt/ember/ember", which: () => null, exec: execFake({}).exec, readFile: () => { throw new Error("ENOENT"); }, stat: () => { throw new Error("ENOENT"); },
-    exists: () => false, fileWatchers: () => null, desk: () => ({ ok: false, missing: ["Xvfb"] }), ...over,
+    exists: () => false, fileWatchers: () => null, desk: () => ({ ok: false, missing: ["Xvfb"] }), env: {}, ...over,
   });
 
   it("list PulseAudio's microphones without their monitors", async () => {
@@ -295,13 +295,19 @@ describe("the doctor's probes", () => {
 
   it("read the sandbox as before: user namespaces (off when Debian's switch says 0), or a setuid-root chrome-sandbox beside Ember", async () => {
     const files = (m: Record<string, string>) => (f: string) => { if (f in m) return m[f]; throw new Error("ENOENT"); };
-    expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "15000\n" }) })).sandbox).toEqual({ userNamespaces: true, suidHelper: false });
+    expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "15000\n" }) })).sandbox).toEqual({ userNamespaces: true, suidHelper: false, appImage: false });
     expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "15000\n", "/proc/sys/kernel/unprivileged_userns_clone": "0\n" }) })).sandbox?.userNamespaces).toBe(false);
     expect((await io({ readFile: files({ "/proc/sys/user/max_user_namespaces": "0\n" }) })).sandbox?.userNamespaces).toBe(false);
     // Built as doctor-probes builds it (path.join), so the case holds on a Windows or macOS CI runner too.
     const stat = (f: string) => { if (f === path.join("/opt/ember", "chrome-sandbox")) return { uid: 0, mode: 0o104755 }; throw new Error("ENOENT"); };
     expect((await io({ stat })).sandbox?.suidHelper).toBe(true);
     expect((await io({ stat: () => ({ uid: 1000, mode: 0o104755 }) })).sandbox?.suidHelper).toBe(false);
+  });
+
+  it("say when Ember runs as an AppImage, whose AppRun turns Chromium's sandbox off where user namespaces are off", async () => {
+    expect((await io({ env: { APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage" } })).sandbox?.appImage).toBe(true);
+    expect((await io({ env: { APPIMAGE: "" } })).sandbox?.appImage).toBe(false);
+    expect((await io()).sandbox?.appImage).toBe(false);
   });
 
   it("pass on the desk's and the file watchers' answers, and add no rows of their own", async () => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createReadStream, mkdirSync, mkdtempSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -244,6 +244,53 @@ describe("the Node runtime for remotes (§5.2.1)", () => {
     expect(() => manifest({ pinned: "latest" })).toThrow();
     expect(() => manifest({ targets: { "linux-x64": { xz: { file: "../../evil.tar.xz", sha256: "a".repeat(64), bytes: 1 } } } })).toThrow();
     expect(RuntimeManifestSchema.safeParse({ ...manifest(), "//": "SHASUMS256.txt checked with the release key" }).success).toBe(true);
+  });
+});
+
+describe("the runtime cache's old files (review #39)", () => {
+  const withReaddir: RuntimeFs = { ...fs, readdir: p => fsp.readdir(p) };
+  const put = (dir: string, name: string, ageMs = 0, body: Buffer = Buffer.alloc(10)) => {
+    writeFileSync(path.join(dir, name), body);
+    if (ageMs) { const t = (Date.now() - ageMs) / 1000; utimesSync(path.join(dir, name), t, t); }
+  };
+  const DAY = 24 * 60 * 60 * 1000;
+  // Another target's pinned archive, which another computer may need, is kept.
+  const both = () => manifest({ targets: {
+    "linux-x64": { xz: { file: "node-v24.11.1-linux-x64.tar.xz", sha256: sha(BODY), bytes: BODY.length } },
+    "darwin-arm64": { gz: { file: "node-v24.11.1-darwin-arm64.tar.gz", sha256: sha(BODY), bytes: BODY.length } },
+  } });
+
+  it("deletes the archives of Node versions Ember no longer pins, and partial downloads a day old, after a download", async () => {
+    const dir = tmp();
+    put(dir, "node-v24.10.0-linux-x64.tar.xz");
+    put(dir, "node-v22.20.0-darwin-arm64.tar.gz");
+    put(dir, "node-v24.11.1-darwin-arm64.tar.gz");
+    put(dir, "node-v24.10.0-linux-x64.tar.xz.0a1b2c3d.part", 2 * DAY);
+    // Another connection's download still in progress, and a file that isn't Ember's runtime: left alone.
+    put(dir, "node-v24.11.1-darwin-arm64.tar.gz.4e5f6a7b.part");
+    put(dir, "notes.txt", 30 * DAY);
+    await ensureRuntime({ manifest: both(), target: "linux-x64", format: "xz", dir, file: n => path.join(dir, n), fs: withReaddir, fetch: async () => answer(BODY) });
+    expect(readdirSync(dir).sort()).toEqual(["node-v24.11.1-darwin-arm64.tar.gz", "node-v24.11.1-darwin-arm64.tar.gz.4e5f6a7b.part", "node-v24.11.1-linux-x64.tar.xz", "notes.txt"]);
+  });
+
+  it("does the same when the pinned archive comes from the cache", async () => {
+    const dir = tmp();
+    put(dir, "node-v24.11.1-linux-x64.tar.xz", 0, BODY);
+    put(dir, "node-v24.10.0-linux-x64.tar.xz");
+    const fetch = vi.fn(async () => answer(BODY));
+    await ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir, file: n => path.join(dir, n), fs: withReaddir, fetch });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readdirSync(dir)).toEqual(["node-v24.11.1-linux-x64.tar.xz"]);
+  });
+
+  it("never fails the download over the clean-up, and keeps everything when the download fails", async () => {
+    const dir = tmp();
+    const broken: RuntimeFs = { ...fs, readdir: async () => { throw new Error("EACCES"); } };
+    expect(await ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir, file: n => path.join(dir, n), fs: broken, fetch: async () => answer(BODY) })).toMatchObject({ bytes: BODY.length });
+    const other = tmp();
+    put(other, "node-v24.10.0-linux-x64.tar.xz");
+    await expect(ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir: other, file: n => path.join(other, n), fs: withReaddir, fetch: async () => answer(Buffer.alloc(10)) })).rejects.toMatchObject({ kind: "mismatch" });
+    expect(readdirSync(other)).toEqual(["node-v24.10.0-linux-x64.tar.xz"]);
   });
 });
 
