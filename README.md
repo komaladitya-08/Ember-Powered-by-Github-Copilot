@@ -197,11 +197,21 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
 | Allow, while Ember asks | Ctrl+Alt+Y | Win+Alt+Y | Control+Shift+Command+Y |
 | Not now, while Ember asks | Ctrl+Alt+N | Win+Alt+N | Control+Shift+Command+N |
 
-If another app already holds one, the setup check says which, and Ember keeps trying to get it. Meanwhile click
-Ember's handle in the bottom-right corner, or from the keyboard start Ember again (from your apps, the Start menu or
+If another app already holds one, Ember uses its fallback: the same chord with Shift on Linux and Windows
+(Ctrl+Alt+Shift+Space, Win+Alt+Shift+Space) and with Option on a Mac (Control+Option+Shift+Command+Space), for every
+shortcut in the table. The setup check says so ("Ctrl+Alt+Space is taken by another app, so Ask Ember is
+Ctrl+Alt+Shift+Space"), and the greeting, the handle's menu, settings and every hint name the chord Ember holds.
+
+If another app holds the fallback too, the setup check says which, and Ember keeps trying to get them. Meanwhile click
+Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the Start menu or
 Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, under
 **Comfort & access**. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by
 default.
+
+**Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
+app grid (Linux), on the taskbar (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Linux and
+Windows it starts Ember with `--ask` (`ember --ask`, `Ember.exe --ask`), which opens the ask box, starting Ember first
+if it isn't running.
 
 On Windows and macOS, wait for the ask box before you type: letters typed before it appears go to the app underneath.
 (On Linux, Ember holds them and puts them in the box.) The ask box reminds you the first five times it opens.
@@ -257,7 +267,7 @@ colour.
 
 **Known gaps.**
 - A task card's own **Stop** and the desk's **Take over** are clicks only: the stop shortcut stops every task.
-- Ember's shortcuts can't be changed; when another app holds one, use the routes in the table.
+- Ember's shortcuts can't be changed; when another app holds one and its fallback, use the routes in the table.
 - **Read the last answer** has no shortcut of its own: it is in the handle's menu and settings' **Conversation**.
 - On Linux, while GNOME's Typing Assist (Slow Keys, Bounce Keys or Sticky Keys, in Settings › Universal Access) is on,
   Ember won't use the keyboard on your screen, because its keys would be lost or changed. It still clicks and scrolls

@@ -115,10 +115,16 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
   will look at, and ↑/↓ bring back earlier questions.
 - Long answers have **Read all** (counted at the text size you picked): the settings window's **Conversation** section
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
-- If another app already holds one of Ember's shortcuts, the **Setup check** says which, Ember keeps trying to get
-  it, and the handle menu does the same things. Meanwhile the bubble and the command window don't name that shortcut:
-  routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an announced command
-  names only its **Stop**.
+- If another app already holds one of Ember's shortcuts, Ember registers its fallback (the same chord with Shift;
+  Option on a Mac: `FALLBACK_SHORTCUTS` in `app/shared/shortcuts.ts`), and the **Setup check**, the greeting, the
+  handle menu, settings and every hint name the chord it holds. A fallback stays Ember's until it quits, even once the
+  default comes free. If another app holds the fallback too, the **Setup check** says which, Ember keeps trying to get
+  them every minute, and the handle menu does the same things. Meanwhile the bubble and the command window don't name
+  that shortcut: routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an
+  announced command names only its **Stop**.
+- `--ask` (the Linux app menu's **Ask Ember** action, the Windows jump list's) opens the ask box: in the running Ember,
+  or once a new one has started (settings first while Ember isn't set up). The macOS Dock menu's **Ask Ember** does the
+  same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
   animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the command window and its terminal, and Ember's password and

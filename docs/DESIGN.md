@@ -60,8 +60,10 @@ They share one emotion rig, so switching never changes behaviour.
   keyboard, so under buttons only the mouse reaches it says where the keyboard finds the same
   thing: an answer cut short (by the lines it takes at the text size) offers **Read all**, and
   under it "Or press Ctrl+Alt+E and go to Conversation." (the settings window keeps the whole
-  answer; there is no shortcut of its own for the last answer). A shortcut another app holds is
-  never named: the route is then "Or open Ember's settings and go to Conversation.", errors
+  answer; there is no shortcut of its own for the last answer). A shortcut is named by the chord
+  Ember holds: its fallback (Shift added; Option on a Mac) while another app holds the default.
+  One whose fallback another app holds too is never named: the route is then "Or open Ember's
+  settings and go to Conversation.", errors
   and a task's result say "in Ember's settings", and an announced command names no stop
   chord, only its **Stop**. (The command window's line for a run the kill switch ended names
   no chord at all, "Stopped with everything else": the switch has other ways too.)
