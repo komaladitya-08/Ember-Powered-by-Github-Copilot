@@ -9,7 +9,7 @@
 
 import { Terminal } from "@xterm/xterm";
 import { termKeyAction } from "./keys";
-import { XTERM_OPTIONS, terminalOptions } from "./terminal-options";
+import { XTERM_OPTIONS, termFontSize, terminalOptions } from "./terminal-options";
 
 /** A run's terminal, written to before or after it is shown. */
 export interface RunTerminal {
@@ -20,6 +20,8 @@ export interface RunTerminal {
   setInteractive(on: boolean): void;
   /** Mirrors its output for a screen reader (review #43), while one runs. */
   setScreenReader(on: boolean): void;
+  /** Draws its type at the page's text scale (its columns and rows stay as the run started, §3.10). */
+  setTextScale(scale: number): void;
   /** Puts the keyboard in it (once open), so what the user types goes to the run. */
   focus(): void;
   /** Copies everything it shows, scrollback included, to the clipboard (the Copy output button); false if it couldn't. */
@@ -51,11 +53,14 @@ function copyText(text: string): boolean {
   }
 }
 
-/** A terminal for one run, at the run's size (fixed for the run, §3.10). `mac`: the Mac's keys (keys.ts). */
-export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; onInput: (data: string) => void }): RunTerminal {
+/**
+ * A terminal for one run, at the run's size (fixed for the run, §3.10). `mac`: the Mac's keys (keys.ts). `scale`: the
+ * page's text scale, which its type follows.
+ */
+export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; scale: number; onInput: (data: string) => void }): RunTerminal {
   let interactive = o.interactive;
   let screenReader = o.screenReader;
-  const term = new Terminal(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader }));
+  const term = new Terminal(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader, scale: o.scale }));
   // Typing and xterm's answers to queries (cursor position, device attributes) go to the run, and only while it takes them.
   const sub = term.onData(data => { if (interactive) o.onInput(data); });
   // Tab and Shift+Tab move the focus, never into the run; paste and copy are the user's (keys.ts). xterm handles the rest.
@@ -104,6 +109,11 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
       term.options.screenReaderMode = on;
       refreshMirror();
     },
+    setTextScale(scale) {
+      const px = termFontSize(scale);
+      // xterm measures its cells again and redraws at the new size.
+      if (term.options.fontSize !== px) term.options.fontSize = px;
+    },
     focus: () => { if (opened) term.focus(); },
     copyAll() {
       const buf = term.buffer.active;
@@ -128,14 +138,17 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
   };
 }
 
-/** One character cell of the terminal's font, measured with a hidden line of it in `host` (CSS px), or null. */
-export function cellSize(host: HTMLElement): { width: number; height: number } | null {
+/**
+ * One character cell of the terminal's font at the page's text scale, measured with a hidden line of it in `host` (CSS
+ * px), or null.
+ */
+export function cellSize(host: HTMLElement, scale: number): { width: number; height: number } | null {
   const probe = document.createElement("span");
   probe.textContent = "W".repeat(40);
   probe.setAttribute("aria-hidden", "true");
   Object.assign(probe.style, {
     position: "absolute", visibility: "hidden", whiteSpace: "pre", lineHeight: "normal",
-    fontFamily: XTERM_OPTIONS.fontFamily ?? "monospace", fontSize: `${XTERM_OPTIONS.fontSize ?? 13}px`,
+    fontFamily: XTERM_OPTIONS.fontFamily ?? "monospace", fontSize: `${termFontSize(scale)}px`,
   });
   host.appendChild(probe);
   const r = probe.getBoundingClientRect();

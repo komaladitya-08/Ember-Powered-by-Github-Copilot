@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { INERT_LINKS, XTERM_OPTIONS, terminalOptions } from "../../app/renderer/command/terminal-options";
+import { INERT_LINKS, TERM_FONT_PX, XTERM_OPTIONS, termFontSize, terminalOptions, textScaleOf } from "../../app/renderer/command/terminal-options";
 import {
   INITIAL_MODEL, MAX_PENDING_LINES, sameAnnouncement, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
   type TabView, type WindowView,
@@ -51,6 +51,36 @@ describe("the terminal's options (\u00a73.10)", () => {
     expect(terminalOptions({ interactive: true, cols: 120, rows: 40 })).toMatchObject({ disableStdin: false, cols: 120, rows: 40, scrollback: 5000 });
     expect(terminalOptions({ interactive: false, cols: 120, rows: 40 }).disableStdin).toBe(true);
     expect(terminalOptions({ interactive: false, cols: 3, rows: 9999 })).toMatchObject({ cols: 100, rows: 30 });
+  });
+
+  it("draw the type at the page's text size, as the rest of the window: 13, 15 and 17 px at Default, Large and Larger", () => {
+    expect(XTERM_OPTIONS.fontSize).toBe(TERM_FONT_PX);
+    expect(TERM_FONT_PX).toBe(13);
+    // ember.css's scales, as getComputedStyle gives --text-scale.
+    const shared = readFileSync(new URL("../../app/renderer/shared/ember.css", import.meta.url), "utf8");
+    const scale = (size: string) => textScaleOf(` ${new RegExp(`html\\[data-text-size="${size}"\\] \\{ --text-scale: ([\\d.]+); \\}`).exec(shared)![1]}`);
+    expect([1, scale("large"), scale("larger")].map(termFontSize)).toEqual([13, 15, 17]);
+    // Whole px, and anything that isn't a scale from 1 to 2 is the default's.
+    for (const bad of [Number.NaN, 0, 0.5, 2.5, Infinity]) expect(termFontSize(bad), String(bad)).toBe(13);
+    for (const bad of ["", "  ", "large", null, undefined, "-1"]) expect(textScaleOf(bad), String(bad)).toBe(1);
+    expect(textScaleOf(" 1.3")).toBe(1.3);
+    expect(terminalOptions({ interactive: false, cols: 100, rows: 30, scale: 1.3 }).fontSize).toBe(17);
+    expect(terminalOptions({ interactive: false, cols: 100, rows: 30 }).fontSize).toBe(13);
+  });
+
+  it("follow a text size changed while the window is open, and fit new runs to the window at it", () => {
+    const term = read("terminal.ts"), main = read("main.ts");
+    // Main sets html[data-text-size] on the page as it loads and when the setting changes: the page watches it.
+    expect(main).toMatch(/new MutationObserver\(\(\) => \{[^]*?for \(const t of tabEls\.values\(\)\) t\.term\.setTextScale\(scale\);\s*reportSize\(\);[^]*?\}\)\.observe\(document\.documentElement, \{ attributes: true, attributeFilter: \["data-text-size"\] \}\)/);
+    expect(main).toMatch(/textScaleOf\(getComputedStyle\(document\.documentElement\)\.getPropertyValue\("--text-scale"\)\)/);
+    // A new run's terminal starts at it, an open one redraws at it (its columns and rows stay, §3.10).
+    expect(main).toMatch(/scale: textScale, onInput:/);
+    expect(term).toMatch(/terminalOptions\(\{ [^}]*scale: o\.scale \}\)/);
+    expect(term).toMatch(/if \(term\.options\.fontSize !== px\) term\.options\.fontSize = px;/);
+    // New runs' size: cells measured at the type's size, and the words and buttons round the terminal grow with it.
+    expect(main).toMatch(/cellSize\(\$\("measure"\), textScale\)/);
+    expect(term).toMatch(/fontSize: `\$\{termFontSize\(scale\)\}px`/);
+    expect(main).toMatch(/const chrome = TERM_CHROME_PX \+ Math\.round\(TERM_CHROME_TEXT_PX \* \(textScale - 1\)\);/);
   });
 
   it("load no addon and listen to no title, bell, clipboard or link event (read from the page's sources)", () => {

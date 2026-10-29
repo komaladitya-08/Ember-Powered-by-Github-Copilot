@@ -98,7 +98,7 @@ body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.
 }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type.
-   The terminal keeps its own size (xterm's cells, and the command's columns, are measured from it). */
+   The terminal's type follows it through xterm's own option (main.ts, terminal-options.ts termFontSize). */
 html[data-text-size] .command { font-size: calc(13px * var(--text-scale)); line-height: calc(19px * var(--text-scale)); }
 html[data-text-size] .command.small { font-size: calc(12px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
 html[data-text-size] .tab { max-width: calc(260px * var(--text-scale)); font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
