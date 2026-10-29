@@ -21,7 +21,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AdminPolicySchema } from "../../app/main/admin";
+import { serverPromptsMarked } from "../../app/main/remote/askpass-server";
 import { createConnections } from "../../app/main/remote/connections";
+import { parseSshVersion } from "../../app/main/remote/ssh-config";
 import { ConnectError, type HostRecord, type PromptUi } from "../../app/main/remote/types";
 import { DEFAULT_SETTINGS, type Settings, type SettingsStore } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
@@ -141,6 +143,10 @@ describe.skipIf(!run)("SSH transport against real OpenSSH (ssh-linux)", () => {
     : null;
   it.skipIf(!pw)("asks for a password through the prompt window, by password and keyboard-interactive, and signs in with the answer", async () => {
     const { port, user: pwUser, secret } = pw!;
+    // Before OpenSSH 8.5 (RHEL 8's 8.0) a server's prompt can't be told from ssh's own, so every secret there is the
+    // host's question, its text quoted ("other"), never worded as a sign-in to a host.
+    const client = parseSshVersion(spawnSync("ssh", ["-V"], { encoding: "utf8" }).stderr ?? "");
+    const kind = serverPromptsMarked(client ?? undefined) ? "password" : "other";
     for (const method of ["password", "keyboard-interactive"]) {
       const cfg = join(tmp, `config-${method}`);
       writeFileSync(cfg, `Host pw-${method}\n  HostName 127.0.0.1\n  Port ${port}\n  User ${pwUser}\n  PubkeyAuthentication no\n  IdentityAgent none\n  PreferredAuthentications ${method}\n`);
@@ -149,7 +155,8 @@ describe.skipIf(!run)("SSH transport against real OpenSSH (ssh-linux)", () => {
       const c = connections({ answer: card => (card.kind === "secret" ? { ok: true, value: secret } : { ok: false }) });
       await c.uninstall(record);
       expect(cards.map(x => x.kind), method).toEqual(["secret"]);
-      expect(cards[0]).toMatchObject({ kind: "secret", secret: "password" });
+      expect(cards[0], `${method} with ${client?.text ?? "an ssh of unknown version"}`).toMatchObject({ kind: "secret", secret: kind });
+      expect((cards[0] as { prompt?: string }).prompt, method).toMatch(/password/i);
     }
     // A wrong answer is an authentication failure, asked once (the config allows one prompt), never retried by Ember.
     const cfg = join(tmp, "config-wrong-password");
