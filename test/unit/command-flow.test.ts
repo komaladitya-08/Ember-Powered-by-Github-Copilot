@@ -27,6 +27,9 @@ import { COMMANDS_IPC } from "../../app/shared/commands";
 import type { WindowView } from "../../app/renderer/command/model";
 import type { BrowserWindowLike, IpcLike } from "../../app/main/targets/types";
 import * as policy from "../../app/main/policy/policy";
+import { BubbleOwner, Presenter } from "../../app/main/agent/presenter";
+import type { EmberState } from "../../app/shared/overlay";
+import { announcement } from "../../packages/bubble/src/bubble";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -1155,6 +1158,87 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(progress).toEqual(["A command is waiting for you to type in the command window.", "The command is running."]);
     h.abort.abort();
     await done;
+  });
+
+  it("gives the waiting line a Show button to the command window, with the keyboard's way there, and takes it away after (review #263)", async () => {
+    let tell: ((runId: string, waiting: boolean) => void) | null = null;
+    const h = harness({ run: () => ({ hang: true }) });
+    Object.assign(h.ctx.service.window as object, {
+      onWaiting: (fn: (runId: string, waiting: boolean) => void) => { tell = fn; return () => { tell = null; }; },
+      typingRoute: () => "Or press Alt+Tab to go there.",
+    });
+    // A real task presenter: the bubble as the user sees it.
+    const shown: Partial<EmberState>[] = [];
+    const presenter = new Presenter(patch => shown.push(patch), undefined, () => "Clone the repository", new BubbleOwner(), undefined, false, { task: "t1" });
+    presenter.taskStarted();
+    presenter.event({ type: "tool.execution_start", data: { toolName: "run_command" } });
+    presenter.progress("Cloning the private repository.");
+    h.ctx.presenter = presenter;
+    const done = call(h, { command: "git clone https://github.com/acme/private" });
+    await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+    const runId = h.starts[0].runId;
+    tell!(runId, true);
+    expect(shown.at(-1)!.bubble).toMatchObject({
+      thought: "A command is waiting for you to type in the command window.", step: "Or press Alt+Tab to go there.",
+      actions: [{ id: `ui:cmdshow:${runId}`, label: "Show" }],
+    });
+    // Typed: what it said before, its step back, no Show.
+    tell!(runId, false);
+    expect(shown.at(-1)!.bubble).toMatchObject({ thought: "Cloning the private repository.", step: "Running a command", actions: [] });
+    // Waiting again, then the task's newer words: they stay, but the Show and its route go once the wait is over.
+    tell!(runId, true);
+    presenter.progress("Checking out main.");
+    expect(shown.at(-1)!.bubble!.actions).toEqual([{ id: `ui:cmdshow:${runId}`, label: "Show" }]);
+    tell!(runId, false);
+    expect(shown.at(-1)!.bubble).toMatchObject({ thought: "Checking out main.", step: "Running a command", actions: [] });
+    // A window that can't say the way there: Show alone.
+    Object.assign(h.ctx.service.window as object, { typingRoute: () => { throw new Error("x"); } });
+    tell!(runId, true);
+    expect(shown.at(-1)!.bubble).toMatchObject({ step: null, actions: [{ id: `ui:cmdshow:${runId}`, label: "Show" }] });
+    h.abort.abort();
+    await done;
+    expect(shown.at(-1)!.bubble!.actions).toEqual([]);
+  });
+
+  it("shows the waiting line as a bubble that needs the user, which a screen reader hears with its way there (review #263)", async () => {
+    for (const where of [undefined, "on build-01"]) {
+      let tell: ((runId: string, waiting: boolean) => void) | null = null;
+      const h = harness({ run: () => ({ hang: true }) });
+      Object.assign(h.ctx.service.window as object, {
+        onWaiting: (fn: (runId: string, waiting: boolean) => void) => { tell = fn; return () => { tell = null; }; },
+        typingRoute: () => "Or press Alt+Tab to go there.",
+      });
+      const shown: Partial<EmberState>[] = [];
+      const presenter = new Presenter(patch => shown.push(patch), undefined, () => "Clone the repository", new BubbleOwner(), undefined, false,
+        { task: "t1", ...(where ? { where } : {}) });
+      presenter.taskStarted();
+      presenter.progress("Cloning the private repository.");
+      h.ctx.presenter = presenter;
+      // What the bubble's live region says (packages/bubble's announcement, as the overlay and the card call it).
+      const heard = (): string => {
+        const b = shown.at(-1)!.bubble!;
+        return announcement({ visible: b.visible, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step });
+      };
+      // The task's own work is running commentary: not read out.
+      expect(heard()).toBe("");
+      const done = call(h, { command: "git clone https://github.com/acme/private" });
+      await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+      const runId = h.starts[0].runId;
+      tell!(runId, true);
+      // The command window came up without the keyboard: the bubble is what tells the user it waits for them.
+      expect(shown.at(-1)!.bubble).toMatchObject({ mood: "attention", streaming: false, actions: [{ id: `ui:cmdshow:${runId}`, label: "Show" }] });
+      expect(heard()).toBe(`Ember needs you${where ? `, ${where}` : ""}: Clone the repository. A command is waiting for you to type in the command window. Or press Alt+Tab to go there.`);
+      // Typed: the task is at work again, its words back as running commentary.
+      tell!(runId, false);
+      expect(shown.at(-1)!.bubble).toMatchObject({ mood: "acting", streaming: true, thought: "Cloning the private repository.", actions: [] });
+      expect(heard()).toBe("");
+      // The run ends while it waits: the same.
+      tell!(runId, true);
+      expect(heard()).not.toBe("");
+      h.abort.abort();
+      await done;
+      expect(shown.at(-1)!.bubble).toMatchObject({ mood: "acting", streaming: true, actions: [] });
+    }
   });
 
   it("tells the card what kind of danger it asks about, for its marker (review #275)", async () => {

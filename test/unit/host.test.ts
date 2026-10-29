@@ -721,6 +721,33 @@ describe("review round 3", () => {
     await stopped;
   });
 
+  it("main's own timed notice (ten times as long with More time) holds the bubble its whole time, past the 30 s (cross-review X4)", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost({ hands: hands() });
+    await host.start(TOKEN, "stored");
+    host.tasks!.start("tidy my desktop");
+    await vi.advanceTimersByTimeAsync(50);
+    const work = (text: string) => {
+      for (const p of (host as any).taskPresenters.values()) (p as Presenter).progress(text);
+      for (const s of taskSessions()) s.emit("assistant.reasoning_delta", { deltaContent: text });
+    };
+    work("first look ");
+    // "I can't take screenshots", for 150 s: main gives the bubble back itself then.
+    const notice = { visible: true, mood: "attention" as const, title: "I can't take screenshots", thought: "…", step: null, streaming: false, actions: [] };
+    host.claimBubble({ ms: 150_000 });
+    setStateOf(host)({ emotion: "neutral", bubble: notice });
+    for (let t = 0; t < 145; t += 10) {
+      work(`still looking ${t} `);
+      await vi.advanceTimersByTimeAsync(10_000);
+    }
+    expect(screen().bubble?.title).toBe("I can't take screenshots");
+    host.releaseBubble(screen().bubble!);
+    expect(screen().bubble?.title).toBe("tidy my desktop");
+    const stopped = host.stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    await stopped;
+  });
+
   it("a runtime that dies under a task: the task fails (the user stopped nothing), its bubble says so and goes, and the next conductor hears it", async () => {
     vi.useFakeTimers();
     const finished: { status: string; text: string }[] = [];
@@ -2544,6 +2571,22 @@ describe("the runtime's bubbles (AgentHost.notices, review #9, #10)", () => {
     expect(host.notices.visible).toBe(false);
     // Main's hold on the bubble (its kill switch message) ends: nothing of anyone's comes back, main hides it itself.
     expect(host.releaseBubble(null)).toBe(false);
+    await host.stop();
+  });
+
+  it("offers go on a board of their own: one nobody asked for waits behind a held notice, which stays (cross-review X3)", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    expect(host.offers).not.toBe(host.notices);
+    host.notices.post({ title: "Lost build-01", thought: "The connection dropped.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect" }], mood: "error" });
+    host.offers.post({ title: "You're connected to web-07", thought: "Bring me there too?", actions: [{ id: "offer:1:bring", label: "Bring Ember" }], mood: "attention" }, { claim: "reply", ms: 25_000 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(screen().bubble).toMatchObject({ visible: true, title: "Lost build-01" });
+    host.notices.clear();
+    expect(screen().bubble).toMatchObject({ visible: true, title: "You're connected to web-07" });
+    // The kill switch takes the offers away too.
+    await host.abortAll();
+    expect(host.offers.visible).toBe(false);
     await host.stop();
   });
 });

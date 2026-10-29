@@ -107,13 +107,14 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
     create: () => { const w = new FakeWindow(); windows.push(w); return w; },
     ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
     ...(o.screenReader ? { screenReader: o.screenReader } : {}),
+    ...(o.stopKey ? { stopKey: o.stopKey } : {}),
   });
   const win = () => windows[windows.length - 1];
   const page = () => win().webContents;
@@ -767,6 +768,16 @@ describe("the command window and a screen reader (review #43)", () => {
   });
 });
 
+describe("the keyboard's way to the window from a waiting command's bubble (review #263)", () => {
+  it("is Alt+Tab on Linux and Windows; none on macOS, where Command+Tab doesn't list the panel", () => {
+    expect(setup().ctl.typingRoute()).toBe("Or press Alt+Tab to go there.");
+    for (const [os, want] of [["win32", "Or press Alt+Tab to go there."], ["darwin", null]] as const) {
+      const ctl = createCommandWindowController({ create: () => new FakeWindow(), ipc: new FakeIpc(), log, os, keyHint: () => null });
+      expect(ctl.typingRoute(), os).toBe(want);
+    }
+  });
+});
+
 describe("the announcement's time and keys (reviews #46, #269)", () => {
   it("gives the countdown more time while a screen reader runs", () => {
     let on = false;
@@ -783,6 +794,22 @@ describe("the announcement's time and keys (reviews #46, #269)", () => {
     void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
     expect(page().last().announce).not.toBeNull();
     expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+  });
+
+  it("names the stop chord only while Ember holds it, as the bubble and the spoken words do (cross-review X0)", async () => {
+    let key: string | null = null;
+    const { ctl, page } = setup({ stopKey: () => key });
+    void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).not.toBeNull();
+    expect(page().last().announceKeys).toBeUndefined();
+    // Held again (the 60 s retry got it back): named at the next state.
+    key = "Ctrl+Alt+X";
+    void ctl.announce(card({ mode: "announce", runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+    // A check that fails names none.
+    const failing = setup({ stopKey: () => { throw new Error("x"); } });
+    void failing.ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(failing.page().last().announceKeys).toBeUndefined();
   });
 });
 

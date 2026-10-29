@@ -363,6 +363,73 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await heard.host.stop();
   });
 
+  it("an announcement said aloud names where it runs as its bubble's badge does: WSL, and this computer when the words named another (follow-up F-wording)", async () => {
+    const { t } = fakeTargets({ bindings: [LOCAL, BUILD, UBUNTU] });
+    t.othersNamed = (id, words) => (id === "local" && /build-01/.test(words) ? ["build-01"] : []);
+    const said: string[] = [];
+    const shown: any[] = [];
+    const h = await started({ hands: hands(), targets: t, onAnnounce: s => said.push(s), setState: (p: any) => { if (p.bubble) shown.push(p.bubble); } });
+    const announce = (spec: Record<string, unknown>, n: number) => (h.real({ id: `9-${n}`, goal: "x", target: {}, ...spec } as never, () => undefined) as any).d.presenter.announce("Deleting build, as you asked.", `ui:cmdstop:${n}`);
+    announce({ targetId: "wsl:Ubuntu" }, 1);
+    expect(shown.at(-1)).toMatchObject({ where: "in Ubuntu (WSL)", thought: "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." });
+    expect(said.at(-1)).toBe("In Ubuntu (WSL): Deleting build, as you asked. Press Control Alt X to cancel.");
+    announce({ userWords: "build-01 delete build/" }, 2);
+    expect(shown.at(-1)).toMatchObject({ where: "on this computer" });
+    expect(said.at(-1)).toBe("On this computer: Deleting build, as you asked. Press Control Alt X to cancel.");
+    announce({ userWords: "delete build/" }, 3);
+    expect(shown.at(-1).thought).toMatch(/^On this computer\. /);
+    expect(said.at(-1)).toBe("Deleting build, as you asked. Press Control Alt X to cancel.");
+    await h.host.stop();
+  });
+
+  it("names Ember's stop and settings shortcuts in its bubbles only while it holds them, as main says (cross-review X0, X5)", async () => {
+    const { t } = fakeTargets();
+    const shown: any[] = [];
+    let held = false;
+    const h = await started({
+      hands: hands(), targets: t, setState: (p: any) => { if (p.bubble) shown.push(p.bubble); },
+      stopKey: () => (held ? "Ctrl+Alt+X" : null), settingsKey: () => (held ? "Ctrl+Alt+E" : null),
+    });
+    const task = (n: number) => (h.real({ id: `9-k${n}`, goal: "x", target: {} } as never, () => undefined) as any).d.presenter;
+    task(1).announce("Deleting build, as you asked.", "ui:cmdstop:1");
+    expect(shown.at(-1).thought).toBe("On this computer. It starts in 4 seconds.");
+    held = true;
+    task(2).announce("Deleting build, as you asked.", "ui:cmdstop:2");
+    expect(shown.at(-1).thought).toBe("On this computer. It starts in 4 seconds. Ctrl+Alt+X stops everything at once.");
+    // The conversation's Read all route.
+    held = false;
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    await h.host.ask("what can I do?");
+    h.session.emit("assistant.message", { content: options });
+    expect(shown.at(-1).step).toBe("Or open Ember's settings and go to Conversation.");
+    // A task's own result (no model for tasks) as its bubble says it: the worker asks main too.
+    const noModel = async () => {
+      const w = h.real({ id: "9-km", goal: "x", target: {} } as never, () => undefined) as any;
+      Object.assign(w.d, { model: null, runtimeDefault: false });
+      return (await w.run(new AbortController().signal)).summary as string;
+    };
+    expect(await noModel()).toBe("No model is available for tasks. Pick one in Ember's settings.");
+    held = true;
+    expect(await noModel()).toBe("No model is available for tasks. Pick one in settings (Ctrl+Alt+E).");
+    await h.host.stop();
+  });
+
+  it("counts an answer's lines at the user's text size, as main says it now (cross-review X2)", async () => {
+    const { t } = fakeTargets();
+    const shown: any[] = [];
+    let scale = 1.3;
+    const h = await started({ hands: hands(), targets: t, setState: (p: any) => { if (p.bubble) shown.push(p.bubble); }, textScale: () => scale });
+    const vpn = "Your Wi-Fi is connected to HomeNet-5G with a strong signal, but the VPN called Work-WireGuard dropped two minutes ago. Would you like me to reconnect the VPN now, or leave it off until you are back at work tomorrow?";
+    await h.host.ask("how's the network?");
+    h.session.emit("assistant.message", { content: vpn });
+    expect(shown.at(-1).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
+    scale = 1;
+    await h.host.ask("and now?");
+    h.session.emit("assistant.message", { content: vpn });
+    expect(shown.at(-1).actions).toEqual([]);
+    await h.host.stop();
+  });
+
   it("a target that can't take the task when it runs ends it at once with why, and no session is made", async () => {
     const { t } = fakeTargets({ refuse: { "ssh:build-01": "build-01 isn't connected. Connect it from Ember's menu first." } });
     const { host, real } = await started({ hands: hands(), targets: t });
@@ -559,6 +626,66 @@ describe("commands off, but the user could turn them on (review #40)", () => {
       session.emit("assistant.message", { content: "Commands are off: turn commands on in Ember's settings (Commands)." });
       session.emit("session.idle", {});
       for (let i = 0; i < 31; i++) { await vi.advanceTimersByTimeAsync(1000); expect(screen.bubble()?.title).not.toBe("Commands are off"); }
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** Each bubble put on screen, with when (fake clock), and for how long the "Commands are off" one stayed. */
+  function timeline() {
+    const shown: { at: number; title: string; visible: boolean }[] = [];
+    const setState = (p: any) => { if (p.bubble) shown.push({ at: Date.now(), title: p.bubble.title, visible: p.bubble.visible }); };
+    /** When the hint first reached the screen, and how long it stayed before something else replaced it (null: never shown). */
+    const hint = () => {
+      const i = shown.findIndex(s => s.visible && s.title === "Commands are off");
+      if (i < 0) return null;
+      const next = shown.slice(i + 1).find(s => s.title !== "Commands are off" || !s.visible);
+      return { at: shown[i].at, stayed: next ? next.at - shown[i].at : Infinity };
+    };
+    return { setState, hint };
+  }
+  const ANSWER = "Commands are off, so I can't run df -h for you. You can turn commands on in Ember's settings (Commands), or I can guide you through checking the disk space yourself.";
+
+  it("a typed request whose answer stays a while still gets the hint, after the answer and for its whole time (cross-review X14)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t } = fakeTargets({ caps: offered });
+      const screen = timeline();
+      const { host, session } = await started({ hands: hands(), targets: t, setState: screen.setState });
+      const t0 = Date.now();
+      await host.ask("run df -h in the terminal");
+      // Copilot thinks for 3 s, then answers in about 170 characters, which stay about 14.6 s.
+      await vi.advanceTimersByTimeAsync(3000);
+      session.emit("assistant.message_delta", { deltaContent: ANSWER });
+      session.emit("assistant.message", { content: ANSWER });
+      session.emit("session.idle", {});
+      await vi.advanceTimersByTimeAsync(60_000);
+      const h = screen.hint();
+      expect(h, "the hint reached the screen").not.toBeNull();
+      // Only once the answer has gone, and for its own reading time (6 s + 50 ms a character).
+      expect(h!.at - t0).toBeGreaterThanOrEqual(3000 + 6000 + ANSWER.length * 50);
+      expect(h!.stayed).toBeGreaterThanOrEqual(6000 + 106 * 50 - 100);
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with More time to read and answer, the hint shows after the answer and stays ten times as long (cross-review X4, X14)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t } = fakeTargets({ caps: offered });
+      const screen = timeline();
+      const { host, session } = await started({ hands: hands(), targets: t, setState: screen.setState, readTime: () => 10 });
+      await host.ask("run df -h in the terminal");
+      session.emit("assistant.message", { content: "Commands are off. You can turn commands on in Ember's settings (Commands), or I can guide you." });
+      session.emit("session.idle", {});
+      await vi.advanceTimersByTimeAsync(300_000);
+      const h = screen.hint();
+      expect(h, "the hint reached the screen").not.toBeNull();
+      expect(h!.stayed).toBeGreaterThanOrEqual((6000 + 106 * 50) * 10 - 100);
+      expect(h!.stayed).toBeLessThan((6000 + 106 * 50) * 10 + 1000);
       await host.stop();
     } finally {
       vi.useRealTimers();

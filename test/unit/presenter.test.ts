@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
+import { SHORTCUTS } from "../../app/shared/shortcuts";
 
 // A test that fakes the clock (or sets its time) leaves the next one on the real clock.
 afterEach(() => { vi.useRealTimers(); });
@@ -769,6 +770,49 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
     expect(expandedBubble(finished(options), options).step).toBeNull();
   });
 
+  it("names the settings shortcut under Read all only while Ember holds it, asked at each answer (cross-review X5)", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    let key: string | null = "Win+Alt+E";
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { shortcuts: SHORTCUTS.win32, settingsKey: () => key });
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    const answer = () => {
+      p.userPrompt("what can I do?");
+      p.event({ type: "assistant.message_delta", data: { deltaContent: options } });
+      p.event({ type: "assistant.message", data: { content: options } });
+      return states.at(-1)!.bubble!;
+    };
+    expect(answer().step).toBe("Or press Win+Alt+E and go to Conversation.");
+    // Another app took it since: the way there without it.
+    key = null;
+    expect(answer().step).toBe("Or open Ember's settings and go to Conversation.");
+    // An error names it only while held too.
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data: { message: "model_not_supported" } });
+    expect(states.at(-1)!.bubble!.thought).toBe("The model I'm set to use isn't available. Pick another one in Ember's settings.");
+    key = "Win+Alt+E";
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data: { message: "model_not_supported" } });
+    expect(states.at(-1)!.bubble!.thought).toBe("The model I'm set to use isn't available. Pick another one in settings (Win+Alt+E).");
+    // A check that fails names none (it may be taken).
+    const q = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { settingsKey: () => { throw new Error("x"); } });
+    q.userPrompt("what can I do?");
+    q.event({ type: "assistant.message", data: { content: options } });
+    expect(states.at(-1)!.bubble!.step).toBe("Or open Ember's settings and go to Conversation.");
+  });
+
+  it("names the stop chord in an announcement only while Ember holds it (cross-review X0, X5)", () => {
+    const states: Partial<EmberState>[] = [];
+    let key: string | null = "Ctrl+Alt+X";
+    const p = new Presenter(s => states.push(s), undefined, () => "Delete build", new BubbleOwner(), undefined, false, { task: "t1", stopKey: () => key });
+    p.announce("Deleting build, as you asked.", "ui:cmdstop:1", 4000);
+    expect(states.at(-1)!.bubble).toMatchObject({ thought: "On this computer. It starts in 4 seconds. Ctrl+Alt+X stops everything at once.", actions: [{ id: "ui:cmdstop:1", label: "Stop" }] });
+    p.endAnnouncement("ui:cmdstop:1");
+    key = null;
+    p.announce("Deleting build, as you asked.", "ui:cmdstop:2", 15_000);
+    expect(states.at(-1)!.bubble).toMatchObject({ thought: "On this computer. It starts in 15 seconds.", actions: [{ id: "ui:cmdstop:2", label: "Stop" }] });
+  });
+
   it("leaves no task's step on a turn stopped mid-step", () => {
     const { p, last } = setup();
     p.userPrompt("tidy up");
@@ -782,6 +826,36 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
     expect(finished("It's half past three.\nYour next meeting is at four.").actions).toEqual([]);
     expect(answerLines("x".repeat(80))).toBe(3);
     expect(answerLines("a\n\nb")).toBe(3);
+  });
+
+  it("counts the lines at the user's text size: the bubble keeps its width while the type grows (cross-review X2)", () => {
+    const vpn = "Your Wi-Fi is connected to HomeNet-5G with a strong signal, but the VPN called Work-WireGuard dropped two minutes ago. Would you like me to reconnect the VPN now, or leave it off until you are back at work tomorrow?";
+    const windows = "Here are the windows you have open:\n- Firefox: GitHub pull request\n- Terminal: ~/src/ember build\n- Files: Downloads folder view\n- Text Editor: notes for today\n- Settings: Displays and screens";
+    expect(vpn.length).toBe(215);
+    expect(answerLines(vpn)).toBe(6);
+    // At Larger (1.3) a line holds 27 characters: 8 lines, more than the bubble's six.
+    expect(answerLines(vpn, 1.3)).toBe(8);
+    expect(cutShort(vpn)).toBe(false);
+    expect(cutShort(vpn, 1.3)).toBe(true);
+    expect(cutShort(windows)).toBe(false);
+    expect(cutShort(windows, 1.3)).toBe(true);
+    // A short answer still fits at every size, and a scale that makes no sense counts as the usual one.
+    for (const s of [1, 1.15, 1.3, Number.NaN, 0, -2]) expect(cutShort("It's half past three.", s), String(s)).toBe(false);
+    expect(answerLines(vpn, Number.NaN)).toBe(6);
+    // The presenter asks at each answer.
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    let scale = 1.3;
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { textScale: () => scale });
+    const answer = (text: string) => {
+      p.userPrompt("how's the network?");
+      p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+      p.event({ type: "assistant.message", data: { content: text } });
+      return states.at(-1)!.bubble!;
+    };
+    expect(answer(vpn)).toMatchObject({ actions: [{ id: "ui:more", label: "Read all" }], step: "Or press Ctrl+Alt+E and go to Conversation." });
+    scale = 1;
+    expect(answer(vpn)).toMatchObject({ actions: [], step: null });
   });
 });
 
@@ -933,5 +1007,65 @@ describe("More time to read and answer (review #51)", () => {
     expect(states.at(-1)?.bubble?.visible).toBe(true);
     vi.advanceTimersByTime(20);
     expect(states.at(-1)?.bubble?.visible).toBe(false);
+  });
+});
+
+describe("More time scales a bubble's time once, also when it waited or was covered (cross-review X1)", () => {
+  /** A conversation's answer up (it holds the bubble), with More time on; its reading time is `answerMs`. */
+  function answerUp() {
+    vi.useFakeTimers();
+    const shown: Partial<EmberState>[] = [];
+    const owner = new BubbleOwner();
+    const readTime = () => readTimeOf(true);
+    const convo = new Presenter(s => shown.push(s), undefined, () => "Ember", owner, undefined, false, { readTime });
+    convo.userPrompt("what time is it?");
+    convo.event({ type: "assistant.message_delta", data: { deltaContent: "Half past three." } });
+    convo.event({ type: "session.idle", data: {} });
+    const visible = () => shown.at(-1)?.bubble?.visible ?? false;
+    return { shown, owner, readTime, convo, visible, answerMs: (6000 + 16 * 50) * 10 };
+  }
+
+  it("an unasked offer that waited behind an answer goes ten times its 25 s after it shows, not a hundred", () => {
+    const { shown, owner, readTime, answerMs, visible } = answerUp();
+    const board = new Presenter(s => shown.push(s), undefined, () => "Ember", owner, undefined, false, { readTime });
+    board.post({ title: "You're connected to web-07", thought: "Bring me there too?", mood: "attention", actions: [{ id: "offer:1:bring", label: "Bring Ember" }] }, { claim: "reply", ms: 25_000 });
+    expect(board.waiting).toBe(true);
+    vi.advanceTimersByTime(answerMs + 10);
+    expect(shown.at(-1)?.bubble?.title).toBe("You're connected to web-07");
+    vi.advanceTimersByTime(250_000 - 20);
+    expect(visible()).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(visible()).toBe(false);
+  });
+
+  it("an answer covered by main's bubble and given back keeps ten times its time, however often it is covered", () => {
+    const { owner, convo, answerMs, visible } = answerUp();
+    // "Hey Ember" that was another word, twice: main claims the bubble, then gives it back.
+    for (let i = 0; i < 2; i++) {
+      const main = {};
+      owner.claim(main);
+      owner.holder = null;
+      expect(owner.uncover(() => true)).toBe(convo);
+      convo.reshow();
+    }
+    vi.advanceTimersByTime(answerMs - 10);
+    expect(visible()).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(visible()).toBe(false);
+  });
+
+  it("a task's result that waited behind an answer stays ten times its time, not a hundred", () => {
+    const { shown, owner, readTime, answerMs, visible } = answerUp();
+    const task = new Presenter(s => shown.push(s), undefined, () => "Check disk", owner, undefined, false, { task: "t1", readTime });
+    const text = "The disk has 41 GB free; Downloads is the largest folder.";
+    task.outcome({ title: "Check disk", text, emotion: "happy", gesture: "thumbsUp", mood: "done" });
+    expect(task.waiting).toBe(true);
+    vi.advanceTimersByTime(answerMs + 10);
+    expect(shown.at(-1)?.bubble?.title).toBe("Check disk");
+    const want = (6000 + text.length * 50) * 10;
+    vi.advanceTimersByTime(want - 20);
+    expect(visible()).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(visible()).toBe(false);
   });
 });

@@ -123,7 +123,7 @@ export interface TargetsRuntime {
   busy(): { commands: number; connections: number };
   /** The handle menu's "Work on" submenu (plain objects main hands to Menu.buildFromTemplate). */
   menuItems(): MenuItemLike[];
-  /** Bubble action ids this runtime owns ("target:…", "offer:…", "conn:…", "ui:panel:…", "ui:cmdstop:…"); true when handled. */
+  /** Bubble action ids this runtime owns ("target:…", "offer:…", "conn:…", "ui:panel:…", "ui:cmdstop:…", "ui:cmdshow:…"); true when handled. */
   bubbleAction(id: string): boolean;
   /** The quick context when the active target isn't this screen (a promise), or null to take the local one. */
   quickContext(): Promise<QuickContext | null> | null;

@@ -12,12 +12,12 @@
 
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../shared/commands";
-import type { OS } from "../../shared/shortcuts";
+import { SHORTCUTS, type OS } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
 import type { CommandCard, CommandWindowPort, DangerClass, RunExit, RunningCommand } from "./types";
-import { RUNNING_STATUS, WAITING_STATUS, announceKeyText, headerLine, outsideText, reaskEndText, reaskText, statusLine, typingHint, waitingTimeoutText } from "../../renderer/command/copy";
+import { RUNNING_STATUS, WAITING_STATUS, announceKeyText, headerLine, outsideText, reaskEndText, reaskText, statusLine, typingHint, typingRouteText, waitingTimeoutText } from "../../renderer/command/copy";
 import { SECRET_PROMPT } from "./prompts";
 import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type SeenMsg, type Snapshot, type TabView, type WindowView } from "../../renderer/command/model";
 
@@ -65,6 +65,11 @@ export interface CommandWindowExtras {
    * the task's bubble. Returns the unsubscribe.
    */
   onWaiting(fn: (runId: string, waiting: boolean) => void): () => void;
+  /**
+   * Under the task's bubble while a run waits for typing, beside its Show (review #263): how to reach this window from the
+   * keyboard on this PC (copy's typingRouteText), or null where there is no such key (macOS).
+   */
+  typingRoute(): string | null;
   /**
    * No OK is coming for run `runId`, which the remote's own check sent back for one (review #274): the user said no or
    * let the question go ("no"), the task stopped ("stopped"), or the retry was sent back too, which is the remote's
@@ -214,8 +219,10 @@ export function createCommandWindowPort(o: CommandWindowOptions): CommandWindowP
 }
 
 /**
- * What the controller is made from: the window's factory, ipcMain, the log, the OS, the card's key hint, and whether a
- * screen reader runs (main's sys.a11y.screenReaderOn: each run's terminal then mirrors its output for it, review #43).
+ * What the controller is made from: the window's factory, ipcMain, the log, the OS, the card's key hint, whether a
+ * screen reader runs (main's sys.a11y.screenReaderOn: each run's terminal then mirrors its output for it, review #43),
+ * and the stop chord as Ember holds it now (null while another app holds it: the announcement names none then, as
+ * neither the bubble nor the spoken words do, cross-review X0; absent: the OS's own).
  */
 export interface CommandWindowOptions {
   create: () => BrowserWindowLike;
@@ -224,6 +231,7 @@ export interface CommandWindowOptions {
   os: OS;
   keyHint: () => string | null;
   screenReader?: () => boolean;
+  stopKey?: () => string | null;
 }
 
 /** createCommandWindowPort with its extras typed: the same object (the targets runtime may call this name instead). */
@@ -332,6 +340,13 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     } catch { return null; } // a hint that can't be built shows none
   }
 
+  /** Under an announcement's countdown: the stop chord Ember holds now, or "" (taken, or the check failed). */
+  function announceKeys(): string {
+    let key: string | null = null;
+    try { key = o.stopKey ? o.stopKey() : SHORTCUTS[o.os].stop.label; } catch { /* named none: it may be taken */ }
+    return announceKeyText(o.os, typeof key === "string" && key ? key : null);
+  }
+
   /** A screen reader runs (main asks the OS each time); false when it isn't told or asking fails. */
   function screenReader(): boolean {
     try { return o.screenReader?.() === true; } catch { return false; } // not known: the terminals stay as they are
@@ -352,12 +367,13 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
   function stateNow(): WindowView {
     const head = queue[0];
+    const keys = head && head.endsAt !== null ? announceKeys() : "";
     return {
       rev: ++rev,
       tabs: tabs.map(tabView),
       card: card ? { ...card.card, n: card.n, ...(card.retry ? { retry: card.retry } : {}) } : null,
       announce: head && head.endsAt !== null ? { card: head.card, endsAt: head.endsAt } : null,
-      ...(head && head.endsAt !== null ? { announceKeys: announceKeyText(o.os) } : {}),
+      ...(keys ? { announceKeys: keys } : {}),
       keyHint: card ? keyHint() : null,
       pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
       os: o.os,
@@ -760,6 +776,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       }
       push();
     },
+
+    typingRoute: () => typingRouteText(o.os),
 
     onWaiting(fn) {
       waitingFns.add(fn);

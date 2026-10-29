@@ -815,9 +815,10 @@ function start(): void {
     // held off shows after the question (the question holds everything meanwhile).
     agent?.releasePin(lastState.bubble);
     // A question nobody can see expires as "no": a hidden Ember shows itself to ask (and stays shown,
-    // also when the compositor comes back while the question is on the card).
+    // also when the compositor comes back while the question is on the card). The handle is the pill again with it, not
+    // the hidden-state tab (cross-review X6).
     keptHidden = false;
-    if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
+    if (overlay?.isHidden()) { overlay.setHidden(false); syncHandle(); presenceChanged(); }
     // A command is never read out or put in a notification (R7): only that Ember wants to run one, and where; the card
     // on screen shows it, and the keys work only there.
     const words = targets?.questionWords(q.question) ?? null;
@@ -885,13 +886,16 @@ function start(): void {
     callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
   /**
-   * Main's own notice in the bubble for `ms`: held, so a task's hide doesn't wipe it, and given back after, so a task still
-   * at work shows its progress again (review #81).
+   * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
+   * hide doesn't wipe it, and given back after, so a task still at work shows its progress again (review #81).
    */
-  const showNotice = (n: { title: string; thought: string }, ms: number) => holdNotice<EmberState["bubble"]>({
-    claim: () => agent?.claimBubble(), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
-    release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
-  }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, ms);
+  const showNotice = (n: { title: string; thought: string }, ms: number) => {
+    const time = ms * readTime();
+    return holdNotice<EmberState["bubble"]>({
+      claim: () => agent?.claimBubble({ ms: time }), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
+      release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
+    }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
+  };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
@@ -899,7 +903,7 @@ function start(): void {
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
-    if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
+    if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
     const epoch = agent?.stopEpoch;
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
@@ -1558,13 +1562,14 @@ function start(): void {
         const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "I can't take screenshots",
           thought: "I don't have macOS's Screen Recording permission. Open the setup check to allow it, then quit and reopen me.",
           actions: [{ id: "ui:setup-check", label: "Open setup check" }] };
-        // It comes mid-task: main holds the bubble so the task's progress doesn't replace it before it is read, then
-        // lets go (the task's progress comes back, or it hides).
-        agent?.claimBubble();
+        // It comes mid-task: main holds the bubble so the task's progress doesn't replace it before it is read (15 s,
+        // ten times that with More time to read and answer), then lets go (the task's progress comes back, or it hides).
+        const time = 15000 * readTime();
+        agent?.claimBubble({ ms: time });
         setState({ bubble });
         setTimeout(() => {
           if (lastState.bubble === bubble && !(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
-        }, 15000);
+        }, time);
       },
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
@@ -1762,13 +1767,19 @@ function start(): void {
       stopTasksOn: (target, only, why) => { agent?.cancelTasksOn(target, only, why); },
       // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
       bubbles: () => agent?.notices ?? null,
-      // Its bubbles' keyboard route names the settings shortcut only while Ember holds it.
+      // Its offers on a board of their own: one nobody asked for waits behind a held Lost or "Can't connect" (cross-review X3).
+      offers: () => agent?.offers ?? null,
+      // Its bubbles' keyboard route names the settings shortcut only while Ember holds it, and its command window's
+      // announcement the stop chord (cross-review X0).
       settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
+      stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null),
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       readTime,
+      // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
+      textScale: () => textScale(settings.get().textSize),
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
@@ -1816,6 +1827,9 @@ function start(): void {
       onAnnounce: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
       // Its cancel words: the kill phrase only where Ember can tell its own voice from the user's (owner decision V1).
       cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null }),
+      // Its bubbles name the settings shortcut and the stop chord only while Ember holds them (cross-review X0, X5).
+      settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
+      stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null),
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)

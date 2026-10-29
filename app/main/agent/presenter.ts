@@ -20,22 +20,29 @@ const quoted = (text: string) => `“${text.length > 120 ? `${text.slice(0, 119)
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
-/** About as many characters as one of the bubble's lines holds (300 px wide, 14 px Ember Sans), a little on the short side. */
+/**
+ * About as many characters as one of the bubble's lines holds (300 px wide, 14 px Ember Sans), a little on the short side;
+ * fewer at a larger text size (answerLines' scale).
+ */
 const LINE_CHARS = 36;
 /** The lines a finished answer shows before it is cut off (BUBBLE_CSS's .eb-thought). */
 const ANSWER_LINES = 6;
 
 /**
  * How many of the bubble's lines `text` takes: each of its lines (the bubble keeps line breaks, so an empty one is a
- * line too) wraps onto as many as its length needs.
+ * line too) wraps onto as many as its length needs. `scale`: the user's text size (page-prefs' textScale: 1.15 at
+ * Large, 1.3 at Larger): the bubble keeps its width while its type grows, so a line holds that many times fewer
+ * characters (cross-review X2). A scale that makes no sense counts as 1.
  */
-export function answerLines(text: string): number {
-  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.trim().length / LINE_CHARS)), 0);
+export function answerLines(text: string, scale = 1): number {
+  const s = Number.isFinite(scale) && scale > 1 ? Math.min(scale, 3) : 1;
+  const chars = Math.max(1, Math.floor(LINE_CHARS / s));
+  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.trim().length / chars)), 0);
 }
 
-/** A finished answer the bubble shows only the start of: it offers "Read all". */
-export function cutShort(text: string): boolean {
-  return text.length > LONG_ANSWER || answerLines(text) > ANSWER_LINES;
+/** A finished answer the bubble shows only the start of (at the user's text size, `scale`): it offers "Read all". */
+export function cutShort(text: string, scale = 1): boolean {
+  return text.length > LONG_ANSWER || answerLines(text, scale) > ANSWER_LINES;
 }
 
 /**
@@ -46,16 +53,20 @@ export function plainText(s: string): string {
   return plainMarkdown(s);
 }
 
+/** friendlyError's sentence for a sign-in Copilot refused (the host then asks Copilot whether the sign-in still holds). */
+export const SIGN_IN_REFUSED = "Copilot didn't accept the sign-in. Open settings to sign in again.";
+
 /**
  * One plain sentence for an error from Copilot, instead of the raw SDK or HTTP text.
  * `raw` is kept for the log by the caller. `provider`: the organisation's own model service
  * is configured (there is no GitHub sign-in to blame then). `settingsKey`: the settings
- * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E").
+ * shortcut as this OS writes it (default Linux's "Ctrl+Alt+E"); null while another app holds
+ * it: the sentence names none (cross-review X5).
  */
-/** friendlyError's sentence for a sign-in Copilot refused (the host then asks Copilot whether the sign-in still holds). */
-export const SIGN_IN_REFUSED = "Copilot didn't accept the sign-in. Open settings to sign in again.";
-
-export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string } = {}): string {
+export function friendlyError(raw: string, errorType?: string, ctx: { statusCode?: number; provider?: boolean; settingsKey?: string | null } = {}): string {
+  const key = ctx.settingsKey === undefined ? SHORTCUTS.linux.settings.label : ctx.settingsKey;
+  /** "in settings (Ctrl+Alt+E)", or where to go without a shortcut. */
+  const inSettings = (own: boolean) => (key ? `in ${own ? "Ember's " : ""}settings (${key})` : "in Ember's settings");
   const m = `${errorType ?? ""} ${raw}`;
   const status = ctx.statusCode ?? Number(/\b(?:HTTP|status|code)?\s*\(?(40[1-4]|429)\b/i.exec(raw)?.[1] ?? 0);
   const service = ctx.provider ? "your organisation's model service" : "Copilot";
@@ -68,7 +79,7 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (status === 403) return refused;
   if (errorType === "authentication" || status === 401 || /authenticat|unauthori[sz]ed|bad credentials|not signed in/i.test(m)) return SIGN_IN_REFUSED;
   if (errorType === "rate_limit" || status === 429 || /quota|rate.?limit|\b402\b|credits/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} usage limit was reached for now. Try again a bit later.`;
-  if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one in settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
+  if (/model_not_supported|model.{0,20}(not (available|supported|found))|unknown model|model_not_found/i.test(m) || (ctx.provider && status === 404)) return `The model I'm set to use isn't available. Pick another one ${inSettings(false)}.`;
   if (/policy|\b403\b|forbidden|\bseat\b|subscription/i.test(m)) return refused;
   // The whole conversation (not this request) went over the model's limit: a new conversation starts when Ember restarts.
   if (/prompt token count|exceeds the limit|token_?limit|max_prompt_tokens/i.test(m)) return "That's more than the model can take in at once: this conversation may have got too long. Try a shorter request, or quit and reopen Ember to start a new conversation.";
@@ -83,7 +94,7 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   // Only a status code is left (a JSON body said nothing more): a refused request.
   if (/^\(?4\d\d\)?$/.test(short)) return `${who} refused that request (${short.replace(/[()]/g, "")}). Try asking in other words.`;
   // Anything else: no raw text (it reads as a code error, and is spoken when speech is on); the caller logs it.
-  return `${who} reported a problem. Try again; if it keeps happening, check ${ctx.provider ? "the model service" : "Copilot"} in Ember's settings (${ctx.settingsKey ?? SHORTCUTS.linux.settings.label}).`;
+  return `${who} reported a problem. Try again; if it keeps happening, check ${ctx.provider ? "the model service" : "Copilot"} ${inSettings(true)}.`;
 }
 
 /**
@@ -321,6 +332,14 @@ export interface PresenterOptions {
   /** Ember's shortcuts on this OS, for the settings shortcut errors name (default Linux's). */
   shortcuts?: ShortcutTable;
   /**
+   * The settings shortcut as Ember holds it now (main asks hasKey), or null while another app holds it: Read all's route
+   * and the errors that send the user to settings name it only then (cross-review X5). Asked at each bubble. Absent: the
+   * table's (`shortcuts`); a check that fails names none.
+   */
+  settingsKey?: () => string | null;
+  /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
+  stopKey?: () => string | null;
+  /**
    * Where the task acts when it isn't this computer ("on build-01", "in Ubuntu (WSL)", §2.4): every bubble of this
    * presenter carries it as its badge. Absent: no badge, as before targets existed.
    */
@@ -331,6 +350,11 @@ export interface PresenterOptions {
   now?: () => number;
   /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
   readTime?: () => number;
+  /**
+   * How much the bubble's type is scaled (the user's text size, page-prefs' textScale; default 1): a finished answer
+   * that needs more than the bubble's six lines at that size offers Read all (cross-review X2). Asked at each answer.
+   */
+  textScale?: () => number;
 }
 
 /**
@@ -488,10 +512,10 @@ export class Presenter {
   /** Where that task acts (BubbleState.where), when not on this computer. */
   private readonly where?: string;
   private readonly onAnnounce?: (text: string) => void;
-  /** The settings shortcut as this OS writes it, for the errors that send the user there. */
-  private readonly settingsKey: string;
-  /** The stop chord's label on this OS ("Ctrl+Alt+X"), named by an announcement. */
-  private readonly stopKey: string;
+  /** The settings shortcut as Ember holds it now (PresenterOptions.settingsKey), for the bubbles that send the user there. */
+  private readonly heldSettingsKey: () => string | null;
+  /** The stop chord as Ember holds it now ("Ctrl+Alt+X"; PresenterOptions.stopKey), named by an announcement. */
+  private readonly heldStopKey: () => string | null;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
   private stalledTitle = "";
   /** The words of the latest request asked (userPrompt), until its turn begins (its user.message). */
@@ -508,6 +532,7 @@ export class Presenter {
   private since: number | null = null;
   private readonly now: () => number;
   private readonly readTime: () => number;
+  private readonly textScale: () => number;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -525,13 +550,25 @@ export class Presenter {
     this.owner = BubbleOwner.of(owner);
     this.onEvent = opts.onEvent;
     this.onProblem = opts.onProblem;
-    this.settingsKey = (opts.shortcuts ?? SHORTCUTS.linux).settings.label;
-    this.stopKey = (opts.shortcuts ?? SHORTCUTS.linux).stop.label;
+    const table = opts.shortcuts ?? SHORTCUTS.linux;
+    this.heldSettingsKey = opts.settingsKey ?? (() => table.settings.label);
+    this.heldStopKey = opts.stopKey ?? (() => table.stop.label);
     if (typeof opts.task === "string") this.taskId = opts.task;
     if (opts.where) this.where = opts.where;
     this.onAnnounce = opts.onAnnounce;
     this.now = opts.now ?? Date.now;
     this.readTime = opts.readTime ?? (() => 1);
+    this.textScale = opts.textScale ?? (() => 1);
+  }
+
+  /** The settings shortcut Ember holds now, or null (taken, or the check failed: naming one that may not work is worse). */
+  private get settingsKey(): string | null {
+    try { return this.heldSettingsKey() || null; } catch { return null; }
+  }
+
+  /** The stop chord Ember holds now, or null (as settingsKey). */
+  private get stopKey(): string | null {
+    try { return this.heldStopKey() || null; } catch { return null; }
   }
 
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
@@ -632,7 +669,8 @@ export class Presenter {
     this.since = this.now();
     this.owner.wrote(this, claim, true);
     this.push({ emotion: this.state.emotion, talking: this.state.talking, bubble: this.state.bubble });
-    if (this.pendingHide !== null) this.hideLater(this.pendingHide);
+    // (Its time was scaled by the user's setting when it was asked for: armed as it is, not scaled again.)
+    if (this.pendingHide !== null) this.armHide(this.pendingHide);
     // A complete answer back on screen (it finished under main's "Listening…" or a question): a guide step waiting
     // behind it shows a moment later, as when it finishes on screen.
     if (claim !== "progress" && !this.busy) this.owner.finished(this);
@@ -660,12 +698,20 @@ export class Presenter {
     this.owner.forget(this);
   }
 
+  /** This presenter's bubble goes `base` ms after it reaches the screen, times the user's "More time to read and answer". */
   private hideLater(base: number): void {
-    this.cancelHide();
     // As long as the user needs to read it (their setting), never shorter than usual.
     let scale = 1;
     try { scale = Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { /* the usual time */ }
-    const ms = base * scale;
+    this.armHide(base * scale);
+  }
+
+  /**
+   * This presenter's bubble goes `ms` after it reaches the screen, as given (hideLater scaled it once already): what
+   * letGo and reshow keep and arm again is that time, so a bubble that waited or was covered isn't scaled twice.
+   */
+  private armHide(ms: number): void {
+    this.cancelHide();
     // Not on screen yet: its time starts when it shows.
     if (this.unseen) { this.pendingHide = ms; return; }
     this.hideMs = ms;
@@ -827,11 +873,19 @@ export class Presenter {
     });
   }
 
-  /** A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's thinking. */
-  progress(text: string): void {
+  /**
+   * A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's
+   * thinking. `more`: its buttons and its step line instead of the ones it has (a command waiting for the user's typing
+   * offers Show, with the keyboard's way to the command window under it: review #263); absent, they stay. With
+   * `needsYou`, the note is a finished line the user has to act on ("Needs you", not streaming), which the bubble's live
+   * region reads out with its step, as it reads a question; without it the note is running commentary, never read out.
+   */
+  progress(text: string, more?: { actions?: BubbleState["actions"]; step?: string | null; needsYou?: boolean }): void {
     const note = text.replace(/\s+/g, " ");
     if (!note.trim()) return;
-    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true } });
+    const needsYou = more?.needsYou === true;
+    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
+      ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
   }
 
   /**
@@ -976,7 +1030,9 @@ export class Presenter {
           // By the lines it takes, not its characters: a short list or a few paragraphs fill the bubble's six lines too.
           // "Read all" takes only the mouse (the overlay never takes the keyboard): under it, where the keyboard finds
           // the whole answer.
-          const more = cutShort(full);
+          let scale = 1;
+          try { scale = Number(this.textScale()); } catch { /* the usual size */ }
+          const more = cutShort(full, scale);
           this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
             step: more ? keyboardRoute(this.settingsKey, "Conversation") : null,
             actions: more ? [{ id: "ui:more", label: "Read all" }] : [] } });

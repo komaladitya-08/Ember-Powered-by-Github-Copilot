@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent } from "./presenter";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -32,7 +32,7 @@ import type { AuditLog } from "../policy/audit";
 import { PLATFORM_WORDS } from "../../shared/words";
 import type { TargetBinding, PromptCaps } from "../targets/types";
 import type { TargetId } from "../../shared/targets";
-import { placeName, whereWords } from "../commands/flow";
+import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
@@ -211,6 +211,19 @@ export interface HostOptions {
    * voice from the user's, review #251). Default: the stop shortcut, as said aloud.
    */
   cancelWords?: () => string;
+  /**
+   * The settings shortcut as Ember holds it now (main: hasKey), or null while another app holds it: the bubbles name it
+   * only then (Read all's route, the errors that send the user to settings, a task's "No model is available" result;
+   * cross-review X5). Default: the OS's table.
+   */
+  settingsKey?: () => string | null;
+  /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
+  stopKey?: () => string | null;
+  /**
+   * How much the bubble's type is scaled now (the user's text size: page-prefs' textScale): an answer that needs more
+   * than the bubble's six lines at that size offers Read all (cross-review X2). Default 1.
+   */
+  textScale?: () => number;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -561,8 +574,16 @@ export class AgentHost {
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
   private carried: string[] = [];
-  /** "Commands are off" with Open settings was offered this run (review #40: once per run). */
-  private commandsHinted = false;
+  /**
+   * "Commands are off" with Open settings (review #40: once per run): its presenter, once offered. It counts as offered
+   * once it has reached the screen, or while it waits to.
+   */
+  private commandsHint: Presenter | null = null;
+  /**
+   * A request asked for a terminal or a command while commands are off by the user's switch: the hint is offered when
+   * its turn ends, behind the answer (asked before the request, it would be covered by "Thinking…" and run out unseen).
+   */
+  private hintOwed = false;
   /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
   private checkingSignIn = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
@@ -587,6 +608,8 @@ export class AgentHost {
   private readonly presenter: Presenter;
   /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
   private readonly noticeBoard: Presenter;
+  /** The targets runtime's offers, on a board of their own (cross-review X3: see offers). */
+  private readonly offerBoard: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
@@ -619,6 +642,18 @@ export class AgentHost {
   /** The signed-out line for how this build signs in. */
   private get signedOut(): string { return this.o.signInWith === "github-cli" ? SIGNED_OUT_CLI : SIGNED_OUT; }
 
+  /**
+   * What every presenter's bubbles follow: this OS's shortcuts, those Ember holds now (a bubble names a shortcut only
+   * while it works, cross-review X0, X5), the user's More time to read and answer, and their text size.
+   */
+  private get bubbleOptions(): PresenterOptions {
+    const o = this.o;
+    return {
+      shortcuts: this.sys.shortcuts, ...(o.readTime ? { readTime: o.readTime } : {}), ...(o.textScale ? { textScale: o.textScale } : {}),
+      ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}), ...(o.stopKey ? { stopKey: o.stopKey } : {}),
+    };
+  }
+
   constructor(private o: HostOptions) {
     this.status = {
       phase: "signed-out", detail: this.signedOut, models: [], conductorModel: null, workerModel: null,
@@ -628,10 +663,10 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    const readTime = o.readTime ? { readTime: o.readTime } : {};
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts, ...readTime });
-    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, { shortcuts: this.sys.shortcuts, ...readTime });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
+    this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
   }
 
   /**
@@ -640,6 +675,16 @@ export class AgentHost {
    */
   get notices(): NoticeBoard {
     return this.noticeBoard;
+  }
+
+  /**
+   * Where the targets runtime's offers go ("You're connected to web-07", "I can work in WSL", offer_connect's Connect):
+   * the shared bubble too, but not the notices' writer, which keeps one bubble at a time. An offer nobody asked for
+   * then waits behind a held notice ("Lost build-01", "Can't connect") instead of replacing it for good, and one the
+   * user asked for covers it, which comes back after (cross-review X3).
+   */
+  get offers(): NoticeBoard {
+    return this.offerBoard;
   }
 
   /**
@@ -706,13 +751,14 @@ export class AgentHost {
    * settings (review #40). Never where the administrator turned commands off, or once they're on.
    */
   private hintCommands(): void {
-    if (this.commandsHinted) return;
+    const h = this.commandsHint;
+    if (h && (h.shownAt !== null || h.visible)) return;
     let caps: PromptCaps | undefined;
     try { caps = this.o.targets?.caps(); } catch { return; }
     if (!caps?.commandsOffered || caps.commands) return;
-    this.commandsHinted = true;
-    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short).
-    const p = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, { shortcuts: this.sys.shortcuts });
+    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short), and
+    // stays as long as the user's More time to read and answer says, as every bubble does.
+    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, this.bubbleOptions);
     p.outcome({
       title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
       emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
@@ -728,9 +774,11 @@ export class AgentHost {
    * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
    * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
    * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
-   * covers doesn't run out of time underneath (main may put it back: a wake that was another word).
+   * covers doesn't run out of time underneath (main may put it back: a wake that was another word). `ms`: main's own
+   * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
+   * held that long, and the 30 seconds count from then (cross-review X4).
    */
-  claimBubble(o: { pin?: boolean } = {}): void {
+  claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();
     if (this.mainHold) clearTimeout(this.mainHold);
@@ -739,7 +787,7 @@ export class AgentHost {
     // answer goes another way (releasePin).
     this.pinned = !!o.pin;
     if (o.pin) return;
-    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS);
+    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS + Math.max(0, o.ms ?? 0));
     this.mainHold.unref?.();
   }
 
@@ -1039,7 +1087,7 @@ export class AgentHost {
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
         audit: hands?.audit ?? this.o.taskBase?.audit,
-        settingsKey: this.sys.shortcuts?.settings.label,
+        settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
@@ -1106,6 +1154,7 @@ export class AgentHost {
             inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
             system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
             ...(this.o.emberPids ? { emberPids: this.o.emberPids } : {}),
+            ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
           }, spec);
         },
       }) : null;
@@ -1130,12 +1179,17 @@ export class AgentHost {
         onUsage: (i, o) => this.recordUsage(i, o),
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
         onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
-        onTurnEnd: this.o.onTurnEnd,
+        onTurnEnd: aborted => {
+          // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
+          if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
+          this.o.onTurnEnd?.(aborted);
+        },
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
         turnSilentMs: this.o.turnSilentMs,
         words: this.sys.words,
         shortcuts: this.sys.shortcuts,
+        ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
         // A turn under way that went silent (a model request that never answers) is ended, and Ember says Copilot
         // didn't answer; the requests waiting behind it go with it. Only the conversation's request is given up on:
         // the tasks go on (each one's own watch decides its fate).
@@ -1420,12 +1474,14 @@ export class AgentHost {
   private taskPresenter(id: string, goal: string, binding?: TargetBinding, othersNamed = false): Presenter {
     const title = titleOf(goal);
     // Its bubbles say where it acts when that isn't this computer (§2.4), and on this computer too when the user's words
-    // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are.
+    // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are, naming the
+    // place as its bubble's badge does ("In Ubuntu (WSL): …", follow-up F-wording).
     const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
+    const place = where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ` : "";
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
-      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}), ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
-      ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
+      task: id, ...this.bubbleOptions, ...(where ? { where } : {}),
+      ...(announce ? { onAnnounce: (text: string) => announce(`${place}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
     });
     this.taskPresenters.set(id, p);
     return p;
@@ -1600,15 +1656,17 @@ export class AgentHost {
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
-    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once).
+    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once),
+    // when this request's turn ends (hintCommands checks then whether commands are off by the user's switch).
     const terminal = terminalRequest(this.sys.os, this.wslOn());
-    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintCommands();
+    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintOwed = true;
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       await this.conductor.ask(text, context?.text, this.trustedLine());
     } catch (err) {
-      // Never sent: no turn of its own will come.
+      // Never sent: no turn of its own will come (nor its hint).
+      this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
       if (err instanceof ConnectionLost) this.lost(gen, "send failed");
       else throw err;
@@ -1627,6 +1685,10 @@ export class AgentHost {
     this.presenter.quiet();
     // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
     this.noticeBoard.quiet();
+    this.offerBoard.quiet();
+    // (And the "Commands are off" hint waiting behind the answer: offered again later if it never showed.)
+    this.hintOwed = false;
+    this.commandsHint?.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();

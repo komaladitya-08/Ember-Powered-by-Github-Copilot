@@ -133,8 +133,10 @@ export function stragglerText(names: readonly string[]): string {
 
 /**
  * A finished run's status line (§8.5): "Finished in 3.2 s.", "Ended with exit code 2 after 1.1 s.", "You stopped it
- * after 12 s. What it already changed stays.", "Stopped by Ctrl+Alt+X after 2 s. …", "Stopped after 2 min: it took too
- * long.", the lost connection, "Couldn't start: …", "build-01 refused it: …", plus any program still running.
+ * after 12 s. What it already changed stays.", "Stopped with everything else after 2 s. …" (the kill switch, which names
+ * no chord: it is also pulled from the handle, settings, "Ember, stop" or a policy change, and the chord may be another
+ * app's; cross-review X5), "Stopped after 2 min: it took too long.", the lost connection, "Couldn't start: …",
+ * "build-01 refused it: …", plus any program still running.
  * `exit.stragglers` is read when the runner reports it (not in RunExit yet).
  */
 export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label: string; os: OS }): string {
@@ -150,7 +152,7 @@ export function statusLine(exit: RunExit & { stragglers?: string[] }, o: { label
       break;
     case "stopped-user": line = `You stopped it after ${d}. ${stays}`; break;
     case "stopped-task": line = `Stopped with its task after ${d}. ${stays}`; break;
-    case "killswitch": line = `Stopped by ${SHORTCUTS[o.os].stop.label} after ${d}. ${stays}`; break;
+    case "killswitch": line = `Stopped with everything else after ${d}. ${stays}`; break;
     case "timeout": line = `Stopped after ${d}: it took too long.`; break;
     case "lost": line = `The connection to ${o.label} dropped; the command was stopped there.`; break;
     case "failed-to-start": line = `Couldn't start: ${clause(exit.error) || "Ember doesn't know why"}.`; break;
@@ -196,9 +198,22 @@ export const stalledText = (label: string, seconds: number) => {
   return `${label} isn't answering. This command stops in ${n} second${n === 1 ? "" : "s"} unless it answers again.`;
 };
 
-/** Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269). */
-export function announceKeyText(os: OS): string {
-  return `Or press ${SHORTCUTS[os].stop.label} to stop everything.`;
+/**
+ * Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269), as
+ * the label Ember holds (`key`, default the OS's own); "" while another app holds it, and Stop is the way, as in the
+ * bubble and the spoken words (cross-review X0).
+ */
+export function announceKeyText(os: OS, key: string | null = SHORTCUTS[os].stop.label): string {
+  return key ? `Or press ${key} to stop everything.` : "";
+}
+
+/**
+ * Under a task's bubble whose command waits for the user's typing, beside its Show button (review #263): the keyboard's
+ * way to this window, which has come up in front of the user's other windows. Alt+Tab reaches it on Linux and Windows;
+ * on macOS the window is a panel Command+Tab doesn't list, so there Show is the way (null), as target-copy's panelHint.
+ */
+export function typingRouteText(os: OS): string | null {
+  return os === "darwin" ? null : "Or press Alt+Tab to go there.";
 }
 
 /** The announcement's countdown: "Starts in 4 s." */

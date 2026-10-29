@@ -79,6 +79,8 @@ export interface ConductorDeps {
   words?: PlatformWords;
   /** Ember's shortcuts on this OS, for the settings shortcut errors name (default Linux's). */
   shortcuts?: ShortcutTable;
+  /** The settings shortcut as Ember holds it now, or null while another app holds it: an error names it only then. */
+  settingsKey?: () => string | null;
   /**
    * What the prompt and the tools may promise (§3.15), read when the conversation is created (its system message is
    * kept on resume). Absent or all false: today's prompt and tools exactly.
@@ -551,9 +553,16 @@ export class Conductor {
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
-      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider, settingsKey: (this.deps.shortcuts ?? SHORTCUTS.linux).settings.label }));
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider, settingsKey: this.settingsKey() }));
       throw new ConnectionLost(msg);
     }
+  }
+
+  /** The settings shortcut an error may name: the one Ember holds now (none if the check fails), else the OS's table's. */
+  private settingsKey(): string | null {
+    const held = this.deps.settingsKey;
+    if (!held) return (this.deps.shortcuts ?? SHORTCUTS.linux).settings.label;
+    try { return held() || null; } catch { return null; }
   }
 
   /** Stops the turn in flight. With nothing running there is no turn to end, so nothing is refused afterwards. */

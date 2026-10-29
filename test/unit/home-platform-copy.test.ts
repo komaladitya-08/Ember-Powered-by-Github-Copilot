@@ -373,10 +373,11 @@ describe("the stop chord in the SSH, WSL and commands words, per OS", () => {
     expect(keyHintText("darwin")).toBe("Control+Shift+Command+Y allow · Control+Shift+Command+N not now");
   });
 
-  it("names each OS's chord when the kill switch stopped a command", () => {
+  it("names no chord when the kill switch stopped a command, on any OS: it may not have been the chord, nor Ember's (cross-review X5)", () => {
     for (const os of OSES) {
-      expect(statusLine({ code: null, signal: null, ended: "killswitch", ms: 2000 }, { label: "build-01", os }))
-        .toBe(`Stopped by ${SHORTCUTS[os].stop.label} after 2\u00a0s. What it already changed stays.`);
+      const line = statusLine({ code: null, signal: null, ended: "killswitch", ms: 2000 }, { label: "build-01", os });
+      expect(line).toBe("Stopped with everything else after 2\u00a0s. What it already changed stays.");
+      expect(line).not.toContain(SHORTCUTS[os].stop.label);
     }
   });
 });

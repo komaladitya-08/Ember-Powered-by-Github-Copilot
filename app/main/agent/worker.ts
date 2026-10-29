@@ -153,6 +153,11 @@ export interface WorkerDeps {
   emberPids?: () => number[];
   /** The command window's size for new runs (default COMMAND_SIZE). */
   commandSize?: () => { cols: number; rows: number };
+  /**
+   * The settings shortcut as Ember holds it now, or null while another app holds it: the task's result names it only
+   * then (cross-review X5). Absent: the OS's table's (tests, the eval).
+   */
+  settingsKey?: () => string | null;
 }
 
 export interface TaskSpec {
@@ -1259,6 +1264,13 @@ export class Worker {
     return tools.some(t => t.name === "run_command");
   }
 
+  /** The settings shortcut the task's result may name: the one Ember holds now (none if the check fails), else the OS's table's. */
+  private settingsKey(): string | null {
+    const held = this.d.settingsKey;
+    if (!held) return this.sys.shortcuts.settings.label;
+    try { return held() || null; } catch { return null; }
+  }
+
   /** What the user stopping says: a guide has no actions of its own, so stopping it cancelled the guide. */
   private stoppedSummary(): string {
     return this.spec.mode === "guide" ? "The guide was cancelled." : "Stopped.";
@@ -1269,7 +1281,10 @@ export class Worker {
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
     if (signal.aborted) return { success: false, summary: this.stoppedSummary(), stopped: true };
     // The runtime's default model only where the host allows it: it may be one the administrator didn't allow.
-    if (!d.model && !d.runtimeDefault) return { success: false, summary: `No model is available for tasks. Pick one in settings (${this.sys.shortcuts.settings.label}).` };
+    if (!d.model && !d.runtimeDefault) {
+      const key = this.settingsKey();
+      return { success: false, summary: `No model is available for tasks. Pick one in ${key ? `settings (${key})` : "Ember's settings"}.` };
+    }
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;

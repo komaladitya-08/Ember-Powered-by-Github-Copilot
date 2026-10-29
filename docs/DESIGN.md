@@ -51,15 +51,20 @@ They share one emotion rig, so switching never changes behaviour.
   the first person there ("I'm on build-01"), and a number's unit never wraps away from it
   ("15 seconds" in a sentence). While Ember thinks or listens, an ember-coloured glow
   breathes round its edge. The state says
-  "Needs you" only when a button needs a decision (a question, an offer, signing in);
-  a notice that asks nothing (a stop on another computer, "I'm on build-01") has no
+  "Needs you" only when a button needs a decision (a question, an offer, signing in) or a
+  command waits for the user's typing (its **Show** brings the command window up, with
+  "Or press Alt+Tab to go there." under it on Linux and Windows); a notice that asks nothing (a stop on another computer, "I'm on build-01") has no
   state word, connecting to a computer is "Working", and a failure is "Problem". With
   **More time to read and answer** (Settings › Comfort & access) every bubble stays ten
   times as long and a question waits 20 minutes instead of 2. The bubble never takes the
   keyboard, so under buttons only the mouse reaches it says where the keyboard finds the same
-  thing: an answer cut short offers **Read all**, and under it "Or press Ctrl+Alt+E and go to
-  Conversation." (the settings window keeps the whole answer; there is no shortcut of its own
-  for the last answer).
+  thing: an answer cut short (by the lines it takes at the text size) offers **Read all**, and
+  under it "Or press Ctrl+Alt+E and go to Conversation." (the settings window keeps the whole
+  answer; there is no shortcut of its own for the last answer). A shortcut another app holds is
+  never named: the route is then "Or open Ember's settings and go to Conversation.", errors
+  and a task's result say "in Ember's settings", and an announced command names no stop
+  chord, only its **Stop**. (The command window's line for a run the kill switch ended names
+  no chord at all, "Stopped with everything else": the switch has other ways too.)
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.

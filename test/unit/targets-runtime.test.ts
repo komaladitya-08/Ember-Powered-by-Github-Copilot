@@ -113,6 +113,7 @@ interface RigOptions {
   /** Main's setter (default: a mock that records), and the shared bubble's notice board (TargetsDepsExtra.bubbles). */
   showState?: (patch: Partial<EmberState>) => void;
   bubbles?: () => NoticeBoard | null;
+  offers?: () => NoticeBoard | null;
   /** The settings shortcut while Ember holds it (TargetsDepsExtra.settingsKey). */
   settingsKey?: () => string | null;
 }
@@ -261,7 +262,7 @@ function rig(o: RigOptions = {}) {
     ...(o.keyHint ? { keyHint: o.keyHint } : {}),
   };
   const stopTasksOn = vi.fn();
-  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}), ...(o.bubbles ? { bubbles: o.bubbles } : {}), ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}) }, parts);
+  const t = buildTargets({ ...deps, stopTasksOn, ...(o.activeWindow ? { activeWindow } : {}), ...(o.bubbles ? { bubbles: o.bubbles } : {}), ...(o.offers ? { offers: o.offers } : {}), ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}) }, parts);
   return {
     t, deps, parts, settings, local, wsl, wslRunners, wslChange, conns, links, progress, remoteRunners, remoteParts, cw, pw, cards, ticks, timers,
     handlers, home, showState, openSettings, windowsMade, answers, confirmer, audit, hands, activeWindow, connOpts, wslMade, stopTasksOn,
@@ -1424,6 +1425,15 @@ describe("the bubble's actions", () => {
     r.t.bubbleAction("ui:panel:1");
     expect(r.cw.show).toHaveBeenCalledTimes(1);
   });
+
+  it("brings the command window up with the keyboard from a waiting command's Show (review #263)", () => {
+    const r = rig();
+    expect(r.t.bubbleAction("ui:cmdshow:0123456789abcdef")).toBe(true);
+    expect(r.cw.show).toHaveBeenCalledTimes(1);
+    // Its own by prefix, malformed: handled, nothing done, never passed on as an answer.
+    expect(r.t.bubbleAction("ui:cmdshow:nope")).toBe(true);
+    expect(r.cw.show).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("noticing the user's own ssh and offering to come along (§2.7)", () => {
@@ -1686,6 +1696,62 @@ describe("offers in the bubble (review #14)", () => {
     expect(s.screen().title).toBe("You're connected to build-01");
     s.advance(1000);
     expect(s.screen().visible).toBe(false);
+  });
+
+  /** A rig with build-01 added and both boards, its noticer seeing the user's own `ssh web-07`. */
+  const heldRig = () => {
+    const web07 = { ...notice, userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", "deploy@web-07"], via: "local" as const }]) };
+    const s = screenRig();
+    const r = rig({ notice: web07, cursor: true, settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, offers: () => s.offers });
+    return { s, r };
+  };
+
+  it("wait behind a held Lost bubble instead of replacing it, and show once it goes (cross-review X3)", async () => {
+    const { s, r } = heldRig();
+    const l = await connected(r);
+    l.move("lost");
+    expect(s.screen()).toMatchObject({ title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
+    r.ticks[0]();
+    await flush();
+    // The offer waits: Lost and its Reconnect stay, however long.
+    expect(s.screen().title).toBe("Lost build-01");
+    s.advance(60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
+    expect(r.t.summaries().find(t => t.id === "ssh:build-01")?.state).toBe("lost");
+    // Answered (Stop trying): the offer shows now, for its own 25 s, and takes no press in its first half second.
+    s.advance(1000);
+    expect(r.t.bubbleAction(s.screen().actions[1].id)).toBe(true);
+    await flush();
+    expect(s.screen().title).toBe("You're connected to web-07");
+    const never = s.screen().actions.find(a => a.label === "Don't offer again")!.id;
+    expect(r.t.bubbleAction(never)).toBe(true);
+    expect(r.settings.get().targets.dismissedOffers).toEqual([]);
+    expect(s.screen().title).toBe("You're connected to web-07");
+    s.advance(24_900);
+    expect(s.screen().title).toBe("You're connected to web-07");
+    s.advance(200);
+    expect(s.screen().visible).toBe(false);
+  });
+
+  it("wait behind a held \"Can't connect\" bubble, which stays until it is closed (cross-review X3)", async () => {
+    const { s, r } = heldRig();
+    r.failConnect(new ConnectError("build-01 refused the sign-in.", "auth", undefined, true));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    expect(s.screen()).toMatchObject({ title: "Can't connect to build-01", actions: [{ label: "Try again" }, { label: "Close" }] });
+    r.ticks[0]();
+    await flush();
+    s.advance(60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Can't connect to build-01", actions: [{ label: "Try again" }, { label: "Close" }] });
+  });
+
+  it("asked for (offer_connect) shows over a held Lost bubble at once, and Lost comes back after it (cross-review X3)", async () => {
+    const { s, r } = heldRig();
+    const l = await connected(r);
+    l.move("lost");
+    expect(r.t.agent.offerConnect("build-01", "open the logs on build-01")).toMatch(/showed the user a Connect button/);
+    expect(s.screen().title).toBe("Connect to build-01?");
+    s.advance(25_100);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
   });
 });
 
@@ -2038,8 +2104,11 @@ function screenRig() {
   const presenter = () => new Presenter(setState, { set, clear }, () => "Ember", owner, undefined, false, { now: () => now });
   const convo = presenter();
   const notices = presenter();
+  // The board for offers (AgentHost.offers): its own presenter on the same bubble, so an offer waits behind the
+  // notices' held bubbles instead of replacing them (cross-review X3).
+  const offers = presenter();
   return {
-    convo, notices, owner, setState, advance, seen, question,
+    convo, notices, offers, owner, setState, advance, seen, question,
     screen: () => screen,
     /** The bubble's chip (its mood) and Ember's face now. */
     look: () => `${screen.mood}/${face}`,
