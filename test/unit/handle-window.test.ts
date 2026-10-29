@@ -178,6 +178,22 @@ describe("the handle window", () => {
     expect(main).toMatch(/if \(handle\?\.sendSettings\(s\)\) deskViewRef\?\.handleMoved\(\);/);
   });
 
+  it("is the pill again whenever main shows a hidden Ember: for a question, for an answer, from the menu (cross-review X6)", () => {
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    // Every place main shows or hides Ember after the overlay exists (not makeOverlay's first setHidden) syncs the handle
+    // in the same statement; showState does it on its own next lines, after its setHidden(true).
+    const calls = [...main.matchAll(/overlay\??\.setHidden\(([^)]*)\)/g)];
+    expect(calls.length).toBeGreaterThanOrEqual(5);
+    for (const c of calls) {
+      const line = main.slice(main.lastIndexOf("\n", c.index!) + 1, main.indexOf("\n", c.index!));
+      const inShowState = line.endsWith("keptHidden = true; overlay?.setHidden(true); }") && main.slice(c.index!, c.index! + 300).includes("syncHandle();");
+      expect(inShowState || line.includes("syncHandle()"), line).toBe(true);
+    }
+    // Named: a question that brings a hidden Ember back, and an answer asked for while Ember was hidden.
+    expect(main).toContain("if (overlay?.isHidden()) { overlay.setHidden(false); syncHandle(); presenceChanged(); }");
+    expect(main).toMatch(/shownForAnswer = true; overlay\?\.setHidden\(false\); syncHandle\(\); \}/);
+  });
+
   it("takes its display listeners with it when destroyed, and stops sending to it", () => {
     const handle = new HandleWindow(() => settings, true);
     const win = handle.win as unknown as FakeWin;

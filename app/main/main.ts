@@ -813,9 +813,10 @@ function start(): void {
     // held off shows after the question (the question holds everything meanwhile).
     agent?.releasePin(lastState.bubble);
     // A question nobody can see expires as "no": a hidden Ember shows itself to ask (and stays shown,
-    // also when the compositor comes back while the question is on the card).
+    // also when the compositor comes back while the question is on the card). The handle is the pill again with it, not
+    // the hidden-state tab (cross-review X6).
     keptHidden = false;
-    if (overlay?.isHidden()) { overlay.setHidden(false); presenceChanged(); }
+    if (overlay?.isHidden()) { overlay.setHidden(false); syncHandle(); presenceChanged(); }
     // A command is never read out or put in a notification (R7): only that Ember wants to run one, and where; the card
     // on screen shows it, and the keys work only there.
     const words = targets?.questionWords(q.question) ?? null;
@@ -900,7 +901,7 @@ function start(): void {
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
     // A hidden Ember shows itself for the answer to a question the user just asked (and hides again after).
-    if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); }
+    if ((overlay ? overlay.isHidden() : keptHidden) && !shownForAnswer) { shownForAnswer = true; overlay?.setHidden(false); syncHandle(); }
     // A Stop while the screen is read (or the brain connects) drops the request.
     const epoch = agent?.stopEpoch;
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
