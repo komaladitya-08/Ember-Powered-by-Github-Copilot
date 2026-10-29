@@ -73,4 +73,16 @@ describe("a typing step's question (worker)", () => {
     await rig.authorizeCells([{ cell: "B5", text: "42" }, { cell: "B6", text: "=SUM(B1:B4)" }]);
     expect(rig.asked[1]).not.toHaveProperty("detail");
   });
+
+  it("fill_cells: a short value whose spaces the sentence closes up is shown whole too", async () => {
+    const rig = makeWorker();
+    await rig.call("perceive_window", {});
+    // Short enough for the sentence, which shows each run of spaces as one: not what will be typed.
+    await rig.authorizeCells([{ cell: "B5", text: "=\"a    b\"" }, { cell: "B6", text: "42" }]);
+    expect(rig.asked[0].prompt).toContain("“=\"a b\"”");
+    expect(rig.asked[0].detail).toBe("B5 “=\"a    b\"”\nB6 “42”");
+    // One space where one is typed: shown as typed, nothing more.
+    await rig.authorizeCells([{ cell: "B5", text: "=\"a b\"" }]);
+    expect(rig.asked[1]).not.toHaveProperty("detail");
+  });
 });

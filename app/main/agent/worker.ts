@@ -2549,8 +2549,9 @@ export class Worker {
     if (judged.every(j => j.d.verdict === "allow")) return null;
     // Each cell, with what goes in (and what it replaces): the values cut short, all of them listed.
     const list = jobs.map(j => `${j.cell} ${j.text ? curly(j.text, CELL_SHOWN) : "emptied"}${j.expected ? ` (replacing ${curly(j.expected, 16)})` : ""}`).join(", ");
-    // A value cut short there is approved whole: the card shows each cell with all of it (review #116), one to a line.
-    const cut = jobs.some(j => j.text.replace(/\s+/g, " ").length > CELL_SHOWN);
+    // A value cut short there, or whose spaces it closes up (curly), is approved whole: the card shows each cell with all
+    // of it as it will be typed (review #116), one to a line.
+    const cut = jobs.some(j => { const t = j.text.replace(/\s+/g, " "); return t.length > CELL_SHOWN || t !== j.text; });
     const detail = cut ? jobs.map(j => `${j.cell} ${j.text ? `“${typedShown(j.text)}”` : "emptied"}`).join("\n") : undefined;
     // What each cell's own question would add (text carried from another app, a long text replaced), once each.
     const notes = new Map<string, string[]>();
