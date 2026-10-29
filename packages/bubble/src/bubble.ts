@@ -619,8 +619,9 @@ export class ReasoningBubble {
       this.wholeBox.scrollTop = 0;
       this.changed();
     }
+    // Judged where it is drawn: once placed with this content (place) and as it scrolls, never here, where the bubble
+    // may still stand where the last one was.
     if (pages) this.wholeBox.scrollTop += pages * wholePage(this.wholeBox.clientHeight, parseFloat(getComputedStyle(this.wholeBox).lineHeight));
-    this.judgeWhole();
     this.paintWhole();
     // Seen here and main doesn't say so yet (just now, or a word that was lost): told (again).
     if (wholeUnreported(this.whole, next)) this.onWholeSeen?.(view.n);
