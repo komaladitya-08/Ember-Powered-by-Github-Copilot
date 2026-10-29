@@ -688,6 +688,21 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const board = (): NoticeBoard | null => { try { return deps.bubbles?.() ?? null; } catch { return null; } };
   const offerBoard = (): NoticeBoard | null => { try { return deps.offers?.() ?? null; } catch { return null; } };
   const isOffer = (key: string) => key.startsWith("offer:");
+  /**
+   * The bubble `key` is still on its board and hasn't reached the screen since it was posted (as `seq`, when given):
+   * nobody has seen it. False when it shows at once (main's own setter) or the board can't say.
+   */
+  const unseenYet = (key: string, seq?: number): boolean => {
+    const ob = isOffer(key) ? offerBoard() : null;
+    const mine = ob ? offerShown : shown;
+    const b = ob ?? board();
+    try { return !!b && mine?.key === key && (seq === undefined || mine.seq === seq) && b.visible && b.shownAt === null; } catch { return false; }
+  };
+  /**
+   * Offers nobody asked for (postUnasked), by their bubble's seq: what to do if one leaves its board without reaching the
+   * screen (it waited too long, or another offer took its place). The user never saw it, so it may come again.
+   */
+  const unaskedGone = new Map<number, () => void>();
   const bubble = (key: string, said: Said, o: number | NoticeOptions = {}) => {
     const { emotion, ...b } = said;
     const opts: NoticeOptions = typeof o === "number" ? { ms: o } : o;
@@ -695,8 +710,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     // An offer on its own board: it waits behind (or covers) the held bubbles of the other, which stay.
     const ob = isOffer(key) ? offerBoard() : null;
     if (ob) {
+      // One nobody asked for that this replaces before it reached the screen may be offered again (R-stale-offer).
+      const prev = offerShown;
+      const replaced = prev && unseenYet(prev.key, prev.seq) ? unaskedGone.get(prev.seq) : undefined;
+      if (prev) unaskedGone.delete(prev.seq);
       offerShown = { key, seq };
       try { ob.post(b, { emotion, ...opts }); } catch (err) { log.warn("targets.bubble_failed", { err }); }
+      replaced?.();
       return;
     }
     shown = { key, seq };
@@ -1187,16 +1207,6 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const offers = new Map<number, Offer>();
   let wslOffered = false;
   /**
-   * The offer `key` is still on its board and hasn't reached the screen since it was posted (as `seq`, when given):
-   * nobody has seen it. False when it shows at once (main's own setter) or the board can't say.
-   */
-  const unseenYet = (key: string, seq?: number): boolean => {
-    const ob = isOffer(key) ? offerBoard() : null;
-    const mine = ob ? offerShown : shown;
-    const b = ob ?? board();
-    try { return !!b && mine?.key === key && (seq === undefined || mine.seq === seq) && b.visible && b.shownAt === null; } catch { return false; }
-  };
-  /**
    * An offer nobody asked for: it waits for the bubble to be free (an answer being read stays) and goes unanswered after
    * OFFER_MS on screen. It waits only OFFER_MS too: a held "Can't connect" or Lost can stay up for an hour, and by then
    * what it says may no longer hold (the ssh it names ended). One that couldn't show in time goes unseen, and `unseen`
@@ -1206,11 +1216,14 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     bubble(key, said, { ms: OFFER_MS, claim: "reply" });
     // bubble() numbered it last.
     const seq = bubbleSeq;
+    unaskedGone.set(seq, unseen);
     parts.setTimeout(() => {
-      if (disposed || !unseenYet(key, seq)) return;
+      const gone = unaskedGone.get(seq);
+      unaskedGone.delete(seq);
+      if (disposed || !gone || !unseenYet(key, seq)) return;
       hideBubble(key);
       log.info("targets.offer_unseen", {});
-      unseen();
+      gone();
     }, OFFER_MS);
   };
   function showSeenOffer(s: SshSeen): void {

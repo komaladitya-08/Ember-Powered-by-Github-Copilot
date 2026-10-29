@@ -1707,11 +1707,15 @@ describe("offers in the bubble (review #14)", () => {
 
   /**
    * A rig with build-01 added and both boards, on the screen's clock, its noticer seeing the user's own `ssh web-07`
-   * while `ssh.on`; `retitle` gives the user's terminal another title, so the noticer looks again.
+   * while `ssh.on` (and an ssh to each of `ssh.others`); `retitle` gives the user's terminal another title, so the
+   * noticer looks again.
    */
   const heldRig = () => {
-    const ssh = { on: true };
-    const web07 = { ...notice, userSshProcesses: vi.fn(async () => (ssh.on ? [{ pid: 9, argv: ["ssh", "deploy@web-07"], via: "local" as const }] : [])) };
+    const ssh = { on: true, others: [] as string[] };
+    const web07 = {
+      ...notice,
+      userSshProcesses: vi.fn(async () => [...(ssh.on ? ["deploy@web-07"] : []), ...ssh.others].map((d, i) => ({ pid: 9 + i, argv: ["ssh", d], via: "local" as const }))),
+    };
     const s = screenRig();
     const r = rig({ notice: web07, cursor: true, settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, offers: () => s.offers, clock: s.clock });
     const retitle = async (title: string) => {
@@ -1796,6 +1800,26 @@ describe("offers in the bubble (review #14)", () => {
     s.advance(10_000);
     await retitle("deploy@web-07: ~");
     expect(s.screen().visible).toBe(false);
+  });
+
+  it("replaced by another before anyone saw them come again at a later look (R-stale-offer)", async () => {
+    const { s, r, ssh, retitle } = heldRig();
+    const l = await connected(r);
+    l.move("lost");
+    r.ticks[0]();
+    await flush();
+    // web-07's offer waits behind Lost; the user's ssh to db-02 brings its offer, which takes web-07's place.
+    ssh.others = ["deploy@db-02"];
+    s.advance(10_000);
+    await retitle("deploy@db-02: ~");
+    s.advance(1000);
+    expect(r.t.bubbleAction(s.screen().actions.find(a => a.label === "Stop trying")!.id)).toBe(true);
+    await flush();
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to db-02" });
+    s.advance(25_000);
+    expect(s.screen().visible).toBe(false);
+    await retitle("deploy@web-07: ~");
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to web-07" });
   });
 
   it("go at the next look that finds the ssh they name ended, up or still waiting (R-stale-offer)", async () => {
