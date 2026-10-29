@@ -837,7 +837,7 @@ describe("the Windows and macOS CI jobs", () => {
   it("prove node mode is refused on both Macs: Ember's binary given ELECTRON_RUN_AS_NODE starts as Ember, never runs the script (review #177)", () => {
     for (const name of ["macos", "macos-x64"]) {
       const s = step(job(name), "fuses.mjs --check");
-      expect(s, name).toMatch(/^name: ".*node mode refused, NODE_OPTIONS ignored, --inspect refused/);
+      expect(s, name).toMatch(/^name: ".*node mode refused, NODE_OPTIONS fuse off, --inspect refused/);
       // Nothing in the step runs the binary as plain Node any more.
       expect(s, name).not.toContain("-e 'process.exit(0)'");
       expect(s, name).not.toMatch(/ELECTRON_RUN_AS_NODE=1 [^\n]*"\$exe"/);
@@ -847,8 +847,20 @@ describe("the Windows and macOS CI jobs", () => {
       const run = at(`\n          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log\n`);
       const verdict = at(`\n          if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi\n`);
       expect(run).toBeLessThan(verdict);
-      // NODE_OPTIONS naming a module that doesn't exist doesn't stop the app: it still refuses --inspect itself.
-      at(`env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" }`);
+      // NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)
+      // whatever the fuse says, and node mode is refused, so no run can show the fuse here. `fuses.mjs --check` above
+      // (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused
+      // with it set; the step says exactly that, and claims nothing more of it.
+      const check = at(`\n          node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"\n`);
+      const options = at(`\n          # NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)\n`
+        + `          # whatever the fuse says, and node mode is refused, so no run can show the fuse here. \`fuses.mjs --check\` above\n`
+        + `          # (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused\n`
+        + `          # with it set.\n`
+        + `          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000, env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" } }); console.log(r.stdout + r.stderr + "\\nexit " + r.status)' "$exe" > inspect.log\n`);
+      expect(check).toBeLessThan(options);
+      expect(verdict).toBeLessThan(options);
+      expect(s, name).not.toContain("it is ignored");
+      expect(s.match(/NODE_OPTIONS:/g), name).toHaveLength(2);
       expect(s.match(/doesn't start with debugging switches/g), name).toHaveLength(2);
     }
     // Linux and Windows keep node mode, and their checks say so.

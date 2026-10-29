@@ -585,7 +585,7 @@ jobs:
           node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
-      - name: "The packaged Ember.app: its fuses, its signature, node mode refused, NODE_OPTIONS ignored, --inspect refused (so it knows it's packaged)"
+      - name: "The packaged Ember.app: its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused (so it knows it's packaged)"
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
           app=dist/package/Ember.app
@@ -615,8 +615,10 @@ jobs:
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log
           if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi
           echo "Node mode refused: Ember started as itself, refused --inspect (exit 2) and left no mark"
-          # --inspect opens no debugger, and a packaged Ember refuses to start with it (exit 2), NODE_OPTIONS naming a
-          # module that doesn't exist or not (it is ignored: it would stop Ember before its first line otherwise).
+          # NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)
+          # whatever the fuse says, and node mode is refused, so no run can show the fuse here. `fuses.mjs --check` above
+          # (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused
+          # with it set.
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000, env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
@@ -780,7 +782,7 @@ jobs:
           node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
-      - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, node mode refused, NODE_OPTIONS ignored, --inspect refused"
+      - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused"
         run: |
           app=dist/package/Ember.app
           exe="$app/Contents/MacOS/Ember"
@@ -821,6 +823,10 @@ jobs:
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log
           if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi
           echo "Node mode refused: Ember started as itself, refused --inspect (exit 2) and left no mark"
+          # NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)
+          # whatever the fuse says, and node mode is refused, so no run can show the fuse here. `fuses.mjs --check` above
+          # (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused
+          # with it set.
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000, env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
