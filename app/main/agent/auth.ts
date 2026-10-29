@@ -57,6 +57,8 @@ export class TokenStore {
   private held: Grant | null = null;
   /** Counts clear() and saveResult(): a saveAsync begun before either is out of date, and writes nothing. */
   private epoch = 0;
+  /** Counts every change of the sign-in it gives: saveResult, saveAsync and clear (see generation). */
+  private changes = 0;
   /** saveAsync's writes, one after another in the order they were asked for. */
   private saving: Promise<unknown> = Promise.resolve();
 
@@ -66,6 +68,14 @@ export class TokenStore {
    * read (load, loadGrant) opens the sign-in with decryptStringAsync, and saveAsync seals it with encryptStringAsync.
    */
   constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncKeyring?: boolean } = {}) {}
+
+  /**
+   * Changes so far of the sign-in it gives (a save, a sign-out's clear). What was read before a change no longer stands:
+   * a renewal of it isn't saved over a sign-out or another account's sign-in (final review S1).
+   */
+  get generation(): number {
+    return this.changes;
+  }
 
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
@@ -170,6 +180,7 @@ export class TokenStore {
    */
   saveResult(token: string | Grant): SaveResult {
     this.epoch++;
+    this.changes++;
     let kept: SaveResult = "no-keyring";
     if (this.canPersist()) {
       try {
@@ -191,6 +202,7 @@ export class TokenStore {
     if (!this.opts.asyncKeyring || !encrypt) return Promise.resolve(this.saveResult(token));
     const grant = grantOf(token);
     const epoch = this.epoch;
+    this.changes++;
     this.held = grant;
     const run = this.saving.then(async (): Promise<SaveResult> => {
       let sealed: Buffer | null = null;
@@ -224,6 +236,7 @@ export class TokenStore {
 
   clear(): void {
     this.epoch++;
+    this.changes++;
     this.unreadable = false;
     this.held = null;
     try { fs.rmSync(this.file); } catch { /* already gone */ }
@@ -524,16 +537,22 @@ export class GrantKeeper {
 
   /**
    * Before Ember looks for a sign-in to connect with: a stored one that has run out, or is about to (Ember was off), is
-   * renewed first. At most once a minute (the GitHub CLI wait looks every 3 s). Never throws.
+   * renewed first. At most once a minute (the GitHub CLI wait looks every 3 s). A sign-out or another sign-in meanwhile
+   * wins: the renewal isn't saved. Never throws.
    */
   async freshen(): Promise<void> {
     const store = this.d.store();
+    const read = store?.generation;
     const g = await store?.loadGrant();
     if (!store || !g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
     if (this.now() - this.lastFreshen < RENEW_RETRY_MS) return;
     this.lastFreshen = this.now();
     try {
       const next = await this.renewed(g);
+      // Signed out while it was read or renewed, or another sign-in saved (the device flow; the keeper's own renewal of
+      // it, saved already): the renewal isn't saved over that, so the account the user left doesn't come back. The token
+      // it replaces stopped working with it anyway (final review S1).
+      if (store.generation !== read) { this.d.log?.("auth.renewal_dropped", { when: "before use" }); return; }
       // The stored one stopped working with the renewal: the store gives the new one from now on, from the file or, not
       // kept (a full or read-only disk), for this run (cross-review X13). Sealed off the main thread on macOS.
       const kept = await store.saveAsync(next);

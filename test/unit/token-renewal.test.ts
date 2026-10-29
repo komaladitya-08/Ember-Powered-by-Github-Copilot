@@ -371,6 +371,65 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(await resolveToken(store, {}, async () => null)).toBeNull();
   });
 
+  /** A stored sign-in that ran out while Ember was off, renewed before use with GitHub's answer held back. */
+  function slowRenewal() {
+    vi.useFakeTimers({ now: T0 });
+    let answer: (r: Reply) => void = () => undefined;
+    const fetch = () => new Promise<Reply>(r => { answer = r; });
+    const store = tmpStore();
+    store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 - HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const logs: string[] = [];
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => null, idle: () => true, reconnect: async () => undefined, log: event => logs.push(event) });
+    return { keeper, store, logs, answer: (r: Reply) => answer(r) };
+  }
+
+  it("saves nothing back when the user signs out while a stored sign-in is renewed before use (final review S1)", async () => {
+    const { keeper, store, logs, answer } = slowRenewal();
+    const starting = keeper.freshen();
+    await vi.advanceTimersByTimeAsync(0);
+    // Sign out (main's handler): the stored sign-in goes, and the keeper keeps none alive.
+    store.clear();
+    keeper.use(null);
+    answer(renewed());
+    await starting;
+    // The account the user left isn't written back, so nothing connects with it now or at the next start.
+    expect(store.hasSaved()).toBe(false);
+    expect(await resolveToken(store, {}, async () => null)).toBeNull();
+    expect(logs).toEqual(["auth.renewal_dropped"]);
+  });
+
+  it("saves nothing back when the user signs out while the keychain is asked for the stored sign-in (macOS) (final review S1)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    const { fetch } = github(renewed());
+    let opened: () => void = () => undefined;
+    const mac: SecretBox = {
+      ...box, isAsyncEncryptionAvailable: async () => true, encryptStringAsync: async s => box.encryptString(s),
+      decryptStringAsync: b => new Promise(r => { opened = () => r({ result: box.decryptString(b), shouldReEncrypt: false }); }),
+    };
+    const store = new TokenStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin"), mac, { asyncKeyring: true });
+    store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 - HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => null, idle: () => true, reconnect: async () => undefined });
+    const starting = keeper.freshen();
+    store.clear();
+    keeper.use(null);
+    opened();
+    await starting;
+    expect(store.hasSaved()).toBe(false);
+    expect(await store.loadGrant()).toBeNull();
+  });
+
+  it("doesn't save a renewal before use over another account's sign-in made meanwhile (final review S1)", async () => {
+    const { keeper, store, answer } = slowRenewal();
+    const starting = keeper.freshen();
+    await vi.advanceTimersByTimeAsync(0);
+    // The device flow signs in as someone else while GitHub is slow to answer.
+    const other: Grant = { token: "ghu_" + "c".repeat(36), refreshToken: "ghr_" + "t".repeat(76), expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    expect(await store.saveAsync(other)).toBe("kept");
+    answer(renewed());
+    await starting;
+    expect(await store.loadGrant()).toEqual(other);
+  });
+
   it("doesn't renew a stored sign-in with hours left", async () => {
     const { keeper, calls } = setup();
     vi.setSystemTime(T0 + 8 * HOUR - RENEW_BEFORE_MS - 60_000);
