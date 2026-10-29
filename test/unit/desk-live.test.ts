@@ -240,6 +240,19 @@ describe.skipIf(!available)("a real desk", () => {
     expect(await until(() => fs.readdirSync("/tmp/.X11-unix").length <= before)).toBe(true);
   });
 
+  it("listens for Ember's exit only while its desk is up or still going, however often it starts", async () => {
+    // Other desks' listeners may still come and go meanwhile (their processes quitting): only this one's are counted.
+    const before = process.listeners("exit");
+    const added = () => process.listeners("exit").filter(l => !before.includes(l)).length;
+    const desk = make({ display: 247 });
+    for (let i = 0; i < 3; i++) {
+      await desk.start();
+      expect(added()).toBe(1);
+      desk.stop();
+    }
+    expect(await until(() => added() === 0, 4000)).toBe(true);
+  }, 20_000); // three desk starts
+
   const which = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`]).status === 0;
   it.skipIf(!["metacity", "openbox", "xfwm4"].some(which) || !which("xev"))("starts once its window manager manages windows: one mapped at once is managed, and no test window is left", async () => {
     const desk = make({ display: 243 });
