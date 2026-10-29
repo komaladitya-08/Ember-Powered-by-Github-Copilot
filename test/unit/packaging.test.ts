@@ -9,7 +9,7 @@ import { TARGETS, layoutFor, selectPackages } from "../../scripts/package/layout
 import { ICONSET, ICO_SIZES, icoFromPngs } from "../../scripts/package/icon.mjs";
 import { BUNDLE_ID, ENTITLEMENTS, EXECUTABLE, FORBIDDEN_ENTITLEMENTS, entitlementsPlist, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
 import { certificateTable, exeResourceMismatches, exeVersionStrings, numericVersion, readExeResources, rewriteExeResources } from "../../scripts/package/exe-resources.mjs";
-import { EMBER_FUSES, SENTINEL, flipFuses, fuseMismatches, readFuses } from "../../scripts/package/fuses.mjs";
+import { SENTINEL, emberFuses, flipFuses, fuseMismatches, readFuses } from "../../scripts/package/fuses.mjs";
 import * as ResEdit from "resedit";
 import { doctorChecks, formatDoctor, type DoctorCheck, type DoctorProbes } from "../../app/main/doctor";
 import { checkDoctorRows, parseDoctorReport, parseExpectation } from "../../scripts/package/doctor-rows.mjs";
@@ -426,7 +426,7 @@ describe("Ember.exe's identity (exe-resources.mjs)", () => {
     expect(readFuses(ember)).toEqual(readFuses(electron));
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-exe-")), "Ember.exe");
     fs.writeFileSync(file, ember);
-    expect(fuseMismatches(flipFuses(file, EMBER_FUSES), EMBER_FUSES)).toEqual([]);
+    expect(fuseMismatches(flipFuses(file, emberFuses("win32")), emberFuses("win32"))).toEqual([]);
     const sections = (bin: Buffer) => ResEdit.NtExecutable.from(bin, { ignoreCert: true });
     const before = sections(electron), after = sections(ember);
     const reloc = (exe: ReturnType<typeof sections>) => exe.getSectionByEntry(ResEdit.Format.ImageDirectoryEntry.BaseRelocation)!;
@@ -821,14 +821,39 @@ describe("the Windows and macOS CI jobs", () => {
       const flag = at(`\n          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\\([^)]*runtime'\n`);
       // The runners report SIP off, and with it off dyld may honour DYLD_* for any binary: there the line would fail
       // for a reason that has nothing to do with Ember, or prove nothing.
+      // Ember started as the app (node mode is refused there now) gets as far as refusing --inspect: exit 2.
       const sip = at(`\n          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then\n`
-        + `            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'\n`
+        + `            status=0\n`
+        + `            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib "$exe" --inspect=127.0.0.1:9229 || status=$?\n`
+        + `            test "$status" -eq 2\n`
         + `          else\n`
         + `            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"\n`
         + `          fi\n`);
       expect(flag).toBeLessThan(sip);
       expect(s.match(/DYLD_INSERT_LIBRARIES/g), name).toHaveLength(1);
     }
+  });
+
+  it("prove node mode is refused on both Macs: Ember's binary given ELECTRON_RUN_AS_NODE starts as Ember, never runs the script (review #177)", () => {
+    for (const name of ["macos", "macos-x64"]) {
+      const s = step(job(name), "fuses.mjs --check");
+      expect(s, name).toMatch(/^name: ".*node mode refused, NODE_OPTIONS ignored, --inspect refused/);
+      // Nothing in the step runs the binary as plain Node any more.
+      expect(s, name).not.toContain("-e 'process.exit(0)'");
+      expect(s, name).not.toMatch(/ELECTRON_RUN_AS_NODE=1 [^\n]*"\$exe"/);
+      const at = (line: string) => { const i = s.indexOf(line); expect(i, `${name}: ${line}`).toBeGreaterThan(0); return i; };
+      at(`\n          mark="$RUNNER_TEMP/ember-node-mode-mark"\n`);
+      at(`\n          echo 'require("fs").writeFileSync(process.env.EMBER_MARK, "node mode")' > "$RUNNER_TEMP/ember-node-mode.js"\n`);
+      const run = at(`\n          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log\n`);
+      const verdict = at(`\n          if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi\n`);
+      expect(run).toBeLessThan(verdict);
+      // NODE_OPTIONS naming a module that doesn't exist doesn't stop the app: it still refuses --inspect itself.
+      at(`env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" }`);
+      expect(s.match(/doesn't start with debugging switches/g), name).toHaveLength(2);
+    }
+    // Linux and Windows keep node mode, and their checks say so.
+    expect(job("windows")).toContain('ELECTRON_RUN_AS_NODE=1 "$app/Ember.exe" -e "process.exit(0)"');
+    expect(ci).toContain("ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'");
   });
 
   it("check SSH's askpass as Ember itself on Apple silicon, the development Electron and the staged Ember.app (review #177)", () => {
