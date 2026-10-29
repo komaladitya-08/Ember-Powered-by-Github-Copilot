@@ -506,6 +506,26 @@ describe("README.md's Accessibility section, against the release it describes", 
   });
 });
 
+/**
+ * Round 2's packages, each known here by its code: a package's lines are checked once it is merged, and skipped
+ * before (on fix2/docs2 alone), so each can be merged, or reverted with its docs commit, on its own.
+ */
+const ROUND2 = {
+  auth2: /\n  wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
+};
+
+describe("round 2's docs lines, against the packages' code", () => {
+  it.runIf(ROUND2.auth2)("auth2: says Ember renews its sign-in by itself, waiting for a quiet moment and on waking", () => {
+    // auth.ts renews from an hour before when nothing is under way (idle), forced near the end, and on wake().
+    expect(read("app/main/agent/auth.ts")).toMatch(/!this\.d\.idle\(\)/);
+    expect(read("app/main/main.ts")).toMatch(/powerMonitor\.on\("resume", \(\) => \{ keeper\.wake\(\)/);
+    const signIn = flat(section(read("README.md"), "Sign in to Copilot"));
+    expect(signIn).toContain("Ember's own GitHub sign-in lasts eight hours at a time: Ember renews it by itself before it runs out (when it isn't in the middle of something, where it can), and as soon as the computer wakes if it ran out during sleep");
+    const notes = flat(read("CHANGELOG.md"));
+    expect(notes).toMatch(/\*\*Staying signed in\*\*: Ember renews its GitHub sign-in by itself before it runs out[^]*as soon as the computer wakes[^]*is still used until Ember quits/);
+  });
+});
+
 describe("CHANGELOG.md", () => {
   const changelog = read("CHANGELOG.md");
   const version = (JSON.parse(read("package.json")) as { version: string }).version;

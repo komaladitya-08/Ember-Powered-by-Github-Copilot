@@ -18,9 +18,13 @@ the work in your real apps where you can watch, without taking over your mouse. 
 - **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), and every
   time before sending, deleting, paying and the like. It never types into password, payment or terminal fields. The
   stop shortcut, "Ember, stop" and **Stop everything** stop everything at once.
-- **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page, and Ember renews that sign-in before
-  it runs out. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN`, or the GitHub CLI's sign-in, works too: a
-  sign-in Copilot refuses gives way to the next, and the message names it.
+- **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`
+  or `GITHUB_TOKEN`, or the GitHub CLI's sign-in, works too: a sign-in Copilot refuses gives way to the next, and the
+  message names it.
+- **Staying signed in**: Ember renews its GitHub sign-in by itself before it runs out, waiting where it can until it
+  isn't in the middle of something, and as soon as the computer wakes if it ran out during sleep. Copilot switches to
+  the renewed sign-in at once, and a renewed sign-in Ember couldn't save (a full or read-only disk) is still used until
+  Ember quits. On a Mac, Ember keeps working while the Keychain asks to open or save the sign-in.
 - **Voice**: "Hey Ember", with speech recognition on this computer (the models download once, 126 MB, or come with
   the `ember-voice-models` RPM); only the text of a request goes to Copilot. Ember can speak its replies, questions
   and results with the system's voices: when a screen reader runs (the default), always or never (**Speak replies,

@@ -168,7 +168,9 @@ the **Copilot CLI** policy). Once you have agreed to how Ember works in its firs
 in its Copilot section. Your browser opens GitHub's device page: enter the code Ember shows (**Copy** puts it on the
 clipboard) and approve. Ember connects within a few seconds, with no restart. It keeps the sign-in encrypted by your
 system (the GNOME keyring, Windows' own protection or the macOS Keychain); where it can't, you sign in again the next
-time Ember starts.
+time Ember starts. Ember's own GitHub sign-in lasts eight hours at a time: Ember renews it by itself before it runs out
+(when it isn't in the middle of something, where it can), and as soon as the computer wakes if it ran out during
+sleep, so you don't need to sign in again.
 
 Ember also uses a sign-in it finds on this computer: a `COPILOT_GITHUB_TOKEN`, `GH_TOKEN` or `GITHUB_TOKEN` in its
 environment (classic `ghp_` tokens don't work), or the **GitHub CLI**'s (run `gh auth login`, then press
