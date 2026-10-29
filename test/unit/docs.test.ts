@@ -202,6 +202,12 @@ describe("docs/COMMANDS-WSL-SSH.md", () => {
     expect(s31).toMatch(/When you ask for something in WSL/);
   });
 
+  it("§4.1 names the switch that turns the offers off as Settings › Computers has it", () => {
+    const offer = /export const OFFER_SWITCH = "([^"]+)"/.exec(computersCopy)?.[1] ?? "";
+    expect(offer).toMatch(/SSH$/);
+    expect(flat(section(doc, "4.1 Connecting"))).toContain(`Turn the offers off with **${offer}**`);
+  });
+
   it.runIf(released)("says a request that names a distro Settings lists brings the WSL offer too, with the offer's words", () => {
     const s31 = flat(section(doc, "3.1 Turning it on"));
     expect(s31).toMatch(/When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember/);
