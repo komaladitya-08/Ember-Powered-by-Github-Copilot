@@ -33,7 +33,7 @@ import { useAppNames } from "../shared/apps";
 import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
-import { AskWindow } from "./ask";
+import { AskWindow, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
 import { openAskInOrder } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
@@ -858,7 +858,17 @@ function start(): void {
     // Electron can think the box is focused while X still has the user's app: only stop holding keys once X agrees
     // (an X11 check, needed only where Ember holds the keyboard while the box opens).
     hasFocus: platform.keyboardHold ? (): boolean => !wsRef || (askXid !== 0 && wsRef.focusWindow()?.id === askXid) : undefined,
-    onReveal: source => log.info("ask.reveal", { source }),
+    onReveal: source => {
+      log.info("ask.reveal", { source });
+      // Counted where the tip shows, until it no longer does: a moment later, and saved a moment after that, so neither
+      // the settings' listeners nor the file hold up the keyboard.
+      if (platform.keyboardHold) return;
+      setTimeout(() => {
+        const opened = settings.get().askOpened;
+        if (opened >= WAIT_TIP_OPENINGS) return;
+        try { settings.update({ askOpened: opened + 1 }, { soon: true }); } catch (err) { log.warn("ask.tip_count_failed", { err }); }
+      }, 500).unref?.();
+    },
     // How long the box took to have the keyboard, by Electron's word: what was typed before went elsewhere (review #78).
     onKeyboard: () => log.info("ask.keyboard", { ms: Date.now() - askAsked }),
   });
@@ -940,7 +950,10 @@ function start(): void {
       holding: !!platform.keyboardHold, look,
       activeWindow: () => wsRef?.activeWindow() ?? null,
       read: active => captureContext(active),
-      show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source),
+      // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
+      show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
+        sees: null, history: askHistory, target: askTarget(), tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened),
+      }, source),
     });
     // ms: from the call (the shortcut's press, as Ember heard it) to the box shown.
     log.info("ask.open", { source, ms: Date.now() - asked });

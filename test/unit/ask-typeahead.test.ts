@@ -125,3 +125,63 @@ describe("the ask box's page (review #78)", () => {
     expect(preload).toContain("onHidden: fn => { ipcRenderer.on(IPC.askHidden, () => fn()); },");
   });
 });
+
+describe("the ask box's tip to wait for it (review #78, owner decision D-78)", () => {
+  it("shows the first five times the box opens where Ember can't hold the letters typed meanwhile, never on Linux", async () => {
+    const { WAIT_TIP_OPENINGS, showsWaitTip } = await import("../../app/main/ask");
+    expect(WAIT_TIP_OPENINGS).toBe(5);
+    expect(showsWaitTip(false, 0)).toBe(true);
+    expect(showsWaitTip(false, 4)).toBe(true);
+    expect(showsWaitTip(false, 5)).toBe(false);
+    // Linux holds the keyboard while the box opens and hands the letters to it.
+    expect(showsWaitTip(true, 0)).toBe(false);
+  });
+
+  it("says in plain words to wait for the box, and where letters typed sooner go", async () => {
+    const { WAIT_TIP } = await import("../../app/renderer/ask/field");
+    expect(WAIT_TIP).toBe("Wait for this box before you type: letters typed sooner go to the app underneath.");
+  });
+
+  it("opens a row taller while it says so, growing away from Ember, and fits the field's lines and the note under it", () => {
+    const { ask, win } = ready();
+    ask.show({ x: 400, y: 500 }, { sees: null, history: [], tip: true }, "hotkey");
+    const tall = { ...win.bounds };
+    ask.hide();
+    ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
+    const one = { ...win.bounds };
+    expect(one.height).toBe(92);
+    // Above Ember: the hint row stays beside Ember's head, the box grows upward.
+    expect(tall).toEqual({ ...one, height: 116, y: one.y - 24 });
+    // Four lines, the note that a paste was cut and the tip: six rows.
+    win.heard.get("agent:ask-fit")!({}, 6);
+    expect(win.bounds.height).toBe(92 + 5 * 24);
+  });
+
+  it("is counted by main where the box is shown, and its row by the page", () => {
+    const MAIN = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(MAIN).toContain("tip: showsWaitTip(!!platform.keyboardHold, settings.get().askOpened)");
+    expect(MAIN).toContain("settings.update({ askOpened: opened + 1 }, { soon: true })");
+    const HTML = readFileSync(new URL("../../app/renderer/ask/index.html", import.meta.url), "utf8");
+    expect(HTML).toMatch(/<p id="cut" class="cut" role="status" hidden><\/p>\s*(<!--[^>]*-->\s*)?<p id="tip" class="tip" hidden><\/p>/);
+    expect(HTML).toMatch(/aria-describedby="where cut tip hint sees"/);
+  });
+});
+
+describe("the ask box's rows", () => {
+  it("are the field's lines, and one each for the note that a paste was cut and the tip to wait for the box", async () => {
+    const { boxRows } = await import("../../app/renderer/ask/field");
+    expect(boxRows(1, false, false)).toBe(1);
+    expect(boxRows(1, false, true)).toBe(2);
+    expect(boxRows(4, true, true)).toBe(6);
+  });
+});
+
+describe("the count of openings that showed the tip", () => {
+  it("is a setting that starts at 0 and a bad value of which is put back to 0", async () => {
+    const { DEFAULT_SETTINGS, repairSettings } = await import("../../app/main/settings");
+    expect(DEFAULT_SETTINGS.askOpened).toBe(0);
+    expect(repairSettings({ askOpened: -1 }).askOpened).toBe(0);
+    expect(repairSettings({ askOpened: "many" }).askOpened).toBe(0);
+    expect(repairSettings({ askOpened: 3 }).askOpened).toBe(3);
+  });
+});

@@ -16,9 +16,19 @@ const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
 /**
  * The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines; the
- * note that a paste was cut takes one more row of the same height (MAX_ROWS).
+ * note that a paste was cut and the tip to wait for the box take one more row of the same height each (MAX_ROWS).
  */
-const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 1;
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 2;
+/** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
+export const WAIT_TIP_OPENINGS = 5;
+
+/**
+ * Whether this opening says to wait for the box before typing: only where Ember can't hold the letters typed while it
+ * opens (`holds`: Linux's keyboard hold), and only until it has opened WAIT_TIP_OPENINGS times there (`opened`).
+ */
+export function showsWaitTip(holds: boolean, opened: number): boolean {
+  return !holds && opened < WAIT_TIP_OPENINGS;
+}
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
@@ -65,7 +75,7 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
 }
 
 /**
- * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, and the note's when a paste was cut):
+ * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the note's when a paste was cut, the tip's):
  * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
  * inside the work area and clear of `keepOff`.
  */
@@ -232,8 +242,10 @@ export class AskWindow {
     this.wanted = true;
     this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
-    const bounds = askBounds(near, display.workArea, this.keepOff());
+    let bounds = askBounds(near, display.workArea, this.keepOff());
     this.up = !near || bounds.y + bounds.height <= near.y;
+    // Saying to wait for it: a row taller from the start, so it doesn't grow once shown.
+    if (this.context.tip) bounds = grownBounds(bounds, 2, display.workArea, this.up, this.keepOff());
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
@@ -265,8 +277,8 @@ export class AskWindow {
   }
 
   /**
-   * The page needs `rows` rows (1 to 5: the field's lines, and the note's when a paste was cut): the box grows or
-   * shrinks to fit, away from Ember.
+   * The page needs `rows` rows (1 to 6: the field's lines, the note's when a paste was cut, the tip's): the box grows
+   * or shrinks to fit, away from Ember.
    */
   fit(rows: number): void {
     if (!this.win || this.win.isDestroyed()) return;

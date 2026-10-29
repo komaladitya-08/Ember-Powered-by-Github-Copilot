@@ -216,6 +216,11 @@ export interface AskContext {
    * earlier question, one line tall. What was left in it was selected as it went away (onHidden).
    */
   opened?: boolean;
+  /**
+   * With `opened`: the box says to wait for it before typing, a row under the rest (its first few openings where Ember
+   * can't hold the letters typed while it opens: Windows, macOS; review #78).
+   */
+  tip?: boolean;
   /** Where a request goes when it names no computer (the picker's choice, §8.1); absent or null: this computer. */
   target?: TargetSummary | null;
 }
