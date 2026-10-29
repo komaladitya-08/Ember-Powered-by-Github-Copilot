@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { GrantKeeper, RENEW_BEFORE_MS, RenewalRefused, TokenStore, pollDeviceGrant, renewGrant, type DeviceCode, type Grant, type SecretBox } from "../../app/main/agent/auth";
+import { GrantKeeper, RENEW_BEFORE_MS, RenewalRefused, TokenStore, pollDeviceGrant, renewGrant, resolveToken, type DeviceCode, type Grant, type SecretBox } from "../../app/main/agent/auth";
 
 const OLD = "ghu_" + "a".repeat(36); // not a real token
 const NEW = "ghu_" + "b".repeat(36); // not a real token
@@ -223,6 +223,38 @@ describe("keeping Ember's own sign-in alive", () => {
     vi.setSystemTime(T0 + 9 * HOUR + 3 * 60_000);
     await keeper.freshen();
     expect(calls).toHaveLength(2);
+  });
+
+  it("uses a stored sign-in renewed before use that couldn't be saved (a full or read-only disk), not the one on disk (cross-review X13)", async () => {
+    const logs: { event: string; data?: Record<string, unknown> }[] = [];
+    vi.useFakeTimers({ now: T0 });
+    const { fetch, calls } = github(renewed(), renewed(NEW, REFRESH2));
+    const store = tmpStore();
+    const file = (store as unknown as { file: string }).file;
+    expect(store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT })).toBe("kept");
+    // The disk is full (or read-only) by the next morning: the file can't be written (TokenStore says "write-failed").
+    fs.mkdirSync(`${file}.${process.pid}.tmp`);
+    let inUse: string | null = null;
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; }, log: (event, data) => logs.push({ event, data }) });
+    vi.setSystemTime(T0 + 9 * HOUR);
+    await keeper.freshen();
+    expect(calls).toHaveLength(1);
+    expect(logs).toEqual([{ event: "auth.renewed", data: { when: "before use", kept: "write-failed" } }]);
+    // GitHub revoked the token and refresh token on disk with the renewal: Ember connects with the renewed one, as its own.
+    expect(await resolveToken(store, {}, async () => null)).toEqual({ token: NEW, source: "stored" });
+    // Check again a minute later doesn't spend the old refresh token again.
+    vi.setSystemTime(T0 + 9 * HOUR + 61_000);
+    await keeper.freshen();
+    expect(calls).toHaveLength(1);
+    // Connected with it: it is kept alive too (renewed seven hours later).
+    inUse = NEW;
+    keeper.use(NEW);
+    await vi.advanceTimersByTimeAsync(8 * HOUR);
+    expect(calls).toHaveLength(2);
+    keeper.stop();
+    // Signing out forgets it.
+    store.clear();
+    expect(await resolveToken(store, {}, async () => null)).toBeNull();
   });
 
   it("doesn't renew a stored sign-in with hours left", async () => {

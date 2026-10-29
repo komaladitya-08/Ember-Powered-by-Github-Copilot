@@ -38,6 +38,27 @@ describe("TokenStore.save", () => {
     const store = new TokenStore(file(), box({ getSelectedStorageBackend: () => "basic_text" }));
     expect(store.save("gho_abc")).toBe(false);
   });
+
+  it("keeps a sign-in it couldn't write for this run, until one is written or it is cleared (cross-review X13)", async () => {
+    const f = file();
+    const store = new TokenStore(f, box());
+    expect(store.save("gho_old")).toBe(true);
+    // A full or read-only disk: the file can't be replaced, and still holds the old one.
+    fs.mkdirSync(`${f}.${process.pid}.tmp`);
+    expect(store.saveResult("gho_new")).toBe("write-failed");
+    expect(await store.load()).toBe("gho_new");
+    expect(box().decryptString(fs.readFileSync(f))).toBe("gho_old");
+    // Written once the disk has room again: from the file from then on.
+    fs.rmdirSync(`${f}.${process.pid}.tmp`);
+    expect(store.saveResult("gho_newer")).toBe("kept");
+    expect(await store.load()).toBe("gho_newer");
+    // No keyring: for this run too; signing out forgets it.
+    const none = new TokenStore(file(), box({ getSelectedStorageBackend: () => "basic_text" }));
+    expect(none.saveResult("gho_abc")).toBe("no-keyring");
+    expect(await none.load()).toBe("gho_abc");
+    none.clear();
+    expect(await none.load()).toBeNull();
+  });
 });
 
 describe("TokenStore.load when the keyring refuses (review #241)", () => {

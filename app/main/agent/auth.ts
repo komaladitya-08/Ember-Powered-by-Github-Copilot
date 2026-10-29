@@ -27,6 +27,9 @@ export interface SecretBox {
   getSelectedStorageBackend?(): string;
 }
 
+/** Whether a sign-in was kept on disk, and why not: no keyring (or the keyring refused), or the file couldn't be written. */
+export type SaveResult = "kept" | "no-keyring" | "write-failed";
+
 export function isUsableToken(t: string | undefined | null): t is string {
   return !!t && /^(gho_|ghu_|github_pat_)[A-Za-z0-9_]+$/.test(t.trim());
 }
@@ -38,6 +41,13 @@ export class TokenStore {
    * to try again.
    */
   unreadable = false;
+
+  /**
+   * A sign-in this run couldn't write (no keyring, the keyring refused, a full or read-only disk): every read gives it
+   * instead of the file's until one is written or the store is cleared (sign-out), so Ember carries on with it "for this
+   * run" whoever reads it next (cross-review X13). A renewal revokes the token and refresh token the file still holds.
+   */
+  private held: Grant | null = null;
 
   /**
    * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
@@ -93,6 +103,10 @@ export class TokenStore {
    * here, so on macOS none holds the main process while the keychain asks (asyncDecrypt).
    */
   async loadGrant(): Promise<Grant | null> {
+    if (this.held) {
+      this.unreadable = false;
+      return this.held;
+    }
     let raw: Buffer;
     try {
       raw = fs.readFileSync(this.file);
@@ -130,9 +144,16 @@ export class TokenStore {
 
   /**
    * save(), saying why a token wasn't kept: "no-keyring" (nothing secret may go to disk, or the keyring refused) or
-   * "write-failed". The file is written whole or not at all (a temporary file renamed over it), owner-only.
+   * "write-failed". The file is written whole or not at all (a temporary file renamed over it), owner-only. One not
+   * kept is still read back for the rest of this run (held).
    */
-  saveResult(token: string | Grant): "kept" | "no-keyring" | "write-failed" {
+  saveResult(token: string | Grant): SaveResult {
+    const kept = this.seal(token);
+    this.held = kept === "kept" ? null : typeof token === "string" ? { token } : token;
+    return kept;
+  }
+
+  private seal(token: string | Grant): SaveResult {
     if (!this.canPersist()) return "no-keyring";
     // A token alone is written as it always was (an earlier Ember reads it); one that expires, with what renews it.
     const text = typeof token === "string" ? token : token.expiresAt === undefined ? token.token : JSON.stringify(token);
@@ -157,6 +178,7 @@ export class TokenStore {
 
   clear(): void {
     this.unreadable = false;
+    this.held = null;
     try { fs.rmSync(this.file); } catch { /* already gone */ }
   }
 }
@@ -438,14 +460,17 @@ export class GrantKeeper {
    * renewed first. At most once a minute (the GitHub CLI wait looks every 3 s). Never throws.
    */
   async freshen(): Promise<void> {
-    const g = await this.d.store()?.loadGrant();
-    if (!g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
+    const store = this.d.store();
+    const g = await store?.loadGrant();
+    if (!store || !g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
     if (this.now() - this.lastFreshen < RENEW_RETRY_MS) return;
     this.lastFreshen = this.now();
     try {
       const next = await renewGrant(this.d.fetch, g, () => this.now());
-      this.d.store()?.saveResult(next);
-      this.d.log?.("auth.renewed", { when: "before use" });
+      // The stored one stopped working with the renewal: the store gives the new one from now on, from the file or, not
+      // kept (a full or read-only disk), for this run (cross-review X13).
+      const kept = store.saveResult(next);
+      this.d.log?.("auth.renewed", { when: "before use", kept });
     } catch (err) {
       this.d.log?.("auth.renew_failed", { err, refused: err instanceof RenewalRefused });
     }
