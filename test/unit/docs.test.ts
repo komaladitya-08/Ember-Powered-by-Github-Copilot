@@ -11,6 +11,7 @@ import { GH_INSTALL } from "../../app/main/agent/github-app";
 import { readTimeOf } from "../../app/main/agent/presenter";
 import { ANNOUNCE_MS } from "../../app/main/commands/flow";
 import { WINDOWS_MIC_FIX } from "../../app/main/environment";
+import { logLevel } from "../../app/main/logger";
 import * as commandWindow from "../../app/main/commands/window";
 import { CHARACTERS, DEFAULT_SETTINGS } from "../../app/main/settings";
 import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/permissions";
@@ -109,6 +110,30 @@ describe("docs/DEVELOPING.md", () => {
     const copilot = section(read("docs/DEVELOPING.md"), "Connecting Copilot");
     for (const step of steps) expect(copilot, step).toContain(step);
     expect(copilot).not.toMatch(/^sudo dnf install -y gh\b/m);
+  });
+
+  it("§5 and §7 say how Ember keeps its files, logs and login entry, as the code does", () => {
+    const dev = read("docs/DEVELOPING.md");
+    const keeps = flat(section(dev, "Where Ember keeps things"));
+    // The audit log's default retention, per entry (admin.ts).
+    const days = Number(/const DEFAULT_RETENTION_DAYS = (\d+)/.exec(read("app/main/admin.ts"))?.[1]);
+    expect(days).toBeGreaterThan(0);
+    for (const where of [keeps, flat(section(dev, "10.6 Where Ember keeps things")), flat(section(dev, "11.6 Where Ember keeps things"))]) {
+      expect(where).toContain(`with each task's request and result (JSON lines, each entry kept ${days} days`);
+    }
+    // settings.json's unusable copies and the settle time of a repairable hand edit (settings.ts).
+    const settings = read("app/main/settings.ts");
+    const keep = Number(/const KEEP_BACKUPS = (\d+)/.exec(settings)?.[1]);
+    const settle = Number(/const SETTLE_MS = (\d+)/.exec(settings)?.[1]);
+    expect(keeps).toContain(`\`settings.json.bad-<time>\` (the ${["", "", "two", "three", "four"][keep]} newest are kept); one it can repair is tidied once it has stayed the same for ${settle / 1000} s`);
+    // EMBER_LOG_LEVEL in any case, anything else info (logger.ts).
+    expect(logLevel("DEBUG").level).toBe("debug");
+    expect(logLevel("loud")).toEqual({ level: "info", unknown: "loud" });
+    expect(keeps).toContain("`debug`, `info`, `warn` or `error`, in any case; anything else means `info`");
+    // The login entry Ember made, marked so it never deletes one it didn't make (autostart.ts).
+    const marker = /const MANAGED = "([^"]+)"/.exec(read("app/main/autostart.ts"))?.[1] ?? "";
+    expect(marker).toBe("X-Ember-Managed=true");
+    expect(flat(section(dev, "7. Packages"))).toContain(`\`~/.config/autostart/ember.desktop\` (marked \`${marker}\`); an \`ember.desktop\` you made yourself is left alone`);
   });
 
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {

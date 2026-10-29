@@ -36,6 +36,9 @@ sudo dnf install -y python3-pyatspi python3-gobject speech-dispatcher speech-dis
 sudo dnf install -y metacity   # optional: a window manager for Ember's desk (Xvfb and xauth are above)
 ```
 
+Ember notices the screen locking through logind, with `gdbus monitor` (glib2, which GNOME brings); without `gdbus` it
+reads `loginctl` every 5 s.
+
 ## 3. Install Node 22 and npm 11
 
 RHEL 8.4's own Node streams are too old, so use the official Node 22 build (it runs on
@@ -85,6 +88,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run test:smoke` | Starts Ember, checks the window appears and a second launch hands over. Without a desktop: `xvfb-run -a npm run test:smoke` |
+| `node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII) |
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
 | `npm run check:symvers` | Only the binary check |
@@ -124,29 +128,29 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 
 ### Asking Ember to do things
 
-Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember
-starts a task in the background, with a card just above Ember's handle (bottom-right). It works through the app's
-accessibility interface, so your mouse and keyboard stay yours. Before its first action in an app it
-asks **Allow / Always in this app / Not now**; answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N**
-(not now), so you never need the mouse (the question shows the keys). **Always** is a click only: a global key could
-take an app's own shortcut and grant for good by accident. A hidden Ember shows itself to ask, and with
-**Speak replies, questions and results out loud** set to **Always**, or a screen reader running and it set to **When a
-screen reader runs** (the default), it says the question out loud; **Never** keeps it quiet even for a screen reader.
-Buttons that send, delete, pay and the like, risky shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button
-are always confirmed, and “Always” is never offered for them. Each task card has **Stop**; a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong). If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
-it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse,
-turn the wheel or press any key to take over instantly. Ember never types into password, payment or terminal
-fields and never acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember
-doesn't read the screen, take screenshots or press keys. If something on screen tries to steer Ember (a page saying
-"click Delete all"), Ember still asks first, the question says you didn't ask for it, and from then on that task
-asks before every step. **Ctrl+Alt+X** (or “Ember, stop”, or **Stop everything** in the handle menu) stops every
-task, question, borrowed mouse, desk take-over and request still being spoken at once; nothing more reaches an app
-after it. Apps you chose "Always" for are listed in **Apps & privacy** in the settings window (with **Remove**),
-next to the never-look list, which you can edit there too. **What Ember did** lists every request, question,
-action and refusal, by day. Text the keyboard can't type (accents, other layouts) is pasted, and your clipboard is
-put back afterwards. With commands turned on (settings' **Commands** section), a task can also run commands, in
-Ember's own **Ember commands** window rather than a terminal of yours; it asks before dangerous ones
-([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
+Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember starts a task in the
+background, with a card just above Ember's handle (bottom-right). It works through the app's accessibility interface, so
+your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;
+answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now), so you never need the mouse (the
+question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
+by accident. A hidden Ember shows itself to ask, and with **Speak replies, questions and results out loud** set to
+**Always**, or a screen reader running and it set to **When a screen reader runs** (the default), it says the question
+out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, delete, pay and the like, risky
+shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
+for them. Each task card has **Stop**; a failed card goes on its own after about a minute (the settings window's
+Conversation section keeps what went wrong). If an app can't be operated through accessibility, Ember asks to **borrow
+your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
+the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
+acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,
+take screenshots or press keys. If something on screen tries to steer Ember (a page saying "click Delete all"), Ember
+still asks first, the question says you didn't ask for it, and from then on that task asks before every step.
+**Ctrl+Alt+X** (or “Ember, stop”, or **Stop everything** in the handle menu) stops every task, question, borrowed mouse,
+desk take-over and request still being spoken at once; nothing more reaches an app after it. Apps you chose "Always" for
+are listed in **Apps & privacy** in the settings window (with **Remove**), next to the never-look list, which you can
+edit there too. **What Ember did** lists every request, question, action and refusal, by day. Text the keyboard can't
+type (accents, other layouts) is pasted, and your clipboard is put back afterwards. With commands turned on (settings'
+**Commands** section), a task can also run commands, in Ember's own **Ember commands** window rather than a terminal of
+yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
 
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
@@ -189,7 +193,9 @@ Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
 audio leaves it, and only the text of your request is sent to Copilot. Ember ignores “Hey Ember” and
-“Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`). A request ends
+“Ember, stop” when they come out of your speakers (needs `parec`, in `pulseaudio-utils`); it follows the default sound
+output when you change it (`pactl`, from the same package), and keeps that output from idle-suspending while it
+listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
 
@@ -199,7 +205,8 @@ Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's 
 enter the code Ember shows on GitHub's page). The app's public client id is checked in at
 `app/main/agent/github-app.ts` and built into `main.cjs`; `EMBER_GITHUB_CLIENT_ID` overrides it at run time. ci.yml's
 `checks` job asks GitHub for a device code with the built-in id, so a client id GitHub doesn't accept (or the app's
-device flow turned off) fails CI. A build without a client id (a fork) signs in through the GitHub CLI:
+device flow turned off) fails CI. Ember renews its own sign-in before the app's 8-hour token runs out. A build
+without a client id (a fork) shows **Connect with GitHub CLI** instead, and signs in through the GitHub CLI:
 
 ```bash
 sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo   # RHEL 8 has no gh of its own
@@ -208,8 +215,9 @@ gh auth login
 ```
 
 Ember checks, in order: a token it stored itself, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
-then `gh auth token`. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
-Enterprise, your organization must enable the **Copilot CLI** policy. No restart is needed: run `gh auth login` in a
+then `gh auth token --hostname github.com`; a sign-in Copilot refuses gives way to the next (the message names it), and
+**Sign out** forgets the refusals. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
+Enterprise, your organisation must enable the **Copilot CLI** policy. No restart is needed: run `gh auth login` in a
 terminal (Ember notices within a few seconds), or press **Check again**. If sign-in fails, the Copilot section says
 which sign-in Ember tried and why; while offline, Ember retries by itself.
 
@@ -234,7 +242,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Conversation (Copilot session state), only while Ember runs: resumed if Ember reconnects, deleted when it quits (one left by a crash is deleted at the next start) | `~/.config/ember/copilot/`, id in `~/.config/ember/agent.json` |
 | GitHub token (encrypted with your keyring) | `~/.config/ember/github-token.bin` |
 | Logs (JSON lines, rotated at 5 MB) | `~/.config/ember/logs/ember.log` |
-| Audit log: every decision and action Ember took (JSON lines, kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
+| Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days) | `~/.config/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models (downloaded once, SHA-256 checked) | `~/.config/ember/models/` |
 | What Ember made on its desk | `~/Ember/` |
 | App profiles used on the desk (kept separate from yours) | `~/.config/ember/desk-profiles/` |
@@ -242,12 +250,17 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
 
+A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
+are kept); one it can repair is tidied once it has stayed the same for 2 s. A `settings.json` that can't be read at
+start-up is never replaced with defaults: Ember says so, keeps changes in memory and saves them over the file once it
+reads again.
+
 Environment variables for development:
 
 | Variable | Effect |
 |---|---|
 | `EMBER_USER_DATA=/tmp/x` | Use another settings and log folder |
-| `EMBER_LOG_LEVEL=debug` | More detail in the log |
+| `EMBER_LOG_LEVEL=debug` | More detail in the log: `debug`, `info`, `warn` or `error`, in any case; anything else means `info` (and is logged) |
 | `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development) |
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
@@ -337,24 +350,39 @@ The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `roc
 | `ember-voice-models-<v>-1.el8.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
 | `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
 
-The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds; it sets the
-staged binary's Electron fuses so the installed Ember ignores `--inspect` and `NODE_OPTIONS`, and keeps plain-Node
-mode for the desk helper, where Node's own `--inspect` still works but reaches only that new process, not the
-running Ember: `node scripts/package/fuses.mjs <binary>` lists them), `scripts/package/rpm.sh` and
-`scripts/package/appimage.sh` (pinned, checksummed appimagetool and runtime). CI builds both packages on
-`rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
-fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user.
-It uploads the packages only when asked (§13): **Actions › ci › Run workflow** with **packages** ticked (kept 3
-days); at about 340 MB a run, uploading them every time filled the account's artifact storage.
-Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the RPM); staging stops if a
-bundled package's licence isn't in the spec's `License:` tag. `sudo ember doctor` works (it adds `--no-sandbox` only
-for the setup check run as root).
+The RPM's example policy, `/usr/share/doc/ember/policy.example.json`, turns commands on for this computer, WSL and
+SSH, and leaves `ssh.allowedHosts` out: with `allowedHosts` set, even to `["*"]`, the settings window says SSH is
+limited to some computers. Its notes are in `/usr/share/doc/ember/policy.README`.
 
-`ember doctor` (or `npm run doctor` in a checkout) checks the session, compositor, accessibility, XTest,
-Copilot sign-in or the organisation's endpoint, the admin policy, microphone, speech models, speech-dispatcher,
-Ember's desk, the sandbox and free file watchers (inotify), and says what to do about each problem. It exits 1 if
-Ember can't work.
-**Start Ember when I log in** in the settings window adds `~/.config/autostart/ember.desktop`.
+The steps are `node scripts/package/stage.mjs` (a self-contained folder with only Linux x64 glibc builds; it sets the
+staged binary's Electron fuses so the installed Ember ignores `--inspect` and `NODE_OPTIONS`, and keeps plain-Node mode
+for its helpers, the desk helper and SSH's askpass helper, where Node's own `--inspect` still works but reaches only
+that new process, not the running Ember: `node scripts/package/fuses.mjs <binary>` lists them; see §11.5 for what
+plain-Node mode allows), `scripts/package/rpm.sh` and `scripts/package/appimage.sh` (pinned, checksummed appimagetool
+and runtime). CI builds Ember's RPM, the speech models RPM (from the cached, checksum-verified models) and the AppImage
+on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's
+fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It
+then installs the speech models RPM, runs `rpm -V` on both, writes an administrator's `/etc/ember/policy.json`, rebuilds
+both as Release 2 (`EMBER_RPM_RELEASE=2 scripts/package/rpm.sh`), upgrades to them with `dnf upgrade`, runs `rpm -V`
+again, checks `chrome-sandbox` is still setuid root and removes both with `rpm -e`. It fails if `/opt/ember`,
+`/usr/share/ember`, `/usr/bin/ember`, the menu entry or `/usr/share/doc/ember` is left, or if the policy changed or
+belongs to a package. It uploads Release 1's packages only when asked (§13): **Actions › ci › Run workflow** with
+**packages** ticked (kept 3 days); at about 450 MB a run with the speech models, uploading them every time filled the
+account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
+RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles
+(sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly holds, eSpeak NG's GPL-3.0-or-later among them:
+`scripts/package/licences.mjs`), or if a bundled package ships no licence file and `licences.mjs` supplies none (the
+texts are in `packaging/licences/`; sherpa-onnx's is pinned to 1.13.8, whose WebAssembly was checked). `sudo ember
+doctor` works (it adds `--no-sandbox` only for the setup check run as root).
+
+`ember doctor` (or `npm run doctor` in a checkout) prints "Ember <v> setup check" with the settings window's rows: the
+session, **Transparent windows** (the compositor), **Screen reading**, **Mouse and keyboard** (XTest), Copilot sign-in
+or the organisation's endpoint, the admin policy, the microphone, speech models, **Speaking** (speech-dispatcher),
+Ember's desk, **Window sandbox** and **Copilot's file watchers** (inotify), and says what to do about each problem. On a
+Linux other than the RHEL 8 family, the operating system row says Ember is tested on RHEL 8 and may work but isn't
+supported. It exits 1 if Ember can't work. **Start Ember when I log in** in the settings window adds
+`~/.config/autostart/ember.desktop` (marked `X-Ember-Managed=true`); an `ember.desktop` you made yourself is left alone,
+and the settings window says it is there.
 
 ## 8. Evaluation
 
@@ -438,6 +466,7 @@ On Linux (Windows: §10.9, macOS: §11.8):
 | Ember doesn't react to “Hey Ember” | Check the **Voice** section: the models must be downloaded and the state must say “Listening for ‘Hey Ember’”. Check the right microphone is selected in GNOME Settings → Sound. `EMBER_LOG_LEVEL=debug` logs every wake, rejection and transcript length |
 | "Copilot isn't answering. Reconnecting…", or "this computer has run out of file watchers" | Each Copilot conversation holds a file watcher (an inotify instance) and the per-user limit is often 128. Run `ember doctor`; raise the limit with `sudo sysctl -w fs.inotify.max_user_instances=512` and keep it with `fs.inotify.max_user_instances = 512` in `/etc/sysctl.d/90-ember.conf` |
 | Ember says it can't read the screen | Check the **Screen reading** row; `python3-pyatspi` must be installed and accessibility on. Apps started before it was turned on must be restarted |
+| "Ember couldn't start: Ember can't write to its data folder" | Make the folder yours again, for example `sudo chown -R $USER ~/.config/ember` (starting Ember with `sudo` can leave it owned by root); when the dialog says the disk is full or can only be read, free some space or start Ember where your home folder can be written to |
 
 ## 10. Windows
 
@@ -595,7 +624,8 @@ For Windows it:
   version) and icon with `resedit` (`scripts/package/exe-resources.mjs`), so Task Manager, the privacy settings and
   firewall prompts say "Ember". It leaves out Electron's certificate table, which any change voids, so Windows reports
   the file `NotSigned` rather than `HashMismatch`, which some endpoint protection reads as tampering;
-- then sets the fuses in `Ember.exe`: no `--inspect`, no `NODE_OPTIONS`, and Node mode kept for the accessibility host;
+- then sets the fuses in `Ember.exe`: no `--inspect`, no `NODE_OPTIONS`, and Node mode kept for its helpers (the
+  accessibility host, and the job host that runs commands, WSL's launcher and SSH; §11.5 says what Node mode allows);
 - adds `ember-doctor.cmd`: Ember.exe is a windowed program, which `cmd.exe` doesn't wait for, so the launcher runs
   `start "" /wait Ember.exe --doctor` and keeps its exit code;
 - bundles the speech models only with `--with-models` (otherwise Ember downloads them when “Hey Ember” is turned
@@ -617,7 +647,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | Conversation (Copilot session state), only while Ember runs | `%LOCALAPPDATA%\ember\copilot\`, id in `%LOCALAPPDATA%\ember\agent.json` |
 | GitHub token (encrypted for your Windows account with DPAPI) | `%LOCALAPPDATA%\ember\github-token.bin` |
 | Logs | `%LOCALAPPDATA%\ember\logs\ember.log` |
-| Audit log (the file only: no copy goes to a system log) | `%LOCALAPPDATA%\ember\audit\audit-YYYY-MM.jsonl` |
+| Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to a system log) | `%LOCALAPPDATA%\ember\audit\audit-YYYY-MM.jsonl` |
 | Speech models | `%LOCALAPPDATA%\ember\models\`, or bundled: `Ember\resources\voice-models`, then `%ProgramData%\Ember\voice-models` |
 | The compiled accessibility helper | `%LOCALAPPDATA%\ember\uia-cache\` |
 | SSH's compiled password helper (OpenSSH 8.4 or newer) | `%LOCALAPPDATA%\ember\ssh\ember-askpass.exe` |
@@ -761,8 +791,10 @@ Ember can't work.
 | Speech models, Speaking | As on Linux; Ember speaks with Windows' own voices | — |
 
 The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
-scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: tell the
-Ember team) and **Keyboard shortcuts**.
+scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
+monitor to the same scale in **Settings › System › Display**, then restart Ember; if it still clicks in the wrong
+place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) and **Keyboard
+shortcuts**.
 
 | Symptom | Fix |
 |---|---|
@@ -897,15 +929,29 @@ npm run package:mac        # npm run build, then node scripts/package/stage.mjs 
 - edits `Info.plist` (`scripts/package/mac-bundle.mjs`): the name "Ember", the bundle id
   `io.github.komaladitya08.ember` (the permissions hang on it), `LSMinimumSystemVersion` 13.0, and the texts macOS
   shows when Ember asks for the microphone, to control System Events and to reach the local network. `LSUIElement` is
-  unset: Ember has a Dock icon and an app menu, whose Quit goes through Ember's own question while a task runs;
+  unset: Ember has a Dock icon and an app menu, which starts with **About Ember** (the version and the MIT licence) and
+  whose Quit goes through Ember's own question while a task runs;
 - sets the fuses in the Electron Framework binary inside the bundle, not in the small `Contents/MacOS/Ember` launcher
-  (`scripts/package/fuses.mjs` lists them, given that binary's path, as CI's packaged checks do);
-- signs the whole bundle ad hoc last and verifies it (`codesign --verify --deep --strict`): flipping the fuses voids
-  Electron's signature, and Apple silicon kills code whose signature doesn't match. Every build is a new identity to
-  macOS, which is why permissions must be given again after an update;
+  (`scripts/package/fuses.mjs` lists them, given that binary's path, as CI's packaged checks do). RunAsNode stays on,
+  because Ember's helpers run its binary as plain Node: the accessibility host and SSH's askpass helper here (the desk
+  helper and askpass on Linux; the accessibility host and the job host for commands, WSL and SSH on Windows). So any
+  program running as the user can start Ember's binary as Node with a script of its own; on macOS, if it is started so
+  that macOS holds Ember responsible for it (by launchd, say), it acts with Ember's Accessibility and Screen Recording
+  grants. This stays so until the helpers leave `ELECTRON_RUN_AS_NODE` (review #177). The hardened runtime closes the
+  `DYLD_*` and debugger ways in;
+- signs the whole bundle ad hoc last, under the hardened runtime (`--options runtime`), with `mac-bundle.mjs`'s
+  `ENTITLEMENTS`: JIT and unsigned executable memory for V8, library validation off (an ad hoc signature has no team
+  ID, so library validation would refuse Electron Framework, koffi, sharp and the speech runtime), the microphone and
+  Apple events. It then reads back the runtime flag and the entitlements, fails if
+  `allow-dyld-environment-variables` or `get-task-allow` is there, and verifies the bundle (`codesign --verify --deep
+  --strict`). Flipping the fuses voids Electron's signature, and Apple silicon kills code whose signature doesn't
+  match. Every build is a new identity to macOS, which is why permissions must be given again after an update;
 - builds one architecture, the Mac's own: an Intel `Ember.app` is built on an Intel Mac (in CI, the `macos-x64` job on
   `macos-15-intel`, which checks with `lipo -archs` that every Mach-O file in it runs on x86_64);
 - bundles the speech models only with `--with-models`.
+
+CI reads the hardened-runtime flag on Ember.app's signature, and tries `DYLD_INSERT_LIBRARIES` only where SIP is on.
+The hosted macOS runners report SIP off, so there it leaves a notice, and the `DYLD_*` behaviour is unproven in CI.
 
 A Developer ID signature and notarisation are out of scope (no certificates; PLAN.md §9). README.md says what
 Gatekeeper does on first start.
@@ -918,7 +964,7 @@ Gatekeeper does on first start.
 | Conversation (Copilot session state), only while Ember runs | `~/Library/Application Support/ember/copilot/`, id in `agent.json` beside it |
 | GitHub token (encrypted with a key kept in your login Keychain) | `~/Library/Application Support/ember/github-token.bin` |
 | Logs | `~/Library/Application Support/ember/logs/ember.log` |
-| Audit log (the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
+| Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models | `~/Library/Application Support/ember/models/`, or bundled: `Ember.app/Contents/Resources/voice-models`, then `/Library/Application Support/Ember/voice-models` |
 | SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |
 | **Start Ember when I log in** | A login item for Ember.app (**System Settings › General › Login Items**) |
@@ -963,9 +1009,9 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 | Mouse and keyboard | No Accessibility permission, or an app holds secure input | Allow Ember under Accessibility; see Secure input |
 | Reading and using apps | Not allowed | **System Settings › Privacy & Security › Accessibility**: switch Ember on (after an update: remove it with **−** and add it again) |
 | Screen Recording | Not allowed: no screenshots, and no other apps' window titles | **Privacy & Security › Screen Recording**: switch Ember on, then quit and reopen Ember. macOS asks again about once a month: choose **Allow** |
-| Input Monitoring | Not allowed: Ember won't use the keyboard for you | **Privacy & Security › Input Monitoring**: switch Ember on |
+| Input Monitoring | Not allowed: Ember can't notice when you take over the keyboard, so it uses neither the mouse nor the keyboard for you | **Privacy & Security › Input Monitoring**: switch Ember on |
 | Microphone | Off for Ember | **Privacy & Security › Microphone**: switch Ember on |
-| Secure input | An app (the row names it) has secure keyboard entry on, so Ember won't use the keyboard | Close the password field, or turn off Secure Keyboard Entry there (Terminal: **Terminal › Secure Keyboard Entry**) |
+| Secure input | An app (the row names it) has secure keyboard entry on, so Ember won't look at the screen or use the mouse or keyboard until it's off; the settings window's setup check shows this row too | Close the password field, or turn off Secure Keyboard Entry there (Terminal: **Terminal › Secure Keyboard Entry**) |
 | Applications folder | Not in the Applications folder | Quit Ember, drag it into Applications and open it from there |
 | Root | Ember runs as root | Start it as yourself |
 | Copilot, Organisation policy, Speech models, Speaking | As on Linux; Ember speaks with macOS's own voices | — |

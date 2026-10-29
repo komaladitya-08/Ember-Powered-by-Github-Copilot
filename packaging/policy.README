@@ -2,8 +2,8 @@ Ember's organisation policy: notes for policy.example.json
 ==========================================================
 
 Copy policy.example.json to /etc/ember/policy.json and change what you need. The file must belong to root and be
-writable only by root. Ember reads it when it starts (restart Ember after changing it); the check-up (ember doctor)
-shows whether it is in force.
+writable only by root. Ember reads it again every 10 seconds: when it changes, Ember stops everything and asks to be
+restarted, and the restart reads the new policy whole. The setup check (ember doctor) shows whether it is in force.
 
 A policy can only make Ember stricter than having no policy at all. If the file can't be read, isn't valid JSON or has
 a key or value Ember doesn't know, Ember locks down (no actions, no listening) until it is fixed. JSON has no comments:
