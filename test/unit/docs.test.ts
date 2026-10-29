@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { announcement, type BubbleView } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../../app/main/commands/flow";
+import { WINDOWS_MIC_FIX } from "../../app/main/environment";
 import * as commandWindow from "../../app/main/commands/window";
 import { CHARACTERS, DEFAULT_SETTINGS } from "../../app/main/settings";
 import { macVersionFromDarwin } from "../../app/main/platform/darwin/system/permissions";
@@ -97,6 +98,13 @@ describe("docs/DEVELOPING.md", () => {
     const named = [...new Set(win.sidecarFiles.map(f => (f.to.startsWith("sidecar/uia/") ? "sidecar/uia/" : f.to)))];
     for (const rel of [...named, `${REMOTE_PARTS_DIR}/`]) expect(table).toContain(`resources\\${rel.replace(/\//g, "\\")}`);
     for (const l of win.launchers ?? []) expect(table).toContain(l.to);
+  });
+
+  it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
+    const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
+    expect(paths.length).toBe(2);
+    const row = flat(section(read("docs/DEVELOPING.md"), "10.9 Troubleshooting").split("\n").find(l => l.startsWith("| Microphone |")) ?? "");
+    for (const p of paths) expect(row, p).toContain(p);
   });
 
   it("says how to publish a release: every file the README downloads, and the SHA256SUMS users check them with", () => {
@@ -225,6 +233,23 @@ describe("README.md", () => {
     expect(read("app/renderer/desk/main.ts")).toMatch(/e\.key === "End"[^\n]*e\.ctrlKey && e\.altKey/);
     expect(a11y).toContain("Ctrl+Alt+End");
     for (const words of ["Calm mode", "Text size", "contrast", "**Always in this app**", "Known gaps"]) expect(a11y).toContain(words);
+  });
+
+  it("gives the microphone switch's path on Windows 10 and 11, as the setup check does (cross-review X17)", () => {
+    // WINDOWS_MIC_FIX: the setup check's and the doctor's words, with each supported Windows' page.
+    const paths = [...WINDOWS_MIC_FIX.matchAll(/Settings › [^()]+?microphone/g)].map(m => m[0]);
+    expect(paths.length).toBe(2);
+    const win = flat(section(readme, "Install on Windows"));
+    for (const p of paths) expect(win, p).toContain(p);
+  });
+
+  it("says which manual CI run keeps each package artifact, as ci.yml makes them (cross-review X17)", () => {
+    const ci = read(".github/workflows/ci.yml");
+    // The Intel Mac job runs on a manual run only when intel is ticked too; its upload step is inside it.
+    const intelIf = /\n  macos-x64:\n(?:.*\n)*?    if: >-\n((?:      .*\n)+)/.exec(ci)?.[1] ?? "";
+    expect(intelIf).toMatch(/workflow_dispatch' && inputs\.intel/);
+    const download = flat(section(readme, "Download"));
+    expect(download).toMatch(/with \*\*packages\*\* ticked also keeps them for 3 days as artifacts \(`ember-packages`, `ember-windows`, `ember-macos`, and `ember-macos-x64` when \*\*intel\*\* is ticked too\)/);
   });
 
   it("gives Windows users blocked by Smart App Control the way forward", () => {

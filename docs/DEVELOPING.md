@@ -749,7 +749,7 @@ Ember can't work.
 | Desktop session | Ember runs in a service's session | Sign in to Windows and start Ember from the Start menu |
 | Transparent windows, Mouse and keyboard | Windows' window or input functions didn't load | Reinstall Ember |
 | Accessibility helper | The helper didn't answer, or can't read apps; the row says what it reported (PowerShell's language mode, its display scaling) | Check the PowerShell row; if it is fine, reinstall Ember |
-| Microphone | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** |
+| Microphone | Windows doesn't let desktop apps use the microphone | **Settings › Privacy & security › Microphone › Let desktop apps access your microphone** (on Windows 10: **Settings › Privacy › Microphone › Allow desktop apps to access your microphone**); in the settings window, the row and the Voice section have **Open Settings** for it |
 | Administrator | Ember runs as administrator | Start it from the Start menu, not with **Run as administrator** |
 | PowerShell | A policy stops Windows PowerShell running the helper | §10.4: **Unblock it**, or ask your administrator |
 | Helper command line | Never: it is the facts for an allow-list | — |

@@ -25,7 +25,7 @@ shasum -a 256 Ember-0.1.0-mac-arm64.dmg                   # macOS: the same as i
 
 To build them yourself, see [docs/DEVELOPING.md](docs/DEVELOPING.md) (§7 Linux, §10.5 Windows, §11.5 macOS). A
 manual CI run with **packages** ticked also keeps them for 3 days as artifacts (`ember-packages`, `ember-windows`,
-`ember-macos`, `ember-macos-x64`).
+`ember-macos`, and `ember-macos-x64` when **intel** is ticked too).
 
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
 
@@ -82,7 +82,9 @@ and `~/Ember` (what it made on its desk).
      helper; screenshots and the borrowed mouse still work.
 
 Windows asks for no permission up front. For “Hey Ember”, desktop apps must be allowed the microphone (**Settings ›
-Privacy & security › Microphone › Let desktop apps access your microphone**). Start Ember normally, not as
+Privacy & security › Microphone › Let desktop apps access your microphone**; on Windows 10, **Settings › Privacy ›
+Microphone › Allow desktop apps to access your microphone**). While they aren't, the setup check's **Microphone** row
+and the Voice section in settings have **Open Settings**, which opens that page. Start Ember normally, not as
 administrator. Ember won't borrow the mouse and keyboard for a window of a program that runs as administrator
 (Windows would drop its input there). It never acts in Remote Desktop windows, or in a Linux app that WSL shows on
 Windows unless WSL is turned on for Ember and it can tell which app it is, and blacks such windows out of its
