@@ -33,7 +33,7 @@ import type { Logger } from "../../app/main/logger";
 import type { Settings } from "../../app/main/settings";
 import type { OverlayShaper } from "../../app/main/platform/types";
 import { besideControl, followTarget } from "../../app/main/follow";
-import { bubbleHere, cardsCorner } from "../../app/renderer/overlay/layout";
+import { bubbleHere, cardsCorner, handleSide, stackPlace } from "../../app/renderer/overlay/layout";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const shaper: OverlayShaper = { setInputRegion: () => false, release() {}, forward: false, floating: () => ({ options: {}, allWorkspaces: null }) };
@@ -220,6 +220,63 @@ describe("the task cards and the ring round a control", () => {
 
   it("stay where they are when the ring would be under them in either corner (a bar as wide as the screen)", () => {
     expect(cardsCorner({ x: 0, y: 640, width: vw, height: 30 }, stack, vw)).toBe("right");
+  });
+});
+
+describe("the handle in the bottom-left corner (Handle position, review #75)", () => {
+  const primary = display(1, 0, 0);
+  const right: Box = { x: 1920 - 212, y: 1040 - 68, width: 200, height: 56 };
+  const left: Box = { x: 12, y: 1040 - 68, width: 200, height: 56 };
+  const vw = 1920, vh = 1080;
+
+  it("Ember keeps off it there, as it does in the bottom right", async () => {
+    const { settle } = await manager([primary], [null], left);
+    const at = settle({ x: left.x + 100, y: left.y + 20 });
+    expect(at.y + 36).toBeLessThanOrEqual(left.y);
+  });
+
+  it("every overlay hears the handle's new place as the settings change, not a second later", async () => {
+    const { m, sent } = await manager([primary], [null], right);
+    let now: Box = right;
+    m.avoid = () => now;
+    m.broadcastSettings({ size: 60, handlePosition: "bottom-right" } as Settings);
+    const inits = () => sent.filter(x => x.channel === "overlay:init").map(x => (x.value as { handle: Box | null }).handle);
+    expect(inits()).toEqual([right]);
+    // The menu's "Move to the other side": main moves the handle, then sends the settings.
+    now = left;
+    m.broadcastSettings({ size: 60, handlePosition: "bottom-left" } as Settings);
+    expect(inits()).toEqual([right, left]);
+    // Settings that don't move it send no new place.
+    m.broadcastSettings({ size: 72, handlePosition: "bottom-left" } as Settings);
+    expect(inits()).toEqual([right, left]);
+  });
+
+  it("the cards take the handle's side: where its pill is on this display, else the setting's", () => {
+    expect(handleSide(right, vw, "bottom-left")).toBe("right");
+    expect(handleSide(left, vw, "bottom-right")).toBe("left");
+    // The handle on another display: the setting says.
+    expect(handleSide(null, vw, "bottom-left")).toBe("left");
+    expect(handleSide(null, vw, "bottom-right")).toBe("right");
+    expect(handleSide(null, vw, undefined)).toBe("right");
+  });
+
+  it("stack a card's gap above the pill, lined up with its outer edge on either side", () => {
+    // The pill is drawn 4 px inside its window; the cards' right (or left) edge meets the pill's.
+    expect(stackPlace(right, { width: vw, height: vh })).toEqual({ inset: 1920 - (right.x + 200 - 4), bottom: 1080 - (right.y + 4) + 8 });
+    expect(stackPlace(left, { width: vw, height: vh })).toEqual({ inset: left.x + 4, bottom: 1080 - (left.y + 4) + 8 });
+    expect(stackPlace(right, { width: vw, height: vh }).inset).toBe(stackPlace(left, { width: vw, height: vh }).inset);
+    // No handle on this display: 12 px in, 80 up, on the side the setting names.
+    expect(stackPlace(null, { width: vw, height: vh })).toEqual({ inset: 12, bottom: 80 });
+  });
+
+  it("make way for the ring round a control to the bottom right, as they do to the bottom left from there", () => {
+    const stack: Box = { x: 16, y: 420, width: 270, height: 268 };
+    expect(cardsCorner(null, stack, vw, "left")).toBe("left");
+    expect(cardsCorner({ x: 600, y: 48, width: 200, height: 32 }, stack, vw, "left")).toBe("left");
+    // A chat button at the bottom left, under them: they go to the bottom right.
+    expect(cardsCorner({ x: 40, y: 620, width: 80, height: 30 }, stack, vw, "left")).toBe("right");
+    // A bar as wide as the screen: they stay.
+    expect(cardsCorner({ x: 0, y: 640, width: vw, height: 30 }, stack, vw, "left")).toBe("left");
   });
 });
 

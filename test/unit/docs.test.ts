@@ -20,6 +20,7 @@ import type { TargetEntry } from "../../app/main/targets/registry";
 import { targetMenu } from "../../app/main/targets/menu";
 import * as commandCopy from "../../app/renderer/command/copy";
 import { terminalOptions } from "../../app/renderer/command/terminal-options";
+import { cardsCorner } from "../../app/renderer/overlay/layout";
 import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
@@ -297,10 +298,13 @@ describe("README.md", () => {
     const main = read("app/main/main.ts");
     const start = main.indexOf("const menu = Menu.buildFromTemplate([");
     const menu = main.slice(start, main.indexOf("]);", start));
-    for (const item of ["Ask Ember…", "Stop everything", "Read the last answer", "Stay put", "Hide Ember", "Quit Ember", "Mute microphone"]) {
+    for (const item of ["Ask Ember…", "Stop everything", "Read the last answer", "Stay put", "Hide Ember", "Quit Ember", "Mute microphone", "Move to the other side"]) {
       expect(menu, item).toContain(`"${item}"`);
       expect(a11y, item).toContain(item === "Mute microphone" ? "microphone" : item);
     }
+    // Move to the other side's keyboard route is the setting it flips (review #75).
+    expect(a11y).toContain("**Handle position** for **Move to the other side**");
+    expect(read("app/renderer/home/index.html")).toContain('<label class="switch-row"><span>Handle position</span><select id="handle-position">');
     expect(a11y).toContain("**Work on**");
     // The desk's way back from a take-over, as the desk view handles it.
     expect(read("app/renderer/desk/main.ts")).toMatch(/e\.key === "End"[^\n]*e\.ctrlKey && e\.altKey/);
@@ -781,6 +785,20 @@ describe("CHANGELOG.md", () => {
     expect(notes).toMatch(/System Settings as Systemeinstellungen/);
     // A command window whose page crashed comes back (windows.ts revives it) instead of closing.
     expect(notes).toMatch(/a command window whose page crashes comes back with its commands instead of closing/);
+  });
+
+  it("says where the task cards and the desk view go with Handle position, as the code places them (review #75)", () => {
+    const notes = flat(changelog);
+    // A control's ring under the cards sends them to the other bottom corner, whichever side the handle is on.
+    const stack = { x: 1500, y: 800, width: 400, height: 200 }, ring = { x: 1600, y: 900, width: 100, height: 30 };
+    expect(cardsCorner(ring, stack, 1920, "right")).toBe("left");
+    expect(cardsCorner({ ...ring, x: 220 }, { ...stack, x: 20 }, 1920, "left")).toBe("right");
+    expect(notes).toContain("and the task cards move to the other bottom corner.");
+    expect(notes).not.toMatch(/task cards move to the bottom-left/);
+    // The cards follow the handle; the desk view takes the corner away from it (deskViewStart), as the README says.
+    expect(notes).toContain("and the task cards follow it, and on Linux the desk view takes the other corner.");
+    expect(flat(read("README.md"))).toContain("The task cards go with it, and on Linux Ember's desk view takes the other corner.");
+    expect(flat(read("docs/DEVELOPING.md"))).toContain("bottom-left corner (bottom-right when Ember's handle is in the bottom left)");
   });
 
   it("uses British spelling and plain words, as the app's own copy does", () => {

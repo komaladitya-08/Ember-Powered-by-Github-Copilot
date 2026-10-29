@@ -190,6 +190,9 @@ export class OverlayManager {
 
   broadcastSettings(s: Settings): void {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.settings, s);
+    // The handle may have moved with them (Handle position, the text size): the task cards follow it now, not at the
+    // next second's check.
+    this.checkHandle();
   }
 
   /** Where Ember holds still beside the control it works on (null: it isn't). */

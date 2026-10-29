@@ -15,7 +15,8 @@ import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { shortWhere, whereText } from "../handle/badge";
-import { bubbleHere, cardsCorner, pillBottom, pillSpot } from "./layout";
+import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
+import { handleCorner, type HandleSide } from "../../shared/handle-place";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -98,6 +99,8 @@ function applySettings(s: Settings): void {
   character = characters[s.character] ?? characters.cinder;
   bubble.setSpeaker("Ember");
   applyReducedMotion();
+  // Handle position changed while the handle is on another display (else its pill says the side): the cards follow.
+  if (homeSide() !== placedSide) placeTasks();
   requestDraw();
 }
 
@@ -106,10 +109,11 @@ api.onInit((i: OverlayInit) => {
   displayId = i.displayId;
   workArea = i.workArea ?? null;
   // The handle's place, when the main process says (`handle`, global DIP; null = on another display).
-  // Otherwise it is where it always is: the bottom-right corner, 200×56, 12 px in.
+  // Otherwise it is where Handle position puts it: the bottom-right (or bottom-left) corner, 200×56, 12 px in.
   const given = (i as OverlayInit & { handle?: Rect | null }).handle;
+  const pill = { width: 200, height: 56 };
   handleRect = given === undefined
-    ? { x: i.bounds.width - 212, y: i.bounds.height - 68, width: 200, height: 56 }
+    ? { ...handleCorner(i.settings?.handlePosition, pill, { x: 0, y: 0, width: i.bounds.width, height: i.bounds.height }), ...pill }
     : given && { x: given.x - i.bounds.x, y: given.y - i.bounds.y, width: given.width, height: given.height };
   placeTasks();
   placeStatus();
@@ -223,16 +227,23 @@ let tasksRoom = Infinity;
 
 /** The handle's pill is drawn this far inside its window (.handle's inset in handle/styles.css). */
 const PILL_INSET = 4;
-/** The cards are in the bottom-left corner: the ring round the control Ember works on was under them in their own. */
-let cardsLeft = false;
+/** The cards are in the other bottom corner from the handle's: the ring round the control Ember works on was under them in their own. */
+let cardsAway = false;
+/** The handle's side the cards were last placed for (Handle position: bottom right or bottom left). */
+let placedSide: HandleSide = "right";
+/** The handle's side in this overlay: where its pill is, or Handle position while it is on another display. */
+const homeSide = (): HandleSide => handleSide(handleRect, viewport.width, settings?.handlePosition);
 
 function placeTasks(): void {
-  const h = handleRect;
-  // Lined up with the pill as it shows (its right edge, a card's gap above it), not with its window.
-  const bottom = h ? Math.max(8, viewport.height - (h.y + PILL_INSET) + CARD_GAP) : 80;
-  const inset = `${h ? Math.max(8, viewport.width - (h.x + h.width - PILL_INSET)) : 12}px`;
-  tasksEl.style.right = cardsLeft ? "auto" : inset;
-  tasksEl.style.left = cardsLeft ? inset : "auto";
+  const home = homeSide();
+  // The handle went to the other side: its cards start in its corner again.
+  if (home !== placedSide) { placedSide = home; cardsAway = false; }
+  const side: HandleSide = cardsAway ? (home === "left" ? "right" : "left") : home;
+  // Lined up with the pill as it shows (its outer edge, a card's gap above it), not with its window.
+  const { inset, bottom } = stackPlace(handleRect, viewport, PILL_INSET, CARD_GAP);
+  tasksEl.classList.toggle("left", side === "left");
+  tasksEl.style.right = side === "left" ? "auto" : `${inset}px`;
+  tasksEl.style.left = side === "left" ? `${inset}px` : "auto";
   tasksEl.style.bottom = `${bottom}px`;
   tasksRoom = Math.max(80, viewport.height - bottom - TOP_ROOM);
   tasksEl.style.maxHeight = `${tasksRoom}px`;
@@ -241,26 +252,27 @@ function placeTasks(): void {
 }
 
 /**
- * The cards make way for the control Ember works on (a chat button or a wizard's Next in the bottom-right corner):
- * while its ring is under them, they go to the bottom-left corner, so the user sees what Ember clicks or asks about.
+ * The cards make way for the control Ember works on (a chat button or a wizard's Next in the handle's corner): while
+ * its ring is under them, they go to the other bottom corner, so the user sees what Ember clicks or asks about.
  * True when they moved (and were measured where they are now).
  */
 let cornerAt = "";
 function cornerTasks(): boolean {
   const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  const home = homeSide();
   // Measured only when something it depends on changed (a streaming answer sends many states).
-  const key = JSON.stringify([f, tasksKey, viewport, handleRect]);
+  const key = JSON.stringify([f, tasksKey, viewport, handleRect, home]);
   if (key === cornerAt) return false;
   cornerAt = key;
-  let left = false;
+  let away = false;
   if (f && tasksEl.children.length) {
     const r = tasksEl.getBoundingClientRect();
     // Where the stack is in its own corner (it may be in the other one now: the same distance in, mirrored).
-    const own = { x: cardsLeft ? viewport.width - r.x - r.width : r.x, y: r.y, width: r.width, height: r.height };
-    left = cardsCorner({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height }, own, viewport.width) === "left";
+    const own = { x: cardsAway ? viewport.width - r.x - r.width : r.x, y: r.y, width: r.width, height: r.height };
+    away = cardsCorner({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height }, own, viewport.width, home) !== home;
   }
-  if (left === cardsLeft) return false;
-  cardsLeft = left;
+  if (away === cardsAway) return false;
+  cardsAway = away;
   placeTasks();
   return true;
 }

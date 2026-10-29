@@ -204,6 +204,69 @@ describe("the handle window", () => {
     expect(pill.sendSettings(now)).toBe(false);
   });
 
+  it("sits in the bottom-left corner of the work area with Handle position set so: the pill, the tab and the card (review #75)", () => {
+    const left = { size: "medium", handlePosition: "bottom-left" } as never;
+    const pill = new HandleWindow(() => left, false);
+    const win = pill.win as unknown as FakeWin;
+    // The work area starts at 100, 50 (a taskbar on the left, a panel on top): 12 px in from its left and bottom edges.
+    expect(win.options).toMatchObject({ x: 112, y: 782 });
+    expect(win.bounds).toEqual({ x: 112, y: 782, width: 200, height: 56 });
+    // Hidden: the tab with Ember's face stays in that corner.
+    pill.setCompact(true);
+    expect(win.bounds).toEqual({ x: 112, y: 782, width: 56, height: 56 });
+    pill.setCompact(false);
+    expect(win.bounds).toEqual({ x: 112, y: 782, width: 200, height: 56 });
+
+    const card = new HandleWindow(() => left, true);
+    const cardWin = card.win as unknown as FakeWin;
+    expect(cardWin.bounds).toEqual({ x: 112, y: 688, width: 360, height: 150 });
+    card.fit(999);
+    expect(cardWin.bounds).toEqual({ x: 112, y: 478, width: 360, height: 360 });
+  });
+
+  it("moves to the other corner when the setting changes, in every form, and says it moved (review #75)", () => {
+    let now = { size: "medium", handlePosition: "bottom-right" } as never;
+    const pill = new HandleWindow(() => now, false);
+    const win = pill.win as unknown as FakeWin;
+    expect(win.bounds).toEqual({ x: 1168, y: 782, width: 200, height: 56 });
+    now = { size: "medium", handlePosition: "bottom-left" } as never;
+    expect(pill.sendSettings(now)).toBe(true);
+    expect(win.bounds).toEqual({ x: 112, y: 782, width: 200, height: 56 });
+    // The page hears the settings either way; nothing else changed: it stays.
+    expect(win.sent.at(-1)).toEqual({ channel: OVERLAY.settings, args: [now] });
+    expect(pill.sendSettings(now)).toBe(false);
+
+    // The tab (Ember hidden) moves too, and the pill comes back on its new side.
+    pill.setCompact(true);
+    now = { size: "medium", handlePosition: "bottom-right" } as never;
+    expect(pill.sendSettings(now)).toBe(true);
+    expect(win.bounds).toEqual({ x: 1312, y: 782, width: 56, height: 56 });
+    pill.setCompact(false);
+    expect(win.bounds).toEqual({ x: 1168, y: 782, width: 200, height: 56 });
+
+    // The card (no compositor) moves, at the height it has grown to.
+    let cardNow = { size: "medium" } as never;
+    const card = new HandleWindow(() => cardNow, true);
+    const cardWin = card.win as unknown as FakeWin;
+    card.fit(200);
+    cardNow = { size: "medium", handlePosition: "bottom-left" } as never;
+    expect(card.sendSettings(cardNow)).toBe(true);
+    expect(cardWin.bounds).toEqual({ x: 112, y: 638, width: 360, height: 200 });
+  });
+
+  it("follows the work area when it changes (a taskbar moved, a display added), on its own side", () => {
+    const pill = new HandleWindow(() => ({ size: "medium", handlePosition: "bottom-left" }) as never, false);
+    const win = pill.win as unknown as FakeWin;
+    const was = { ...workArea };
+    Object.assign(workArea, { x: 0, y: 0, width: 1920, height: 1040 });
+    try {
+      for (const fn of screenHandlers.get("display-metrics-changed") ?? []) fn();
+      expect(win.bounds).toEqual({ x: 12, y: 972, width: 200, height: 56 });
+    } finally {
+      Object.assign(workArea, was);
+    }
+  });
+
   it("is moved by main when the text size changes it, with the desk view beside it", () => {
     const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
     expect(main).toMatch(/if \(handle\?\.sendSettings\(s\)\) deskViewRef\?\.handleMoved\(\);/);

@@ -28,6 +28,7 @@ import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
+import { otherSide } from "../shared/handle-place";
 import { revive } from "./revive";
 import { useAppNames } from "../shared/apps";
 import { AtspiSidecar } from "./perception/sidecar";
@@ -700,6 +701,8 @@ function start(): void {
       { ...keyed("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
       { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); syncHandle(); presenceChanged(); } },
+      // Handle position (review #75): the handle (pill, tab or card) and its task cards go to the other bottom corner.
+      { label: "Move to the other side", click: moveHandle },
       { type: "separator" },
       { label: "Quit Ember", click: () => { opens = quitWords() !== null; void quitEmber(); } },
     ]);
@@ -761,6 +764,10 @@ function start(): void {
     if (inputRef?.focusInput) inputRef.focusInput(xid);
   };
   let followPaused = false;
+  /** The handle menu's "Move to the other side": Handle position flips, and the settings change moves the handle. */
+  const moveHandle = () => {
+    try { settings.update({ handlePosition: otherSide(settings.get().handlePosition) }); } catch (err) { log.warn("handle.move_not_saved", { err }); }
+  };
   let presenceChanged = () => { /* set once the IPC is ready */ };
   /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
   const readLastAnswer = () => {
@@ -1359,10 +1366,11 @@ function start(): void {
   });
 
   settings.onChange((s) => {
-    overlay?.broadcastSettings(s);
+    // The handle first: it may move (Handle position, the text size), and the overlays then hear where it is now.
     if (handle?.sendSettings(s)) deskViewRef?.handleMoved();
     // The desk view's bar grows with the text size: the view fits it at once (only when the size changed).
     deskViewRef?.fitText();
+    overlay?.broadcastSettings(s);
   });
   // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step: at start
   // only when it is on, then whenever it changes, so a start with it off removes nothing (review #85).

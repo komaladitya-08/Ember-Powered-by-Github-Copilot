@@ -20,11 +20,13 @@ body { font: var(--type-callout); color: var(--label); }
 .status[hidden] { display: none; opacity: 0; }
 .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); animation: pulse 1.2s ease-in-out infinite; }
 
-/* Stacked just above Ember's handle in the bottom-right corner (main.ts places them exactly, in the bottom-left while
-   the control Ember works on is under them there); above Ember, which keeps off them. */
+/* Stacked just above Ember's handle in its corner, bottom right or (.left) bottom left as Handle position puts it
+   (main.ts places them exactly, in the other bottom corner while the control Ember works on is under them there);
+   above Ember, which keeps off them. */
 .tasks {
   position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
 }
+.tasks.left { right: auto; left: 12px; }
 /* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. The
    scroller would cut the cards' outer shadows off at its edges (a hard-edged grey slab over a light app): while it
    scrolls they keep only their sheen and rim, which it doesn't cut. */

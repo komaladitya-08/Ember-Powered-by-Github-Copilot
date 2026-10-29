@@ -14,6 +14,7 @@ import { applyAdminPolicy, type AdminPolicy } from "./admin";
 import { CONSENT_VERSION } from "../shared/consent";
 import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
 import { DISTRO_NAME, HOST_ID, parseTargetId, type TargetId } from "../shared/targets";
+import { HANDLE_POSITIONS } from "../shared/handle-place";
 import { HOST_OS } from "./platform/os";
 import { readTextFile } from "./text-file";
 
@@ -119,6 +120,11 @@ export const SettingsSchema = z.object({
   moreTime: z.boolean().default(false),
   /** Text size in Ember's windows, bubble and cards (main's page-prefs.ts applies it): larger is 30% bigger. */
   textSize: z.enum(["default", "large", "larger"]).default("default"),
+  /**
+   * The primary display's corner Ember's handle sits in, and its task cards above it (Comfort & access › Handle
+   * position, and the handle menu's "Move to the other side"; review #75). A file from before it reads as the bottom right.
+   */
+  handlePosition: z.enum(HANDLE_POSITIONS).default("bottom-right"),
   /**
    * How many times the ask box has opened where Ember can't hold the letters typed while it opens (Windows, macOS),
    * counted up to the openings that say to wait for it before typing (ask.ts WAIT_TIP_OPENINGS, review #78).

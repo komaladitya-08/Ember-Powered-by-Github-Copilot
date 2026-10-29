@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {}, ipcMain: { on() {} } }));
 
 const { askBounds, askSize, grownBounds } = await import("../../app/main/ask");
-const { deskViewBounds } = await import("../../app/main/desk/view");
+const { deskViewBounds, deskViewStart } = await import("../../app/main/desk/view");
 const { foldCount, foldedLine, stackOrder } = await import("../../app/renderer/overlay/stack");
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -148,6 +148,43 @@ describe("deskViewBounds", () => {
     expect(overlaps(deskViewBounds(small, true, wa, null), handle(wa))).toBe(false);
   });
 
+  it("starts where it always has with the handle in the bottom right (or not known)", () => {
+    const wa = { x: 0, y: 27, width: 1280, height: 773 };
+    expect(deskViewStart(wa, handle(wa))).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+    expect(deskViewStart(wa, null)).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+    expect(deskViewStart(wa)).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+  });
+
+  it("with the handle in the bottom left (Handle position), is bottom-right, growing up and to the left (review #75)", () => {
+    const wa = { x: 0, y: 0, width: 1920, height: 1080 };
+    const left = { x: 12, y: 1012, width: 200, height: 56 };
+    const small = deskViewBounds(deskViewStart(wa, left), false, wa, left);
+    expect(small).toEqual({ x: 1920 - 16 - 340, y: 826, width: 340, height: 238 });
+    const large = deskViewBounds(small, true, wa, left);
+    expect(large).toEqual({ x: 1920 - 16 - 980, y: 418, width: 980, height: 646 });
+    expect(deskViewBounds(large, false, wa, left)).toEqual(small);
+  });
+
+  it("with the handle or its card in the bottom left, keeps clear of it on small screens and a left taskbar too", () => {
+    for (const wa of [{ x: 0, y: 0, width: 1024, height: 600 }, { x: 0, y: 27, width: 1280, height: 773 }, { x: 48, y: 0, width: 1232, height: 800 }]) {
+      for (const h of [56, 120, 360]) {
+        const width = h === 56 ? 200 : 360;
+        const card = { x: wa.x + 12, y: wa.y + wa.height - 12 - h, width, height: h };
+        const small = deskViewBounds(deskViewStart(wa, card), false, wa, card);
+        const large = deskViewBounds(small, true, wa, card);
+        for (const b of [small, large]) {
+          expect(inside(b, wa), `${wa.width} ${h}`).toBe(true);
+          expect(overlaps(b, card), `${wa.width} ${h}`).toBe(false);
+          expect(b.width, `${wa.width} ${h}`).toBeGreaterThan(100);
+        }
+        expect(large.width / large.height).toBeCloseTo(980 / 646, 2);
+        expect(deskViewBounds(large, false, wa, card)).toEqual(small);
+        // Dragged towards the handle first: it still grows clear of it.
+        expect(overlaps(deskViewBounds({ ...small, x: wa.x + 100 }, true, wa, card), card)).toBe(false);
+      }
+    }
+  });
+
   it("keeps its bottom edge on screen wherever it was dragged", () => {
     const wa = { x: 0, y: 27, width: 1280, height: 773 };
     for (const b of [{ x: 900, y: 700, width: 340, height: 238 }, { x: -50, y: 0, width: 340, height: 238 }, { x: 16, y: 600, width: 980, height: 646 }]) {
@@ -257,6 +294,18 @@ describe("the desk view at the text size (review #57)", () => {
     expect(large.x + large.width + 12).toBeLessThanOrEqual(pill.x);
     // A scale that can't be read is the default's.
     expect(deskViewBounds(start, false, big, null, Number.NaN)).toEqual(deskViewBounds(start, false, big));
+  });
+
+  it("grows by its bar the same with the handle in the bottom left (Handle position, review #75)", () => {
+    const big = { x: 0, y: 0, width: 1920, height: 1080 };
+    const left = { x: 12, y: 1012, width: 200, height: 56 };
+    for (const [scale, bar] of [[1, 30], [1.15, 35], [1.3, 39]]) {
+      const small = deskViewBounds(deskViewStart(big, left), false, big, left, scale);
+      expect(small, `${scale}`).toEqual({ x: 1920 - 16 - 340, y: 826 - (bar - 30), width: 340, height: 208 + bar });
+      const large = deskViewBounds(small, true, big, left, scale);
+      expect(large, `${scale}`).toEqual({ x: 1920 - 16 - 980, y: 418 - (bar - 30), width: 980, height: 616 + bar });
+      expect(deskViewBounds(large, false, big, left, scale)).toEqual(small);
+    }
   });
 });
 
