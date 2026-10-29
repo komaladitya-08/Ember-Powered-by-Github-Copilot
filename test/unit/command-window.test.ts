@@ -831,6 +831,16 @@ describe("the window's life", () => {
     await expect(none.announce(card(), 4000, new AbortController().signal)).resolves.toBe(false);
     expect(none.announceGone("0123456789abcdef")).toBe(true);
 
+    // More waiting than announceGone keeps: the one that was showing is still reported, not dropped as the oldest.
+    const many = setup();
+    const ids = ["0123456789abcdef", ...Array.from({ length: 32 }, (_, i) => (i + 1).toString(16).padStart(16, "0"))];
+    const burst = ids.map(runId => many.ctl.announce(card({ runId }), 4000, new AbortController().signal));
+    many.win().crash();
+    // Asked on this turn, before the cap drops the oldest: the one that was showing is still "couldn't show it".
+    expect(many.ctl.announceGone(ids[0])).toBe(true);
+    expect(many.ctl.announceGone(ids[32])).toBe(true);
+    await expect(Promise.all(burst)).resolves.toEqual(ids.map(() => false));
+
     // The page's Stop, the bubble's Stop or the stop chord, the task's stop, Stop and close, and a countdown that ran: not gone.
     const d = setup();
     const ac = new AbortController();

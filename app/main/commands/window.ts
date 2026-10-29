@@ -139,7 +139,7 @@ export function awaitsTyping(text: string): boolean {
 /** At most this many pending lines are kept (one per task; a task past it isn't shown). */
 export const MAX_PENDING = 8;
 
-/** At most this many countdowns the window couldn't show to the end are kept for announceGone (the newest). */
+/** At most this many countdowns the window couldn't show to the end are kept for announceGone, once the flows have asked. */
 const MAX_GONE = 32;
 
 /** The port, what the targets runtime needs of the window, and the extras. */
@@ -548,10 +548,17 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     push();
   }
 
+  /** Drops unread ids down to MAX_GONE on a later turn, so a burst can all be reported first (the one that was showing is the oldest). */
+  let trimGone = false;
   /** Run `runId`'s countdown ended because the window couldn't show it to the end (kept for announceGone). */
   function markGone(runId: string): void {
     goneRuns.add(runId);
-    for (const old of goneRuns) { if (goneRuns.size <= MAX_GONE) break; goneRuns.delete(old); }
+    if (goneRuns.size <= MAX_GONE || trimGone) return;
+    trimGone = true;
+    setTimeout(() => {
+      trimGone = false;
+      for (const old of goneRuns) { if (goneRuns.size <= MAX_GONE) break; goneRuns.delete(old); }
+    }, 0);
   }
 
   /**
