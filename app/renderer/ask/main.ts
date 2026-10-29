@@ -103,8 +103,13 @@ input.addEventListener("keydown", e => {
 input.addEventListener("input", fit);
 window.addEventListener("keydown", e => { if (e.key === "Escape") window.emberAsk.close(); });
 window.addEventListener("focus", () => input.focus());
-// Each time the box opens: where Ember will look (so nothing is sent by surprise) and the earlier questions. The
-// update once the quick look is done (not `opened`) keeps the user's place in the history and what they were typing.
+// The box went away: what was left in it (after Esc, or a click away) is selected, so typing replaces it when it opens
+// again instead of running on from it ("draftwhat can you do"); End or a click keeps it. Done now, while nothing can be
+// typed: done as the box opened, it selected the letters already typed, and the next one replaced them (review #78).
+window.emberAsk.onHidden(() => input.select());
+// Each time the box opens (sent before its window is shown): where Ember will look (so nothing is sent by surprise) and
+// the earlier questions. The update once the quick look is done (not `opened`) keeps the user's place in the history
+// and what they were typing.
 window.emberAsk.onContext(c => {
   history.context(c.history, c.opened === true);
   // "↑ earlier questions" only when there are some.
@@ -128,9 +133,8 @@ window.emberAsk.onContext(c => {
   if (live !== null) seesLive.textContent = said = live;
   fitMeta();
   input.focus();
-  // Opened again: what was left in it (after Esc, or a click away) is selected, so typing replaces it instead of
-  // running on from it ("draftwhat can you do"); End or a click keeps it. Main opened the window one line tall.
-  if (c.opened) { input.select(); shownRows = 1; }
+  // Main opens the window one line tall.
+  if (c.opened) shownRows = 1;
   fit();
 });
 // Typed while the box was opening: it goes where the caret is, as if typed here.

@@ -42,6 +42,8 @@ export const IPC = {
   askTyped: "agent:ask-typed",
   /** The ask box's field needs this many lines (1 to 4) for its text: the box grows to fit. */
   askFit: "agent:ask-fit",
+  /** The ask box went away: what was left in its field is selected, so typing replaces it when the box opens again. */
+  askHidden: "agent:ask-hidden",
   /** Hide/show Ember and stay put/follow, from the settings window (the handle menu isn't keyboard-reachable). */
   presence: "ember:presence",
   setPresence: "ember:set-presence",
@@ -209,7 +211,10 @@ export interface AskContext {
   /** The user is in a private window (never-look list, password prompt): Ember reads nothing there. */
   privateWindow?: boolean;
   history: string[];
-  /** The box has just opened (not a later update of what Ember will see): what was left in it is selected. */
+  /**
+   * The box is opening (sent before its window is shown; not a later update of what Ember will see): back to the newest
+   * earlier question, one line tall. What was left in it was selected as it went away (onHidden).
+   */
   opened?: boolean;
   /** Where a request goes when it names no computer (the picker's choice, §8.1); absent or null: this computer. */
   target?: TargetSummary | null;
@@ -221,6 +226,8 @@ export interface EmberAskApi {
   onContext(fn: (c: AskContext) => void): void;
   /** Text typed before the box had the keyboard: it goes in the box (Enter sends it, Esc closes the box). */
   onTyped(fn: (t: { text: string; submit: boolean; cancel: boolean }) => void): void;
+  /** The box went away (nothing can be typed in it now): what was left in the field is selected for the next opening. */
+  onHidden(fn: () => void): void;
   /** The page needs `rows` rows (the field's 1 to 4 lines, and one for the note when a paste was cut): the box grows to fit. */
   fit?(rows: number): void;
 }

@@ -193,13 +193,16 @@ export class AskWindow {
   }
 
   private reveal(win: BrowserWindow): void {
+    // What the box shows (where Ember will look, the earlier questions) goes first: the page has it before the window
+    // has the keyboard, so nothing it does on opening lands on letters already typed into it (review #78).
+    this.sendContext();
     try { win.setIgnoreMouseEvents(false); } catch { /* test double */ }
-    this.o.onReveal?.(this.source);
     win.show();
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
     try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }
-    this.sendContext();
+    // Said once the box is up: a log line written before it would hold up the keyboard.
+    this.o.onReveal?.(this.source);
   }
 
   /**
@@ -292,6 +295,9 @@ export class AskWindow {
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
     // looks like the box opening by itself). While hidden it takes no pointer.
     try { this.win.setIgnoreMouseEvents(true); } catch { /* test double */ }
+    // What was left in the field is selected now, while nothing can be typed in it, so typing replaces it when the box
+    // opens again (selected as it opened, it took the letters typed first: review #78).
+    if (!this.win.webContents.isLoading()) this.win.webContents.send(IPC.askHidden);
   }
 
   /**
