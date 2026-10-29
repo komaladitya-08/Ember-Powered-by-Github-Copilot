@@ -1656,16 +1656,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (e.kind === "ssh" && e.host && e.state !== "ready") { void connect(e.host.id, { interactive: true, activate: true }); return; }
     setActive(id);
   }
-  /** A button of the runtime's bubble was pressed too soon after it showed (ARM_MS; only the board can tell). */
-  const tooSoon = (): boolean => {
-    const shownFor = board()?.shownFor;
+  /**
+   * A button of the runtime's bubble (`id`) was pressed too soon after it showed (ARM_MS; only the board can tell): an
+   * offer's on the offers' board when there is one, else the notices'.
+   */
+  const tooSoon = (id: string): boolean => {
+    const shownFor = ((id.startsWith("offer:") ? offerBoard() : null) ?? board())?.shownFor;
     return typeof shownFor === "number" && shownFor < ARM_MS;
   };
   const bubbleAction = (id: string): boolean => {
     if (typeof id !== "string") return false;
     try {
       // Handled (never passed on as a question's answer), and nothing done: the press came before it could be meant.
-      if (/^(offer|conn):/.test(id) && tooSoon()) { log.info("targets.press_too_soon", {}); return true; }
+      if (/^(offer|conn):/.test(id) && tooSoon(id)) { log.info("targets.press_too_soon", {}); return true; }
       let m = /^ui:cmdstop:([0-9a-f]{16})$/.exec(id);
       if (m) { commandWindow.cancelAnnounce(m[1]); return true; }
       m = /^ui:panel:(\d+)$/.exec(id);

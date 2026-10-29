@@ -1678,10 +1678,14 @@ describe("offers in the bubble (review #14)", () => {
     s.advance(60_000);
     expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
     expect(r.t.summaries().find(t => t.id === "ssh:build-01")?.state).toBe("lost");
-    // Answered (Stop trying): the offer shows now, for its own 25 s.
+    // Answered (Stop trying): the offer shows now, for its own 25 s, and takes no press in its first half second.
     s.advance(1000);
     expect(r.t.bubbleAction(s.screen().actions[1].id)).toBe(true);
     await flush();
+    expect(s.screen().title).toBe("You're connected to web-07");
+    const never = s.screen().actions.find(a => a.label === "Don't offer again")!.id;
+    expect(r.t.bubbleAction(never)).toBe(true);
+    expect(r.settings.get().targets.dismissedOffers).toEqual([]);
     expect(s.screen().title).toBe("You're connected to web-07");
     s.advance(24_900);
     expect(s.screen().title).toBe("You're connected to web-07");
