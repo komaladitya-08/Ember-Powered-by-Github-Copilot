@@ -201,6 +201,15 @@ const CONFUSABLES: Record<string, string> = {
  */
 const INVISIBLE = /[\p{Cf}\u00ad\u115f\u1160\u180e\u2800\u3164\uffa0]|\u034f|\u17b4|\u17b5|\u180b|\u180c|\u180d|\u180f/gu;
 
+/**
+ * A window's app as the vocabulary's lists of apps match it: trimmed, without the characters that show nothing. macOS
+ * reports an app by its name in the user's language, which Apple writes with soft hyphens in places (German System
+ * Settings is "System" + U+00AD + "einstellungen"), and a name in a list would miss it (cross-review X15).
+ */
+export function appNameOf(app: string): string {
+  return app.replace(INVISIBLE, "").trim();
+}
+
 /** What a label says, ready for matching: compatibility forms folded, invisible characters gone, look-alikes mapped. */
 export function normalizeLabel(s: string): string {
   return s.normalize("NFKC")
@@ -419,7 +428,7 @@ const SECRET_FIELD = /\b(password|passphrase|passcode|pin|card ?number|credit ?c
  * while it has the keyboard Ember treats it as one (it never acts in the shell anyway).
  */
 export function isSecurityWindow(w: { app?: string; title?: string; name?: string }, os: OS = "linux"): boolean {
-  const app = (w.app ?? "").trim();
+  const app = appNameOf(w.app ?? "");
   if (SECURITY_APP[os]?.test(app)) return true;
   if (SECURITY_TITLE[os]?.test(normalizeLabel(w.title ?? w.name ?? ""))) return true;
   return SECURITY_CLASS[os].includes(app.toLowerCase());
@@ -1954,7 +1963,7 @@ export class PolicyEngine {
     const secureField = secureTitle || securityTalk(name);
     const secure = (what: string): Risk => ({ reason: SECURITY_SETTING, about: securityTalk(what) || !r.dialog ? what : `${what} ${r.dialog.name}`.trim() });
     // The system's own Settings app (SETTINGS_APP): every setting changed there is asked about, whatever its label says.
-    const systemSettings = SETTINGS_APP[os]?.test(r.app.trim()) ?? false;
+    const systemSettings = SETTINGS_APP[os]?.test(appNameOf(r.app)) ?? false;
     const system = (what: string): Risk => ({ reason: "this changes a system setting, which may weaken the computer's protection", about: what });
     // A dialog about a file someone else is using or has changed (LibreOffice's "Document in Use", "Document Has Been
     // Changed by Others"): going ahead anyway ("Open", "Save Anyway") is asked; backing off (Cancel, read-only) isn't.

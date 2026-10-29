@@ -454,14 +454,21 @@ export function focusedElement(nodes: AxNode[]): AxNode | null {
 }
 
 /**
+ * A name as the never-look list matches it: without format characters (macOS names some apps with a soft hyphen:
+ * German System Settings is "System" + U+00AD + "einstellungen"), composed (macOS may give an accented name with the
+ * accent apart), in lower case (cross-review X15).
+ */
+const lookFold = (s: string) => s.replace(/\p{Cf}/gu, "").normalize("NFC").toLowerCase();
+
+/**
  * True when the app or window matches the user's "never look at" list. A default entry that is an everyday word
  * (NEVER_LOOK_APP_ONLY: "keeper", "seahorse") is matched against the app only, never the title.
  */
 export function isNeverLook(window: { app: string; name: string }, list: string[]): boolean {
-  const hay = `${window.app} ${window.name}`.toLowerCase();
-  const app = window.app.toLowerCase();
+  const app = lookFold(window.app);
+  const hay = `${app} ${lookFold(window.name)}`;
   return list.some(item => {
-    const i = item.trim().toLowerCase();
+    const i = lookFold(item).trim();
     return !!i && (NEVER_LOOK_APP_ONLY.has(i) ? app.includes(i) : hay.includes(i));
   });
 }
