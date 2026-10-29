@@ -518,11 +518,11 @@ describe("the card's words from the classifier (review #214)", () => {
   });
 
   it("says what Ember can't tell in plain words", () => {
-    expect(says("ls $(pwd)")).toContain("Ember can't tell which arguments ls gets.");
+    expect(says("ls $(cat names.txt)")).toContain("Ember can't tell which arguments ls gets.");
     expect(says("echo $\"hi\"")).toContain("It uses locale-translated text ($\"…\"), which Ember can't check.");
     expect(says("$ExecutionContext.InvokeCommand.InvokeScript('ls')", "powershell", "win32")).toContain("It uses PowerShell's $ExecutionContext, which Ember can't follow.");
     expect(says("^d^e^l x.txt", "cmd", "win32")).toContain("It hides the program's name with ^ characters, so Ember can't tell what runs.");
-    const all = [...says("ls $(pwd)"), ...says("echo $\"hi\""), ...says("^d^e^l x.txt", "cmd", "win32")];
+    const all = [...says("ls $(cat names.txt)"), ...says("echo $\"hi\""), ...says("^d^e^l x.txt", "cmd", "win32")];
     for (const l of all) expect(l).not.toMatch(/is given\.|a translated string|\^ escapes/);
   });
 });

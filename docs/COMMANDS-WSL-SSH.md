@@ -119,29 +119,43 @@ Ember stops and asks before a command that:
 - **deletes or destroys data**: `rm`, `rmdir`, `del`, `Remove-Item`, `find -delete`, `git clean`,
   `git reset --hard`, discarding changes (`git checkout -- <file>`, `git restore`), `git branch -D`,
   `git stash drop`, overwriting a file that exists (`>`, `cp` or `mv` onto it, `dd of=`, `tee` without `-a`),
-  `truncate`, formatting or partitioning a disk, emptying the trash, and package scripts or make targets named
-  clean, wipe, purge, reset and the like;
+  `truncate`, formatting or partitioning a disk, emptying the trash, giving a container a folder outside your project
+  that it can change (`docker run -v ~/Documents:/d`; a read-only `:ro` mount doesn't ask), and package scripts or
+  make targets named clean, wipe, purge, reset and the like;
 - **submits or publishes anywhere**: `git push`, pull requests, releases and repository changes on GitHub (`gh pr
   create`, `gh release create`, `gh api` with a write), `p4 submit`, `p4 shelve`, publishing packages (`npm publish`,
   `twine upload`, `docker push`), copying files or sending data to another computer or service (`scp`, `rsync host:`,
-  `curl -T`, `curl -d`, `ssh host <command>`), changing cloud services or clusters (`kubectl apply`,
-  `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
+  `curl -T`, `curl -d`, `ssh host <command>`, a file fed to `openssl s_client`), adding your key to another computer
+  (`ssh-copy-id`), using a share on another computer (`dir \\server\share`, `net use`, `New-PSDrive` on Windows,
+  `mount_smbfs` on a Mac), which signs in there with your account, starting a server other computers can reach or
+  one that shares a folder outside your project (`python3 -m http.server`, `php -S 0.0.0.0:8000`, `caddy
+  file-server`, `miniserve`, `busybox httpd`; one on `127.0.0.1` or `localhost` serving your project doesn't ask, but
+  `caddy reverse-proxy` listens on every address whatever `--from` says),
+  opening a tunnel from the internet (`cloudflared tunnel`, `ngrok http`), changing cloud services or clusters
+  (`kubectl apply`, `terraform apply`), and scripts or targets named deploy, publish, release, push and the like;
 - **deletes from source control or a service**: `git push --force`, deleting a remote branch or tag, `p4 delete`,
   `p4 obliterate`, `p4 revert` of opened work, `gh repo delete`, `kubectl delete`, `terraform destroy`;
 - **reads or changes passwords, keys or other secrets**: anything under `~/.ssh` (except reading public keys,
   `known_hosts` and `config`), `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.config/gh`, `~/.docker/config.json`,
-  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, keychains and credential stores, browser profiles, password managers,
-  `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
+  `.netrc`, `.npmrc`, `.pypirc`, `.env` files, GitHub Copilot's sign-in (`~/.config/github-copilot`, `~/.copilot`), cloud
+  and hosting tools' sign-ins (`~/.config/gcloud`, `~/.oci`, `~/.config/doctl`), Kerberos tickets, the display's key
+  (`~/.Xauthority`), chat apps' and VS Code's stored sign-ins, keychains and credential stores, browser profiles,
+  password managers, `/etc/shadow`, your shell history; printing tokens or environment variables that may hold them (`gh auth token`,
   `env`, `printenv`); reading the clipboard; taking a screenshot without Ember's privacy filters; a password or token
   written on the command line;
 - **changes the system or needs privileges**: `sudo`, `su`, `runas`, installing or removing packages (`apt`, `dnf`,
-  `brew`, `winget`, `npm install`, `pip install`), services, the registry, the firewall, users and groups,
+  `brew`, `winget`, `npm install`, `pip install`), services, the registry and desktop settings (`gsettings set`,
+  `dconf write`, and `defaults write` to the screen saver, firewall and remote-access settings), the firewall, the
+  certificates the computer trusts, users and groups, giving a container the container engine's socket or a system
+  folder (`docker run -v /var/run/docker.sock:…`, `-v /usr:…`),
   permissions changed recursively or outside your home, scheduled tasks and login items, shutting down or logging
-  out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `$PROFILE`) and git
-  hooks;
+  out, stopping other programs (`kill`, `taskkill`), your shell's start-up files (`~/.bashrc`, `~/.bashrc.d`,
+  `$PROFILE`) and git hooks, putting a program in a folder your shell searches for commands (`~/.local/bin`, `~/bin`),
+  settings a program runs code from (`~/.vimrc`, `~/.tmux.conf`, `~/.config/pip`, `~/.cargo/config.toml`), and
+  launchers and desktop extensions (`~/.local/share/applications`, GNOME Shell extensions), even when the file is new;
 - **downloads code and runs it, or keeps running after Ember stops**: `curl … | sh`, `iwr … | iex`, running a file
-  downloaded in this task, `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without
-  `-Wait`;
+  downloaded in this task, running a program or script from another computer's share (`\\server\share\x.exe`),
+  `npx <package>`, `nohup`, `setsid`, `&`, `docker run -d`, `Start-Process` without `-Wait`;
 - **Ember can't read with certainty**: `eval`, encoded commands (`powershell -EncodedCommand`, `base64 -d | sh`),
   aliases it can't see, unusual syntax, and interactive programs such as `vim`, `less`, `top` or `python` with no
   script ("This opens an interactive program; you'd have to use it yourself in the command window.").

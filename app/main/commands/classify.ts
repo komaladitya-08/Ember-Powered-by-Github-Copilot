@@ -16,7 +16,7 @@ import { lexPosix, type PList, type PSimple, type PWord, type PRedir, type Uncle
 import { lexPowerShell, restrictedExpression, type PsArg, type PsCommand, type PsRedir, type PsSeg, type PsStatement } from "./lex-powershell";
 import { lexCmd, type CSimple, type CWord } from "./lex-cmd";
 import {
-  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, parseOpts, programName, values,
+  type Arg, type OptSpec, type Parsed, has, isOption, joinList, lit, nonAsciiLetters, optIs, parseOpts, programName, values,
 } from "./words";
 import {
   type PathEnv, type PathUse, WRITES, baseName, flavourOf, globPrefix, globReaches, globRegExp, globWriteKind, holdsEmberPath,
@@ -124,6 +124,7 @@ export const SAYS = {
   downloadsAndRuns: "Downloads code and runs it.",
   opensProgram: "Opens a program that keeps running after Ember stops.",
   runsDownloaded: "Runs a file downloaded in this task.",
+  scriptStream: "It runs a script from a stream, which Ember can't read first.",
   downloadsProgram: "Downloads a program and runs it.",
   unclear: "Ember can't tell exactly what this does.",
   interactive: "This opens an interactive program; you'd have to use it yourself in the command window.",
@@ -175,6 +176,11 @@ interface Simple {
   redirs: Redir[];
   /** Where stdin comes from. */
   stdin: "pipe" | "heredoc" | "file" | null;
+  /**
+   * A here-document's or here-string's text, when it is stdin and Ember can read all of it (quoted, or without
+   * expansions); null when it can't. A program that reads its own program text from stdin is judged by it (review #166).
+   */
+  stdinText?: string | null;
   /** An earlier command in its pipeline fetches from the network or decodes hidden text. */
   fetchBefore: boolean;
   background: boolean;
@@ -344,9 +350,14 @@ class Classifier {
         if (WRITES.has(use) && /^[\\/]{2}\.[\\/](physicaldrive\d+|[a-z]:)$/i.test(text)) this.add("destroy", "path.disk", `Overwrites the disk ${text}.`);
         return { kind: "other", text, abs: null };
       }
-      if (/^[\\/]{2}[^\\/?.]/.test(text) && WRITES.has(use)) {
+      if (/^[\\/]{2}[^\\/?.]/.test(text)) {
+        // Another computer's share: Windows connects and signs in there with the user's account before anything is
+        // read, so even a listing hands that computer what it needs to pose as the user (review #171).
         const host = /^[\\/]{2}([^\\/]+)/.exec(text)?.[1] ?? "";
-        this.add("publish", "upload.unc", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }] });
+        const objects: Obj[] = [{ kind: "host", text: host, abs: null }];
+        if (WRITES.has(use)) this.add("publish", "upload.unc", `Sends data to ${host}.`, { objects });
+        else if (use === "exec") this.add("escape", "escape.run-remote", `Runs a program from another computer (${host}).`, { objects });
+        else this.add("publish", "net.unc", `Connects to ${host} and signs in there with your Windows account.`, { objects });
       }
     }
     if (sc.path.flavour === "posix" && (text === "~" || text.startsWith("~/")) && !sc.home) {
@@ -498,6 +509,8 @@ class Classifier {
       case "autostart": this.add("system", "path.autostart", "Schedules something to run later or at login."); break;
       case "system": this.add("system", "path.system", "Changes system files."); break;
       case "disk": this.add("destroy", "path.disk", `Overwrites the disk ${text}.`); break;
+      case "bin": this.add("system", "path.bin", "Changes which program a command name runs."); break;
+      case "program-config": this.add("system", "path.program-config", "Changes what a program runs the next time you use it."); break;
     }
   }
 
@@ -515,7 +528,7 @@ class Classifier {
     const abs = resolveTargetPath(a.v, { os: sc.os, home: sc.home ?? "", cwd: sc.cwd ?? "" });
     const stream = (p: string) => sc.path.flavour === "posix" && /^\/(dev|proc)\//.test(p);
     if (stream(abs)) {
-      this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first.");
+      this.unclear("unclear.script-stream", SAYS.scriptStream);
       return;
     }
     // A shell or the kernel opens the name as written, walking `..` through links (`sh sub/../t.sh` with sub a link
@@ -530,7 +543,7 @@ class Classifier {
       this.addProbe(open);
       real = this.ctx.real?.get(open);
       if (!real) { this.unclear("unclear.script-path", SCRIPT_UNSURE); return; }
-      if (stream(real)) { this.unclear("unclear.script-stream", "It runs a script from a stream, which Ember can't read first."); return; }
+      if (stream(real)) { this.unclear("unclear.script-stream", SAYS.scriptStream); return; }
     }
     // A secret or one of Ember's own files is never read as a script: running it already asks or is refused (the path's
     // own rule), and its text has no business on a card.
@@ -665,6 +678,26 @@ const CMDLETS: Record<string, Handler> = {};
 const CMD_BUILTINS: Record<string, Handler> = {};
 const reg = (table: Record<string, Handler>, names: readonly string[], fn: Handler): void => { for (const n of names) table[n] = fn; };
 
+/** A substitution that is only `pwd`, with no arguments, redirections or assignments. */
+function lonePwd(list: PList): boolean {
+  const item = list.items.length === 1 ? list.items[0] : null;
+  const pipe = item && !item.background && item.pipes.length === 1 ? item.pipes[0] : null;
+  const cmd = pipe && !pipe.bang && pipe.cmds.length === 1 ? pipe.cmds[0] : null;
+  return cmd !== null && cmd.kind === "simple" && cmd.assigns.length === 0 && cmd.redirs.length === 0 && cmd.words.length === 1
+    && cmd.words[0].segs.every(seg => seg.t === "lit") && cmd.words[0].segs.map(seg => (seg.t === "lit" ? seg.s : "")).join("") === "pwd";
+}
+/** A PowerShell subexpression that is only Get-Location (or its aliases pwd and gl), with no arguments or redirections. */
+function lonePsLocation(list: PsStatement[]): boolean {
+  const el = list.length === 1 && list[0].assign === null && list[0].elements.length === 1 ? list[0].elements[0] : null;
+  return el !== null && el.kind === "command" && !el.call && !el.background && el.args.length === 0 && el.redirs.length === 0
+    && el.name.segs.every(seg => seg.t === "lit") && /^(get-location|pwd|gl)$/i.test(el.name.segs.map(seg => (seg.t === "lit" ? seg.s : "")).join(""));
+}
+
+/** A file name that is the program's stdin (`-`, `/dev/stdin`, `/dev/fd/0`, `/proc/self/fd/0`). */
+const STDIN_NAME = /^(-|\/dev\/stdin|\/dev\/fd\/0|\/proc\/(self|\d+)\/fd\/0)$/;
+/** A file name that is one of the program's open descriptors (`/dev/fd/3`, `/proc/self/fd/3`); fd 0 is STDIN_NAME. */
+const STREAM_NAME = /^(\/dev\/fd\/\d+|\/proc\/(self|\d+)\/fd\/\d+)$/;
+
 /** A URL (`https://…`, `file:///…`, `s3://…`, `git@host:…`). */
 const URL_LIKE = /^[a-z][a-z0-9+.-]*:\/\//i;
 const SCP_LIKE = /^(?:[A-Za-z0-9._%+-]+@)?[A-Za-z0-9.-]+:(?![\\/]{2})/;
@@ -703,6 +736,7 @@ export function writesUnnamedFiles(key: string, args: readonly Arg[]): boolean {
     return undefined;
   };
   switch (key) {
+    case "cmake": return vs[0] === "-E" && vs[1] === "tar" && writesUnnamedFiles("tar", args.slice(2));
     case "tar": case "bsdtar": case "gtar":
       return opt(/^--(extract|get)\b|^-[A-Za-z]*x/) || /^[A-Za-wyz]*x[A-Za-z]*$/.test(vs[0] ?? "");
     case "unzip": return !opt(/^-[A-Za-z]*[lvtZp]/);
@@ -761,6 +795,7 @@ export function unnamedWriteFolders(key: string, args: readonly Arg[], sc: Pick<
     return out;
   };
   switch (key) {
+    case "cmake": return vs[0] === "-E" && vs[1] === "tar" ? unnamedWriteFolders("tar", args.slice(2), sc) : null;
     case "tar": case "bsdtar": case "gtar": {
       const dirs: string[] = [];
       for (let k = 0; k < vs.length; k++) {
@@ -1170,23 +1205,41 @@ class Engine extends Classifier {
     const redirs = c.redirs.map(r => this.posixRedir(r, sc));
     const stdin: Simple["stdin"] = c.redirs.some(r => r.op === "<<" || r.op === "<<-" || r.op === "<<<") ? "heredoc"
       : c.redirs.some(r => r.op === "<") ? "file" : o.stdinPipe ? "pipe" : null;
+    const stdinText = stdin === "heredoc" ? this.hereText(c.redirs, sc) : undefined;
     if (c.words.length === 0) {
       this.newCommand("", [], sc, redirs, o.background, o.pipedFrom);
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
       this.redirects(redirs, sc);
       return;
     }
-    this.simple({ words, redirs, stdin, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
+    this.simple({ words, redirs, stdin, stdinText, fetchBefore: this.pipe.fetch, background: o.background, pipedFrom: o.pipedFrom }, sc, () => {
       this.assignments(c.assigns.map(a => ({ name: a.name, value: this.posixWord(a.value, sc, false) })), sc);
     });
   }
 
-  /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`); anything else unresolved. */
+  /**
+   * The text the last here-document or here-string on stdin hands the program: a here-string's word (with its newline),
+   * a quoted here-document's body, or an unquoted one's when it expands nothing. null when Ember can't see all of it.
+   */
+  private hereText(redirs: PRedir[], sc: Scope): string | null {
+    const last = redirs.filter(r => (r.fd === null || r.fd === 0) && r.dup === undefined && ["<", "<<", "<<-", "<<<"].includes(r.op)).pop();
+    if (!last) return null;
+    if (last.op === "<<<") {
+      const v = last.target ? this.posixWord(last.target, sc, false).v : null;
+      return v === null ? null : `${v}\n`;
+    }
+    if (!last.heredoc) return null;
+    return last.heredoc.quoted || !/[$`\\]/.test(last.heredoc.body) ? last.heredoc.body : null;
+  }
+
+  /** A POSIX word's value with the scope's home and folder (`~`, `$HOME`, `$PWD`, `$(pwd)`); anything else unresolved. */
   posixWord(w: PWord, sc: Scope, fetch: boolean): Arg {
     let v = "";
     let pattern = "";
     let unquoted = "";
     let unresolved = false;
+    // A word whose only substitution is a plain `$(pwd)` or `` `pwd` `` gives the folder, as `$PWD` does (review #170).
+    const cwdSub = w.subs.length === 1 && w.segs.filter(seg => seg.t === "unres" && seg.why === "command substitution").length === 1 && lonePwd(w.subs[0]);
     for (const seg of w.segs) {
       if (seg.t === "lit") {
         v += seg.s;
@@ -1196,6 +1249,9 @@ class Engine extends Classifier {
         const val = seg.name === "HOME" ? sc.home : seg.name === "PWD" ? sc.cwd : null;
         if (val === null) unresolved = true;
         else { v += val; pattern += val.replace(/[*?[\]\\]/g, "\\$&"); }
+      } else if (seg.t === "unres" && seg.why === "command substitution" && cwdSub && sc.cwd) {
+        v += sc.cwd;
+        pattern += sc.cwd.replace(/[*?[\]\\]/g, "\\$&");
       } else if (seg.t === "tilde") {
         if (seg.user !== "") unresolved = true;
         // A home Ember doesn't know stays `~` (judged as some user's home, never probed: usePath).
@@ -1329,7 +1385,10 @@ class Engine extends Classifier {
   /** A PowerShell argument as one or more values (an array gives one per element). */
   psArgValues(a: PsArg, sc: Scope): Arg[] {
     if (a.items) return a.items.map(segs => this.psValue(segs, a.raw, sc, a.quoted));
-    return [this.psValue(a.segs, a.raw, sc, a.quoted)];
+    // A value whose only subexpression is a plain `$(Get-Location)` or `$(pwd)` gives the folder, as `$PWD` does (#170).
+    const cwdSub = a.subs.length === 1 && a.segs.filter(seg => seg.t === "unres" && seg.why === "subexpression").length === 1 && lonePsLocation(a.subs[0]);
+    const segs = cwdSub ? a.segs.map(seg => (seg.t === "unres" && seg.why === "subexpression" ? { t: "var" as const, name: "pwd" } : seg)) : a.segs;
+    return [this.psValue(segs, a.raw, sc, a.quoted)];
   }
 
   /** PowerShell redirections in the shared form (`*>` as `&>`; a merge such as `2>&1` writes no file). */
@@ -1461,7 +1520,7 @@ class Engine extends Classifier {
     const obj = this.usePath(t, "append", sc);
     if (obj.abs === null) { this.add("destroy", rule, "Writes to a file Ember can't name."); return; }
     const k = writeKind(obj.abs, sc.path);
-    if (k === "startup" || k === "hook" || k === "git-config" || k === "wsl-config" || k === "autostart") return;
+    if (k === "startup" || k === "hook" || k === "git-config" || k === "wsl-config" || k === "autostart" || k === "bin" || k === "program-config") return;
     if (!inWorkTree(obj.abs, sc.path) || homeDotFile(obj.abs, sc.path)) {
       this.add("destroy", rule, `Adds to ${obj.text}, outside your project.`, { objects: [obj] });
     }
@@ -1562,8 +1621,9 @@ class Engine extends Classifier {
     const windowsSide = sc.os === "win32" || sc.family !== "posix" || pn.interop;
     if (windowsSide && (key === "bash" || (!NATIVE[key] && DISTRO_LAUNCHER.test(key)))) { distroLauncher(h); return; }
     const n = NATIVE[key];
-    if (n) { n(h); return; }
-    generic(h);
+    if (n) n(h);
+    else generic(h);
+    optionPaths(h, !n);
   }
 
   /** Every argument read as a possible path (an unknown program's operands): secrets and Ember's paths judged. */
@@ -1660,6 +1720,7 @@ class Engine extends Classifier {
     const n = NATIVE[key];
     if (n) n(inner);
     else generic(inner);
+    optionPaths(inner, !n);
     this.unnamedWrites(key, inner.args, sc);
     this.afterArgs(inner.args);
     this.afterRun(key, inner.args, { ...h.s, redirs: [] }, sc);
@@ -1847,7 +1908,21 @@ function interactive(h: H): void {
     case "mongo": case "mongosh": if (!(has(p, "eval", "version") || ops.some(o => o?.endsWith(".js")) || stdin)) add(); return;
     case "redis-cli": if (!(ops.length >= 1 || stdin || has(p, "version", "v"))) add(); return;
     case "bc": case "dc": if (!(ops.length >= 1 || stdin || has(p, "version", "v"))) add(); return;
-    case "ed": case "ex": if (!stdin) add(); return;
+    case "ed": case "ex": {
+      // Script fed on stdin or a here-document: a `!` line, or `r !`/`w !`, runs a shell command (review #166).
+      if (!stdin) { add(); return; }
+      const edited = parseOpts(a, { shortValue: "p" }).operands;
+      fromStdin(h, t => {
+        if (/!/.test(t)) h.e.unclear("unclear.ed-shell", "It can run a shell command from the editor.");
+        // The files its commands name (`r FILE`, `e FILE`, `w FILE`) are read or written, by §3.6's rules (review #166).
+        const named = edFiles(t, edited.length > 0);
+        for (const f of named.read) h.e.usePath(lit(f), "read", h.sc);
+        for (const f of named.write) h.e.usePath(lit(f), "write", h.sc);
+      });
+      // The file the script edits: written (a `w` saves it), so §3.6's rules meet it (review #169).
+      for (const f of edited) h.e.usePath(f, "write", h.sc);
+      return;
+    }
     case "gdb": case "lldb": if (!has(p, "batch", "x", "version", "v")) add(); return;
     case "emacs": if (!has(p, "batch", "version", "script")) add(); else if (has(p, "eval")) h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return;
     case "watch": {
@@ -1862,6 +1937,36 @@ function interactive(h: H): void {
     case "passwd": add(); return;
     default: add();
   }
+}
+
+/**
+ * The files an ed or ex script reads and writes (review #166): `e`/`r FILE` read it, `w FILE` (and ex's `wq`, `x`,
+ * `sav`) write it, and a bare `w` writes the remembered name, which `e`, `f`, and a first `r` or `w` set when the
+ * command line named no file. Text added with `a`, `i` or `c` up to a `.` line is not commands. A name starting with
+ * `!` is a shell command (asked for already).
+ */
+function edFiles(text: string, fileGiven: boolean): { read: string[]; write: string[] } {
+  const read: string[] = [];
+  const write: string[] = [];
+  let remembered: string | null = null;
+  let adding = false;
+  for (const line of text.split("\n")) {
+    if (adding) { if (line === ".") adding = false; continue; }
+    const m = /^[\s:]*(?:[\d.$,;%+\s-]|'[a-z]|\/(?:\\.|[^/\\])*\/|\?(?:\\.|[^?\\])*\?)*([A-Za-z]+)!?\s*(?:>>\s*)?(.*)$/.exec(line);
+    if (!m) continue;
+    const [, cmd, rest] = m;
+    const name = rest.trim() !== "" && !rest.trim().startsWith("!") ? rest.trim() : null;
+    if (/^(a|i|c|append|insert|change)$/.test(cmd)) { adding = true; continue; }
+    if (/^(e|E|ed|edi|edit|r|re|rea|read)$/.test(cmd) && name !== null) {
+      read.push(name);
+      if (!/^r/.test(cmd) || (remembered === null && !fileGiven)) remembered = name;
+    } else if (/^(f|fi|fil|file)$/.test(cmd) && name !== null) remembered = name;
+    else if (/^(w|W|wq|x|xi|xit|exi|exit|wr|wri|writ|write|sav|save|savea|saveas|up|upd|upda|updat|update)$/.test(cmd)) {
+      if (name !== null) { write.push(name); if (remembered === null && !fileGiven) remembered = name; }
+      else if (remembered !== null) write.push(remembered);
+    }
+  }
+  return { read, write };
 }
 
 /** Launchers that hand work to the desktop or a daemon (§3.4.7, critique wsl-6): class f. */
@@ -1904,11 +2009,20 @@ const KNOWN_ORDINARY = new Set([
   "terraform", "aws", "az", "gcloud",
 ]);
 
+/**
+ * Programs with a handler whose names are common words or tools no wrapper runs: as an unknown program's operand
+ * (`mise trust`, `somecli trust list`) they are words, as they were before these handlers existed.
+ */
+const NOT_RUNNERS = new Set([
+  "trust", "plutil", "plistbuddy", "systemsetup", "update-ca-trust", "update-ca-certificates", "bazelisk", "sponge", "unrar", "dpkg-deb",
+  "desktop-file-install", "desktop-file-edit", "update-desktop-database", "busybox", "caddy", "miniserve", "cloudflared", "ngrok",
+  "ssh-copy-id", "mount_smbfs", "mount_afp", "mount_webdav",
+]);
 /** Program keys that, as an unknown program's operand, suggest it runs them (a wrapper Ember doesn't know). */
 let RUNNERS: ReadonlySet<string> | null = null;
 function runners(): ReadonlySet<string> {
   if (!RUNNERS) {
-    const s = new Set<string>(Object.keys(NATIVE).filter(k => !KNOWN_ORDINARY.has(k) && !TEXT.has(k)));
+    const s = new Set<string>(Object.keys(NATIVE).filter(k => !KNOWN_ORDINARY.has(k) && !TEXT.has(k) && !NOT_RUNNERS.has(k)));
     for (const k of ["git", "docker", "kubectl", "npm", "curl", "wget", "python", "python3", "node", "perl", "ruby"]) s.add(k);
     RUNNERS = s;
   }
@@ -1935,6 +2049,61 @@ function generic(h: H): void {
   if (at >= 0) {
     h.e.unclear("unclear.hidden-command", `Ember can't tell how ${h.prog} runs ${h.args[at].v}.`);
     h.e.payload(h.args.slice(at), h.sc, h.prog);
+  }
+}
+
+/** Programs whose arguments name files on another computer or in a container, not here (their own rows judge them). */
+const ELSEWHERE_ARGS = new Set(["ssh", "slogin", "autossh", "mosh", "docker", "podman", "nerdctl", "docker-compose", "podman-compose", "kubectl"]);
+/** Long options whose value names a file the program reads: `--file`, `--input-file`, `--pathspec-from-file`, `--files0-from`. */
+const FILE_OPTION = /(file|files|.-from)$/;
+/** Long options whose value is a file the program writes or a folder it writes into: `--output`, `--outdir`, `--directory-prefix`. */
+const OUTPUT_OPTION = /^(out|output)(-?(file|dir|directory))?$|^(outdir|outfile|directory-prefix|pack-destination)$/;
+/** Known programs whose `-o` names their output (to the others, `nm -o`, `strings -o`, `od -o`, it is a flag or a format). */
+const OUTPUT_O = new Set(["gcc", "g++", "cc", "c++", "clang", "clang++", "ld", "as", "rustc", "strip", "pandoc"]);
+/**
+ * Options naming a settings file the program loads without showing it: MySQL's option files, which keep the password
+ * off the command line (review #174). --print-defaults and my_print_defaults print what they hold.
+ */
+const SETTINGS_FILE_OPTION = new Set(["defaults-file", "defaults-extra-file"]);
+
+/**
+ * Every program's long options whose value names a file it reads or writes, judged after its own row (which may never
+ * look at them). One it reads (`du --files0-from=…`, `git add --pathspec-from-file …`, `date --file=…` show its lines
+ * in their errors) meets the secret and Ember rules as `cat`'s file does (review #174); one it writes, or a folder it
+ * writes into (`--output`, `npm pack --pack-destination`, an unknown program's `-o`: `gcc -o ~/.bashrc`), meets the
+ * start-up, autostart, system and Ember rules too (review #169). Text programs' words and the arguments of programs
+ * that name files elsewhere (another computer, a container) are left out.
+ */
+function optionPaths(h: H, unknown: boolean): void {
+  if (TEXT.has(h.key) || ELSEWHERE_ARGS.has(h.key)) return;
+  const args = h.args;
+  for (let k = 0; k < args.length; k++) {
+    const a = args[k];
+    if (a.v === "--") return;
+    // An unknown program's `-o` (PowerShell hands it over as a parameter, as written).
+    const short = unknown && a.v === "-o" && (!KNOWN_ORDINARY.has(h.key) || OUTPUT_O.has(h.key));
+    if (a.param !== undefined && !short) continue;
+    // A word Ember can't see is still an option by its written name (`--file="$F"`): its value is unknown.
+    const m = /^--([A-Za-z][A-Za-z0-9-]*)(=([\s\S]*))?$/.exec(a.v ?? a.raw);
+    const name = m ? m[1].toLowerCase() : short ? "o" : null;
+    if (name === null) continue;
+    const output = name === "o" || OUTPUT_OPTION.test(name);
+    if (!output && (!FILE_OPTION.test(name) || name.endsWith("profile"))) continue;
+    if (SETTINGS_FILE_OPTION.has(name) && h.key !== "my_print_defaults" && !args.some(x => x.v === "--print-defaults")) continue;
+    // `--file=x` in one word (its pattern, for a glob, is the part after `=`), or `--file x`.
+    const value: Arg | undefined = m && m[2] !== undefined
+      ? { ...a, v: a.v === null ? null : m[3], pattern: a.pattern === undefined ? undefined : a.pattern.slice(a.pattern.indexOf("=") + 1), param: undefined }
+      : args[k + 1];
+    if (value && value.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog || "the program"} gets.`); continue; }
+    if (!value || value.v === null || value.v === "" || STDIN_NAME.test(value.v) || NULL_SINKS.has(value.v.toLowerCase()) || URL_LIKE.test(value.v)) continue;
+    if (!output) { h.e.usePath(value, "read", h.sc); continue; }
+    // An output option's value may be a format (`--output json`, `ps -o pid,comm`): only one that looks like a path.
+    if (!/[~/\\.]/.test(value.v)) continue;
+    // Only §3.6's rules: whether a script this command runs is one it writes is its own row's business (L8).
+    const mark = h.e.written.length;
+    const obj = h.e.usePath(value, "write", h.sc);
+    if (obj.abs !== null && /(dir|directory|prefix|destination)$/.test(name)) h.e.judgeInside(obj.abs, "write", h.sc, value.v);
+    h.e.written.length = mark;
   }
 }
 
@@ -1972,6 +2141,13 @@ reg(NATIVE, ["hostname"], h => {
 });
 reg(NATIVE, ["date"], h => {
   if (h.args.some(a => a.v === "-s" || (a.v ?? "").startsWith("--set"))) h.e.add("system", "system.kernel", "Changes how the system works.");
+  // GNU date -f reads dates from a file and shows each line it can't read in its error, so it reads that file like cat
+  // (review #174). BSD date's -f is an input format.
+  if (h.sc.os === "darwin") return;
+  for (const f of values(opts(h, { shortValue: "dfrs", longValue: ["date", "file", "reference", "set"] }), "f", "file")) {
+    if (f === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+    else if (!STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  }
 });
 
 // cd and friends: the task's folder for what follows (§3.14).
@@ -2050,18 +2226,44 @@ function finishCd(h: H, abs: string | null): void {
 
 // Listing names and sizes reads no file's contents.
 reg(NATIVE, ["ls", "ll", "dir", "vdir", "tree", "du", "stat", "file", "lsd", "exa", "eza"], h => {
-  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style"] });
+  const p = opts(h, { shortValue: h.key === "tree" ? "LPIoH" : h.key === "du" ? "BdXt" : h.key === "stat" ? "cf" : "IwT", longValue: ["ignore", "hide", "format", "time-style", "width", "tabsize", "block-size", "exclude", "max-depth", "threshold", "time", "printf", "output", "sort", "color", "indicator-style", "quoting-style", "files0-from", "exclude-from"] });
   if (h.key === "tree") for (const o of values(p, "o", "output")) if (o) h.e.usePath(lit(o), "write", h.sc);
+  // du reads names from --files0-from and patterns from -X/--exclude-from, and shows the lines in its errors (review
+  // #174): those files are read. `--exclude` is a pattern, not an abbreviation of --exclude-from.
+  if (h.key === "du") {
+    for (const o of p.opts) {
+      const named = o.name === "-X" || (o.name.startsWith("--files0") && "--files0-from".startsWith(o.name)) || (o.name.startsWith("--exclude-") && "--exclude-from".startsWith(o.name));
+      if (named && o.value !== undefined && o.value !== null && !STDIN_NAME.test(o.value)) h.e.usePath(lit(o.value), "read", h.sc);
+    }
+  }
+  // tree --fromfile reads each file it is given as a listing and prints its lines.
+  const use: PathUse = h.key === "tree" && has(p, "fromfile") ? "read" : "list";
   for (const a of p.operands) {
     if (a.v === null) { h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`); continue; }
-    const obj = h.e.usePath(a, "list", h.sc);
+    const obj = h.e.usePath(a, use, h.sc);
     if (obj.abs === null) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
   }
 });
 // grep and friends: a recursive search reads every file under its folders (secrets included unless hidden files are skipped).
 reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], h => {
-  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace"] });
-  if (values(p, "pre").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
+  // git grep's and ugrep's pager value is optional and only follows `=`: written alone, the option takes the default
+  // pager and the next word is the pattern or a file (review #165). ag's and ack's take the next word.
+  const pagerApart = h.key === "git-grep" || h.key === "ugrep" ? [] : ["pager", "open-files-in-pager"];
+  const p = opts(h, { shortValue: h.key === "rg" ? "eftgjmABCEMT" : "efmABCdD", longValue: ["regexp", "file", "max-count", "after-context", "before-context", "context", "include", "exclude", "exclude-dir", "include-dir", "directories", "devices", "label", "binary-files", "color", "colour", "glob", "iglob", "type", "type-not", "type-add", "max-depth", "threads", "encoding", "max-filesize", "sort", "sortr", "path-separator", "pre", "pre-glob", "engine", "ignore-file", "replace", ...pagerApart, "filter", "hostname-bin"] });
+  // Options whose value is a program run on the matches or the matched files (review #165): git grep's pager,
+  // ag/ack/ugrep's pager, ugrep's per-file filter, rg's --pre and --hostname-bin. Seen text is the command it runs.
+  if (values(p, "pre", "hostname-bin").length) h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see.");
+  const pagerCmds = [...values(p, "pager", "open-files-in-pager"), ...values(p, "filter")];
+  if (h.key === "git-grep" && p.opts.some(o => o.value === undefined && optIs(o.name, "open-files-in-pager"))) pagerCmds.push(null);
+  // git grep's -O takes the rest of its word as the pager, after any flags bundled before it (`-nOcmd`); a bundle with
+  // a value option before it (-e, -f, -m, -A, -B, -C) gives that option the rest instead.
+  if (h.key === "git-grep") for (const a of h.args) { const m = /^-([A-Za-z0-9]*?)O(.*)$/.exec(a.v ?? ""); if (m && !/[efmABC]/.test(m[1])) pagerCmds.push(m[2] || null); }
+  for (const cmd of pagerCmds) {
+    if (cmd === null) { h.e.unclear("unclear.rg-pre", "It runs a program on every file Ember can't see."); continue; }
+    // ugrep's filter is `glob:command,glob:command`; the pager options are a plain command line.
+    const text = h.key === "ugrep" && /^[^:,]*:/.test(cmd) ? cmd.split(",").map(part => part.replace(/^[^:]*:/, "")).join("; ") : cmd;
+    h.e.nested(text, "sh", h.sc, `${h.prog} pager`);
+  }
   const patternGiven = values(p, "e", "regexp", "f", "file").length > 0;
   for (const f of values(p, "f", "file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   const files = patternGiven ? p.operands : p.operands.slice(1);
@@ -2077,7 +2279,12 @@ reg(NATIVE, ["grep", "egrep", "fgrep", "rg", "ag", "ack", "ugrep", "git-grep"], 
 });
 reg(NATIVE, ["mysql", "mariadb", "mysqldump", "mysqladmin", "mysqlimport"], h => {
   if (h.args.some(a => a.v !== null && /^-p.+/.test(a.v))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
-  if (h.key === "mysql" || h.key === "mariadb") { interactive(h); databaseText(h, inlineSql(h, ["e"], ["execute"])); }
+  if (h.key === "mysql" || h.key === "mariadb") {
+    interactive(h);
+    databaseText(h, inlineSql(h, ["e"], ["execute"]));
+    // SQL read from stdin or a here-document (`mysql <<< 'system id'`): judge the seen text, else ask (review #166).
+    if (!inlineSql(h, ["e"], ["execute"]).length) sqlFromStdin(h);
+  }
   if (h.key === "mysqladmin" && h.args.some(a => /^(drop|shutdown|flush-|kill|password|reload|refresh)/.test(a.v ?? ""))) h.e.add("destroy", "db.change", "Changes or deletes data in a database.");
   for (const r of h.args) if (r.v && /^--result-file=/.test(r.v)) h.e.usePath(lit(r.v.slice(14)), "write", h.sc);
 });
@@ -2105,6 +2312,14 @@ function inlineSql(h: H, short: string[], long: string[]): (string | null)[] {
   return out;
 }
 
+/**
+ * SQL a client reads from stdin: a here-document or another program's output is judged when seen, else asks (review
+ * #166). A file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does.
+ */
+function sqlFromStdin(h: H): void {
+  if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") fromStdin(h, t => databaseText(h, [t]));
+}
+
 /** A database client's own text: changing data is class a; running programs or touching files from it is unclear. */
 function databaseText(h: H, texts: (string | null)[]): void {
   for (const t of texts) {
@@ -2117,13 +2332,34 @@ function databaseText(h: H, texts: (string | null)[]): void {
 reg(NATIVE, ["psql", "sqlite3", "sqlite", "duckdb", "sqlcmd", "cqlsh", "clickhouse-client", "mongo", "mongosh", "redis-cli", "sqlplus"], h => {
   if (INTERACTIVE.has(h.key)) interactive(h);
   const k = h.key;
-  if (k === "psql") databaseText(h, inlineSql(h, ["c"], ["command"]));
+  if (k === "psql") {
+    databaseText(h, inlineSql(h, ["c"], ["command"]));
+    // SQL read from stdin or a here-document (`psql <<< '\! id'`, `psql -f - <<< …`): judge the seen text, else ask;
+    // a file given as another descriptor (`-f /dev/fd/3`) can't be read first (review #166).
+    const files = inlineSql(h, ["f"], ["file"]);
+    if (files.some(f => f !== null && STDIN_NAME.test(f)) || (!inlineSql(h, ["c"], ["command"]).length && !files.length)) sqlFromStdin(h);
+    if (files.some(f => f !== null && !STDIN_NAME.test(f) && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+  }
   else if (k === "sqlcmd") databaseText(h, inlineSql(h, ["Q", "q"], []));
   else if (k === "cqlsh") databaseText(h, inlineSql(h, ["e"], ["execute"]));
   else if (k === "clickhouse-client") databaseText(h, inlineSql(h, ["q"], ["query"]));
   else if (k === "sqlite3" || k === "sqlite" || k === "duckdb") {
-    const ops = h.args.filter(a => !isOption(a));
+    // -cmd's and -init's values are not the database or its SQL.
+    const ops = h.args.filter((a, j) => !isOption(a) && !/^--?(cmd|init)$/.test(h.args[j - 1]?.v ?? ""));
     databaseText(h, [...ops.slice(1).map(a => a.v), ...inlineSql(h, [], ["cmd"]).map(x => x), ...h.args.flatMap((a, j) => (a.v === "-cmd" ? [h.args[j + 1]?.v ?? null] : []))]);
+    // -init FILE runs the file's commands first, as `.read FILE` does (review #166): stdin is judged as below, another
+    // descriptor can't be read first, and any other file asks.
+    const init = h.args.flatMap((a, j) => (/^--?init$/.test(a.v ?? "") ? [h.args[j + 1]?.v ?? null] : []));
+    for (const f of init) {
+      if (f !== null && STDIN_NAME.test(f)) sqlFromStdin(h);
+      else if (f !== null && STREAM_NAME.test(f)) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+      else {
+        if (f) h.e.usePath(lit(f), "read", h.sc);
+        h.e.unclear("unclear.sql", "It runs database client commands from a file Ember doesn't read.");
+      }
+    }
+    // SQL read from stdin or a here-document (`sqlite3 <<< '.shell id'`): judge the seen text, else ask (review #166).
+    if (ops.length < 2 && !inlineSql(h, [], ["cmd"]).length && !h.args.some(a => a.v === "-cmd") && !init.some(f => f !== null && STDIN_NAME.test(f))) sqlFromStdin(h);
     if (ops[0]) h.e.readArgs([ops[0]], h.sc);
     return;
   } else if (k === "mongo" || k === "mongosh") {
@@ -2169,11 +2405,43 @@ reg(NATIVE, ["trash", "trash-put", "gio"], h => {
       return;
     }
     if (sub === "copy" || sub === "move" || sub === "rename" || sub === "save") { copyLike({ ...h, args: rest }, sub === "move" ? "mv" : "cp"); return; }
+    // A launcher marked trusted runs without the desktop's warning (review #172).
+    const trusted = rest.findIndex(a => lower(a) === "metadata::trusted");
+    if (sub === "set" && trusted >= 0 && !/^(false|no|0)$/i.test(rest[trusted + 1]?.v ?? "")) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
     h.e.readArgs(rest, h.sc);
     return;
   }
   const objs = objsOf(h, h.args.filter(a => !isOption(a)), "delete");
   h.e.add("destroy", "posix.rm", `Deletes ${listOf(objs)}.`, { objects: objs });
+});
+
+// Launcher entries (review #172): desktop-file-install copies them into --dir (by default the system's applications
+// folder), desktop-file-edit changes one in place, and update-desktop-database writes the folder's file-type list.
+reg(NATIVE, ["desktop-file-install", "desktop-file-edit", "update-desktop-database"], h => {
+  const p = opts(h, {
+    shortValue: "m",
+    longValue: [
+      "dir", "mode", "vendor", "set-key", "set-value", "set-name", "set-generic-name", "set-comment", "set-icon", "remove-key",
+      "add-category", "remove-category", "add-mime-type", "remove-mime-type", "add-only-show-in", "remove-only-show-in",
+      "add-not-show-in", "remove-not-show-in",
+    ],
+  });
+  if (h.key === "desktop-file-edit") { objsOf(h, p.operands, "write"); return; }
+  if (h.key === "update-desktop-database") {
+    for (const d of p.operands.length ? p.operands : [lit("/usr/share/applications")]) {
+      if (d.v === null) h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder this changes.");
+      else h.e.usePath(lit(`${d.v.replace(/[\\/]+$/, "")}/mimeinfo.cache`), "write", h.sc);
+    }
+    return;
+  }
+  const dir = values(p, "dir").pop() ?? "/usr/share/applications";
+  if (dir === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder this changes."); return; }
+  for (const f of p.operands) {
+    h.e.usePath(f, has(p, "delete-original") ? "move" : "read", h.sc);
+    const name = f.v === null ? null : baseName(f.v, h.sc.path.flavour);
+    if (name) h.e.usePath(lit(`${dir.replace(/[\\/]+$/, "")}/${name}`), "write", h.sc);
+    else writeInto(h, dir);
+  }
 });
 
 // find: deletes, writes, payloads, secret searches (§3.4.5, §3.5.1, critique security-5).
@@ -2232,6 +2500,8 @@ reg(NATIVE, ["find"], h => {
     }
     if (/^-(print0?|printf|ls)$/.test(v)) action = true;
     if (/^-(i?name|i?path|i?wholename|i?regex|i?lname)$/.test(v)) { const pv = expr[j + 1]?.v; if (pv) patterns.push(pv); j++; continue; }
+    // The starting points read from a file, whose names find shows in its errors (review #174).
+    if (v === "-files0-from") { const f = expr[j + 1]; if (f && f.v !== null && !STDIN_NAME.test(f.v)) h.e.usePath(f, "read", h.sc); j++; continue; }
     if (FIND_VALUE.has(v)) j++;
   }
   if (hasDelete) h.e.add("destroy", "posix.find.delete", `Deletes what it finds under ${where}.`, { objects: startObjs });
@@ -2409,6 +2679,8 @@ reg(NATIVE, ["tar", "bsdtar", "gtar"], h => {
   const archive = values(p, "f", "file")[0];
   const dir = values(p, "C", "directory")[0];
   if (has(p, "to-command", "use-compress-program", "I", "info-script", "new-volume-script", "checkpoint-action", "rsh-command") || values(p, "checkpoint-action").length) h.e.unclear("unclear.tar-command", "It runs a command Ember can't see.");
+  // The lists of names to pack or leave out are files tar reads, and its errors show their lines (review #174).
+  for (const f of values(p, "T", "files-from", "X", "exclude-from")) if (f !== null && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
   if (archive) {
     const arc = lit(archive);
     if (URL_LIKE.test(archive) || SCP_LIKE.test(archive)) h.e.add("publish", "send.tar", "Sends data to another computer.");
@@ -2472,7 +2744,7 @@ reg(NATIVE, ["7z", "7za", "7zz", "7zr"], h => {
   h.e.readArgs(ops, h.sc);
 });
 
-reg(NATIVE, ["rar"], h => {
+reg(NATIVE, ["rar", "unrar"], h => {
   const verb = lower(h.args[0]) ?? "";
   const rest = h.args.slice(1);
   const sw = rest.filter(a => (a.v ?? "").startsWith("-")).map(a => a.v!.toLowerCase());
@@ -2505,11 +2777,13 @@ reg(NATIVE, ["unzip"], h => {
 });
 
 reg(NATIVE, ["cpio"], h => {
-  const p = opts(h, { shortValue: "EFHIMORs", longValue: ["file", "format", "pattern-file", "rsh-command", "owner"] });
+  const p = opts(h, { shortValue: "EFHIMORsD", longValue: ["file", "format", "pattern-file", "rsh-command", "owner", "directory"] });
   if (has(p, "rsh-command")) h.e.unclear("unclear.cpio-command", "It runs a command Ember can't see.");
   if (has(p, "i", "extract")) {
-    const into = h.e.usePath(lit("."), "write", h.sc);
-    if (has(p, "u", "unconditional") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", "Unpacks an archive over files in this folder.", { objects: [into] });
+    // -D/--directory: the folder it unpacks into (review #169).
+    const dir = values(p, "D", "directory")[0];
+    const into = dir === null ? { kind: "other" as const, text: "a folder Ember can't name", abs: null } : h.e.usePath(lit(dir ?? "."), "write", h.sc);
+    if (has(p, "u", "unconditional") || into.abs === null || !inWorkTree(into.abs, h.sc.path)) h.e.add("destroy", "archive.unpack", `Unpacks an archive over files in ${dir === undefined ? "this folder" : into.text}.`, { objects: [into] });
   }
   if (has(p, "p", "pass-through")) {
     const dest = p.operands[0];
@@ -2524,6 +2798,32 @@ reg(NATIVE, ["gzip", "gunzip", "bzip2", "bunzip2", "xz", "unxz", "lzma", "unlzma
   const removes = ["zstd", "unzstd", "lz4", "brotli"].includes(h.key) ? has(p, "rm") : !keeps;
   const ins = objsOf(h, p.operands, "write");
   if (removes && p.operands.length && !keeps) h.e.add("destroy", "archive.in-place", `Replaces ${listOf(ins)} with a packed or unpacked copy.`, { objects: ins });
+});
+
+// Programs that write the files their operands or options name (review #169); otherwise they are unknown programs.
+reg(NATIVE, ["sponge"], h => { objsOf(h, opts(h).operands, "write"); generic(h); });
+reg(NATIVE, ["split", "csplit"], h => {
+  const p = opts(h, h.key === "split"
+    ? { shortValue: "abClnt", longValue: ["suffix-length", "bytes", "line-bytes", "lines", "number", "separator", "additional-suffix", "filter"] }
+    : { shortValue: "bfn", longValue: ["suffix-format", "prefix", "digits"] });
+  // The output files' names start with split's second operand or csplit's -f. Only §3.6's rules meet them: the pieces
+  // stay writes Ember doesn't follow for a script this command runs (L8).
+  const prefix = h.key === "split" ? p.operands[1]?.v : values(p, "f", "prefix")[0];
+  const mark = h.e.written.length;
+  if (prefix) h.e.usePath(lit(`${prefix}${h.key === "split" ? "aa" : "00"}`), "write", h.sc);
+  h.e.written.length = mark;
+  // split --filter hands each piece to a shell command instead of a file.
+  for (const f of h.key === "split" ? values(p, "filter") : []) {
+    if (f === null) h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see.");
+    else h.e.nested(f, "sh", h.sc, "split --filter");
+  }
+  generic(h);
+});
+reg(NATIVE, ["dpkg-deb"], h => {
+  // -x, -X and -R unpack a package into the folder named after it.
+  const p = opts(h);
+  if (has(p, "x", "extract", "X", "vextract", "R", "raw-extract") && p.operands[1]?.v) writeInto(h, p.operands[1].v);
+  generic(h);
 });
 
 // sed and perl edit in place: ordinary inside the user's work, except on §3.6's paths; code-running scripts are unclear.
@@ -2601,7 +2901,10 @@ export function awkProgramOk(prog: string): boolean {
 reg(NATIVE, ["awk", "gawk", "mawk", "nawk"], h => {
   const p = opts(h, { shortValue: "fFvWe", longValue: ["file", "field-separator", "assign", "source", "include", "load"] });
   const progFiles = values(p, "f", "file", "include", "load");
-  for (const f of progFiles) if (f) h.e.usePath(lit(f), "read", h.sc);
+  for (const f of progFiles) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // `awk -f -` / `-f /dev/stdin` reads its program from stdin: judge the seen text, else ask (review #166).
+  if (progFiles.some(f => f === null || STDIN_NAME.test(f))) fromStdin(h, t => { if (!awkProgramOk(t)) h.e.unclear("unclear.awk-program", "Its awk program can run commands or write files."); });
+  else if (progFiles.some(f => f !== null && STREAM_NAME.test(f))) h.e.unclear("unclear.script-stream", SAYS.scriptStream);
   let files = p.operands;
   const inline = values(p, "e", "source");
   if (progFiles.length === 0 && inline.length === 0) { inline.push(files[0]?.v ?? null); files = files.slice(1); }
@@ -2639,6 +2942,18 @@ reg(NATIVE, [...Object.keys(POSIX_SHELLS), ...OTHER_SHELLS], h => {
   }
   intoInterpreter(h, readAs);
 });
+
+/**
+ * A tool reading its program (a makefile, SQL, an awk or debugger script) from stdin or a here-document (review #166):
+ * when Ember can see all of the text (a quoted here-document or a here-string), `judge` it; otherwise a fetch before it
+ * is download-and-run, and anything else is unclear (it runs code Ember can't see). The dangerous cases ask either way.
+ */
+function fromStdin(h: H, judge: (text: string) => void): void {
+  const t = h.s.stdinText;
+  if (t !== undefined && t !== null) { judge(t); return; }
+  if (h.s.fetchBefore && (h.s.stdin === "pipe" || h.s.stdin === "heredoc")) { h.e.add("escape", "escape.download-run", SAYS.downloadsAndRuns); return; }
+  h.e.unclear("unclear.stdin-code", "Runs code Ember can't see.");
+}
 
 /**
  * An interpreter reading its program from stdin: download-and-run after a fetch, else unclear; with no stdin,
@@ -2710,6 +3025,15 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
   }
   if (h.key === "osascript" && p.operands[0]) { h.e.unclear("unclear.script", "It runs a script Ember can't see."); return; }
+  if (h.key === "php" && h.args.some(a => a.v !== null && a.v.startsWith("-S"))) {
+    // PHP's own web server: -S address:port, -t the folder it serves (this one by default), and a router script it
+    // runs for every request (review #178).
+    const q = parseOpts(h.args, { shortValue: "cdzSt" });
+    const addr = values(q, "S").pop();
+    listens(h, addr === undefined || addr === null ? null : listenHost(addr), servedRoot(values(q, "t").pop()));
+    if (q.operands[0]) runScript(h, q.operands[0]);
+    return;
+  }
   const mod = values(p, "m")[0];
   if (mod !== undefined && /^python|^pypy|^py$/.test(h.key)) {
     if (mod === "pip" || mod === "pip3") {
@@ -2720,6 +3044,20 @@ reg(NATIVE, Object.keys(INTERPRETERS).filter(k => !["awk", "gawk", "mawk", "nawk
     }
     if (mod === "timeit" || mod === "code" || mod === "pdb") { h.e.unclear("unclear.inline-code", "It runs code given on the command line."); return; }
     if (mod === "ensurepip") { h.e.add("system", "pkg.language", "Installs packages (they can run their own setup code)."); return; }
+    if (mod === "http.server" || mod === "SimpleHTTPServer" || mod === "CGIHTTPServer") {
+      // A web server for a folder (this one by default) on every address unless --bind says otherwise (review #178).
+      const at = h.args.findIndex(a => a.v === "-m" || a.v === `-m${mod}`);
+      const q = parseOpts(h.args.slice(at + (h.args[at]?.v === "-m" ? 2 : 1)), { shortValue: "bdp", longValue: ["bind", "directory", "protocol"] });
+      const bind = values(q, "b", "bind").pop();
+      listens(h, bind === undefined ? "" : bind, servedRoot(values(q, "d", "directory").pop()));
+      return;
+    }
+    // zipfile and tarfile -e unpack into the folder given last (review #169).
+    if ((mod === "zipfile" || mod === "tarfile") && h.args.some(a => a.v === "-e" || a.v === "--extract") && p.operands.length >= 2) {
+      const to = p.operands[p.operands.length - 1];
+      if (to.v === null) h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name.");
+      else writeInto(h, to.v);
+    }
     if (mod) nameCheck(h, mod);
     h.e.readArgs(p.operands, h.sc);
     return;
@@ -3238,6 +3576,25 @@ git(["replace", "update-ref", "symbolic-ref"], h => { if (h.args.some(a => a.v =
 git(["worktree"], h => {
   if (h.args[0]?.v === "remove" && h.args.some(a => a.v === "-f" || a.v === "--force")) h.e.add("destroy", "git.history", "Deletes history git keeps for recovery.");
   if (h.args[0]?.v === "remove") { const objs = objsOf(h, h.args.slice(1).filter(a => !isOption(a)), "deleteTree"); h.e.add("destroy", "git.worktree.remove", `Deletes ${listOf(objs)} and everything in it.`, { objects: objs }); }
+  // add checks files out into a folder, move moves a work tree to one: §3.6's rules meet that folder (review #169).
+  if (h.args[0]?.v === "add" || h.args[0]?.v === "move") {
+    const p = parseOpts(h.args.slice(1), { shortValue: "bB", longValue: ["reason"] });
+    const to = p.operands[h.args[0].v === "add" ? 0 : 1];
+    if (to?.v === null) h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name.");
+    else if (to?.v) writeInto(h, to.v);
+  }
+});
+// checkout-index writes each file at <prefix><path>: a prefix ending in a slash is a folder, any other the start of
+// each name (review #169). Without one it writes the work tree's own files (writesUnnamedFiles).
+git(["checkout-index"], h => {
+  const p = opts(h, { longValue: ["prefix", "stage"] });
+  const files = p.operands.filter(a => a.v !== "--");
+  const prefix = values(p, "prefix")[0];
+  if (h.args.some(a => a.v === null && /^--prefix/.test(a.raw))) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); return; }
+  if (prefix === undefined || prefix === "") { h.e.readArgs(files, h.sc); return; }
+  if (prefix === null || files.some(f => f.v === null)) { h.e.add("destroy", "redirect.overwrite", "Writes to files Ember can't name."); if (prefix === null) return; }
+  for (const f of files) if (f.v !== null) h.e.usePath(lit(prefix + f.v), "write", h.sc);
+  if (has(p, "a", "all", "stdin") || files.length === 0) writeInto(h, prefix.replace(/[^\\/]*$/, "") || ".");
 });
 git(["rm"], h => {
   const p = opts(h, { longValue: ["pathspec-from-file"] });
@@ -3287,6 +3644,8 @@ git(["submodule"], h => {
   if (rest.some(a => a.v === null)) { h.e.unclear("unclear.shell-text", "It runs shell text Ember can't see."); return; }
   h.e.nested(rest.map(a => a.v).join(" "), "sh", h.sc, "git submodule foreach");
 });
+// `git grep` is the grep family, so its -O/--open-files-in-pager runs a program on the matches, like rg's --pre (review #165).
+git(["grep"], h => { NATIVE["git-grep"]({ ...h, key: "git-grep", prog: "git grep" }); });
 git(["bisect"], h => { if (h.args[0]?.v === "run") h.e.payload(h.args.slice(1), h.sc, "git bisect run"); });
 git(["rebase"], h => {
   const p = opts(h, { shortValue: "xsX", longValue: ["exec", "onto", "strategy", "strategy-option", "gpg-sign", "whitespace", "empty"] });
@@ -3570,17 +3929,62 @@ function containerRun(h: H, prog: string, rest: Arg[]): void {
   const priv = has(p, "privileged")
     || values(p, "pid", "ipc", "userns", "uts", "cgroupns").includes("host") || values(p, "net", "network").includes("host")
     || values(p, "cap-add", "device").length > 0 || values(p, "security-opt").some(s => /unconfined|disable/.test(s ?? ""));
-  for (const vol of [...values(p, "v", "volume"), ...values(p, "mount").map(m => /(?:source|src)=([^,]+)/.exec(m ?? "")?.[1] ?? null)]) {
-    if (vol === null) continue;
-    // host:container[:options]; a Windows host path keeps its drive's colon.
-    const at = vol.indexOf(":", /^[A-Za-z]:[\\/]/.test(vol) ? 2 : 0);
-    const src = at < 0 ? vol : vol.slice(0, at);
-    if (src === "/" || /^\/:/.test(vol) || /^[A-Za-z]:\\?$/.test(src)) { h.e.add("system", "docker.privileged", "Gives a container access to the whole computer."); continue; }
-    if (/^[~./\\]|^[A-Za-z]:[\\/]/.test(src)) h.e.usePath(lit(src), "readTree", h.sc);
-  }
+  containerMounts(h, p);
   if (priv) h.e.add("system", "docker.privileged", "Gives a container access to the whole computer.");
   for (const f of values(p, "env-file")) if (f) h.e.usePath(lit(f), "read", h.sc);
   void prog;
+}
+/** A container engine's socket or named pipe: whoever reaches it can start a container that mounts the whole computer. */
+const ENGINE_SOCKET = /\.sock$|^[\\/]{2}[.?][\\/]pipe[\\/]/i;
+/** Folders that hold an engine's socket (`/run`, `/run/user/1000`, `/var/run/docker`). */
+const ENGINE_DIR = /^\/(var\/)?run(\/(docker|podman|containerd|crio|buildkit|user(\/\d+(\/(docker|podman|containerd))?)?))?$/;
+/** System folders as a whole, read-only or not. */
+const SYSTEM_MOUNT = /^\/(usr|boot|sys|proc|dev|bin|sbin|lib[^/]*|etc|var|opt)$/;
+/**
+ * A container's bind mounts (-v/--volume host:container[:options], --mount type=bind,src=…): the host path is read as a
+ * whole and, unless read-only, written; a mount of an engine's socket or a system folder gives the container the
+ * computer, and a writable one outside the task's folder lets the container change or delete what is there (review
+ * #170). Named volumes and anonymous ones (`data:/x`, `-v /x`) are the engine's own, not the computer's files.
+ */
+function containerMounts(h: H, p: Parsed): void {
+  const mounts: { src: string; ro: boolean }[] = [];
+  for (const vol of values(p, "v", "volume")) {
+    if (vol === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder the container is given."); continue; }
+    // host:container[:options]; a Windows host path keeps its drive's colon. `-v=x` is `-v x`.
+    const v = vol.replace(/^=/, "");
+    const at = v.indexOf(":", /^[A-Za-z]:[\\/]/.test(v) ? 2 : 0);
+    if (at < 0) { if (v === "/") mounts.push({ src: v, ro: false }); continue; }
+    const dst = v.slice(at + 1);
+    const end = dst.indexOf(":", /^[A-Za-z]:[\\/]/.test(dst) ? 2 : 0);
+    // Podman's `O` is an overlay: the container's changes are thrown away.
+    mounts.push({ src: v.slice(0, at), ro: end >= 0 && dst.slice(end + 1).split(",").some(o => /^(ro|readonly|O)$/.test(o)) });
+  }
+  for (const m of values(p, "mount")) {
+    if (m === null) { h.e.unclear("unclear.unresolved-arg", "Ember can't tell which folder the container is given."); continue; }
+    const kv = new Map(m.split(",").map(s => {
+      const i = s.indexOf("=");
+      return [(i < 0 ? s : s.slice(0, i)).trim().toLowerCase(), i < 0 ? "true" : s.slice(i + 1)] as const;
+    }));
+    const src = kv.get("source") ?? kv.get("src");
+    if (src === undefined || kv.get("type") === "tmpfs") continue;
+    mounts.push({ src, ro: ["readonly", "ro"].some(k => kv.has(k) && !/^(false|0)$/i.test(kv.get(k) ?? "")) });
+  }
+  for (const { src, ro } of mounts) {
+    if (src === "/" || /^[A-Za-z]:\\?$/.test(src)) { h.e.add("system", "docker.privileged", "Gives a container access to the whole computer."); continue; }
+    // A name without a slash is a named volume (`data`); anything else is a folder or file on the computer.
+    if (/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(src)) continue;
+    const mark = h.e.written.length;
+    const obj = h.e.usePath(lit(src), "readTree", h.sc);
+    if (!ro) h.e.usePath(lit(src), "write", h.sc);
+    // Only §3.6's rules: what the container writes there is a write Ember doesn't follow for a script run later (L8).
+    h.e.written.length = mark;
+    const forms = [src.startsWith("/") ? posix.normalize(src).replace(/(.)\/$/, "$1") : null, h.sc.path.flavour === "posix" ? obj.abs : null];
+    if (ENGINE_SOCKET.test(src) || forms.some(f => f !== null && (ENGINE_DIR.test(f) || SYSTEM_MOUNT.test(f) || (!ro && /^\/(sys|proc)\//.test(f))))) {
+      h.e.add("system", "docker.privileged", "Gives a container access to the whole computer.");
+    } else if (!ro && (obj.abs === null || !inWorkTree(obj.abs, h.sc.path))) {
+      h.e.add("destroy", "docker.mount", `Lets a container change or delete files in ${obj.text}.`, { objects: [obj] });
+    }
+  }
 }
 function compose(h: H, prog: string, rest: Arg[]): void {
   const p = parseOpts(rest, { shortValue: "fp", longValue: ["file", "project-name", "project-directory", "env-file", "profile", "context", "ansi", "progress"] });
@@ -3591,6 +3995,9 @@ function compose(h: H, prog: string, rest: Arg[]): void {
   if (sub === "up" || sub === "start" || sub === "run" || sub === "create") {
     if (flags.some(f => f === "-d" || f === "--detach" || /^-[a-z]*d[a-z]*$/.test(f))) h.e.add("escape", "escape.background", SAYS.keepsRunning);
     if (sub === "run" && !flags.includes("-T") && !flags.some(f => f === "-d" || f === "--detach")) h.e.unclear("unclear.interactive", SAYS.interactive);
+    // `compose run -v host:container` mounts as `docker run -v` does.
+    const at = rest.indexOf(p.operands[0]);
+    if (sub === "run") containerMounts(h, parseOpts(rest.slice(at + 1), { shortValue: "eluvwp", longValue: ["env", "env-from-file", "label", "user", "volume", "workdir", "publish", "name", "entrypoint", "cap-add", "cap-drop"], stopAtOperand: true }));
     return;
   }
   if (sub === "down" || sub === "rm" || sub === "kill") { h.e.add("destroy", `${prog}.rm`, "Deletes containers, images or volumes."); return; }
@@ -3878,6 +4285,8 @@ function pip(h: H): void {
   if (verb === "install" || verb === "uninstall") {
     const p = parseOpts(rest, { shortValue: "rcetbi", longValue: ["requirement", "constraint", "editable", "target", "build", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "root", "prefix", "src", "upgrade-strategy", "config-settings", "global-option", "install-option", "progress-bar", "report", "only-binary", "no-binary"] });
     for (const r of values(p, "r", "requirement", "c", "constraint")) if (r) h.e.usePath(lit(r), "read", h.sc);
+    // The folders it installs into (review #169).
+    for (const d of values(p, "t", "target", "root", "prefix", "src")) if (d) writeInto(h, d);
     const editable = values(p, "e", "editable").map(v => (v === null ? { v: null, raw: "?", glob: false } : lit(v)));
     const reqs = values(p, "r", "requirement").map(r => ({ kind: "path" as const, text: r ?? "?", abs: null }));
     const objects = [...packageObjects(h, [...p.operands, ...editable]), ...reqs];
@@ -3886,7 +4295,12 @@ function pip(h: H): void {
     return;
   }
   if (verb === "config" && rest.some(a => a.v === "--global")) h.e.add("system", "pip.config.global", "Changes settings for every user.");
-  if (verb === "download" || verb === "wheel") h.e.readArgs(rest.filter(a => !isOption(a) && !URL_LIKE.test(a.v ?? "")), h.sc);
+  if (verb === "download" || verb === "wheel") {
+    // The folder it saves into (review #169).
+    const p = parseOpts(rest, { shortValue: "rcdwi", longValue: ["requirement", "constraint", "dest", "wheel-dir", "index-url", "extra-index-url", "find-links", "platform", "python-version", "implementation", "abi", "src"] });
+    for (const d of values(p, "d", "dest", "w", "wheel-dir")) if (d) writeInto(h, d);
+    h.e.readArgs(rest.filter(a => !isOption(a) && !URL_LIKE.test(a.v ?? "")), h.sc);
+  }
 }
 reg(NATIVE, ["pip", "pip3", "pip2"], h => pip(h));
 
@@ -3970,6 +4384,16 @@ reg(NATIVE, ["go"], h => {
   if (verb === "run" && rest.some(a => /@/.test(a.v ?? "") && !isOption(a))) { h.e.add("escape", "escape.npx", SAYS.downloadsProgram); return; }
   if (verb === "run") { const s = rest.find(a => !isOption(a)); if (s) runScript(h, s); return; }
   if (verb === "clean" && rest.some(a => /^-(cache|modcache|testcache|fuzzcache)$/.test(a.v ?? ""))) h.e.add("destroy", "script.destroy", "Runs clean, whose name says it deletes things.");
+  // build and test -c write the program where -o says, a file or a folder (review #169).
+  if (verb === "build" || verb === "test") {
+    for (let k = 0; k < rest.length; k++) {
+      const m = /^--?o(=([\s\S]*))?$/.exec(rest[k].v ?? "");
+      if (!m) continue;
+      const o = m[1] !== undefined ? m[2] : rest[k + 1]?.v;
+      if (o === null || o === undefined) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+      else if (!NULL_SINKS.has(o.toLowerCase())) h.e.usePath(lit(o), "write", h.sc);
+    }
+  }
 });
 reg(NATIVE, ["dotnet"], h => {
   const g = globals(h, "dotnet");
@@ -4006,9 +4430,22 @@ reg(NATIVE, ["msbuild"], h => {
 });
 /** Task runners and package scripts (§3.5.9): their targets' names say what they do. */
 reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke", "inv", "ant", "sbt", "lein", "gradle", "gradlew", "mvn", "mvnw", "nox", "tox", "task", "mage", "ninja"], h => {
-  const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl" };
+  const valueShort: Record<string, string> = { make: "CfIjloWE", gmake: "CfIjloWE", "mingw32-make": "CfIjloWE", nmake: "fX", just: "fd", rake: "fIrRCeEp", gradle: "pbcgIxDP", gradlew: "pbcgIxDP", mvn: "fsplDPTtbgrX", mvnw: "fsplDPTtbgrX", nox: "sfeptkr", tox: "ecvrnx", task: "dt", ant: "fDl", ninja: "Cfjkldtw" };
   const p = parseOpts(h.args, { shortValue: valueShort[h.key] ?? "", longValue: ["file", "makefile", "directory", "include-dir", "jobs", "load-average", "old-file", "what-if", "justfile", "working-directory", "set", "project-dir", "build-file", "settings-file", "gradle-user-home", "init-script", "exclude-task", "projects", "resume-from", "settings", "global-settings", "session", "sessions", "keywords", "environment", "envlist", "taskfile", "dir"] });
-  for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  // A makefile read from stdin, /dev/stdin or a process substitution is a build program Ember can't vouch for: its
+  // recipes run shell (review #166). Ember asks unless it can see the whole text and it is plainly ordinary.
+  if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f === null || STDIN_NAME.test(f))) {
+    fromStdin(h, () => h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."));
+    return;
+  }
+  // One given as another descriptor (`-f /dev/fd/3 3<<< …`) can't be read first either.
+  if ((/make$/.test(h.key) || h.key === "ninja") && values(p, "f", "file", "makefile").some(f => f !== null && STREAM_NAME.test(f))) {
+    h.e.unclear("unclear.script-stream", SAYS.scriptStream);
+    return;
+  }
+  for (const f of values(p, "f", "file", "makefile", "justfile", "build-file", "b", "settings-file", "c", "init-script", "I")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // `ninja -t <tool>` runs one of ninja's own tools, not a target (review #167).
+  if (h.key === "ninja" && values(p, "t").length) { ninjaTool(h, values(p, "t")[0]); return; }
   // make: `--eval` and variable overrides that name a shell or hold command text run code Ember can't see in the
   // makefile's recipes (`make SHELL='rm -rf ~' build`, `make CC='sh -c …'`).
   if (/make$/.test(h.key)) {
@@ -4033,6 +4470,116 @@ reg(NATIVE, ["make", "gmake", "mingw32-make", "nmake", "just", "rake", "invoke",
   }
   for (const a of h.args) if (a.v !== null && /^-?-?D?[A-Za-z0-9_.]*=/.test(a.v) && commandLineSecret(a.v)) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
+
+/** ninja's tools (review #167): clean and cleandead delete build output, browse opens a browser on a web server, msvc runs the command after `--`. */
+function ninjaTool(h: H, tool: string | null): void {
+  if (tool === null) { h.e.unclear("unclear.ninja-tool", "Ember can't tell which ninja tool this runs."); return; }
+  if (tool === "clean" || tool === "cleandead") { h.e.add("destroy", "script.destroy", `Runs ninja -t ${tool}, which deletes build output.`); return; }
+  if (tool === "browse") { h.e.add("escape", "escape.launcher", SAYS.opensProgram); return; }
+  if (tool === "msvc") { const dd = h.args.findIndex(a => a.v === "--"); h.e.payload(dd >= 0 ? h.args.slice(dd + 1) : [], h.sc, "ninja -t msvc"); }
+}
+reg(NATIVE, ["bazel", "bazelisk"], h => {
+  // `bazel clean` deletes build output; `bazel run <target>` runs a target, judged by its name like a make target, and
+  // its other arguments are read as any program's are; `--script_path` writes a script that runs it (review #167).
+  const verb = firstOperand(h.args);
+  if (verb.v === "clean") { h.e.add("destroy", "script.destroy", "Runs bazel clean, which deletes build output."); return; }
+  if (verb.v === "run") {
+    const target = h.args.slice(verb.at + 1).find(a => !isOption(a));
+    if (target?.v === null) h.e.unclear("unclear.target", "It runs a target Ember can't name.");
+    else if (target) nameCheck(h, target.v, `${h.prog} run ${target.v}`);
+    for (let k = 0; k < h.args.length && h.args[k].v !== "--"; k++) {
+      const v = h.args[k].v;
+      if (v === "--script_path" && h.args[k + 1]) h.e.usePath(h.args[k + 1], "write", h.sc);
+      else if (v?.startsWith("--script_path=")) h.e.usePath(lit(v.slice("--script_path=".length)), "write", h.sc);
+    }
+  }
+  generic(h);
+});
+
+// cmake (review #167): `cmake -E <command>` is a portable shell. Its rm, copy, rename, tar, touch and link commands are
+// judged like rm, cp, mv, tar, touch and ln; time, env and chdir run the command after them. `cmake -P <script>` runs a
+// CMake script (its execute_process runs programs), judged like an interpreter's script.
+reg(NATIVE, ["cmake"], h => {
+  const e = h.args.findIndex(a => a.v === "-E");
+  if (e >= 0) { cmakeCommand(h, h.args[e + 1], h.args.slice(e + 2)); return; }
+  // `-D NAME[:TYPE]=VALUE` written apart: VALUE is read as an argument is (`-DNAME=VALUE` already is).
+  h.e.readArgs(h.args.flatMap((a, k) => (h.args[k - 1]?.v === "-D" && a.v?.includes("=") ? [lit(a.v.slice(a.v.indexOf("=") + 1))] : [])), h.sc);
+  const p = h.args.findIndex(a => a.v === "-P");
+  if (p >= 0) {
+    const script = h.args[p + 1];
+    // The script's arguments and the -D values are read as any program's are.
+    h.e.readArgs(h.args.filter((_, k) => k !== p && k !== p + 1), h.sc, { unresolvedUnclear: true });
+    if (!script) { h.e.unclear("unclear.script", "It runs a script Ember can't name."); return; }
+    if (script.v !== null && STDIN_NAME.test(script.v)) { intoInterpreter(h); return; }
+    if (script.v !== null && STREAM_NAME.test(script.v)) { h.e.unclear("unclear.script-stream", SAYS.scriptStream); return; }
+    runScript(h, script);
+    return;
+  }
+  const b = h.args.findIndex(a => a.v === "--build");
+  if (b >= 0) cmakeBuild(h, h.args.slice(b + 1));
+  generic(h);
+});
+/**
+ * `cmake --build DIR`'s targets (after --target or -t, one or more, and the build tool's own after `--`) are judged by
+ * their names, as make's are; --clean-first runs the clean target first (review #167).
+ */
+function cmakeBuild(h: H, args: Arg[]): void {
+  let targets = false;
+  for (let k = 0; k < args.length; k++) {
+    const v = args[k].v;
+    if (v === null) continue;
+    if (v === "--") { for (const t of args.slice(k + 1)) if (t.v !== null && !t.v.startsWith("-")) nameCheck(h, t.v, `${h.prog} --build -- ${t.v}`); return; }
+    if (v === "--clean-first") h.e.add("destroy", "script.destroy", `Runs ${h.prog} --build --clean-first, which deletes build output.`);
+    if (v.startsWith("--target=")) nameCheck(h, v.slice("--target=".length), `${h.prog} --build --target ${v.slice("--target=".length)}`);
+    if (v.startsWith("-")) { targets = v === "--target" || v === "-t"; continue; }
+    if (targets) nameCheck(h, v, `${h.prog} --build --target ${v}`);
+  }
+}
+/** One `cmake -E` command, judged as the program it stands for. */
+function cmakeCommand(h: H, cmd: Arg | undefined, rest: Arg[]): void {
+  if (!cmd) return;
+  const as = (key: string, args: Arg[]): void => NATIVE[key]({ ...h, key, args });
+  switch (cmd.v) {
+    case "rm": as("rm", rest); return;
+    case "remove": as("rm", rest.filter(a => a.v !== "-f")); return;
+    case "remove_directory": as("rm", [lit("-r"), ...rest]); return;
+    case "rename": as("mv", rest); return;
+    case "copy": case "copy_if_different": case "copy_if_newer": as("cp", rest); return;
+    case "copy_directory": case "copy_directory_if_different": case "copy_directory_if_newer": {
+      // Each folder's contents go into the last one, over what is there.
+      const dest = rest[rest.length - 1];
+      objsOf(h, rest.slice(0, -1), "readTree");
+      if (!dest) return;
+      const obj = h.e.usePath(dest, "write", h.sc);
+      if (obj.abs === null) { h.e.add("destroy", "posix.cp", "Writes to a file Ember can't name.", { objects: [obj] }); return; }
+      h.e.judgeInside(obj.abs, "write", h.sc, obj.text);
+      h.e.add("destroy", "posix.cp", `Replaces files in ${obj.text} if they exist.`, { objects: [obj], ifExists: obj.abs });
+      return;
+    }
+    case "touch": case "touch_nocreate": as("touch", rest); return;
+    case "make_directory": as("mkdir", rest); return;
+    // An existing link or file of that name is replaced.
+    case "create_symlink": case "create_hardlink": as("ln", [lit("-f"), ...rest]); return;
+    case "tar": as("tar", rest); return;
+    case "time": h.e.payload(rest, h.sc, "cmake -E time"); return;
+    case "env": as("env", rest); return;
+    case "chdir": {
+      const dir = rest[0];
+      if (!dir) return;
+      const cwd = h.e.usePath(dir, "cd", h.sc).abs;
+      h.e.payload(rest.slice(1), child(h.sc, { cwd }), "cmake -E chdir");
+      return;
+    }
+    case "environment": h.e.add("secret", "secret.env", SAYS.env); return;
+    case "cat": h.e.readArgs(rest, h.sc, { unresolvedUnclear: true }); return;
+    case "echo": case "echo_append": textProgram({ ...h, args: rest }); return;
+    case "compare_files": case "md5sum": case "sha1sum": case "sha224sum": case "sha256sum": case "sha384sum": case "sha512sum":
+      h.e.readArgs(rest, h.sc, { unresolvedUnclear: true }); return;
+    case "capabilities": case "true": case "false": case "sleep": return;
+    case "delete_regv": case "write_regv": h.e.add("system", "system.registry", "Changes the Windows registry."); return;
+    default: h.e.unclear("unclear.cmake-command", "Ember can't tell which cmake command this runs.");
+  }
+}
 
 // System package managers (§3.5.5).
 reg(NATIVE, Object.keys(SYSTEM_PACKAGERS), h => {
@@ -4149,18 +4696,23 @@ reg(NATIVE, ["wget", "wget2"], h => {
   if (values(p, "e", "execute").length) h.e.unclear("unclear.wget-execute", "It runs settings Ember can't see.");
   if (h.args.some(a => /^--use-askpass/.test(a.v ?? ""))) h.e.unclear("unclear.wget-askpass", "It runs a program Ember can't see.");
   if (values(p, "config").length) h.e.unclear("unclear.curl-config", "It reads its options from a file Ember can't see.");
-  const dir = values(p, "P", "directory-prefix")[0] ?? null;
+  const dir = values(p, "P", "directory-prefix")[0];
   const out = values(p, "O", "output-document")[0];
   if (out !== undefined) {
-    if (out !== "-" && out !== null) {
+    if (out === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    else if (out !== "-") {
       const obj = h.e.usePath(lit(out), "write", h.sc);
       if (obj.abs) h.e.add("destroy", "download.output", `Overwrites ${obj.text} if it exists.`, { objects: [obj], ifExists: obj.abs });
       h.e.download(out, h.sc);
     }
   } else {
+    // The folder it saves into (-P) and each file by the name its address ends in meet §3.6's rules, Ember's own files
+    // included (review #169); wget may pick another name (a redirect, -r's folders), so the folder is judged too.
+    if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    else if (dir !== undefined) writeInto(h, dir);
     for (const u of urls) {
       const name = u.replace(/[?#].*$/, "").split("/").pop() || "index.html";
-      h.e.download(dir ? `${dir}/${name}` : name, h.sc);
+      saveAs(h, dir ? `${dir}/${name}` : name);
     }
   }
   for (const f of values(p, "a", "append-output")) if (f) h.e.append(lit(f), h.sc, "redirect.append");
@@ -4174,10 +4726,47 @@ reg(NATIVE, ["http", "https", "xh", "xhs", "httpie"], h => {
   if (hasMethod || items.some(i => /^[^=:@]+(:?=|@)/.test(i)) || h.args.some(a => /^(-f|--form|--raw)$/.test(a.v ?? ""))) h.e.add("publish", "send.http", `Sends data to ${hostOf(url ?? "")}.`);
   for (const i of items) { const m = /^[^=:@]+(?:=@|:=@|@)(.+)$/.exec(i); if (m) h.e.usePath(lit(m[1]), "read", h.sc); }
 });
+/**
+ * A folder a program saves files into by names Ember can't be sure of (wget -P, aria2c -d, git checkout-index
+ * --prefix): the folder and a file in it are judged as written by §3.6's rules (review #169). Only the rules: the
+ * folder isn't remembered as written, so a script in it that this command runs is still read first (L8), as before.
+ */
+function writeInto(h: H, dir: string): void {
+  const mark = h.e.written.length;
+  const obj = h.e.usePath(lit(dir), "write", h.sc);
+  if (obj.abs !== null) h.e.judgeInside(obj.abs, "write", h.sc, dir);
+  h.e.written.length = mark;
+}
+/** A file a download saves: written (§3.6's rules) and recorded as downloaded (§3.4.7). */
+function saveAs(h: H, path: string): void {
+  h.e.usePath(lit(path), "write", h.sc);
+  h.e.download(path, h.sc);
+}
 reg(NATIVE, ["aria2c", "fetch", "axel", "lwp-download"], h => {
-  const p = opts(h, { shortValue: "odi", longValue: ["out", "dir", "input-file"] });
-  for (const o of values(p, "o", "out")) if (o) { h.e.usePath(lit(o), "write", h.sc); h.e.download(o, h.sc); }
-  for (const u of p.operands) if (u.v) h.e.download(u.v.replace(/[?#].*$/, "").split("/").pop() ?? null, h.sc);
+  const p = opts(h, { shortValue: h.key === "aria2c" ? "odi" : h.key === "lwp-download" ? "" : "o", longValue: ["out", "dir", "input-file", "output"] });
+  for (const f of values(p, "i", "input-file")) if (f && !STDIN_NAME.test(f)) h.e.usePath(lit(f), "read", h.sc);
+  // Where it saves (review #169): aria2c's -d folder (-o names a file in it), fetch's and axel's -o (a file or a
+  // folder), lwp-download's second operand (the same); otherwise the name the address ends in.
+  const dir = h.key === "aria2c" ? values(p, "d", "dir")[0] : undefined;
+  if (dir === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+  else if (dir !== undefined) writeInto(h, dir);
+  const at = (name: string): string => (dir ? `${dir}/${name}` : name);
+  const named = (u: Arg): string | null => (u.v ? u.v.replace(/[?#].*$/, "").split("/").pop() || "index.html" : null);
+  const outs = values(p, "o", "out", "output");
+  for (const o of outs) {
+    if (o === null) h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name.");
+    else if (o !== "-") saveAs(h, at(o));
+  }
+  if (h.key === "lwp-download" && p.operands.length >= 2) {
+    const [url, to] = p.operands;
+    if (to.v === null) { h.e.add("destroy", "redirect.overwrite", "Writes to a file Ember can't name."); return; }
+    saveAs(h, to.v);
+    // A folder gets the file by the address's name.
+    const name = named(url);
+    if (name) h.e.usePath(lit(`${to.v.replace(/[\\/]+$/, "")}/${name}`), "write", h.sc);
+    return;
+  }
+  if (outs.length === 0) for (const u of p.operands) { const name = named(u); if (name) saveAs(h, at(name)); }
 });
 
 reg(NATIVE, ["scp", "pscp"], h => {
@@ -4285,6 +4874,113 @@ reg(NATIVE, ["rclone"], h => {
   if (/^(mount|serve|rcd|nfsmount)$/.test(verb)) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if (!/^(ls|lsd|lsl|lsf|lsjson|cat|size|about|check|cryptcheck|tree|version|listremotes|md5sum|sha1sum|hashsum|ncdu|help|backend|selfupdate|test|config|genautocomplete|completion|gendocs)$/.test(verb)) h.e.unclear("unclear.rclone-verb", "Ember can't tell which rclone command this runs.");
 });
+// Servers, tunnels and shares (review #178).
+/** A loopback address: only programs on this computer can connect to it. */
+const LOOPBACK = /^(localhost|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|::1|0*:(0*:)*0*1|ip6-localhost|ip6-loopback)$/i;
+/** The address of `host:port`, `[v6]:port` or `:port` ("" for every address; a bare port too). */
+function listenHost(addr: string): string {
+  const v6 = /^\[([^\]]*)\](:\d*)?$/.exec(addr);
+  if (v6) return v6[1];
+  if (/^:?\d*$/.test(addr)) return "";
+  const at = addr.lastIndexOf(":");
+  return at < 0 || addr.indexOf(":") !== at ? addr : addr.slice(0, at);
+}
+/**
+ * A server Ember starts: unless it listens only on loopback (`bind`: "" for every address, null when Ember can't
+ * tell), other computers can connect; whoever connects reads the folder it serves, so that is read as a whole and asks
+ * when it is outside the task's folder.
+ */
+function listens(h: H, bind: string | null, root: Arg | null): void {
+  if (bind === null || !LOOPBACK.test(bind.replace(/^\[|\]$/g, ""))) h.e.add("publish", "net.listen", "Lets other computers on your network connect to this one.");
+  if (!root) return;
+  const obj = h.e.usePath(root, "readTree", h.sc);
+  if (obj.abs === null || !inWorkTree(obj.abs, h.sc.path)) {
+    h.e.add("publish", "net.serve", `Shares ${root.v === null ? "a folder Ember can't name" : obj.text} with anyone who connects.`, { objects: [obj] });
+  }
+}
+/** The folder a server is given (this one when none is; one Ember can't see stays unresolved). */
+const servedRoot = (v: string | null | undefined): Arg => (v === undefined ? lit(".") : v === null ? { v: null, raw: "?", glob: false } : lit(v));
+const TUNNEL_SAYS = "Makes a service on this computer reachable from the internet.";
+reg(NATIVE, ["busybox"], h => {
+  if (lower(h.args[0]) !== "httpd") { generic(h); return; }
+  // busybox httpd [-f] [-p [IP:]PORT] [-h HOME] [-c CONF]: port 80 on every address, this folder; without -f it
+  // carries on in the background.
+  const q = parseOpts(h.args.slice(1), { shortValue: "pchurmedP" });
+  const port = values(q, "p").pop();
+  listens(h, port === undefined ? "" : port === null ? null : listenHost(port), servedRoot(values(q, "h").pop()));
+  for (const c of values(q, "c")) if (c) h.e.usePath(lit(c), "read", h.sc);
+  if (!h.args.some(a => a.v !== null && /^-[a-zA-Z]*f/.test(a.v))) h.e.add("escape", "escape.background", SAYS.keepsRunning);
+});
+reg(NATIVE, ["caddy"], h => {
+  const verb = firstOperand(h.args).v;
+  const q = parseOpts(h.args, {
+    shortValue: "rlcatdf",
+    longValue: ["root", "listen", "domain", "from", "to", "config", "adapter", "envfile", "pidfile", "address", "body", "header", "status"],
+  });
+  for (const f of values(q, "c", "config", "envfile")) if (f) h.e.usePath(lit(f), "read", h.sc);
+  if (verb === "trust" || verb === "untrust") { h.e.add("system", "system.security", TRUST_SAYS); return; }
+  if (verb === "environ") { h.e.add("secret", "secret.env", SAYS.env); return; }
+  if (verb === "file-server" || verb === "reverse-proxy" || verb === "respond") {
+    // Where it listens: every address when --listen isn't given. reverse-proxy always listens on every address, on
+    // --from's port; --from's host only picks which requests it answers (review #178).
+    const at = verb === "reverse-proxy" ? undefined : values(q, "l", "listen").pop();
+    listens(h, at === undefined ? "" : at === null ? null : listenHost(at.replace(/^[a-z]+:\/\//i, "")), verb === "file-server" ? servedRoot(values(q, "r", "root").pop()) : null);
+    return;
+  }
+  if (verb === "run" || verb === "start" || verb === "reload") {
+    // Its settings say where it listens and what it serves; Ember doesn't read them.
+    h.e.add("publish", "net.listen", "Lets other computers on your network connect to this one.");
+    if (verb === "start") h.e.add("escape", "escape.background", SAYS.keepsRunning);
+    return;
+  }
+  h.e.readArgs(q.operands.slice(1), h.sc);
+});
+reg(NATIVE, ["miniserve"], h => {
+  // miniserve [PATH]: every address unless -i/--interfaces says otherwise; -u lets whoever connects add files.
+  const q = parseOpts(h.args, {
+    shortValue: "ipacdtq",
+    longValue: ["interfaces", "port", "auth", "auth-file", "color-scheme", "color-scheme-dark", "title", "header", "index", "route-prefix", "tls-cert", "tls-key", "qrcode"],
+  });
+  const ifs = values(q, "i", "interfaces");
+  const root = q.operands[0] ?? lit(".");
+  listens(h, ifs.length === 0 ? "" : ifs.find(i => i === null || !LOOPBACK.test(i.replace(/^\[|\]$/g, ""))) ?? "localhost", root);
+  if (has(q, "u", "upload-files")) h.e.usePath(root, "write", h.sc);
+  for (const f of values(q, "auth-file", "tls-key")) if (f) h.e.usePath(lit(f), "read", h.sc);
+});
+reg(NATIVE, ["cloudflared", "ngrok"], h => {
+  const words = h.args.map(a => a.v);
+  if (words.some(w => w !== null && /^(-v|-h|--version|--help|version|help|completion|update)$/.test(w))) return;
+  if (words.includes("service")) { h.e.add("system", "service.change", "Starts, stops or changes a system service."); return; }
+  if (h.key === "ngrok") {
+    if (words.some(w => w !== null && /^(http|tcp|tls|start|tunnel)$/.test(w))) h.e.add("publish", "net.tunnel", TUNNEL_SAYS);
+    else h.e.readArgs(h.args.filter(a => !isOption(a)), h.sc);
+    return;
+  }
+  // cloudflared: `tunnel` (a quick one with --url, or a named one), `--url` alone, and the bare program with its
+  // settings all run a tunnel; `tunnel list|info` only print, `access` reaches other services from here.
+  const t = words.indexOf("tunnel");
+  const sub = t < 0 ? undefined : words.slice(t + 1).find(w => w === null || /^(run|list|info|create|delete|route|cleanup|login|token|vnet)$/.test(w));
+  if (t < 0 && words.includes("access")) { if (words.includes("token")) h.e.add("secret", "secret.program", SAYS.secrets); return; }
+  if (sub === "list" || sub === "info") return;
+  if (sub === "token") { h.e.add("secret", "secret.program", SAYS.secrets); return; }
+  if (sub === "delete" || sub === "cleanup") { h.e.add("remote-delete", "cloud.delete", "Deletes things in Cloudflare."); return; }
+  if (sub === "create" || sub === "route" || sub === "login" || sub === "vnet") { h.e.add("publish", "cloud.change", "Changes Cloudflare."); return; }
+  h.e.add("publish", "net.tunnel", TUNNEL_SAYS);
+});
+reg(NATIVE, ["ssh-copy-id"], h => {
+  const p = opts(h, { shortValue: "ioptFJ", longValue: [] });
+  sshOptions(h, p);
+  const host = hostOf((p.operands[p.operands.length - 1]?.v ?? "another computer").replace(/^[^@]*@/, ""));
+  h.e.add("publish", "send.ssh-key", `Adds your key to ${host}, so this computer can sign in there without a password.`, { objects: [{ kind: "host", text: host, abs: null }] });
+});
+reg(NATIVE, ["mount_smbfs", "mount_afp", "mount_webdav"], h => {
+  // macOS: mounting another computer's share signs in there (with the password in the keychain, if any).
+  const ops = h.args.filter(a => !isOption(a) && h.args[h.args.indexOf(a) - 1]?.v !== "-o");
+  const share = ops[0]?.v ?? null;
+  const host = share === null ? "another computer" : /^(?:[a-z]+:)?\/\/(?:[^@/]*@)?([^/:]+)/i.exec(share)?.[1] ?? share;
+  h.e.add("publish", "net.mount", `Connects to ${host} and signs in there with your account.`, { objects: [{ kind: "host", text: host, abs: null }] });
+  if (ops[1]) h.e.usePath(ops[1], "write", h.sc);
+});
 reg(NATIVE, ["nc", "ncat", "netcat", "socat", "s_client"], h => {
   const args = h.args.map(a => a.v ?? "");
   if (h.key === "socat" && args.some(a => /^(EXEC|SYSTEM):/i.test(a))) h.e.unclear("unclear.socat-exec", "It runs a program Ember can't see.");
@@ -4313,6 +5009,7 @@ reg(NATIVE, ["security"], h => {
   if (/^(find-generic-password|find-internet-password|dump-keychain|export|unlock-keychain|add-generic-password|add-internet-password|delete-generic-password|delete-internet-password|find-certificate|import|set-keychain-password|create-keychain|delete-keychain|set-generic-password-partition-list|authorizationdb|export-identities|find-identity)$/.test(verb)) {
     h.e.add("secret", "secret.program", SAYS.secrets);
   }
+  if (/^(add-trusted-cert|remove-trusted-cert|add-certificates|delete-certificate|trust-settings-import)$/.test(verb)) h.e.add("system", "system.security", TRUST_SAYS);
 });
 reg(NATIVE, ["keyctl"], h => { if (/^(print|read|pipe|show|add|padd|request|update|newring|unlink|clear|purge|invalidate)$/.test(h.args[0]?.v ?? "")) h.e.add("secret", "secret.program", SAYS.secrets); });
 reg(NATIVE, ["ssh-keygen"], h => {
@@ -4331,6 +5028,22 @@ reg(NATIVE, ["gpg", "gpg2", "gpgsm"], h => {
 });
 reg(NATIVE, ["openssl"], h => {
   const sub = h.args[0]?.v ?? "";
+  if (sub === "s_client" && h.s.stdin !== null && h.s.stdin !== "heredoc") {
+    // Whatever stdin holds goes to the server: a file, or another program's output (text the command shows, from
+    // echo or printf, doesn't hide anything) (review #178).
+    const from = h.s.pipedFrom !== undefined ? h.e.commands[h.s.pipedFrom]?.program.toLowerCase() : undefined;
+    const files = h.s.redirs.filter(r => r.kind === "read").map(r => r.target?.v ?? null);
+    const sends = h.s.stdin === "file" ? files.some(f => f === null || !NULL_SINKS.has(f.toLowerCase())) : !/^(echo|printf|true|:|write-output)$/.test(from ?? "");
+    const at = h.args.findIndex(a => a.v === "-connect");
+    const host = hostOf(at >= 0 ? h.args[at + 1]?.v ?? "another computer" : "another computer");
+    if (sends) h.e.add("publish", "send.nc", `Sends data to ${host}.`, { objects: [{ kind: "host", text: host, abs: null }] });
+  }
+  if (sub === "s_server") {
+    // A TLS server on every address unless -accept names one; -WWW and -HTTP serve this folder's files.
+    const at = h.args.findIndex(a => a.v === "-accept");
+    const addr = at >= 0 ? h.args[at + 1]?.v ?? null : "";
+    listens(h, addr === null ? null : listenHost(addr), h.args.some(a => a.v === "-WWW" || a.v === "-HTTP") ? lit(".") : null);
+  }
   if (/^(pkcs12|pkcs8|rsa|ec|genrsa|genpkey|req|ca)$/.test(sub) && h.args.some(a => /^-(passin|passout|export|nodes|noenc|text)$/.test(a.v ?? ""))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (h.args.some(a => /^-pass(in|out)$/.test(a.v ?? "")) && h.args.some(a => /^pass:/.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
   if (h.args.some(a => /^-(engine|provider|provider-path|keygen_engine)$/.test(a.v ?? ""))) h.e.unclear("unclear.openssl-engine", "It loads a program library Ember can't see.");
@@ -4384,6 +5097,14 @@ reg(NATIVE, ["patch", "gpatch"], h => {
   if (patchFile) h.e.usePath(patchFile, "read", sc);
 });
 reg(NATIVE, ["certutil"], h => {
+  // NSS's certutil (Linux, macOS): a capital letter names its command; adding, changing or deleting a certificate or
+  // key changes what this computer trusts (review #108), and -W changes the store's password.
+  if (h.sc.os !== "win32" && h.sc.family === "posix" && !h.pn.interop) {
+    const cmds = h.args.map(a => a.v ?? "?");
+    if (cmds.includes("-W")) h.e.add("secret", "secret.program", SAYS.secrets);
+    if (cmds.some(c => /^(-[ABDEFGMNST]|--(merge|upgrade-merge|rename))$/.test(c))) h.e.add("system", "system.security", TRUST_SAYS);
+    return;
+  }
   const flags = h.args.map(a => (a.v ?? "").toLowerCase());
   if (flags.some(f => /^[-/](exportpfx|backupkey|backup|getkey|importpfx|repairstore|delstore|addstore|viewdelstore|deletehelloContainer)$/i.test(f))) h.e.add("secret", "secret.program", SAYS.secrets);
   if (flags.some(f => /^[-/]urlcache$/.test(f))) { const out = h.args.filter(a => !(a.v ?? "").startsWith("-") && !(a.v ?? "").startsWith("/")).pop(); if (out?.v && !URL_LIKE.test(out.v)) { h.e.usePath(out, "write", h.sc); h.e.download(out.v, h.sc); } }
@@ -4440,6 +5161,8 @@ reg(NATIVE, ["net", "net1"], h => {
   if (verb === "share" && rest.length) { h.e.add("publish", "net.share", "Shares a folder on the network."); return; }
   if (verb === "time" && rest.some(a => /^\/set$/i.test(a.v ?? ""))) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   if ((verb === "session" || verb === "file") && rest.some(a => /^\/(delete|close)$/i.test(a.v ?? ""))) { h.e.add("system", "kill.process", "Stops programs that are running (network sessions)."); return; }
+  // `net use [Z:] \\host\share` and `net view \\host` connect to that computer and sign in there (review #171).
+  if (verb === "use" || verb === "view") for (const a of rest) if (/^[\\/]{2}/.test(a.v ?? "")) h.e.usePath(a, "list", h.sc);
   if (verb === "use" && rest.some(a => /\\\\/.test(a.v ?? "")) && rest.some(a => /^\/user:/i.test(a.v ?? ""))) h.e.add("secret", "secret.token-arg", SAYS.tokenArg);
 });
 reg(NATIVE, ["reg", "regedit", "regini"], h => {
@@ -4608,6 +5331,18 @@ reg(NATIVE, ["taskkill"], h => {
   }
   killPids(h, pids);
 });
+/**
+ * A gdb or lldb option that runs debugger commands, given on the line or read from a file (reviews #165, #166). Both
+ * take one or two dashes; gdb also takes any unambiguous prefix of a long name (`-eval` is --eval-command) and a value
+ * after `=`. gdb's -s is --symbols, not a script.
+ */
+function debuggerCode(key: string, word: string): boolean {
+  const m = /^--?([A-Za-z][\w-]*)(=|$)/.exec(word);
+  if (!m) return false;
+  const name = m[1];
+  if (key === "lldb") return /^([oOkKsS]|one-line|one-line-before-file|one-line-on-crash|source|source-before-file|source-on-crash)$/.test(name);
+  return /^(ex|iex|x|ix)$/.test(name) || (name.length >= 2 && ["eval-command", "init-eval-command", "command", "init-command"].some(l => l.startsWith(name)));
+}
 reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h => {
   const pids = h.args.flatMap((a, k) => (/^(-p|--pid|-pid|--attach-pid)$/.test(h.args[k - 1]?.v ?? "") || /^--pid=/.test(a.v ?? "") ? [(a.v ?? "").replace(/^--pid=/, "")] : []));
   if (h.key === "renice") pids.push(...h.args.filter(a => /^\d+$/.test(a.v ?? "")).slice(1).map(a => a.v!));
@@ -4618,19 +5353,17 @@ reg(NATIVE, ["gdb", "lldb", "renice", "gcore", "dtrace", "dtruss", "perf"], h =>
     h.e.payload(p.operands, h.sc, `perf ${h.args[0].v}`);
     return;
   }
-  if ((h.key === "gdb" || h.key === "lldb") && !h.args.some(a => /^-?-batch$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
+  // gdb/lldb command and script options run debugger commands (which can `shell`/`platform shell`), from the line or a
+  // file or stdin: Ember can't vouch for them, so batch mode runs only when none is present (reviews #165, #166).
+  if (h.key === "gdb" || h.key === "lldb") {
+    const code = h.args.some(a => a.v !== null && debuggerCode(h.key, a.v));
+    if (code) h.e.unclear("unclear.inline-code", "It runs debugger commands Ember can't see.");
+    else if (!h.args.some(a => /^-?-batch$/.test(a.v ?? ""))) h.e.unclear("unclear.interactive", SAYS.interactive);
+  }
 });
-reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapon", "swapoff", "mountvol", "bcdedit", "bcdboot", "csrutil", "kextload", "kextunload", "kmutil", "nvram", "hdiutil", "fsutil", "sfc", "chkdsk", "defrag", "powercfg", "w32tm", "label", "subst", "dmsetup", "zfs", "btrfs", "lvcreate", "lvextend", "vgcreate", "pvcreate", "tune2fs", "e2fsck", "fsck", "xfs_repair", "update-grub", "grub-install", "grub2-mkconfig", "dracut", "mkinitcpio", "update-initramfs", "depmod", "sysctl", "setcap", "systemd-tmpfiles", "ldconfig", "update-alternatives", "alternatives", "gsettings", "dconf", "defaults"], h => {
+reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapon", "swapoff", "mountvol", "bcdedit", "bcdboot", "csrutil", "kextload", "kextunload", "kmutil", "nvram", "hdiutil", "fsutil", "sfc", "chkdsk", "defrag", "powercfg", "w32tm", "label", "subst", "dmsetup", "zfs", "btrfs", "lvcreate", "lvextend", "vgcreate", "pvcreate", "tune2fs", "e2fsck", "fsck", "xfs_repair", "update-grub", "grub-install", "grub2-mkconfig", "dracut", "mkinitcpio", "update-initramfs", "depmod", "sysctl", "setcap", "systemd-tmpfiles", "ldconfig", "update-alternatives", "alternatives"], h => {
   const a = h.args.map(x => x.v ?? "");
   if (h.key === "sysctl" && !a.some(x => /^-w$|=/.test(x) || x === "-p" || x === "--system" || x === "--load")) return;
-  if ((h.key === "gsettings" || h.key === "dconf") && !/^(set|reset|reset-recursively|write|reset|load|update|compile)$/.test(a[0] ?? "")) return;
-  if (h.key === "gsettings" || h.key === "dconf") return;
-  if (h.key === "defaults") {
-    if (!/^(write|delete|import|rename)$/.test(a[0] ?? "")) return;
-    if (a.some(x => /LSQuarantine/i.test(x))) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
-    else if (a.some(x => /^\/Library\//.test(x) || /^-g$|^NSGlobalDomain$/.test(x) && false)) h.e.add("system", "path.system", "Changes system files.");
-    return;
-  }
   if (h.key === "hdiutil" && !/^(attach|mount|detach|eject|create|convert|resize|makehybrid|burn|erase)$/.test(a[0] ?? "")) return;
   if ((h.key === "fsutil" || h.key === "chkdsk" || h.key === "powercfg" || h.key === "w32tm" || h.key === "bcdedit") && a.length && a.every(x => /^[/-](query|list|l|enum|v|scan|stripchart|tz|monitor|getactivescheme|batteryreport|energy|requests|a|\?|help)/i.test(x) || /^(query|info|fsinfo|volume)$/i.test(x))) return;
   if (h.key === "csrutil" && /^(disable|enable|clear)/.test(a[0] ?? "")) { h.e.add("system", "system.security", "Turns off or weakens a security protection."); return; }
@@ -4638,6 +5371,210 @@ reg(NATIVE, ["mount", "umount", "losetup", "modprobe", "insmod", "rmmod", "swapo
   if (h.key === "subst") h.e.unclear("unclear.windows-path", "Ember can't tell which file this names.");
   if (h.key === "mount" && a.length === 0) { h.e.add("system", "system.kernel", "Changes how the system works."); return; }
   h.e.add("system", "system.kernel", "Changes how the system works.");
+});
+// Desktop settings (review #108, #168). Every GNOME settings write (gsettings, dconf) changes the desktop's settings, as
+// a registry write does on Windows (D4.3 e). Some weaken a protection the GUI policy asks about too (the proxy, the
+// screen lock, remote access, privacy), and some set something that runs later (a keyboard shortcut's command, a shell
+// extension, a default program): those say so. macOS's defaults asks for the domains that weaken a protection.
+/** GNOME settings areas, as dotted key prefixes (`org.gnome.desktop.screensaver` holds `….lock-enabled`), and what changing one does. */
+const SETTINGS_AREAS: readonly { rule: string; says: string; prefixes: readonly string[] }[] = [
+  { rule: "system.network", says: "Changes the firewall or network settings.", prefixes: ["org.gnome.system.proxy"] },
+  {
+    rule: "system.security", says: "Turns off or weakens a security protection.",
+    prefixes: [
+      "org.gnome.desktop.screensaver", "org.gnome.desktop.lockdown", "org.gnome.desktop.remote-desktop", "org.gnome.desktop.privacy",
+      "org.gnome.desktop.media-handling", "org.gnome.desktop.session.idle-delay", "org.gnome.settings-daemon.plugins.sharing",
+      "org.gnome.settings-daemon.plugins.remote-display", "org.gnome.login-screen", "org.gnome.system.location",
+    ],
+  },
+  {
+    rule: "system.autostart", says: "Sets a command, an extension or a default program that runs later.",
+    prefixes: [
+      "org.gnome.settings-daemon.plugins.media-keys", "org.gnome.shell.enabled-extensions", "org.gnome.shell.disabled-extensions",
+      "org.gnome.shell.disable-user-extensions", "org.gnome.shell.allow-extension-installation", "org.gnome.shell.development-tools",
+      "org.gnome.shell.extensions", "org.gnome.desktop.default-applications",
+    ],
+  },
+];
+/**
+ * A GNOME settings write to `key` (dotted, lower case; null: a key Ember can't see, which could be any): the areas it
+ * reaches, or plain desktop settings. `tree`: everything under `key` changes (a reset of a folder, a load).
+ */
+function settingsWrite(h: H, key: string | null, tree: boolean, form: (prefix: string) => string = p => p): void {
+  let hit = false;
+  for (const area of SETTINGS_AREAS) {
+    const reaches = key === null || area.prefixes.map(form).some(p => key === p || key.startsWith(`${p}.`) || (tree && (key === "" || p.startsWith(`${key}.`))));
+    if (reaches) { hit = true; h.e.add("system", area.rule, area.says); }
+  }
+  if (!hit) h.e.add("system", "system.settings", "Changes your desktop settings.");
+}
+reg(NATIVE, ["gsettings"], h => {
+  // gsettings [--schemadir DIR] <command> SCHEMA[:PATH] [KEY] [VALUE]: only set, reset and reset-recursively change anything.
+  let k = 0;
+  while (h.args[k]?.v === "--schemadir") k += 2;
+  if (h.args[k]?.v?.startsWith("--schemadir=")) k++;
+  const verb = h.args[k];
+  if (!verb) return;
+  if (verb.v === null) { settingsWrite(h, null, true); return; }
+  if (!/^(set|reset|reset-recursively)$/.test(verb.v)) return;
+  const schema = h.args[k + 1]?.v ?? null;
+  const name = h.args[k + 2]?.v ?? null;
+  const recursive = verb.v === "reset-recursively";
+  if (schema === null || (!recursive && name === null)) { settingsWrite(h, null, true); return; }
+  const id = schema.split(":")[0].toLowerCase();
+  settingsWrite(h, recursive ? id : `${id}.${name!.toLowerCase()}`, recursive);
+});
+/**
+ * Where a settings area's keys live in dconf, dotted: its schema id, except for the two schemas GNOME keeps elsewhere
+ * (org.gnome.system.proxy at /system/proxy/, org.gnome.desktop.default-applications at /org/gnome/desktop/applications/).
+ */
+const dconfForm = (id: string): string =>
+  id.replace(/^org\.gnome\.system\.proxy(?=\.|$)/, "system.proxy").replace(/^org\.gnome\.desktop\.default-applications(?=\.|$)/, "org.gnome.desktop.applications");
+reg(NATIVE, ["dconf"], h => {
+  // dconf write KEY VALUE, reset [-f] KEY|DIR/, load [-f] DIR/ (keys from stdin), update and compile (the system's or a
+  // file's database). Keys are paths (`/org/gnome/desktop/screensaver/lock-enabled`); a folder ends with `/`.
+  const verb = h.args[0]?.v;
+  if (verb === undefined) return;
+  if (verb === null) { settingsWrite(h, null, true); return; }
+  const ops = h.args.slice(1).filter(a => a.v !== "-f");
+  const dotted = (p: string): string => p.replace(/^\/+|\/+$/g, "").replace(/\//g, ".").toLowerCase();
+  switch (verb) {
+    case "write": case "reset": case "load": {
+      const target = ops[0]?.v ?? null;
+      if (target === null) { settingsWrite(h, null, true); return; }
+      settingsWrite(h, dotted(target), verb === "load" || target.endsWith("/"), dconfForm);
+      return;
+    }
+    case "update": settingsWrite(h, null, true); return;
+    case "compile": { const out = ops[0]; if (out) h.e.usePath(out, "write", h.sc); h.e.readArgs(ops.slice(1), h.sc); return; }
+    default: return;
+  }
+});
+/** macOS preference domains whose settings weaken a protection: the screen saver's password, the firewall, remote access, updates. */
+const DEFAULTS_SECURITY = /^com\.apple\.(screensaver|alf|security(\..+)?|screensharing|remotemanagement|remotedesktop|softwareupdate|commerce)$/i;
+/** macOS preference domains that start something at login or choose which program opens a file or link (review #175). */
+const DEFAULTS_AUTOSTART = /^com\.apple\.(loginitems|loginwindow|backgroundtaskmanagementagent|launchservices)(\/|$)/i;
+/**
+ * The preference domains a property list holds, when it is one macOS reads settings from: a file in a Library/Preferences
+ * folder (`…/Library/Preferences/com.apple.screensaver.plist` holds com.apple.screensaver), or in its ByHost folder,
+ * whose names end with the computer's id (`com.apple.screensaver.<id>`). Empty for any other file (review #108).
+ */
+function prefsDomains(path: string): string[] {
+  const m = /(?:^|\/)Library\/Preferences\/(ByHost\/)?(.+?)(?:\.plist)?$/i.exec(path);
+  if (!m) return [];
+  return m[1] ? [m[2], m[2].replace(/\.[^.]*$/, "")] : [m[2]];
+}
+/**
+ * A change to preference domains (null: ones Ember can't name, which could be any): those that weaken a protection, and
+ * LSQuarantine (`lsq`: the change names it) in any, ask as security; those that start something at login ask as autostart.
+ */
+function prefsChange(h: H, domains: readonly string[] | null, lsq: boolean): void {
+  if (domains === null || lsq || domains.some(d => DEFAULTS_SECURITY.test(d))) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
+  if (domains === null || (!lsq && domains.some(d => DEFAULTS_AUTOSTART.test(d)))) h.e.add("system", "path.autostart", "Schedules something to run later or at login.");
+}
+/** A property list written by PlistBuddy or plutil: a preferences file is judged as a change to its domains. */
+function prefsFile(h: H, obj: Obj, lsq: boolean): void {
+  const domains = obj.abs === null ? [] : prefsDomains(obj.abs);
+  if (domains.length) prefsChange(h, domains, lsq);
+}
+reg(NATIVE, ["defaults"], h => {
+  // defaults [-currentHost | -host NAME] <verb> <domain> …; the domain may be `-g`, `-app NAME`, a name or a path.
+  let k = 0;
+  while (h.args[k]?.v === "-currentHost" || h.args[k]?.v === "-host") k += h.args[k].v === "-host" ? 2 : 1;
+  const verb = h.args[k]?.v;
+  if (verb === undefined) return;
+  const rest = h.args.slice(k + 1);
+  const app = rest[0]?.v === "-app";
+  const domain = app ? null : rest[0]?.v ?? null;
+  // A domain given as a path is that file, `.plist` added when missing (review #175).
+  const file = domain !== null && /^[~/]/.test(domain) ? lit(domain.endsWith(".plist") ? domain : `${domain}.plist`) : null;
+  if (verb === "export") {
+    if (file) h.e.usePath(file, "read", h.sc);
+    if (rest[1]) overwrites(h, rest[1]);
+    return;
+  }
+  if (verb !== null && !/^(write|delete|import|rename)$/.test(verb)) { if (file) h.e.usePath(file, "read", h.sc); return; }
+  if (verb === "import" && rest[1] && rest[1].v !== "-") h.e.usePath(rest[1], "read", h.sc);
+  const lsq = rest.some(a => /LSQuarantine/i.test(a.v ?? ""));
+  // A path domain is judged as a write to its file and as a change to the domain it holds (review #108).
+  if (file) { const obj = h.e.usePath(file, "write", h.sc); prefsChange(h, prefsDomains(obj.abs ?? file.v ?? ""), lsq); return; }
+  const unknown = verb === null || (!app && domain === null);
+  prefsChange(h, unknown ? null : domain === null ? [] : [domain], lsq);
+});
+// Property lists edited in place (review #175): a LaunchAgent built with PlistBuddy or plutil runs at the next login.
+reg(NATIVE, ["PlistBuddy", "plistbuddy"], h => {
+  // PlistBuddy [-x] [-c "<command>"]… <file>: Set, Add, Delete, Clear, Copy, Merge and Import change the file (Merge
+  // and Import read another one); with no -c it reads its commands from the terminal or stdin.
+  const cmds: (string | null)[] = [];
+  const ops: Arg[] = [];
+  for (let k = 0; k < h.args.length; k++) {
+    const v = h.args[k].v;
+    if (v === "-c") { cmds.push(h.args[k + 1]?.v ?? null); k++; continue; }
+    if (v !== null && /^-[xh]$/.test(v)) continue;
+    ops.push(h.args[k]);
+  }
+  const file = ops[0];
+  let writes = false;
+  for (const c of cmds) {
+    if (c === null) { writes = true; continue; }
+    const [verb, ...words] = c.trim().split(/\s+/);
+    const w = (verb ?? "").toLowerCase();
+    if (/^(set|add|delete|clear|copy|merge|import|save|revert)$/.test(w)) writes = true;
+    const other = w === "merge" ? words[0] : w === "import" ? words[1] : undefined;
+    if (other) h.e.usePath(lit(other), "read", h.sc);
+  }
+  if (cmds.length === 0) {
+    if (h.s.stdin === null) h.e.unclear("unclear.interactive", SAYS.interactive);
+    else { writes = true; h.e.unclear("unclear.stdin-code", "Runs code Ember can't see."); }
+  }
+  if (file) {
+    const obj = h.e.usePath(file, writes ? "write" : "read", h.sc);
+    if (writes) prefsFile(h, obj, cmds.some(c => c !== null && /LSQuarantine/i.test(c)));
+  }
+  // A command or file Ember can't see may be any, as for any program's unresolved argument.
+  if (file?.v === null || cmds.includes(null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+});
+/** plutil's options that take values, and how many. */
+const PLUTIL_VALUES: Readonly<Record<string, number>> = { "-o": 1, "-e": 1, "-expect": 1, "-remove": 1, "-create": 1, "-convert": 1, "-extract": 2, "-type": 1 };
+reg(NATIVE, ["plutil"], h => {
+  // plutil <command> … [-s] [-r] [-n] [-o OUT | -e EXT] [--] FILE…, options anywhere: -insert|-replace KEY -TYPE VALUE
+  // (-array and -dictionary take no value), -remove KEY, -create FORMAT and -convert FORMAT change every FILE in place,
+  // or write -o's (`-` is stdout); -extract KEY FORMAT, -type KEY, -lint, -p and -help only read. A command Ember
+  // can't see may change them (review #175).
+  let verb: string | null | undefined;
+  let out: Arg | undefined;
+  const files: Arg[] = [];
+  for (let k = 0; k < h.args.length; k++) {
+    const a = h.args[k];
+    const v = a.v;
+    if (v === "--") { files.push(...h.args.slice(k + 1)); break; }
+    if (v === null && verb === undefined) { verb = null; continue; }
+    if (v === null || !v.startsWith("-") || v === "-") { files.push(a); continue; }
+    if (verb === undefined && /^-(insert|replace|remove|create|convert|extract|type|lint|p|help)$/.test(v)) verb = v;
+    if (v === "-o") out = h.args[k + 1];
+    if (v === "-insert" || v === "-replace") k += /^-(array|dictionary)$/.test(h.args[k + 2]?.v ?? "") ? 2 : 3;
+    else k += PLUTIL_VALUES[v] ?? 0;
+  }
+  const lsq = h.args.some(a => /LSQuarantine/i.test(a.v ?? ""));
+  if (out && out.v !== "-") prefsFile(h, h.e.usePath(out, "write", h.sc), lsq);
+  if (verb === null || (verb !== undefined && /^-(insert|replace|remove|create|convert)$/.test(verb) && !out)) for (const f of files) prefsFile(h, h.e.usePath(f, "write", h.sc), lsq);
+  else h.e.readArgs(files, h.sc);
+  if (verb === null || files.some(f => f.v === null)) h.e.unclear("unclear.unresolved-arg", `Ember can't tell which arguments ${h.prog} gets.`);
+});
+// Which certificates the computer trusts (review #108): NSS's certutil, p11-kit's trust, the system bundle, macOS's
+// trust settings. Windows' certutil is judged below its own handler.
+const TRUST_SAYS = "Changes which certificates your computer trusts.";
+reg(NATIVE, ["trust"], h => {
+  const verb = firstOperand(h.args);
+  if (verb.v === null) { if (verb.at < h.args.length) h.e.add("system", "system.security", TRUST_SAYS); return; }
+  if (verb.v === "anchor" || verb.v === "extract-compat") { h.e.add("system", "system.security", TRUST_SAYS); return; }
+  if (verb.v === "extract") { const out = h.args.slice(verb.at + 1).filter(a => !isOption(a)).pop(); if (out) overwrites(h, out); }
+});
+reg(NATIVE, ["update-ca-trust", "update-ca-certificates"], h => { h.e.add("system", "system.security", TRUST_SAYS); });
+reg(NATIVE, ["systemsetup"], h => {
+  const flags = h.args.map(a => (a.v ?? "").toLowerCase());
+  if (flags.some(f => /^-set(remotelogin|remoteappleevents)$/.test(f))) h.e.add("system", "system.security", "Turns off or weakens a security protection.");
+  else if (flags.some(f => f.startsWith("-set") || f === "")) h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 reg(NATIVE, ["setenforce", "semanage", "auditctl", "aa-disable", "aa-complain", "apparmor_parser", "spctl", "xattr", "vssadmin", "wbadmin", "wevtutil", "auditpol"], h => {
   const a = h.args.map(x => (x.v ?? "").toLowerCase());
@@ -4910,7 +5847,14 @@ reg(NATIVE, ["powershell", "pwsh", "powershell_ise"], h => {
     h.e.unclear("unclear.powershell-option", "Ember can't tell what PowerShell would run.");
     return;
   }
-  if (file) { runScript(h, file, "powershell"); return; }
+  if (file) {
+    // Through WSL interop the script's path is Windows's: one on another computer's share (`\\host\share\x.ps1`,
+    // `//host/share/x.ps1`) runs from there, as on Windows (review #171).
+    const ws = h.pn.interop ? windowsScope(h, "powershell") : null;
+    if (ws && file.v !== null) h.e.usePath(file, "exec", child(h.sc, ws));
+    runScript(h, file, "powershell");
+    return;
+  }
   if (text === null) { h.e.unclear("unclear.shell-text", "It runs PowerShell text Ember can't see."); return; }
   if (text === undefined || interactiveShell) {
     if (h.s.stdin === "pipe" || h.s.stdin === "heredoc") { intoInterpreter(h); return; }
@@ -5103,6 +6047,13 @@ reg(CMDLETS, ["get-content", "get-item", "select-string", "get-itemproperty", "g
   if (paths.length === 0) objsOf(h, pipedListing(h), h.key === "get-item" ? "list" : "readTree");
   if (h.key === "get-item") h.e.listed.set(h.e.at, files);
 });
+// Resolve-Path and Convert-Path look a path up: one on another computer's share connects and signs in there, as
+// listing it does (review #171). Otherwise they only print names, as before.
+reg(CMDLETS, ["resolve-path", "convert-path"], h => {
+  textProgram(h);
+  const b = bindPs(h, { params: { Path: "v", LiteralPath: "v", Relative: "s", RelativeBasePath: "v", Credential: "v" }, aliases: { pspath: "LiteralPath", lp: "LiteralPath" }, pos: ["Path"] });
+  for (const a of psPaths(b, "Path", "LiteralPath")) if (/^[\\/]{2}/.test(a.v ?? "")) h.e.usePath(a, "list", h.sc);
+});
 reg(CMDLETS, ["get-childitem"], h => {
   const b = bindPs(h, PS_CMDLETS["get-childitem"]);
   const paths = psPaths(b, "Path", "LiteralPath");
@@ -5291,7 +6242,12 @@ reg(CMDLETS, ["register-scheduledtask", "unregister-scheduledtask", "new-schedul
   h.e.add("system", "system.schedule", "Schedules something to run later or at login.");
 });
 reg(CMDLETS, ["new-psdrive", "mount-diskimage", "dismount-diskimage", "mount-vhd", "set-date", "set-timezone", "rename-computer", "add-computer", "remove-computer", "set-itemproperty-system"], h => {
-  if (h.key === "new-psdrive" && !h.args.some(a => /^persist$/i.test(a.param ?? ""))) return;
+  if (h.key === "new-psdrive") {
+    // A drive on another computer's share connects and signs in there as `net use` does (review #171).
+    const b = bindPs(h, { params: { Name: "v", PSProvider: "v", Root: "v", Description: "v", Scope: "v", Credential: "v", Persist: "s" }, pos: ["Name", "PSProvider", "Root"] });
+    for (const r of b.named.get("Root") ?? []) if (/^[\\/]{2}/.test(r.v ?? "")) h.e.usePath(r, "list", h.sc);
+    if (!h.args.some(a => /^persist$/i.test(a.param ?? ""))) return;
+  }
   h.e.add("system", "system.kernel", "Changes how the system works.");
 });
 reg(CMDLETS, ["get-childitem-env"], () => undefined);
