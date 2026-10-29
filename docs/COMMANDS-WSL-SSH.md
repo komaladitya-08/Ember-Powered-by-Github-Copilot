@@ -80,30 +80,33 @@ Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop ev
 
 ### 2.2 Ember's command window
 
-Commands run in Ember's own window, **Ember commands**, never in your own terminal windows: Ember still never types
-into a terminal of yours. Each command gets a tab (the newest first, the last 20 kept) with a header such as
-"On build-01 as deploy · bash · in ~/src/app", a status line ("Running…", "Finished in 3.2 s.", "Ended with exit
-code 2 after 1.1 s.") with **Copy output** and **Stop**, then its live output. What a command already changed stays
-changed when you stop it. Closing the window while a command runs asks first ("A command is still running"): **Stop
-and close** stops it and closes the window, **Keep it open** leaves both, and closing it again stops and closes, so a
-command never runs on where you can't see it. Quitting Ember asks its own question.
+Commands run in Ember's own window, **Ember commands**, never in your own terminal windows: Ember still never types into
+a terminal of yours. Each command gets a tab (the newest first, the last 20 kept) with a header such as "On build-01 as
+deploy · bash · in ~/src/app", a status line ("Running…", "Finished in 3.2 s.", "Ended with exit code 2 after 1.1 s.")
+with **Copy output** and **Stop**, then its live output. What a command already changed stays changed when you stop it.
+A command the kill switch ended says "Stopped with everything else after 2 s. What it already changed stays." It names
+no chord: the kill switch is also pulled from the handle, settings, "Ember, stop" or a policy change. Closing the window
+while a command runs asks first ("A command is still running"): **Stop and close** stops it and closes the window,
+**Keep it open** leaves both, and closing it again stops and closes, so a command never runs on where you can't see it.
+Quitting Ember asks its own question.
 
-When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command;
-paste with Ctrl+V. Ember never sees what you type." (Command+V on a Mac). The keyboard is already in the command's
-terminal when its tab comes up, so what you type there goes straight to it. Every new command brings the window above
-your other windows without taking the keyboard, and when a command's output stops at a question for a couple of
-seconds ("Password:", "Username for 'https://github.com':", "[y/N]"), its tab says "Waiting for you to type in this
-window.", the window comes up and flashes in the taskbar or Dock, and the task's bubble says "A command is waiting for
-you to type in the command window." until you type or the command ends. The command's time limit still runs while it waits; if it runs out, the tab says
-it was waiting for you. What you type goes only to the command: it
-never reaches Copilot, the log or the audit. Tab and Shift+Tab always move on to the window's buttons and tabs, never
-into the command (Ctrl+I types a tab for a program that wants one). Off a Mac, Ctrl+C copies the text you selected
-(without a selection it interrupts the command, as in any terminal) and Ctrl+Shift+C always copies; **Copy output**
-copies everything the command printed. Commands without a terminal (on Windows, or where `script` isn't installed)
-say "This command can't take typing here." and are left out of the Tab order; programs there run with their
-non-interactive settings, so one that wants a password fails at once instead of waiting. While a screen reader runs
-(Orca, NVDA, JAWS, Narrator, VoiceOver), what a command prints is read out as it comes and can be read again line by
-line.
+When a command asks for something (a password, a "y/n"), type it in the window: "Type here to answer the command; paste
+with Ctrl+V. Ember never sees what you type." (Command+V on a Mac). The keyboard is already in the command's terminal
+when its tab comes up, so what you type there goes straight to it. Every new command brings the window above your other
+windows without taking the keyboard, and when a command's output stops at a question for a couple of seconds
+("Password:", "Username for 'https://github.com':", "[y/N]"), its tab says "Waiting for you to type in this window.",
+the window comes up and flashes in the taskbar or Dock, and the task's bubble says "A command is waiting for you to type
+in the command window." (Needs you) with **Show**, which brings the command window up with the keyboard in the command,
+and "Or press Alt+Tab to go there." under it on Linux and Windows; a screen reader hears both. It stays until you type
+or the command ends. The command's time limit still runs while it waits; if it runs out, the tab says it was waiting for
+you. What you type goes only to the command: it never reaches Copilot, the log or the audit. Tab and Shift+Tab always
+move on to the window's buttons and tabs, never into the command (Ctrl+I types a tab for a program that wants one). Off
+a Mac, Ctrl+C copies the text you selected (without a selection it interrupts the command, as in any terminal) and
+Ctrl+Shift+C always copies; **Copy output** copies everything the command printed. Commands without a terminal (on
+Windows, or where `script` isn't installed) say "This command can't take typing here." and are left out of the Tab
+order; programs there run with their non-interactive settings, so one that wants a password fails at once instead of
+waiting. While a screen reader runs (Orca, NVDA, JAWS, Narrator, VoiceOver), what a command prints is read out as it
+comes and can be read again line by line.
 
 The window never reaches Copilot as a picture: Ember blacks out its own windows in every screenshot.
 
@@ -214,20 +217,23 @@ that folder, for that task: any change asks again. After a "no", Ember doesn't t
 
 ### 2.5 When you asked for exactly that
 
-If your own words for this task asked for that kind of operation on that computer and that object, a dangerous
-command runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to
-GitHub" covers `git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the
-announcement ("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything
-at once." and **Stop**), the command window shows "About to run this, as you asked" with the command, what it does and
-the model's reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**, and when Ember speaks
-(**Speak replies, questions and results out loud** set to Always, or a screen reader running with it on When a screen
-reader runs, the default), Ember says it and adds how to cancel it: "Say 'Ember, stop' to cancel." only where Ember can
-tell its own voice from yours (Linux with speaker rejection on and parec installed); elsewhere it names the stop chord
-("Press Windows key, Alt, X to cancel."), because its own microphone would hear it say the phrase and stop everything.
-There it never says "Ember, stop" or "Hey Ember" out loud at all (it says "the stop phrase" and "the wake phrase";
-the bubble still shows them). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds cancels
-it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. The audit
-log records it as requested by you.
+If your own words for this task asked for that kind of operation on that computer and that object, a dangerous command
+runs without a question, after an announcement: "delete build/" covers `rm -r build`, "push my branch to GitHub" covers
+`git push origin <that branch>`, "submit my changelist" covers `p4 submit -c <n>`. The bubble shows the announcement
+("Pushing feature-x to origin, as you asked.", with "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." and
+**Stop**), the command window shows "About to run this, as you asked" with the command, what it does and the model's
+reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**. While another app holds the stop
+chord, neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel."
+says. When Ember speaks (**Speak replies, questions and results out loud** set to Always, or a screen reader running
+with it on When a screen reader runs, the default), Ember says it and adds how to cancel it: "Say 'Ember, stop' to
+cancel." only where Ember can tell its own voice from yours (Linux with speaker rejection on and parec installed);
+elsewhere it names the stop chord ("Press Windows key, Alt, X to cancel."), because its own microphone would hear it say
+the phrase and stop everything. There it never says "Ember, stop" or "Hey Ember" out loud at all (it says "the stop
+phrase" and "the wake phrase"; the bubble still shows them). When the command runs in WSL, or on this computer while
+your words named another, the spoken announcement starts with where it runs, as the bubble's badge does ("In Ubuntu
+(WSL): …", "On this computer: …"). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds
+cancels it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. The
+audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. What you said counts only where Ember can tell your voice from
@@ -432,14 +438,16 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   with **More time to read and answer**). While it is up, Ember stops following the pointer and holds still beside it,
   as it does while you read an answer, so its buttons stay where you reach for them. Its buttons, like those of "Lost
   build-01" and "Can't connect", take only the mouse; under them the bubble says where the same buttons are from the
-  keyboard (Settings › **Computers**, with the settings shortcut). It offers each computer once per run, and **Don't
-  offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`, `rsync`,
-  scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with **Offer to
-  bring Ember along when I connect with SSH** (shown once a computer is added). Ember always opens its own connection;
-  it never uses or types into yours. If it can't connect there (your organisation doesn't allow that computer, its
-  settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to build-01" with the
-  reason. Ember looks at your `ssh` in WSL only in distros that are running at that moment, and never starts one to
-  look.
+  keyboard (Settings › **Computers**, with the settings shortcut). An offer to work on another computer that you didn't
+  ask for waits while "Lost build-01" or "Can't connect to build-01" is up, and shows (for its 25 seconds) once that
+  goes; one you asked for shows at once, and the Lost bubble comes back after it. It offers each computer once per run,
+  and **Don't offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`,
+  `rsync`, scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with
+  **Offer to bring Ember along when I connect with SSH** (shown once a computer is added). Ember always opens its own
+  connection; it never uses or types into yours. If it can't connect there (your organisation doesn't allow that
+  computer, its settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to
+  build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that are running at that moment, and never
+  starts one to look.
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,

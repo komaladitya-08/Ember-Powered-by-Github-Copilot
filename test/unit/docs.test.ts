@@ -404,7 +404,8 @@ describe("README.md's Accessibility section, against the release it describes", 
     const more = /More time to read and answer: messages stay ([^,<]+), and questions wait (\d+) minutes/.exec(homePage);
     expect(more).not.toBeNull();
     expect(sectionOf("more-time")).toBe("Comfort & access");
-    expect(a11y).toContain(`**More time to read and answer** (messages stay ${more![1]}, and a question waits ${more![2]} minutes`);
+    expect(a11y).toContain(`**More time to read and answer** (messages stay ${more![1]},`);
+    expect(a11y).toMatch(new RegExp(`\\*\\*More time to read and answer\\*\\* \\([^)]*a question waits ${more![2]} minutes`));
     expect(gaps).not.toMatch(/question waits|leaves the bubble/);
   });
 
@@ -516,6 +517,7 @@ const ROUND2 = {
   perception2: fs.existsSync(path.resolve("app/main/perception/text-warm.ts")),
   css2: fs.existsSync(path.resolve("app/renderer/command/terminal-size.ts")),
   ship2: /export function restartAfterUpdate\(/.test(read("app/main/install-watch.ts")),
+  bubble2: /case "killswitch": line = `Stopped with everything else after/.test(read("app/renderer/command/copy.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -598,6 +600,34 @@ describe("round 2's docs lines (ship2)", () => {
     const wf = read(".github/workflows/remote.yml");
     for (const v of ["EMBER_SSH_TEST_EXPECT_HELLO: \"0\"", "EMBER_SSH_TEST_EXPECT_HELLO: \"1\""]) expect(wf).toContain(v);
     expect(s144).toContain("`EMBER_SSH_TEST_EXPECT_HELLO` makes `ssh-windows` strict: `1` requires the hello, `0` requires the refusal of a kernel older than 4.18");
+  });
+});
+
+describe("round 2's docs lines (bubble2)", () => {
+  it.runIf(ROUND2.bubble2)("bubble2: gives the waiting bubble's Show, the kill switch's line, Read all at larger text and held keys", () => {
+    const guide = read("docs/COMMANDS-WSL-SSH.md");
+    const s22 = flat(section(guide, "2.2 Ember's command window"));
+    // The bubble a command waiting for typing raises (flow.ts) and the hint under it (command/copy.ts).
+    expect(read("app/main/commands/flow.ts")).toMatch(/\{ id: show, label: "Show" \}/);
+    expect(read("app/renderer/command/copy.ts")).toContain('"Or press Alt+Tab to go there."');
+    expect(s22).toContain(`(Needs you) with **Show**, which brings the command window up with the keyboard in the command, and "Or press Alt+Tab to go there." under it on Linux and Windows`);
+    expect(s22).toContain(`A command the kill switch ended says "Stopped with everything else after 2 s. What it already changed stays." It names no chord`);
+    expect(flat(section(guide, "2.5 When you asked for exactly that"))).toContain(`neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel." says`);
+    expect(read("app/voice/spoken.ts")).toContain('"Press Stop to cancel."');
+    expect(flat(section(guide, "4.1 Connecting"))).toContain(`An offer to work on another computer that you didn't ask for waits while "Lost build-01" or "Can't connect to build-01" is up`);
+    // Read all at the user's text size (presenter.ts) and the routes while a shortcut is held elsewhere (target-copy.ts).
+    expect(read("app/main/agent/presenter.ts")).toMatch(/six lines at that size offers Read all/);
+    expect(read("app/renderer/overlay/target-copy.ts")).toContain("`Or open Ember's settings and go to ${section}.`");
+    const using = flat(section(read("docs/DEVELOPING.md"), "Using Ember"));
+    expect(using).toContain("Long answers have **Read all** (counted at the text size you picked)");
+    expect(using).toContain(`routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an announced command names only its **Stop**`);
+    const a11y = flat(section(read("README.md"), "Accessibility"));
+    expect(a11y).toContain("At Large and Larger, an answer that needs more than six lines at that size offers **Read all**");
+    expect(a11y).toContain("also ones that waited behind another or were covered for a while, and Ember's own notices");
+    const notes = flat(read("CHANGELOG.md"));
+    expect(notes).toMatch(/the task's bubble says so as \*\*Needs you\*\*, with \*\*Show\*\*/);
+    expect(notes).toContain(`A command the kill switch ended says "Stopped with everything else"`);
+    expect(notes).toContain("an answer that needs more than six lines at that size offers **Read all**");
   });
 });
 

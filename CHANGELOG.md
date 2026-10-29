@@ -71,11 +71,14 @@ work on other computers you reach over SSH. Each is off until you turn it on and
 - **The command window**: Tab and Shift+Tab always move between the window's buttons and tabs and never go into the
   command; Ctrl+V pastes into a command that takes typing (Command+V on a Mac), Ctrl+C copies selected output, and
   **Copy output** copies all of it. When a command waits for you to type (a password, a "[y/N]"), its tab says so, the
-  window comes up and flashes, and the task's bubble says so until you type. Closing the window while a command runs
-  asks (**Stop and close** or **Keep it open**), so a command never runs on unseen. While a screen reader runs, a
-  command's output is read to it, and an announced command waits 15 seconds before it starts; every announcement
-  names the stop chord. One very long line of output doesn't freeze Ember, and a run that prints more than 4 MiB
-  doesn't slow the overlay or the stop chord.
+  window comes up and flashes, and the task's bubble says so as **Needs you**, with **Show**, which brings the command
+  window up with the keyboard, and "Or press Alt+Tab to go there." on Linux and Windows; screen readers hear it. Closing
+  the window while a command runs asks (**Stop and close** or **Keep it open**), so a command never runs on unseen.
+  While a screen reader runs, a command's output is read to it, and an announced command waits 15 seconds before it
+  starts; every announcement names the stop chord, or only **Stop** while another app holds the chord, and the spoken
+  one names where the command runs as the bubble's badge does (in WSL, or on this computer when your words named
+  another). A command the kill switch ended says "Stopped with everything else". One very long line of output doesn't
+  freeze Ember, and a run that prints more than 4 MiB doesn't slow the overlay or the stop chord.
 - **The command card** says which computer the command runs on, marks a command that deletes data, and underlines
   look-alike letters word by word: your own folders in your alphabet (`C:\Users\Иван`) aren't marked, an address
   spelled in letters that only look Latin (`https://аррӏе.com`) is. Hebrew and Arabic text is shown in the order it
@@ -152,16 +155,17 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   `ssh` somewhere ("You're connected to build-01"). Ember looks for your own `ssh` only once you have added a computer,
   and never offers for one that carries a command (git over ssh, `scp`, `rsync`), uses `-T` or goes to a git hosting
   service. An offer goes after 25 seconds as **Not now**, ignores a press in its first half second, and holds Ember
-  still while it is up. The SSH card says what changed when your SSH settings send the name somewhere else, names the
-  helper's folder on a Mac, and says that a server with no desktop gets commands only. Ember opens its own connection
-  with your SSH settings, keys, agent and jump hosts, asks for passwords in its own window and never keeps them, checks
-  the other computer before copying anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that
-  runs only while it is connected and leaves no service or autostart behind. It works there on commands, and on the apps
-  of that computer's screen when it is a Linux computer with an X11 desktop and you are the person logged in at it,
-  asking before every step and showing a notice with **Stop** there. When that screen locks or its session goes
-  inactive, the tasks using the screen stop; a task only running commands there goes on (a **Stop** at that computer, a
-  lost connection, **Disconnect** and the stop chord stop everything there). Your voice, Copilot and your GitHub sign-in
-  stay on this computer. Its **Remove helper** in Settings › **Computers** removes the helper again.
+  still while it is up; one nobody asked for waits while "Lost build-01" or "Can't connect to build-01" is up. The SSH
+  card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac, and
+  says that a server with no desktop gets commands only. Ember opens its own connection with your SSH settings, keys,
+  agent and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before
+  copying anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is
+  connected and leaves no service or autostart behind. It works there on commands, and on the apps of that computer's
+  screen when it is a Linux computer with an X11 desktop and you are the person logged in at it, asking before every
+  step and showing a notice with **Stop** there. When that screen locks or its session goes inactive, the tasks using
+  the screen stop; a task only running commands there goes on (a **Stop** at that computer, a lost connection,
+  **Disconnect** and the stop chord stop everything there). Your voice, Copilot and your GitHub sign-in stay on this
+  computer. Its **Remove helper** in Settings › **Computers** removes the helper again.
 - **SSH connections, in detail**: with OpenSSH older than 8.5 on this computer (RHEL 8, Ubuntu 20.04, Debian 11),
   every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
   those clients can't mark a server's own questions. The sign-in, host-key and consent cards take the keyboard on
@@ -291,13 +295,19 @@ allows them.
   and the task cards move to the bottom-left. With more than one display, Ember keeps clear only of the task cards on
   its own display, and shows its bubble only on the display it is on. Ember and its bubble also step clear of the
   command window and of the sign-in and consent cards while they ask.
-- **Hide Ember** shrinks the handle to a small tab showing Ember's face. In the desk window, once you take over, a
-  screen reader is told that your keys go to the desk and that Ctrl+Alt+End hands it back.
+- **Hide Ember** shrinks the handle to a small tab showing Ember's face, and a question or an answer that brings a
+  hidden Ember back makes the handle the full pill again. In the desk window, once you take over, a screen reader is
+  told that your keys go to the desk and that Ctrl+Alt+End hands it back.
 - On a Mac, the Command key is called Command everywhere. Notifications too long to show end at a word, with an
   ellipsis.
 - The handle's microphone badge has a shape for each state (listening, muted, starting, problem) and is read out. A
   microphone problem, or voice not being set up, shows on the handle's line, and its menu offers "Microphone problem:
   open Settings…".
+- At the Large and Larger text sizes, an answer that needs more than six lines at that size offers **Read all**. With
+  **More time to read and answer**, a bubble that waited behind another or was covered stays ten times its time, and
+  so do Ember's own notices (the screen-lock notices, "I can't take screenshots", the "Commands are off" hint).
+- While another app holds Ember's stop or settings shortcut, the bubble, the command window and task results don't
+  name it: they say "in Ember's settings", and an announced command names only its **Stop**.
 - "May I?" questions name controls in plain words: "Click the “Save” button", "Turn on the “Night Light” switch",
   "Tick the “Bold” checkbox", "on the “report.odt” window".
 - Calm mode also stops the springs and fades of the ask box, the command and card windows and the desk view, and
@@ -360,7 +370,8 @@ allows them.
 - A settings change that can't be saved (a full disk, a folder that can't be written) is explained in the settings
   window, and the control goes back to the setting in use; a size-slider change that couldn't be saved is saved with
   the next change.
-- With commands off, Ember points to Settings › **Commands**.
+- With commands off, Ember points to Settings › **Commands**, in a hint after the answer that prompted it, for the
+  hint's whole time.
 - On Windows and Linux, Ember's windows have no menu bar: Ctrl+Q doesn't quit from a window (use **Quit Ember** on the
   handle's menu, which asks first while something is running), and Ctrl+R, Ctrl+W, F11, Ctrl+Shift+I and the Alt menu
   bar do nothing. The settings window zooms with Ctrl+= or Ctrl++, Ctrl+- and Ctrl+0 (back to 100 %), from 58 % to
