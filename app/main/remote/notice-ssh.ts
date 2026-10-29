@@ -170,9 +170,10 @@ export interface NoticeDeps {
   env?: Readonly<Record<string, string | undefined>>;
 }
 
-/** The most processes looked at, and the most ssh processes reported. */
+/** The most processes looked at. */
 const SCAN_MAX = 5000;
-const SSH_MAX = 64;
+/** The most ssh processes reported per place (this computer, each distro): a list this long may have been cut short. */
+export const SSH_MAX = 64;
 
 /** Ember's own connection, recognised by its fixed options (it is never offered back). */
 function isEmbers(argv: readonly string[]): boolean {

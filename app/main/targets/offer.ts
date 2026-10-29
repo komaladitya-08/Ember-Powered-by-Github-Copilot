@@ -5,19 +5,25 @@
  * when the window the user is in is a terminal whose title just changed, and at most once every 10 s; on Windows the
  * process query (a PowerShell start) runs only for a title that looks like an SSH session and only while SSH is in use
  * or the user hasn't turned the first offer away; ssh inside WSL is read only with WSL on and only in distros running
- * at that moment (never starting one). Each destination is offered once per run, never one the user dismissed or Ember
- * is already connected to, and never while a question is up. Ember never opens a connection here: the offer's button
- * does, after the SSH card.
+ * at that moment (never starting one). Each destination is offered once per run (again only if its offer never reached
+ * the screen: release), never one the user dismissed or Ember is already connected to, and never while a question is up;
+ * each look also says which of the user's ssh still run, and where it could read, so an offer for one that ended goes
+ * (running). Ember never opens a connection here: the offer's button does, after the SSH card.
  */
 
 import type { OS } from "../../shared/shortcuts";
 import type { Logger } from "../logger";
+import { SSH_MAX } from "../remote/notice-ssh";
 import type { SshSeen } from "../remote/types";
 
-/** SA's noticing functions (app/main/remote/notice-ssh.ts), with their exact signatures (§2.7). */
+/**
+ * SA's noticing functions (app/main/remote/notice-ssh.ts), with their signatures (§2.7), plus `read`, which only the
+ * runtime's WSL reading fills (SA's leaves it empty): each WSL place (`wsl:<distro>`) this read covered in full, as its
+ * reader worked or it doesn't run. An ssh missing from a distro not named there may still run (R-stale-offer).
+ */
 export interface SshNotice {
   sshDestination(argv: readonly string[]): SshSeen | null;
-  userSshProcesses(os: OS, o?: { wsl?: { exe: string; distros: string[] } }): Promise<{ pid: number; argv: string[]; via: SshSeen["via"] }[] | null>;
+  userSshProcesses(os: OS, o?: { wsl?: { exe: string; distros: string[] }; read?: Set<string> }): Promise<{ pid: number; argv: string[]; via: SshSeen["via"] }[] | null>;
 }
 
 /** At most one look at the process list in this long (§2.7). */
@@ -62,6 +68,15 @@ export interface NoticerDeps {
   questionUp(): boolean;
   /** Shows the offer. */
   offer(s: SshSeen): void;
+  /**
+   * After each look that read the process list: the destinations (seenKey) of every ssh of the user's running now,
+   * offered or not, and whether the look read a place (an ssh's via) in full, so an offer up or waiting for one that
+   * has ended goes ("You're connected to web-07" no longer holds; R-stale-offer). Ended means missing from a place that
+   * was read: this computer's list is read whole or not at all, but a WSL distro whose reader failed or timed out, or
+   * every distro when which of them run couldn't be told, is not read, nor is a list cut short at the readers' cap,
+   * and what runs there is unknown, not ended. Not called when this computer's list couldn't be read.
+   */
+  running?(keys: ReadonlySet<string>, read: (via: SshSeen["via"]) => boolean): void;
   now(): number;
 }
 
@@ -72,6 +87,11 @@ export interface Noticer {
   check(): Promise<void>;
   /** Destinations offered this run. */
   readonly offered: ReadonlySet<string>;
+  /**
+   * The offer for `key` (seenKey) went without ever reaching the screen (it waited too long behind a held bubble, or its
+   * ssh ended first): the user never saw it, so the next look that finds that destination may offer it again.
+   */
+  release(key: string): void;
 }
 
 /** Makes the noticer. */
@@ -88,19 +108,29 @@ export function createNoticer(d: NoticerDeps): Noticer {
     running = true;
     try {
       const wsl = d.wsl();
+      // The WSL distros this look reads in full (the read names them); this computer's list is whole or null.
+      const wslRead = new Set<string>();
       let procs: Awaited<ReturnType<SshNotice["userSshProcesses"]>>;
       try {
-        procs = await d.notice.userSshProcesses(d.os, wsl && wsl.distros.length ? { wsl } : undefined);
+        procs = await d.notice.userSshProcesses(d.os, wsl && wsl.distros.length ? { wsl, read: wslRead } : undefined);
       } catch (err) {
         d.log.warn("remote.ssh_seen_failed", { err });
         return;
       }
       if (!procs) return;
+      const all: SshSeen[] = [];
       for (const p of procs) {
         let seen: SshSeen | null;
         try { seen = d.notice.sshDestination(p.argv); } catch { seen = null; }
-        if (!seen) continue;
-        if (p.via) seen = { ...seen, via: p.via };
+        if (seen) all.push(p.via ? { ...seen, via: p.via } : seen);
+      }
+      // Read in full: this computer's list, and each distro the read names, unless its list came back at the readers'
+      // cap (SSH_MAX), which may have cut it short.
+      const perPlace = new Map<string, number>();
+      for (const p of procs) perPlace.set(p.via ?? "local", (perPlace.get(p.via ?? "local") ?? 0) + 1);
+      const read = new Set([...wslRead, "local"].filter(v => (perPlace.get(v) ?? 0) < SSH_MAX));
+      try { d.running?.(new Set(all.map(seenKey)), via => read.has(via ?? "local")); } catch (err) { d.log.warn("remote.ssh_running_failed", { err }); }
+      for (const seen of all) {
         const key = seenKey(seen);
         if (offered.has(key) || d.dismissed(seen) || d.connected(seen)) continue;
         // The user's own ssh; logged without its host (§2.7).
@@ -135,5 +165,5 @@ export function createNoticer(d: NoticerDeps): Noticer {
     void check();
   }
 
-  return { tick, check, offered };
+  return { tick, check, offered, release: key => { offered.delete(key); } };
 }

@@ -116,6 +116,8 @@ interface RigOptions {
   offers?: () => NoticeBoard | null;
   /** The settings shortcut while Ember holds it (TargetsDepsExtra.settingsKey). */
   settingsKey?: () => string | null;
+  /** The runtime's clock and timers (default: a fixed time, and timers the test runs itself): screenRig's, to share its time. */
+  clock?: ScreenClock;
 }
 
 /** The runtime over fakes, and every fake for the test to look at. */
@@ -226,6 +228,7 @@ function rig(o: RigOptions = {}) {
     apps: { isTerminalApp: (a: { id: string; name?: string }) => /terminal/i.test(a.name ?? a.id), list: () => [], appKey: (s: string) => s.toLowerCase() },
     privacy: { isSecurityWindow: () => false }, spawnDefaults: {}, which: () => null,
   } as unknown as SystemPlatform;
+  const clock = o.clock;
   let runnerOpts: Parameters<TargetsParts["localRunner"]>[0] | null = null;
   let cwOpts: Parameters<TargetsParts["commandWindow"]>[0] | null = null;
   let pwOpts: Parameters<TargetsParts["promptWindow"]>[0] | null = null;
@@ -252,6 +255,10 @@ function rig(o: RigOptions = {}) {
     clearInterval: vi.fn(),
     setTimeout: fn => { timers.push(fn); return timers.length; },
     clearTimeout: vi.fn(),
+    ...(clock ? {
+      now: () => new Date(Date.parse("2026-10-22T12:00:00.000Z") + clock.now()),
+      setTimeout: clock.set, clearTimeout: clock.clear,
+    } satisfies Partial<TargetsParts> : {}),
   };
   const deps: TargetsDeps = {
     log: quiet, os: osName, sys, userData: "/home/ana/.config/ember", appDir: "/opt/ember/resources/app/dist/app", resourcesPath: "/opt/ember/resources",
@@ -1698,12 +1705,25 @@ describe("offers in the bubble (review #14)", () => {
     expect(s.screen().visible).toBe(false);
   });
 
-  /** A rig with build-01 added and both boards, its noticer seeing the user's own `ssh web-07`. */
+  /**
+   * A rig with build-01 added and both boards, on the screen's clock, its noticer seeing the user's own `ssh web-07`
+   * while `ssh.on` (and an ssh to each of `ssh.others`); `retitle` gives the user's terminal another title, so the
+   * noticer looks again.
+   */
   const heldRig = () => {
-    const web07 = { ...notice, userSshProcesses: vi.fn(async () => [{ pid: 9, argv: ["ssh", "deploy@web-07"], via: "local" as const }]) };
+    const ssh = { on: true, others: [] as string[] };
+    const web07 = {
+      ...notice,
+      userSshProcesses: vi.fn(async () => [...(ssh.on ? ["deploy@web-07"] : []), ...ssh.others].map((d, i) => ({ pid: 9 + i, argv: ["ssh", d], via: "local" as const }))),
+    };
     const s = screenRig();
-    const r = rig({ notice: web07, cursor: true, settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, offers: () => s.offers });
-    return { s, r };
+    const r = rig({ notice: web07, cursor: true, settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, offers: () => s.offers, clock: s.clock });
+    const retitle = async (title: string) => {
+      r.activeWindow.mockReturnValue({ app: "gnome-terminal-server", title });
+      r.ticks[0]();
+      await flush();
+    };
+    return { s, r, ssh, retitle };
   };
 
   it("wait behind a held Lost bubble instead of replacing it, and show once it goes (cross-review X3)", async () => {
@@ -1713,12 +1733,13 @@ describe("offers in the bubble (review #14)", () => {
     expect(s.screen()).toMatchObject({ title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
     r.ticks[0]();
     await flush();
-    // The offer waits: Lost and its Reconnect stay, however long.
+    // The offer waits: Lost and its Reconnect stay.
     expect(s.screen().title).toBe("Lost build-01");
-    s.advance(60_000);
+    s.advance(20_000);
     expect(s.screen()).toMatchObject({ visible: true, title: "Lost build-01", actions: [{ label: "Reconnect" }, { label: "Stop trying" }] });
     expect(r.t.summaries().find(t => t.id === "ssh:build-01")?.state).toBe("lost");
-    // Answered (Stop trying): the offer shows now, for its own 25 s, and takes no press in its first half second.
+    // Answered (Stop trying) within its 25 s: the offer shows now, for its own 25 s, and takes no press in its first
+    // half second.
     s.advance(1000);
     expect(r.t.bubbleAction(s.screen().actions[1].id)).toBe(true);
     await flush();
@@ -1742,6 +1763,169 @@ describe("offers in the bubble (review #14)", () => {
     await flush();
     s.advance(60_000);
     expect(s.screen()).toMatchObject({ visible: true, title: "Can't connect to build-01", actions: [{ label: "Try again" }, { label: "Close" }] });
+  });
+
+  it("that nobody asked for go unseen when they can't show within 25 s: never long after the ssh they name ended (R-stale-offer)", async () => {
+    const { s, r, ssh } = heldRig();
+    r.failConnect(new ConnectError("build-01 refused the sign-in.", "auth", undefined, true));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    r.ticks[0]();
+    await flush();
+    // The user ends that ssh session and leaves the failure up for 45 minutes, then closes it.
+    ssh.on = false;
+    s.advance(45 * 60_000);
+    expect(s.screen()).toMatchObject({ visible: true, title: "Can't connect to build-01" });
+    expect(r.t.bubbleAction(s.screen().actions.find(a => a.label === "Close")!.id)).toBe(true);
+    await flush();
+    expect(s.screen().visible).toBe(false);
+    expect(s.seen.filter(x => x.startsWith("You're connected"))).toEqual([]);
+  });
+
+  it("that couldn't show in time are offered again at the next look while the ssh still runs, as nobody saw them (R-stale-offer)", async () => {
+    const { s, r, retitle } = heldRig();
+    const l = await connected(r);
+    l.move("lost");
+    r.ticks[0]();
+    await flush();
+    s.advance(25_000);
+    expect(r.t.bubbleAction(s.screen().actions.find(a => a.label === "Stop trying")!.id)).toBe(true);
+    await flush();
+    expect(s.screen().visible).toBe(false);
+    // The user is still on web-07: the next title their terminal shows brings the offer, which shows now.
+    await retitle("deploy@web-07: ~/src");
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to web-07" });
+    // Seen this time: once a run.
+    s.advance(25_000);
+    expect(s.screen().visible).toBe(false);
+    s.advance(10_000);
+    await retitle("deploy@web-07: ~");
+    expect(s.screen().visible).toBe(false);
+  });
+
+  it("replaced by another before anyone saw them come again at a later look (R-stale-offer)", async () => {
+    const { s, r, ssh, retitle } = heldRig();
+    const l = await connected(r);
+    l.move("lost");
+    r.ticks[0]();
+    await flush();
+    // web-07's offer waits behind Lost; the user's ssh to db-02 brings its offer, which takes web-07's place.
+    ssh.others = ["deploy@db-02"];
+    s.advance(10_000);
+    await retitle("deploy@db-02: ~");
+    s.advance(1000);
+    expect(r.t.bubbleAction(s.screen().actions.find(a => a.label === "Stop trying")!.id)).toBe(true);
+    await flush();
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to db-02" });
+    s.advance(25_000);
+    expect(s.screen().visible).toBe(false);
+    await retitle("deploy@web-07: ~");
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to web-07" });
+  });
+
+  it("go at the next look that finds the ssh they name ended, up or still waiting (R-stale-offer)", async () => {
+    const { s, r, ssh, retitle } = heldRig();
+    r.ticks[0]();
+    await flush();
+    expect(s.screen().title).toBe("You're connected to web-07");
+    ssh.on = false;
+    s.advance(10_000);
+    await retitle("ana@laptop: ~");
+    expect(s.screen().visible).toBe(false);
+    // Waiting behind Lost: it goes too, and nothing shows once Lost is answered. Unseen, it comes again when the user
+    // connects there again.
+    const w = heldRig();
+    const l = await connected(w.r);
+    l.move("lost");
+    w.r.ticks[0]();
+    await flush();
+    w.ssh.on = false;
+    w.s.advance(10_000);
+    await w.retitle("ana@laptop: ~");
+    expect(w.r.t.bubbleAction(w.s.screen().actions.find(a => a.label === "Stop trying")!.id)).toBe(true);
+    await flush();
+    expect(w.s.screen().visible).toBe(false);
+    w.ssh.on = true;
+    w.s.advance(10_000);
+    await w.retitle("deploy@web-07: ~");
+    expect(w.s.screen()).toMatchObject({ visible: true, title: "You're connected to web-07" });
+  });
+
+  /**
+   * Windows with WSL on: the user's `ssh deploy@build-02` in Debian, which runs, read by WA's runner there, on a rig
+   * with both boards on the screen's clock. `live` is what runs now and `fail` makes the next look's read go wrong once:
+   * Debian's reader exits 1 (it timed out), rejects, or the running set can't be read.
+   */
+  const wslSeenRig = async () => {
+    const seen = { sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async (_os: OS, _o?: unknown) => [] as { pid: number; argv: string[]; via: "local" }[]) };
+    const s = screenRig();
+    const r = rig({
+      os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu({ name: "Debian" })]), settings: { targets: { ...wslOnSettings.targets, hosts: [hostRecord("web-07")] } },
+      showState: s.setState, bubbles: () => s.notices, offers: () => s.offers, clock: s.clock,
+    });
+    const live = new Set(["Debian"]);
+    const fail = { next: null as "exit" | "reject" | "running" | null };
+    const once = (k: "exit" | "reject" | "running") => { if (fail.next !== k) return false; fail.next = null; return true; };
+    r.wsl.runningNow = async () => { if (once("running")) throw new Error("wsl.exe --list --running failed"); return new Set(live); };
+    const runScript = vi.fn(async (_script: string, _o?: unknown) => {
+      if (once("reject")) throw new Error("the reader went away");
+      return once("exit") ? { code: 1, stdout: Buffer.from(""), stderr: "" } : { code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" };
+    });
+    Object.assign(r.wsl.runner("Debian"), { runScript });
+    await flush();
+    const retitle = async (title: string) => {
+      r.activeWindow.mockReturnValue({ app: "gnome-terminal-server", title });
+      r.ticks[0]();
+      await flush(); await flush(); await flush();
+    };
+    return { s, r, live, fail, runScript, retitle };
+  };
+
+  it("for an ssh in WSL stay when a look couldn't read that distro, and go once it no longer runs (R-stale-offer)", async () => {
+    for (const how of ["exit", "reject", "running"] as const) {
+      const { s, live, fail, runScript, retitle } = await wslSeenRig();
+      await retitle("deploy@build-02: ~");
+      expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+      // Debian's reader times out, fails, or which distros run can't be told: the ssh there may still run.
+      fail.next = how;
+      s.advance(10_000);
+      await retitle("deploy@build-02: ~/src");
+      expect(fail.next).toBeNull();
+      expect(s.screen(), how).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+      // Debian stopped: nothing runs there, so its ssh has ended, and the offer goes without reading it.
+      const reads = runScript.mock.calls.length;
+      live.clear();
+      s.advance(10_000);
+      await retitle("ana@build-02: ~");
+      expect(runScript).toHaveBeenCalledTimes(reads);
+      expect(s.screen(), how).toMatchObject({ visible: false });
+    }
+  });
+
+  it("for an ssh in WSL go at the next look that read its distro and didn't find it (R-stale-offer)", async () => {
+    const { s, runScript, retitle } = await wslSeenRig();
+    await retitle("deploy@build-02: ~");
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+    runScript.mockResolvedValue({ code: 0, stdout: Buffer.from(""), stderr: "" });
+    s.advance(10_000);
+    await retitle("ana@build-02: ~");
+    expect(s.screen().visible).toBe(false);
+  });
+
+  it("\"I can work in WSL\" waits at most 25 s too, and comes again at the next request that names WSL (R-stale-offer)", async () => {
+    const s = screenRig();
+    const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, offers: () => s.offers, clock: s.clock });
+    await flush();
+    r.failConnect(new ConnectError("build-01 refused the sign-in.", "auth", undefined, true));
+    await r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" });
+    r.t.agent.bind({ userWords: "open gedit in WSL" });
+    await flush();
+    s.advance(25_000);
+    expect(r.t.bubbleAction(s.screen().actions.find(a => a.label === "Close")!.id)).toBe(true);
+    await flush();
+    expect(s.screen().visible).toBe(false);
+    r.t.agent.bind({ userWords: "open gedit in WSL" });
+    await flush();
+    expect(s.screen()).toMatchObject({ visible: true, title: "I can work in WSL" });
   });
 
   it("asked for (offer_connect) shows over a held Lost bubble at once, and Lost comes back after it (cross-review X3)", async () => {
@@ -2068,6 +2252,13 @@ describe("wslSwitchOn (the doctor's reading of the user's WSL switch)", () => {
   });
 });
 
+/** screenRig's time (ms since it began) and timers, for the runtime to share (RigOptions.clock). */
+interface ScreenClock {
+  now(): number;
+  set(fn: () => void, ms: number): unknown;
+  clear(t: unknown): void;
+}
+
 /**
  * The screen as main keeps it, with the shared bubble behind it: main's guarded setter (a question on screen holds the
  * bubble), the conversation's presenter, and the notice board the runtime posts through, all on timers the test moves.
@@ -2107,8 +2298,10 @@ function screenRig() {
   // The board for offers (AgentHost.offers): its own presenter on the same bubble, so an offer waits behind the
   // notices' held bubbles instead of replacing them (cross-review X3).
   const offers = presenter();
+  /** The same time and timers for the runtime (RigOptions.clock): its own timers run as the test moves the screen's. */
+  const clock: ScreenClock = { now: () => now, set: (fn, ms) => set(fn, ms), clear: t => clear(t as number) };
   return {
-    convo, notices, offers, owner, setState, advance, seen, question,
+    convo, notices, offers, owner, setState, advance, seen, question, clock,
     screen: () => screen,
     /** The bubble's chip (its mood) and Ember's face now. */
     look: () => `${screen.mood}/${face}`,
