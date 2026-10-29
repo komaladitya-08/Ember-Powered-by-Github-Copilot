@@ -158,7 +158,8 @@ export function fromBridgeNode(b: BridgeNode): RawNode {
   if ((p.value && !p.value.readOnly) || (p.text && !p.value && TEXT_TYPES.has(type) && b.isEnabled !== false && !!b.isKeyboardFocusable)) n.editable = true;
   set("grid", p.grid);
   set("cell", p.gridItem ? { row: p.gridItem.row, column: p.gridItem.column } : undefined);
-  if (b.hwnd) n.native = b.hwnd;
+  // The bridge's hwnd is a signed 32-bit handle (JSON). The high bit set arrives negative; Win32 and keyboardFocus use it unsigned.
+  if (b.hwnd) n.native = b.hwnd >>> 0;
   if (b.gone) n.gone = true;
   return n;
 }
@@ -168,7 +169,7 @@ export function fromBridgeWindow(w: BridgeWindow): RawWindow {
   const handle = w.h ?? w.handle ?? 0;
   const out: RawWindow = {
     handle,
-    key: w.hwnd ? String(w.hwnd) : `uia-${w.pid}-${handle}`,
+    key: w.hwnd ? String(w.hwnd >>> 0) : `uia-${w.pid}-${handle}`,
     pid: w.pid,
     app: (w.processName ?? "").replace(/\.exe$/i, ""),
     title: w.name ?? "",
@@ -180,7 +181,7 @@ export function fromBridgeWindow(w: BridgeWindow): RawWindow {
   if (w.className !== undefined) out.className = w.className;
   if (w.isModal || w.patterns?.window?.modal) out.modal = true;
   if (w.busy) out.busy = true;
-  if (w.hwnd) out.native = w.hwnd;
+  if (w.hwnd) out.native = w.hwnd >>> 0;
   return out;
 }
 

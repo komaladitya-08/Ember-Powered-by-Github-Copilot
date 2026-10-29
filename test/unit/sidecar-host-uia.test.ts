@@ -63,6 +63,10 @@ describe("the bridge's elements as the host's", () => {
     });
     expect(fromBridgeWindow({ h: 4, pid: 9, isModal: true, busy: true })).toMatchObject({ key: "uia-9-4", modal: true, busy: true, platformRole: "Window" });
     expect(fromBridgeWindow({ h: 5, hwnd: 6, pid: 9, patterns: { window: { modal: true } } })).toMatchObject({ handle: 5, modal: true });
+    // A handle with the high bit set is negative in the bridge's JSON and unsigned everywhere else (keyboardFocus).
+    const high = fromBridgeNode({ h: 1, hwnd: -2147483648, controlType: "Edit" });
+    expect(high.native).toBe(0x80000000);
+    expect(fromBridgeWindow({ h: 3, hwnd: -2147483648, pid: 9 })).toMatchObject({ native: 0x80000000, key: "2147483648" });
   });
 
   it("maps the bridge's error codes onto the host's", () => {
