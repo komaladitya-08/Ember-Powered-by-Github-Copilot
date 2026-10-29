@@ -1,6 +1,6 @@
 /**
  * Calm mode and the text size in every window of Ember's: main applies both to each of its pages as it loads and when
- * the settings change, since the Ask box, the command and prompt windows and the desk view are sent no settings
+ * the settings change, since the ask box, the command and prompt windows and the desk view are sent no settings
  * (review #248, #57).
  */
 import { describe, expect, it } from "vitest";
@@ -29,7 +29,7 @@ function fakePage(u: string, opts: { destroyed?: boolean; fails?: boolean } = {}
 }
 
 describe("Ember's display settings in every window", () => {
-  it("puts Calm mode on the Ask box, the command and prompt windows and the desk view too (review #248)", async () => {
+  it("puts Calm mode on the ask box, the command and prompt windows and the desk view too (review #248)", async () => {
     for (const p of ["ask", "command", "prompt", "desk", "overlay", "handle", "home"]) {
       const f = fakePage(url(p));
       expect(await applyPagePrefs(f.page, pagePrefs({ reduceMotion: true, textSize: "default" })), p).toBe(true);
@@ -39,7 +39,7 @@ describe("Ember's display settings in every window", () => {
     }
   });
 
-  it("sets the text size in every page with words, the Ask box and the desk's bar included (review #57)", async () => {
+  it("sets the text size in every page with words, the ask box and the desk's bar included (review #57)", async () => {
     for (const p of ["home", "command", "prompt", "overlay", "handle", "ask", "desk"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "larger" }));

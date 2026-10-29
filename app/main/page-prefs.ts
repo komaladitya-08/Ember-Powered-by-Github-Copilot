@@ -1,7 +1,7 @@
 /**
  * Ember's own display settings in every page of its: Calm mode (html.calm, by which ember.css and each page's styles
  * stop springs, slides and pulses) and the text size (html[data-text-size], by which ember.css scales the type). The
- * overlay, the handle and the settings window are sent the settings, but the Ask box, the command and prompt windows
+ * overlay, the handle and the settings window are sent the settings, but the ask box, the command and prompt windows
  * and the desk view are sent none, so main applies both to each page of Ember's as the page loads and again whenever
  * they change (review #248, #57). Plain Node: a page comes in structurally, and only Ember's own bundled pages are
  * touched.
@@ -21,7 +21,7 @@ const FIXED_TYPE = new Set(["mic"]);
 
 /**
  * How much the text grows at each size (ember.css's --text-scale): the windows sized for their words (the handle's
- * pill, the Ask box, the desk view's bar, the command and prompt windows) grow by it too (review #57).
+ * pill, the ask box, the desk view's bar, the command and prompt windows) grow by it too (review #57).
  */
 const TEXT_SCALE: Readonly<Record<Settings["textSize"], number>> = { default: 1, large: 1.15, larger: 1.3 };
 

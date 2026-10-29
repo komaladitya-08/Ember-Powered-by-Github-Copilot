@@ -1,5 +1,5 @@
 /**
- * The Ask box at a text size on real runners (review #57): ask-size.ts holds the steps and the sizes that handle-menu-live
+ * The ask box at a text size on real runners (review #57): ask-size.ts holds the steps and the sizes that handle-menu-live
  * (Xvfb, RHEL 8 CI), ember-win32 and ember-darwin expect. Its sizes are ask.ts's (so a real runner fails only when its
  * window system refuses the box's bounds), and Windows and macOS open the box at Larger, where it is wider and taller
  * than the default size's 560 × 92 (the only size their other cases open it at).
@@ -19,7 +19,7 @@ const SIZES: TextSize[] = ["default", "large", "larger"];
 /** A 1024 × 768 screen at 100 % (Windows' runner), its work area above a 40 px taskbar. */
 const wa = { x: 0, y: 0, width: 1024, height: 728 };
 
-describe("ask-size.ts: what the live suites expect of the Ask box (review #57)", () => {
+describe("ask-size.ts: what the live suites expect of the ask box (review #57)", () => {
   it("expects ask.ts's own sizes at each text size: one row, with the tip's, and with four lines and the note", () => {
     for (const size of SIZES) {
       const scale = textScale(size);
