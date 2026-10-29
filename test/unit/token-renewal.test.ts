@@ -517,6 +517,21 @@ describe("main's sign-in wiring", () => {
     expect(MAIN).toContain("await connected(phase, kept === \"kept\" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);");
   });
 
+  it("connects nothing a look under way found when the user signed out, so Sign out isn't undone (final review S1)", () => {
+    // Counted as soon as it is clicked, before the conversation is deleted and the stored sign-in cleared.
+    expect(MAIN).toMatch(/ipcMain\.handle\(IPC\.signOut, guard\(async \(\) => \{ signOuts\+\+; signInAbort\?\.abort\(\);/);
+    // Signed out since the look began: nothing is connected, the first sign-in found or the next after a refusal.
+    expect(MAIN).toContain([
+      "const connectWith = async (found: ResolvedToken | null, how: \"user\" | \"auto\" = \"user\", since = signOuts) => {",
+      "if (since !== signOuts) return { phase: agent?.getStatus().phase, found: null };",
+      "return connectFirstAccepted(async () => { const next = await findToken(); return since === signOuts ? next : null; }, async f => {",
+    ].join(" "));
+    // Check again's look and the start's (from before the keychain pause and the renewal) count from when they began.
+    expect(MAIN).toMatch(/const since = signOuts; const first = await findToken\(\) \?\? [^;]*; const \{ found \} = await connectWith\(first, "user", since\);/);
+    expect(MAIN).toMatch(/const startBrain = async \(\) => \{ if \(brainStarted \|\| !consented\(\)\) return; brainStarted = true; const since = signOuts;/);
+    expect(MAIN).toContain(": await connectWith(found, \"auto\", since);");
+  });
+
   it("tells the keeper when the computer wakes or Copilot refuses the sign-in in use (cross-review X12)", () => {
     expect(MAIN).toContain(`powerMonitor.on("resume", () => { keeper.wake(); agent?.networkChanged(true); });`);
     expect(MAIN).toContain(`powerMonitor.on("unlock-screen", () => keeper.wake());`);

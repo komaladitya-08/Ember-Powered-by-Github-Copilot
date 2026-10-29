@@ -1195,15 +1195,24 @@ function start(): void {
   /** The sign-in to use: the first source whose token Copilot hasn't refused this run (a stored one that ran out renewed first). */
   const findToken = async () => { await keeper.freshen(); return resolveToken(tokens, process.env, ghOptions(), refusedTokens).catch(() => null); };
   /**
+   * Counts Sign out, from the click: a sign-in that a look under way then finds isn't connected, which would undo the
+   * sign-out (the account just left, read or renewed before its file was cleared) (final review S1).
+   */
+  let signOuts = 0;
+  /**
    * Connects with `found`, or the first sign-in after it that Copilot accepts: a refused token gives way to the next
    * source (a token in the environment comes before the GitHub CLI's). Resolves to the phase and the sign-in used.
+   * `since`: the count of sign-outs when the look for `found` began. Signed out since: nothing is connected (none used).
    */
-  const connectWith = (found: ResolvedToken | null, how: "user" | "auto" = "user") => connectFirstAccepted(findToken, async f => {
-    currentToken = f?.token ?? null;
-    keeper.use(currentToken);
-    const phase = await agent?.start(currentToken, f?.source, how, f?.name);
-    return { phase, refused: phase === "error" && agent?.getStatus().reason === "sign-in" };
-  }, refusedTokens, found);
+  const connectWith = async (found: ResolvedToken | null, how: "user" | "auto" = "user", since = signOuts) => {
+    if (since !== signOuts) return { phase: agent?.getStatus().phase, found: null };
+    return connectFirstAccepted(async () => { const next = await findToken(); return since === signOuts ? next : null; }, async f => {
+      currentToken = f?.token ?? null;
+      keeper.use(currentToken);
+      const phase = await agent?.start(currentToken, f?.source, how, f?.name);
+      return { phase, refused: phase === "error" && agent?.getStatus().reason === "sign-in" };
+    }, refusedTokens, found);
+  };
   let signInAbort: AbortController | null = null;
   const broadcast = (channel: string, value: unknown) => {
     for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, value);
@@ -1213,6 +1222,7 @@ function start(): void {
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
   ipcMain.handle(IPC.conversation, guard(() => agent?.getTranscript() ?? []));
   ipcMain.handle(IPC.signOut, guard(async () => {
+    signOuts++;
     signInAbort?.abort();
     // While still connected: delete this account's conversation so the next sign-in starts fresh.
     await agent?.forgetConversation();
@@ -1238,8 +1248,9 @@ function start(): void {
   const retrySignIn = async (): Promise<{ found: boolean; source: string | null; hint?: string }> => {
     if (!consented()) { showHome(); return { found: false, source: null }; }
     // Sign-ins refused before are passed over; with nothing else, the one refused is tried again (it may work now).
+    const since = signOuts;
     const first = await findToken() ?? (refusedTokens.size ? await resolveToken(tokens, process.env, ghOptions()).catch(() => null) : null);
-    const { found } = await connectWith(first);
+    const { found } = await connectWith(first, "user", since);
     return { found: !!found, source: found?.source ?? null, ...(found ? {} : { hint: noSignInMessage({ os: platform.os, with: signInWith(), ghInstalled: ghInstalled() }) }) };
   };
   ipcMain.handle(IPC.agentRetry, guard(retrySignIn));
@@ -1973,6 +1984,7 @@ function start(): void {
     const startBrain = async () => {
       if (brainStarted || !consented()) return;
       brainStarted = true;
+      const since = signOuts;
       // macOS asks for the login keychain password before Ember may read its saved sign-in (after every update of an
       // ad-hoc-signed Ember). The read is asynchronous there, and Ember's windows still come up first, with a status that
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
@@ -1987,8 +1999,9 @@ function start(): void {
       log.info("auth.token", { source: testProvider ? "test-provider" : provider ? "admin-provider" : found?.source ?? "none", ...(tokens?.unreadable ? { saved: "unreadable" } : {}) });
       // Found on its own (GitHub CLI, environment): not used after the user signed out of Ember
       // (then "Sign in" may use it at once, so it isn't counted as the token in use). One Copilot refuses gives way to
-      // the next source.
-      const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto");
+      // the next source. Signed out while it looked (the settings window is up during a keychain prompt or a slow
+      // renewal): nothing found then is connected (final review S1).
+      const { phase } = provider ? { phase: await agent?.start(null, undefined, "auto") } : await connectWith(found, "auto", since);
       if (phase === "signed-out") { currentToken = null; keeper.use(null); }
     };
     brainStart = startBrain();
