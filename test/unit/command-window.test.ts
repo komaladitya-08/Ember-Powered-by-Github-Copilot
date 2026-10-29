@@ -806,6 +806,57 @@ describe("the window's life", () => {
     await expect(p).resolves.toBe(true);
   });
 
+  it("tells the flow which countdowns ended because the window couldn't show them to the end, not by the user's Stop (cross-review S2)", async () => {
+    // Its page crashed (the one counting down and the one waiting), the window closed, Ember closed it, or none could be made.
+    const a = setup();
+    const crashed = a.ctl.announce(card(), 4000, new AbortController().signal);
+    const queued = a.ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    a.win().crash();
+    await expect(Promise.all([crashed, queued])).resolves.toEqual([false, false]);
+    expect(a.ctl.announceGone("0123456789abcdef")).toBe(true);
+    expect(a.ctl.announceGone("fedcba9876543210")).toBe(true);
+    // Asked once: the answer is forgotten then.
+    expect(a.ctl.announceGone("0123456789abcdef")).toBe(false);
+    const b = setup();
+    const closed = b.ctl.announce(card(), 4000, new AbortController().signal);
+    b.win().close();
+    await expect(closed).resolves.toBe(false);
+    expect(b.ctl.announceGone("0123456789abcdef")).toBe(true);
+    const c = setup();
+    const disposed = c.ctl.announce(card(), 4000, new AbortController().signal);
+    c.ctl.dispose();
+    await expect(disposed).resolves.toBe(false);
+    expect(c.ctl.announceGone("0123456789abcdef")).toBe(true);
+    const none = createCommandWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux", keyHint: () => null });
+    await expect(none.announce(card(), 4000, new AbortController().signal)).resolves.toBe(false);
+    expect(none.announceGone("0123456789abcdef")).toBe(true);
+
+    // The page's Stop, the bubble's Stop or the stop chord, the task's stop, Stop and close, and a countdown that ran: not gone.
+    const d = setup();
+    const ac = new AbortController();
+    const stops = [
+      d.ctl.announce(card(), 4000, new AbortController().signal),
+      d.ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal),
+      d.ctl.announce(card({ runId: "00000000000000aa" }), 4000, ac.signal),
+    ];
+    d.ipc.send(COMMANDS_IPC.stop, d.page(), { runId: "0123456789abcdef" });
+    d.ctl.cancelAnnounce("fedcba9876543210");
+    ac.abort();
+    await expect(Promise.all(stops)).resolves.toEqual([false, false, false]);
+    const ran = d.ctl.announce(card({ runId: "00000000000000bb" }), 4000, new AbortController().signal);
+    vi.advanceTimersByTime(4000);
+    await expect(ran).resolves.toBe(true);
+    d.ctl.attach(card({ runId: "00000000000000cc", mode: "run" }), new FakeRun("00000000000000cc"));
+    const closing = d.ctl.announce(card({ runId: "00000000000000dd" }), 4000, new AbortController().signal);
+    d.win().requestClose();
+    d.ipc.send(COMMANDS_EXTRA_IPC.closeWindow, d.page(), { stop: true });
+    await expect(closing).resolves.toBe(false);
+    expect(d.win().destroyed).toBe(true);
+    for (const id of ["0123456789abcdef", "fedcba9876543210", "00000000000000aa", "00000000000000bb", "00000000000000dd"]) {
+      expect(d.ctl.announceGone(id)).toBe(false);
+    }
+  });
+
   it("has the contract's factory return the same controller", () => {
     const ipc = new FakeIpc();
     const port = createCommandWindowPort({ create: () => new FakeWindow(), ipc, log, os: "win32", keyHint: () => null });

@@ -61,6 +61,12 @@ export interface CommandWindowExtras {
   /** How long an announcement should count down, given the flow's usual `base`: longer while a screen reader runs. */
   announceMs(base: number): number;
   /**
+   * Whether run `runId`'s announcement ended as "don't run" because the window couldn't show it to the end (cross-review
+   * S2): its page crashed, the window closed or none could be made, or Ember closed it. False after the user's Stop (the
+   * page's, the bubble's, the stop chord), the task's stop, or a countdown that ran out. Asked once: then forgotten.
+   */
+  announceGone(runId: string): boolean;
+  /**
    * Calls `fn` when a run starts or stops waiting at a prompt for the user to type (review #263): the flow says so in
    * the task's bubble. Returns the unsubscribe.
    */
@@ -132,6 +138,9 @@ export function awaitsTyping(text: string): boolean {
 
 /** At most this many pending lines are kept (one per task; a task past it isn't shown). */
 export const MAX_PENDING = 8;
+
+/** At most this many countdowns the window couldn't show to the end are kept for announceGone (the newest). */
+const MAX_GONE = 32;
 
 /** The port, what the targets runtime needs of the window, and the extras. */
 export type CommandWindowController = CommandWindowPort & CommandWindowExtras & { show(): void; owns(sender: WebContentsLike): boolean; dispose(): void };
@@ -256,6 +265,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   let card: { n: number; card: CommandCard; shownAt: number; retry: number } | null = null;
   let view: SeenMsg | null = null;
   const queue: Announcement[] = [];
+  /** The runs whose countdown ended because the window couldn't show it to the end, until the flow asks (announceGone). */
+  const goneRuns = new Set<string>();
   /** Tasks whose command has no tab yet, and the line each shows (insertion order). */
   const pendings = new Map<string, string>();
   const answerFns = new Set<(a: AnswerMsg) => boolean | void>();
@@ -302,7 +313,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       closeAsk = false;
       // Closed during a countdown: the user didn't get to see it to the end, so no command waiting there runs (fail
       // closed), and the window doesn't come back for the next one.
-      cancelAnnouncements();
+      cancelAnnouncements(true);
     });
     return w;
   }
@@ -331,7 +342,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   function stopAll(): void {
     closeAsk = false;
     for (const t of runningTabs()) safe("stop", () => t.run.stop("user"));
-    cancelAnnouncements();
+    cancelAnnouncements(false);
   }
 
   /** Stops every running command and countdown, then closes the window (the page's Stop and close). */
@@ -354,7 +365,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     pageDown = true;
     if (view) view = { ...view, inView: false };
     note("warn", "commands.page_gone", { card: !!card, countdowns: queue.length });
-    cancelAnnouncements();
+    cancelAnnouncements(true);
   }
 
   function keyHint(): string | null {
@@ -529,7 +540,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     if (!a || a.endsAt !== null || disposed) return;
     reveal();
     // No window to count down in (it couldn't be made): the command doesn't run (R1: it runs only where it's seen).
-    if (!live()) { settleAnnouncement(a, false); return; }
+    if (!live()) { settleAnnouncement(a, false, true); return; }
     // Its page crashed and is loading again: the countdown starts when the page pulls the state (cross-review S2).
     if (pageDown) return;
     a.endsAt = Date.now() + a.ms;
@@ -537,21 +548,32 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     push();
   }
 
-  /** Every announcement, shown or waiting, ends as "don't run" at once. */
-  function cancelAnnouncements(): void {
+  /** Run `runId`'s countdown ended because the window couldn't show it to the end (kept for announceGone). */
+  function markGone(runId: string): void {
+    goneRuns.add(runId);
+    for (const old of goneRuns) { if (goneRuns.size <= MAX_GONE) break; goneRuns.delete(old); }
+  }
+
+  /**
+   * Every announcement, shown or waiting, ends as "don't run" at once; `unshown`: because the window or its page went,
+   * not the user's Stop.
+   */
+  function cancelAnnouncements(unshown: boolean): void {
     for (const a of queue.splice(0)) {
       if (a.timer) clearTimeout(a.timer);
+      if (unshown) markGone(a.card.runId);
       a.settle(false);
     }
     push();
     settle();
   }
 
-  function settleAnnouncement(a: Announcement, ok: boolean): void {
+  function settleAnnouncement(a: Announcement, ok: boolean, unshown = false): void {
     const at = queue.indexOf(a);
     if (at < 0) return;
     queue.splice(at, 1);
     if (a.timer) clearTimeout(a.timer);
+    if (unshown) markGone(a.card.runId);
     a.settle(ok && !disposed);
     if (at === 0) startHead();
     push();
@@ -794,6 +816,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
     announceMs: base => (screenReader() ? Math.max(base, ANNOUNCE_SCREEN_READER_MS) : base),
 
+    announceGone: runId => goneRuns.delete(runId),
+
     reaskEnded(runId, why) {
       const t = tabs.find(x => x.card.runId === runId && x.reask === true);
       if (disposed || !t) return;
@@ -841,7 +865,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     dispose() {
       if (disposed) return;
       disposed = true;
-      cancelAnnouncements();
+      cancelAnnouncements(true);
       for (const t of tabs) dropTab(t);
       tabs = [];
       card = null;

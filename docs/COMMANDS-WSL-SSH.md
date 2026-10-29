@@ -236,7 +236,8 @@ your words named another, the spoken announcement starts with where it runs, as 
 (WSL): …", "On this computer: …"). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds
 cancels it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. If
 the command window's page crashes during the countdown, the command doesn't run; one announced while the page loads
-again counts down once it is back. The audit log records it as requested by you.
+again counts down once it is back. When the page crashes or the window closes during a countdown, Ember tells you the
+command window couldn't show it to the end, not that you stopped it. The audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. What you said counts only where Ember can tell your voice from
