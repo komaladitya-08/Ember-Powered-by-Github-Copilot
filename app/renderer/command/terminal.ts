@@ -4,12 +4,13 @@
  * queries) to `onInput` only while the run takes typing, and listens to nothing else: no title changes, no bell, no
  * links, and nothing a program prints can reach the clipboard (no OSC 52). Its keys are keys.ts's: Tab moves the focus,
  * and the user's own Ctrl+V, Ctrl+C and Ctrl+Shift+C paste and copy. This is the only module that loads xterm, so the
- * page's pure modules stay testable in Node.
+ * page's pure modules stay testable in Node; the tests drive this one with a stand-in for xterm and for the page.
  */
 
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from "@xterm/xterm";
 import { termKeyAction } from "./keys";
-import { XTERM_OPTIONS, terminalOptions } from "./terminal-options";
+import { XTERM_OPTIONS, termFontSize, terminalOptions } from "./terminal-options";
+import { inputAtGrid } from "./terminal-size";
 
 /** A run's terminal, written to before or after it is shown. */
 export interface RunTerminal {
@@ -20,6 +21,8 @@ export interface RunTerminal {
   setInteractive(on: boolean): void;
   /** Mirrors its output for a screen reader (review #43), while one runs. */
   setScreenReader(on: boolean): void;
+  /** Draws its type at the page's text scale (its columns and rows stay as the run started, §3.10). */
+  setTextScale(scale: number): void;
   /** Puts the keyboard in it (once open), so what the user types goes to the run. */
   focus(): void;
   /** Copies everything it shows, scrollback included, to the clipboard (the Copy output button); false if it couldn't. */
@@ -51,11 +54,17 @@ function copyText(text: string): boolean {
   }
 }
 
-/** A terminal for one run, at the run's size (fixed for the run, §3.10). `mac`: the Mac's keys (keys.ts). */
-export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; onInput: (data: string) => void }): RunTerminal {
+/** xterm's Terminal, or a stand-in for it with the same shape (the tests'). */
+export type TerminalCtor = new (options: ITerminalOptions & ITerminalInitOnlyOptions) => Terminal;
+
+/**
+ * A terminal for one run, at the run's size (fixed for the run, §3.10). `mac`: the Mac's keys (keys.ts). `scale`: the
+ * page's text scale, which its type follows. `Term`: xterm's Terminal (a stand-in in the tests).
+ */
+export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; scale: number; onInput: (data: string) => void }, Term: TerminalCtor = Terminal): RunTerminal {
   let interactive = o.interactive;
   let screenReader = o.screenReader;
-  const term = new Terminal(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader }));
+  const term = new Term(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader, scale: o.scale }));
   // Typing and xterm's answers to queries (cursor position, device attributes) go to the run, and only while it takes them.
   const sub = term.onData(data => { if (interactive) o.onInput(data); });
   // Tab and Shift+Tab move the focus, never into the run; paste and copy are the user's (keys.ts). xterm handles the rest.
@@ -74,6 +83,11 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
   const refreshMirror = () => {
     if (!screenReader || mirrorTimer) return;
     mirrorTimer = setTimeout(() => { mirrorTimer = null; if (opened) term.refresh(0, term.rows - 1); }, 150);
+  };
+  // The grid xterm draws, in CSS px (its screen element, which it sizes to its columns times its cell): 0 x 0 until it opens.
+  const gridSize = (): { width: number; height: number } => {
+    const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
+    return { width: Number.parseFloat(screen?.style.width ?? "") || 0, height: Number.parseFloat(screen?.style.height ?? "") || 0 };
   };
   // A run that can't take typing keeps its terminal's input out of the Tab order, and says it is read-only: there is
   // nothing to type there.
@@ -104,6 +118,17 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
       term.options.screenReaderMode = on;
       refreshMirror();
     },
+    setTextScale(scale) {
+      const px = termFontSize(scale);
+      if (term.options.fontSize === px) return;
+      const before = gridSize();
+      // xterm measures its cells again and redraws at the new size, at once.
+      term.options.fontSize = px;
+      // It moves its hidden input to the cursor's cell only when the cursor moves, so after a smaller type the input
+      // stayed at the old cell's place, past the grid, and the box scrolled into empty space (for good, for a run that
+      // has finished). Put it on the same cell at the new size.
+      if (term.textarea) Object.assign(term.textarea.style, inputAtGrid(term.textarea.style, before, gridSize()));
+    },
     focus: () => { if (opened) term.focus(); },
     copyAll() {
       const buf = term.buffer.active;
@@ -128,29 +153,21 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
   };
 }
 
-/** One character cell of the terminal's font, measured with a hidden line of it in `host` (CSS px), or null. */
-export function cellSize(host: HTMLElement): { width: number; height: number } | null {
-  const probe = document.createElement("span");
+/**
+ * One character cell of the terminal's font at the page's text scale, measured with a hidden line of it in `host` (CSS
+ * px), or null when nothing is laid out.
+ */
+export function cellSize(host: HTMLElement, scale: number): { width: number; height: number } | null {
+  const probe = host.ownerDocument.createElement("span");
   probe.textContent = "W".repeat(40);
   probe.setAttribute("aria-hidden", "true");
   Object.assign(probe.style, {
     position: "absolute", visibility: "hidden", whiteSpace: "pre", lineHeight: "normal",
-    fontFamily: XTERM_OPTIONS.fontFamily ?? "monospace", fontSize: `${XTERM_OPTIONS.fontSize ?? 13}px`,
+    fontFamily: XTERM_OPTIONS.fontFamily ?? "monospace", fontSize: `${termFontSize(scale)}px`,
   });
   host.appendChild(probe);
   const r = probe.getBoundingClientRect();
   probe.remove();
   if (!r.width || !r.height) return null;
   return { width: r.width / 40, height: Math.ceil(r.height * (XTERM_OPTIONS.lineHeight ?? 1)) };
-}
-
-/**
- * How many columns and rows fit a run's terminal in a window `width` × `height` CSS px with nothing above it but the
- * tab's own parts (what new runs start at: a card shown for the moment doesn't make them smaller). A column and a few
- * pixels are left over so the last column and row are never cut.
- */
-export function fitTerminal(cell: { width: number; height: number }, width: number, height: number): { cols: number; rows: number } {
-  const cols = Math.floor((width - 16) / cell.width) - 1;
-  const rows = Math.floor((height - 8) / cell.height);
-  return { cols: Math.max(20, Math.min(500, cols)), rows: Math.max(5, Math.min(200, rows)) };
 }

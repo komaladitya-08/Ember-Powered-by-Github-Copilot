@@ -123,12 +123,16 @@ body.first-run .start-row::before {
   content: ""; position: absolute; inset: 1px; z-index: -1; border-radius: inherit; pointer-events: none;
   box-shadow: var(--group-edge), 0 100vmax 0 100vmax var(--bg);
 }
-html:has(> body.first-run) { scroll-padding-bottom: 150px; }
+/* Focus scrolls clear of the row and its gap, with the room left at the top for a focus ring (16 px), at the row's own
+   height, which its words set: the text size, the window's width and its zoom wrap them onto more lines (start-row.ts
+   keeps it as --start-row-h). Until it is measured, at least the row at the narrowest window, not zoomed, at each text
+   size (136, 143.8 and 175.6 px). */
+html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138px * var(--text-scale)) + 12px + 16px); }
 .start-row .hint { margin: 0; flex-basis: 100%; }
 #agree-row { min-height: 28px; }
 .start {
   all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-  min-height: 36px; padding: 8px 22px; border-radius: var(--r-capsule); background: var(--accent); color: var(--on-accent);
+  min-height: calc(36px * var(--text-scale)); padding: 8px 22px; border-radius: var(--r-capsule); background: var(--accent); color: var(--on-accent);
   font: 600 15px/20px var(--ember-font); letter-spacing: -0.009em;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 4px 14px color-mix(in srgb, var(--glow) 26%, transparent);
   transition: filter 160ms ease, transform 220ms var(--spring-snappy);
@@ -168,9 +172,9 @@ html:has(> body.first-run) { scroll-padding-bottom: 150px; }
 .models label { color: var(--fg); }
 /* A choice in a list (Speak … out loud), laid out and styled as the model choices. */
 .choice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
-/* A pop-up button, sized to its choice and set at the row's end. */
+/* A pop-up button, sized to its choice and set at the row's end; its height grows with the text size, as its words do. */
 .models select, .choice select, #text-size {
-  justify-self: end; max-width: 100%; height: 28px; padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
+  justify-self: end; max-width: 100%; height: calc(28px * var(--text-scale)); padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
@@ -239,9 +243,9 @@ progress[hidden] { display: none; }
 .plain-list .btn.quiet:focus-visible { box-shadow: var(--focus-ring); }
 .managed-tag { color: var(--muted); font: var(--type-footnote); }
 .add-row { display: flex; gap: 8px; margin-top: 4px; }
-/* A text field: filled, rounded, Apple's focus ring. */
+/* A text field: filled, rounded, Apple's focus ring; as tall as the button beside it at every text size. */
 .add-row input {
-  flex: 1; min-width: 0; height: 28px; padding: 0 11px; border-radius: var(--r-sm); border: 0;
+  flex: 1; min-width: 0; height: calc(28px * var(--text-scale)); padding: 0 11px; border-radius: var(--r-sm); border: 0;
   background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-body); letter-spacing: -0.006em;
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
@@ -403,6 +407,11 @@ html { scroll-padding-top: 16px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
+  /* First run's Start row stays opaque at the window's foot: what covers the window round it is a shadow, which the
+     system drops, so the terms scrolling under it showed beside and below it. The cover is drawn as it is, in the
+     window's colour, with the row's edge in the text colour over it (and the outline above over that). */
+  body.first-run .start-row { background: Canvas; }
+  body.first-run .start-row::before { forced-color-adjust: none; box-shadow: 0 0 0 1px CanvasText, 0 100vmax 0 100vmax Canvas; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
   .models select, .choice select, #text-size { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }

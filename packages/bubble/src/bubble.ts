@@ -335,7 +335,7 @@ export const BUBBLE_CSS = `
    an edge of 3:1 or more (WCAG 1.4.11). */
 .eb-actions button {
   font: 600 13px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: -0.003em;
-  min-height: 28px; padding: 6px 14px; border-radius: var(--r-capsule, 999px); cursor: pointer;
+  min-height: calc(28px * var(--text-scale, 1)); padding: 6px 14px; border-radius: var(--r-capsule, 999px); cursor: pointer;
   max-width: 100%; overflow-wrap: anywhere;
   border: 0; background: rgba(255, 255, 255, 0.08); color: var(--label, #f5f2ef);
   box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42));

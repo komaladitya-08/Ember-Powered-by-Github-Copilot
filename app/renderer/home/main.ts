@@ -22,6 +22,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { keptWords, lockdownNotice, lockdownSendLine } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
+import { followStartRow } from "./start-row";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -148,6 +149,8 @@ function applySettings(s: Settings): void {
     $("pick-h").focus({ preventScroll: true });
   }
 }
+// First run's Start row stays at the window's foot: focus scrolls clear of it at its height now (start-row.ts).
+followStartRow($("start-row"), document.documentElement);
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });

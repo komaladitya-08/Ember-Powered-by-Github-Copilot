@@ -104,9 +104,10 @@ describe("the first-run window", () => {
     expect(flat.slice(start)).toMatch(/^<div class="start-row" id="start-row" hidden>.*?<\/div><\/main>/);
     const pick = flat.slice(flat.indexOf("<section class=\"pick\""), flat.indexOf("</section>", flat.indexOf("<section class=\"pick\"")));
     expect(pick).not.toContain("start-row");
-    // In first run it sticks to the window's foot, and focus scrolls clear of it (WCAG 2.4.11).
+    // In first run it sticks to the window's foot, and focus scrolls clear of it (WCAG 2.4.11), at the row's own height
+    // (home-start-row.test.ts has the lengths).
     expect(STYLES).toMatch(/body\.first-run \.start-row \{[^}]*position: sticky; bottom: \d+px;/);
-    expect(STYLES).toMatch(/html:has\(> body\.first-run\) \{ scroll-padding-bottom: \d+px; \}/);
+    expect(STYLES).toMatch(/html:has\(> body\.first-run\) \{ scroll-padding-bottom: calc\(var\(--start-row-h, [^;]+\) \+ \d+px \+ \d+px\); \}/);
     // Nothing shows around it from its top down, across the whole window: a shadow moved down by its spread, so it
     // starts at the card's top (a shadow, so no sideways scrolling), behind the card's content.
     const band = /body\.first-run \.start-row::before \{([^}]*)\}/.exec(STYLES)?.[1] ?? "";

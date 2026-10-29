@@ -21,13 +21,21 @@ import {
   type WindowView,
 } from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
-import { cellSize, createRunTerminal, fitTerminal, type RunTerminal } from "./terminal";
+import { cellSize, createRunTerminal, type RunTerminal } from "./terminal";
+import { textScaleOf } from "./terminal-options";
+import { applyTextScale, fitTerminal, termChromePx } from "./terminal-size";
 
 declare global { interface Window { emberCommands: CommandsApi } }
 
 const api = window.emberCommands;
 const $ = (id: string) => document.getElementById(id)!;
 let model = INITIAL_MODEL;
+/**
+ * The page's text scale (ember.css's --text-scale, set through html[data-text-size] by main): the terminals' type, and
+ * the room the window's other parts take, follow it.
+ */
+const pageScale = () => textScaleOf(getComputedStyle(document.documentElement).getPropertyValue("--text-scale"));
+let textScale = pageScale();
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -368,7 +376,7 @@ function buildTab(t: TabView): TabEls {
   panel.append(header.node, block, ...legends, foot, host, typing);
   const term = createRunTerminal({
     cols: t.cols, rows: t.rows, interactive: t.interactive, mac: model.view?.os === "darwin", screenReader: model.view?.screenReader === true,
-    onInput: data => api.input(t.runId, data),
+    scale: textScale, onInput: data => api.input(t.runId, data),
   });
   return { seq: t.seq, runId: t.runId, command: t.command, tab, panel, status, typing, action, host, term, ended: t.ended, live };
 }
@@ -515,14 +523,15 @@ function focusTerminal(): void {
   if (shouldFocusTerminal({ interactive: t.interactive, ended: t.ended, cardUp: !!ask || !!announce || !!closingCard, focusIdle: !a || a === document.body })) e.term.focus();
 }
 
-/** The window's height taken by everything around a run's terminal: padding, tabs, header, command, hint, status. */
-const TERM_CHROME_PX = 250;
-/** Tells main what terminal size fits the window now (without a card), so new runs start at it. */
+/**
+ * Tells main what terminal size fits the window now (without a card, the parts round the terminal at the text size,
+ * terminal-size.ts), so new runs start at it. `scale`: the page's text scale (the one it has now, unless it is changing).
+ */
 let sizeSent = "";
-function reportSize(): void {
-  const cell = cellSize($("measure"));
+function reportSize(scale = textScale): void {
+  const cell = cellSize($("measure"), scale);
   if (!cell) return;
-  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - TERM_CHROME_PX);
+  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - termChromePx(scale));
   const key = `${fit.cols}x${fit.rows}`;
   if (key === sizeSent) return;
   sizeSent = key;
@@ -551,6 +560,12 @@ $("empty").textContent = EMPTY_TEXT;
 api.onState(onState);
 api.onOutput(msg => dispatch({ type: "output", msg }));
 window.addEventListener("resize", () => { measureCard(); reportSize(); });
+// The text size changed (main sets html[data-text-size] as the page loads and whenever the setting changes): every
+// run's terminal takes the new type size, and new runs start at what fits the window with it (terminal-size.ts; main
+// grows the window by the same scale, and its resize reports again).
+new MutationObserver(() => {
+  textScale = applyTextScale(textScale, pageScale(), [...tabEls.values()].map(t => t.term), reportSize);
+}).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 window.addEventListener("focus", () => focusTerminal());
 // A scroll anywhere on the page (the card area, not only the command block) can move the card out of view.
 document.addEventListener("scroll", () => measureCard(), { capture: true, passive: true });

@@ -76,7 +76,7 @@ body.fallback .step[hidden] { display: none; }
 .actions { display: flex; flex: none; gap: 8px; flex-wrap: wrap; margin: 0 12px 12px; }
 /* Capsules: the prominent one is the app's accent, the others carry an edge of 3:1 or more (WCAG 1.4.11). */
 .actions button, .task-actions button {
-  all: unset; box-sizing: border-box; cursor: pointer; min-height: 28px; padding: 5px 14px; border-radius: var(--r-capsule);
+  all: unset; box-sizing: border-box; cursor: pointer; min-height: calc(28px * var(--text-scale)); padding: 5px 14px; border-radius: var(--r-capsule);
   font: 600 13px/18px var(--ember-font); letter-spacing: -0.003em;
   background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px var(--control-edge);
   max-width: 100%; overflow-wrap: anywhere; text-align: center;
@@ -99,7 +99,7 @@ body.fallback .task::before { content: ""; flex: none; width: 16px; height: 16px
 .task-text b { margin-right: 2px; font-weight: 600; }
 #task-detail { color: var(--label-2); }
 .task-actions { flex: none; display: flex; gap: 6px; }
-.task-actions button { min-height: 24px; padding: 3px 12px; font-size: 12px; line-height: 16px; }
+.task-actions button { min-height: calc(24px * var(--text-scale)); padding: 3px 12px; font-size: 12px; line-height: 16px; }
 /* Microphone: a badge on the face's lower right, a symbol on a dark disc (so it never reads as part of the character,
    as an orange dot on Cinder's mitten did). Its shape says the state, not only its colour (app/shared/mic.ts): a
    microphone in the accent while it listens (as the system's own privacy dot), its halo breathing while it hears you
