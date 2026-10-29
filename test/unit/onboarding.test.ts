@@ -295,6 +295,16 @@ describe("Ember's hello once it starts", () => {
     // None: as before.
     expect(hello(at({ cannotWork: null }))).toEqual(hello(at({})));
   });
+
+  it("gets one reason from main, the organisation's lockdown before a session Ember can't use (follow-up F-greet)", () => {
+    // The lockdown overrides everything (#107: no session helps until the policy is fixed); then the session (#240).
+    // hello() says that one reason in place of Copilot's and the rows' (above), so each is said once.
+    const greet = MAIN.slice(MAIN.indexOf("  const greet = () => {"), MAIN.indexOf("  const busyTasks = "));
+    expect(greet).toContain("const cannotWork = modelServiceRefusal(admin) ?? sessionGreeting(readEnvironment());");
+    expect(greet.match(/modelServiceRefusal\(/g)).toHaveLength(1);
+    expect(greet.match(/sessionGreeting\(/g)).toHaveLength(1);
+    expect(greet).toMatch(/hello\(\{[^}]*\bcannotWork \}\)/);
+  });
 });
 
 describe("Ember's handle while a setup row holds it back", () => {
