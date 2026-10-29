@@ -542,6 +542,22 @@ describe("CHANGELOG.md", () => {
     expect(notes).toContain(`"${MIC_PROBLEM_MENU}"`);
   });
 
+  it("says what the post-merge CI rounds fixed, as the code does it (follow-up F-changelog-ci)", () => {
+    const notes = flat(changelog);
+    // GitHub refusing the device-code request (auth.ts throws, host.ts words it).
+    const refused = /return "(GitHub didn't accept Ember's sign-in request\.[^"]*)"/.exec(read("app/main/agent/host.ts"))?.[1] ?? "";
+    expect(refused).not.toBe("");
+    expect(notes).toContain(`Ember says so instead of showing a code: "${refused}"`);
+    // The UIA bridge reads what shows in full on a long level (ember_uia.cs) and leaves the offscreen rest out.
+    expect(read("sidecar/uia/ember_uia.cs")).toMatch(/offscreen/);
+    expect(notes).toMatch(/On Windows, Ember reads long lists and pages that are scrolled down: it reads what shows in full and leaves most of what is scrolled away out/);
+    // macOS app names are folded without format characters (System Settings' soft hyphen in German).
+    expect(read("app/main/platform/darwin/system/apps.ts")).toMatch(/\\p\{Cf\}/);
+    expect(notes).toMatch(/System Settings as Systemeinstellungen/);
+    // A command window whose page crashed comes back (windows.ts revives it) instead of closing.
+    expect(notes).toMatch(/a command window whose page crashes comes back with its commands instead of closing/);
+  });
+
   it("names the same best-effort computers as the README", () => {
     const readme = flat(read("README.md"));
     const where = /- \*\*Where it runs\*\*: ([^]*?)(?= - \*\*)/.exec(flat(changelog))?.[1] ?? "";

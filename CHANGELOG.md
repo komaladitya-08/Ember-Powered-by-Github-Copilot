@@ -220,7 +220,9 @@ allows them.
   **Sign in** and **Check again**. A refused `GITHUB_TOKEN` or `GH_TOKEN` gives way to the GitHub CLI's sign-in and is
   named in the message; the GitHub CLI is asked for github.com's token.
 - A sign-in survives a network blip while it waits for your approval, and one Ember can't save still connects for
-  this run. Passing Copilot problems while connecting (its server's errors, rate limits, timeouts) are tried again by
+  this run. If GitHub refuses Ember's sign-in request, Ember says so instead of showing a code: "GitHub didn't accept
+  Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check
+  again." Passing Copilot problems while connecting (its server's errors, rate limits, timeouts) are tried again by
   themselves.
 - Copilot's errors are shown in plain words, and problems with your organisation's own model service are titled with
   its name, never Copilot's. A notice that Ember can't reach Copilot, or needs you to sign in, goes as soon as Copilot
@@ -317,12 +319,13 @@ allows them.
   Command shortcuts. Without the Screen Recording permission, Ember says so instead of "the window is off screen", and
   once a run shows "I can't take screenshots" with a button to the setup check. Secure keyboard entry is named, with
   the app that holds it, instead of "a system dialog", in a **Secure input** row of the setup check too.
-- On a Mac in another language, Ember finds Apple's apps by their names there (Rechner, Systemeinstellungen) and
-  recognises their windows. It reads its saved sign-in without freezing while the Keychain asks after an update, says
+- On a Mac in another language, Ember finds Apple's apps by their names there (Calculator as Rechner, System Settings
+  as Systemeinstellungen in German) and recognises their windows. It reads its saved sign-in without freezing while the Keychain asks after an update, says
   when the Keychain refused, and shows "Reading your saved sign-in from the keychain…" only on the first start after
   an update.
-- On Windows, long web pages scrolled down are read by what shows: no more empty reads, or refused screenshots of very
-  big pages.
+- On Windows, Ember reads long lists and pages that are scrolled down: it reads what shows in full and leaves most of
+  what is scrolled away out, so a list of thousands of rows or a very big page no longer reads as empty, and its
+  screenshot isn't refused.
 - Windows' setup check has a **Microphone** row, and the Voice section a button to the microphone's privacy settings;
   the advice names both Windows 10's and Windows 11's page. The advice for mixed display scaling gives a way round it
   and the issue tracker's address.
@@ -355,8 +358,9 @@ allows them.
   once a day, without losing lines another process writes meanwhile. When the audit log can't be written, a task stops
   with a plain sentence; a step already taken is reported as done, and the task queue keeps moving.
 - `EMBER_LOG_LEVEL` takes `debug`, `info`, `warn` or `error` in any case; anything else means `info`, and is logged.
-  GPU, utility and page crashes are logged (`app.child_process_gone`, `window.renderer_gone`), and a crashed SSH
-  sign-in or consent window closes instead of staying blank.
+  GPU, utility and page crashes are logged (`app.child_process_gone`, `window.renderer_gone`), a crashed SSH sign-in
+  or consent window closes instead of staying blank, and a command window whose page crashes comes back with its
+  commands instead of closing.
 - Ember's windows load from a folder whose name has a % in it (for example "100% Free" or "50%AB").
 - Linux RPM: when an update replaces Ember's files while it runs, Ember offers to restart, and dnf says so too.
   AppImage: Ember starts without Chromium's sandbox where unprivileged user namespaces are off (Debian's
