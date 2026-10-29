@@ -1,9 +1,9 @@
 /**
  * Crashes of Ember's own processes reach ember.log, and a card window whose page crashed doesn't stay on screen blank
  * (review #91): app "child-process-gone" (the GPU process on a VM) and every page's "render-process-gone" are logged
- * with their reason; the prompt window closes on a crash (its controller then answers as if the user had closed it: an
- * SSH prompt no), the command window's page loads again (its running commands stay on screen, review #262), and the
- * desk view lets go of held keys and reloads.
+ * with their reason; the prompt window closes on a crash, marked first (its controller then refuses an SSH prompt:
+ * nobody could answer it, cross-review X8), the command window's page loads again (its running commands stay on
+ * screen, review #262), and the desk view lets go of held keys and reloads.
  */
 
 import { EventEmitter } from "node:events";
@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { pageName, watchCrashes, type CrashSource } from "../../app/main/crash-log";
 
-const made: { destroyed: boolean; reloads: number; emit(e: string, ...a: unknown[]): void }[] = [];
+const made: { destroyed: boolean; reloads: number; goneAtDestroy: unknown; emit(e: string, ...a: unknown[]): void }[] = [];
 vi.mock("electron", () => {
   class BrowserWindow {
     destroyed = false;
@@ -27,8 +27,10 @@ vi.mock("electron", () => {
     setAlwaysOnTop(): void {}
     setContentProtection(): void {}
     loadURL(): Promise<void> { return Promise.resolve(); }
+    /** Whether windows.ts had marked the page gone when it destroyed the window (cross-review X8). */
+    goneAtDestroy: unknown = undefined;
     isDestroyed(): boolean { return this.destroyed; }
-    destroy(): void { this.destroyed = true; }
+    destroy(): void { this.goneAtDestroy = (this as { pageGone?: unknown }).pageGone; this.destroyed = true; }
     on(): void { /* the command window's close guard listens (review #262) */ }
   }
   // The command window's close guard also listens for Ember quitting (#262); placement reads the screen (#272).
@@ -81,6 +83,8 @@ describe("card windows whose page crashed (review #91)", () => {
     expect(win.destroyed).toBe(false);
     win.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
     expect(win.destroyed).toBe(true);
+    // Marked first, so its controller answers the card as refused (nobody could answer it), not as the user's Cancel.
+    expect(win.goneAtDestroy).toBe(true);
   });
 
   it("the command window's page loads again, so commands still running stay on screen (review #262)", async () => {

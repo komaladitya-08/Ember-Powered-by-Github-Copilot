@@ -451,8 +451,9 @@ export function createConnections(o: {
       const named = /host key is known for (\S+?) and/.exec(r.exit?.stderr ?? "")?.[1];
       if (named && !p.names.some(n => n.toLowerCase() === named.toLowerCase())) return { ...f, kind: "unknown-hop-key", message: MESSAGES.unknownKeyNoAskpass(cleanLine(named, 100)), retry: false };
     }
-    // A sign-in card the prompt window couldn't show (no window, or a question too long to show): nobody was asked.
-    if (mode === "interactive" && f.kind === "auth" && promptRefused) return { ...f, message: MESSAGES.promptRefused(h), retry: true };
+    // A sign-in card the prompt window couldn't show (no window, its page crashed, or a question too long to show):
+    // nobody was asked. A host key card too (cross-review X8): Try again asks it in a new window, no terminal needed.
+    if (mode === "interactive" && (f.kind === "auth" || f.kind === "unknown-host-key") && promptRefused) return { ...f, message: MESSAGES.promptRefused(h), retry: true };
     if (mode === "interactive" && f.kind === "auth") return { ...f, message: MESSAGES.signInFailed(h), retry: true };
     return f;
   }

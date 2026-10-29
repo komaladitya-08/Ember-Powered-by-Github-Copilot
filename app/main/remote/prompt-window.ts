@@ -81,6 +81,8 @@ export interface PromptWindowLike extends BrowserWindowLike {
    * Windows asks through the input backend (foreground rules). Without it: show() and focus().
    */
   takeKeyboard?(): void;
+  /** Its page crashed, and windows.ts closes it for that (set before it closes): its card had nobody to answer it. */
+  pageGone?: boolean;
 }
 
 /** How long after a card that takes typing shows the window must have the keyboard, or the user is told (review #235). */
@@ -185,8 +187,10 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       win = null;
       // Closed with a card up: an SSH prompt is cancelled (ssh gets no answer) and the next card, if any, shows; a
       // consent question stays asked, to come back with the bubble's "Read it", and expires as "no" if it doesn't.
+      // Closed because its page crashed: nobody could answer the card, so it is refused, as a card with no window to
+      // show it in is (review #193, cross-review X8), not cancelled as the user's own close is.
       const head = queue[0];
-      if (head && head.card.kind !== "consent") finish(head, { id: head.card.id, ok: false });
+      if (head && head.card.kind !== "consent") finish(head, w.pageGone === true ? { id: head.card.id, ok: false, refused: true } : { id: head.card.id, ok: false });
     });
     return w;
   }

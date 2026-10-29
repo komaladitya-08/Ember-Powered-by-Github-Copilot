@@ -34,6 +34,10 @@ let nextId = 500;
 class FakeWindow implements BrowserWindowLike {
   webContents = { id: nextId++, sent: [] as unknown[][], send(channel: string, ...args: unknown[]) { this.sent.push([channel, ...args]); } };
   visible = false; minimized = false; destroyed = false; onTop = true; focused = false;
+  /** Set by windows.ts when the page crashed, before it closes the window (review #91). */
+  pageGone?: boolean;
+  /** The page crashed: windows.ts marks the window and destroys it, which closes it. */
+  crash() { this.pageGone = true; this.close(); }
   private closedFns: (() => void)[] = [];
   show() { this.visible = true; }
   showInactive() { this.visible = true; }
@@ -191,6 +195,26 @@ describe("answers", () => {
     ctl.dispose();
     await expect(b).resolves.toEqual({ id: "b", ok: false });
   });
+
+  it("refuse an SSH prompt whose page crashed: nobody could answer it, so it isn't the user's Cancel (cross-review X8)", async () => {
+    // A host key, a password and a touch card: each is answered as refused (connections then says Ember couldn't show
+    // the question, with Try again, instead of ending the connection quietly as a Cancel), and the next card shows.
+    const { ctl, windows } = setup();
+    const a = ctl.ask(hostKey("h"));
+    const b = ctl.ask(password("p"));
+    const c = ctl.ask({ id: "t", kind: "touch", host: "build-01" });
+    windows[0].crash();
+    await expect(a).resolves.toEqual({ id: "h", ok: false, refused: true });
+    expect(windows[1].shown()?.id).toBe("p");
+    windows[1].crash();
+    await expect(b).resolves.toEqual({ id: "p", ok: false, refused: true });
+    windows[2].crash();
+    await expect(c).resolves.toEqual({ id: "t", ok: false, refused: true });
+    // The user's own close of a new window is their Cancel, as before.
+    const d = ctl.ask(password("d"));
+    windows[3].close();
+    await expect(d).resolves.toEqual({ id: "d", ok: false });
+  });
 });
 
 describe("consent cards", () => {
@@ -234,6 +258,18 @@ describe("consent cards", () => {
     ctl.hideConsent(3);
     expect(ctl.consentReady(3)).toBe(false);
     expect(win().visible).toBe(false);
+  });
+
+  it("asked directly, are refused when their page crashed, not answered Not now (cross-review X8)", async () => {
+    const { ctl, windows } = setup();
+    const a = ctl.ask({ id: "d1", kind: "consent-direct", consent: commandsCard() });
+    windows[0].crash();
+    await expect(a).resolves.toEqual({ id: "d1", ok: false, refused: true });
+    // A Confirmer's consent question stays asked, as when the user closes the window.
+    ctl.showConsent(3, commandsCard());
+    windows[1].crash();
+    ctl.show();
+    expect(windows[2].shown()).toMatchObject({ id: "consent-3" });
   });
 
   it("stay asked when the window is closed, and come back when asked again", () => {
