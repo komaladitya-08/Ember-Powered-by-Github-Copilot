@@ -42,7 +42,8 @@ import { PROBE_PACE_MS, PROBE_TEXT, probeVerdict } from "./typeahead-probe";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
-const root = fileURLToPath(new URL("../../", import.meta.url));
+// Without the trailing separator: as a command-line argument, `"D:\a\Ember\"` ends in an escaped quote on Windows.
+const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const TITLE = "Ember Bench (Windows)";
 const powershell = path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 const POWERSHELL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
