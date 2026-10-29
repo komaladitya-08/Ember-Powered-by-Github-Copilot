@@ -500,12 +500,14 @@ describe("README.md's Accessibility section, against the release it describes", 
       expect(hint, place).toContain(place);
       expect(reach, place).toContain(place);
     }
-    // The Ask box takes the text size (page-prefs.ts) and grows with it (ask.ts askSize): named with the rest, and
-    // nothing says it keeps its size (review #57).
-    expect(prefsScript(pagePrefs({ reduceMotion: false, textSize: "large" }), "ask")).toContain('dataset.textSize = "large"');
+    // The Ask box and the desk window's bar take the text size (page-prefs.ts) and their windows grow with it (ask.ts
+    // askSize, desk/view.ts deskViewBounds): named with the rest, and nothing says either keeps its size (review #57).
+    // Settings' hint leaves the desk out: it is Linux's only.
+    for (const page of ["ask", "desk"]) expect(prefsScript(pagePrefs({ reduceMotion: false, textSize: "large" }), page), page).toContain('dataset.textSize = "large"');
     expect(hint).toContain("the Ask box");
     expect(reach).toContain("the Ask box");
-    for (const said of [hint, reach]) expect(said).not.toMatch(/keeps its size/);
+    expect(reach).toContain("the desk window's bar on Linux");
+    for (const said of [hint, reach]) expect(said).not.toMatch(/keeps? (its|their) size/);
     // Windows' contrast themes (forced colours) and the handle's badges drawn per state.
     expect(read("app/renderer/shared/ember.css")).toMatch(/@media \(forced-colors: active\)/);
     expect(fs.existsSync(path.resolve("app/shared/mic.ts"))).toBe(true);
@@ -622,8 +624,8 @@ describe("round 2's docs lines (css2)", () => {
     const notes = flat(read("CHANGELOG.md"));
     expect(notes).toContain(`Text size also reaches the command window's terminal (${px[0]}, ${px[1]} or ${px[2]} px, at once when you change it; a running command keeps its columns and rows)`);
     expect(notes).toMatch(/first run's \*\*Start Ember\*\* row stays opaque/);
-    expect(flat(section(read("README.md"), "Accessibility"))).toContain("the Ask box, the command window and its terminal, and the password and consent cards");
-    expect(flat(section(read("docs/DEVELOPING.md"), "Using Ember"))).toContain("the Ask box, the command window and its terminal, and Ember's password and consent cards");
+    expect(flat(section(read("README.md"), "Accessibility"))).toContain("the Ask box, the desk window's bar on Linux, the command window and its terminal, and the password and consent cards");
+    expect(flat(section(read("docs/DEVELOPING.md"), "Using Ember"))).toContain("the Ask box, the desk window's bar, the command window and its terminal, and Ember's password and consent cards");
   });
 });
 

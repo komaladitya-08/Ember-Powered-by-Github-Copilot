@@ -1356,6 +1356,8 @@ function start(): void {
   settings.onChange((s) => {
     overlay?.broadcastSettings(s);
     if (handle?.sendSettings(s)) deskViewRef?.handleMoved();
+    // The desk view's bar grows with the text size: the view fits it at once (only when the size changed).
+    deskViewRef?.fitText();
   });
   // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step: at start
   // only when it is on, then whenever it changes, so a start with it off removes nothing (review #85).
@@ -1716,6 +1718,8 @@ function start(): void {
         return () => giveFocusBack(back);
       },
       windowId: w => ownId(w),
+      // Its bar grows with the text size (review #57).
+      textScale: () => textScale(settings.get().textSize),
     });
     deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;

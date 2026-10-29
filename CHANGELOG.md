@@ -43,7 +43,8 @@ the work in your real apps where you can watch, without taking over your mouse. 
   can watch and take over.
 - **Accessibility**: Ember works from the keyboard and with screen readers (README.md has every route). Settings ›
   **Comfort & access** has **Text size** (Default, Large, Larger: settings, the bubble, task cards, the handle, the Ask
-  box, the command window and the password and consent cards), **Calm mode** and **More time to read and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change it; a
+  box, the desk window's bar on Linux, the command window and the password and consent cards), **Calm mode** and
+  **More time to read and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change it; a
   running command keeps its columns and rows) and the height of buttons, pop-up buttons and text fields, so larger words
   keep their room. Windows' contrast themes are supported: switches, the slider, the chosen character, button edges,
   tabs, state symbols and keyboard focus stay visible, and first run's **Start Ember** row stays opaque at the window's

@@ -235,6 +235,31 @@ describe("the ask box at the text size (review #57)", () => {
   });
 });
 
+describe("the desk view at the text size (review #57)", () => {
+  it("grows the desk view by its bar only, so the picture under it keeps its size", () => {
+    const big = { x: 0, y: 0, width: 1920, height: 1080 };
+    const start = { x: 16, y: 0, width: 0, height: 1080 };
+    expect(deskViewBounds(start, false, big, null, 1)).toEqual({ x: 16, y: 826, width: 340, height: 238 });
+    for (const [scale, bar] of [[1.15, 35], [1.3, 39]]) {
+      const small = deskViewBounds(start, false, big, null, scale);
+      expect(small, `${scale}`).toEqual({ x: 16, y: 826 - (bar - 30), width: 340, height: 208 + bar });
+      const large = deskViewBounds(small, true, big, null, scale);
+      expect(large, `${scale}`).toEqual({ x: 16, y: 418 - (bar - 30), width: 980, height: 616 + bar });
+      // Its foot stays put, at every size and back.
+      expect(deskViewBounds(large, false, big, null, scale)).toEqual(small);
+      expect(deskViewBounds(small, false, big, null, 1)).toEqual(deskViewBounds(start, false, big, null, 1));
+    }
+    // On a small screen, the larger bar still fits, clear of the handle.
+    const wa = { x: 0, y: 0, width: 1024, height: 600 };
+    const pill = { x: 782, y: 532, width: 230, height: 56 };
+    const large = deskViewBounds(deskViewBounds(start, false, wa, pill, 1.3), true, wa, pill, 1.3);
+    expect(inside(large, wa)).toBe(true);
+    expect(large.x + large.width + 12).toBeLessThanOrEqual(pill.x);
+    // A scale that can't be read is the default's.
+    expect(deskViewBounds(start, false, big, null, Number.NaN)).toEqual(deskViewBounds(start, false, big));
+  });
+});
+
 describe("task card stack", () => {
   type Card = Parameters<typeof stackOrder>[0][number];
   const card = (id: string, status: Card["status"]): Card => ({

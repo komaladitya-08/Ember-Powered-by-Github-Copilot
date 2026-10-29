@@ -39,15 +39,16 @@ describe("Ember's display settings in every window", () => {
     }
   });
 
-  it("sets the text size where the window can grow with it, the Ask box's included, and leaves the desk's bar at its own (review #57)", async () => {
-    for (const p of ["home", "command", "prompt", "overlay", "handle", "ask"]) {
+  it("sets the text size in every page with words, the Ask box and the desk's bar included (review #57)", async () => {
+    for (const p of ["home", "command", "prompt", "overlay", "handle", "ask", "desk"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "larger" }));
       expect(f.dataset.textSize, p).toBe("larger");
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default" }));
       expect(f.dataset.textSize, p).toBeUndefined();
     }
-    for (const p of ["desk", "mic"]) {
+    // The microphone's page shows no words.
+    for (const p of ["mic"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "large" }));
       expect(f.dataset.textSize, p).toBeUndefined();
@@ -160,7 +161,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
       ["shared", shared], ["bubble", BUBBLE_CSS],
-      ...["home", "command", "prompt", "overlay", "handle", "ask"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+      ...["home", "command", "prompt", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);
   });
@@ -169,7 +170,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string, string[]][] = [
       ["shared", shared, []], ["bubble", BUBBLE_CSS, []],
-      ...["home", "command", "prompt", "overlay", "handle", "ask"].map(p => [p, read(`app/renderer/${p}/styles.css`), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
+      ...["home", "command", "prompt", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
     ];
     for (const [name, css, ids] of sheets) expect(fixedControlHeights(css, ids), name).toEqual([]);
     // The usual heights are kept at the default size (--text-scale 1): 28 px buttons, 24 px small ones, a 36 px Start,
@@ -201,7 +202,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
       ["shared", shared], ["bubble", BUBBLE_CSS],
-      ...["home", "command", "prompt", "overlay", "handle", "ask"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+      ...["home", "command", "prompt", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(fixedClearances(css), name).toEqual([]);
     // The guard sees a fixed length wherever it is, and leaves a focus ring's few px, a scaled length and a measured one.

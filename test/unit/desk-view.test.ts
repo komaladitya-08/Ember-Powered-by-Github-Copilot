@@ -137,6 +137,40 @@ describe("desk view", () => {
     expect(win.bounds.width).toBe(980);
   });
 
+  it("grows by its bar at the text size, open or hidden, from its foot, and only when the size changes (review #57)", () => {
+    let scale = 1.3;
+    view = new DeskView(quiet, on => control.push(on), { lingerMs: 1000, textScale: () => scale });
+    open();
+    const box = () => win.bounds as unknown as { x: number; y: number; width: number; height: number };
+    const foot = () => box().y + box().height;
+    // Made with the larger bar: 9 px taller than the usual 238, the picture under it as large.
+    expect(box()).toEqual({ x: 16, y: 1080 - 16 - 247, width: 340, height: 247 });
+    const at = foot();
+    send(DESK.takeOver);
+    expect(box()).toMatchObject({ width: 980, height: 655 });
+    expect(foot()).toBe(at);
+    // Changed in Settings: the open view fits its bar at once, from its foot.
+    scale = 1;
+    view.fitText();
+    expect(box()).toMatchObject({ width: 980, height: 646 });
+    expect(foot()).toBe(at);
+    send(DESK.handBack);
+    expect(box()).toMatchObject({ width: 340, height: 238 });
+    // Moved by the user, with the size unchanged: left where it is.
+    win.bounds = { ...box(), x: 400 };
+    view.fitText();
+    expect(box().x).toBe(400);
+    // Hidden, then the size changes: shown again at the new size.
+    view.hide();
+    scale = 1.15;
+    view.fitText();
+    expect(box().height).toBe(243);
+    // A scale that can't be read is the default's.
+    scale = Number.NaN;
+    view.fitText();
+    expect(box().height).toBe(238);
+  });
+
   it("always tells the page which mode it is in", () => {
     open();
     send(DESK.handBack);

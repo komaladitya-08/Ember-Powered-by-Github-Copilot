@@ -81,14 +81,14 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
   scales the type tokens, each page's own px sizes and the heights of its buttons, pop-up buttons and
   text fields (`html[data-text-size]`, set by main's `page-prefs.ts`) in Settings, the bubble, task
-  cards, the handle, the Ask box and the command and prompt windows. The handle's pill, the Ask box
-  and the command and prompt windows grow by the same scale (the pill wider; the Ask box as it opens,
-  its field and the line under it, not its insets: 560 × 92, 644 × 101 or 728 × 111 px, then a line
-  of 24 px times the scale for each further row; the windows as they open, and at once when they are
-  already open; inside the work area).
+  cards, the handle, the Ask box, the desk view's bar and the command and prompt windows. The
+  handle's pill, the Ask box, the desk view and the command and prompt windows grow by the same scale
+  (the pill wider; the Ask box as it opens, its field and the line under it, not its insets: 560 × 92,
+  644 × 101 or 728 × 111 px, then a line of 24 px times the scale for each further row; the desk view
+  by its bar, 30, 35 or 39 px, at once, its picture keeping its size; the windows as they open, and at
+  once when they are already open; inside the work area).
   The command window's terminal draws its type at 13, 15 or 17 px, at once when it changes: a run
-  keeps its columns and rows, its cells grow, and new runs start at what fits the window. The
-  desk's bar keeps its size (its window can't grow with it).
+  keeps its columns and rows, its cells grow, and new runs start at what fits the window.
 - **Colour:** Apple's dark system palette (2025) with its increased-contrast variants. The accent is
   system orange (#FF9230), kept for the one prominent action and for status; text on filled buttons
   is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %. Ember is
