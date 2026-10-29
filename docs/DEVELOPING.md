@@ -104,6 +104,9 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4b-tour.mjs out/` | Cursor-borrow tour: Ember borrows the mouse with permission, and lets go when the user moves it |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4-tour.mjs out/` | Task tour: Ember fills in a form in another window, asks once, refuses the password, turns on Do Not Disturb |
 
+Each test run works in a temporary folder of its own (`ember-run-…`), which it removes at the end with vitest's module
+cache (test/temp-folder.ts).
+
 ### Using Ember
 
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with

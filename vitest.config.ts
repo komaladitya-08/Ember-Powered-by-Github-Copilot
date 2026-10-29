@@ -16,7 +16,8 @@ export default defineConfig({
     fileParallelism: !process.env.EMBER_INTEGRATION,
     environment: "node",
     // Builds fontconfig's cache before the tests that draw Ember's marks (test/warm-text.ts).
-    globalSetup: ["test/warm-text.ts"],
+    // Gives the run its own temporary folder and removes it, and vitest's module cache, at the end (test/temp-folder.ts).
+    globalSetup: ["test/temp-folder.ts", "test/warm-text.ts"],
     // Windows starts processes slowly (antivirus scans each new file) and its timers tick every 15.6 ms, so tests that
     // spawn helpers or chain real waits (worker-scroll's take about 3 s on Linux) get more than the default 5 s there.
     // Their own time bounds still apply.
