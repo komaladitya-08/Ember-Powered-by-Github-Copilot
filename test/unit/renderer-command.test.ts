@@ -1,13 +1,16 @@
 /**
- * The command window's page, tested through its pure modules (vitest runs in Node: no DOM, no xterm; critique
- * integration-29): the exact xterm options (\u00a73.10), the reducer that keeps the card apart from every output byte
- * (critique security-13), Allow's arming, and visibleText's tokens and mixed-script marks (critique security-10).
+ * The command window's page, tested through its pure modules (vitest runs in Node: no DOM; critique integration-29):
+ * the exact xterm options (\u00a73.10), the reducer that keeps the card apart from every output byte (critique
+ * security-13), Allow's arming, and visibleText's tokens and mixed-script marks (critique security-10). A run's
+ * terminal (terminal.ts) is driven with a fake xterm and a fake measuring element.
  */
 
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import type { ITerminalOptions } from "@xterm/xterm";
 import { INERT_LINKS, TERM_FONT_PX, XTERM_OPTIONS, termFontSize, terminalOptions, textScaleOf } from "../../app/renderer/command/terminal-options";
-import { fitTerminal, inputAtGrid, termChromePx } from "../../app/renderer/command/terminal-size";
+import { applyTextScale, fitTerminal, inputAtGrid, termChromePx } from "../../app/renderer/command/terminal-size";
+import { cellSize, createRunTerminal, type TerminalCtor } from "../../app/renderer/command/terminal";
 import {
   INITIAL_MODEL, MAX_PENDING_LINES, sameAnnouncement, allowAnswer, allowEnabled, allowHint, judgeMetrics, pendingLines, reduce, type CardMetrics, type Effect, type PageEvent, type PageModel,
   type TabView, type WindowView,
@@ -17,6 +20,82 @@ import { shouldFocusTerminal, termKeyAction, type KeyLike } from "../../app/rend
 import type { CommandCard } from "../../app/main/commands/types";
 
 const read = (f: string) => readFileSync(new URL(`../../app/renderer/command/${f}`, import.meta.url), "utf8");
+
+// Measured on the built page in Chromium (scratchpad css2/r2/fit-inputs.mjs and the verifier's chrome.mjs), at the
+// window main opens for each size (windows.ts): the panels' width, the cell cellSize() measures, the parts round the
+// terminal (the window's height less the terminal's content box, typing line shown) and that content box.
+const MEASURED = [
+  { scale: 1, window: [760, 480], panels: 736, cell: { width: 7.826953125, height: 18 }, parts: 203, box: [720, 277], fit: { cols: 90, rows: 12 } },
+  { scale: 1.15, window: [874, 552], panels: 850, cell: { width: 9.030859375, height: 22 }, parts: 219, box: [834, 333], fit: { cols: 91, rows: 12 } },
+  { scale: 1.3, window: [988, 624], panels: 964, cell: { width: 10.23515625, height: 24 }, parts: 234, box: [948, 390], fit: { cols: 91, rows: 13 } },
+];
+/** xterm's cell at each type size it is given (px), as measured: the grid it draws is its columns and rows times this. */
+const XTERM_CELL: Record<number, { width: number; height: number }> = { 13: MEASURED[0].cell, 15: MEASURED[1].cell, 17: MEASURED[2].cell };
+
+/**
+ * A stand-in for xterm's Terminal, as far as terminal.ts uses it: setting its type size redraws its grid (the
+ * .xterm-screen element's size) at the cell of that size, as xterm does, and leaves its hidden input where it was
+ * (xterm moves the input only when the cursor moves).
+ */
+function fakeXterm() {
+  class FakeTerminal {
+    readonly screen = { style: { width: "", height: "" } };
+    readonly textarea = { style: { left: "", top: "", width: "", height: "", lineHeight: "" }, tabIndex: 0, setAttribute: () => {} };
+    element: { querySelector(sel: string): unknown } | undefined;
+    readonly cols: number;
+    readonly rows: number;
+    readonly options: ITerminalOptions;
+    fontSets = 0;
+    constructor(o: ITerminalOptions & { cols: number; rows: number }) {
+      this.cols = o.cols;
+      this.rows = o.rows;
+      let font = o.fontSize;
+      this.options = { ...o };
+      Object.defineProperty(this.options, "fontSize", { get: () => font, set: (v: number) => { font = v; this.fontSets++; this.draw(); } });
+      terms.push(this);
+    }
+    private draw() {
+      if (!this.element) return;
+      const c = XTERM_CELL[this.options.fontSize ?? 0];
+      this.screen.style = { width: `${Math.round(this.cols * c.width)}px`, height: `${this.rows * c.height}px` };
+    }
+    /** What xterm does when the cursor moves: the input goes on the cursor's cell, which is its grid over its columns and rows. */
+    moveCursor(col: number, row: number) {
+      const w = Number.parseFloat(this.screen.style.width) / this.cols, h = Number.parseFloat(this.screen.style.height) / this.rows;
+      this.textarea.style = { left: `${col * w}px`, top: `${row * h}px`, width: `${w}px`, height: `${h}px`, lineHeight: `${h}px` };
+    }
+    open() { this.element = { querySelector: (sel: string) => (sel === ".xterm-screen" ? this.screen : null) }; this.draw(); }
+    onData() { return { dispose: () => {} }; }
+    attachCustomKeyEventHandler() {}
+    hasSelection() { return false; }
+    write() {}
+    refresh() {}
+    focus() {}
+    dispose() {}
+  }
+  const terms: FakeTerminal[] = [];
+  return { Term: FakeTerminal as unknown as TerminalCtor, terms };
+}
+
+/**
+ * The element cellSize measures in: the hidden line it puts there is as wide as 40 of `cell`, and its normal line height
+ * just under `cell`'s height over xterm's line height (1.2), as the browser lays out the terminal's font.
+ */
+function fakeMeasureHost(cell: { width: number; height: number }) {
+  const probes: { style: Record<string, string>; removed: boolean }[] = [];
+  const el = {
+    ownerDocument: {
+      createElement: () => {
+        const probe = { style: {} as Record<string, string>, textContent: "", removed: false, setAttribute: () => {}, remove: () => { probe.removed = true; },
+          getBoundingClientRect: () => ({ width: cell.width * 40, height: cell.height ? (cell.height - 0.4) / (XTERM_OPTIONS.lineHeight ?? 1) : 0 }) };
+        probes.push(probe);
+        return probe;
+      },
+    },
+    appendChild: () => {},
+  };
+  return { el: el as unknown as HTMLElement, probes };
+}
 
 describe("the terminal's options (\u00a73.10)", () => {
   it("are exactly the design's: no proposed API, no window reports, 5000 lines, no newline conversion", () => {
@@ -79,14 +158,48 @@ describe("the terminal's options (\u00a73.10)", () => {
     expect(readFileSync(new URL("../../app/renderer/command/index.html", import.meta.url), "utf8")).toMatch(/<div id="measure" class="term measure"/);
   });
 
-  it("follow a text size changed while the window is open: open terminals redraw at it, new runs start at it", () => {
-    const term = read("terminal.ts"), main = read("main.ts");
-    // Main sets html[data-text-size] on the page as it loads and when the setting changes: the page watches it, tells
-    // every open terminal and reports the size new runs start at.
-    expect(main).toMatch(/new MutationObserver\([^]*?setTextScale\([^]*?reportSize\(\)[^]*?\.observe\(document\.documentElement, \{[^}]*attributeFilter: \["data-text-size"\][^}]*\}\)/);
-    // Terminals and the cell new runs are measured by both take the type's size from termFontSize.
-    expect(term).toMatch(/terminalOptions\(\{[^}]*scale: o\.scale[^}]*\}\)/);
-    expect(term).toMatch(/fontSize: `\$\{termFontSize\(scale\)\}px`/);
+  it("follow a text size changed while the window is open: every terminal is told, then the size new runs start at is reported", () => {
+    const calls: string[] = [];
+    const terms = ["a", "b", "c"].map(n => ({ setTextScale: (s: number) => void calls.push(`${n} ${s}`) }));
+    const report = (s: number) => void calls.push(`report ${s}`);
+    // Default -> Larger: each open terminal (shown or not) takes the new scale, and the report comes once, after them,
+    // with the new scale (it measures the cell new runs get at it).
+    expect(applyTextScale(1, 1.3, terms, report)).toBe(1.3);
+    expect(calls).toEqual(["a 1.3", "b 1.3", "c 1.3", "report 1.3"]);
+    // The same size again (main sets it on every settings change, whatever changed): nothing to do.
+    calls.length = 0;
+    expect(applyTextScale(1.3, 1.3, terms, report)).toBe(1.3);
+    expect(calls).toEqual([]);
+    // Back down, with no run open: only the report.
+    expect(applyTextScale(1.3, 1, [], report)).toBe(1);
+    expect(calls).toEqual(["report 1"]);
+    // A scale that isn't one from 1 to 2 is the default's.
+    calls.length = 0;
+    expect(applyTextScale(1.15, Number.NaN, terms, report)).toBe(1);
+    expect(calls).toEqual(["a 1", "b 1", "c 1", "report 1"]);
+    // The page runs it whenever main sets html[data-text-size] (as it loads and when the setting changes), with every
+    // run's terminal and its own report.
+    const main = read("main.ts");
+    expect(main).toMatch(/new MutationObserver\(\(\) => \{\s*textScale = applyTextScale\(textScale, pageScale\(\), \[\.\.\.tabEls\.values\(\)\]\.map\(t => t\.term\), reportSize\);\s*\}\)\.observe\(document\.documentElement, \{ attributes: true, attributeFilter: \["data-text-size"\] \}\);/);
+  });
+
+  it("start a run's terminal at the page's text size, and measure the cell new runs get at it", () => {
+    for (const [scale, px] of [[1, 13], [1.15, 15], [1.3, 17]] as const) {
+      const made = fakeXterm();
+      createRunTerminal({ cols: 91, rows: 13, interactive: false, mac: false, screenReader: false, scale, onInput: () => {} }, made.Term);
+      expect(made.terms[0].options.fontSize, String(scale)).toBe(px);
+      expect(made.terms[0].options).toMatchObject({ cols: 91, rows: 13, disableStdin: true });
+    }
+    // The cell: a hidden line of 40 cells in the terminal's font, at the type's size; its width over 40, its height whole.
+    for (const m of MEASURED) {
+      const host = fakeMeasureHost(m.cell);
+      expect(cellSize(host.el, m.scale), String(m.scale)).toEqual({ width: m.cell.width, height: m.cell.height });
+      expect(host.probes[0].style.fontSize).toBe(`${termFontSize(m.scale)}px`);
+      expect(host.probes[0].style.fontFamily).toBe(XTERM_OPTIONS.fontFamily);
+      expect(host.probes[0].removed, "taken out again").toBe(true);
+    }
+    // Not laid out (a hidden window): nothing measured.
+    expect(cellSize(fakeMeasureHost({ width: 0, height: 0 }).el, 1)).toBeNull();
   });
 
   it("put xterm's hidden input back on the cursor's cell when the type's size changes, so a smaller type leaves nothing past the grid", () => {
@@ -114,22 +227,38 @@ describe("the terminal's options (\u00a73.10)", () => {
       expect(inputAtGrid(larger, bad, { width: 712, height: 234 })).toEqual({ left: "", top: "", width: "", height: "", lineHeight: "" });
       expect(inputAtGrid(larger, { width: 931, height: 312 }, bad)).toEqual({ left: "", top: "", width: "", height: "", lineHeight: "" });
     }
-    // The terminal moves it so, with the grid as xterm drew it before and after the new size.
-    const term = read("terminal.ts");
-    expect(term).toMatch(/setTextScale\(scale\) \{[^]*?const before = gridSize\(\);[^]*?term\.options\.fontSize = px;[^]*?Object\.assign\(term\.textarea\.style, inputAtGrid\(term\.textarea\.style, before, gridSize\(\)\)\)/);
+  });
+
+  it("move a run's terminal's hidden input with its type: the same cell at the new size, inside the grid xterm draws", () => {
+    const made = fakeXterm();
+    const run = createRunTerminal({ cols: 91, rows: 13, interactive: false, mac: false, screenReader: false, scale: 1.3, onInput: () => {} }, made.Term);
+    // Not open yet (its tab never shown): the type's size changes, there is nothing to move.
+    run.setTextScale(1.15);
+    expect(made.terms[0].options.fontSize).toBe(15);
+    run.setTextScale(1.3);
+    run.open({} as HTMLElement);
+    const xt = made.terms[0];
+    // A finished run that filled its screen: the cursor on the last row's last cell, at Larger.
+    xt.moveCursor(90, 12);
+    expect(xt.screen.style).toEqual({ width: "931px", height: "312px" });
+    run.setTextScale(1);
+    expect(xt.options.fontSize).toBe(13);
+    expect(xt.screen.style).toEqual({ width: "712px", height: "234px" });
+    const px = (v: string) => Number.parseFloat(v);
+    const s = xt.textarea.style;
+    expect(px(s.left)).toBeCloseTo(90 * 712 / 91, 2);
+    expect(px(s.top)).toBeCloseTo(12 * 18, 2);
+    expect(px(s.left) + px(s.width)).toBeLessThanOrEqual(712 + 0.01);
+    expect(px(s.top) + px(s.height)).toBeLessThanOrEqual(234 + 0.01);
+    // The same size again: xterm isn't asked to redraw, and the input stays.
+    const sets = xt.fontSets;
+    run.setTextScale(1);
+    expect(xt.fontSets).toBe(sets);
+    expect(xt.textarea.style.left).toBe(s.left);
   });
 });
 
 describe("a new run's size at each text size", () => {
-  // Measured on the built page in Chromium (scratchpad css2/r2/fit-inputs.mjs and the verifier's chrome.mjs), at the
-  // window main opens for each size (windows.ts): the panels' width, the cell cellSize() measures, the parts round the
-  // terminal (the window's height less the terminal's content box, typing line shown) and that content box.
-  const MEASURED = [
-    { scale: 1, window: [760, 480], panels: 736, cell: { width: 7.826953125, height: 18 }, parts: 203, box: [720, 277], fit: { cols: 90, rows: 12 } },
-    { scale: 1.15, window: [874, 552], panels: 850, cell: { width: 9.030859375, height: 22 }, parts: 219, box: [834, 333], fit: { cols: 91, rows: 12 } },
-    { scale: 1.3, window: [988, 624], panels: 964, cell: { width: 10.23515625, height: 24 }, parts: 234, box: [948, 390], fit: { cols: 91, rows: 13 } },
-  ];
-
   it("leaves room for the parts round the terminal, which grow with the words and buttons, but not much more", () => {
     for (const m of MEASURED) {
       const chrome = termChromePx(m.scale);
@@ -156,8 +285,8 @@ describe("a new run's size at each text size", () => {
 
   it("is what the page reports to main, from the cell measured at the text size", () => {
     const main = read("main.ts");
-    expect(main).toMatch(/cellSize\(\$\("measure"\), textScale\)/);
-    expect(main).toMatch(/fitTerminal\(cell, \$\("panels"\)\.clientWidth, window\.innerHeight - termChromePx\(textScale\)\)/);
+    expect(main).toMatch(/function reportSize\(scale = textScale\): void \{\s*const cell = cellSize\(\$\("measure"\), scale\);/);
+    expect(main).toMatch(/fitTerminal\(cell, \$\("panels"\)\.clientWidth, window\.innerHeight - termChromePx\(scale\)\)/);
   });
 });
 

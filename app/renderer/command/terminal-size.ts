@@ -24,6 +24,20 @@ export function termChromePx(scale: number): number {
 }
 
 /**
+ * The page's text scale changed from `prev` to `next` (main sets html[data-text-size] as the page loads and on every
+ * settings change, whatever changed): every run's terminal, shown or not, draws its type at it, then `report` tells main
+ * the size new runs start at, measured at it. The same scale again does nothing. A scale that isn't one from 1 to 2 is
+ * the default's. Returns the scale the page now has.
+ */
+export function applyTextScale(prev: number, next: number, terms: Iterable<{ setTextScale(scale: number): void }>, report: (scale: number) => void): number {
+  const scale = textScaleOf(String(next));
+  if (scale === prev) return prev;
+  for (const t of terms) t.setTextScale(scale);
+  report(scale);
+  return scale;
+}
+
+/**
  * How many columns and rows fit a run's terminal in a window `width` × `height` CSS px with nothing above it but the
  * tab's own parts (what new runs start at: a card shown for the moment doesn't make them smaller). A column and a few
  * pixels are left over so the last column and row are never cut.

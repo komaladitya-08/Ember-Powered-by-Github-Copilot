@@ -23,7 +23,7 @@ import {
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
 import { cellSize, createRunTerminal, type RunTerminal } from "./terminal";
 import { textScaleOf } from "./terminal-options";
-import { fitTerminal, termChromePx } from "./terminal-size";
+import { applyTextScale, fitTerminal, termChromePx } from "./terminal-size";
 
 declare global { interface Window { emberCommands: CommandsApi } }
 
@@ -523,13 +523,13 @@ function focusTerminal(): void {
 
 /**
  * Tells main what terminal size fits the window now (without a card, the parts round the terminal at the text size,
- * terminal-size.ts), so new runs start at it.
+ * terminal-size.ts), so new runs start at it. `scale`: the page's text scale (the one it has now, unless it is changing).
  */
 let sizeSent = "";
-function reportSize(): void {
-  const cell = cellSize($("measure"), textScale);
+function reportSize(scale = textScale): void {
+  const cell = cellSize($("measure"), scale);
   if (!cell) return;
-  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - termChromePx(textScale));
+  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - termChromePx(scale));
   const key = `${fit.cols}x${fit.rows}`;
   if (key === sizeSent) return;
   sizeSent = key;
@@ -559,14 +559,10 @@ api.onState(onState);
 api.onOutput(msg => dispatch({ type: "output", msg }));
 window.addEventListener("resize", () => { measureCard(); reportSize(); });
 // The text size changed (main sets html[data-text-size] as the page loads and whenever the setting changes): every
-// run's terminal takes the new type size, and new runs start at what fits the window with it (main grows the window
-// by the same scale, and its resize reports again).
+// run's terminal takes the new type size, and new runs start at what fits the window with it (terminal-size.ts; main
+// grows the window by the same scale, and its resize reports again).
 new MutationObserver(() => {
-  const scale = pageScale();
-  if (scale === textScale) return;
-  textScale = scale;
-  for (const t of tabEls.values()) t.term.setTextScale(scale);
-  reportSize();
+  textScale = applyTextScale(textScale, pageScale(), [...tabEls.values()].map(t => t.term), reportSize);
 }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 window.addEventListener("focus", () => focusTerminal());
 // A scroll anywhere on the page (the card area, not only the command block) can move the card out of view.

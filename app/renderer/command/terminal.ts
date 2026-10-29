@@ -4,10 +4,10 @@
  * queries) to `onInput` only while the run takes typing, and listens to nothing else: no title changes, no bell, no
  * links, and nothing a program prints can reach the clipboard (no OSC 52). Its keys are keys.ts's: Tab moves the focus,
  * and the user's own Ctrl+V, Ctrl+C and Ctrl+Shift+C paste and copy. This is the only module that loads xterm, so the
- * page's pure modules stay testable in Node.
+ * page's pure modules stay testable in Node; the tests drive this one with a stand-in for xterm and for the page.
  */
 
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type ITerminalInitOnlyOptions, type ITerminalOptions } from "@xterm/xterm";
 import { termKeyAction } from "./keys";
 import { XTERM_OPTIONS, termFontSize, terminalOptions } from "./terminal-options";
 import { inputAtGrid } from "./terminal-size";
@@ -54,14 +54,17 @@ function copyText(text: string): boolean {
   }
 }
 
+/** xterm's Terminal, or a stand-in for it with the same shape (the tests'). */
+export type TerminalCtor = new (options: ITerminalOptions & ITerminalInitOnlyOptions) => Terminal;
+
 /**
  * A terminal for one run, at the run's size (fixed for the run, §3.10). `mac`: the Mac's keys (keys.ts). `scale`: the
- * page's text scale, which its type follows.
+ * page's text scale, which its type follows. `Term`: xterm's Terminal (a stand-in in the tests).
  */
-export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; scale: number; onInput: (data: string) => void }): RunTerminal {
+export function createRunTerminal(o: { cols: number; rows: number; interactive: boolean; mac: boolean; screenReader: boolean; scale: number; onInput: (data: string) => void }, Term: TerminalCtor = Terminal): RunTerminal {
   let interactive = o.interactive;
   let screenReader = o.screenReader;
-  const term = new Terminal(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader, scale: o.scale }));
+  const term = new Term(terminalOptions({ interactive, cols: o.cols, rows: o.rows, screenReader, scale: o.scale }));
   // Typing and xterm's answers to queries (cursor position, device attributes) go to the run, and only while it takes them.
   const sub = term.onData(data => { if (interactive) o.onInput(data); });
   // Tab and Shift+Tab move the focus, never into the run; paste and copy are the user's (keys.ts). xterm handles the rest.
@@ -152,10 +155,10 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
 
 /**
  * One character cell of the terminal's font at the page's text scale, measured with a hidden line of it in `host` (CSS
- * px), or null.
+ * px), or null when nothing is laid out.
  */
 export function cellSize(host: HTMLElement, scale: number): { width: number; height: number } | null {
-  const probe = document.createElement("span");
+  const probe = host.ownerDocument.createElement("span");
   probe.textContent = "W".repeat(40);
   probe.setAttribute("aria-hidden", "true");
   Object.assign(probe.style, {
