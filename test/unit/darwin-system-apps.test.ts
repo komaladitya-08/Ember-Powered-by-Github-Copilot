@@ -281,6 +281,12 @@ describe("Apple's apps by their localized names (review #239)", () => {
       <key>pt_BR</key><dict><key>CFBundleDisplayName</key><string>Ajustes do Sistema</string></dict>
       <key>zh_CN</key><dict><key>CFBundleName</key><string>系统设置</string></dict>
     </dict></plist>`);
+    // Both: the loctable has the language's usage descriptions only, its InfoPlist.strings the names.
+    const maps = bundle(system, "Maps.app", infoXml({ CFBundleExecutable: "Maps", CFBundleIdentifier: "com.apple.Maps", CFBundleName: "Maps" }));
+    resource(maps, "InfoPlist.loctable", `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>
+      <key>de</key><dict><key>NSLocationUsageDescription</key><string>Karten zeigt, wo Sie sind.</string></dict>
+    </dict></plist>`);
+    resource(maps, "de.lproj/InfoPlist.strings", utf16(`"CFBundleDisplayName" = "Karten";\n`));
     // A broken localization costs only the localized names.
     const notes = bundle(system, "Notes.app", infoXml({ CFBundleExecutable: "Notes", CFBundleIdentifier: "com.apple.Notes", CFBundleName: "Notes" }));
     resource(notes, "de.lproj/InfoPlist.strings", "\"CFBundleName\" = ");
@@ -307,6 +313,12 @@ describe("Apple's apps by their localized names (review #239)", () => {
     expect(app(catalogue(["de-AT"]).list(), "com.apple.systempreferences").programs).toContain("systemeinstellungen");
     expect(app(catalogue(["pt-BR"]).list(), "com.apple.systempreferences").programs).toContain("ajustes do sistema");
     expect(app(catalogue(["zh-Hans-CN"]).list(), "com.apple.systempreferences").programs).toContain("系统设置");
+  });
+
+  it("reads the language's InfoPlist.strings too when its loctable entry has no names", () => {
+    const maps = app(catalogue(["de-DE"]).list(), "com.apple.Maps");
+    expect(maps.programs).toContain("karten");
+    expect(maps.keywords).toContain("karten");
   });
 
   it("takes the first preferred language the app has, as macOS does", () => {

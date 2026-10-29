@@ -131,8 +131,9 @@ const namesIn = (d: PlistValue | undefined): string[] =>
 /**
  * An app's names in the first of `languages` it is localized for, as the window list and the accessibility helper
  * name it on that Mac ("Rechner" for Calculator in German): from Contents/Resources/InfoPlist.loctable (every
- * language in one file, macOS 14 and later) or <language>.lproj/InfoPlist.strings. [] when it has none, or when the
- * files can't be read (only the localized names are lost).
+ * language in one file, macOS 14 and later) and <language>.lproj/InfoPlist.strings, both where a bundle has both (one
+ * may hold only the language's usage descriptions). [] when it has none, or when the files can't be read (only the
+ * localized names are lost).
  */
 export function localizedNames(bundle: string, languages: readonly string[], bfs: BundleFs): string[] {
   if (!languages.length) return [];
@@ -153,13 +154,17 @@ export function localizedNames(bundle: string, languages: readonly string[], bfs
   }
   for (const tag of languages) {
     for (const key of localeKeys(tag)) {
-      if (table && Object.prototype.hasOwnProperty.call(table, key) && isPlistDict(table[key])) return namesIn(table[key]);
+      const inTable = !!table && Object.prototype.hasOwnProperty.call(table, key) && isPlistDict(table[key]);
+      const names = inTable ? namesIn(table![key]) : [];
       const strings = path.join(resources, `${key}.lproj`, "InfoPlist.strings");
-      if (!small(strings)) continue;
+      if (!small(strings)) {
+        if (inTable) return names;
+        continue;
+      }
       try {
-        return namesIn(parseStringsFile(bfs.readFile(strings)));
+        return [...new Set([...names, ...namesIn(parseStringsFile(bfs.readFile(strings)))])];
       } catch {
-        return []; // this language's file is broken: no localized names
+        return names; // this language's file is broken: only what the table has
       }
     }
   }

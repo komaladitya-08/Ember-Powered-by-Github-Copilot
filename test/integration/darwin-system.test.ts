@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSync } from "esbuild";
 import { darwinApps } from "../../app/main/platform/darwin/system/apps";
+import { isPlistDict, parsePlist, parseStringsFile } from "../../app/main/platform/darwin/system/plist";
 import { darwinSettings } from "../../app/main/platform/darwin/system/settings";
 import { darwinAdminPolicy, POLICY_FOLDER } from "../../app/main/platform/darwin/system/admin-policy";
 import { voiceOverRunning } from "../../app/main/platform/darwin/system/a11y";
@@ -222,18 +223,44 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
     it("knows Apple's apps by the names a German Mac shows", () => {
       const german = darwinApps({ languages: () => ["de-DE"] });
       const list = german.list();
-      /** What the bundle has for German, so a miss says which layout this macOS uses. */
+      /** What the bundle has for German, so a miss says which layout this macOS uses and what each file holds. */
       const layout = (bundle: string | undefined) => {
-        try {
-          return fs.readdirSync(path.join(bundle ?? "", "Contents", "Resources")).filter(n => /^(de|German)([._-]|$)|loctable$/i.test(n)).join(", ") || "none";
-        } catch (err) {
-          return String(err);
+        const said: string[] = [];
+        const note = (what: string, read: () => unknown) => {
+          try {
+            said.push(`${what}: ${JSON.stringify(read())}`);
+          } catch (err) {
+            said.push(`${what}: ${String(err)}`);
+          }
+        };
+        const resources = path.join(bundle ?? "", "Contents", "Resources");
+        note("German resources", () => fs.readdirSync(resources).filter(n => /^(de|German)([._-]|$)|loctable$/i.test(n)));
+        note("Info.plist names", () => {
+          const info = parsePlist(fs.readFileSync(path.join(bundle ?? "", "Contents", "Info.plist")));
+          return isPlistDict(info) ? { CFBundleName: info.CFBundleName, CFBundleDisplayName: info.CFBundleDisplayName, CFBundleExecutable: info.CFBundleExecutable } : typeof info;
+        });
+        note("InfoPlist.loctable", () => {
+          const file = path.join(resources, "InfoPlist.loctable");
+          const table = parsePlist(fs.readFileSync(file));
+          if (!isPlistDict(table)) return typeof table;
+          const keys = Object.keys(table);
+          const german = keys.filter(k => /^(de|German)([._-]|$)/i.test(k));
+          return { bytes: fs.statSync(file).size, languages: keys.length, sample: keys.slice(0, 8), german: Object.fromEntries(german.map(k => [k, isPlistDict(table[k]) ? Object.keys(table[k]) : typeof table[k]])) };
+        });
+        for (const folder of ["de.lproj", "German.lproj"]) {
+          note(folder, () => fs.readdirSync(path.join(resources, folder)));
+          note(`${folder}/InfoPlist.strings`, () => {
+            const strings = parseStringsFile(fs.readFileSync(path.join(resources, folder, "InfoPlist.strings")));
+            return isPlistDict(strings) ? Object.keys(strings) : typeof strings;
+          });
         }
+        return said.join("; ");
       };
       for (const [id, name] of [["com.apple.calculator", "rechner"], ["com.apple.systempreferences", "systemeinstellungen"]] as const) {
         const app = list.find(a => a.id.toLowerCase() === id);
         expect(app, `${id} in the catalogue`).toBeDefined();
-        expect(app!.programs, `${id}'s names (German resources: ${layout(app!.file)})`).toContain(name);
+        if (!(app!.programs ?? []).includes(name)) console.log(`${id}: programs ${JSON.stringify(app!.programs)}; ${layout(app!.file)}`);
+        expect(app!.programs, `${id}'s names`).toContain(name);
         expect(app!.keywords).toContain(name);
       }
       expect(german.find(list, "Rechner")?.id.toLowerCase()).toBe("com.apple.calculator");
