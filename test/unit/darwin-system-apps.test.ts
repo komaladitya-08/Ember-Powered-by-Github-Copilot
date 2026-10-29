@@ -277,7 +277,7 @@ describe("Apple's apps by their localized names (review #239)", () => {
     const settings = bundle(system, "System Settings.app", infoXml({ CFBundleExecutable: "System Settings", CFBundleIdentifier: "com.apple.systempreferences", CFBundleName: "System Settings" }));
     resource(settings, "InfoPlist.loctable", `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>
       <key>LocProvenance</key><dict><key>de</key><string>x</string></dict>
-      <key>de</key><dict><key>CFBundleDisplayName</key><string>Systemeinstellungen</string></dict>
+      <key>de</key><dict><key>System Settings</key><string>Systemeinstellungen</string><key>CFBundleName</key><string>System&#xAD;einstellungen</string></dict>
       <key>pt_BR</key><dict><key>CFBundleDisplayName</key><string>Ajustes do Sistema</string></dict>
       <key>zh_CN</key><dict><key>CFBundleName</key><string>系统设置</string></dict>
     </dict></plist>`);
@@ -313,6 +313,16 @@ describe("Apple's apps by their localized names (review #239)", () => {
     expect(app(catalogue(["de-AT"]).list(), "com.apple.systempreferences").programs).toContain("systemeinstellungen");
     expect(app(catalogue(["pt-BR"]).list(), "com.apple.systempreferences").programs).toContain("ajustes do sistema");
     expect(app(catalogue(["zh-Hans-CN"]).list(), "com.apple.systempreferences").programs).toContain("系统设置");
+  });
+
+  it("compares names without the soft hyphen Apple puts in “System\u00ADeinstellungen”", () => {
+    const c = catalogue(["de-DE"]);
+    const settings = app(c.list(), "com.apple.systempreferences");
+    expect(settings.keywords).toContain("systemeinstellungen");
+    expect(c.find(c.list(), "Systemeinstellungen")?.id).toBe("com.apple.systempreferences");
+    // The window list may report the owner name with it or without it.
+    expect(c.appKey("System\u00ADeinstellungen")).toBe(c.appKey("Systemeinstellungen"));
+    expect(c.programsOf(settings).has(c.appKey("System\u00ADeinstellungen"))).toBe(true);
   });
 
   it("reads the language's InfoPlist.strings too when its loctable entry has no names", () => {

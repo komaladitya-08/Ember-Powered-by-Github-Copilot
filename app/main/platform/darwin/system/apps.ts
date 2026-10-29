@@ -88,7 +88,12 @@ export interface DarwinAppsDeps {
 
 const truthy = (v: PlistValue | undefined): boolean => v === true || v === 1 || (typeof v === "string" && /^(1|yes|true)$/i.test(v.trim()));
 const text = (v: PlistValue | undefined): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-const uniqueLower = (xs: (string | undefined)[]): string[] => [...new Set(xs.filter((x): x is string => !!x).map(x => x.toLowerCase()))];
+/**
+ * A name as it is compared: lower case, without invisible format characters (Apple's German name for System Settings is
+ * "System\u00ADeinstellungen", a soft hyphen where the Dock may break it; nobody types or says one).
+ */
+const fold = (s: string): string => s.replace(/\p{Cf}/gu, "").toLowerCase();
+const uniqueLower = (xs: (string | undefined)[]): string[] => [...new Set(xs.filter((x): x is string => !!x).map(fold))];
 
 /** Language folders older bundles are named by (English.lproj), by language code. */
 const LEGACY_LPROJ: Readonly<Record<string, string>> = {
@@ -306,6 +311,6 @@ export function darwinApps(d: DarwinAppsDeps = {}): AppCatalog {
     isTerminalApp: (a: AppIdentity) => isTerminalApp(a, "darwin"),
     hasBuiltInShell: (a: AppIdentity) => hasBuiltInShell(a, "darwin"),
     programsOf: (app: DesktopApp) => programsOf(app, LAUNCHERS.darwin),
-    appKey: (s: string) => s.toLowerCase(),
+    appKey: fold,
   };
 }
