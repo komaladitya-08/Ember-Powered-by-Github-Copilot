@@ -530,15 +530,19 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
   const chords = (Object.keys(SHORTCUTS.linux) as ShortcutId[])
     .map((id): HomePatch => ({ selector: `[data-shortcut="${id}"]`, content: chordSegments(p.shortcuts[id].keys) }));
   // A shortcut another app holds with its fallback (D-45b): the sentences that name its chord give way to how to do it
-  // without the key (the question keys together: one sentence names both).
-  const taken = (id: ShortcutId) => p.shortcuts[id].taken === true || (id === "allow" && p.shortcuts.deny.taken === true);
-  const toggles = (["stop", "ask", "mute", "allow"] as const).flatMap((id): HomePatch[] => [
+  // without the key.
+  const taken = (id: ShortcutId) => p.shortcuts[id].taken === true;
+  const toggles = (["stop", "ask", "mute"] as const).flatMap((id): HomePatch[] => [
     { selector: `[data-key-held="${id}"]`, hidden: taken(id) },
     { selector: `[data-key-taken="${id}"]`, hidden: !taken(id) },
   ]);
+  // The question keys' sentence names each key Ember holds, and sends only the other one to the bubble.
+  const asked = !taken("allow") && !taken("deny") ? "both" : !taken("allow") ? "allow" : !taken("deny") ? "deny" : "none";
+  const questionKeys = (["both", "allow", "deny", "none"] as const).map((k): HomePatch => ({ selector: `[data-question-keys="${k}"]`, hidden: k !== asked }));
   return [
     ...chords,
     ...toggles,
+    ...questionKeys,
     { selector: 'p:has(> [data-shortcut="settings"])', hidden: taken("settings") },
     { selector: "#settings-taken", content: [`Open Ember again ${OPEN_AGAIN[p.os]} any time to come back here, or click Ember's handle.`], hidden: !taken("settings") },
     { selector: "#permissions-note", content: [p.permissionsNote], hidden: !p.permissionsNote },

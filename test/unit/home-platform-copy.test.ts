@@ -49,12 +49,12 @@ function parse(html: string): El {
 
 const elements = (n: Node): El[] => (typeof n === "string" ? [] : [n, ...n.children.flatMap(elements)]);
 /**
- * home/main.ts's selector forms: `#id`, `[data-shortcut="…"]`, the shortcut toggles `[data-key-held="…"]` and
- * `[data-key-taken="…"]`, and `p:has(> [data-shortcut="…"])` (a paragraph whose own child is that chip).
+ * home/main.ts's selector forms: `#id`, `[data-shortcut="…"]`, the shortcut toggles `[data-key-held="…"]`,
+ * `[data-key-taken="…"]` and `[data-question-keys="…"]`, and `p:has(> [data-shortcut="…"])` (a paragraph whose own child is that chip).
  */
 function select(root: El, selector: string): El[] {
   const id = /^#([\w-]+)$/.exec(selector);
-  const attr = /^\[(data-shortcut|data-key-held|data-key-taken)="([\w-]+)"\]$/.exec(selector);
+  const attr = /^\[(data-shortcut|data-key-held|data-key-taken|data-question-keys)="([\w-]+)"\]$/.exec(selector);
   const has = /^p:has\(> \[data-shortcut="([\w-]+)"\]\)$/.exec(selector);
   if (!id && !attr && !has) throw new Error(`unexpected selector ${selector}`);
   if (has) return elements(root).filter(e => e.tag === "p" && e.children.some(c => typeof c !== "string" && c.attrs["data-shortcut"] === has[1]));
@@ -156,8 +156,9 @@ describe("the settings window before a status names an OS", () => {
   it("marks every chord chip with its shortcut, each holding today's Linux key caps", () => {
     const root = page();
     const chips = elements(root).filter(e => e.attrs.class === "chord");
-    expect(chips).toHaveLength(6);
-    expect(chips.map(c => c.attrs["data-shortcut"]).sort()).toEqual([...IDS].sort());
+    // Allow's and Not now's twice: the question sentence has a twin for each key on its own (D-45b).
+    expect(chips).toHaveLength(8);
+    expect(chips.map(c => c.attrs["data-shortcut"]).sort()).toEqual([...IDS, "allow", "deny"].sort());
     for (const chip of chips) {
       const id = chip.attrs["data-shortcut"] as ShortcutId;
       expect(chip.children.map(markup).join(""), id).toBe(SHORTCUTS.linux[id].keys.map(k => `<kbd>${k}</kbd>`).join("+"));
@@ -255,7 +256,7 @@ describe("the settings window with a Windows or macOS status", () => {
       const root = page();
       for (const patch of homePatches(p)) expect(select(root, patch.selector).length, patch.selector).toBeGreaterThan(0);
     }
-    for (const id of IDS) expect(select(page(), `[data-shortcut="${id}"]`), id).toHaveLength(1);
+    for (const id of IDS) expect(select(page(), `[data-shortcut="${id}"]`), id).toHaveLength(id === "allow" || id === "deny" ? 2 : 1);
   });
 
   it("writes the OS's shortcuts in the tagline, the stop line and the voice line", () => {
@@ -473,9 +474,25 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(markup(apply(root, homePatches(held(LINUX, []))))).toBe(markup(page()));
   });
 
-  it("answers questions in the bubble only while either question key is gone", () => {
-    const root = apply(page(), homePatches(held(LINUX, ["Control+Alt+N", "Control+Alt+Shift+N"])));
-    expect(readable(root).join("\n")).toContain("When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.");
-    expect(readable(root).join("\n")).not.toContain("Ctrl+Alt+Y");
+  describe("the question keys, each on its own (Allow and Not now)", () => {
+    const question = (taken: string[]) => readable(apply(page(), homePatches(held(LINUX, taken)))).filter(l => l.includes("May I?"));
+    const SR = " With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.";
+
+    it("names both while Ember holds both, by the chords it holds", () => {
+      expect(question([])).toEqual([CHORD_SENTENCES.allow]);
+      expect(question(["Control+Alt+Y"])).toEqual([`When Ember asks “May I?”, press Ctrl+Alt+Shift+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse.${SR}`]);
+    });
+
+    it("keeps the key Ember still holds when another app has the other, and says to answer that one in the bubble", () => {
+      expect(question(["Control+Alt+N", "Control+Alt+Shift+N"])).toEqual([
+        `When Ember asks “May I?”, press Ctrl+Alt+Y to allow; another app has the key for Not now, so answer that in its bubble.${SR}`]);
+      expect(question(["Control+Alt+Y", "Control+Alt+Shift+Y", "Control+Alt+N"])).toEqual([
+        `When Ember asks “May I?”, press Ctrl+Alt+Shift+N for not now; another app has the key for Allow, so answer that in its bubble.${SR}`]);
+    });
+
+    it("answers in the bubble only while Ember holds neither", () => {
+      expect(question(["Control+Alt+Y", "Control+Alt+Shift+Y", "Control+Alt+N", "Control+Alt+Shift+N"])).toEqual([
+        `When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.${SR}`]);
+    });
   });
 });
