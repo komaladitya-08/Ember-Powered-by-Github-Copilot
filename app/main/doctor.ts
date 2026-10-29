@@ -6,9 +6,8 @@
  * never by the wording of a check (Linux's fixes are dnf, gsettings and GNOME's).
  */
 
-import { MIXED_SCALING_FIX, type EnvReport } from "./environment";
+import { LINUX_A11Y_RESTART, MIXED_SCALING_FIX, type EnvReport } from "./environment";
 import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
-import { LINUX_A11Y_RESTART } from "./environment";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";

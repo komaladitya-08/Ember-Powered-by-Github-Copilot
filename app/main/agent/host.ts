@@ -106,7 +106,7 @@ export interface AgentStatus {
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
-  /** Copilot stopped answering and Ember reconnects once the tasks running are done (reconnecting now would stop them). */
+  /** Copilot stopped answering, and Ember reconnects once the tasks that are running finish (reconnecting now would stop them). */
   waitingForTasks?: boolean;
 }
 

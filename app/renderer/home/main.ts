@@ -8,7 +8,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
-import { targetFeatureApplies } from "./computers-copy";
+import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
@@ -20,7 +20,6 @@ import {
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
-import { TARGET_FEATURE_TEXT } from "./computers-copy";
 import { keptWords, lockdownNotice, lockdownSendLine } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 
