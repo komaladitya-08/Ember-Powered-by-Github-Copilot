@@ -272,9 +272,9 @@ describe("the text size", () => {
     const html = read("app/renderer/home/index.html");
     expect(html).toMatch(/<select id="text-size">\s*<option value="default">Default<\/option>\s*<option value="large">Large<\/option>\s*<option value="larger">Larger<\/option>\s*<\/select>/);
     expect(read("app/main/settings.ts")).toMatch(/textSize: z\.enum\(\["default", "large", "larger"\]\)\.default\("default"\)/);
-    // Its hint says, in a sentence, where the size reaches: the Ask box, the one command window, and the prompt window's
-    // cards too.
+    // Its hint says, in a sentence, where the size reaches: the ask box, the desk's bar, the one command window, and the
+    // prompt window's cards too.
     const hint = /<\/select><\/label>\s*<\/div>\s*<p class="hint">([^<]*)<\/p>/.exec(html.slice(html.indexOf('id="text-size"')))![1];
-    expect(hint).toBe("Changes the text in this window, Ember's bubble, task cards and handle, the Ask box, the command window, and Ember's password and consent cards.");
+    expect(hint).toBe("Changes the text in this window, Ember's bubble, task cards and handle, the ask box, the desk window's bar on Linux, the command window, and Ember's password and consent cards.");
   });
 });
