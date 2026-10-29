@@ -11,7 +11,7 @@ import {
   PROMPT_FOCUS_CHECK_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
 } from "../../app/main/remote/prompt-window";
 import {
-  CONSENT_READ_HINT, KEYBOARD_ELSEWHERE_HINT, PROMPT_ARM_MS, consentHashText, moreBelow, pressResult, promptHint, promptView, readThrough,
+  CONSENT_READ_HINT, KEYBOARD_ELSEWHERE_HINT, PROMPT_ARM_MS, consentHashText, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn, readThrough,
 } from "../../app/renderer/prompt/copy";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
 import type { Logger } from "../../app/main/logger";
@@ -383,9 +383,40 @@ describe("the page's buttons (pure press logic)", () => {
     const src = readFileSync(new URL("../../app/renderer/prompt/main.ts", import.meta.url), "utf8");
     const judge = /function judge\(\): void \{[\s\S]*?\n\}/.exec(src)?.[0] ?? "";
     expect(judge).toMatch(/const m = \{[^\n]*scrollHeight[^\n]*\};\n\s*const fontsLoaded = document\.fonts\.status === "loaded";/);
-    expect(judge).toMatch(/if \(readThrough\(m, fontsLoaded\)\) seen = true;/);
+    expect(judge).toMatch(/gate = judgeRead\(gate, m, fontsLoaded, layoutNow\(\)\);/);
     expect(src).toMatch(/document\.fonts\.addEventListener\("loadingdone", judge\);/);
     expect(src).toMatch(/document\.fonts\.addEventListener\("loadingerror", judge\);/);
+  });
+
+  it("counts a card read through only at the text size it has now: main sets it after a new window's first card is drawn (cross-review X7)", () => {
+    // Measured in Ember's prompt window at Larger text on a 1280x500 screen: drawn before main's text size landed, the
+    // SSH card fitted (339 of 339 px); at Larger it ran on below (407 px in 325).
+    const before: { seen: boolean; layout: string } = { seen: false, layout: "default" };
+    const fitted = judgeRead(before, { scrollTop: 0, scrollHeight: 339, clientHeight: 339 }, true, "default");
+    expect(readIn(fitted, "default")).toBe(true);
+    // The text size lands: not read through until it has been judged at it, and then only if every word was in view.
+    expect(readIn(fitted, "larger")).toBe(false);
+    const larger = judgeRead(fitted, { scrollTop: 0, scrollHeight: 407, clientHeight: 325 }, true, "larger");
+    expect(larger).toEqual({ seen: false, layout: "larger" });
+    expect(promptHint({ consent: true, seen: readIn(larger, "larger"), more: true, field: false, focused: true, sinceShownMs: 5000 })).toBe(CONSENT_READ_HINT);
+    // Scrolled to the end at that size: read through, and it stays so when scrolled back up.
+    const atEnd = judgeRead(larger, { scrollTop: 82, scrollHeight: 407, clientHeight: 325 }, true, "larger");
+    expect(readIn(atEnd, "larger")).toBe(true);
+    expect(readIn(judgeRead(atEnd, { scrollTop: 0, scrollHeight: 407, clientHeight: 325 }, true, "larger"), "larger")).toBe(true);
+    // Another size again starts unread; one where everything fits is read through at once (with the typeface in).
+    expect(readIn(judgeRead(atEnd, { scrollTop: 0, scrollHeight: 300, clientHeight: 339 }, false, "default"), "default")).toBe(false);
+    expect(readIn(judgeRead(atEnd, { scrollTop: 0, scrollHeight: 300, clientHeight: 339 }, true, "default"), "default")).toBe(true);
+  });
+
+  it("judges the words again when main sets the text size, and lets the yes go only when read through at it (read from the page's source)", () => {
+    const src = readFileSync(new URL("../../app/renderer/prompt/main.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/const layoutNow = \(\): string => document\.documentElement\.dataset\.textSize \?\? "default";/);
+    expect(src).toMatch(/new MutationObserver\(\(\) => judge\(\)\)\.observe\(document\.documentElement, \{ attributes: true, attributeFilter: \["data-text-size"\] \}\);/);
+    // The yes and its press go by the gate at the size the card has now, never by a flag kept from another size.
+    expect(src).toMatch(/const seenNow = \(\): boolean => readIn\(gate, layoutNow\(\)\);/);
+    expect(src).toMatch(/pressResult\(card, b, field, Date\.now\(\), shownAt, seenNow\(\)\)/);
+    expect(src).toMatch(/const unread = !!card && isConsent\(card\) && !seenNow\(\);/);
+    expect(src).not.toMatch(/\bseen = true\b/);
   });
 
   it("keeps the window's title \"Ember\" and builds nothing from HTML (read from the page's source)", () => {

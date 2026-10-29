@@ -59,6 +59,22 @@ export const readThrough = (m: WordsMetrics, fontsLoaded: boolean): boolean => f
 /** The words run on below what shows (the page fades their foot and says to scroll). */
 export const moreBelow = (m: WordsMetrics): boolean => !allInView(m);
 
+/**
+ * Whether every word of the card has been in view (sticky), and in which layout: the page's text size
+ * (html[data-text-size]), which main sets on a page it sends no settings only once the page has loaded (page-prefs.ts,
+ * at dom-ready) and again whenever the setting changes. A new window's first card can be drawn, fit and judged read at
+ * the default size before that; once the larger text lands its last lines are below the fold (cross-review X7). So
+ * being read through holds only in the layout it was judged in: another text size starts unread and is judged afresh.
+ */
+export interface ReadGate { seen: boolean; layout: string }
+
+/** The gate after measuring the words (`m`) in `layout`: read through stays so in the same layout only. */
+export const judgeRead = (g: ReadGate, m: WordsMetrics, fontsLoaded: boolean, layout: string): ReadGate =>
+  ({ seen: (g.seen && g.layout === layout) || readThrough(m, fontsLoaded), layout });
+
+/** Read through in the layout the card has now (`layout`): false until the words have been judged in it. */
+export const readIn = (g: ReadGate, layout: string): boolean => g.seen && g.layout === layout;
+
 /** On a card that takes typing whose window hasn't the keyboard (review #235): typing would go to another app. */
 export const KEYBOARD_ELSEWHERE_HINT = "Click here before you type: the keyboard is still in another app.";
 /** How long a card's window may take to get the keyboard before the page says it hasn't. */

@@ -4,14 +4,15 @@
  * as text nodes from the card's fields (values from outside Ember with every character made visible); a secret goes
  * to main once, and the field is cleared the moment it is sent. A consent card's yes carries the hash of the very text
  * this page showed (computed here), so main can tell it was that text, and it can be pressed only once every word of
- * it has been in view (review #182, #270): words that run on below fade at their foot and say to scroll. A card that
- * takes typing says so when its window hasn't the keyboard, so nobody types a secret into another app (review #235).
+ * it has been in view (review #182, #270) at the text size it has now (cross-review X7): words that run on below fade
+ * at their foot and say to scroll. A card that takes typing says so when its window hasn't the keyboard, so nobody
+ * types a secret into another app (review #235).
  */
 
 import type { PromptCard } from "../../shared/remote-ui";
 import {
-  PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, consentHashText, isConsent, moreBelow, pressResult, promptHint, promptView, readThrough,
-  type Block, type ButtonView, type Part,
+  PROMPT_ARM_MS, PROMPT_FOCUS_GRACE_MS, consentHashText, isConsent, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn,
+  type Block, type ButtonView, type Part, type ReadGate,
 } from "./copy";
 import type { PromptApi } from "./api";
 import { LEGEND_MIXED, LEGEND_TOKENS } from "../command/copy";
@@ -29,8 +30,12 @@ let shownAt = 0;
 let buttons: { view: ButtonView; el: HTMLButtonElement }[] = [];
 let armTimer: ReturnType<typeof setTimeout> | null = null;
 let sent = false;
-/** Every word of the card on screen has been in view since it came up. */
-let seen = false;
+/** The card's layout: the text size main gave the page (page-prefs.ts), which it may set after the card is drawn. */
+const layoutNow = (): string => document.documentElement.dataset.textSize ?? "default";
+/** Every word of the card on screen has been in view since it came up, and at which text size (copy.ts judgeRead). */
+let gate: ReadGate = { seen: false, layout: layoutNow() };
+/** Read through at the text size the card has now. */
+const seenNow = (): boolean => readIn(gate, layoutNow());
 let focusTimer: ReturnType<typeof setTimeout> | null = null;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -81,7 +86,7 @@ async function hashShown(c: { title: string; body: string[] }): Promise<string |
 
 async function press(b: ButtonView): Promise<void> {
   if (!card || sent) return;
-  const r = pressResult(card, b, field, Date.now(), shownAt, seen);
+  const r = pressResult(card, b, field, Date.now(), shownAt, seenNow());
   if (r.kind === "wait") { if (r.focusField) field.focus(); return; }
   sent = true;
   if (r.kind === "cancel") api.cancel(r.id);
@@ -92,7 +97,7 @@ async function press(b: ButtonView): Promise<void> {
 function paintArmed(): void {
   const armed = Date.now() >= shownAt + PROMPT_ARM_MS;
   // A consent card's yes also waits until all its words have been in view.
-  const unread = !!card && isConsent(card) && !seen;
+  const unread = !!card && isConsent(card) && !seenNow();
   for (const b of buttons) if (b.view.armed) b.el.disabled = sent || !armed || unread;
   if (!armed && !armTimer) armTimer = setTimeout(() => { armTimer = null; paintArmed(); }, shownAt + PROMPT_ARM_MS - Date.now() + 5);
 }
@@ -103,8 +108,10 @@ function judge(): void {
   const m = { scrollTop: words.scrollTop, scrollHeight: words.scrollHeight, clientHeight: words.clientHeight };
   const fontsLoaded = document.fonts.status === "loaded";
   // Read after the words are laid out (in a new window that starts the typeface loading): a fit in a fallback face
-  // isn't the card's final layout, so it doesn't count (review #182). The page judges again once the face is in.
-  if (readThrough(m, fontsLoaded)) seen = true;
+  // isn't the card's final layout, so it doesn't count (review #182). The page judges again once the face is in. Nor
+  // does a fit at another text size: main may set it just after the first card is drawn (cross-review X7).
+  gate = judgeRead(gate, m, fontsLoaded, layoutNow());
+  const seen = seenNow();
   const more = moreBelow(m);
   words.classList.toggle("more", more);
   // Words that scroll can be scrolled from the keyboard too (Tab to them, then the arrow keys or Page Down).
@@ -125,13 +132,15 @@ window.addEventListener("resize", judge);
 window.addEventListener("focus", judge);
 window.addEventListener("blur", judge);
 const rewrap = typeof ResizeObserver === "function" ? new ResizeObserver(() => judge()) : null;
+// And when main sets the text size (once the page has loaded, and whenever it changes): read through again in it.
+new MutationObserver(() => judge()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 
 function show(next: PromptCard | null): void {
   // The same card again (pulled after it was pushed): leave what the user is doing alone.
   if (next && card && next.id === card.id) return;
   card = next;
   sent = false;
-  seen = false;
+  gate = { seen: false, layout: layoutNow() };
   field.value = "";
   if (armTimer) clearTimeout(armTimer);
   armTimer = null;
