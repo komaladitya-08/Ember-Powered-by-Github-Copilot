@@ -21,8 +21,9 @@ import {
   type WindowView,
 } from "./model";
 import { breaksLine, legendFor, segmentLabel, visibleText } from "./visible";
-import { cellSize, createRunTerminal, fitTerminal, type RunTerminal } from "./terminal";
+import { cellSize, createRunTerminal, type RunTerminal } from "./terminal";
 import { textScaleOf } from "./terminal-options";
+import { fitTerminal, termChromePx } from "./terminal-size";
 
 declare global { interface Window { emberCommands: CommandsApi } }
 
@@ -520,20 +521,15 @@ function focusTerminal(): void {
   if (shouldFocusTerminal({ interactive: t.interactive, ended: t.ended, cardUp: !!ask || !!announce || !!closingCard, focusIdle: !a || a === document.body })) e.term.focus();
 }
 
-/** The window's height taken by everything around a run's terminal: padding, tabs, header, command, hint, status. */
-const TERM_CHROME_PX = 250;
 /**
- * The part of it that is words and buttons, which grow with the text size (the paddings and gaps don't): measured at
- * 203, 219 and 234 px of parts round the terminal at Default, Large and Larger.
+ * Tells main what terminal size fits the window now (without a card, the parts round the terminal at the text size,
+ * terminal-size.ts), so new runs start at it.
  */
-const TERM_CHROME_TEXT_PX = 105;
-/** Tells main what terminal size fits the window now (without a card), so new runs start at it. */
 let sizeSent = "";
 function reportSize(): void {
   const cell = cellSize($("measure"), textScale);
   if (!cell) return;
-  const chrome = TERM_CHROME_PX + Math.round(TERM_CHROME_TEXT_PX * (textScale - 1));
-  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - chrome);
+  const fit = fitTerminal(cell, $("panels").clientWidth, window.innerHeight - termChromePx(textScale));
   const key = `${fit.cols}x${fit.rows}`;
   if (key === sizeSent) return;
   sizeSent = key;

@@ -10,6 +10,7 @@
 import { Terminal } from "@xterm/xterm";
 import { termKeyAction } from "./keys";
 import { XTERM_OPTIONS, termFontSize, terminalOptions } from "./terminal-options";
+import { inputAtGrid } from "./terminal-size";
 
 /** A run's terminal, written to before or after it is shown. */
 export interface RunTerminal {
@@ -80,6 +81,11 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
     if (!screenReader || mirrorTimer) return;
     mirrorTimer = setTimeout(() => { mirrorTimer = null; if (opened) term.refresh(0, term.rows - 1); }, 150);
   };
+  // The grid xterm draws, in CSS px (its screen element, which it sizes to its columns times its cell): 0 x 0 until it opens.
+  const gridSize = (): { width: number; height: number } => {
+    const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
+    return { width: Number.parseFloat(screen?.style.width ?? "") || 0, height: Number.parseFloat(screen?.style.height ?? "") || 0 };
+  };
   // A run that can't take typing keeps its terminal's input out of the Tab order, and says it is read-only: there is
   // nothing to type there.
   const tabStop = () => {
@@ -111,8 +117,14 @@ export function createRunTerminal(o: { cols: number; rows: number; interactive: 
     },
     setTextScale(scale) {
       const px = termFontSize(scale);
-      // xterm measures its cells again and redraws at the new size.
-      if (term.options.fontSize !== px) term.options.fontSize = px;
+      if (term.options.fontSize === px) return;
+      const before = gridSize();
+      // xterm measures its cells again and redraws at the new size, at once.
+      term.options.fontSize = px;
+      // It moves its hidden input to the cursor's cell only when the cursor moves, so after a smaller type the input
+      // stayed at the old cell's place, past the grid, and the box scrolled into empty space (for good, for a run that
+      // has finished). Put it on the same cell at the new size.
+      if (term.textarea) Object.assign(term.textarea.style, inputAtGrid(term.textarea.style, before, gridSize()));
     },
     focus: () => { if (opened) term.focus(); },
     copyAll() {
@@ -155,15 +167,4 @@ export function cellSize(host: HTMLElement, scale: number): { width: number; hei
   probe.remove();
   if (!r.width || !r.height) return null;
   return { width: r.width / 40, height: Math.ceil(r.height * (XTERM_OPTIONS.lineHeight ?? 1)) };
-}
-
-/**
- * How many columns and rows fit a run's terminal in a window `width` × `height` CSS px with nothing above it but the
- * tab's own parts (what new runs start at: a card shown for the moment doesn't make them smaller). A column and a few
- * pixels are left over so the last column and row are never cut.
- */
-export function fitTerminal(cell: { width: number; height: number }, width: number, height: number): { cols: number; rows: number } {
-  const cols = Math.floor((width - 16) / cell.width) - 1;
-  const rows = Math.floor((height - 8) / cell.height);
-  return { cols: Math.max(20, Math.min(500, cols)), rows: Math.max(5, Math.min(200, rows)) };
 }
