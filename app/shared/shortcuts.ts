@@ -41,6 +41,47 @@ export const SHORTCUTS: Readonly<Record<OS, ShortcutTable>> = {
   darwin: table(k => ({ accel: `Control+Shift+Command+${k}`, label: `Control+Shift+Command+${k}`, keys: ["Control", "Shift", "Command", k], say: `Control Shift Command ${k}`, chord: `ctrl+shift+cmd+${lower(k)}` })),
 };
 
+/**
+ * The fallback chord of each shortcut (owner decision D-45b): Ember registers it when another app already holds the
+ * default, and names it wherever it would name the default. It is the default with one more modifier, so it is the same
+ * key with the same hand: Shift on Linux and Windows, Option on macOS (written between Control and Shift, as the Mac
+ * writes it). Nothing on these systems uses them: GNOME's Shift+Ctrl+Alt chords are R and the arrows, Windows has no
+ * Win+Alt+Shift chord (PowerToys' Command Palette and Xbox Game Bar take Win+Alt+Space and Win+Alt+M, defaults these
+ * stand in for), and macOS's only Control+Option+Shift+Command one is Period. Each is a key only the user presses with
+ * no change to the policy: Ctrl+Alt with these keys on Linux, the Win key on Windows, Control+Shift+Command on macOS.
+ */
+export const FALLBACK_SHORTCUTS: Readonly<Record<OS, ShortcutTable>> = {
+  linux: table(k => ({ accel: `Control+Alt+Shift+${k}`, label: `Ctrl+Alt+Shift+${k}`, keys: ["Ctrl", "Alt", "Shift", k], say: `Control Alt Shift ${k}`, chord: `ctrl+alt+shift+${lower(k)}` })),
+  win32: table(k => ({ accel: `Super+Alt+Shift+${k}`, label: `Win+Alt+Shift+${k}`, keys: ["Win", "Alt", "Shift", k], say: `Windows key, Alt, Shift, ${k}`, chord: `alt+shift+super+${lower(k)}` })),
+  darwin: table(k => ({
+    accel: `Control+Alt+Shift+Command+${k}`, label: `Control+Option+Shift+Command+${k}`, keys: ["Control", "Option", "Shift", "Command", k],
+    say: `Control Option Shift Command ${k}`, chord: `ctrl+alt+shift+cmd+${lower(k)}`,
+  })),
+};
+
+/** What each shortcut does, as a sentence names it ("so Ask Ember is Ctrl+Alt+Shift+Space"): the handle menu's words. */
+export const SHORTCUT_NAMES: Readonly<Record<ShortcutId, string>> = {
+  ask: "Ask Ember", stop: "Stop everything", settings: "Settings", mute: "Mute microphone", allow: "Allow", deny: "Not now",
+};
+
+/** The shortcuts Ember holds while it runs (Allow and Not now are held only while a question is up). */
+export const ALWAYS_HELD: readonly ShortcutId[] = ["ask", "stop", "settings", "mute"];
+
+/** The chord Ember holds for each shortcut: its default, its fallback (another app holds the default), or null (both). */
+export type HeldShortcuts = Readonly<Record<ShortcutId, ShortcutDef | null>>;
+
+/**
+ * Which chord Ember holds for each shortcut, from the accelerators another app holds (`taken`). Ember tries a default's
+ * fallback as soon as the default is refused, so a default alone in `taken` means its fallback is Ember's.
+ */
+export function heldShortcuts(sc: ShortcutTable, fallback: ShortcutTable, taken: readonly string[]): HeldShortcuts {
+  const held = (id: ShortcutId) => (!taken.includes(sc[id].accel) ? sc[id] : !taken.includes(fallback[id].accel) ? fallback[id] : null);
+  return Object.fromEntries((Object.keys(sc) as ShortcutId[]).map(id => [id, held(id)])) as HeldShortcuts;
+}
+
+/** Where the user opens Ember again on each OS: a second start brings up its settings, which have Ask Ember…. */
+export const OPEN_AGAIN: Readonly<Record<OS, string>> = { linux: "from your apps", win32: "from the Start menu", darwin: "from Applications" };
+
 /** How keys are named, parsed and labelled on an OS: the primary modifier lives here (D6). */
 export interface KeyConventions {
   readonly os: OS;

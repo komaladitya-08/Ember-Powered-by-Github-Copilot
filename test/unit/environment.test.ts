@@ -57,9 +57,9 @@ describe("session detection without XDG_SESSION_TYPE (Xvfb, xrdp, ssh -X)", () =
     expect(c.detail).not.toMatch(/GNOME on Xorg/);
   });
   it("shortcuts another app holds are named, with the way around them", () => {
-    const r = inspectEnvironment({ env: { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, osRelease: null, glibc: "2.28", versions: { node: "22" }, platform: "linux", arch: "x64", shortcutsTaken: ["Control+Alt+X"] });
+    const r = inspectEnvironment({ env: { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, osRelease: null, glibc: "2.28", versions: { node: "22" }, platform: "linux", arch: "x64", shortcutsTaken: ["Control+Alt+X", "Control+Alt+Shift+X"] });
     expect(r.checks.find(c => c.id === "shortcuts")).toMatchObject({ status: "warn" });
-    expect(r.checks.find(c => c.id === "shortcuts")?.detail).toMatch(/Ctrl\+Alt\+X.*handle/);
+    expect(r.checks.find(c => c.id === "shortcuts")?.detail).toMatch(/Ctrl\+Alt\+X, Ctrl\+Alt\+Shift\+X.*handle/);
   });
 });
 
