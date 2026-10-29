@@ -81,6 +81,7 @@ import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
+import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
 // SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
@@ -414,9 +415,11 @@ function start(): void {
   };
   const homeOpen = () => !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized();
 
-  app.on("second-instance", () => {
-    log.info("instance.second", {});
-    showHomeFromKeys();
+  // Started again: settings, or the ask box when a launcher's Ask Ember started it with --ask (D-45b).
+  app.on("second-instance", (_e, argv) => {
+    const ask = wantsAsk(argv);
+    log.info("instance.second", ask ? { ask } : {});
+    if (ask) openAsk({ source: "launcher" }); else showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.
@@ -980,7 +983,7 @@ function start(): void {
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
    * `over` is the window it had the keyboard.
    */
-  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "test" } = {}) => {
+  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "launcher" | "test" } = {}) => {
     const asked = Date.now();
     // Every opening says where it came from (an ask box that opened by itself would show up here), once the box is up
     // where it opens: a line written first would hold up the keyboard (review #78).
@@ -1598,6 +1601,14 @@ function start(): void {
       const retry = setInterval(() => { if (!registerShortcuts().length) clearInterval(retry); }, 60_000);
       retry.unref?.();
     }
+    // Ask Ember in the OS's launcher, whatever another app holds (D-45b): the jump list (Windows) starts Ember with --ask,
+    // the Dock menu (macOS) opens the box here; Linux's is its desktop entry's action (packaging/ember.desktop).
+    try {
+      if (platform.os === "win32") log.info("launcher.tasks", { ok: app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged })) });
+      if (platform.os === "darwin") app.dock?.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: "launcher" }))));
+    } catch (err) {
+      log.warn("launcher.tasks_failed", { err });
+    }
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
     // On macOS the saved sign-in is opened and sealed asynchronously: the keychain prompt after an update holds no main thread.
@@ -2058,9 +2069,12 @@ function start(): void {
     // One listener for the policy watch and the screen lock, in that order: an 11th will-quit listener warns of a leak.
     app.on("will-quit", () => { unwatchPolicy(); screenLock?.stop(); lockControl.dispose(); });
 
-    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets,
-    // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
-    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin || sessionGreeting(env)) showHome();
+    // Started by the user (the launcher, a terminal), settings opens; by a launcher's Ask Ember (--ask), the ask box;
+    // started at login (--autostart), Ember only greets, unless the desktop session is one Ember can't use (a Wayland
+    // login after an Xorg one): then the check is shown.
+    const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv) });
+    if (view === "ask") openAsk({ source: "launcher" });
+    else if (view === "settings") showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings

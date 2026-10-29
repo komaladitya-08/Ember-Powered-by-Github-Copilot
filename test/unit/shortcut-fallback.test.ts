@@ -13,6 +13,7 @@ import { canonicalKeys, isSystemKey } from "../../app/main/policy/policy";
 import { holdShortcuts, type ShortcutRegistry } from "../../app/main/hotkey";
 import { inspectEnvironment, keyboardRoute, type EnvInputs } from "../../app/main/environment";
 import { keysLine } from "../../app/main/hello";
+import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "../../app/main/launcher";
 import { commandsConsent, sshConsent, type SshCardFacts } from "../../app/main/targets/consent";
 
 const OSES: OS[] = ["linux", "win32", "darwin"];
@@ -239,5 +240,70 @@ describe("the commands and SSH consent cards name the stop chord Ember holds (D-
     const calls = RUNTIME.match(/\b(sshConsent|commandsConsent)\(\{[^}]*/g) ?? [];
     expect(calls.length).toBeGreaterThanOrEqual(6);
     for (const c of calls) expect(c).toContain("stopKey: stopKeyNow()");
+  });
+});
+
+describe("Ask Ember in the OS's launcher (D-45b)", () => {
+  it("knows a start that asks for the ask box, first or handed over", () => {
+    expect(wantsAsk(["/opt/ember/ember", "--ozone-platform=x11", "--ask"])).toBe(true);
+    expect(wantsAsk(["C:\\Ember\\Ember.exe", "--allow-file-access-from-files", "--ask"])).toBe(true);
+    expect(wantsAsk(["/opt/ember/ember", "--show-settings"])).toBe(false);
+    expect(wantsAsk(["ember", "--asking"])).toBe(false);
+  });
+
+  it("opens the ask box at start for --ask once Ember is set up, settings before then or when the session can't work", () => {
+    const at = (o: Partial<Parameters<typeof startView>[0]>) => startView({ onboarded: true, showSettings: false, atLogin: false, sessionProblem: false, ask: false, ...o });
+    expect(at({ ask: true })).toBe("ask");
+    expect(at({ ask: true, showSettings: true })).toBe("ask");
+    expect(at({ ask: true, onboarded: false })).toBe("settings");
+    expect(at({ ask: true, sessionProblem: true })).toBe("settings");
+    // Today's: started by the user, settings; at login, the greeting.
+    expect(at({})).toBe("settings");
+    expect(at({ atLogin: true })).toBe("greet");
+    expect(at({ atLogin: true, showSettings: true })).toBe("settings");
+  });
+
+  it("puts Ask Ember in the Windows jump list, starting Ember.exe with --ask", () => {
+    expect(jumpListTasks({ execPath: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", appPath: "unused", packaged: true })).toEqual([{
+      program: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", arguments: "--ask", title: "Ask Ember",
+      description: "Open the box to ask Ember something", iconPath: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", iconIndex: 0,
+    }]);
+    // A development run: Electron with the app's folder first, quoted (it may have spaces).
+    expect(jumpListTasks({ execPath: "C:\\repo\\node_modules\\electron\\dist\\electron.exe", appPath: "C:\\My Repos\\ember", packaged: false })[0].arguments).toBe("\"C:\\My Repos\\ember\" --ask");
+  });
+
+  it("puts Ask Ember in the Dock menu on a Mac", () => {
+    let asked = 0;
+    const items = dockMenuItems(() => { asked++; });
+    expect(items.map(i => i.label)).toEqual(["Ask Ember"]);
+    items[0].click();
+    expect(asked).toBe(1);
+  });
+
+  it("gives the Linux desktop entry an Ask Ember action that starts Ember with --ask (RPM and AppImage)", () => {
+    const entry = fs.readFileSync(path.resolve("packaging/ember.desktop"), "utf8");
+    const groups = Object.fromEntries(entry.split(/^(?=\[)/m).map(g => {
+      const [head, ...lines] = g.trim().split("\n");
+      return [head, Object.fromEntries(lines.filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))];
+    }));
+    expect(Object.keys(groups)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
+    expect(groups["[Desktop Entry]"]).toMatchObject({ Exec: "ember --show-settings", Actions: "Ask;" });
+    expect(groups["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: "ember --ask" });
+    // The AppImage takes the entry as it is: nothing there rewrites its Exec lines (a rewrite of every Exec= would turn
+    // the action into a second "open settings").
+    const appimage = fs.readFileSync(path.resolve("scripts/package/appimage.sh"), "utf8");
+    expect(appimage).toContain("cp \"$root/packaging/ember.desktop\" \"$app/ember.desktop\"");
+    expect(appimage).not.toMatch(/\bsed\b[^\n]*ember\.desktop/);
+    // The RPM installs the same file, and its launcher passes the argument on.
+    expect(fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8")).toContain("install -Dm644 ember.desktop %{buildroot}%{_datadir}/applications/ember.desktop");
+    expect(fs.readFileSync(path.resolve("packaging/ember"), "utf8")).toMatch(/exec "\$APP" --ozone-platform=x11 "\$@"\n?$/);
+  });
+
+  it("main.ts opens the ask box for --ask, sets up the jump list and the Dock menu", () => {
+    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); if (ask) openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
+    expect(MAIN).toContain("ask: wantsAsk(process.argv)");
+    expect(MAIN).toContain('if (view === "ask") openAsk({ source: "launcher" });');
+    expect(MAIN).toContain("app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged }))");
+    expect(MAIN).toContain("app.dock?.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: \"launcher\" }))));");
   });
 });

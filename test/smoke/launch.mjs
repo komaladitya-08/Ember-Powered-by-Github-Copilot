@@ -1,4 +1,5 @@
-// Smoke test: the app starts, shows its window, and a second launch hands over to the first instance.
+// Smoke test: the app starts, shows its window, a second launch hands over to the first instance, and a third with
+// --ask (the launchers' Ask Ember: the Windows jump list, the Linux desktop entry's action) has it open its ask box.
 // Linux needs an X display (in CI: xvfb-run -a npm run test:smoke). Windows and macOS need a logged-in desktop
 // session (GitHub's hosted runners have one).
 // By default it starts the development build (Electron with dist/app); --exe <path> (or EMBER_SMOKE_EXE) starts a
@@ -47,10 +48,12 @@ const flags = (process.platform === "linux" && process.getuid?.() === 0) || proc
 const env = { ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1" };
 const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform === "linux" ? 30_000 : 60_000);
 
-function launch(name) {
+function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];
-  const child = spawn(command, [...appArgs, ...flags, ...debug], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(command, [...appArgs, ...flags, ...debug, ...extra], { env, stdio: ["ignore", "pipe", "pipe"] });
   const events = [];
+  /** Ask boxes opened for a launcher's --ask (ask.open from "launcher"). */
+  const asked = { count: 0 };
   /** The log lines of forbidden events, as the app wrote them. */
   const forbiddenLines = [];
   const said = { stdout: "", stderr: "" };
@@ -63,8 +66,10 @@ function launch(name) {
     while ((i = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, i); buf = buf.slice(i + 1);
       try {
-        const msg = JSON.parse(line).msg;
+        const entry = JSON.parse(line);
+        const msg = entry.msg;
         events.push(msg);
+        if (msg === "ask.open" && entry.source === "launcher") asked.count++;
         if (msg === "app.start_failed") failed ??= line.trim();
         if (forbidden.includes(msg)) forbiddenLines.push(line.trim());
       } catch { /* not a log line */ }
@@ -75,7 +80,7 @@ function launch(name) {
     if (process.env.EMBER_SMOKE_VERBOSE) process.stderr.write(`[${name}] ${d}`);
   });
   child.on("error", err => { failed ??= `couldn't start ${command}: ${err.message}`; });
-  return { name, child, events, forbiddenLines, said, failed: () => failed };
+  return { name, child, events, asked, forbiddenLines, said, failed: () => failed };
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -127,7 +132,7 @@ const tail = (inst, stream) => inst.said[stream].trim()
   ? `--- ${inst.name} instance's ${stream} (last lines) ---\n${inst.said[stream].trim().split("\n").slice(-40).join("\n")}\n`
   : "";
 
-let first, second;
+let first, second, third;
 let ok = false;
 try {
   first = launch("first");
@@ -159,15 +164,22 @@ try {
     if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);
     console.log(`ok   the first instance logged none of ${forbidden.join(", ")}`);
   }
+  // Ask Ember from a launcher: Ember started again with --ask. Not set up yet (a fresh profile), the box sends the user
+  // to settings, and says where it was asked for all the same.
+  third = launch("third", ["--ask"]);
+  await waitFor(third, () => exited(third), windowMs, "the third instance to exit", { exitOk: true });
+  if (third.child.exitCode !== 0) throw new Error(`third instance ${exitText(third)}`);
+  await waitFor(first, () => first.asked.count > 0, 10_000, "the first instance to open the ask box for a start with --ask");
+  console.log("ok   a start with --ask handed over and the first instance opened its ask box");
   ok = true;
 } catch (err) {
   console.error(`FAIL ${err.message}`);
   // What the app said, to tell why (with EMBER_SMOKE_VERBOSE its stderr was already shown as it came).
-  for (const inst of [first, second].filter(Boolean)) {
+  for (const inst of [first, second, third].filter(Boolean)) {
     process.stderr.write((process.env.EMBER_SMOKE_VERBOSE ? "" : tail(inst, "stderr")) + tail(inst, "stdout"));
   }
 } finally {
-  for (const inst of [second, first].filter(Boolean)) {
+  for (const inst of [third, second, first].filter(Boolean)) {
     try { await stop(inst); } catch (err) { console.log(`note couldn't stop the ${inst.name} instance: ${err.message}`); }
   }
   cleanUp();

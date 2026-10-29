@@ -177,6 +177,9 @@ jobs:
           rpm -q --requires ember | grep -v rpmlib
           stat -c '%A %U %n' /opt/ember/chrome-sandbox | grep -q '^-rwsr-xr-x root'
           test -x /usr/bin/ember && test -f /usr/share/applications/ember.desktop
+          # The desktop entry is valid (desktop-file-utils comes with the RPM), with its Ask Ember action (D-45b).
+          desktop-file-validate /usr/share/applications/ember.desktop
+          grep -qx 'Exec=ember --ask' /usr/share/applications/ember.desktop
           # The desk helper ships beside main.cjs, and the installed binary can run it as plain Node.
           test -f /opt/ember/resources/app/dist/app/desk-agent.cjs
           ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'

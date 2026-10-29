@@ -654,6 +654,13 @@ describe("staging in CI", () => {
     expect(life).toContain("rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm");
     expect(at("RPM lifecycle")).toBeLessThan(at("actions/upload-artifact"));
   });
+  it("checks the installed desktop entry and its Ask Ember action (D-45b)", () => {
+    const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
+    const install = job.slice(job.indexOf("dnf -y install ./dist/package/ember-*.x86_64.rpm"));
+    expect(install).toMatch(/^\s+desktop-file-validate \/usr\/share\/applications\/ember\.desktop$/m);
+    expect(install).toMatch(/^\s+grep -qx 'Exec=ember --ask' \/usr\/share\/applications\/ember\.desktop$/m);
+    expect(install.indexOf("desktop-file-validate")).toBeLessThan(install.indexOf("RPM lifecycle"));
+  });
   it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
     expect(spec).toMatch(/^Release:\s+%\{\?ember_release\}%\{!\?ember_release:1\}%\{\?dist\}$/m);
@@ -1140,16 +1147,22 @@ describe.skipIf(process.platform === "win32")("the smoke test (test/smoke/launch
 import fs from "node:fs";
 import path from "node:path";
 const dir = process.env.EMBER_USER_DATA;
-const log = msg => console.log(JSON.stringify({ level: "info", msg }));
+const log = (msg, fields = {}) => console.log(JSON.stringify({ ...fields, level: "info", msg }));
 const mode = process.env.FAKE_EMBER_MODE;
 if (mode === "start-failed") { log("app.start_failed"); setInterval(() => {}, 1000); }
 else if (mode === "crash") { console.error("libsomething.so: cannot open shared object file"); process.exit(3); }
-else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(dir, "second"), ""); log("instance.handover"); }
+else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(dir, "second"), process.argv.slice(2).join(" ")); log("instance.handover"); }
 else {
   fs.writeFileSync(path.join(dir, "first"), "");
   if (process.env.FAKE_EMBER_LOG) log(process.env.FAKE_EMBER_LOG);
   log("window.home.shown");
-  setInterval(() => { if (fs.existsSync(path.join(dir, "second"))) { fs.rmSync(path.join(dir, "second")); log("instance.second"); } }, 50);
+  setInterval(() => {
+    if (!fs.existsSync(path.join(dir, "second"))) return;
+    const args = fs.readFileSync(path.join(dir, "second"), "utf8");
+    fs.rmSync(path.join(dir, "second"));
+    log("instance.second");
+    if (args.includes("--ask") && mode !== "no-ask") log("ask.open", { source: "launcher" });
+  }, 50);
 }
 `, { mode: 0o755 });
     return file;
@@ -1165,8 +1178,16 @@ else {
   it("passes when the window shows and a second launch hands over", () => {
     const r = smoke("ok");
     expect(r.stdout).toMatch(/ok {3}first instance showed its window\nok {3}second launch handed over/);
+    expect(r.stdout).toMatch(/ok {3}a start with --ask handed over and the first instance opened its ask box/);
     expect(r.status).toBe(0);
   });
+
+  it("fails when a start with --ask doesn't open the ask box in the running Ember (D-45b)", () => {
+    const r = smoke("no-ask");
+    expect(r.stdout).toMatch(/ok {3}second launch handed over/);
+    expect(r.stderr).toMatch(/FAIL timed out after 10 s waiting for the first instance to open the ask box for a start with --ask/);
+    expect(r.status).toBe(1);
+  }, 30_000);
 
   it("fails at once on app.start_failed, quoting it, and stops the app", () => {
     const r = smoke("start-failed");

@@ -28,8 +28,8 @@ chmod +x "$cache/appimagetool"
 app=$(mktemp -d)
 trap 'rm -rf "$app"' EXIT
 cp -a "$stage/ember" "$app/ember"
+# As the RPM installs it, its Ask Ember action included (an edit of every Exec line would undo that): AppRun runs ember/ember.
 cp "$root/packaging/ember.desktop" "$app/ember.desktop"
-sed -i 's|^Exec=.*|Exec=ember --show-settings|' "$app/ember.desktop"
 node "$root/scripts/package/icon.mjs" "$root/assets/ember.svg" "$app/ember.png" 256
 ln -s ember.png "$app/.DirIcon"
 cat > "$app/AppRun" <<'RUN'

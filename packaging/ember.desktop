@@ -10,3 +10,8 @@ Categories=Utility;Accessibility;
 Keywords=assistant;copilot;agent;helper;
 StartupNotify=false
 StartupWMClass=ember
+Actions=Ask;
+
+[Desktop Action Ask]
+Name=Ask Ember
+Exec=ember --ask
