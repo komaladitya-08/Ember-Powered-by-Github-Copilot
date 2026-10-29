@@ -63,15 +63,17 @@ card without a compositor.
 
 ### 2.1 Turning them on
 
-Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
-(WSL)**, **Run commands on build-01**. When you turn one on, Ember shows the card "Let Ember run commands on this
-computer?" (or "on build-01?") with **Turn on** and **Not now**. It opens big enough to show the whole card on most
-screens, and names the stop chord in its first line. The card is answered with a click only, never with Ember's
-approve keys or by voice, and **Turn on** works only once the whole card has been in view (on a small screen, or with
-larger text, scroll to its end: "Scroll down to read it all first."). While a computer's switch is off, Ember runs no
-commands there and a task can't bring up the card: turn the switch on yourself. If a later Ember changes what the
-card says, the next command a task runs there shows the new card first. Under each switch, **Ask me before every
-command** makes every command on that computer ask. **Open the command window** shows it.
+Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu (WSL)**,
+**Run commands on build-01**. When you turn one on, Ember shows the card "Let Ember run commands on this computer?" (or
+"on build-01?") with **Turn on** and **Not now**. It opens big enough to show the whole card on most screens, and names
+the stop chord in its first line. The card is answered with a click only, never with Ember's approve keys or by voice,
+and **Turn on** works only once the whole card has been in view (on a small screen, or with larger text, scroll to its
+end: "Scroll down to read it all first."). While a computer's switch is off, Ember runs no commands there and a task
+can't bring up the card: turn the switch on yourself. If Ember can't show the card that asks you first (this one, the
+WSL card or a computer's card), nothing changes and it says "Ember couldn't show the card that asks you first, so
+nothing changed." (when connecting, in the bubble with **Try again**). If a later Ember changes what the card says, the
+next command a task runs there shows the new card first. Under each switch, **Ask me before every command** makes every
+command on that computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
@@ -454,15 +456,15 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 - **Passwords, passphrases and codes** are asked in Ember's own small window ("Sign in to build-01", "Unlock your SSH
   key", "Verification code for build-01", "Touch your security key"), handed to SSH only, and never saved, logged or
   sent to Copilot. A prompt for a jump host names that host "on the way to build-01". One card shows at a time: a
-  password card waits while a consent card is open. The window takes the keyboard as settings does; if another app
-  keeps it (macOS after a shortcut, Windows' focus rules), the card says "Click here before you type: the keyboard is
-  still in another app." and a notification says so too. **Cancel** (or Esc) on a sign-in card ends the connection
-  quietly, as the bubble's **Cancel** does. A sign-in card Ember can't show (no window, or a server's question too
-  long to show) ends it with "Ember couldn't show build-01's sign-in question." and **Try again**. **With OpenSSH
+  password card waits while a consent card is open. The window takes the keyboard as settings does; if another app keeps
+  it (macOS after a shortcut, Windows' focus rules), the card says "Click here before you type: the keyboard is still in
+  another app." and a notification says so too. **Cancel** (or Esc) on a sign-in card ends the connection quietly, as
+  the bubble's **Cancel** does. A sign-in card Ember can't show (no window, its window crashed, or a server's question
+  too long to show) ends it with "Ember couldn't show build-01's sign-in question." and **Try again**. **With OpenSSH
   older than 8.5** on this computer (RHEL 8 has 8.0, Ubuntu 20.04 8.2, Debian 11 8.4), SSH can't mark which questions
   come from the other computer, so a server could word its own question as SSH's. There every password, passphrase or
-  code is shown as "build-01 asks", with the question quoted as it came, never as "Unlock your SSH key" or as a
-  sign-in to another host: read it before you answer, because the answer goes to whoever asked.
+  code is shown as "build-01 asks", with the question quoted as it came, never as "Unlock your SSH key" or as a sign-in
+  to another host: read it before you answer, because the answer goes to whoever asked.
 - **A computer you haven't connected to before** shows "Is this really build-01?" with its key's fingerprint. Check
   it with whoever looks after build-01; **Trust and connect** is never the default. If the key has changed, Ember
   won't connect ("build-01's identity changed"); remove the old key with `ssh-keygen -R build-01` only if you know

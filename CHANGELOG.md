@@ -136,8 +136,10 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   window say "Starting Ubuntu…" meanwhile: a line above the tabs while Ember checks the command, then the command's
   tab.
 - **First-use cards** (commands, WSL, SSH) open big enough to show the whole card on most screens, and **Turn on** or
-  **Connect** works only once the whole card has been in view ("Scroll down to read it all first."). With your
-  organisation's own model service, they name it instead of GitHub Copilot.
+  **Connect** works only once the whole card has been in view ("Scroll down to read it all first."), at Large or
+  Larger text on a short screen too, as a command card's **Allow** does. A card Ember couldn't show changes nothing and
+  says so: "Ember couldn't show the card that asks you first, so nothing changed." (when connecting, in the bubble with
+  **Try again**). With your organisation's own model service, the cards name it instead of GitHub Copilot.
 - **Other computers over SSH**: add a computer in Settings › **Computers**, or accept Ember's offer when it sees you
   `ssh` somewhere ("You're connected to build-01"). Ember looks for your own `ssh` only once you have added a computer,
   and never offers for one that carries a command (git over ssh, `scp`, `rsync`), uses `-T` or goes to a git hosting
@@ -156,8 +158,9 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
   those clients can't mark a server's own questions. The sign-in, host-key and consent cards take the keyboard on
   macOS and Windows too; if another app keeps it, the card and a notification say so before you type. **Cancel** or
-  Esc on a sign-in card ends the connection quietly, and a sign-in card Ember can't show ends it with "Ember couldn't
-  show build-01's sign-in question." and **Try again**. A silent connection shows "build-01 isn't answering" in the
+  Esc on a sign-in card ends the connection quietly, and a sign-in card Ember can't show, "Is this really build-01?"
+  included and also when the card's window crashes, ends it with "Ember couldn't show build-01's sign-in question." and
+  **Try again**. A silent connection shows "build-01 isn't answering" in the
   bubble and a countdown on each running command's tab. A command that prints faster than the connection can carry is
   paused until its output catches up; a stopped command that keeps printing past that limit has the rest dropped. When
   reconnecting needs you to sign in, Ember stops trying and says "build-01 needs you to sign in again", with
@@ -317,8 +320,10 @@ allows them.
   like don't add Shift on French, Belgian or Czech layouts (Windows, Linux). Ember's clicks stay left clicks under a
   left-handed button map on X11. Quitting Ember in the middle of a borrow puts the pointer and the keyboard back.
 - On Linux, while GNOME's Typing Assist (Slow Keys, Bounce Keys or Sticky Keys) is on, Ember won't use the keyboard on
-  your screen, because its keys would be lost or changed: it refuses before it clicks or touches the clipboard, and
-  never switches Sticky Keys off. The setup check shows a Typing warning.
+  your screen, because its keys would be lost or changed: it refuses keys and typing before it brings your window to the
+  front, clicks or touches the clipboard, and never switches Sticky Keys off. The setup check shows a Typing warning.
+  Typing uses the keyboard layout of the window it types into, so it works when your own window uses another layout
+  (GNOME's "Switch input sources individually for each window").
 - On macOS, an input method (Japanese, Pinyin, Korean…) stops only typing: Ember still clicks, scrolls and presses
   Command shortcuts. Without the Screen Recording permission, Ember says so instead of "the window is off screen", and
   once a run shows "I can't take screenshots" with a button to the setup check. Secure keyboard entry is named, with
@@ -358,9 +363,12 @@ allows them.
   reads again.
 - Ember never deletes an `~/.config/autostart/ember.desktop` it didn't make: its own is marked
   `X-Ember-Managed=true`, and the settings window says when another entry starts it at login.
-- Audit entries are kept for `auditRetentionDays` by their own time, not by whole months, and pruned at start and
-  once a day, without losing lines another process writes meanwhile. When the audit log can't be written, a task stops
-  with a plain sentence; a step already taken is reported as done, and the task queue keeps moving.
+- Audit entries are kept for `auditRetentionDays` by their own time, not by whole months, and pruned at start and once a
+  day, without losing lines another process writes meanwhile. An old month that can't be removed (a file another program
+  holds open on Windows) doesn't stop the other old months being pruned, on this computer or on a remote, and on a
+  remote the audit log stays open when pruning fails, so steps and commands are still recorded. When the audit log can't
+  be written, a task stops with a plain sentence; a step already taken is reported as done, and the task queue keeps
+  moving.
 - `EMBER_LOG_LEVEL` takes `debug`, `info`, `warn` or `error` in any case; anything else means `info`, and is logged.
   GPU, utility and page crashes are logged (`app.child_process_gone`, `window.renderer_gone`), a crashed SSH sign-in
   or consent window closes instead of staying blank, and a command window whose page crashes comes back with its

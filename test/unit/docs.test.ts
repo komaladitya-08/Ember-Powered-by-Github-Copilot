@@ -512,6 +512,7 @@ describe("README.md's Accessibility section, against the release it describes", 
  */
 const ROUND2 = {
   auth2: /\n  wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
+  lifecycle2: /const CARD_UNSHOWN = "/.test(read("app/main/targets/runtime.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -523,6 +524,20 @@ describe("round 2's docs lines, against the packages' code", () => {
     expect(signIn).toContain("Ember's own GitHub sign-in lasts eight hours at a time: Ember renews it by itself before it runs out (when it isn't in the middle of something, where it can), and as soon as the computer wakes if it ran out during sleep");
     const notes = flat(read("CHANGELOG.md"));
     expect(notes).toMatch(/\*\*Staying signed in\*\*: Ember renews its GitHub sign-in by itself before it runs out[^]*as soon as the computer wakes[^]*is still used until Ember quits/);
+  });
+});
+
+describe("round 2's docs lines (lifecycle2)", () => {
+  it.runIf(ROUND2.lifecycle2)("lifecycle2: quotes what a card Ember couldn't show says, and names a crashed card window", () => {
+    const unshown = /const CARD_UNSHOWN = "([^"]+)"/.exec(read("app/main/targets/runtime.ts"))?.[1] ?? "";
+    expect(unshown).toBe("Ember couldn't show the card that asks you first, so nothing changed.");
+    const guide = flat(read("docs/COMMANDS-WSL-SSH.md"));
+    expect(flat(section(read("docs/COMMANDS-WSL-SSH.md"), "2.1 Turning them on"))).toContain(`nothing changes and it says "${unshown}"`);
+    expect(guide).toContain("A sign-in card Ember can't show (no window, its window crashed, or a server's question too long to show)");
+    const notes = flat(read("CHANGELOG.md"));
+    expect(notes).toContain(`"${unshown}" (when connecting, in the bubble with **Try again**)`);
+    expect(notes).toMatch(/An old month that can't be removed[^.]*doesn't stop the other old months being pruned/);
+    expect(notes).toMatch(/refuses keys and typing before it brings your window to the front/);
   });
 });
 
