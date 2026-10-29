@@ -200,7 +200,7 @@ describe("Settings › Comfort & access › Handle position", () => {
       '            <option value="bottom-left">Bottom left</option>',
       "          </select></label>",
     ].join("\n"));
-    expect(onScreen).toContain('<p class="hint">Ember\'s handle and its task cards sit in this corner of your main screen. Move to the other side in the handle\'s menu switches it too.</p>');
+    expect(onScreen).toContain('<p class="hint">Ember\'s handle and its task cards sit in this corner of your main screen. “Move to the other side” in the handle\'s menu switches it too.</p>');
   });
 
   it("shows the setting in use and saves a change at once", () => {
