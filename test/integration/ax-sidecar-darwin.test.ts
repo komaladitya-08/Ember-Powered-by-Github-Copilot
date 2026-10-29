@@ -1,6 +1,7 @@
 /**
- * The accessibility sidecar host end to end on macOS: the host built from source, started as Ember starts it
- * (hostLaunch: its own binary as plain Node, here this Node), with the in-process AX provider, driven through Ember's
+ * The accessibility sidecar host end to end on macOS: the host built from source, started by hostLaunch's spawn form
+ * with this Node (Ember itself forks it as a utility process, which needs Electron: ember-darwin covers that, review
+ * #177), with the in-process AX provider, driven through Ember's
  * real client (AtspiSidecar) against the macOS bench (test/fixtures/mac_bench.js, an AppKit window run by osascript),
  * whose log says what each action did. It also reads the bench with the provider directly in this process, for what
  * the protocol doesn't show: every key of its 200-row list, and the window list's system prompts at rest.

@@ -70,8 +70,9 @@ await Promise.all([
     target: "node24",
     external: ["electron", "koffi", "sharp"],
   }),
-  // The accessibility host on Windows and macOS (app/sidecar-host): Ember's own binary runs it as plain Node, and it
-  // speaks the Python AT-SPI sidecar's protocol. It never imports electron.
+  // The accessibility host on Windows and macOS (app/sidecar-host): Ember's own binary runs it as plain Node on Windows,
+  // and as a utility process on macOS (review #177); it speaks the Python AT-SPI sidecar's protocol. It never imports
+  // electron.
   build({
     ...common,
     entryPoints: ["app/sidecar-host/main.ts"],

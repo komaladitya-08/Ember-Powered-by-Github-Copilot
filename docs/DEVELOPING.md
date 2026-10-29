@@ -851,10 +851,10 @@ process, not to the process itself. Which app that is depends on how Ember was s
 | `npm run dev:mac` | "Electron" (`node_modules/electron/dist/Electron.app`) | Builds, then starts the development Electron through LaunchServices (`open -n -W … --args "$PWD"`), as Ember.app is started. Your shell's environment variables don't reach it; logs go to `~/Library/Application Support/ember/logs/ember.log` |
 | The packaged `Ember.app` | "Ember", by its bundle id `io.github.komaladitya08.ember` | Its ad hoc signature changes with every build, so after installing a new one, remove Ember from each list with **−** and add it again |
 
-Ember's accessibility host is Ember's own binary in Node mode, started by Ember, so it shares whatever Ember gets.
-`npm run doctor` judges the terminal it runs in. The setup check in the settings window shows each permission with an
-**Open System Settings** button, which first makes macOS list Ember in that pane (macOS lists an app only once it has
-asked).
+Ember's accessibility host is an Electron utility process of Ember's, started by Ember, so it shares whatever Ember
+gets. `npm run doctor` judges the terminal it runs in. The setup check in the settings window shows each permission
+with an **Open System Settings** button, which first makes macOS list Ember in that pane (macOS lists an app only
+once it has asked).
 
 ### 11.3 Integration suites
 
@@ -870,6 +870,7 @@ EMBER_AX_TEST=1 node scripts/run-integration.mjs test/integration/ax-sidecar-dar
 EMBER_MACSYS_TEST=1 node scripts/run-integration.mjs test/integration/darwin-system.test.ts test/integration/darwin-vocabulary.test.ts
 node scripts/package/stage.mjs && node scripts/package/archive.mjs
 EMBER_DARWIN_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember.app node scripts/run-integration.mjs test/integration/ember-darwin.test.ts
+EMBER_DARWIN_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember.app node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts
 ```
 
 | Suite | Variable | What it drives |
@@ -879,6 +880,7 @@ EMBER_DARWIN_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember.app node scripts/run-i
 | `darwin-system` | `EMBER_MACSYS_TEST` | System integration: the app list, TextEdit opened through LaunchServices, the VoiceOver probe, no admin policy, Dark Mode switched through System Events and back, a red window captured at one pixel per point |
 | `darwin-vocabulary` | `EMBER_MACSYS_TEST` | The vocabularies against real windows: Terminal, Console and Calculator, System Settings' privacy pages, an administrator prompt's owner, the clipboard's password markers |
 | `ember-darwin` | `EMBER_DARWIN_TEST`, `EMBER_PACKAGED_APP` | Ember itself, built and started as a login start: it shows beside the user's app without taking its place, the ask box takes keys while TextEdit stays the active app, screenshots with the password field blacked out and the overlay left out, polling under 2 ms, the ask box opened with the real ⌃⇧⌘Space, printing what it holds of letters typed straight after (the typed-ahead probe: macOS has no keyboard hold), the packaged host's answer |
+| `askpass-darwin` | `EMBER_DARWIN_TEST`, `EMBER_PACKAGED_APP` | SSH's askpass as Ember runs it: real `ssh-add` unlocks a new key through Ember's askpass wrapper and its real askpass server, with the development Electron and Ember.app; sampled every 50 ms, the askpass process is never a regular app to LaunchServices (no Dock icon), there is one, and it starts no other process; a cancel leaves the key locked |
 
 On your own Mac, run them from a terminal that has Accessibility, Screen Recording and Input Monitoring (the terminal
 is the responsible app). With `EMBER_MACSYS_TEST=1`, `darwin-system` switches Dark Mode and back (macOS first asks to
@@ -918,8 +920,9 @@ thread. Reading and acting on apps happens in the accessibility host, through ko
 - Chromium and Electron apps build their tree only when asked: the first read sets `AXManualAccessibility` once;
 - no action raises a window, so tier 1 works in the background.
 
-The host is a child of Ember, so when LaunchServices started Ember, macOS holds Ember.app responsible for the host
-too, and one grant covers both (CI's attribution check shows it).
+The host is an Electron utility process of Ember's (Ember sends each request as a message on its parent port; it
+answers on stdout), so when LaunchServices started Ember, macOS holds Ember.app responsible for the host too, and one
+grant covers both (CI's attribution check shows it). The macOS build never runs Ember's binary as plain Node (§11.5).
 
 ### 11.5 Packages
 
@@ -943,13 +946,14 @@ npm run package:mac        # npm run build, then node scripts/package/stage.mjs 
   unset: Ember has a Dock icon and an app menu, which starts with **About Ember** (the version and the MIT licence) and
   whose Quit goes through Ember's own question while a task runs;
 - sets the fuses in the Electron Framework binary inside the bundle, not in the small `Contents/MacOS/Ember` launcher
-  (`scripts/package/fuses.mjs` lists them, given that binary's path, as CI's packaged checks do). RunAsNode stays on,
-  because Ember's helpers run its binary as plain Node: the accessibility host and SSH's askpass helper here (the desk
-  helper and askpass on Linux; the accessibility host and the job host for commands, WSL and SSH on Windows). So any
-  program running as the user can start Ember's binary as Node with a script of its own; on macOS, if it is started so
-  that macOS holds Ember responsible for it (by launchd, say), it acts with Ember's Accessibility and Screen Recording
-  grants. This stays so until the helpers leave `ELECTRON_RUN_AS_NODE` (review #177). The hardened runtime closes the
-  `DYLD_*` and debugger ways in;
+  (`scripts/package/fuses.mjs` lists them, given that binary's path, as CI's packaged checks do); RunAsNode is off, so
+  Ember.app refuses `ELECTRON_RUN_AS_NODE` (CI gives it a script that would leave a mark and checks that Ember started
+  as itself instead), while Linux and Windows keep plain Node for their helpers (`fuses.mjs` says why). With node mode,
+  any program running as the user could start Ember's binary as Node with a script of its own and, started so that
+  macOS holds Ember responsible for it (by launchd, say), act with Ember's Accessibility and Screen Recording grants
+  (review #177). Ember's own helpers don't need it on a Mac: the accessibility host is a utility process (§11.4) and
+  SSH's askpass is Ember itself, started with `--ember-askpass`. The hardened runtime closes the `DYLD_*` and debugger
+  ways in;
 - signs the whole bundle ad hoc last, under the hardened runtime (`--options runtime`), with `mac-bundle.mjs`'s
   `ENTITLEMENTS`: JIT and unsigned executable memory for V8, library validation off (an ad hoc signature has no team
   ID, so library validation would refuse Electron Framework, koffi, sharp and the speech runtime), the microphone and
@@ -1117,7 +1121,7 @@ computer reached over SSH is eyes, hands and a command runner. PLAN.md M12 lists
 | `app/main/wsl/` | WSL discovery from the registry and `wsl.exe`, never starting a distro (`discover.ts`, `lxss.ts`, `decode.ts`), the WSL runner (`runner.ts`), the `wsl` setup check row (`doctor.ts`), and the WSLg layer: the router over UIA and each distro's AT-SPI helper (`router.ts`, `routed-sidecar.ts`, `routed-windows.ts`, `launch-sidecar.ts`), window matching (`match.ts`), RAIL identification (`rail.ts`), Start-menu launching (`apps.ts`) and the joined vocabularies (`privacy.ts`) |
 | `app/main/remote/` | The PC's side of SSH: the protocol's schemas (`protocol.ts`), the framed stream both ends share (`mux.ts`), the link's worker thread (`link-worker.ts`), connections (`connections.ts`), ssh's argv, configuration and errors, the bootstrap script (`scripts/bootstrap.sh`), the install plan and the same-machine check, the Node.js download, the askpass server, noticing ssh (`notice-ssh.ts`), the prompt window's controller (`prompt-window.ts`), and the remote target's perception, accessibility, apps and runner (`target.ts`, `remote-*.ts`) |
 | `app/remote/` | `ember-remote`, the agent Ember runs on a computer reached over SSH (plain Node 24, `main.ts`): the protocol loop, gate 2 (its own re-check of every step and command, which also reads the shell scripts a command runs on its own filesystem: the PC can't, so its gate 1 leaves them to L8), the commands it runs (`commands.ts`: output held back while the link's bulk queue is over 1 MiB), desktop discovery and the desktop child, PNG capture, the single-instance lock, liveness, and the remote's own policy and audit |
-| `app/askpass/` | `askpass.cjs`, which ssh runs to ask for a password on a Linux or macOS PC (the answer comes from Ember's prompt window over a Unix socket made for that one ssh run) |
+| `app/askpass/` | `askpass.cjs`, which ssh runs to ask for a password on a Linux or macOS PC (on Linux as plain Node; on a Mac inside Ember itself, started with `--ember-askpass`, which runs it as a worker thread and shows nothing: `in-ember.ts`); the answer comes from Ember's prompt window over a Unix socket made for that one ssh run |
 | `app/renderer/command/`, `app/renderer/prompt/` | The command window (xterm.js, no add-ons) and the prompt window (host keys, passwords, consent cards) |
 | `app/shared/targets.ts`, `commands.ts`, `consent.ts`, `remote-ui.ts`, `visible-text.ts` | Target ids and summaries; the two windows' IPC names and types; the consent cards' versions (`FEATURE_CONSENT_VERSION`); `visibleText`, which shows every invisible character of a command |
 | `app/main/policy/target-rules.ts` | The policy's one seam for refusals that depend on the target (the borrowed mouse in WSLg windows) |
@@ -1309,9 +1313,9 @@ app/main/           Electron main process (settings, logging, environment checks
                     platform.ts composes macOS; system/: apps (with a plist reader), policy, login item, permissions
 app/remote/         ember-remote, the agent Ember runs on a computer reached over SSH (plain Node 24)
 app/askpass/        SSH's askpass helper for Linux and macOS PCs
-app/sidecar-host/   the Windows and macOS accessibility host (dist/app/ax-sidecar.cjs, Ember's binary in Node mode):
-                    protocol, ids, secrets, labels, roles, launch.ts; providers/uia.ts (the bridge's client),
-                    providers/ax-darwin*.ts (macOS AX), providers/fake.ts (tests)
+app/sidecar-host/   the Windows and macOS accessibility host (dist/app/ax-sidecar.cjs: Ember's binary in Node mode on
+                    Windows, a utility process on macOS): protocol, ids, secrets, labels, roles, launch.ts;
+                    providers/uia.ts (the bridge's client), providers/ax-darwin*.ts (macOS AX), providers/fake.ts (tests)
 sidecar/atspi       Python accessibility helper (Linux, and inside WSL distros: reads app controls over AT-SPI)
 sidecar/notice      the notice with Stop on a remote's screen while Ember uses it
 sidecar/uia         UI Automation bridge (Windows): ember_uia.ps1 (the bootstrap), ember_uia.cs (C# 5), PROTOCOL.md

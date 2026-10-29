@@ -6,7 +6,7 @@
 // is fixed: a new fuse is only ever appended. A universal (fat) macOS binary holds one wire per architecture; Ember
 // stages one architecture per build, so it is refused rather than half flipped.
 // usage: node scripts/package/fuses.mjs <electron binary>            prints every fuse
-//        node scripts/package/fuses.mjs --check <electron binary>    exits 1 unless EMBER_FUSES are set
+//        node scripts/package/fuses.mjs --check <electron binary>    exits 1 unless EMBER_FUSES (this OS's) are set
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -28,22 +28,40 @@ export const FUSES = [
 const OFF = 0x30, ON = 0x31, REMOVED = 0x72;
 
 /**
- * What the installed Ember needs. No debugger and no code injected through the environment: the app ignores
- * --inspect* and NODE_OPTIONS. RunAsNode stays on: Ember runs helpers with its own binary as plain Node
- * (ELECTRON_RUN_AS_NODE): the desk helper on Linux (app/main/desk/agent.ts), the accessibility host
- * (dist/app/ax-sidecar.cjs) on Windows and macOS, the commands' job host and SSH's askpass helper. So any program
- * the user runs can start Ember's binary as Node with a script of its own (Node's --inspect works there too). The
- * running Ember is unaffected, but on macOS what the system grants Ember (Accessibility, Screen Recording) can go
- * with it: started so that macOS holds Ember responsible for it (by launchd, say), that process acts with Ember's
- * grants. The hardened runtime closes the DYLD_* and debugger ways in (mac-bundle.mjs); this one stays open until
- * the helpers no longer need node mode (review #177). (main.ts also refuses --remote-debugging-* and --inspect* in
- * a packaged build.)
+ * What the installed Ember needs, per OS. Everywhere: no debugger and no code injected through the environment (the
+ * app ignores --inspect* and NODE_OPTIONS; main.ts also refuses --remote-debugging-* and --inspect* in a packaged
+ * build).
+ *
+ * RunAsNode (ELECTRON_RUN_AS_NODE starting Ember's binary as plain Node) is OFF on macOS (review #177, owner decision
+ * D-177): with it on, any program the user runs could start Ember's binary as Node with a script of its own, and,
+ * started so that macOS holds Ember responsible for it (by launchd, say), act with what macOS grants Ember
+ * (Accessibility, Screen Recording). Ember's macOS helpers don't need it: the accessibility host is an Electron
+ * utility process (app/sidecar-host/launch.ts) and SSH's askpass is Ember itself in its askpass mode
+ * (app/askpass/in-ember.ts). The hardened runtime closes the DYLD_* and debugger ways in (mac-bundle.mjs).
+ *
+ * It stays ON on Linux and Windows, where a program the user runs gains nothing by it that it doesn't already have (no
+ * grants follow Ember's binary there), and Ember's helpers still run as plain Node: Linux's desk helper
+ * (app/main/desk/agent.ts); Windows' commands job host (which needs a console-capable child process), accessibility
+ * host, askpass launcher and WSL launcher.
  */
-export const EMBER_FUSES = {
-  RunAsNode: true,
-  EnableNodeOptionsEnvironmentVariable: false,
-  EnableNodeCliInspectArguments: false,
+const BY_OS = {
+  darwin: { RunAsNode: false, EnableNodeOptionsEnvironmentVariable: false, EnableNodeCliInspectArguments: false },
+  linux: { RunAsNode: true, EnableNodeOptionsEnvironmentVariable: false, EnableNodeCliInspectArguments: false },
+  win32: { RunAsNode: true, EnableNodeOptionsEnvironmentVariable: false, EnableNodeCliInspectArguments: false },
 };
+
+/** Ember's fuses for a build for `os` ("darwin", "linux" or "win32"); throws for any other. */
+export function emberFuses(os) {
+  const fuses = Object.hasOwn(BY_OS, os) ? BY_OS[os] : null;
+  if (!fuses) throw new Error(`no fuses for ${os}: Ember is built for macOS, Linux and Windows`);
+  return { ...fuses };
+}
+
+/**
+ * The fuses for the OS this runs on: stage.mjs stages a build for its own OS, and CI's --check reads each build on the
+ * OS that made it. (An OS Ember isn't built for gets macOS's, the strictest: nothing is staged there anyway.)
+ */
+export const EMBER_FUSES = emberFuses(Object.hasOwn(BY_OS, process.platform) ? process.platform : "darwin");
 
 /**
  * How many architectures a universal (fat) Mach-O binary holds; 0 for any other file. The fat header is big-endian:

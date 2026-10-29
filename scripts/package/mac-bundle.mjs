@@ -49,11 +49,12 @@ export function infoPlistValues(version) {
  * macOS ignore DYLD_INSERT_LIBRARIES and the other DYLD_* variables for Ember and refuse other processes a debugger's
  * hold on it, so another program the user runs can't put its code into Ember that way and use Ember's Accessibility
  * and Screen Recording grants. Each entitlement gives back only what Ember needs:
- * - allow-jit, allow-unsigned-executable-memory: V8 compiles JavaScript in main, in every page and in each helper
- *   Ember runs in node mode (Electron's own signing defaults carry both);
+ * - allow-jit, allow-unsigned-executable-memory: V8 compiles JavaScript in main, in every page and in the utility
+ *   processes Electron's helper app runs for Ember (the accessibility host, voice); the signature is --deep, so the
+ *   helpers carry the same entitlements (Electron's own signing defaults carry both);
  * - disable-library-validation: an ad hoc signature has no team, and library validation loads only libraries of the
- *   same team or Apple's, so Electron's framework and the native modules (koffi, sharp, the speech runtime) would be
- *   refused;
+ *   same team or Apple's, so Electron's framework and the native modules (koffi, in main and in the accessibility
+ *   host's utility process; sharp; the speech runtime) would be refused;
  * - device.audio-input: the microphone ("Hey Ember"), which the hardened runtime otherwise refuses without a prompt;
  * - automation.apple-events: dark mode through System Events (NSAppleEventsUsageDescription below).
  */

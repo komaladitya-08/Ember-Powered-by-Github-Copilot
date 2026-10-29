@@ -1,9 +1,10 @@
 /**
  * Client for the accessibility sidecar: the Python AT-SPI one on Linux
  * (sidecar/atspi/ember_atspi.py), or on Windows and macOS the TypeScript host
- * (app/sidecar-host, run by Ember's own binary as plain Node: see SidecarLaunch)
- * that speaks the same protocol. Newline-delimited JSON-RPC over stdio, started
- * on demand. The sidecar answers one request at a time, so a request that
+ * (app/sidecar-host: on Windows Ember's own binary as plain Node, on macOS an
+ * Electron utility process; see SidecarLaunch) that speaks the same protocol.
+ * Newline-delimited JSON-RPC (requests on stdin, or as messages to a utility
+ * process; answers on stdout), started on demand. The sidecar answers one request at a time, so a request that
  * doesn't come back in time holds up every other one: that process is killed,
  * and a fresh one starts at once (as after any exit or crash), so one stays
  * connected (see revive). Element ids are only valid in the process that issued
@@ -11,7 +12,7 @@
  * new process.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import type { Logger } from "../logger";
 
@@ -194,8 +195,29 @@ export function pickPython(env: NodeJS.ProcessEnv = process.env, exists: (p: str
 }
 
 /**
- * How to start a sidecar other than the Python one: the TypeScript host on Windows and macOS, run by Ember's own binary
- * with ELECTRON_RUN_AS_NODE. Without one, the Python sidecar starts as it always has (`python` + `script`).
+ * What AtspiSidecar uses of the process Electron's utilityProcess.fork returns (structural: perception/ loads without
+ * Electron, so main hands the fork in). It has no stdin: requests go to it as messages.
+ */
+export interface UtilityChild {
+  /** Undefined until it has spawned, and again once it has exited. */
+  readonly pid: number | undefined;
+  readonly stdout: NodeJS.ReadableStream | null;
+  readonly stderr: NodeJS.ReadableStream | null;
+  postMessage(message: string): void;
+  /** SIGTERM on POSIX (Electron reaps it); false when there is no process (yet) to end. */
+  kill(): boolean;
+  on(event: "spawn", listener: () => void): unknown;
+  on(event: "exit", listener: (code: number) => void): unknown;
+  on(event: "error", listener: (type: string, location: string, report: string) => void): unknown;
+}
+
+/** Electron's utilityProcess.fork, as AtspiSidecar calls it. */
+export type UtilityFork = (modulePath: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: "pipe"; serviceName: string }) => UtilityChild;
+
+/**
+ * How to start a sidecar other than the Python one: the TypeScript host on Windows (Ember's own binary with
+ * ELECTRON_RUN_AS_NODE) and on macOS (an Electron utility process: `utility`). Without one, the Python sidecar starts as
+ * it always has (`python` + `script`).
  */
 export interface SidecarLaunch {
   command: string;
@@ -220,6 +242,76 @@ export interface SidecarLaunch {
   mayStart?: () => boolean;
   /** No new process after one exits (no revive): the next request starts one, if mayStart allows (critique wsl-20). */
   noRevive?: boolean;
+  /**
+   * macOS (review #177): fork `args[0]`, the host's script, as an Electron utility process named `serviceName`, instead
+   * of spawning `command`, so Ember's binary never has to run as plain Node. Its stdout and stderr are piped as a
+   * spawned helper's are; each request goes to it as one message (a utility process has no stdin). Being Ember's own
+   * child, macOS holds Ember responsible for it, so its Accessibility grant is Ember's.
+   */
+  utility?: { fork: UtilityFork; serviceName: string };
+}
+
+/**
+ * A running helper, as AtspiSidecar drives it: a spawned child (requests on its stdin) or a utility process (requests
+ * as messages).
+ */
+interface HelperChild {
+  readonly pid: number | undefined;
+  readonly stdout: NodeJS.ReadableStream;
+  readonly stderr: NodeJS.ReadableStream;
+  /** It has exited. */
+  ended(): boolean;
+  /** Hands it one request line (with its newline). */
+  send(line: string): void;
+  kill(signal: NodeJS.Signals): void;
+  onExit(fn: (code: number | null, signal: NodeJS.Signals | null) => void): void;
+  onError(fn: (err: Error) => void): void;
+  /** A request couldn't be handed over (its stdin broke: it died). */
+  onSendError(fn: (err: Error) => void): void;
+}
+
+/** A spawned helper (the Python sidecar, or the host as Ember's binary in node mode on Windows). */
+function spawnedHelper(command: string, args: string[], env: NodeJS.ProcessEnv, windowsHide: boolean): HelperChild {
+  const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env, ...(windowsHide ? { windowsHide: true } : {}) });
+  return {
+    get pid() { return child.pid; },
+    stdout: child.stdout,
+    stderr: child.stderr,
+    ended: () => child.exitCode !== null || child.signalCode !== null,
+    send: line => { child.stdin.write(line); },
+    kill: signal => { child.kill(signal); },
+    onExit: fn => { child.on("exit", fn); },
+    onError: fn => { child.on("error", fn); },
+    onSendError: fn => { child.stdin.on("error", fn); },
+  };
+}
+
+/**
+ * The host as an Electron utility process (macOS). Electron ends one with SIGTERM and reaps it whatever the signal
+ * asked for; one asked to end before it has spawned (kill() can't reach it yet) is ended as soon as it has.
+ */
+function utilityHelper(u: NonNullable<SidecarLaunch["utility"]>, script: string, env: NodeJS.ProcessEnv): HelperChild {
+  const proc = u.fork(script, [], { env, stdio: "pipe", serviceName: u.serviceName });
+  if (!proc.stdout || !proc.stderr) {
+    proc.kill();
+    throw new Error("its output isn't piped");
+  }
+  let exited = false;
+  let endWanted = false;
+  proc.on("spawn", () => { if (endWanted) proc.kill(); });
+  proc.on("exit", () => { exited = true; });
+  return {
+    get pid() { return proc.pid; },
+    stdout: proc.stdout,
+    stderr: proc.stderr,
+    ended: () => exited,
+    send: line => { proc.postMessage(line); },
+    kill: () => { endWanted = true; if (!exited) proc.kill(); },
+    onExit: fn => { proc.on("exit", code => fn(code, null)); },
+    onError: fn => { proc.on("error", (type, location) => fn(new Error(`${type} at ${location}`))); },
+    // A message to a process that is gone is dropped: its exit ends its requests.
+    onSendError: () => undefined,
+  };
 }
 
 /**
@@ -291,7 +383,7 @@ interface Pending { resolve: (v: unknown) => void; reject: (e: Error) => void; t
  * One sidecar process and the requests waiting on it; `answered`: it has answered something (it works); `warm`: it has
  * answered a request waited on (see SidecarLaunch.firstRequestMs).
  */
-interface Helper { child: ChildProcessWithoutNullStreams; pending: Map<number, Pending>; done: boolean; answered: boolean; warm: boolean }
+interface Helper { child: HelperChild; pending: Map<number, Pending>; done: boolean; answered: boolean; warm: boolean }
 
 /** A secret field's accessible: its app's bus name and its object path. */
 type SecretKey = [string, string];
@@ -325,22 +417,23 @@ export class AtspiSidecar {
 
   private ensure(): Helper {
     const live = this.helper;
-    if (live && !live.done && live.child.exitCode === null && live.child.signalCode === null) return live;
+    if (live && !live.done && !live.child.ended()) return live;
     if (live) this.retire(live, "accessibility helper stopped");
     if (!this.mayStartNow()) throw new Error("accessibility helper not running");
     const block = ++idBlocks;
     this.blocks.add(block);
     const base = String(block * ID_BLOCK);
-    const child = this.launch
-      ? spawn(this.launch.command, this.launch.args, {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...this.launch.env, EMBER_ATSPI_ID_BASE: base },
-        ...(this.launch.windowsHide ? { windowsHide: true } : {}),
-      })
-      : spawn(this.python, [this.script], {
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...this.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", EMBER_ATSPI_ID_BASE: base },
-      });
+    const launch = this.launch;
+    let child: HelperChild;
+    try {
+      child = launch?.utility ? utilityHelper(launch.utility, launch.args[0] ?? "", { ...launch.env, EMBER_ATSPI_ID_BASE: base })
+        : launch ? spawnedHelper(launch.command, launch.args, { ...launch.env, EMBER_ATSPI_ID_BASE: base }, !!launch.windowsHide)
+        : spawnedHelper(this.python, [this.script], { ...this.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", EMBER_ATSPI_ID_BASE: base }, false);
+    } catch (err) {
+      // (spawn reports its failures as "error" events; Electron's fork throws, before ready for one.)
+      this.log.error("sidecar.error", { err });
+      throw new Error(`accessibility helper could not run (${err instanceof Error ? err.message : String(err)})`, { cause: err });
+    }
     const h: Helper = { child, pending: new Map(), done: false, answered: false, warm: false };
     this.helper = h;
     // A line past MAX_LINE_BYTES is no answer Ember can trust: that process is ended and a fresh one starts (fail closed).
@@ -353,23 +446,23 @@ export class AtspiSidecar {
     }, () => {
       // An endless stderr line is dropped up to its newline (only a line's start was ever logged).
     });
-    child.on("exit", (code, signal) => {
+    child.onExit((code, signal) => {
       this.log.info("sidecar.exit", { code, signal });
       this.retire(h, "accessibility helper stopped");
     });
-    child.on("error", err => {
+    child.onError(err => {
       this.log.error("sidecar.error", { err });
       this.retire(h, `accessibility helper could not run (${err.message})`, "SIGKILL");
     });
     // Writing to a helper that just died fails with EPIPE: its requests fail, Ember carries on.
-    child.stdin.on("error", err => {
+    child.onSendError(err => {
       this.log.warn("sidecar.stdin_error", { err });
       this.retire(h, "accessibility helper stopped", "SIGKILL");
     });
     // Before anything else it is asked: the secret fields earlier processes knew (its answer isn't needed).
     if (this.secrets.size || this.withheld.size) {
       const params = { keys: [...this.secrets.values()], ...(this.withheld.size ? { withheld: [...this.withheld.values()] } : {}) };
-      child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params }) + "\n");
+      child.send(JSON.stringify({ jsonrpc: "2.0", id: this.nextId++, method: "remember_secrets", params }) + "\n");
     }
     return h;
   }
@@ -414,7 +507,7 @@ export class AtspiSidecar {
     const current = this.helper === h;
     if (current) this.helper = null;
     h.done = true;
-    if (kill && h.child.exitCode === null && h.child.signalCode === null) h.child.kill(kill);
+    if (kill && !h.child.ended()) h.child.kill(kill);
     for (const p of h.pending.values()) { clearTimeout(p.timer); p.reject(new Error(why)); }
     h.pending.clear();
     if (current && h.answered) this.revive();
@@ -467,7 +560,7 @@ export class AtspiSidecar {
         this.retire(h, "accessibility helper was restarted (an earlier request took too long)", "SIGKILL");
       }, ms);
       h.pending.set(id, { resolve: v => resolve(v as T), reject, timer });
-      h.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      h.child.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
     });
   }
 
@@ -506,7 +599,7 @@ export class AtspiSidecar {
   /** The process running now (null when none is): Ember's own, which a command may never stop (D4.5). */
   get pid(): number | null {
     const h = this.helper;
-    return h && !h.done && h.child.exitCode === null && h.child.signalCode === null ? h.child.pid ?? null : null;
+    return h && !h.done && !h.child.ended() ? h.child.pid ?? null : null;
   }
 
   /** Physical pixels per pixel element `id` reports (1 when its window isn't HiDPI, or the id isn't known). */

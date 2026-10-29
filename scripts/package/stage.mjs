@@ -55,7 +55,7 @@ const rel = p => path.relative(root, p);
 const notStaged = [];
 
 // The built app: main.cjs, its windows, and the helpers it starts beside itself (Linux: desk-agent.cjs, run as
-// plain Node; Windows and macOS: ax-sidecar.cjs, the accessibility host, likewise).
+// plain Node; Windows: ax-sidecar.cjs, the accessibility host, likewise; macOS: the same host, as a utility process).
 const builtMissing = f => {
   const p = path.join(root, "dist/app", f);
   return f.endsWith("/") ? !fs.existsSync(p) || !fs.readdirSync(p).length : !fs.existsSync(p);
@@ -148,8 +148,8 @@ if (layout.exeResources) {
   exeIdentity = `${layout.exe}: "${read.versions[0].strings[0].values.FileDescription}" ${pkg.version} by ${company}, ${read.iconGroups[0].icons.length} icon sizes, unsigned`;
 }
 // Its fuses: no debugger (--inspect*) and no NODE_OPTIONS, in the app or in what it runs as plain Node; plain Node
-// itself (RunAsNode) stays, for the desk helper and the accessibility host. Only the copy changes, not
-// node_modules/electron.
+// itself (RunAsNode) is refused on macOS and stays on Linux and Windows for their helpers (fuses.mjs says why). Only the
+// copy changes, not node_modules/electron.
 const fuses = flipFuses(path.join(app, layout.fuseFile), EMBER_FUSES);
 const wrongFuses = fuseMismatches(fuses, EMBER_FUSES);
 if (wrongFuses.length) throw new Error(`the staged binary's fuses didn't take: ${wrongFuses.join("; ")}`);

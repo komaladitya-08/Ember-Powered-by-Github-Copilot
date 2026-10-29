@@ -544,6 +544,7 @@ const ROUND2 = {
   css2: fs.existsSync(path.resolve("app/renderer/command/terminal-size.ts")),
   ship2: /export function restartAfterUpdate\(/.test(read("app/main/install-watch.ts")),
   bubble2: /case "killswitch": line = `Stopped with everything else after/.test(read("app/renderer/command/copy.ts")),
+  runasnode2: fs.existsSync(path.resolve("app/askpass/in-ember.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -661,6 +662,29 @@ describe("round 2's docs lines (bubble2)", () => {
     expect(notes).toMatch(/the task's bubble says so as \*\*Needs you\*\*, with \*\*Show\*\*/);
     expect(notes).toContain(`A command the kill switch ended says "Stopped with everything else"`);
     expect(notes).toContain("an answer that needs more than six lines at that size offers **Read all**");
+  });
+});
+
+describe("round 2's docs lines (runasnode2)", () => {
+  it.runIf(ROUND2.runasnode2)("runasnode2: says the macOS build refuses node mode, and how its accessibility host and askpass start", async () => {
+    // fuses.mjs: RunAsNode off for macOS only; launch.ts's utility process; in-ember.ts's switch; ci.yml's macOS suite.
+    const { emberFuses } = await load<{ emberFuses(os: string): Record<string, boolean> }>("scripts/package/fuses.mjs");
+    expect(["darwin", "linux", "win32"].map(os => emberFuses(os).RunAsNode)).toEqual([false, true, true]);
+    expect(read("app/sidecar-host/launch.ts")).toContain('export const HOST_SERVICE_NAME = "Ember accessibility";');
+    expect(read("app/askpass/in-ember.ts")).toContain('export const ASKPASS_SWITCH = "--ember-askpass";');
+    expect(read(".github/workflows/ci.yml")).toContain("run: node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts");
+    const dev = read("docs/DEVELOPING.md");
+    expect(flat(section(dev, "11.2 Running Ember in development, and its permissions"))).toContain("Ember's accessibility host is an Electron utility process of Ember's, started by Ember");
+    const s113 = flat(section(dev, "11.3 Integration suites"));
+    expect(s113).toContain("EMBER_DARWIN_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember.app node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts");
+    expect(s113).toContain("| `askpass-darwin` | `EMBER_DARWIN_TEST`, `EMBER_PACKAGED_APP` | SSH's askpass as Ember runs it");
+    expect(flat(section(dev, "11.4 The AX provider"))).toContain("The host is an Electron utility process of Ember's (Ember sends each request as a message on its parent port; it answers on stdout)");
+    const s115 = flat(section(dev, "11.5 Packages"));
+    expect(s115).toContain("RunAsNode is off, so Ember.app refuses `ELECTRON_RUN_AS_NODE`");
+    expect(s115).toContain("SSH's askpass is Ember itself, started with `--ember-askpass`");
+    expect(s115).not.toMatch(/RunAsNode stays on/);
+    expect(flat(dev)).toContain("on a Mac inside Ember itself, started with `--ember-askpass`, which runs it as a worker thread and shows nothing: `in-ember.ts`");
+    expect(flat(read("CHANGELOG.md"))).toContain("**Your Mac's permissions stay Ember's**: Ember.app never runs as a plain Node.js program");
   });
 });
 

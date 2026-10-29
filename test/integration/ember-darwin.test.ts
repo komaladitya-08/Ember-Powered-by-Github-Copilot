@@ -15,8 +15,9 @@
  *   it) has the bench's pixels and its password field blacked out;
  * - Ember's overlay, painted over the bench and seen in a plain screen grab, is left out of Perception's screenshot;
  * - the keyboard brake's polling (what CursorBorrow's check() reads every 8 ms) costs under 2 ms median (§8.5);
- * - with EMBER_PACKAGED_APP (the staged Ember.app): the packaged accessibility host, run as Ember in node mode, answers
- *   ping within 30 s and status with its AX provider up, which proves the bundle, RunAsNode and koffi load.
+ * - with EMBER_PACKAGED_APP (the staged Ember.app): the packaged accessibility host, started as Ember starts it (a
+ *   utility process: the macOS build refuses node mode, review #177), answers within the check-up's time with its AX
+ *   provider up, which proves the bundle, the utility process launch and koffi load in Electron's helper.
  * The permissions are only read, never asked for (a prompt on a runner sits over every later test).
  *
  * Skipped off macOS; with EMBER_DARWIN_TEST=1 it fails instead of skipping when macOS, the build, Electron or (with
@@ -25,12 +26,11 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { _electron as electron, type ElectronApplication } from "playwright-core";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import readline from "node:readline";
 import sharp from "sharp";
 import type { Rect, ScreenLike } from "../../app/main/platform/types";
 import { openDarwinInput, openDarwinWindows, type DarwinInput, type DarwinWindowSystem } from "../../app/main/platform/darwin";
@@ -372,44 +372,24 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     expect(median).toBeLessThan(2);
   });
 
-  it.runIf(onMac && !!packaged)("runs the packaged accessibility host as Ember in node mode: it answers ping within 30 s, and status with AX up (koffi loads)", async () => {
+  it.runIf(onMac && !!packaged)("runs the packaged accessibility host as Ember does, a utility process (no node mode): the check-up's helper row is ok, AX up (koffi loads)", () => {
     const exe = path.join(packaged, "Contents", "MacOS", "Ember");
     const host = path.join(packaged, "Contents", "Resources", "app", "dist", "app", "ax-sidecar.cjs");
     expect(fs.existsSync(exe), exe).toBe(true);
     expect(fs.existsSync(host), host).toBe(true);
-    const child = spawn(exe, [host], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
-    let stderr = "";
-    child.stderr.on("data", d => { stderr += d; });
-    const answers = new Map<number, Record<string, unknown>>();
-    const lines = readline.createInterface({ input: child.stdout });
-    lines.on("line", line => {
-      try {
-        const msg = JSON.parse(line) as Record<string, unknown>;
-        if (typeof msg.id === "number") answers.set(msg.id, msg);
-      } catch {
-        // not a protocol line
-      }
-    });
-    const ask = async (id: number, method: string, ms: number) => {
-      const t0 = Date.now();
-      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params: {} })}\n`);
-      const msg = await waitFor(() => `an answer to ${method} (exit ${String(child.exitCode)}; stderr ${stderr.slice(0, 2000)})`, () => answers.get(id) ?? (child.exitCode !== null ? Promise.reject(new Error(`the packaged host exited (${String(child.exitCode)})\n${stderr}`)) : null), ms);
-      console.log(`ember-darwin: the packaged host answered ${method} in ${Date.now() - t0} ms: ${JSON.stringify(msg)}`);
-      return msg;
-    };
-    try {
-      const ping = await ask(1, "ping", 30_000);
-      expect(ping.error).toBeUndefined();
-      expect(ping.result).toBeTruthy();
-      const status = await ask(2, "status", 30_000);
-      expect(status.error).toBeUndefined();
-      expect(status.result, "the AX provider (koffi and ApplicationServices) up, trusted under the runner's grants").toMatchObject({ toolkitAccessibility: true });
-      expect(String((status.result as { python?: string }).python)).toMatch(/\(ax\)$/);
-    } finally {
-      child.stdin.end();
-      setTimeout(() => { if (child.exitCode === null) child.kill(); }, 3_000).unref();
-    }
-  });
+    // The check-up starts the host once through Ember's own launch and reports its status (main.ts doctorHelper). Run
+    // from here, macOS holds the runner's granted processes responsible, so AX answers (attribution is ci.yml's job).
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), "ember-darwin-doctor-"));
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
+    const t0 = Date.now();
+    const r = spawnSync(exe, ["--doctor"], { encoding: "utf8", timeout: 120_000, env: { ...env, EMBER_USER_DATA: userData } });
+    console.log(`ember-darwin: the packaged check-up (exit ${String(r.status)}, ${Date.now() - t0} ms):\n${r.stdout}`);
+    const row = r.stdout.split("\n").find(l => /^(ok|warn|FAIL) +Accessibility helper\b/.test(l));
+    expect(row, `no helper row; stderr: ${r.stderr.slice(-3000)}`).toBeTruthy();
+    expect(row, "the host answered through the utility process with its AX provider up").toMatch(/^ok +Accessibility helper +Running: Ember can read apps/);
+    fs.rmSync(userData, { recursive: true, force: true });
+  }, 150_000);
 
   it.runIf(onMac && !packaged)("names the packaged host check as not run without EMBER_PACKAGED_APP", () => {
     if (required) throw new Error("EMBER_DARWIN_TEST=1 without EMBER_PACKAGED_APP: stage Ember first and name its bundle (dist/package/Ember.app)");

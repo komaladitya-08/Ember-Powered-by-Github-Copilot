@@ -9,7 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
@@ -79,6 +79,23 @@ import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello } from "./hello";
+import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
+
+// SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
+// Ember itself with --ember-askpass. That run asks the running Ember (askpass.cjs as a worker thread), prints the answer
+// for ssh and ends here, before anything else of Ember starts: no single-instance lock, no window, nothing in the data
+// folder, and no Dock icon (the run loop never starts; "prohibited" tells macOS so as well).
+if (isAskpassRun(process.argv)) {
+  try {
+    if (typeof app.setActivationPolicy === "function") app.setActivationPolicy("prohibited");
+  } catch {
+    // Not on this OS, or refused: the run loop never starts, so nothing shows anyway.
+  }
+  const code = askpassInEmber({ script: path.join(__dirname, "askpass.cjs") });
+  // Before the run loop app.exit ends the process at once; process.exit only stands behind it.
+  app.exit(code);
+  process.exit(code);
+}
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy
@@ -101,7 +118,7 @@ if (app.isPackaged && debugSwitch) {
  * (PlatformDeps' rule); its window system and input open after ready.
  */
 const platform = loadPlatform({
-  electron: { app, screen, desktopCapturer, systemPreferences, shell, powerMonitor, browserWindow: BrowserWindow },
+  electron: { app, screen, desktopCapturer, systemPreferences, shell, powerMonitor, browserWindow: BrowserWindow, utilityProcess },
   packaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: process.env,
 });
 const sys = platform.system;
@@ -1523,7 +1540,8 @@ function start(): void {
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
-    // AT-SPI sidecar (no launch); Windows and macOS the shared host, run as Ember's own binary.
+    // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
+    // utility process, review #177).
     const launch = platform.sidecarLaunch(sidecarContext());
     const sidecar = sidecarRef = new AtspiSidecar(sidecarScript(), log.child("atspi"), undefined, undefined, launch);
     app.on("will-quit", () => sidecar.stop());

@@ -185,7 +185,7 @@ describe("where the socket goes (critique remote-24)", () => {
 });
 
 describe("the askpass wrapper", () => {
-  it("runs Ember as plain Node on askpass.cjs with the prompt after the script path, 0700", async () => {
+  const memoryFs = () => {
     const files = new Map<string, { text: string; mode: number }>();
     const fs: AskpassFs = {
       mkdir: async () => undefined, mkdtemp: async p => p, rm: async () => undefined,
@@ -194,10 +194,32 @@ describe("the askpass wrapper", () => {
       chmod: async (p, mode) => { const f = files.get(p); if (f) f.mode = mode; },
       rename: async (a, b) => { files.set(b, files.get(a) as { text: string; mode: number }); files.delete(a); },
     };
-    const path = await writeAskpassWrapper({ fs, userData: "/home/ana/.config/ember", execPath: "/opt/Ember/ember", appDir: "/opt/Ember/resources/app/dist/app" });
+    return { fs, files };
+  };
+
+  it("runs Ember as plain Node on askpass.cjs on Linux, with the prompt after the script path, 0700", async () => {
+    const { fs, files } = memoryFs();
+    const path = await writeAskpassWrapper({ fs, os: "linux", userData: "/home/ana/.config/ember", execPath: "/opt/Ember/ember", appDir: "/opt/Ember/resources/app/dist/app" });
     expect(path).toBe("/home/ana/.config/ember/ssh/askpass");
     expect(files.get(path)).toEqual({ text: "#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec '/opt/Ember/ember' '/opt/Ember/resources/app/dist/app/askpass.cjs' \"$@\"\n", mode: 0o700 });
-    const odd = await writeAskpassWrapper({ fs, userData: "/u", execPath: "/opt/it's/ember", appDir: "/a" });
+    const odd = await writeAskpassWrapper({ fs, os: "linux", userData: "/u", execPath: "/opt/it's/ember", appDir: "/a" });
     expect(files.get(odd)?.text).toContain("'/opt/it'\\''s/ember'");
+  });
+
+  it("runs Ember itself on macOS, in its askpass mode, with the prompt in its environment, never in node mode (review #177)", async () => {
+    const { fs, files } = memoryFs();
+    const userData = "/Users/ana/Library/Application Support/ember";
+    const path = await writeAskpassWrapper({ fs, os: "darwin", userData, execPath: "/Applications/Ember.app/Contents/MacOS/Ember", appDir: "/Applications/Ember.app/Contents/Resources/app/dist/app" });
+    expect(path).toBe(`${userData}/ssh/askpass`);
+    // The prompt (a server's text, from 8.5 marked as such) never reaches Ember's command line, where Chromium or AppKit
+    // could read it as a switch; a packaged Ember loads its own app folder by itself.
+    expect(files.get(path)).toEqual({
+      text: "#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nEMBER_ASKPASS_PROMPT=\"$*\"\nexport EMBER_ASKPASS_PROMPT\nexec '/Applications/Ember.app/Contents/MacOS/Ember' --ember-askpass\n",
+      mode: 0o700,
+    });
+    // The development Electron is told which app to run: the tree's.
+    const dev = await writeAskpassWrapper({ fs, os: "darwin", userData: "/u", execPath: "/Users/ana/src/ember/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron", appDir: "/Users/ana/src/ember/dist/app" });
+    expect(files.get(dev)?.text).toMatch(/\nexec '\/Users\/ana\/src\/ember\/node_modules\/electron\/dist\/Electron\.app\/Contents\/MacOS\/Electron' '\/Users\/ana\/src\/ember' --ember-askpass\n$/);
+    expect(files.get(dev)?.text).not.toContain("askpass.cjs");
   });
 });

@@ -14,6 +14,7 @@ import posix from "node:path/posix";
 import type { OS } from "../../shared/shortcuts";
 import type { PromptCard } from "../../shared/remote-ui";
 import type { Logger } from "../logger";
+import { ASKPASS_SWITCH } from "../../askpass/in-ember";
 import { shQuote } from "./ssh-argv";
 import { versionAtLeast, type SshVersion } from "./ssh-config";
 
@@ -254,14 +255,29 @@ export async function createAskpassServer(o: {
 }
 
 /**
- * The askpass wrapper ssh runs on Linux and macOS PCs (§5.1.6): two lines that start Ember's own binary as plain Node on
- * askpass.cjs, the prompt **after** the script path so Node never reads it as an option. Written to
- * <userData>/ssh/askpass (folder and file 0700) when its text differs; returns its path.
+ * The app folder Ember's binary must be told on its command line: none when it is the bundle's own (a packaged Ember.app
+ * loads Contents/Resources/app by itself), else the development tree's (Electron's default app takes it first).
  */
-export async function writeAskpassWrapper(o: { fs: AskpassFs; userData: string; execPath: string; appDir: string }): Promise<string> {
+function appFolderArgs(execPath: string, appDir: string): string[] {
+  const root = posix.dirname(posix.dirname(appDir));
+  return root === posix.join(posix.dirname(posix.dirname(execPath)), "Resources", "app") ? [] : [root];
+}
+
+/**
+ * The askpass wrapper ssh runs on Linux and macOS PCs (§5.1.6), written to <userData>/ssh/askpass (folder and file
+ * 0700) when its text differs; returns its path.
+ * - Linux: two lines that start Ember's own binary as plain Node on askpass.cjs, the prompt **after** the script path so
+ *   Node never reads it as an option.
+ * - macOS, whose build refuses node mode (review #177): Ember itself in its askpass mode (--ember-askpass: main.ts runs
+ *   askpass.cjs as a worker and exits, starting nothing else), the prompt handed over in EMBER_ASKPASS_PROMPT, never
+ *   on the command line, where Chromium or AppKit could take a server's text for a switch of theirs.
+ */
+export async function writeAskpassWrapper(o: { fs: AskpassFs; os: OS; userData: string; execPath: string; appDir: string }): Promise<string> {
   const dir = posix.join(o.userData, "ssh");
   const file = posix.join(dir, "askpass");
-  const text = `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${shQuote(o.execPath)} ${shQuote(posix.join(o.appDir, "askpass.cjs"))} "$@"\n`;
+  const text = o.os === "darwin"
+    ? `#!/bin/sh\nunset ELECTRON_RUN_AS_NODE\nEMBER_ASKPASS_PROMPT="$*"\nexport EMBER_ASKPASS_PROMPT\nexec ${[o.execPath, ...appFolderArgs(o.execPath, o.appDir)].map(shQuote).join(" ")} ${ASKPASS_SWITCH}\n`
+    : `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${shQuote(o.execPath)} ${shQuote(posix.join(o.appDir, "askpass.cjs"))} "$@"\n`;
   await o.fs.mkdir(dir, { recursive: true, mode: 0o700 });
   await o.fs.chmod(dir, 0o700).catch(() => undefined);
   const now = await o.fs.readFile(file, "utf8").catch(() => null);

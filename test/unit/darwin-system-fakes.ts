@@ -58,8 +58,11 @@ export function fakeElectron(overrides: { app?: Partial<ElectronParts["app"]>; s
     getPrimaryDisplay: () => ({ id: 1, bounds: { x: 0, y: 0, width: 1440, height: 900 }, scaleFactor: 2, size: { width: 1440, height: 900 } }),
     getAllDisplays: () => [{ id: 1, bounds: { x: 0, y: 0, width: 1440, height: 900 }, scaleFactor: 2, size: { width: 1440, height: 900 } }],
   };
-  const electron = { app, systemPreferences, shell, desktopCapturer, powerMonitor, browserWindow, screen } as unknown as ElectronParts;
-  return { electron, app, systemPreferences, shell, desktopCapturer, powerMonitor, browserWindow, screen, setLogin: (s: LoginItemSettingsLike) => { login = s; } };
+  // Electron's utilityProcess (the accessibility host's launch, review #177): what its fork returns.
+  const utilityChild = { pid: undefined, stdout: null, stderr: null, postMessage: vi.fn(), kill: vi.fn(() => false), on: vi.fn() };
+  const utilityProcess = { fork: vi.fn((_modulePath: string, _args: string[], _options: unknown) => utilityChild) };
+  const electron = { app, systemPreferences, shell, desktopCapturer, powerMonitor, browserWindow, screen, utilityProcess } as unknown as ElectronParts;
+  return { electron, app, systemPreferences, shell, desktopCapturer, powerMonitor, browserWindow, screen, utilityProcess, utilityChild, setLogin: (s: LoginItemSettingsLike) => { login = s; } };
 }
 
 /** PlatformDeps over fake Electron parts. */

@@ -33,6 +33,7 @@ import type { EnvInputs } from "../environment";
 import type { DeskManager } from "../desk/desk";
 import type { DeskPlace } from "../desk/place";
 import type { Logger } from "../logger";
+import type { UtilityFork } from "../perception/sidecar";
 import type { KeyConventions, OS, ShortcutTable } from "../../shared/shortcuts";
 import type { PlatformWords } from "../../shared/words";
 
@@ -217,6 +218,11 @@ export interface ElectronParts {
   powerMonitor: PowerMonitorLike;
   /** Electron's BrowserWindow class (darwin passes `() => browserWindow.getFocusedWindow()` as focusedOwnWindow). */
   browserWindow: BrowserWindowStatic;
+  /**
+   * Electron's utilityProcess: darwin starts the accessibility host with its fork (review #177: no node mode there).
+   * Only used after app ready.
+   */
+  utilityProcess?: { fork: UtilityFork };
 }
 
 /**
@@ -228,7 +234,7 @@ export interface ElectronParts {
 export interface PlatformDeps {
   electron: ElectronParts;
   packaged: boolean;
-  /** process.execPath (Ember's own binary: the sidecar host runs as it, ELECTRON_RUN_AS_NODE=1). */
+  /** process.execPath (Ember's own binary: on Windows the sidecar host runs as it, ELECTRON_RUN_AS_NODE=1). */
   execPath: string;
   appPath: string;
   resourcesPath: string;
@@ -311,6 +317,8 @@ export interface SidecarLaunch {
   firstRequestMs?: number;
   /** win32: true, so no console window appears for the helper (G1). */
   windowsHide?: boolean;
+  /** darwin: fork `args[0]` as an Electron utility process instead of spawning `command` (review #177). */
+  utility?: { fork: UtilityFork; serviceName: string };
 }
 
 // ───────────── System integration ─────────────
