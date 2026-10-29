@@ -123,7 +123,11 @@ body.first-run .start-row::before {
   content: ""; position: absolute; inset: 1px; z-index: -1; border-radius: inherit; pointer-events: none;
   box-shadow: var(--group-edge), 0 100vmax 0 100vmax var(--bg);
 }
-html:has(> body.first-run) { scroll-padding-bottom: 150px; }
+/* Focus scrolls clear of the row and its gap, with the room left at the top for a focus ring (16 px), at the row's own
+   height, which its words set: the text size, the window's width and its zoom wrap them onto more lines (start-row.ts
+   keeps it as --start-row-h). Until it is measured, at least the row at the narrowest window, not zoomed, at each text
+   size (136, 143.8 and 175.6 px). */
+html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138px * var(--text-scale)) + 12px + 16px); }
 .start-row .hint { margin: 0; flex-basis: 100%; }
 #agree-row { min-height: 28px; }
 .start {

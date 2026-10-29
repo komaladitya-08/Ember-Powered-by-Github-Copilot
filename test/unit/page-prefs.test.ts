@@ -123,6 +123,20 @@ function fixedControlHeights(css: string, ids: string[] = []): string[] {
     .filter(sel => !sel.includes("::") && control.test(sel));
 }
 
+/**
+ * The selectors in `css` whose scroll padding keeps a fixed px length of 24 px or more: room that big is kept clear for
+ * a part of the page that holds words (first run's sticky Start row), which grow with the text size and wrap onto more
+ * lines in a narrower or zoomed window. Such room is the part's measured height (a var() it falls back from) or scaled
+ * by --text-scale. A few px for a focus ring are left.
+ */
+function fixedClearances(css: string): string[] {
+  const plain = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@(media|supports)[^{]*\{/g, "");
+  return [...plain.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+    .filter(([, , d]) => [...d.matchAll(/scroll-padding[\w-]*: ([^;]+)/g)]
+      .some(([, v]) => [...v.replace(/\d+(\.\d+)?px \* var\(--text-scale(, 1)?\)/g, "").matchAll(/(\d+(?:\.\d+)?)px/g)].some(([, n]) => Number(n) >= 24)))
+    .map(([, sel]) => sel.trim());
+}
+
 /** The ids of a page's controls that hold words, from its index.html: buttons, pop-ups, text areas and text fields. */
 function controlIds(html: string): string[] {
   return [...html.matchAll(/<(button|select|textarea|input)\b([^>]*)>/g)]
@@ -181,6 +195,20 @@ describe("the text size", () => {
       .toEqual([]);
     expect(controlIds('<select id="text-size"></select><input id="host-add" type="text"><input type="checkbox" id="agree"><button id="go">Go</button><div id="buddy"></div>'))
       .toEqual(["text-size", "host-add", "go"]);
+  });
+
+  it("keeps focus clear of first run's Start row at every text size: no scroll padding is a fixed px length", async () => {
+    const { BUBBLE_CSS } = await import("@ember/bubble");
+    const sheets: [string, string][] = [
+      ["shared", shared], ["bubble", BUBBLE_CSS],
+      ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+    ];
+    for (const [name, css] of sheets) expect(fixedClearances(css), name).toEqual([]);
+    // The guard sees a fixed length wherever it is, and leaves a focus ring's few px, a scaled length and a measured one.
+    expect(fixedClearances("html:has(> body.x) { scroll-padding-bottom: 150px; } @media (min-width: 9px) { html { scroll-padding: 0 0 40px; } }"))
+      .toEqual(["html:has(> body.x)", "html"]);
+    expect(fixedClearances("html { scroll-padding-top: 16px; } .a { scroll-padding-bottom: calc(150px * var(--text-scale)); } .b { scroll-padding-bottom: calc(var(--h, 138px * var(--text-scale)) + 12px); } .c { scroll-margin: 120px; }"))
+      .toEqual([]);
   });
 
   it("keeps as many lines in the bubble at every size: its heights are counted in lines, not px (review #57)", async () => {
