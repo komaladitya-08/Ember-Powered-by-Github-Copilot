@@ -328,10 +328,10 @@ allows them.
   Command shortcuts. Without the Screen Recording permission, Ember says so instead of "the window is off screen", and
   once a run shows "I can't take screenshots" with a button to the setup check. Secure keyboard entry is named, with
   the app that holds it, instead of "a system dialog", in a **Secure input** row of the setup check too.
-- On a Mac in another language, Ember finds Apple's apps by their names there (Calculator as Rechner, System Settings
-  as Systemeinstellungen in German) and recognises their windows. It reads its saved sign-in without freezing while the Keychain asks after an update, says
-  when the Keychain refused, and shows "Reading your saved sign-in from the keychain…" only on the first start after
-  an update.
+- On a Mac in another language, Ember finds Apple's apps by their names there (Calculator as Rechner, System Settings as
+  Systemeinstellungen in German) and recognises their windows. It reads its saved sign-in without freezing while the
+  Keychain asks after an update, says when the Keychain refused, and shows "Reading your saved sign-in from the
+  keychain…" only on the first start after an update.
 - On Windows, Ember reads long lists and pages that are scrolled down: it reads what shows in full and leaves most of
   what is scrolled away out, so a list of thousands of rows or a very big page no longer reads as empty, and its
   screenshot isn't refused.
