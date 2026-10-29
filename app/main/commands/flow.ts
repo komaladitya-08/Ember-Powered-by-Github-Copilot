@@ -1031,7 +1031,9 @@ function followWaiting(svc: CommandService, runId: string, presenter: Presenter)
       if (before === null) before = { thought: now !== null && now.thought !== WAITING_BUBBLE ? now.thought : "", step: now?.step ?? null, route: way };
       else before.route = way;
       try {
-        presenter.progress(WAITING_BUBBLE, { actions: [...(now?.actions ?? []).filter(a => a.id !== show), { id: show, label: "Show" }], step: way });
+        // A line that needs the user ("Needs you", finished), so a screen reader hears it and its route: the window came
+        // up without the keyboard, and the task's running commentary is never read out.
+        presenter.progress(WAITING_BUBBLE, { actions: [...(now?.actions ?? []).filter(a => a.id !== show), { id: show, label: "Show" }], step: way, needsYou: true });
       } catch { /* the bubble is only a pointer: the window says it too */ }
     });
     return () => {

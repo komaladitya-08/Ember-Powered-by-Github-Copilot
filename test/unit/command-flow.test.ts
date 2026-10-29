@@ -29,6 +29,7 @@ import type { BrowserWindowLike, IpcLike } from "../../app/main/targets/types";
 import * as policy from "../../app/main/policy/policy";
 import { BubbleOwner, Presenter } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
+import { announcement } from "../../packages/bubble/src/bubble";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const tick = () => new Promise(r => setTimeout(r, 0));
@@ -1197,6 +1198,47 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     h.abort.abort();
     await done;
     expect(shown.at(-1)!.bubble!.actions).toEqual([]);
+  });
+
+  it("shows the waiting line as a bubble that needs the user, which a screen reader hears with its way there (review #263)", async () => {
+    for (const where of [undefined, "on build-01"]) {
+      let tell: ((runId: string, waiting: boolean) => void) | null = null;
+      const h = harness({ run: () => ({ hang: true }) });
+      Object.assign(h.ctx.service.window as object, {
+        onWaiting: (fn: (runId: string, waiting: boolean) => void) => { tell = fn; return () => { tell = null; }; },
+        typingRoute: () => "Or press Alt+Tab to go there.",
+      });
+      const shown: Partial<EmberState>[] = [];
+      const presenter = new Presenter(patch => shown.push(patch), undefined, () => "Clone the repository", new BubbleOwner(), undefined, false,
+        { task: "t1", ...(where ? { where } : {}) });
+      presenter.taskStarted();
+      presenter.progress("Cloning the private repository.");
+      h.ctx.presenter = presenter;
+      // What the bubble's live region says (packages/bubble's announcement, as the overlay and the card call it).
+      const heard = (): string => {
+        const b = shown.at(-1)!.bubble!;
+        return announcement({ visible: b.visible, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step });
+      };
+      // The task's own work is running commentary: not read out.
+      expect(heard()).toBe("");
+      const done = call(h, { command: "git clone https://github.com/acme/private" });
+      await vi.waitFor(() => expect(h.runs).toHaveLength(1));
+      const runId = h.starts[0].runId;
+      tell!(runId, true);
+      // The command window came up without the keyboard: the bubble is what tells the user it waits for them.
+      expect(shown.at(-1)!.bubble).toMatchObject({ mood: "attention", streaming: false, actions: [{ id: `ui:cmdshow:${runId}`, label: "Show" }] });
+      expect(heard()).toBe(`Ember needs you${where ? `, ${where}` : ""}: Clone the repository. A command is waiting for you to type in the command window. Or press Alt+Tab to go there.`);
+      // Typed: the task is at work again, its words back as running commentary.
+      tell!(runId, false);
+      expect(shown.at(-1)!.bubble).toMatchObject({ mood: "acting", streaming: true, thought: "Cloning the private repository.", actions: [] });
+      expect(heard()).toBe("");
+      // The run ends while it waits: the same.
+      tell!(runId, true);
+      expect(heard()).not.toBe("");
+      h.abort.abort();
+      await done;
+      expect(shown.at(-1)!.bubble).toMatchObject({ mood: "acting", streaming: true, actions: [] });
+    }
   });
 
   it("tells the card what kind of danger it asks about, for its marker (review #275)", async () => {

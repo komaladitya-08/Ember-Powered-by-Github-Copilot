@@ -876,12 +876,15 @@ export class Presenter {
   /**
    * A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's
    * thinking. `more`: its buttons and its step line instead of the ones it has (a command waiting for the user's typing
-   * offers Show, with the keyboard's way to the command window under it: review #263); absent, they stay.
+   * offers Show, with the keyboard's way to the command window under it: review #263); absent, they stay. With
+   * `needsYou`, the note is a finished line the user has to act on ("Needs you", not streaming), which the bubble's live
+   * region reads out with its step, as it reads a question; without it the note is running commentary, never read out.
    */
-  progress(text: string, more?: { actions?: BubbleState["actions"]; step?: string | null }): void {
+  progress(text: string, more?: { actions?: BubbleState["actions"]; step?: string | null; needsYou?: boolean }): void {
     const note = text.replace(/\s+/g, " ");
     if (!note.trim()) return;
-    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true,
+    const needsYou = more?.needsYou === true;
+    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
       ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
   }
 
