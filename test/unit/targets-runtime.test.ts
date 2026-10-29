@@ -1394,6 +1394,15 @@ describe("the bubble's actions", () => {
     r.t.bubbleAction("ui:panel:1");
     expect(r.cw.show).toHaveBeenCalledTimes(1);
   });
+
+  it("brings the command window up with the keyboard from a waiting command's Show (review #263)", () => {
+    const r = rig();
+    expect(r.t.bubbleAction("ui:cmdshow:0123456789abcdef")).toBe(true);
+    expect(r.cw.show).toHaveBeenCalledTimes(1);
+    // Its own by prefix, malformed: handled, nothing done, never passed on as an answer.
+    expect(r.t.bubbleAction("ui:cmdshow:nope")).toBe(true);
+    expect(r.cw.show).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("noticing the user's own ssh and offering to come along (§2.7)", () => {

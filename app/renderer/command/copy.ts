@@ -205,6 +205,15 @@ export function announceKeyText(os: OS, key: string | null = SHORTCUTS[os].stop.
   return key ? `Or press ${key} to stop everything.` : "";
 }
 
+/**
+ * Under a task's bubble whose command waits for the user's typing, beside its Show button (review #263): the keyboard's
+ * way to this window, which has come up in front of the user's other windows. Alt+Tab reaches it on Linux and Windows;
+ * on macOS the window is a panel Command+Tab doesn't list, so there Show is the way (null), as target-copy's panelHint.
+ */
+export function typingRouteText(os: OS): string | null {
+  return os === "darwin" ? null : "Or press Alt+Tab to go there.";
+}
+
 /** The announcement's countdown: "Starts in 4 s." */
 export function countdownText(endsAt: number, now: number): string {
   return `Starts in ${Math.max(0, Math.ceil((endsAt - now) / 1000))}${NB}s.`;

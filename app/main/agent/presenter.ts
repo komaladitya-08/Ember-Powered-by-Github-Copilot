@@ -873,11 +873,16 @@ export class Presenter {
     });
   }
 
-  /** A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's thinking. */
-  progress(text: string): void {
+  /**
+   * A task's own note on how it's going (report_progress): what its bubble says while it works, in place of its model's
+   * thinking. `more`: its buttons and its step line instead of the ones it has (a command waiting for the user's typing
+   * offers Show, with the keyboard's way to the command window under it: review #263); absent, they stay.
+   */
+  progress(text: string, more?: { actions?: BubbleState["actions"]; step?: string | null }): void {
     const note = text.replace(/\s+/g, " ");
     if (!note.trim()) return;
-    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true } });
+    this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", thought: clip(note), streaming: true,
+      ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
   }
 
   /**

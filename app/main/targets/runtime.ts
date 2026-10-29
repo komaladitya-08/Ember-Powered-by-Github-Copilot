@@ -1671,6 +1671,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (/^(offer|conn):/.test(id) && tooSoon(id)) { log.info("targets.press_too_soon", {}); return true; }
       let m = /^ui:cmdstop:([0-9a-f]{16})$/.exec(id);
       if (m) { commandWindow.cancelAnnounce(m[1]); return true; }
+      // A command waiting for the user's typing: its window comes up with the keyboard (review #263).
+      if (/^ui:cmdshow:[0-9a-f]{16}$/.test(id)) { commandWindow.show(); return true; }
       m = /^ui:panel:(\d+)$/.exec(id);
       if (m) {
         const n = Number(m[1]);
@@ -1719,10 +1721,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         return true;
       }
       // Ours by prefix, but stale or malformed: handled (nothing to do), never passed on as a question's answer.
-      return /^(target|offer|conn|ui:panel|ui:cmdstop):/.test(id);
+      return /^(target|offer|conn|ui:panel|ui:cmdstop|ui:cmdshow):/.test(id);
     } catch (err) {
       log.warn("targets.bubble_action_failed", { err });
-      return /^(target|offer|conn|ui:panel|ui:cmdstop):/.test(id);
+      return /^(target|offer|conn|ui:panel|ui:cmdstop|ui:cmdshow):/.test(id);
     }
   };
 

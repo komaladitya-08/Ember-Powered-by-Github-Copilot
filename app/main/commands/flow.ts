@@ -983,32 +983,56 @@ export const WAITING_BUBBLE = "A command is waiting for you to type in the comma
 /** The task's bubble after the wait, when it said nothing before it. */
 export const RUNNING_BUBBLE = "The command is running.";
 
+/** The waiting line's button, which brings the command window up with the keyboard (the targets runtime handles it). */
+export const showCommandWindowId = (runId: string): string => `ui:cmdshow:${runId}`;
+
 /**
- * The command window's word that run `runId` waits for the user's typing (UI's onWaiting), said in the task's bubble;
- * nothing when the window doesn't have it. Once the run stops waiting (the user typed, or it ended), the bubble says
- * again what it said before, unless something newer has replaced the waiting line since. Returns the unsubscribe.
+ * The command window's word that run `runId` waits for the user's typing (UI's onWaiting), said in the task's bubble
+ * with a Show button that brings the command window up and gives it the keyboard, and under it the keyboard's own way
+ * there (UI's typingRoute; review #263); nothing when the window doesn't have it. Once the run stops waiting (the user
+ * typed, or it ended), the bubble says again what it said before, with its step and without Show, unless something
+ * newer has replaced the waiting line since: that stays, without Show. Returns the unsubscribe.
  */
 function followWaiting(svc: CommandService, runId: string, presenter: Presenter): () => void {
-  const window = svc.window as CommandService["window"] & { onWaiting?: (fn: (runId: string, waiting: boolean) => void) => () => void };
-  if (typeof window.onWaiting !== "function") return () => undefined;
-  const thought = (): string | null => {
-    try { const t = (presenter as Partial<Pick<Presenter, "bubble">>).bubble?.thought; return typeof t === "string" ? t : null; } catch { return null; }
+  const window = svc.window as CommandService["window"] & {
+    onWaiting?: (fn: (runId: string, waiting: boolean) => void) => () => void;
+    typingRoute?: () => string | null;
   };
-  /** What the bubble said before the waiting line, while it shows that line. */
-  let before: string | null = null;
+  if (typeof window.onWaiting !== "function") return () => undefined;
+  const show = showCommandWindowId(runId);
+  const bubble = (): { thought: string; step: string | null; actions: { id: string; label: string }[] } | null => {
+    try {
+      const b = (presenter as Partial<Pick<Presenter, "bubble">>).bubble;
+      return b && typeof b.thought === "string" ? { thought: b.thought, step: typeof b.step === "string" ? b.step : null, actions: Array.isArray(b.actions) ? b.actions : [] } : null;
+    } catch { return null; }
+  };
+  const route = (): string | null => {
+    try { const r = typeof window.typingRoute === "function" ? window.typingRoute() : null; return typeof r === "string" && r ? r : null; } catch { return null; }
+  };
+  /** What the bubble said before the waiting line (and its step), and the route said under it, while it shows that line. */
+  let before: { thought: string; step: string | null; route: string | null } | null = null;
   const restore = (): void => {
     if (before === null) return;
     const back = before;
     before = null;
-    if (thought() !== WAITING_BUBBLE) return; // something newer is in the bubble: it stays
-    try { presenter.progress(back.trim() ? back : RUNNING_BUBBLE); } catch { /* the bubble is only a pointer */ }
+    const now = bubble();
+    try {
+      if (now?.thought === WAITING_BUBBLE) presenter.progress(back.thought.trim() ? back.thought : RUNNING_BUBBLE, { actions: now.actions.filter(a => a.id !== show), step: back.step });
+      // Something newer is in the bubble: it stays, without Show (and the route under it).
+      else if (now?.actions.some(a => a.id === show)) presenter.progress(now.thought, { actions: now.actions.filter(a => a.id !== show), step: now.step === back.route ? back.step : now.step });
+    } catch { /* the bubble is only a pointer */ }
   };
   try {
     const off = window.onWaiting((id, waiting) => {
       if (id !== runId) return;
       if (!waiting) { restore(); return; }
-      if (before === null) { const t = thought(); before = t !== null && t !== WAITING_BUBBLE ? t : ""; }
-      try { presenter.progress(WAITING_BUBBLE); } catch { /* the bubble is only a pointer: the window says it too */ }
+      const now = bubble();
+      const way = route();
+      if (before === null) before = { thought: now !== null && now.thought !== WAITING_BUBBLE ? now.thought : "", step: now?.step ?? null, route: way };
+      else before.route = way;
+      try {
+        presenter.progress(WAITING_BUBBLE, { actions: [...(now?.actions ?? []).filter(a => a.id !== show), { id: show, label: "Show" }], step: way });
+      } catch { /* the bubble is only a pointer: the window says it too */ }
     });
     return () => {
       try { off(); } catch { /* already gone */ }

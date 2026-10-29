@@ -768,6 +768,16 @@ describe("the command window and a screen reader (review #43)", () => {
   });
 });
 
+describe("the keyboard's way to the window from a waiting command's bubble (review #263)", () => {
+  it("is Alt+Tab on Linux and Windows; none on macOS, where Command+Tab doesn't list the panel", () => {
+    expect(setup().ctl.typingRoute()).toBe("Or press Alt+Tab to go there.");
+    for (const [os, want] of [["win32", "Or press Alt+Tab to go there."], ["darwin", null]] as const) {
+      const ctl = createCommandWindowController({ create: () => new FakeWindow(), ipc: new FakeIpc(), log, os, keyHint: () => null });
+      expect(ctl.typingRoute(), os).toBe(want);
+    }
+  });
+});
+
 describe("the announcement's time and keys (reviews #46, #269)", () => {
   it("gives the countdown more time while a screen reader runs", () => {
     let on = false;

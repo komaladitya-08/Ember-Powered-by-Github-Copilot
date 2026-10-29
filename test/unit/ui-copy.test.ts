@@ -720,6 +720,10 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
     expect(commandCopy.announceKeyText("linux", "Ctrl+Alt+X")).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(all(bubbleCopy.wslFirstSeen())).toEqual(["I can work in WSL", "I can read and use your Linux apps and run commands there. Turn this on in settings?", "Open settings", "Not now"]);
     expect(keep(bubbleCopy.commandSpoken("ssh", "build-01"))).toBe("Ember wants to run a command on build-01.");
+    // Under a waiting command's Show (review #263): Alt+Tab where it reaches the command window.
+    expect(keep(commandCopy.typingRouteText("linux")!)).toBe("Or press Alt+Tab to go there.");
+    expect(commandCopy.typingRouteText("win32")).toBe("Or press Alt+Tab to go there.");
+    expect(commandCopy.typingRouteText("darwin")).toBeNull();
     // One voice in the bubble (review #22): a connection's or the settings window's "Ember can't…" is said as Ember.
     expect(bubbleCopy.firstPerson("Ember can't reach build-01 (no route). Check you're on the right network or VPN.")).toBe("I can't reach build-01 (no route). Check you're on the right network or VPN.");
     expect(bubbleCopy.firstPerson("The key changed. Ember won't connect.")).toBe("The key changed. I won't connect.");
