@@ -390,7 +390,10 @@ describe.runIf(required && platform === "win32")("commands on Windows", () => {
   beforeAll(async () => {
     expect(fs.existsSync(jobHostScript), "run `npm run build` first: the job host is dist/app/job-host.cjs").toBe(true);
     facts = await runner.facts();
-  });
+    // The first Windows PowerShell a fresh runner starts can take longer than a test's 15 s (remote.yml run 18: the UTF-8
+    // test, the first run here, timed out; every later run took 0.4-3 s). Paid once here, so no test is charged for it.
+    await start(runner, facts, "Write-Output ready").exit;
+  }, 120_000);
 
   it("offers Windows PowerShell only, on pipes", () => {
     expect(facts.shells).toEqual(["powershell"]);
