@@ -124,9 +124,10 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
   them every minute, and the handle menu does the same things. Meanwhile the bubble and the command window don't name
   that shortcut: routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an
   announced command names only its **Stop**.
-- `--ask` (the Linux app menu's **Ask Ember** action, the Windows jump list's) opens the ask box: in the running Ember,
-  or once a new one has started. Either way settings open instead while Ember isn't set up or the desktop session is
-  one it can't use (the setup check says why). The macOS Dock menu's **Ask Ember** does the same in the running Ember.
+- `--ask` (the Linux app menu's **Ask Ember** action, the one in the jump list of Ember's taskbar icon on Windows once
+  Ember is pinned there) opens the ask box: in the running Ember, or once a new one has started. Either way settings
+  open instead while Ember isn't set up or the desktop session is one it can't use (the setup check says why). The macOS
+  Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
   animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the ask box, the desk window's bar, the command window and its
