@@ -340,11 +340,10 @@ allows them.
   computer's name but never its state).
 - A right-click in it offers **Cut**, **Copy**, **Paste** and **Select all**; dismissing that menu by clicking another
   app puts the box away instead of taking the keyboard back.
-- On Windows and macOS it takes the keyboard sooner: it shows before Ember reads the screen. That read still notes the
-  field you were in and the text you had selected. Letters typed before it appears still go to the app underneath (on
-  Linux, Ember holds them for the box), so the first five times it opens there it says to wait for it before typing.
-  Letters typed into it as it opens are kept: what was left in it from last time is selected when it closes, not as it
-  opens.
+- On Windows and macOS it takes the keyboard sooner: it shows before Ember reads the screen. Letters typed before it
+  appears still go to the app underneath (on Linux, Ember holds them for the box), so the first five times it opens
+  there it says to wait for it before typing. Letters typed into it as it opens are kept: what was left in it from
+  last time is selected when it closes, not as it opens.
 - It follows **Text size**: at Large and Larger the box is wider, and its words and lines are larger.
 
 #### Voice
@@ -454,6 +453,8 @@ allows them.
 - An app's own popups over its window (menus, lists, autofill panels) are checked for secret fields only when the
   system's accessibility lists them as windows; macOS menus and some Windows popups aren't, and are pictured as they
   are.
+- On Windows and macOS, text you select in a web page doesn't go with what you ask: Ember notes the page you were in,
+  not what you selected there.
 - On Windows and macOS, tools that work by capturing the screen (TeamViewer, AnyDesk, Quick Assist, VNC, magnifiers)
   show a blank space where the command window and Ember's small cards are: they are left out of screen captures, so
   no other app records a command's output or a card. Remote Desktop shows them.
