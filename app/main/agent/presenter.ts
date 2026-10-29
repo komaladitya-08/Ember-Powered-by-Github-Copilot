@@ -8,7 +8,7 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
-import { WHOLE_UNREAD_SAID, plainMarkdown } from "@ember/bubble";
+import { WHOLE_KEY_HINT, WHOLE_KEY_SAY, WHOLE_UNREAD_SAID, plainMarkdown } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../commands/flow";
 import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
 
@@ -95,6 +95,20 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   if (/^\(?4\d\d\)?$/.test(short)) return `${who} refused that request (${short.replace(/[()]/g, "")}). Try asking in other words.`;
   // Anything else: no raw text (it reads as a code error, and is spoken when speech is on); the caller logs it.
   return `${who} reported a problem. Try again; if it keeps happening, check ${ctx.provider ? "the model service" : "Copilot"} ${inSettings(true)}.`;
+}
+
+/**
+ * The question keys' words while a question's whole text waits to be read (review #116): the approve key's "allow"
+ * becomes what it does then ("Ctrl+Alt+Y shows the next part", "Control Alt Y to show the next part"), named by the chord
+ * Ember holds; the others as they are. An approve key whose words don't end so is left out: never said to allow.
+ */
+export function readKeyWords(keys: readonly { which: "primary" | "deny"; hint: string; say: string }[]): { hint: string; say: string }[] {
+  return keys.flatMap(k => {
+    if (k.which !== "primary") return [{ hint: k.hint, say: k.say }];
+    const hint = /^(.+) allow$/.exec(k.hint)?.[1];
+    const say = /^(.+) to allow$/.exec(k.say)?.[1];
+    return hint && say ? [{ hint: `${hint} ${WHOLE_KEY_HINT}`, say: `${say} ${WHOLE_KEY_SAY}` }] : [];
+  });
 }
 
 /**

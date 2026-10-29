@@ -24,7 +24,6 @@ import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSen
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
-import { WHOLE_KEY_HINT, WHOLE_KEY_SAY } from "@ember/bubble";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -56,7 +55,7 @@ import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
-import { expandedBubble, questionAloud, readTimeOf } from "./agent/presenter";
+import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
@@ -844,7 +843,7 @@ function start(): void {
     const words = targets?.questionWords(q.question) ?? null;
     // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
     // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
-    const aloud = questionAloud(q.question, { keys: heldKeys().map(k => (q.question.detail && k.which === "primary" ? `${sc.allow.say} ${WHOLE_KEY_SAY}` : k.say)), spoken: spokenText });
+    const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
@@ -1670,7 +1669,7 @@ function start(): void {
       onChange: questionChanged,
       keyHint: questionKeyHint,
       // Until a question's whole text has all been shown, the approve key shows its next part (review #116).
-      readKeyHint: () => { holdQuestionKeys(); return heldKeys().map(k => (k.which === "primary" ? `${sc.allow.label} ${WHOLE_KEY_HINT}` : k.hint)).join(" · ") || undefined; },
+      readKeyHint: () => { holdQuestionKeys(); return readKeyWords(heldKeys()).map(k => k.hint).join(" · ") || undefined; },
       // A question shown in a window of Ember's own (a command, a consent card): the keys allow it only while that window
       // shows all of it (R7).
       panelReady: n => targets?.panelReady(n) ?? false,

@@ -223,10 +223,21 @@ describe("the pages' word that a whole text was read", () => {
     const { WHOLE_KEY_HINT, WHOLE_KEY_SAY } = await import("@ember/bubble");
     expect(WHOLE_KEY_HINT).toBe("shows the next part");
     expect(WHOLE_KEY_SAY).toBe("to show the next part");
-    // The same keys Ember holds, the approve key's words swapped: "Ctrl+Alt+Y shows the next part · Ctrl+Alt+N not now".
-    expect(MAIN).toContain("readKeyHint: () => { holdQuestionKeys(); return heldKeys().map(k => (k.which === \"primary\" ? `${sc.allow.label} ${WHOLE_KEY_HINT}` : k.hint)).join(\" · \") || undefined; },");
-    // Spoken: "Press Control Alt Y to show the next part, or Control Alt N for not now."
-    expect(MAIN).toContain("questionAloud(q.question, { keys: heldKeys().map(k => (q.question.detail && k.which === \"primary\" ? `${sc.allow.say} ${WHOLE_KEY_SAY}` : k.say)), spoken: spokenText })");
+    // The same keys Ember holds (whichever chord it holds), the approve key's words swapped.
+    expect(MAIN).toContain("readKeyHint: () => { holdQuestionKeys(); return readKeyWords(heldKeys()).map(k => k.hint).join(\" · \") || undefined; },");
+    expect(MAIN).toContain("questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText })");
+    const { readKeyWords } = await import("../../app/main/agent/presenter");
+    const held = [
+      { which: "primary" as const, hint: "Ctrl+Alt+Y allow", say: "Control Alt Y to allow" },
+      { which: "deny" as const, hint: "Ctrl+Alt+N not now", say: "Control Alt N for not now" },
+    ];
+    expect(readKeyWords(held)).toEqual([
+      { hint: "Ctrl+Alt+Y shows the next part", say: "Control Alt Y to show the next part" },
+      { hint: "Ctrl+Alt+N not now", say: "Control Alt N for not now" },
+    ]);
+    // A fallback chord is named as held; words that don't end as expected are left out, never said to allow.
+    expect(readKeyWords([{ ...held[0], hint: "Ctrl+Alt+Shift+Y allow", say: "Control Alt Shift Y to allow" }])[0]).toEqual({ hint: "Ctrl+Alt+Shift+Y shows the next part", say: "Control Alt Shift Y to show the next part" });
+    expect(readKeyWords([{ ...held[0], hint: "Ctrl+Alt+Y OK", say: "Control Alt Y for OK" }, held[1]])).toEqual([held[1]].map(({ hint, say }) => ({ hint, say })));
   });
 });
 
