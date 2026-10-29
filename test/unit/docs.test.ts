@@ -513,6 +513,7 @@ describe("README.md's Accessibility section, against the release it describes", 
 const ROUND2 = {
   auth2: /\n  wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
   lifecycle2: /const CARD_UNSHOWN = "/.test(read("app/main/targets/runtime.ts")),
+  perception2: fs.existsSync(path.resolve("app/main/perception/text-warm.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -538,6 +539,34 @@ describe("round 2's docs lines (lifecycle2)", () => {
     expect(notes).toContain(`"${unshown}" (when connecting, in the bubble with **Try again**)`);
     expect(notes).toMatch(/An old month that can't be removed[^.]*doesn't stop the other old months being pruned/);
     expect(notes).toMatch(/refuses keys and typing before it brings your window to the front/);
+  });
+});
+
+describe("round 2's docs lines (perception2)", () => {
+  it.runIf(ROUND2.perception2)("perception2: gives the typed text's limits, the policy stop's record and the font cache's marker", () => {
+    const policy = read("app/main/policy/policy.ts");
+    const shown = Number(/const TYPED_SHOWN = (\d+);/.exec(policy)?.[1]);
+    const head = Number(/const TYPED_HEAD = (\d+);/.exec(policy)?.[1]);
+    const tail = Number(/const TYPED_TAIL = (\d+);/.exec(policy)?.[1]);
+    const notes = flat(read("CHANGELOG.md"));
+    expect(notes).toContain(`Text over ${shown} characters shows its first ${head} and last ${tail} characters and its length`);
+    expect(notes).toContain(`A question about typing more than ${shown} characters shows only the start and end of the text and its length`);
+    const stopped = /what: "(Everything stopped: your organisation changed Ember's policy)"/.exec(read("app/renderer/home/copy.ts"))?.[1] ?? "";
+    expect(stopped).not.toBe("");
+    expect(notes).toContain(`**What Ember did** records "${stopped}"`);
+    expect(flat(section(read("docs/COMMANDS-WSL-SSH.md"), "6.2 Defaults and what fails closed"))).toContain(`records the stop as "${stopped}"`);
+    // The warm-up's marker (main.ts) and its log events (text-warm.ts), in §10.6, §11.6 and the troubleshooting tables.
+    expect(read("app/main/main.ts")).toMatch(/marker: path\.join\(userData, "text-warmed"\)/);
+    const warm = read("app/main/perception/text-warm.ts");
+    const dev = read("docs/DEVELOPING.md");
+    for (const s of ["10.6 Where Ember keeps things", "11.6 Where Ember keeps things"]) expect(section(dev, s)).toMatch(/ember[\\/]text-warmed` \|/);
+    for (const s of ["10.9 Troubleshooting", "11.8 Troubleshooting"]) {
+      for (const ev of ["text_warm.done", "text_warm.failed", "text_warm.marker_failed"]) {
+        expect(warm).toContain(`"${ev}"`);
+        expect(section(dev, s), `${s} ${ev}`).toContain(`\`${ev}\``);
+      }
+    }
+    expect(flat(section(read("docs/COMMANDS-WSL-SSH.md"), "4.4 build-01's screen"))).toContain("even for a request already under way: it doesn't describe the screen, open apps on it or change its settings");
   });
 });
 

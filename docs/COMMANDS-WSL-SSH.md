@@ -523,16 +523,17 @@ first click **Allow**.
 - **Every step there is asked**, Ember never borrows build-01's mouse and keyboard, and you aren't shown its screen.
   Screenshots taken there are masked on build-01 (never-look windows, password fields) before they leave it, and go
   only to the model. A live view of the remote screen may come later.
-- **The screen locks, or that session stops being the active one**: the tasks using build-01's screen stop
-  ("build-01's screen locked, so I stopped working on its screen.", or "build-01's desktop session isn't active any
-  more, …"). A task that has only run commands there goes on: its command window is on this computer. A click on the
-  notice's **Stop**, a lost connection, **Disconnect** and the stop chord still stop everything there.
-  This computer's own screen is treated the same way: while it is locked, or its session isn't the one in front,
-  Ember doesn't listen for "Hey Ember", doesn't speak, takes no requests ("Your screen is locked, so I didn't take
-  that.") and doesn't read or act on this computer's screen (or a WSL app's window on it), and the tasks that have used
-  this computer's screen stop ("Your screen locked, so I stopped the task working on it.", once you're back); one that
-  has only run commands goes on. Listening starts again when you unlock it. Windows and macOS say when the screen locks;
-  on Linux, logind does (GNOME sets its LockedHint), watched with `gdbus monitor`, or read every 5 s without gdbus.
+- **The screen locks, or that session stops being the active one**: the tasks using build-01's screen stop ("build-01's
+  screen locked, so I stopped working on its screen.", or "build-01's desktop session isn't active any more, …"). A task
+  that has only run commands there goes on: its command window is on this computer. A click on the notice's **Stop**, a
+  lost connection, **Disconnect** and the stop chord still stop everything there. This computer's own screen is treated
+  the same way: while it is locked, or its session isn't the one in front, Ember doesn't listen for "Hey Ember", doesn't
+  speak, takes no requests ("Your screen is locked, so I didn't take that.") and doesn't read or act on this computer's
+  screen (or a WSL app's window on it), even for a request already under way: it doesn't describe the screen, open apps
+  on it or change its settings; and the tasks that have used this computer's screen stop ("Your screen locked, so I
+  stopped the task working on it.", once you're back); one that has only run commands goes on. Listening starts again
+  when you unlock it. Windows and macOS say when the screen locks; on Linux, logind does (GNOME sets its LockedHint),
+  watched with `gdbus monitor`, or read every 5 s without gdbus.
 - **No desktop, or only a VNC or xrdp session**: commands only ("build-01's desktop is a remote session: Ember will run
   commands only."). VNC and xrdp desktops aren't used because Ember can't be sure who sees its notice there.
 - **Wayland**: reading and using controls only, no screenshots. Until Ember's own test of it passes, a Wayland desktop
@@ -702,10 +703,11 @@ Example for a fleet that allows SSH to build hosts, commands with questions on r
 A locked-down Ember (a broken policy) also connects to no model service, neither GitHub Copilot nor the organisation's
 own endpoint, and prunes nothing from the audit log, until the policy reads fine again.
 
-Ember reads the PC's policy again every 10 seconds, as the helper on a remote does. When what it says changes (tightened,
-repaired, added or removed) and the next read says so too, Ember stops everything, holds itself locked down as above,
-and asks the user to restart it; the restart reads the new policy whole. One read that differs (a file caught mid-write)
-is let pass when the next one says what the policy said before; three reads in a row that differ count as a change.
+Ember reads the PC's policy again every 10 seconds, as the helper on a remote does. When what it says changes
+(tightened, repaired, added or removed) and the next read says so too, Ember stops everything, holds itself locked down
+as above, and asks the user to restart it; the restart reads the new policy whole. One read that differs (a file caught
+mid-write) is let pass when the next one says what the policy said before; three reads in a row that differ count as a
+change. **What Ember did** records the stop as "Everything stopped: your organisation changed Ember's policy".
 
 **An older Ember locks down when it reads a policy with these keys.** The policy schema is strict, so an Ember from
 before this release reads `commands`, `ssh`, `features.wsl` or `features.ssh` as a mistake and locks down (no actions,

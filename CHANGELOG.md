@@ -18,6 +18,11 @@ the work in your real apps where you can watch, without taking over your mouse. 
 - **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), and every
   time before sending, deleting, paying and the like. It never types into password, payment or terminal fields. The
   stop shortcut, "Ember, stop" and **Stop everything** stop everything at once.
+- **Questions show what will be typed**: text Ember is about to type shows as it will be typed, real double quotes
+  (a formula's `=IF(A1="x";1;0)`), emoji and spaces included, with a line break shown as ⏎ and a tab as ⇥. Other
+  quote marks, quote marks set side by side (’’), and characters that show nothing or reorder text are marked in ⟨ ⟩
+  (⟨”⟩, ⟨’’⟩, ⟨ZWSP⟩). Text that holds quote marks says how long it is right after the quote, so typed text can't
+  pass for Ember's own words. Text over 160 characters shows its first 110 and last 40 characters and its length.
 - **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`
   or `GITHUB_TOKEN`, or the GitHub CLI's sign-in, works too: a sign-in Copilot refuses gives way to the next, and the
   message names it.
@@ -240,7 +245,10 @@ allows them.
 
 #### Safety and privacy
 
-- Every setting changed in GNOME Settings, Windows Settings or macOS System Settings asks first, every time.
+- Every setting changed in GNOME Settings, Windows Settings or macOS System Settings asks first, every time. On a Mac
+  in German, and in any language where Apple writes an app's name with a soft hyphen, Ember recognises System
+  Settings and security apps by that name and asks before every setting it changes there; the never-look list matches
+  such names however they are written.
 - In File Explorer and Finder, Ember never opens an item whose name shows no file type, because it may be a program,
   and it asks every time before opening one that shows a document's type. Folders are opened by their path, from
   Explorer's navigation pane, or from Finder's sidebar places.
@@ -248,12 +256,12 @@ allows them.
   Screen Sharing, UTM, Parallels, VMware, VirtualBox…) are treated like Windows' Remote Desktop: Ember never acts in
   them and blacks them out of screenshots.
 - While this computer's screen is locked, or another session is in front, Ember doesn't listen for "Hey Ember",
-  doesn't speak, takes no requests ("Your screen is locked, so I didn't take that.") and doesn't read or act on the
-  screen. Tasks that used the screen stop, and are reported once you're back; a task running only commands goes on.
+  doesn't speak, takes no requests ("Your screen is locked, so I didn't take that.") and doesn't read this computer's
+  screen, open apps on it or change its settings, even for a request already under way. Tasks that used the screen
+  stop, and are reported once you're back; a task running only commands goes on.
 - On Linux, Ember refuses Ctrl+Alt with a key not named in Latin letters (another script's letter, or an accented
   one), which another keyboard layout could put on Ctrl+Alt+T or on Ember's own shortcuts.
-- A question about text Ember would type shows the text whole up to 160 characters, and longer ones by their start,
-  their end and their length. Quote marks in names can't rewrite the question, and a slider's new value is quoted.
+- Quote marks in names can't rewrite a question, and a slider's new value is quoted.
 - Secret fields are recognised by more words: wallet seed and recovery phrases, "6-digit code" and other two-factor
   prompts, security, session, refresh and ID tokens, master and SSH keys, JWTs, webhook, private, GPG and SSH signing
   keys, and show-password switches in Korean, Danish, Norwegian, Hungarian, Romanian, Greek, Vietnamese, Indonesian,
@@ -263,7 +271,9 @@ allows them.
   windows on your never-look list and password prompts are never read. The list is in settings, and common password
   managers are on it already."), and say that the audit record includes what you asked each task to do and how it
   went.
-- A screenshot of a window Ember can't find takes no picture, and says only that the window can't be found.
+- A screenshot of a window Ember can't find takes no picture, and says only that the window can't be found. On
+  Windows and macOS, the first screenshot with Ember's marks on a new computer doesn't wait seconds for the font
+  cache: Ember builds it once in the background shortly after it starts.
 - DevTools can't be opened in an installed Ember.
 
 #### Ember on screen
@@ -387,6 +397,7 @@ allows them.
   is fixed. An unknown key's message says this Ember may be older than the policy.
 - Ember reads the policy again every 10 seconds. When it changes, and the next read confirms it, Ember stops
   everything and stays locked down until the user clicks **Restart Ember**, which reads the new policy whole.
+  **What Ember did** records "Everything stopped: your organisation changed Ember's policy".
 - `confirmEveryAction` asks before every command too, on this computer, in WSL and over SSH.
 - The RPM's example policy (`/usr/share/doc/ember/policy.example.json`) turns commands on for this computer, WSL and
   SSH, and has notes beside it (`policy.README`).
@@ -398,6 +409,8 @@ allows them.
   again.
 - On Linux, Ember needs GNOME on Xorg. In a Wayland session it says so, takes no screenshots and doesn't borrow the
   mouse or keyboard; reading apps still works.
+- A question about typing more than 160 characters shows only the start and end of the text and its length: you
+  can't see the middle before you allow it yet.
 - A granted browser has no confirmation for new domains or downloads, and the policy has no domain rules.
 - An app's own popups over its window (menus, lists, autofill panels) are checked for secret fields only when the
   system's accessibility lists them as windows; macOS menus and some Windows popups aren't, and are pictured as they

@@ -267,8 +267,9 @@ Environment variables for development:
 | `EMBER_TEST_ALLOW_LOOPBACK_SSH=1` | Development only: lets Ember connect over SSH to this same computer (`127.0.0.1`), for the SSH tests (§14.5) |
 | `EMBER_REMOTE_DEV=1` | For the remote agent only: lets `ember-remote.cjs` run from a checkout's `dist/remote` instead of a verified install (§14.5); an installed agent ignores it |
 
-Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json`
-(matched against app name and window title; password managers and polkit are listed by default).
+Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json` (matched against app name
+and window title, ignoring characters that show nothing, such as a soft hyphen, and accents written apart; password
+managers and polkit are listed by default).
 
 ### For administrators: `/etc/ember/policy.json`
 
@@ -652,6 +653,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | The compiled accessibility helper | `%LOCALAPPDATA%\ember\uia-cache\` |
 | SSH's compiled password helper (OpenSSH 8.4 or newer) | `%LOCALAPPDATA%\ember\ssh\ember-askpass.exe` |
 | Node.js downloaded for other computers | `%LOCALAPPDATA%\ember\remote\runtime\` |
+| A marker that the marks' font cache was built for this version of Ember | `%LOCALAPPDATA%\ember\text-warmed` |
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
 
@@ -803,6 +805,7 @@ shortcuts**.
 | Ember won't borrow the mouse for a window | The window's program runs as administrator; Windows would drop Ember's input |
 | Ember can't open an app by name | Store (MSIX) apps that have no Start menu shortcut, such as the new Teams, can't be opened by name yet |
 | Ember refuses to act in a window | A Remote Desktop or WSL window (§10.8) |
+| The first screenshot with marks waits for the font cache | About 10 s after start (60 s at login), Ember draws one mark's text with sharp so that fontconfig builds its cache before the first marked screenshot. The log says `text_warm.done` (with ms), `text_warm.failed` (tried again at the next start) or `text_warm.marker_failed`. It never runs for `--doctor`. Delete `text-warmed` (§10.6) to make it run again |
 | Ember won't open a file or folder in File Explorer | File Explorer hides file types, so a program can show as "setup": Ember never opens an item whose name shows no type, and asks every time before opening one that shows a document's. Folders are opened by their path (the address box) or from the navigation pane |
 
 ## 11. macOS
@@ -967,6 +970,7 @@ Gatekeeper does on first start.
 | Audit log: every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days; the file only: no copy goes to the system log) | `~/Library/Application Support/ember/audit/audit-YYYY-MM.jsonl` |
 | Speech models | `~/Library/Application Support/ember/models/`, or bundled: `Ember.app/Contents/Resources/voice-models`, then `/Library/Application Support/Ember/voice-models` |
 | SSH's password helper, and Node.js downloaded for other computers | `~/Library/Application Support/ember/ssh/`, `~/Library/Application Support/ember/remote/runtime/` |
+| A marker that the marks' font cache was built for this version of Ember | `~/Library/Application Support/ember/text-warmed` |
 | **Start Ember when I log in** | A login item for Ember.app (**System Settings › General › Login Items**) |
 
 A copy run from the dmg or from Downloads is moved by macOS to a temporary place before it starts (App Translocation),
@@ -1023,6 +1027,7 @@ Run from Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` repor
 | Ember won't type, and says to switch to a keyboard layout | An input method (Japanese, Pinyin, Korean…) is selected, and it would compose from Ember's keys. Choose a keyboard layout; Ember can still fill fields directly |
 | **Start Ember when I log in** doesn't stick | Allow Ember in **System Settings › General › Login Items**; a copy outside Applications can't register |
 | Ember can't reach your organisation's AI service on the local network (macOS 15) | Allow Ember under **Privacy & Security › Local Network** |
+| The first screenshot with marks waits for the font cache | About 10 s after start (60 s at login), Ember draws one mark's text with sharp so that fontconfig builds its cache before the first marked screenshot. The log says `text_warm.done` (with ms), `text_warm.failed` (tried again at the next start) or `text_warm.marker_failed`. It never runs for `--doctor`. Delete `text-warmed` (§11.6) to make it run again |
 | Ember won't open a file or folder in Finder | Finder hides file types (an app's `.app` always), so Ember never opens an item whose name shows no type, and asks every time before opening one that shows a document's. It opens the sidebar's places by name (Recents, Applications, Desktop, Documents, Downloads, iCloud Drive, the startup disk, Network…); the home folder, other disks, servers, folders you added to the sidebar and folders in the window itself are opened by their path (**Go › Go to Folder**) |
 
 ## 12. Working on the platform layer
