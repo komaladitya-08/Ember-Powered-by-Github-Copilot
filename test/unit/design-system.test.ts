@@ -142,7 +142,8 @@ describe("the keyboard focus ring", () => {
 describe("shape", () => {
   it("rounds corners only from the radius tokens (or a circle, a capsule's half, or what a parent passes on)", () => {
     const sources = [shared, BUBBLE_CSS, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
-    const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|50%|0|inherit|1px)$/;
+    // A capsule's half grows with the text size too, as the field it rounds does (the Ask box's: review #57).
+    const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|calc\(\(var\(--r-[a-z]+\) \+ \d+px\) \* var\(--text-scale\)\)|50%|0|inherit|1px)$/;
     for (const css of sources) for (const [, v] of css.matchAll(/border-radius: ([^;]+);/g)) expect(v, v).toMatch(ok);
   });
 });

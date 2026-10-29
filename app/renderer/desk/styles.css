@@ -3,9 +3,10 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color:
 body { display: flex; flex-direction: column; box-sizing: border-box; border: 1px solid var(--separator); }
 body.control:has(#screen:focus) { border-color: var(--accent); }
 /* The bar: what Ember works in, and its controls. One line at any width (the title shortens, then the hint goes);
-   30 px tall, as view.ts's window sizes expect (a 16:10 picture under it). */
+   30 px tall at the default text size, and taller by the text's scale, as view.ts's window sizes expect (a 16:10
+   picture under it, which keeps its size). */
 header {
-  box-sizing: border-box; display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 3px 3px 3px 11px; -webkit-app-region: drag;
+  box-sizing: border-box; display: flex; align-items: center; gap: 8px; min-height: calc(30px * var(--text-scale)); padding: 3px 3px 3px 11px; -webkit-app-region: drag;
   background: var(--glass-solid); box-shadow: inset 0 -1px 0 var(--separator); white-space: nowrap;
 }
 header .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent); }
@@ -15,10 +16,10 @@ header b { flex: none; font-weight: 600; letter-spacing: -0.003em; }
 /* Taken over: the way back matters more than the names, which make room for it. */
 body.control header b, body.control #title { display: none; }
 body.control #hint { display: inline; flex: 1; }
-/* Small capsules (24 px) with an edge of 3:1 or more (WCAG 1.4.11). */
+/* Small capsules (24 px at the default text size) with an edge of 3:1 or more (WCAG 1.4.11). */
 button {
   all: unset; flex: none; -webkit-app-region: no-drag; cursor: pointer; box-sizing: border-box;
-  min-height: 24px; padding: 3px 10px; border-radius: var(--r-capsule); font: 600 12px/16px var(--ember-font); text-align: center;
+  min-height: calc(24px * var(--text-scale)); padding: 3px 10px; border-radius: var(--r-capsule); font: 600 12px/16px var(--ember-font); text-align: center;
   background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 @media (hover: hover) { button:hover { background: rgba(255, 255, 255, 0.15); } }
@@ -34,6 +35,12 @@ body.control #screen:focus-visible { outline: none; }
 /* No picture until the first frame: an <img> without one shows a broken-image icon. */
 body:not(.live) #screen { visibility: hidden; }
 body.control #screen { cursor: crosshair; }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): the bar's words and buttons grow with the type,
+   and main's view.ts grows the window by the bar (deskViewBounds). */
+html[data-text-size] button { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] #hide { width: calc(24px * var(--text-scale)); font-size: calc(11px * var(--text-scale)); }
+html[data-text-size] header .dot { width: calc(8px * var(--text-scale)); height: calc(8px * var(--text-scale)); }
 
 /* Windows contrast themes (forced colours; tokens and focus in ember.css): the bar's buttons keep their edges. */
 @media (forced-colors: active) {

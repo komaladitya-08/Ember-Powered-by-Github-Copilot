@@ -3,7 +3,8 @@ body { font: var(--type-body); color: var(--label); }
 /* Inset enough that the shadow fits inside the window (no clipped rectangle around it). The window is 92 px tall
    (main's ask.ts): 10 + field 46 + 4 + hint line 21 + 11 px, 24 px taller for each line the field grows, 24 px
    taller again (4 + the note's 20) while the note says a paste was cut, and again while the tip says to wait for the
-   box (its first openings on Windows and macOS). */
+   box (its first openings on Windows and macOS). Those are the default text size's: the field, the line under it and
+   each row grow with the text size (the twins at the end). */
 .ask { position: absolute; inset: 10px; display: flex; flex-direction: column; gap: 4px; }
 /* The field: a glass capsule with Ember's flame at its start, as Spotlight. It is always focused while open, so its
    focus shows quietly: a firmer rim and the accent caret, no glow. */
@@ -71,6 +72,22 @@ html.opaque body { box-shadow: var(--glass-rim); }
 html.opaque textarea { background: rgba(255, 255, 255, 0.05); border-color: var(--separator); box-shadow: none; }
 html.opaque textarea:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
 html.opaque .meta, html.opaque .cut, html.opaque .tip { background: transparent; border-color: transparent; }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): the field and the line under it grow with the
+   type, all but the window's 10 px insets, and main grows the window by the same scale (ask.ts askSize, 24 px a row
+   times it; field.ts measures the field's lines at it). */
+html[data-text-size] .field { flex-basis: calc(46px * var(--text-scale)); }
+html[data-text-size] .glyph { left: calc(18px * var(--text-scale)); top: calc(14px * var(--text-scale)); width: calc(18px * var(--text-scale)); height: calc(18px * var(--text-scale)); }
+html[data-text-size] textarea {
+  padding: calc(11px * var(--text-scale)) calc(20px * var(--text-scale)) calc(11px * var(--text-scale)) calc(46px * var(--text-scale));
+  border-radius: calc((var(--r-xl) + 5px) * var(--text-scale)); font-size: calc(18px * var(--text-scale)); line-height: calc(24px * var(--text-scale));
+}
+html[data-text-size] .meta { line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .meta kbd { font-size: calc(10.5px * var(--text-scale)); line-height: calc(13px * var(--text-scale)); }
+html[data-text-size] .eye { width: calc(13px * var(--text-scale)); height: calc(13px * var(--text-scale)); }
+html[data-text-size] .where { max-width: calc(240px * var(--text-scale)); }
+html[data-text-size] .where.tight { max-width: calc(150px * var(--text-scale)); }
+html[data-text-size] .cut, html[data-text-size] .tip { line-height: calc(16px * var(--text-scale)); }
 
 /* Windows contrast themes (forced colours; tokens in ember.css): the computer a request goes to is set apart by its
    weight (the highlight is no text colour). */

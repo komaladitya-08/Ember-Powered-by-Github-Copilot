@@ -13,10 +13,17 @@ import { x11WindowId } from "./platform/linux/window-system";
 import { pageUrl } from "./page-url";
 
 const appDir = __dirname;
+/** The box at the default text size. */
 const SIZE = { width: 560, height: 92 };
 /**
- * The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines; the
- * note that a paste was cut and the tip to wait for the box take one more row of the same height each (MAX_ROWS).
+ * Of its 92 px, what grows with the text size (Settings > Comfort & access): the field's line (46 px) and the line under
+ * it (17 px); the insets, the gap between them and that line's padding (29 px) keep theirs (renderer/ask/styles.css).
+ */
+const GROWS = 46 + 17;
+/**
+ * The field grows a line at a time (its line height, at the text size), up to MAX_LINES, as the user types or pastes
+ * several lines; the note that a paste was cut and the tip to wait for the box take one more row of the same height
+ * each (MAX_ROWS).
  */
 const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 2;
 /** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
@@ -42,26 +49,47 @@ const LATE_MS = 1500;
 const MENU_SETTLE_MS = 120;
 
 type Box = { x: number; y: number; width: number; height: number };
+
+/** A text scale as given (page-prefs.ts textScale: 1, 1.15 or 1.3), or the default's 1 when it can't be read. */
+const scaleOf = (scale: number): number => (Number.isFinite(scale) && scale > 0 ? scale : 1);
+
+/**
+ * The box's size at the text's scale (`scale`: page-prefs.ts textScale), one line tall: as wide as its words grow, and
+ * as tall as its field and the line under it at that size (560 × 92 at the default size, 644 × 101 at Large and
+ * 728 × 111 at Larger).
+ */
+export function askSize(scale = 1): { width: number; height: number } {
+  const s = scaleOf(scale);
+  return { width: Math.round(SIZE.width * s), height: Math.round(SIZE.height + GROWS * (s - 1)) };
+}
+
+/** The box's size at `scale` on work area `wa`: no wider than it (with its gaps), never narrower than the usual box. */
+function sizeIn(wa: Box, scale: number): { width: number; height: number } {
+  const size = askSize(scale);
+  return { ...size, width: Math.max(SIZE.width, Math.min(size.width, wa.width - 2 * GAP)) };
+}
+
 const overlap = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
 
 /**
  * Where the box goes (global DIP): centred over Ember (`near`: its centre, and its size in px), with its hint row
  * clear of Ember's head; below Ember when there's no room above (Ember near the top of the screen); without
  * `near`, low in the middle of the work area. Always inside the work area, and clear of `keepOff` (Ember's
- * handle in the corner): above it, else beside it.
+ * handle in the corner): above it, else beside it. `scale`: the text's (askSize).
  */
-export function askBounds(near: { x: number; y: number; size?: number } | null, wa: Box, keepOff?: Box | null): Box {
+export function askBounds(near: { x: number; y: number; size?: number } | null, wa: Box, keepOff?: Box | null, scale = 1): Box {
+  const box = sizeIn(wa, scale);
   const size = near?.size ?? EMBER_SIZE;
-  const top = wa.y + GAP, bottom = wa.y + wa.height - SIZE.height - GAP;
-  const left = wa.x + GAP, right = wa.x + wa.width - SIZE.width - GAP;
-  let y = wa.y + wa.height - SIZE.height - 90;
+  const top = wa.y + GAP, bottom = wa.y + wa.height - box.height - GAP;
+  const left = wa.x + GAP, right = wa.x + wa.width - box.width - GAP;
+  let y = wa.y + wa.height - box.height - 90;
   if (near) {
-    const above = near.y - SIZE.height - Math.max(18, size * 0.5 - 8);
+    const above = near.y - box.height - Math.max(18, size * 0.5 - 8);
     const below = near.y + size * 0.6;
     y = above >= top || below > bottom ? above : below;
   }
-  const x = near ? near.x - SIZE.width / 2 : wa.x + (wa.width - SIZE.width) / 2;
-  const b = { ...SIZE, x: Math.round(Math.min(Math.max(x, left), right)), y: Math.round(Math.min(Math.max(y, top), bottom)) };
+  const x = near ? near.x - box.width / 2 : wa.x + (wa.width - box.width) / 2;
+  const b = { ...box, x: Math.round(Math.min(Math.max(x, left), right)), y: Math.round(Math.min(Math.max(y, top), bottom)) };
   return clearOf(b, wa, keepOff);
 }
 
@@ -77,10 +105,11 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
 /**
  * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the note's when a paste was cut, the tip's):
  * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
- * inside the work area and clear of `keepOff`.
+ * inside the work area and clear of `keepOff`. `scale`: the text's (askSize), by which each row is taller too.
  */
-export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?: Box | null): Box {
-  const height = SIZE.height + (Math.min(MAX_ROWS, Math.max(1, Math.round(rows))) - 1) * LINE;
+export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?: Box | null, scale = 1): Box {
+  const extra = Math.min(MAX_ROWS, Math.max(1, Math.round(rows))) - 1;
+  const height = askSize(scale).height + Math.round(extra * LINE * scaleOf(scale));
   const top = wa.y + GAP, bottom = wa.y + wa.height - height - GAP;
   const y = up ? b.y + b.height - height : b.y;
   return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
@@ -142,11 +171,12 @@ export class AskWindow {
    * `windowId`: the box's id in the window system's id space (default: its X id), 0 when it can't be told.
    * `floating`: the platform's window options and workspace rule (default: today's Linux window). `os`: the page names
    * its keys as this OS does (Return on a Mac). `onKeyboard`: the first time Electron says the box has the keyboard
-   * after each reveal (letters typed before went elsewhere where Ember holds no keys: review #78).
+   * after each reveal (letters typed before went elsewhere where Ember holds no keys: review #78). `textScale`: the
+   * text's scale now (page-prefs.ts textScale; default 1): the box is as large as its words at that size (review #57).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
-    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void;
+    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
   } = {}) {}
 
   /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
@@ -154,11 +184,16 @@ export class AskWindow {
     try { return (this.o.windowId ?? x11WindowId)(win); } catch { return 0; }
   }
 
+  /** The text's scale now (the default's 1 when it can't be told; askSize reads a bad one as 1 too). */
+  private scale(): number {
+    try { return this.o.textScale?.() ?? 1; } catch { return 1; }
+  }
+
   /** Makes the box ahead of time (hidden), so the first Ctrl+Alt+Space opens it at once. */
   prepare(): void {
     if (this.win && !this.win.isDestroyed()) return;
     const display = screen.getPrimaryDisplay();
-    this.build(askBounds(null, display.workArea, this.keepOff()));
+    this.build(askBounds(null, display.workArea, this.keepOff(), this.scale()));
   }
 
   private build(bounds: Box): BrowserWindow {
@@ -242,10 +277,12 @@ export class AskWindow {
     this.wanted = true;
     this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
-    let bounds = askBounds(near, display.workArea, this.keepOff());
+    // As large as its words at the text size now (it is hidden while Settings changes it, so each opening is sized here).
+    const scale = this.scale();
+    let bounds = askBounds(near, display.workArea, this.keepOff(), scale);
     this.up = !near || bounds.y + bounds.height <= near.y;
     // Saying to wait for it: a row taller from the start, so it doesn't grow once shown.
-    if (this.context.tip) bounds = grownBounds(bounds, 2, display.workArea, this.up, this.keepOff());
+    if (this.context.tip) bounds = grownBounds(bounds, 2, display.workArea, this.up, this.keepOff(), scale);
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
@@ -283,7 +320,7 @@ export class AskWindow {
   fit(rows: number): void {
     if (!this.win || this.win.isDestroyed()) return;
     const b = this.win.getBounds();
-    const next = grownBounds(b, rows, screen.getDisplayMatching(b).workArea, this.up, this.keepOff());
+    const next = grownBounds(b, rows, screen.getDisplayMatching(b).workArea, this.up, this.keepOff(), this.scale());
     if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
   }
 

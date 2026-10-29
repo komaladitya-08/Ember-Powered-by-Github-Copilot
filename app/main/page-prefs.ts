@@ -16,15 +16,12 @@ export interface PagePrefs {
 }
 
 const TEXT_SIZES: readonly Settings["textSize"][] = ["default", "large", "larger"];
-/**
- * The pages whose type keeps its size: the Ask box (a 92 px window whose field is already 18 px) and the desk view's
- * 30 px bar. Their windows can't grow with their words.
- */
-const FIXED_TYPE = new Set(["ask", "desk", "mic"]);
+/** The pages whose type keeps its size: the microphone's page, which shows no words. */
+const FIXED_TYPE = new Set(["mic"]);
 
 /**
  * How much the text grows at each size (ember.css's --text-scale): the windows sized for their words (the handle's
- * pill, the command and prompt windows) grow by it too.
+ * pill, the Ask box, the desk view's bar, the command and prompt windows) grow by it too (review #57).
  */
 const TEXT_SCALE: Readonly<Record<Settings["textSize"], number>> = { default: 1, large: 1.15, larger: 1.3 };
 

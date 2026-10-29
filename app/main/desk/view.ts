@@ -16,8 +16,11 @@ import { revive } from "../revive";
 import { pageUrl } from "../page-url";
 
 const appDir = path.join(__dirname);
+/** The view at the default text size: its 30 px bar (BAR) over a 16:10 picture. */
 const SMALL = { width: 340, height: 238 };
 const LARGE = { width: 980, height: 646 };
+/** The bar's height at the default text size (renderer/desk/styles.css): it grows with the text size, the picture doesn't. */
+const BAR = 30;
 /** Gap to the screen's edges. */
 const EDGE = 16;
 /** Gap kept between the view and Ember's handle beside it. */
@@ -33,11 +36,15 @@ const pillIn = (wa: Box): Box => ({ x: wa.x + wa.width - 212, y: wa.y + wa.heigh
  * bottom-left corner, as large as the work area allows (same shape, left of Ember's handle in the corner:
  * the pill, or the 360 px card without a compositor), and its bottom edge is always on screen.
  * `handle`: the handle's bounds (global DIP); the pill's place when not known or on another screen.
+ * `textScale`: the text's scale (page-prefs.ts textScale; 1 when it can't be read): the bar is taller by it.
  */
-export function deskViewBounds(b: Box, large: boolean, wa: Box, handle?: Box | null): Box {
+export function deskViewBounds(b: Box, large: boolean, wa: Box, handle?: Box | null, textScale = 1): Box {
   const h = handle && handle.x < wa.x + wa.width && handle.x + handle.width > wa.x && handle.y < wa.y + wa.height && handle.y + handle.height > wa.y
     ? handle : pillIn(wa);
-  const want = large ? LARGE : SMALL;
+  const usual = large ? LARGE : SMALL;
+  // The bar's words grow with the text size: the window grows by the bar, so the picture under it keeps its size.
+  const text = Number.isFinite(textScale) && textScale > 0 ? textScale : 1;
+  const want = { width: usual.width, height: usual.height + Math.max(0, Math.round(BAR * text) - BAR) };
   const scale = Math.min(1, (h.x - HANDLE_GAP - wa.x - EDGE) / want.width, (wa.height - 2 * EDGE) / want.height);
   const width = Math.max(1, Math.round(want.width * scale)), height = Math.max(1, Math.round(want.height * scale));
   const bottom = Math.min(Math.max(b.y + b.height, wa.y + height + EDGE), wa.y + wa.height - EDGE);
@@ -95,6 +102,8 @@ export class DeskView {
   private lentKeys = false;
   /** Gives the keyboard back to where the user was before taking over (see `userFocus`). */
   private focusBack: (() => void) | null = null;
+  /** The text's scale the window was last sized for (fitText resizes it when the setting changes). */
+  private sizedFor = 1;
 
   /**
    * `handleBounds`: where Ember's handle is now (global DIP), so the view keeps clear of it (the card without a
@@ -102,9 +111,13 @@ export class DeskView {
    * `userFocus`: called as the user takes over; what it returns gives the keyboard back to their window on hand back,
    * when the view still has it.
    * `windowId`: the view's id in the window system's id space (default: its X id), 0 when it can't be told.
+   * `textScale`: the text's scale now (page-prefs.ts textScale; default 1): the bar grows with it (review #57).
    */
   constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined,
-    private o: { lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void; windowId?: (w: BrowserWindow) => number } = {}) {
+    private o: {
+      lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void; windowId?: (w: BrowserWindow) => number;
+      textScale?: () => number;
+    } = {}) {
     ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
     ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
@@ -141,7 +154,7 @@ export class DeskView {
       const wa = screen.getPrimaryDisplay().workArea;
       const win = new BrowserWindow({
         // Bottom-left: the bottom-right corner is Ember's handle and its task cards.
-        ...deskViewBounds({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa, this.handle()),
+        ...this.boundsFor({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa),
         frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: "Ember's desk",
         backgroundColor: "#000000",
         webPreferences: { preload: path.join(appDir, "preload", "desk.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
@@ -192,12 +205,34 @@ export class DeskView {
     const win = this.win && !this.win.isDestroyed() ? this.win : null;
     if (!win) return;
     const b = win.getBounds();
-    const next = deskViewBounds(b, this.control, screen.getDisplayMatching(b).workArea, this.handle());
+    const next = this.boundsFor(b, this.control, screen.getDisplayMatching(b).workArea);
     if (next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height) win.setBounds(next);
+  }
+
+  /**
+   * The text size may have changed (main calls this whenever the settings do): the view, open or hidden, grows or
+   * shrinks by its bar from its foot. Left where it is when the size is the one it has (the user may have moved it).
+   */
+  fitText(): void {
+    if (this.scale() !== this.sizedFor) this.handleMoved();
   }
 
   private handle(): Box | null {
     try { return this.o.handleBounds?.() ?? null; } catch { return null; }
+  }
+
+  /** The text's scale now (the default's 1 when it can't be told). */
+  private scale(): number {
+    try {
+      const s = this.o.textScale?.() ?? 1;
+      return Number.isFinite(s) && s > 0 ? s : 1;
+    } catch { return 1; }
+  }
+
+  /** deskViewBounds at the text size now, which the window is then sized for. */
+  private boundsFor(b: Box, large: boolean, wa: Box): Box {
+    this.sizedFor = this.scale();
+    return deskViewBounds(b, large, wa, this.handle(), this.sizedFor);
   }
 
   /** Gives the desk back to Ember (the kill switch calls this too). */
@@ -232,7 +267,7 @@ export class DeskView {
     if (changed) {
       const b = win.getBounds();
       // Grows up and to the right from its bottom-left corner, as large as the screen allows, staying on it.
-      win.setBounds(deskViewBounds(b, on, screen.getDisplayMatching(b).workArea, this.handle()));
+      win.setBounds(this.boundsFor(b, on, screen.getDisplayMatching(b).workArea));
       if (on) {
         try { this.focusBack = this.o.userFocus?.() ?? null; } catch { this.focusBack = null; }
         win.focus();

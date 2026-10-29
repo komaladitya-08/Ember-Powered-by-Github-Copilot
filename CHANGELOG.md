@@ -46,9 +46,9 @@ the work in your real apps where you can watch, without taking over your mouse. 
 - **Ember's desk** (Linux): a private display where Ember uses a full mouse and keyboard out of your way, which you
   can watch and take over.
 - **Accessibility**: Ember works from the keyboard and with screen readers (README.md has every route). Settings ›
-  **Comfort & access** has **Text size** (Default, Large, Larger: settings, the bubble, task cards, the handle, the
-  command window and the password and consent cards; the Ask box keeps its size), **Calm mode** and **More time to read
-  and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change it; a
+  **Comfort & access** has **Text size** (Default, Large, Larger: settings, the bubble, task cards, the handle, the Ask
+  box, the desk window's bar on Linux, the command window and the password and consent cards), **Calm mode** and
+  **More time to read and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change it; a
   running command keeps its columns and rows) and the height of buttons, pop-up buttons and text fields, so larger words
   keep their room. Windows' contrast themes are supported: switches, the slider, the chosen character, button edges,
   tabs, state symbols and keyboard focus stay visible, and first run's **Start Ember** row stays opaque at the window's
@@ -332,6 +332,7 @@ allows them.
   appears still go to the app underneath (on Linux, Ember holds them for the box), so the first five times it opens
   there it says to wait for it before typing. Letters typed into it as it opens are kept: what was left in it from
   last time is selected when it closes, not as it opens.
+- It follows **Text size**: at Large and Larger the box is wider, and its words and lines are larger.
 
 #### Voice
 

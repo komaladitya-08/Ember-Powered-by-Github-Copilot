@@ -895,6 +895,8 @@ function start(): void {
     },
     // How long the box took to have the keyboard, by Electron's word: what was typed before went elsewhere (review #78).
     onKeyboard: () => log.info("ask.keyboard", { ms: Date.now() - askAsked }),
+    // As large as its words at the text size (review #57).
+    textScale: () => textScale(settings.get().textSize),
   });
   let agent: AgentHost | null = null;
   /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */
@@ -1359,6 +1361,8 @@ function start(): void {
   settings.onChange((s) => {
     overlay?.broadcastSettings(s);
     if (handle?.sendSettings(s)) deskViewRef?.handleMoved();
+    // The desk view's bar grows with the text size: the view fits it at once (only when the size changed).
+    deskViewRef?.fitText();
   });
   // "Start Ember when I log in" keeps the OS's login item (Linux: ~/.config/autostart/ember.desktop) in step: at start
   // only when it is on, then whenever it changes, so a start with it off removes nothing (review #85).
@@ -1721,6 +1725,8 @@ function start(): void {
         return () => giveFocusBack(back);
       },
       windowId: w => ownId(w),
+      // Its bar grows with the text size (review #57).
+      textScale: () => textScale(settings.get().textSize),
     });
     deskViewRef = deskView;
     let deskPlace: Promise<DeskPlace> | null = null;

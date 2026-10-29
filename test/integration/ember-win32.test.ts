@@ -14,7 +14,8 @@
  * straight after is printed (review #78: Windows has no typed-ahead hold; typeahead-probe.ts), with when Ember heard
  * the chord, showed the box and had the keyboard (its log), how many letters the bench got, and the box's tip to wait
  * for it (its first openings); then its right-click menu dismissed by a click on the bench leaves the bench the
- * keyboard (review #77).
+ * keyboard (review #77). Last, Ember started again with Text size set to Larger through its settings opens the box
+ * 728 × 111 DIP (142 with the tip's row), its page and field at that size (review #57; ask-size.ts).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -41,6 +42,7 @@ import { matchFrame } from "../../app/main/perception/windows";
 import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
 import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
+import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -435,6 +437,37 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       if (benchActive) expect(after?.visible, "the box after the click activated the bench").toBe(false);
       else expect(after?.visible && after.focused, "the box kept the keyboard (the menu swallowed the click)").toBe(true);
     } finally {
+      const proc = ember.process();
+      await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
+      if (proc.exitCode === null) proc.kill();
+    }
+  });
+
+  it("opens the ask box as large as its words at Larger text, its window wider and taller, the tip's row too (review #57)", async () => {
+    // Windows' box is a "toolbar" window without a resizing frame that, before the text size reached it, only ever
+    // changed height: this proves it takes the wider bounds (ask-size.ts: the steps handle-menu-live takes on Linux).
+    const main = path.join(root, "dist", "app", "main.cjs");
+    if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
+    const userData = path.join(dir, "ember-userData-text");
+    fs.mkdirSync(userData, { recursive: true });
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
+    const ember: ElectronApplication = await electron.launch({
+      executablePath: createRequire(import.meta.url)("electron") as unknown as string, args: [root, "--autostart"], timeout: 90_000,
+      env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData },
+    });
+    const inEmber: InEmber = (fn, arg) => ember.evaluate(fn as never, arg) as never;
+    try {
+      await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
+      const seen = await openAskAt(inEmber, "larger");
+      console.log(`the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
+      // 728 × 111 DIP, and a row of round(24 × 1.3) = 31 more while it says to wait for it (its first openings here).
+      expect(seen, JSON.stringify(seen)).toMatchObject(askWant("larger", seen.tip));
+      expect(seen.room, JSON.stringify(seen)).toBeGreaterThanOrEqual(8);
+    } finally {
+      await closeAsk(inEmber);
+      await setTextSize(inEmber, "default").catch(() => undefined);
       const proc = ember.process();
       await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
       if (proc.exitCode === null) proc.kill();

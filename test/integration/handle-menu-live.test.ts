@@ -3,8 +3,8 @@
  * picking "Ask Ember…" with the keyboard opens the ask box (review #67: a guard on menu-will-close, which Electron sends
  * just before the pick's click, swallowed every pick), and Esc on the menu opens nothing; the line under the ask box's
  * field keeps the window's name readable when it is crowded: a remote computer, what else is sent, a paste cut at the
- * limit (reviews #70, #74). Skipped without Xvfb, off Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8
- * CI, which builds first): there a missing one fails.
+ * limit (reviews #70, #74); the box is as large as its words at each text size (review #57). Skipped without Xvfb, off
+ * Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a missing one fails.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,6 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { askHeight, askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
 
 const requireCjs = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -166,5 +167,28 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
       }
     }
     await hideAsk();
+  }, 60_000);
+
+  it("opens the ask box as large as its words at the text size, and at the new size once it changes (review #57)", async () => {
+    // The steps ember-win32 and ember-darwin take on real Windows and macOS (ask-size.ts), here on an X server.
+    const inEmber: InEmber = (fn, arg) => app.evaluate(fn as never, arg) as never;
+    try {
+      // 560 × 92 at the default size; the field and the line under it grow with the text, not the window's insets.
+      for (const size of ["larger", "large", "default"] as const) {
+        const r = await openAskAt(inEmber, size);
+        const label = `${size}: ${JSON.stringify(r)}`;
+        // Linux holds the keyboard while the box opens, so it never says to wait for it.
+        expect.soft(r, label).toMatchObject({ ...askWant(size, false), tip: false });
+        expect.soft(r.room, label).toBeGreaterThanOrEqual(8);
+        await closeAsk(inEmber);
+      }
+      // A paste cut at the limit at Larger: four lines and the note, each row 24 px times the scale.
+      const cut = await openAskAt(inEmber, "larger", "x".repeat(2000));
+      expect.soft(cut, JSON.stringify(cut)).toMatchObject({ width: 728, height: askHeight("larger", 5), clipped: false });
+      expect.soft(cut.room, JSON.stringify(cut)).toBeGreaterThanOrEqual(8);
+    } finally {
+      await closeAsk(inEmber);
+      await setTextSize(inEmber, "default");
+    }
   }, 60_000);
 });

@@ -248,8 +248,8 @@ and VoiceOver on a Mac. While one runs:
 | Ember's desk (Linux) | **Take over** is a click; while you have the desk, every key goes to it, Tab included, until Ctrl+Alt+End hands it back. A screen reader is told so when you take over |
 
 **Seeing, motion and time.** Settings › **Comfort & access** has **Text size** (Large or Larger, for settings, the
-bubble, task cards, the handle, the command window and its terminal, and the password and consent cards; the Ask box
-keeps its size), **Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion) and **More
+bubble, task cards, the handle, the Ask box, the desk window's bar on Linux, the command window and its terminal,
+and the password and consent cards), **Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion) and **More
 time to read and answer** (messages stay ten times as long, also ones that waited behind another or were covered for a
 while, and Ember's own notices; a question waits 20 minutes instead of 2 before it counts as **Not now**). At Large and
 Larger, an answer that needs more than six lines at that size offers **Read all**. Windows' contrast themes keep
