@@ -128,7 +128,7 @@ cache (test/temp-folder.ts).
   that shortcut: routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an
   announced command names only its **Stop**.
 - `--ask` (the Linux app menu's **Ask Ember** action, the one in the jump list of Ember's taskbar icon on Windows once
-  Ember is pinned there) opens the ask box: in the running Ember, or once a new one has started. Either way settings
+  Ember is pinned there, or while its settings, command, or password and consent window is open) opens the ask box: in the running Ember, or once a new one has started. Either way settings
   open instead while Ember isn't set up or the desktop session is one it can't use (the setup check says why). The macOS
   Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's

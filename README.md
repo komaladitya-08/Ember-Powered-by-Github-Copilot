@@ -212,7 +212,7 @@ default.
 
 **Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
 app grid (Linux), Ember's taskbar icon (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Windows,
-Ember has a taskbar icon only while its settings or command window is open, or once you pin it there: right-click
+Ember has a taskbar icon while its settings, command, or password and consent window is open, or once you pin it there: right-click
 Ember in the Start menu and pin it to the taskbar. On Linux and Windows it starts Ember with `--ask` (`ember --ask`,
 `Ember.exe --ask`), which opens the ask box, starting Ember first if it isn't running (settings instead until Ember is
 set up).
