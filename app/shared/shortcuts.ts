@@ -30,8 +30,8 @@ export type ShortcutTable = Readonly<Record<ShortcutId, ShortcutDef>>;
 const LETTERS: Record<ShortcutId, string> = { ask: "Space", stop: "X", settings: "E", mute: "M", allow: "Y", deny: "N" };
 const lower = (k: string) => k.toLowerCase();
 
-function table(f: (key: string) => ShortcutDef): ShortcutTable {
-  return Object.fromEntries((Object.keys(LETTERS) as ShortcutId[]).map(id => [id, f(LETTERS[id])])) as ShortcutTable;
+function table(f: (key: string, id: ShortcutId) => ShortcutDef): ShortcutTable {
+  return Object.fromEntries((Object.keys(LETTERS) as ShortcutId[]).map(id => [id, f(LETTERS[id], id)])) as ShortcutTable;
 }
 
 /** Linux: unchanged. Windows: Win+Alt (Ctrl+Alt is AltGr). macOS: Control+Shift+Command (⌃⌥ is VoiceOver's, ⌃⌘Space the emoji picker). */
@@ -42,21 +42,40 @@ export const SHORTCUTS: Readonly<Record<OS, ShortcutTable>> = {
 };
 
 /**
+ * The macOS fallbacks' keys, with Control+Shift+Command as the defaults have (D-45b): never Option, since Control+Option
+ * is VoiceOver's VO key (D6), which takes those presses while it runs, and Control+Option+Shift+Command is the "Hyper"
+ * chord Raycast and Karabiner users bind. A for Ask Ember; Period and Comma, as ⌘. stops and ⌘, opens settings in every
+ * Mac app; U for the microphone; Return and Esc, as a Mac dialog's default button and Cancel. No digits:
+ * Control+Shift+Command+3, 4 and 6 are the Mac's screenshots to the clipboard.
+ */
+const MAC_FALLBACK_KEYS: Readonly<Record<ShortcutId, { readonly accel: string; readonly key: string; readonly say: string; readonly chord: string }>> = {
+  ask: { accel: "A", key: "A", say: "A", chord: "a" },
+  stop: { accel: ".", key: "Period", say: "Period", chord: "period" },
+  settings: { accel: ",", key: "Comma", say: "Comma", chord: "comma" },
+  mute: { accel: "U", key: "U", say: "U", chord: "u" },
+  allow: { accel: "Return", key: "Return", say: "Return", chord: "return" },
+  deny: { accel: "Escape", key: "Esc", say: "Escape", chord: "escape" },
+};
+
+/**
  * The fallback chord of each shortcut (owner decision D-45b): Ember registers it when another app already holds the
- * default, and names it wherever it would name the default. It is the default with one more modifier, so it is the same
- * key with the same hand: Shift on Linux and Windows, Option on macOS (written between Control and Shift, as the Mac
- * writes it). Nothing on these systems uses them: GNOME's Shift+Ctrl+Alt chords are R and the arrows, Windows has no
- * Win+Alt+Shift chord (PowerToys' Command Palette and Xbox Game Bar take Win+Alt+Space and Win+Alt+M, defaults these
- * stand in for), and macOS's only Control+Option+Shift+Command one is Period. Each is a key only the user presses with
- * no change to the policy: Ctrl+Alt with these keys on Linux, the Win key on Windows, Control+Shift+Command on macOS.
+ * default, and names it wherever it would name the default. On Linux and Windows it is the default with Shift added,
+ * the same key with the same hand: GNOME's Shift+Ctrl+Alt chords are R and the arrows, and Windows has no Win+Alt+Shift
+ * chord (PowerToys' Command Palette and Xbox Game Bar take Win+Alt+Space and Win+Alt+M, defaults these stand in for).
+ * On a Mac it is Control+Shift+Command, as the defaults, on another key (MAC_FALLBACK_KEYS). Each is a key only the user
+ * presses with no change to the policy: Ctrl+Alt with these keys on Linux, the Win key on Windows, the Control+Shift+Command
+ * family on macOS.
  */
 export const FALLBACK_SHORTCUTS: Readonly<Record<OS, ShortcutTable>> = {
   linux: table(k => ({ accel: `Control+Alt+Shift+${k}`, label: `Ctrl+Alt+Shift+${k}`, keys: ["Ctrl", "Alt", "Shift", k], say: `Control Alt Shift ${k}`, chord: `ctrl+alt+shift+${lower(k)}` })),
   win32: table(k => ({ accel: `Super+Alt+Shift+${k}`, label: `Win+Alt+Shift+${k}`, keys: ["Win", "Alt", "Shift", k], say: `Windows key, Alt, Shift, ${k}`, chord: `alt+shift+super+${lower(k)}` })),
-  darwin: table(k => ({
-    accel: `Control+Alt+Shift+Command+${k}`, label: `Control+Option+Shift+Command+${k}`, keys: ["Control", "Option", "Shift", "Command", k],
-    say: `Control Option Shift Command ${k}`, chord: `ctrl+alt+shift+cmd+${lower(k)}`,
-  })),
+  darwin: table((_, id) => {
+    const k = MAC_FALLBACK_KEYS[id];
+    return {
+      accel: `Control+Shift+Command+${k.accel}`, label: `Control+Shift+Command+${k.key}`, keys: ["Control", "Shift", "Command", k.key],
+      say: `Control Shift Command ${k.say}`, chord: `ctrl+shift+cmd+${k.chord}`,
+    };
+  }),
 };
 
 /** What each shortcut does, as a sentence names it ("so Ask Ember is Ctrl+Alt+Shift+Space"): the handle menu's words. */

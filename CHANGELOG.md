@@ -306,8 +306,9 @@ allows them.
 - At the Large and Larger text sizes, an answer that needs more than six lines at that size offers **Read all**. With
   **More time to read and answer**, a bubble that waited behind another or was covered stays ten times its time, and
   so do Ember's own notices (the screen-lock notices, "I can't take screenshots", the "Commands are off" hint).
-- When another app already holds one of Ember's shortcuts, Ember takes its fallback, the same chord with Shift
-  (Option on a Mac: Ctrl+Alt+Shift+Space, Win+Alt+Shift+Space, Control+Option+Shift+Command+Space), and the setup
+- When another app already holds one of Ember's shortcuts, Ember takes its fallback: on Linux and Windows the same
+  chord with Shift (Ctrl+Alt+Shift+Space, Win+Alt+Shift+Space); on a Mac Control+Shift+Command with another key,
+  never Option, which is VoiceOver's (Control+Shift+Command+A asks, +Period stops, +Comma opens settings). The setup
   check ("Ctrl+Alt+Space is taken by another app, so Ask Ember is Ctrl+Alt+Shift+Space"), the greeting, the handle's
   menu, settings, the consent cards and every hint name the chord it holds.
 - **Ask Ember** is in the system's own launcher: the app menu's right-click on Linux, the taskbar's jump list on

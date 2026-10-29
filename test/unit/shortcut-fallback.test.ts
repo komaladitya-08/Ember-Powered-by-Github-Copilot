@@ -18,16 +18,22 @@ import { commandsConsent, sshConsent, type SshCardFacts } from "../../app/main/t
 
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
-/** An Electron accelerator as a combination the policy reads ("Control+Alt+Shift+Command+Y" → "ctrl+alt+shift+cmd+y"). */
+/** An Electron accelerator as a combination the policy reads ("Control+Shift+Command+Y" → "ctrl+shift+cmd+y"). */
 const asCombo = (accel: string) => accel.split("+").map(p => ({ Control: "ctrl", Command: "cmd", Super: "super", Alt: "alt", Shift: "shift" } as Record<string, string>)[p] ?? p.toLowerCase()).join("+");
 
 describe("the fallback chords (D-45b)", () => {
-  it("are the defaults with Shift on Linux and Windows, and with Option on macOS", () => {
+  it("are the defaults with Shift on Linux and Windows, and Control+Shift+Command on another key on a Mac", () => {
     expect(FALLBACK_SHORTCUTS.linux.ask).toEqual({ accel: "Control+Alt+Shift+Space", label: "Ctrl+Alt+Shift+Space", keys: ["Ctrl", "Alt", "Shift", "Space"], say: "Control Alt Shift Space", chord: "ctrl+alt+shift+space" });
     expect(FALLBACK_SHORTCUTS.win32.stop).toEqual({ accel: "Super+Alt+Shift+X", label: "Win+Alt+Shift+X", keys: ["Win", "Alt", "Shift", "X"], say: "Windows key, Alt, Shift, X", chord: "alt+shift+super+x" });
+    // ⌘, opens an app's settings and ⌘. stops: Ember's fallbacks keep those keys.
     expect(FALLBACK_SHORTCUTS.darwin.settings).toEqual({
-      accel: "Control+Alt+Shift+Command+E", label: "Control+Option+Shift+Command+E", keys: ["Control", "Option", "Shift", "Command", "E"],
-      say: "Control Option Shift Command E", chord: "ctrl+alt+shift+cmd+e",
+      accel: "Control+Shift+Command+,", label: "Control+Shift+Command+Comma", keys: ["Control", "Shift", "Command", "Comma"],
+      say: "Control Shift Command Comma", chord: "ctrl+shift+cmd+comma",
+    });
+    expect(FALLBACK_SHORTCUTS.darwin.stop).toMatchObject({ accel: "Control+Shift+Command+.", label: "Control+Shift+Command+Period", say: "Control Shift Command Period", chord: "ctrl+shift+cmd+period" });
+    expect(Object.fromEntries(IDS.map(id => [id, FALLBACK_SHORTCUTS.darwin[id].label]))).toEqual({
+      ask: "Control+Shift+Command+A", stop: "Control+Shift+Command+Period", settings: "Control+Shift+Command+Comma",
+      mute: "Control+Shift+Command+U", allow: "Control+Shift+Command+Return", deny: "Control+Shift+Command+Esc",
     });
   });
 
@@ -42,12 +48,35 @@ describe("the fallback chords (D-45b)", () => {
         expect(isSystemKey(f.chord, KEYS[os]), `${os} ${id}`).toBe(true);
         expect(defaults.has(f.accel), `${os} ${id}`).toBe(false);
         accels.add(f.accel);
-        // The same key as the default, one modifier more.
-        expect(f.keys.at(-1)).toBe(SHORTCUTS[os][id].keys.at(-1));
-        expect(f.keys).toHaveLength(SHORTCUTS[os][id].keys.length + 1);
         expect(f.label).toBe(f.keys.join("+"));
       }
       expect(accels.size).toBe(IDS.length);
+    }
+  });
+
+  it("are the same key as the default with Shift added on Linux and Windows", () => {
+    for (const os of ["linux", "win32"] as const) {
+      for (const id of IDS) {
+        const f = FALLBACK_SHORTCUTS[os][id], d = SHORTCUTS[os][id];
+        expect(f.keys.at(-1), `${os} ${id}`).toBe(d.keys.at(-1));
+        expect(f.keys, `${os} ${id}`).toEqual([...d.keys.slice(0, -1), "Shift", d.keys.at(-1)]);
+      }
+    }
+  });
+
+  it("keep the defaults' Control+Shift+Command on a Mac, without Option (VoiceOver's keys) and clear of the Mac's own", () => {
+    const defaultKeys = new Set(Object.values(SHORTCUTS.darwin).map(d => d.keys.at(-1)));
+    for (const id of IDS) {
+      const f = FALLBACK_SHORTCUTS.darwin[id];
+      expect(f.keys.slice(0, -1), id).toEqual(["Control", "Shift", "Command"]);
+      // Control+Option is VoiceOver's VO key (D6): while it runs it takes those presses, so a chord with it never reaches
+      // Ember. Control+Option+Shift+Command is also the "Hyper" chord Raycast and Karabiner users bind.
+      expect(f.accel, id).not.toMatch(/\bAlt\b|\bOption\b/);
+      expect(f.chord, id).not.toMatch(/\balt\b/);
+      // Another key than every default's, and no digit: Control+Shift+Command+3, 4 and 6 are screenshots to the clipboard.
+      expect(defaultKeys.has(f.keys.at(-1)), id).toBe(false);
+      expect(f.keys.at(-1), id).not.toMatch(/^\d$/);
+      expect(KEYS.darwin.systemKeys, id).not.toContain(f.chord);
     }
   });
 });

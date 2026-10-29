@@ -101,8 +101,8 @@ describe("Windows setup checks", () => {
       + "(it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again from the Start menu: its settings open "
       + "at Ask Ember… and Stop everything, under Comfort & access.",
     );
-    expect(check(mac({}, { shortcutsTaken: ["Control+Shift+Command+Space", "Control+Alt+Shift+Command+Space", "Control+Shift+Command+X", "Control+Alt+Shift+Command+X"] }), "shortcuts")?.detail)
-      .toMatch(/^Another app already uses Control\+Shift\+Command\+Space, Control\+Option\+Shift\+Command\+Space, Control\+Shift\+Command\+X, Control\+Option\+Shift\+Command\+X\. Ember keeps trying to get them; .* open Ember again from Applications: its settings open at Ask Ember… and Stop everything, under Comfort & access\.$/);
+    expect(check(mac({}, { shortcutsTaken: ["Control+Shift+Command+Space", "Control+Shift+Command+A", "Control+Shift+Command+X", "Control+Shift+Command+."] }), "shortcuts")?.detail)
+      .toMatch(/^Another app already uses Control\+Shift\+Command\+Space, Control\+Shift\+Command\+A, Control\+Shift\+Command\+X, Control\+Shift\+Command\+Period\. Ember keeps trying to get them; .* open Ember again from Applications: its settings open at Ask Ember… and Stop everything, under Comfort & access\.$/);
     // Only the microphone's (Xbox Game Bar's Win+Alt+M, and its fallback): settings opens where it was, and the words don't promise more.
     expect(check(win({}, { shortcutsTaken: ["Super+Alt+M", "Super+Alt+Shift+M"] }), "shortcuts")?.detail).toMatch(/, or, from the keyboard, open Ember again from the Start menu for its settings\.$/);
   });

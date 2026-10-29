@@ -116,7 +116,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 - Long answers have **Read all** (counted at the text size you picked): the settings window's **Conversation** section
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
 - If another app already holds one of Ember's shortcuts, Ember registers its fallback (the same chord with Shift;
-  Option on a Mac: `FALLBACK_SHORTCUTS` in `app/shared/shortcuts.ts`), and the **Setup check**, the greeting, the
+  on a Mac Control+Shift+Command with another key, never VoiceOver's Option: `FALLBACK_SHORTCUTS` in
+  `app/shared/shortcuts.ts`), and the **Setup check**, the greeting, the
   handle menu, settings and every hint name the chord it holds. A fallback stays Ember's until it quits, even once the
   default comes free. If another app holds the fallback too, the **Setup check** says which, Ember keeps trying to get
   them every minute, and the handle menu does the same things. Meanwhile the bubble and the command window don't name

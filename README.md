@@ -197,9 +197,11 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
 | Allow, while Ember asks | Ctrl+Alt+Y | Win+Alt+Y | Control+Shift+Command+Y |
 | Not now, while Ember asks | Ctrl+Alt+N | Win+Alt+N | Control+Shift+Command+N |
 
-If another app already holds one, Ember uses its fallback: the same chord with Shift on Linux and Windows
-(Ctrl+Alt+Shift+Space, Win+Alt+Shift+Space) and with Option on a Mac (Control+Option+Shift+Command+Space), for every
-shortcut in the table. The setup check says so ("Ctrl+Alt+Space is taken by another app, so Ask Ember is
+If another app already holds one, Ember uses its fallback: on Linux and Windows the same chord with Shift
+(Ctrl+Alt+Shift+Space, Win+Alt+Shift+Space), for every shortcut in the table. On a Mac it is Control+Shift+Command
+with another key, never Option (Control+Option is VoiceOver's): A for Ask Ember, Period for Stop everything (as ⌘.
+stops), Comma for settings (as ⌘, opens them), U for the microphone, Return to allow and Esc for not now. The setup
+check says so ("Ctrl+Alt+Space is taken by another app, so Ask Ember is
 Ctrl+Alt+Shift+Space"), and the greeting, the handle's menu, settings and every hint name the chord Ember holds.
 
 If another app holds the fallback too, the setup check says which, and Ember keeps trying to get them. Meanwhile click

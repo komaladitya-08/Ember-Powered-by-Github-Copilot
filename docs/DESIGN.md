@@ -61,7 +61,8 @@ They share one emotion rig, so switching never changes behaviour.
   thing: an answer cut short (by the lines it takes at the text size) offers **Read all**, and
   under it "Or press Ctrl+Alt+E and go to Conversation." (the settings window keeps the whole
   answer; there is no shortcut of its own for the last answer). A shortcut is named by the chord
-  Ember holds: its fallback (Shift added; Option on a Mac) while another app holds the default.
+  Ember holds: its fallback (Shift added; on a Mac another key, since Option is VoiceOver's)
+  while another app holds the default.
   One whose fallback another app holds too is never named: the route is then "Or open Ember's
   settings and go to Conversation.", errors
   and a task's result say "in Ember's settings", and an announced command names no stop
