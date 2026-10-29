@@ -935,3 +935,63 @@ describe("More time to read and answer (review #51)", () => {
     expect(states.at(-1)?.bubble?.visible).toBe(false);
   });
 });
+
+describe("More time scales a bubble's time once, also when it waited or was covered (cross-review X1)", () => {
+  /** A conversation's answer up (it holds the bubble), with More time on; its reading time is `answerMs`. */
+  function answerUp() {
+    vi.useFakeTimers();
+    const shown: Partial<EmberState>[] = [];
+    const owner = new BubbleOwner();
+    const readTime = () => readTimeOf(true);
+    const convo = new Presenter(s => shown.push(s), undefined, () => "Ember", owner, undefined, false, { readTime });
+    convo.userPrompt("what time is it?");
+    convo.event({ type: "assistant.message_delta", data: { deltaContent: "Half past three." } });
+    convo.event({ type: "session.idle", data: {} });
+    const visible = () => shown.at(-1)?.bubble?.visible ?? false;
+    return { shown, owner, readTime, convo, visible, answerMs: (6000 + 16 * 50) * 10 };
+  }
+
+  it("an unasked offer that waited behind an answer goes ten times its 25 s after it shows, not a hundred", () => {
+    const { shown, owner, readTime, answerMs, visible } = answerUp();
+    const board = new Presenter(s => shown.push(s), undefined, () => "Ember", owner, undefined, false, { readTime });
+    board.post({ title: "You're connected to web-07", thought: "Bring me there too?", mood: "attention", actions: [{ id: "offer:1:bring", label: "Bring Ember" }] }, { claim: "reply", ms: 25_000 });
+    expect(board.waiting).toBe(true);
+    vi.advanceTimersByTime(answerMs + 10);
+    expect(shown.at(-1)?.bubble?.title).toBe("You're connected to web-07");
+    vi.advanceTimersByTime(250_000 - 20);
+    expect(visible()).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(visible()).toBe(false);
+  });
+
+  it("an answer covered by main's bubble and given back keeps ten times its time, however often it is covered", () => {
+    const { owner, convo, answerMs, visible } = answerUp();
+    // "Hey Ember" that was another word, twice: main claims the bubble, then gives it back.
+    for (let i = 0; i < 2; i++) {
+      const main = {};
+      owner.claim(main);
+      owner.holder = null;
+      expect(owner.uncover(() => true)).toBe(convo);
+      convo.reshow();
+    }
+    vi.advanceTimersByTime(answerMs - 10);
+    expect(visible()).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(visible()).toBe(false);
+  });
+
+  it("a task's result that waited behind an answer stays ten times its time, not a hundred", () => {
+    const { shown, owner, readTime, answerMs, visible } = answerUp();
+    const task = new Presenter(s => shown.push(s), undefined, () => "Check disk", owner, undefined, false, { task: "t1", readTime });
+    const text = "The disk has 41 GB free; Downloads is the largest folder.";
+    task.outcome({ title: "Check disk", text, emotion: "happy", gesture: "thumbsUp", mood: "done" });
+    expect(task.waiting).toBe(true);
+    vi.advanceTimersByTime(answerMs + 10);
+    expect(shown.at(-1)?.bubble?.title).toBe("Check disk");
+    const want = (6000 + text.length * 50) * 10;
+    vi.advanceTimersByTime(want - 20);
+    expect(visible()).toBe(true);
+    vi.advanceTimersByTime(20);
+    expect(visible()).toBe(false);
+  });
+});

@@ -632,7 +632,8 @@ export class Presenter {
     this.since = this.now();
     this.owner.wrote(this, claim, true);
     this.push({ emotion: this.state.emotion, talking: this.state.talking, bubble: this.state.bubble });
-    if (this.pendingHide !== null) this.hideLater(this.pendingHide);
+    // (Its time was scaled by the user's setting when it was asked for: armed as it is, not scaled again.)
+    if (this.pendingHide !== null) this.armHide(this.pendingHide);
     // A complete answer back on screen (it finished under main's "Listening…" or a question): a guide step waiting
     // behind it shows a moment later, as when it finishes on screen.
     if (claim !== "progress" && !this.busy) this.owner.finished(this);
@@ -660,12 +661,20 @@ export class Presenter {
     this.owner.forget(this);
   }
 
+  /** This presenter's bubble goes `base` ms after it reaches the screen, times the user's "More time to read and answer". */
   private hideLater(base: number): void {
-    this.cancelHide();
     // As long as the user needs to read it (their setting), never shorter than usual.
     let scale = 1;
     try { scale = Math.max(1, Math.min(10, Number(this.readTime()) || 1)); } catch { /* the usual time */ }
-    const ms = base * scale;
+    this.armHide(base * scale);
+  }
+
+  /**
+   * This presenter's bubble goes `ms` after it reaches the screen, as given (hideLater scaled it once already): what
+   * letGo and reshow keep and arm again is that time, so a bubble that waited or was covered isn't scaled twice.
+   */
+  private armHide(ms: number): void {
+    this.cancelHide();
     // Not on screen yet: its time starts when it shows.
     if (this.unseen) { this.pendingHide = ms; return; }
     this.hideMs = ms;
