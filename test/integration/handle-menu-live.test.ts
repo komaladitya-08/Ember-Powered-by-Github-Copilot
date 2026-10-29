@@ -3,8 +3,8 @@
  * picking "Ask Ember…" with the keyboard opens the ask box (review #67: a guard on menu-will-close, which Electron sends
  * just before the pick's click, swallowed every pick), and Esc on the menu opens nothing; the line under the ask box's
  * field keeps the window's name readable when it is crowded: a remote computer, what else is sent, a paste cut at the
- * limit (reviews #70, #74). Skipped without Xvfb, off Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8
- * CI, which builds first): there a missing one fails.
+ * limit (reviews #70, #74); the box is as large as its words at each text size (review #57). Skipped without Xvfb, off
+ * Linux, or without a build, except with EMBER_ATSPI_TEST=1 (RHEL 8 CI, which builds first): there a missing one fails.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -166,5 +166,46 @@ describe.skipIf(!required && (!xvfb || !built))("the handle's menu on a real X s
       }
     }
     await hideAsk();
+  }, 60_000);
+
+  it("opens the ask box as large as its words at the text size, and at the new size once it changes (review #57)", async () => {
+    type Seen = { width: number; height: number; size: string; font: string; clipped: boolean; room: number };
+    const opened = async (size: string, text = ""): Promise<Seen> => {
+      await app.evaluate((_e, s: string) => (globalThis as unknown as { __ember: { settings: { update(p: object): void } } }).__ember.settings.update({ textSize: s }), size);
+      await sleep(300);
+      await app.evaluate(() => (globalThis as unknown as { __ember: { showAsk(): void } }).__ember.showAsk());
+      for (let t = 0; t < 50 && !(await askShown()); t++) await sleep(100);
+      await sleep(800);
+      return app.evaluate(async ({ BrowserWindow }, t: string): Promise<Seen> => {
+        const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember")!;
+        await w.webContents.executeJavaScript(`{ const q = document.getElementById("q"); q.value = ${JSON.stringify(t)}; q.dispatchEvent(new Event("input")); }`);
+        await new Promise(r => setTimeout(r, 400));
+        const page = await w.webContents.executeJavaScript(`(() => {
+          const meta = document.querySelector(".meta"), form = document.getElementById("form");
+          const foot = Math.max(...[...form.children].filter(e => getComputedStyle(e).display !== "none").map(e => e.getBoundingClientRect().bottom));
+          return { size: document.documentElement.dataset.textSize ?? "default", font: getComputedStyle(document.getElementById("q")).fontSize,
+            clipped: meta.scrollHeight > meta.clientHeight + 0.5 || meta.scrollWidth > meta.clientWidth, room: innerHeight - foot };
+        })()`) as Omit<Seen, "width" | "height">;
+        const { width, height } = w.getBounds();
+        return { width, height, ...page };
+      }, text);
+    };
+    try {
+      // 560 × 92 at the default size; the field and the line under it grow with the text, not the window's insets.
+      for (const [size, width, height, font] of [["larger", 728, 111, "23.4px"], ["large", 644, 101, "20.7px"], ["default", 560, 92, "18px"]] as const) {
+        const r = await opened(size);
+        const label = `${size}: ${JSON.stringify(r)}`;
+        expect.soft(r, label).toMatchObject({ width, height, size, font, clipped: false });
+        expect.soft(r.room, label).toBeGreaterThanOrEqual(8);
+        await hideAsk();
+      }
+      // A paste cut at the limit at Larger: four lines and the note, each row 24 px times the scale.
+      const cut = await opened("larger", "x".repeat(2000));
+      expect.soft(cut, JSON.stringify(cut)).toMatchObject({ width: 728, height: 111 + Math.round(4 * 24 * 1.3), clipped: false });
+      expect.soft(cut.room, JSON.stringify(cut)).toBeGreaterThanOrEqual(8);
+    } finally {
+      await hideAsk();
+      await app.evaluate(() => (globalThis as unknown as { __ember: { settings: { update(p: object): void } } }).__ember.settings.update({ textSize: "default" }));
+    }
   }, 60_000);
 });
