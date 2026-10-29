@@ -26,7 +26,8 @@ the work in your real apps where you can watch, without taking over your mouse. 
   all of it in a box under the question (so does each cell's whole value when Ember fills several cells at once):
   **Allow** works once you have scrolled to its end, or it fits ("Scroll down to read it all first."), and until then
   Ember's allow shortcut shows the next part of it (a press within half a second of the last one, or a held key, never
-  allows). Screen readers hear all of it, and when **Allow** works.
+  allows). Screen readers hear all of it, and when **Allow** works. Such a question waits a minute longer for every
+  1000 characters of its text (ten with **More time to read and answer**), so there is time to read all of it.
 - **Your Mac's permissions stay Ember's**: Ember.app never runs as a plain Node.js program, so another program can't
   start it that way to borrow its Accessibility and Screen Recording permissions.
 - **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`

@@ -5,7 +5,7 @@
  * whole in its sentence is as before.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import type { EmberState } from "../../app/shared/overlay";
 
@@ -168,6 +168,37 @@ describe("the Confirmer's question with a whole text to read", () => {
     c.wholeSeen(2);
     expect(c.answerKey("deny")).toBe(true);
     await expect(r).resolves.toBe("deny");
+  });
+
+  it("waits longer for a long text, a minute per 1000 characters of it, ten with More time (final review U1)", async () => {
+    vi.useFakeTimers();
+    try {
+      // The longest text type_text and set_value take (worker.ts: 5000 characters).
+      const text = "word ".repeat(1000).trim();
+      for (const scale of [1, 10]) {
+        // As main makes it: 2 minutes, times More time to read and answer.
+        const c = new Confirmer(() => undefined, { timeoutMs: () => 120_000 * scale });
+        const q = c.ask(typing({ detail: text }));
+        // Paging on with the approve key as the user reads, past the question's own 2 minutes (20): still asked.
+        for (let i = 0; i < 18; i++) { c.answerKey("primary"); await vi.advanceTimersByTimeAsync(7_000 * scale); }
+        expect(c.waiting).toBe(true);
+        // A minute more for every 1000 characters (ten with More time): about 7 minutes in all (70).
+        const time = 120_000 * scale * (1 + text.length / 2000);
+        await vi.advanceTimersByTimeAsync(time - 18 * 7_000 * scale - 1_000);
+        expect(c.waiting).toBe(true);
+        await vi.advanceTimersByTimeAsync(2_000);
+        await expect(q).resolves.toBeNull();
+      }
+      // A question with nothing more to read keeps the question's own time.
+      const c = new Confirmer(() => undefined, { timeoutMs: () => 120_000 });
+      const q = c.ask(typing({ detail: undefined, prompt: "Type “Hello” into the “Message” text field?" }));
+      await vi.advanceTimersByTimeAsync(119_000);
+      expect(c.waiting).toBe(true);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(q).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

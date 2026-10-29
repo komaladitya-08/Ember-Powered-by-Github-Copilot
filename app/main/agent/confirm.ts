@@ -21,7 +21,8 @@
  * block that scrolls under the sentence (review #116). Allow, from its button or the approve key, works only once the
  * page showing it has said all of it was in view (`wholeSeen`), as the command card's and the consent cards' do, and it
  * has been armed again since; before then the approve key shows the next part instead, and a key pressed again too soon
- * (held down, or once more than needed) never allows. Not now works at once.
+ * (held down, or once more than needed) never allows. Not now works at once. Such a question waits longer, by the
+ * length of its text (timeoutOf).
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
@@ -223,6 +224,16 @@ export class Confirmer {
     try { const v = t(); return Number.isFinite(v) && v > 0 ? v : 120_000; } catch { return 120_000; }
   }
 
+  /**
+   * How long question `p` waits: the question time, and for a whole text to read, half as much again for every 1000
+   * characters of it (a minute at the usual 2 minutes, ten with More time to read and answer), so paging through 5000
+   * characters, or hearing them read out, doesn't run its time out (final review U1).
+   */
+  private timeoutOf(p: Pending): number {
+    const t = this.timeout();
+    return p.whole && p.q.detail ? Math.round(t * (1 + p.q.detail.length / 2000)) : t;
+  }
+
   /** How long clicks are ignored after `q` shows: its own arm time, or the default when it has none (or none that is a time). */
   private armOf(q: Question): number {
     return typeof q.armMs === "number" && Number.isFinite(q.armMs) && q.armMs >= 0 ? q.armMs : this.armMs;
@@ -280,7 +291,7 @@ export class Confirmer {
     if (!this.current) { this.checkSettled(); return; }
     const p = this.current;
     p.shownAt = this.now();
-    p.timer = setTimeout(() => this.finish(p, null), this.timeout());
+    p.timer = setTimeout(() => this.finish(p, null), this.timeoutOf(p));
     this.show({ emotion: "curious", talking: false, bubble: this.bubbleOf(p) });
     this.onChange?.({ n: p.n, question: p.q });
   }
