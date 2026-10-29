@@ -193,7 +193,7 @@ function measureCard(): void {
   const metrics: CardMetrics = {
     scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight, scrollWidth: b.scrollWidth, clientWidth: b.clientWidth,
     top: r.top, bottom: r.bottom, left: r.left, right: r.right, viewWidth: window.innerWidth, viewHeight: window.innerHeight,
-    clip, visible: document.visibilityState === "visible",
+    clip, visible: document.visibilityState === "visible", textSize: document.documentElement.dataset.textSize ?? "default",
   };
   dispatch({ type: "card-metrics", n: ask.card.n, metrics });
   paintAllow();
@@ -202,6 +202,8 @@ const cardResize = new ResizeObserver(() => measureCard());
 // The block moving in or out of view for any reason (the card area scrolled, an announcement put above it, the layout
 // changed) is measured again, so "in view" never outlives the view.
 const cardVisible = new IntersectionObserver(() => measureCard(), { threshold: [0, 0.25, 0.5, 0.75, 0.99, 1] });
+// And when main sets the text size (once the page has loaded, and whenever it changes): "seen" holds at one size only.
+new MutationObserver(() => measureCard()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-text-size"] });
 
 /** Allow, its hint and the key hint, from the model only. */
 function paintAllow(): void {

@@ -186,6 +186,27 @@ describe("the page's model: seen, in view and Allow", () => {
     expect(c.model.card?.seen).toBe(true);
   });
 
+  it("counts a command seen only at the text size it was measured at: main sets it after a new window's first card is drawn (cross-review X7)", () => {
+    // Measured in Ember's command window at Larger text on a 1280x500 screen: a 10-line command drawn before main's
+    // text size landed fitted its block (206 of 206 px); at Larger it ran on below (263 px in 216).
+    const a = run([{ type: "state", view: view(1), now: 0 }, { type: "card-metrics", n: 4, metrics: metrics({ scrollHeight: 206, clientHeight: 206, textSize: "default" }) }]);
+    expect(a.model.card).toMatchObject({ seen: true, inView: true });
+    const b = run([{ type: "card-metrics", n: 4, metrics: metrics({ scrollHeight: 263, clientHeight: 216, textSize: "larger" }) }], a.model);
+    expect(b.model.card).toMatchObject({ fits: false, seen: false, inView: false });
+    expect(allowEnabled(b.model.card, 60_000)).toBe(false);
+    expect(allowHint(b.model.card)).toBe("Read the whole command to allow it.");
+    expect(b.effects).toEqual([{ kind: "report", msg: { n: 4, inView: false, seen: false } }]);
+    // Scrolled to its end at that size: seen again, and it sticks when scrolled back up at the same size.
+    const c = run([{ type: "card-metrics", n: 4, metrics: metrics({ scrollTop: 47, scrollHeight: 263, clientHeight: 216, textSize: "larger" }) }], b.model);
+    expect(c.model.card?.seen).toBe(true);
+    const d = run([{ type: "card-metrics", n: 4, metrics: metrics({ scrollHeight: 263, clientHeight: 216, textSize: "larger" }) }], c.model);
+    expect(d.model.card?.seen).toBe(true);
+    // The page measures again when main sets the text size (read from its source).
+    const src = read("main.ts");
+    expect(src).toMatch(/textSize: document\.documentElement\.dataset\.textSize \?\? "default"/);
+    expect(src).toMatch(/new MutationObserver\(\(\) => measureCard\(\)\)\.observe\(document\.documentElement, \{ attributes: true, attributeFilter: \["data-text-size"\] \}\);/);
+  });
+
   it("doesn't count a block that is cut off by the window, or a hidden page", () => {
     for (const m of [metrics({ bottom: 500 }), metrics({ top: -20 }), metrics({ right: 900 }), metrics({ visible: false }), metrics({ clientHeight: 0, scrollHeight: 0 })]) {
       const r = run([{ type: "state", view: view(1), now: 0 }, { type: "card-metrics", n: 4, metrics: m }]);

@@ -128,6 +128,12 @@ export interface CardMetrics {
    */
   clip?: { top: number; bottom: number; left: number; right: number };
   visible: boolean;
+  /**
+   * The page's text size as it was measured (html[data-text-size], "default" without one). Main sets it on this page
+   * only once it has loaded (page-prefs.ts, at dom-ready) and whenever it changes: what was seen at one size isn't at
+   * another (cross-review X7).
+   */
+  textSize?: string;
 }
 
 /** What the page knows about the question card on screen. */
@@ -141,10 +147,12 @@ export interface CardModel {
   fits: boolean;
   /** The block is scrolled to its end. */
   atEnd: boolean;
-  /** The whole command has been in view since the card came up (Allow's second condition). */
+  /** The whole command has been in view since the card came up, at the text size of `textSize` (Allow's second condition). */
   seen: boolean;
   /** The whole command is in view now (the approve chord's guard). */
   inView: boolean;
+  /** The text size it was last measured at (CardMetrics.textSize). */
+  textSize?: string;
 }
 
 /** The page's model. */
@@ -238,9 +246,11 @@ export function reduce(model: PageModel, ev: PageEvent): { model: PageModel; eff
       const card = model.card;
       if (!card || card.n !== ev.n) return { model, effects: [] };
       const { fits, atEnd, onScreen } = judgeMetrics(ev.metrics);
-      const seen = card.seen || (onScreen && (fits || atEnd));
+      // "Seen" sticks at the text size it was measured at only: a new window's first card can be drawn and measured
+      // before main sets the size, and a command that fitted then may run on below at a larger one (cross-review X7).
+      const seen = (card.seen && card.textSize === ev.metrics.textSize) || (onScreen && (fits || atEnd));
       const inView = seen && onScreen && fits;
-      const next: CardModel = { ...card, fits, atEnd, seen, inView };
+      const next: CardModel = { ...card, fits, atEnd, seen, inView, textSize: ev.metrics.textSize };
       const msg: SeenMsg = { n: card.n, inView, seen };
       const changed = !model.reported || model.reported.n !== msg.n || model.reported.inView !== msg.inView || model.reported.seen !== msg.seen;
       return { model: { ...model, card: next, reported: changed ? msg : model.reported }, effects: changed ? [{ kind: "report", msg }] : [] };
