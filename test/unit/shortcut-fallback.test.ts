@@ -212,11 +212,30 @@ describe("the greeting names the chords Ember holds (D-45b)", () => {
     expect(line(["Control+Alt+Space", "Control+Alt+X"])).toBe("Press Ctrl+Alt+Shift+Space to ask me anything; Ctrl+Alt+Shift+X stops me. Another app has Ctrl+Alt+Space and Ctrl+Alt+X.");
   });
 
-  it("keeps today's route when Ember holds neither chord, naming the settings chord it holds", () => {
-    expect(line(["Control+Alt+Space", "Control+Alt+Shift+Space", "Control+Alt+E"])).toBe(
+  it("keeps today's route when Ember holds neither chord of either, naming the settings chord it holds", () => {
+    const both = ["Control+Alt+Space", "Control+Alt+Shift+Space", "Control+Alt+X", "Control+Alt+Shift+X"];
+    expect(line([...both, "Control+Alt+E"])).toBe(
       "Click my handle in the corner to ask me something or to stop me, or press Ctrl+Alt+Shift+E: settings opens at Ask Ember… and Stop everything.");
-    expect(line(["Control+Alt+X", "Control+Alt+Shift+X", "Control+Alt+E", "Control+Alt+Shift+E"])).toBe(
+    expect(line([...both, "Control+Alt+E", "Control+Alt+Shift+E"])).toBe(
       "Click my handle in the corner to ask me something or to stop me, or open Ember again: its settings open at Ask Ember… and Stop everything.");
+  });
+
+  it("names the chord Ember holds for one when it holds neither for the other, and the route for that one (final review U2)", () => {
+    // Ask by its fallback or default; stop by neither: settings opens at Stop everything (keyboardRoute's "access:stop").
+    expect(line(["Control+Alt+X", "Control+Alt+Shift+X", "Control+Alt+Space"])).toBe(
+      "Press Ctrl+Alt+Shift+Space to ask me anything. To stop me, click my handle in the corner, or press Ctrl+Alt+E: settings opens at Stop everything. Another app has Ctrl+Alt+Space.");
+    expect(line(["Control+Alt+X", "Control+Alt+Shift+X", "Control+Alt+E", "Control+Alt+Shift+E"])).toBe(
+      "Press Ctrl+Alt+Space to ask me anything. To stop me, click my handle in the corner, or open Ember again: its settings open at Stop everything.");
+    // Stop by its default; ask by neither: settings opens at Ask Ember… ("access:ask").
+    expect(line(["Control+Alt+Space", "Control+Alt+Shift+Space", "Control+Alt+E"])).toBe(
+      "Ctrl+Alt+X stops me. To ask me something, click my handle in the corner, or press Ctrl+Alt+Shift+E: settings opens at Ask Ember…");
+    expect(keyboardRoute(["Control+Alt+Space", "Control+Alt+Shift+Space"], sc, fb)).toBe("access:ask");
+    // The same on Windows and a Mac, with their own chords.
+    const on = (os: OS, taken: string[]) => keysLine(heldShortcuts(SHORTCUTS[os], FALLBACK_SHORTCUTS[os], taken), SHORTCUTS[os]);
+    expect(on("win32", ["Super+Alt+X", "Super+Alt+Shift+X"])).toBe(
+      "Press Win+Alt+Space to ask me anything. To stop me, click my handle in the corner, or press Win+Alt+E: settings opens at Stop everything.");
+    expect(on("darwin", ["Control+Shift+Command+Space", "Control+Shift+Command+A", "Control+Shift+Command+X"])).toBe(
+      "Control+Shift+Command+Period stops me. To ask me something, click my handle in the corner, or press Control+Shift+Command+E: settings opens at Ask Ember… Another app has Control+Shift+Command+X.");
   });
 });
 
