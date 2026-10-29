@@ -7,8 +7,11 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { AdminPolicySchema, commandMode, heldUntilRestart, lockedDown, modelServiceRefusal, parseAdminPolicy, samePolicy, type LoadedAdminPolicy } from "../../app/main/admin";
-import { ADMIN_WATCH_MS, restartOptions, watchAdminPolicy } from "../../app/main/policy/admin-watch";
+import { ADMIN_WATCH_MS, restartOptions, runningAppImage, watchAdminPolicy } from "../../app/main/policy/admin-watch";
 
 const FILE = "/etc/ember/policy.json";
 const none: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
@@ -154,11 +157,58 @@ describe("watchAdminPolicy", () => {
 });
 
 describe("restartOptions", () => {
-  it("restarts the AppImage itself, whose mounted copy is gone once Ember quits", () => {
-    const argv = ["/tmp/.mount_EmberAbc/ember", "--autostart"];
-    expect(restartOptions({ APPIMAGE: "/home/u/Apps/Ember.AppImage" }, argv)).toEqual({ execPath: "/home/u/Apps/Ember.AppImage", args: ["--autostart"] });
-    // Elsewhere Electron starts this program again with the same arguments.
-    expect(restartOptions({}, ["/opt/ember/ember"])).toBeUndefined();
-    expect(restartOptions({ APPIMAGE: "" }, argv)).toBeUndefined();
+  const APPIMAGE = "/home/u/Apps/Ember.AppImage";
+  const MOUNT = "/tmp/.mount_EmberAbc";
+
+  // appimage.sh's AppRun runs $APPDIR/ember/ember.
+  it("restarts the AppImage itself when Ember runs from it, whose mounted copy is gone once Ember quits", () => {
+    const argv = [`${MOUNT}/ember/ember`, "--autostart"];
+    expect(restartOptions({ APPIMAGE, APPDIR: MOUNT }, argv, `${MOUNT}/ember/ember`)).toEqual({ execPath: APPIMAGE, args: ["--autostart"] });
+    // Extracted and run (--appimage-extract-and-run): APPDIR is the extracted copy, and the AppImage is still the way back.
+    const extracted = "/tmp/appimage_extracted_0123abcd";
+    expect(restartOptions({ APPIMAGE, APPDIR: extracted }, [`${extracted}/ember/ember`], `${extracted}/ember/ember`)).toEqual({ execPath: APPIMAGE, args: [] });
+  });
+
+  it("leaves an AppImage that Ember doesn't run from alone: Electron starts this program again with the same arguments", () => {
+    // An RPM Ember started from a shell in another AppImage app's terminal inherits that app's APPIMAGE and APPDIR.
+    const other = { APPIMAGE: "/home/u/Apps/SomeTerminal-x86_64.AppImage", APPDIR: "/tmp/.mount_SomeTeXy12" };
+    expect(restartOptions(other, ["/opt/ember/ember", "--autostart"], "/opt/ember/ember")).toBeUndefined();
+    // A mount whose name only starts with that app's.
+    expect(restartOptions(other, ["/tmp/.mount_SomeTeXy12b/ember/ember"], "/tmp/.mount_SomeTeXy12b/ember/ember")).toBeUndefined();
+    // APPIMAGE without APPDIR: nothing says Ember runs from it.
+    expect(restartOptions({ APPIMAGE }, [`${MOUNT}/ember/ember`], `${MOUNT}/ember/ember`)).toBeUndefined();
+    expect(restartOptions({}, ["/opt/ember/ember"], "/opt/ember/ember")).toBeUndefined();
+    expect(restartOptions({ APPIMAGE: "", APPDIR: MOUNT }, [`${MOUNT}/ember/ember`], `${MOUNT}/ember/ember`)).toBeUndefined();
+    expect(restartOptions({ APPIMAGE, APPDIR: "" }, [`${MOUNT}/ember/ember`], `${MOUNT}/ember/ember`)).toBeUndefined();
+  });
+});
+
+describe("runningAppImage", () => {
+  it("is APPIMAGE only when Ember's program is inside APPDIR, symbolic links resolved", () => {
+    const env = { APPIMAGE: "/home/u/Apps/Ember.AppImage", APPDIR: "/tmp/.mount_EmberAbc" };
+    expect(runningAppImage(env, "/tmp/.mount_EmberAbc/ember/ember")).toBe("/home/u/Apps/Ember.AppImage");
+    expect(runningAppImage(env, "/tmp/.mount_EmberAbc")).toBeNull();
+    expect(runningAppImage(env, "/opt/ember/ember")).toBeNull();
+    // /tmp a link to /private/tmp: APPDIR as the AppImage's runtime names it, the program as the kernel resolved it.
+    const realpath = (p: string) => p.replace(/^\/tmp\//, "/private/tmp/");
+    expect(runningAppImage(env, "/private/tmp/.mount_EmberAbc/ember/ember", realpath)).toBe("/home/u/Apps/Ember.AppImage");
+    expect(runningAppImage(env, "/private/tmp/.mount_EmberAbc/ember/ember")).toBeNull();
+    // A path that can't be resolved is compared as it is.
+    const failing = () => { throw Object.assign(new Error("ENOENT"), { code: "ENOENT" }); };
+    expect(runningAppImage(env, "/tmp/.mount_EmberAbc/ember/ember", failing)).toBe("/home/u/Apps/Ember.AppImage");
+  });
+
+  it.skipIf(process.platform === "win32")("resolves links on the real file system by default", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-appdir-"));
+    try {
+      fs.mkdirSync(path.join(dir, "mount", "ember"), { recursive: true });
+      fs.writeFileSync(path.join(dir, "mount", "ember", "ember"), "");
+      fs.symlinkSync(path.join(dir, "mount"), path.join(dir, "link"));
+      const env = { APPIMAGE: "/home/u/Apps/Ember.AppImage", APPDIR: path.join(dir, "link") };
+      expect(runningAppImage(env, fs.realpathSync(path.join(dir, "mount", "ember", "ember")))).toBe("/home/u/Apps/Ember.AppImage");
+      expect(runningAppImage(env, "/opt/ember/ember")).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
