@@ -162,7 +162,7 @@ describe("docs/DEVELOPING.md", () => {
 
   it("§14.4 says when remote.yml runs, and that its macOS job runs on every push", () => {
     const wf = read(".github/workflows/remote.yml");
-    const macIf = /\n  ssh-macos:\n(?:.*\n)*?    if: (.*)\n/.exec(wf)?.[1] ?? "";
+    const macIf = /\n {2}ssh-macos:\n(?:.*\n)*? {4}if: (.*)\n/.exec(wf)?.[1] ?? "";
     expect(macIf).toMatch(/github\.event_name == 'push'/);
     expect(macIf).not.toMatch(/pull_request/);
     const s144 = flat(section(read("docs/DEVELOPING.md"), "14.4 Tests and CI"));
@@ -317,7 +317,7 @@ describe("README.md", () => {
   it("says which manual CI run keeps each package artifact, as ci.yml makes them (cross-review X17)", () => {
     const ci = read(".github/workflows/ci.yml");
     // The Intel Mac job runs on a manual run only when intel is ticked too; its upload step is inside it.
-    const intelIf = /\n  macos-x64:\n(?:.*\n)*?    if: >-\n((?:      .*\n)+)/.exec(ci)?.[1] ?? "";
+    const intelIf = /\n {2}macos-x64:\n(?:.*\n)*? {4}if: >-\n((?: {6}.*\n)+)/.exec(ci)?.[1] ?? "";
     expect(intelIf).toMatch(/workflow_dispatch' && inputs\.intel/);
     const download = flat(section(readme, "Download"));
     expect(download).toMatch(/with \*\*packages\*\* ticked also keeps them for 3 days as artifacts \(`ember-packages`, `ember-windows`, `ember-macos`, and `ember-macos-x64` when \*\*intel\*\* is ticked too\)/);
@@ -512,7 +512,7 @@ describe("README.md's Accessibility section, against the release it describes", 
  * before (on fix2/docs2 alone), so each can be merged, or reverted with its docs commit, on its own.
  */
 const ROUND2 = {
-  auth2: /\n  wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
+  auth2: /\n {2}wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
   lifecycle2: /const CARD_UNSHOWN = "/.test(read("app/main/targets/runtime.ts")),
   perception2: fs.existsSync(path.resolve("app/main/perception/text-warm.ts")),
   css2: fs.existsSync(path.resolve("app/renderer/command/terminal-size.ts")),
