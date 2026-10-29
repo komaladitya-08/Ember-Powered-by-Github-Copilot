@@ -201,7 +201,8 @@ export interface HostOptions {
   cancelWords?: () => string;
   /**
    * The settings shortcut as Ember holds it now (main: hasKey), or null while another app holds it: the bubbles name it
-   * only then (Read all's route, the errors that send the user to settings; cross-review X5). Default: the OS's table.
+   * only then (Read all's route, the errors that send the user to settings, a task's "No model is available" result;
+   * cross-review X5). Default: the OS's table.
    */
   settingsKey?: () => string | null;
   /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
@@ -1141,6 +1142,7 @@ export class AgentHost {
             inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
             system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
             ...(this.o.emberPids ? { emberPids: this.o.emberPids } : {}),
+            ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
           }, spec);
         },
       }) : null;

@@ -401,6 +401,15 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await h.host.ask("what can I do?");
     h.session.emit("assistant.message", { content: options });
     expect(shown.at(-1).step).toBe("Or open Ember's settings and go to Conversation.");
+    // A task's own result (no model for tasks) as its bubble says it: the worker asks main too.
+    const noModel = async () => {
+      const w = h.real({ id: "9-km", goal: "x", target: {} } as never, () => undefined) as any;
+      Object.assign(w.d, { model: null, runtimeDefault: false });
+      return (await w.run(new AbortController().signal)).summary as string;
+    };
+    expect(await noModel()).toBe("No model is available for tasks. Pick one in Ember's settings.");
+    held = true;
+    expect(await noModel()).toBe("No model is available for tasks. Pick one in settings (Ctrl+Alt+E).");
     await h.host.stop();
   });
 
