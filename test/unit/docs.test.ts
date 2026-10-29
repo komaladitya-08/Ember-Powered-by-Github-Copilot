@@ -545,6 +545,7 @@ const ROUND2 = {
   ship2: /export function restartAfterUpdate\(/.test(read("app/main/install-watch.ts")),
   bubble2: /case "killswitch": line = `Stopped with everything else after/.test(read("app/renderer/command/copy.ts")),
   runasnode2: fs.existsSync(path.resolve("app/askpass/in-ember.ts")),
+  typeahead2: fs.existsSync(path.resolve("app/main/ask-open.ts")),
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
@@ -685,6 +686,38 @@ describe("round 2's docs lines (runasnode2)", () => {
     expect(s115).not.toMatch(/RunAsNode stays on/);
     expect(flat(dev)).toContain("on a Mac inside Ember itself, started with `--ember-askpass`, which runs it as a worker thread and shows nothing: `in-ember.ts`");
     expect(flat(read("CHANGELOG.md"))).toContain("**Your Mac's permissions stay Ember's**: Ember.app never runs as a plain Node.js program");
+  });
+});
+
+describe("round 2's docs lines (typeahead2)", () => {
+  it.runIf(ROUND2.typeahead2)("typeahead2: says to wait for the ask box on Windows and macOS, its first five openings' tip, and what the probes print", () => {
+    // ask.ts: the tip shows where Ember can't hold the letters, for the first WAIT_TIP_OPENINGS openings; field.ts: its
+    // words; ask-open.ts: the box shows before the read where Ember can't hold them; main.ts: the log lines the probes read.
+    const ask = read("app/main/ask.ts");
+    expect(ask).toContain("export const WAIT_TIP_OPENINGS = 5;");
+    expect(ask).toContain("return !holds && opened < WAIT_TIP_OPENINGS;");
+    expect(read("app/renderer/ask/field.ts")).toContain('export const WAIT_TIP = "Wait for this box before you type: letters typed sooner go to the app underneath.";');
+    expect(read("app/main/ask-open.ts")).toMatch(/o\.show\(\);\n {2}o\.read\(active\);/);
+    expect(read("app/renderer/ask/main.ts")).toContain("window.emberAsk.onHidden(() => input.select());");
+    const main = read("app/main/main.ts");
+    expect(main).toContain('log.info("ask.keyboard", { ms: Date.now() - askAsked })');
+    expect(main).toContain('log.info("ask.open", { source, ms: Date.now() - asked });');
+    const shortcuts = flat(section(read("README.md"), "Shortcuts"));
+    expect(shortcuts).toContain("On Windows and macOS, wait for the ask box before you type: letters typed before it appears go to the app underneath. (On Linux, Ember holds them and puts them in the box.) The ask box reminds you the first five times it opens.");
+    const box = flat(section(read("CHANGELOG.md"), "The ask box"));
+    expect(box).toContain("On Windows and macOS it takes the keyboard sooner: it shows before Ember reads the screen.");
+    expect(box).toContain("so the first five times it opens there it says to wait for it before typing");
+    expect(box).toContain("what was left in it from last time is selected when it closes, not as it opens");
+    // The probes print what typeahead-probe.ts's timeline reads, and expect the tip (ember-win32, ember-darwin).
+    expect(read("test/integration/typeahead-probe.ts")).toMatch(/e\.msg === "ask\.keyboard"/);
+    for (const suite of ["ember-win32", "ember-darwin"]) expect(read(`test/integration/${suite}.test.ts`), suite).toContain('toBe("Wait for this box before you type: letters typed sooner go to the app underneath.")');
+    expect(read("test/integration/ember-win32.test.ts")).toContain("the bench's Name field got ${benchNameLength(benchLog) - nameBefore} of the letters");
+    const dev = read("docs/DEVELOPING.md");
+    const win = flat(section(dev, "10.3 Integration suites"));
+    expect(win).toContain("opened with the real Win+Alt+Space, pressed while the user types in the bench's Name field, printing what the ask box holds");
+    expect(win).toContain("when Ember heard the chord, showed the box and had the keyboard, how many letters were typed before then and how many reached the bench's Name field, and expecting the box's \"wait for this box\" tip on these first openings");
+    const mac = flat(section(dev, "11.3 Integration suites"));
+    expect(mac).toContain("from Ember's log (`ask.open`, `ask.keyboard`), when Ember heard the chord, showed the box and had the keyboard and how many letters were typed before then, and expecting the box's \"wait for this box\" tip on these first openings");
   });
 });
 

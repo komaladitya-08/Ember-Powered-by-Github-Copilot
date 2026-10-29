@@ -9,7 +9,8 @@
  * - M2: the ask box takes the keys typed while the user's app stays the active one (AX's focused application may be
  *   Ember's while its panel has the keyboard: logged), and hides when the user clicks back into their app (blur);
  * - the real ask chord (⌃⇧⌘Space as CGEvents) opens the box, and what it holds of letters typed straight after is
- *   printed (review #78: no typed-ahead hold on macOS; typeahead-probe.ts);
+ *   printed (review #78: no typed-ahead hold on macOS; typeahead-probe.ts), with when Ember heard the chord, showed the
+ *   box and had the keyboard (its log), and the box's tip to wait for it (its first openings);
  * - no system dialog is open at rest, as the window system and as Perception see it;
  * - a window-scope screenshot of the bench through Ember's Perception (its accessibility host started as Ember starts
  *   it) has the bench's pixels and its password field blacked out;
@@ -37,7 +38,7 @@ import { openDarwinInput, openDarwinWindows, type DarwinInput, type DarwinWindow
 import {
   BENCH_TITLE, ROOT, activePid, alertReport, appWindow, frontmostPid, pidsOf, sleep, startBench, waitFor, warn, whyNoWindow, type Bench,
 } from "./darwin-support";
-import { PROBE_PACE_MS, PROBE_TEXT, probeVerdict } from "./typeahead-probe";
+import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 
 const required = process.env.EMBER_DARWIN_TEST === "1";
 const onMac = process.platform === "darwin";
@@ -241,23 +242,33 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     const mods = ["Control_L", "Shift_L", "Super_L"].map(n => x.keysymOf(n));
     const space = x.keysymOf("space");
     for (const k of mods) expect(x.keysym(k, true)).toBe(true);
+    const pressedAt = Date.now();
     x.keysym(space, true);
     x.keysym(space, false);
     for (const k of [...mods].reverse()) x.keysym(k, false);
+    const typedAt: number[] = [];
     for (const ch of PROBE_TEXT) {
+      typedAt.push(Date.now());
       x.textKey(ch, true);
       x.textKey(ch, false);
       await sleep(PROBE_PACE_MS);
     }
     await waitFor(async () => `the ask box from the real chord (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), 5_000);
     await sleep(800);
-    const held = await inEmber(async ({ BrowserWindow }) => {
+    const { held, tip } = await inEmber(async ({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
-      return w ? String(await w.webContents.executeJavaScript(`document.querySelector("#q")?.value ?? ""`)) : "";
+      return w ? await w.webContents.executeJavaScript(`({ held: document.querySelector("#q")?.value ?? "", tip: document.getElementById("tip")?.hidden === false ? document.getElementById("tip").textContent : null })`) as { held: string; tip: string | null } : { held: "", tip: null };
     }, null);
     const verdict = probeVerdict("macOS", PROBE_TEXT, held);
     console.log(verdict.line);
+    // When Ember heard the chord, showed the box and had the keyboard (its own log): the letters typed before that
+    // went to the user's app.
+    const emberLog = path.join(dir, "userData", "logs", "ember.log");
+    console.log(probeTimeline("macOS", fs.existsSync(emberLog) ? fs.readFileSync(emberLog, "utf8") : "", pressedAt, typedAt, verdict.lost).line);
+    console.log(`typed-ahead probe (macOS): the box's tip: ${tip === null ? "not shown" : JSON.stringify(tip)}`);
     expect(verdict.inOrder, verdict.line).toBe(true);
+    // A fresh profile: this is the box's second opening (M2 opened it once), where Ember can't hold the letters typed.
+    expect(tip, "the box's tip to wait for it on its first openings").toBe("Wait for this box before you type: letters typed sooner go to the app underneath.");
     // Put away as Esc does (the page's own close).
     await inEmber(async ({ BrowserWindow }) => {
       await BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")?.webContents.executeJavaScript("window.emberAsk.close()");

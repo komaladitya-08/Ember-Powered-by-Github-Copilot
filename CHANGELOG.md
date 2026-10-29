@@ -323,6 +323,10 @@ allows them.
   computer's name but never its state).
 - A right-click in it offers **Cut**, **Copy**, **Paste** and **Select all**; dismissing that menu by clicking another
   app puts the box away instead of taking the keyboard back.
+- On Windows and macOS it takes the keyboard sooner: it shows before Ember reads the screen. Letters typed before it
+  appears still go to the app underneath (on Linux, Ember holds them for the box), so the first five times it opens
+  there it says to wait for it before typing. Letters typed into it as it opens are kept: what was left in it from
+  last time is selected when it closes, not as it opens.
 
 #### Voice
 

@@ -16,9 +16,19 @@ const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
 /**
  * The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines; the
- * note that a paste was cut takes one more row of the same height (MAX_ROWS).
+ * note that a paste was cut and the tip to wait for the box take one more row of the same height each (MAX_ROWS).
  */
-const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 1;
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 2;
+/** The openings that say to wait for the box before typing, where Ember can't hold the letters typed meanwhile (review #78). */
+export const WAIT_TIP_OPENINGS = 5;
+
+/**
+ * Whether this opening says to wait for the box before typing: only where Ember can't hold the letters typed while it
+ * opens (`holds`: Linux's keyboard hold), and only until it has opened WAIT_TIP_OPENINGS times there (`opened`).
+ */
+export function showsWaitTip(holds: boolean, opened: number): boolean {
+  return !holds && opened < WAIT_TIP_OPENINGS;
+}
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
@@ -65,7 +75,7 @@ function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
 }
 
 /**
- * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, and the note's when a paste was cut):
+ * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, the note's when a paste was cut, the tip's):
  * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
  * inside the work area and clear of `keepOff`.
  */
@@ -119,6 +129,8 @@ export class AskWindow {
   private menuUp = false;
   /** The box lost the keyboard while that menu was up and hasn't had it back since. */
   private menuBlur = false;
+  /** Shown, and not yet told by Electron that it has the keyboard (onKeyboard says when it is). */
+  private awaitingKeyboard = false;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -129,11 +141,12 @@ export class AskWindow {
    * actually shown (the only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
    * `windowId`: the box's id in the window system's id space (default: its X id), 0 when it can't be told.
    * `floating`: the platform's window options and workspace rule (default: today's Linux window). `os`: the page names
-   * its keys as this OS does (Return on a Mac).
+   * its keys as this OS does (Return on a Mac). `onKeyboard`: the first time Electron says the box has the keyboard
+   * after each reveal (letters typed before went elsewhere where Ember holds no keys: review #78).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
-    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS;
+    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void;
   } = {}) {}
 
   /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
@@ -170,7 +183,11 @@ export class AskWindow {
       if (this.menuUp) this.menuBlur = true;
       else this.hide();
     });
-    win.on("focus", () => { if (this.win === win) this.menuBlur = false; });
+    win.on("focus", () => {
+      if (this.win !== win) return;
+      this.menuBlur = false;
+      if (this.awaitingKeyboard) { this.awaitingKeyboard = false; this.o.onKeyboard?.(); }
+    });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
     win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
     // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
@@ -193,13 +210,18 @@ export class AskWindow {
   }
 
   private reveal(win: BrowserWindow): void {
+    // What the box shows (where Ember will look, the earlier questions) goes first: the page has it before the window
+    // has the keyboard, so nothing it does on opening lands on letters already typed into it (review #78).
+    this.sendContext();
     try { win.setIgnoreMouseEvents(false); } catch { /* test double */ }
-    this.o.onReveal?.(this.source);
+    // Before show(): Windows activates the window, and says so ("focus"), inside it.
+    this.awaitingKeyboard = true;
     win.show();
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
     try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where the window manager put it */ }
-    this.sendContext();
+    // Said once the box is up: a log line written before it would hold up the keyboard.
+    this.o.onReveal?.(this.source);
   }
 
   /**
@@ -220,8 +242,10 @@ export class AskWindow {
     this.wanted = true;
     this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
-    const bounds = askBounds(near, display.workArea, this.keepOff());
+    let bounds = askBounds(near, display.workArea, this.keepOff());
     this.up = !near || bounds.y + bounds.height <= near.y;
+    // Saying to wait for it: a row taller from the start, so it doesn't grow once shown.
+    if (this.context.tip) bounds = grownBounds(bounds, 2, display.workArea, this.up, this.keepOff());
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
@@ -253,8 +277,8 @@ export class AskWindow {
   }
 
   /**
-   * The page needs `rows` rows (1 to 5: the field's lines, and the note's when a paste was cut): the box grows or
-   * shrinks to fit, away from Ember.
+   * The page needs `rows` rows (1 to 6: the field's lines, the note's when a paste was cut, the tip's): the box grows
+   * or shrinks to fit, away from Ember.
    */
   fit(rows: number): void {
     if (!this.win || this.win.isDestroyed()) return;
@@ -287,11 +311,15 @@ export class AskWindow {
 
   hide(): void {
     this.wanted = false;
+    this.awaitingKeyboard = false;
     if (!this.win || this.win.isDestroyed()) return;
     this.win.hide();
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
     // looks like the box opening by itself). While hidden it takes no pointer.
     try { this.win.setIgnoreMouseEvents(true); } catch { /* test double */ }
+    // What was left in the field is selected now, while nothing can be typed in it, so typing replaces it when the box
+    // opens again (selected as it opened, it took the letters typed first: review #78).
+    if (!this.win.webContents.isLoading()) this.win.webContents.send(IPC.askHidden);
   }
 
   /**

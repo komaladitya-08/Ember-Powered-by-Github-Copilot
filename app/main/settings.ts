@@ -119,6 +119,11 @@ export const SettingsSchema = z.object({
   moreTime: z.boolean().default(false),
   /** Text size in Ember's windows, bubble and cards (main's page-prefs.ts applies it): larger is 30% bigger. */
   textSize: z.enum(["default", "large", "larger"]).default("default"),
+  /**
+   * How many times the ask box has opened where Ember can't hold the letters typed while it opens (Windows, macOS),
+   * counted up to the openings that say to wait for it before typing (ask.ts WAIT_TIP_OPENINGS, review #78).
+   */
+  askOpened: z.number().int().min(0).max(1000).default(0),
   /** Where Ember works (§2): the picker's target, the SSH hosts the user added, WSL, and this install's id. */
   targets: z.object({
     /** The picker's choice: requests that name no computer go here. */

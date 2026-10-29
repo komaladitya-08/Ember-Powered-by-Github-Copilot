@@ -84,6 +84,21 @@ describe("renaming identified windows", () => {
     expect(ws.activeWindow()?.wmClass).toBe("msrdc");
   });
 
+  it("renames both windows of a backend's focusAndActive, and adds none to a backend without one (review #78)", async () => {
+    const { ws, h } = await scene();
+    expect("focusAndActive" in ws && ws.focusAndActive).toBeFalsy();
+    const raw = h.windows.ws;
+    const both = { ...raw, focusAndActive: () => ({ focus: raw.focusWindow(), active: raw.activeWindow() }) };
+    // The same router as the scene's (one per options object), which has looked already.
+    const seen = wrapWindowsWith(both, h.options, h.deps);
+    h.windows.foreground = 11;
+    expect(raw.activeWindow()?.wmClass).toBe("msrdc");
+    const r = seen.focusAndActive!();
+    expect([r.focus?.wmClass, r.active?.wmClass]).toEqual(["wsl:Ubuntu:gedit", "wsl:Ubuntu:gedit"]);
+    h.windows.foreground = 12;
+    expect(seen.focusAndActive!().active?.wmClass).toBe("msrdc");
+  });
+
   it("keeps every other member the backend's own, called on the backend (I-win's extras survive)", async () => {
     const { ws, h } = await scene();
     expect((ws as typeof h.windows.ws).extra).toBe("I-win's");

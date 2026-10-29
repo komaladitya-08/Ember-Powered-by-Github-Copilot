@@ -6,7 +6,7 @@ import type { AskContext, EmberAskApi } from "../../shared/ipc";
 import type { TargetSummary } from "../../shared/targets";
 import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
-import { CUT_NOTE, FIELD, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "./field";
+import { CUT_NOTE, FIELD, WAIT_TIP, atLimit, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "./field";
 import { liveWords, seesView, type SeesView } from "./chips";
 
 declare global { interface Window { emberAsk: EmberAskApi } }
@@ -21,6 +21,7 @@ const input = document.getElementById("q") as HTMLTextAreaElement;
 const sees = document.getElementById("sees")!;
 const where = document.getElementById("where")!;
 const cut = document.getElementById("cut")!;
+const tip = document.getElementById("tip")!;
 const seesLive = document.getElementById("sees-live")!;
 const seesText = document.getElementById("sees-text")!;
 const seesExtra = document.getElementById("sees-extra")!;
@@ -60,11 +61,14 @@ function cutShort(): boolean {
 let said = "";
 const form = document.getElementById("form") as HTMLFormElement;
 const field = input.parentElement!;
-/** The rows the window was last sized for: the field's lines, and one for the note (main opens it at one). */
+/**
+ * The rows the window was last sized for: the field's lines, and one each for the note and the tip (main opens it at
+ * one, or two with the tip).
+ */
 let shownRows = 1;
 /**
  * The field as tall as its text (one line to four, then it scrolls), the note on a line of its own when the text
- * reached the most that is sent (a longer paste was cut at the limit), and the window with both.
+ * reached the most that is sent (a longer paste was cut at the limit), the tip while it shows, and the window with all.
  */
 function fit(): void {
   field.style.flexBasis = `${FIELD.oneLine}px`;
@@ -73,7 +77,7 @@ function fit(): void {
   input.classList.toggle("scrolls", input.scrollHeight > fieldHeight(lines) + 1);
   const full = atLimit(input.value);
   if (cut.hidden === full) { cut.hidden = !full; cut.textContent = full ? CUT_NOTE : ""; }
-  const rows = lines + (full ? 1 : 0);
+  const rows = boxRows(lines, full, !tip.hidden);
   if (rows !== shownRows) { shownRows = rows; window.emberAsk.fit?.(rows); }
 }
 /** Earlier questions (↑/↓), and what was being typed meanwhile. */
@@ -103,8 +107,13 @@ input.addEventListener("keydown", e => {
 input.addEventListener("input", fit);
 window.addEventListener("keydown", e => { if (e.key === "Escape") window.emberAsk.close(); });
 window.addEventListener("focus", () => input.focus());
-// Each time the box opens: where Ember will look (so nothing is sent by surprise) and the earlier questions. The
-// update once the quick look is done (not `opened`) keeps the user's place in the history and what they were typing.
+// The box went away: what was left in it (after Esc, or a click away) is selected, so typing replaces it when it opens
+// again instead of running on from it ("draftwhat can you do"); End or a click keeps it. Done now, while nothing can be
+// typed: done as the box opened, it selected the letters already typed, and the next one replaced them (review #78).
+window.emberAsk.onHidden(() => input.select());
+// Each time the box opens (sent before its window is shown): where Ember will look (so nothing is sent by surprise) and
+// the earlier questions. The update once the quick look is done (not `opened`) keeps the user's place in the history
+// and what they were typing.
 window.emberAsk.onContext(c => {
   history.context(c.history, c.opened === true);
   // "↑ earlier questions" only when there are some.
@@ -128,9 +137,13 @@ window.emberAsk.onContext(c => {
   if (live !== null) seesLive.textContent = said = live;
   fitMeta();
   input.focus();
-  // Opened again: what was left in it (after Esc, or a click away) is selected, so typing replaces it instead of
-  // running on from it ("draftwhat can you do"); End or a click keeps it. Main opened the window one line tall.
-  if (c.opened) { input.select(); shownRows = 1; }
+  // Main opens the window one line tall, a row taller when this opening says to wait for the box (review #78). Said
+  // before the window is shown, so the tip is there from the first frame.
+  if (c.opened) {
+    tip.hidden = c.tip !== true;
+    tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
+    shownRows = c.tip === true ? 2 : 1;
+  }
   fit();
 });
 // Typed while the box was opening: it goes where the caret is, as if typed here.

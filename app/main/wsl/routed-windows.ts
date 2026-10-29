@@ -21,7 +21,7 @@ function renamed<T extends { id: number; pid: number | null; wmClass: string; wm
 /**
  * The Windows window system, with the program name (`wmClass`) of every RAIL window the router identified rewritten to
  * "wsl:<distro>:<app>" (critique wsl-2). Main passes the result as Perception's `x11`, to the hands' window lists and to
- * `currentWindow`/`activeWindow`. Unidentified RAIL windows keep "msrdc", so the existing `isRemoteSurface` check keeps
+ * `currentWindow`/`activeWindow`, and names the window the ask box reads from it (review #78). Unidentified RAIL windows keep "msrdc", so the existing `isRemoteSurface` check keeps
  * masking and refusing exactly those. A Proxy like `platform/compose.ts`'s system-dialog wrapper: every other member is
  * the backend's own (I-win's extras survive).
  */
@@ -39,6 +39,14 @@ export function wrapWindowsWith<T extends WindowSystem>(ws: T, o: WrapForWslOpti
     clientWindows: () => ws.clientWindows().map(w => renamed(w, router, false)),
     activeWindow: () => { const w = ws.activeWindow(); return w && renamed(w, router, false); },
     focusWindow: () => { const w = ws.focusWindow(); return w && renamed(w, router, false); },
+    // Both together, where the backend takes them in one look (review #78): renamed as the two are. Left out when the
+    // backend has none, so callers make the two renamed calls.
+    ...(ws.focusAndActive ? {
+      focusAndActive: () => {
+        const { focus, active } = ws.focusAndActive!();
+        return { focus: focus && renamed(focus, router, false), active: active && renamed(active, router, false) };
+      },
+    } : {}),
   };
   const bound = new Map<PropertyKey, { fn: (...a: unknown[]) => unknown; bound: (...a: unknown[]) => unknown }>();
   return new Proxy(ws, {

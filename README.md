@@ -204,7 +204,7 @@ Applications) or press the settings shortcut: settings then opens at **Ask Ember
 default.
 
 On Windows and macOS, wait for the ask box before you type: letters typed before it appears go to the app underneath.
-(On Linux, Ember holds them and puts them in the box.)
+(On Linux, Ember holds them and puts them in the box.) The ask box reminds you the first five times it opens.
 
 On Windows and Linux, Ember's windows have no menu bar: quit with **Quit Ember** in the handle's menu, which asks
 first while something is running (Ctrl+Q doesn't quit). The settings window zooms with Ctrl+= or Ctrl++, Ctrl+- and

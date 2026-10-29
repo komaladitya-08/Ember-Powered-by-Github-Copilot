@@ -141,9 +141,12 @@ export class Perception {
     this.words = o.words ?? PLATFORM_WORDS.linux;
   }
 
-  /** The focused window's accessibility tree (empty when blocked or unreadable). */
-  async focused(stack?: StackedWindow[] | null): Promise<Seen> {
-    const x11Window = this.o.x11?.activeWindow() ?? null;
+  /**
+   * The focused window's accessibility tree (empty when blocked or unreadable). `active`: the window the user is in, as
+   * the caller took it (undefined: asked now).
+   */
+  async focused(stack?: StackedWindow[] | null, active?: ReturnType<PerceptionWindows["activeWindow"]>): Promise<Seen> {
+    const x11Window = active !== undefined ? active : this.o.x11?.activeWindow() ?? null;
     if (x11Window && x11Window.pid === this.ownPid) {
       return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, ember: true };
     }
@@ -324,11 +327,13 @@ export class Perception {
    * Taken the moment the user calls Ember (before the ask box or anything else
    * takes focus): which window they're in, what has focus, and any selected
    * text, so "make this bold" knows what "this" is. Short; untrusted.
+   * `active`: the window the user was in, taken before the ask box took the keyboard where it opens before the screen
+   * is read (Windows, macOS: review #78); undefined: the window active now.
    */
-  async quickContext(): Promise<QuickContext | null> {
+  async quickContext(active?: ReturnType<PerceptionWindows["activeWindow"]>): Promise<QuickContext | null> {
     let seen: Seen;
     try {
-      seen = await this.focused();
+      seen = await this.focused(undefined, active);
     } catch {
       return null;
     }

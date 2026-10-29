@@ -12,7 +12,7 @@ import type { OwnWindowHandle, Rect, ScreenLike, StackedWindow, WindowSystem, X1
 import type { Logger } from "../../logger";
 import { captureRect, type DarwinCapture } from "./capture";
 import { openDesktop, desktopError, secureInputCause, secureInputOf, type DarwinDesktop, type DarwinSecureInput } from "./desktop";
-import { resolveActive, resolveFocus, type Resolved } from "./focus";
+import { resolveActive, resolveFocus, resolveFocusAndActive, type Resolved } from "./focus";
 import { FLAG, MOUSE_BUTTON } from "./cg";
 import { VK } from "./keys";
 import { SECURITY_OWNERS, clientWindowsOf, parseMediaSourceId, sameFrame, stackOf, unionRect } from "./model";
@@ -77,6 +77,8 @@ export interface DarwinWindowSystem extends WindowSystem {
    * Settings); for the setup check's fix. null after close() or where the call doesn't exist.
    */
   requestInputMonitoring(): boolean | null;
+  /** focusWindow() and activeWindow() from one CGWindowList copy and at most one AX round trip (review #78). */
+  focusAndActive(): { focus: (X11Window & { wmClass: string }) | null; active: (X11Window & { wmClass: string }) | null };
 }
 
 /** Tunables and seams for the tests. */
@@ -174,6 +176,12 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
     focusWindow() {
       if (!open) return null;
       return describe(resolveFocus(focus, desktop.windows()));
+    },
+
+    focusAndActive() {
+      if (!open) return { focus: null, active: null };
+      const both = resolveFocusAndActive(focus, desktop.windows());
+      return { focus: describe(both.focus), active: describe(both.active) };
     },
 
     clientWindows() {
