@@ -158,11 +158,11 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   and never offers for one that carries a command (git over ssh, `scp`, `rsync`), uses `-T` or goes to a git hosting
   service. An offer goes after 25 seconds as **Not now**, ignores a press in its first half second, and holds Ember
   still while it is up; one nobody asked for waits while "Lost build-01" or "Can't connect to build-01" is up, but
-  25 seconds at most, and goes unseen when the `ssh` it names has ended. The SSH
-  card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac, and
-  says that a server with no desktop gets commands only. Ember opens its own connection with your SSH settings, keys,
-  agent and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before
-  copying anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is
+  25 seconds at most, and it goes, up or waiting, the next time Ember looks and finds the `ssh` it names has ended. The
+  SSH card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac,
+  and says that a server with no desktop gets commands only. Ember opens its own connection with your SSH settings,
+  keys, agent and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer
+  before copying anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is
   connected and leaves no service or autostart behind. It works there on commands, and on the apps of that computer's
   screen when it is a Linux computer with an X11 desktop and you are the person logged in at it, asking before every
   step and showing a notice with **Stop** there. When that screen locks or its session goes inactive, the tasks using

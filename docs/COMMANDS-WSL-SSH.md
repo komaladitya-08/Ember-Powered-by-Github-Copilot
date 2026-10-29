@@ -442,10 +442,11 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   keyboard (Settings › **Computers**, with the settings shortcut). An offer to work on another computer that you didn't
   ask for waits while "Lost build-01" or "Can't connect to build-01" is up, and shows (for its 25 seconds) once that
   goes; one you asked for shows at once, and the Lost bubble comes back after it. An offer you didn't ask for waits
-  25 seconds at most (whatever it waits behind): one that couldn't show by then goes unseen, and so does one whose
-  `ssh` Ember finds has ended the next time it looks. It offers each computer once per run (again, the next time it
-  looks, if you never saw the offer), and **Don't offer again** sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`,
-  `rsync`, scripts), one started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with
+  25 seconds at most (whatever it waits behind): one that couldn't show by then goes unseen. The next time Ember
+  looks, an offer whose `ssh` it finds has ended goes too, whether it is up or still waiting. It offers each
+  computer once per run (again, the next time it looks, if you never saw the offer), and **Don't offer again**
+  sticks. It doesn't offer for an `ssh` that runs a command without a terminal (git, `scp`, `rsync`, scripts), one
+  started with `-T`, or one to a git hosting service such as GitHub. Turn the offers off with
   **Offer to bring Ember along when I connect with SSH** (shown once a computer is added). Ember always opens its own
   connection; it never uses or types into yours. If it can't connect there (your organisation doesn't allow that
   computer, its settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to
