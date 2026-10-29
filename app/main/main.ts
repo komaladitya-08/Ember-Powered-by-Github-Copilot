@@ -1074,8 +1074,8 @@ function start(): void {
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
-   * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed an hour before, and Copilot
-   * reconnected with the new token once nothing is under way (review #138).
+   * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed from an hour before, once nothing is
+   * under way, and Copilot reconnected with the new token at once (review #138, cross-review X11).
    */
   const keeper = new GrantKeeper({
     fetch: (url, init) => net.fetch(url, init), store: () => tokens, inUse: () => currentToken, idle: () => agent?.idle ?? true,

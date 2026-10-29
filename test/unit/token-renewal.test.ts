@@ -1,8 +1,9 @@
 /**
  * Ember's own sign-in when its GitHub App expires user tokens (review #138): GitHub's default for a GitHub App gives an
- * eight-hour token and a six-month refresh token. The device flow keeps both, the store keeps them, and an hour before
- * the token runs out Ember renews it (no client secret: a device-flow sign-in's renews without one) and reconnects
- * Copilot with the new token once nothing is under way. An app whose tokens don't expire changes nothing.
+ * eight-hour token and a six-month refresh token. The device flow keeps both, the store keeps them, and from an hour
+ * before the token runs out, once nothing is under way, Ember renews it (no client secret: a device-flow sign-in's renews
+ * without one) and reconnects Copilot with the new token at once: the renewal revokes the old one (cross-review X11). An
+ * app whose tokens don't expire changes nothing.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -135,27 +136,85 @@ describe("keeping Ember's own sign-in alive", () => {
     keeper.stop();
   });
 
-  it("waits for nothing to be under way before reconnecting (a running task isn't cut off)", async () => {
+  it("renews only when it can switch: not while something is under way, which keeps the old token (still working) meanwhile (cross-review X11)", async () => {
     let idle = false;
-    const { keeper, reconnected } = setup({ idle: () => idle });
+    const { keeper, calls, reconnected } = setup({ idle: () => idle });
     keeper.use(OLD);
     await vi.advanceTimersByTimeAsync(7 * HOUR + 1000);
-    expect(reconnected).toEqual([]);
+    // Renewing would revoke the token Copilot is using for the task: GitHub isn't asked yet.
+    expect(calls).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(calls).toHaveLength(0);
     expect(reconnected).toEqual([]);
     idle = true;
     await vi.advanceTimersByTimeAsync(31_000);
+    expect(calls).toHaveLength(1);
     expect(reconnected).toEqual([NEW]);
     keeper.stop();
   });
 
-  it("reconnects anyway just before the old token runs out (what's under way would fail then regardless)", async () => {
-    const { keeper, reconnected } = setup({ idle: () => false });
+  it("renews anyway just before the old token runs out, and switches at once (what's under way would fail then regardless)", async () => {
+    const { keeper, calls, reconnected } = setup({ idle: () => false });
     keeper.use(OLD);
     await vi.advanceTimersByTimeAsync(8 * HOUR - 3 * 60_000);
+    expect(calls).toHaveLength(0);
     expect(reconnected).toEqual([]);
     await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(calls).toHaveLength(1);
     expect(reconnected).toEqual([NEW]);
+    keeper.stop();
+  });
+
+  it("never leaves Copilot on a token the renewal revoked (GitHub: the old token stops working once its refresh token is used)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    const valid = new Set([OLD]);
+    // A pretend GitHub that does what its docs say: using the refresh token revokes the old token at once.
+    const fetch = async () => { valid.delete(OLD); valid.add(NEW); return renewed(); };
+    const store = tmpStore();
+    const grant: Grant = { token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    store.saveResult(grant);
+    let inUse: string | null = OLD;
+    let busy = true;
+    /** Each time the token in use was checked, whether GitHub still took it. */
+    const revokedInUse: boolean[] = [];
+    // Saved only after Copilot was switched: a slow keyring doesn't hold the switch.
+    const save = store.saveResult.bind(store);
+    store.saveResult = g => { revokedInUse.push(!valid.has(inUse!)); return save(g); };
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => !busy, reconnect: async t => { inUse = t; } });
+    keeper.use(OLD, grant);
+    await vi.advanceTimersByTimeAsync(7 * HOUR + 1000);
+    // A task runs for 40 minutes past the renewal time, checking the token every minute (Copilot renews its own session
+    // with it, and Ember's own reconnects use it).
+    for (let m = 0; m < 60; m++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      revokedInUse.push(!valid.has(inUse!));
+      if (m === 40) busy = false;
+    }
+    expect(inUse).toBe(NEW);
+    expect(revokedInUse.filter(Boolean)).toEqual([]);
+    keeper.stop();
+  });
+
+  it("asks GitHub once when Check again comes during a renewal (a refresh token works once)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    let answer: (r: Reply) => void = () => undefined;
+    const bodies: string[] = [];
+    const fetch = (_url: string, init: { body: string }) => { bodies.push(init.body); return new Promise<Reply>(r => { answer = r; }); };
+    const store = tmpStore();
+    const grant: Grant = { token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    store.saveResult(grant);
+    let inUse: string | null = OLD;
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; } });
+    keeper.use(OLD, grant);
+    await vi.advanceTimersByTimeAsync(7 * HOUR + 1000);
+    expect(bodies).toHaveLength(1);
+    const checking = keeper.freshen();
+    await vi.advanceTimersByTimeAsync(0);
+    answer(renewed());
+    await checking;
+    expect(bodies).toHaveLength(1);
+    expect(inUse).toBe(NEW);
+    expect(await store.load()).toBe(NEW);
     keeper.stop();
   });
 

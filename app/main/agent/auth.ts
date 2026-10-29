@@ -393,11 +393,15 @@ export async function renewGrant(fetch: Fetch, grant: Grant, now: () => number =
   throw new RenewalRefused(`GitHub didn't renew the sign-in: ${String(j?.error ?? res.status)}`);
 }
 
-/** How long before an expiring sign-in runs out Ember renews it. */
+/** How long before an expiring sign-in runs out Ember renews it (once nothing is under way). */
 export const RENEW_BEFORE_MS = 60 * 60_000;
-/** A renewed sign-in waits for nothing to be under way before Copilot is reconnected with it, checking this often... */
+/**
+ * A sign-in due for renewal waits for nothing to be under way, checking this often: renewing it revokes the token
+ * Copilot holds (GitHub: "the old user access token will no longer work"), so Copilot is reconnected with the new one at
+ * once, which would cut off what's under way...
+ */
 const IDLE_CHECK_MS = 30_000;
-/** ...but no closer than this to the old one's end (which would cut off what's under way anyway). */
+/** ...but no closer than this to the old one's end: it is renewed then anyway (what's under way would fail regardless). */
 const FORCE_BEFORE_MS = 2 * 60_000;
 /** A renewal that failed in passing (no network) is tried again after this. */
 const RENEW_RETRY_MS = 60_000;
@@ -416,10 +420,12 @@ export interface GrantKeeperDeps {
 }
 
 /**
- * Keeps Ember's own sign-in working when its token expires (review #138): an hour before the end, the grant is renewed
- * and saved, and Copilot is reconnected with the new token once nothing is under way. A grant that doesn't expire (the
- * app's "Expire user authorization tokens" off) needs none of this. One GitHub won't renew is left to run out: Copilot
- * then refuses it, and the settings window offers Sign in again.
+ * Keeps Ember's own sign-in working when its token expires (review #138): from an hour before the end, once nothing is
+ * under way (or two minutes before the end regardless), the grant is renewed, Copilot is reconnected with the new token
+ * at once, and the new grant is saved. Renewing first and switching later would leave Copilot, and every reconnect it
+ * makes on its own, on a token GitHub revoked at the renewal (cross-review X11). A grant that doesn't expire (the app's
+ * "Expire user authorization tokens" off) needs none of this. One GitHub won't renew is left to run out: Copilot then
+ * refuses it, and the settings window offers Sign in again.
  */
 export class GrantKeeper {
   private grant: Grant | null = null;
@@ -427,6 +433,8 @@ export class GrantKeeper {
   private lastFreshen = -Infinity;
   /** Counts use() and stop() calls: a stored grant read for an earlier use() is dropped when another came meanwhile. */
   private turn = 0;
+  /** Renewals under way, by refresh token (see renewed). */
+  private readonly renewals = new Map<string, Promise<Grant>>();
 
   constructor(private d: GrantKeeperDeps) {}
 
@@ -466,7 +474,7 @@ export class GrantKeeper {
     if (this.now() - this.lastFreshen < RENEW_RETRY_MS) return;
     this.lastFreshen = this.now();
     try {
-      const next = await renewGrant(this.d.fetch, g, () => this.now());
+      const next = await this.renewed(g);
       // The stored one stopped working with the renewal: the store gives the new one from now on, from the file or, not
       // kept (a full or read-only disk), for this run (cross-review X13).
       const kept = store.saveResult(next);
@@ -480,7 +488,7 @@ export class GrantKeeper {
     this.stop();
     if (!grant || !renewable(grant, this.now())) return;
     this.grant = grant;
-    this.after(grant.expiresAt! - RENEW_BEFORE_MS - this.now(), () => void this.renew(grant));
+    this.after(grant.expiresAt! - RENEW_BEFORE_MS - this.now(), () => this.due(grant));
   }
 
   private after(ms: number, fn: () => void): void {
@@ -490,32 +498,52 @@ export class GrantKeeper {
     this.timer.unref?.();
   }
 
-  private async renew(grant: Grant): Promise<void> {
+  /**
+   * The grant's renewal time came (or a check since). It is renewed only when Copilot can be switched to the new token
+   * at once: nothing under way, or the old token about to run out. Until then the old one, which still works, stays.
+   */
+  private due(grant: Grant): void {
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.grant !== grant || this.d.inUse() !== grant.token) return;
-    if (this.now() < grant.expiresAt! - RENEW_BEFORE_MS) { this.track(grant); return; }
+    const now = this.now();
+    if (now < grant.expiresAt! - RENEW_BEFORE_MS) { this.after(grant.expiresAt! - RENEW_BEFORE_MS - now, () => this.due(grant)); return; }
+    if (now < grant.expiresAt! - FORCE_BEFORE_MS && !this.d.idle()) { this.after(IDLE_CHECK_MS, () => this.due(grant)); return; }
+    void this.renew(grant);
+  }
+
+  private async renew(grant: Grant): Promise<void> {
     let next: Grant;
     try {
-      next = await renewGrant(this.d.fetch, grant, () => this.now());
+      next = await this.renewed(grant);
     } catch (err) {
       const refused = err instanceof RenewalRefused;
       this.d.log?.("auth.renew_failed", { err, refused });
-      if (!refused && this.grant === grant && renewable(grant, this.now())) this.after(RENEW_RETRY_MS, () => void this.renew(grant));
+      if (!refused && this.grant === grant && renewable(grant, this.now())) this.after(RENEW_RETRY_MS, () => this.due(grant));
       return;
     }
     if (this.grant !== grant || this.d.inUse() !== grant.token) return;
-    // Kept for the next start (the old refresh token no longer works); not kept (no keyring): for this run.
-    const kept = this.d.store()?.saveResult(next) ?? "no-keyring";
-    this.d.log?.("auth.renewed", { kept });
-    this.switchWhenIdle(grant, next);
-  }
-
-  private switchWhenIdle(old: Grant, next: Grant): void {
-    if (this.grant !== old || this.d.inUse() !== old.token) return;
-    const late = old.expiresAt === undefined || this.now() >= old.expiresAt - FORCE_BEFORE_MS;
-    if (!this.d.idle() && !late) { this.after(IDLE_CHECK_MS, () => this.switchWhenIdle(old, next)); return; }
+    // The old token stopped working with the renewal: Copilot is reconnected with the new one at once (with no await
+    // between, so the reconnects Copilot makes on its own use it too), and only then is it saved, so a slow keyring
+    // doesn't hold the switch. Kept for the next start; not kept (no keyring, a full disk): for this run.
     this.track(next);
     void this.d.reconnect(next.token).catch(err => this.d.log?.("auth.renew_reconnect_failed", { err }));
+    const kept = this.d.store()?.saveResult(next) ?? "no-keyring";
+    this.d.log?.("auth.renewed", { kept });
+  }
+
+  /**
+   * The grant renewed, asking GitHub once however many ask at a time (the timer, freshen): a refresh token works only
+   * once, so a second request with it would be refused.
+   */
+  private renewed(grant: Grant): Promise<Grant> {
+    const key = grant.refreshToken ?? "";
+    let p = this.renewals.get(key);
+    if (!p) {
+      p = renewGrant(this.d.fetch, grant, () => this.now()).finally(() => this.renewals.delete(key));
+      this.renewals.set(key, p);
+    }
+    return p;
   }
 }
 
