@@ -595,7 +595,7 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
   it("says where the helper goes and what it does on the screen for a Linux computer, a Mac or a server alike (review #192)", () => {
     const card = sshConsent({ os: "linux", target: "ssh:build-01", facts: { label: "build-01", resolved: { user: "deploy", hostname: "build-01.example.com", port: 22, jump: [] }, desktopOff: false, graceSeconds: 20 } });
     const text = card.body.join("\n");
-    expect(text).toContain("in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)");
+    expect(text).toContain("in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)");
     expect(text).toContain("If build-01 has a desktop, Ember reads and uses apps on its screen only when deploy is the person logged in there");
     expect(text).toContain("On a server with no desktop, or on a Mac, it only runs commands.");
     expect(validConsent(card)).toBe(true);

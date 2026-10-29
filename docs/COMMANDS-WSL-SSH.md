@@ -22,7 +22,7 @@ there and the commands it runs.
 | This computer (Windows) | as always, plus Linux apps shown by WSL (§3) | Windows PowerShell 5.1, without typing (§2.9) |
 | A WSL distro (WSL 2 or WSL 1) | the Windows screen, Linux apps included | bash, zsh or sh inside the distro; WSL 1: commands only |
 | An SSH computer: Linux (x64 or arm64, glibc 2.28 or newer, kernel 4.18 or newer) with your own X11 desktop | reading, opening apps and using their controls, every step asked (§4.4) | bash, zsh or sh |
-| An SSH computer: Linux with a Wayland desktop | reading and using controls, no screenshots (§4.4) | yes |
+| An SSH computer: Linux with a Wayland desktop | none yet: commands only (§4.4) | yes |
 | An SSH computer: Linux without a desktop, or only a VNC or xrdp session | none | yes |
 | An SSH computer: macOS 13.5 or newer | none yet | zsh, bash or sh |
 | An SSH computer that is WSL on another PC | none | yes |
@@ -64,12 +64,14 @@ card without a compositor.
 ### 2.1 Turning them on
 
 Settings › **Commands** has a switch per computer: **Run commands on this computer**, **Run commands in Ubuntu
-(WSL)**, **Run commands on build-01**. The first time you turn one on (or a task needs one), Ember shows the card "Let
-Ember run commands on this computer?" (or "on build-01?") with **Turn on** and **Not now**. It opens big enough to
-show the whole card on most screens, and names the stop chord in its first line. The card is answered with a click
-only, never with Ember's approve keys or by voice, and **Turn on** works only once the whole card has been in view (on
-a small screen, or with larger text, scroll to its end: "Scroll down to read it all first."). Under each switch, **Ask
-me before every command** makes every command on that computer ask. **Open the command window** shows it.
+(WSL)**, **Run commands on build-01**. When you turn one on, Ember shows the card "Let Ember run commands on this
+computer?" (or "on build-01?") with **Turn on** and **Not now**. It opens big enough to show the whole card on most
+screens, and names the stop chord in its first line. The card is answered with a click only, never with Ember's
+approve keys or by voice, and **Turn on** works only once the whole card has been in view (on a small screen, or with
+larger text, scroll to its end: "Scroll down to read it all first."). While a computer's switch is off, Ember runs no
+commands there and a task can't bring up the card: turn the switch on yourself. If a later Ember changes what the
+card says, the next command a task runs there shows the new card first. Under each switch, **Ask me before every
+command** makes every command on that computer ask. **Open the command window** shows it.
 
 To turn commands off again, turn the switch off. The stop chord (Ctrl+Alt+X on Linux, Win+Alt+X on Windows,
 Control+Shift+Command+X on macOS), "Ember, stop" and **Stop everything** stop every running command at once.
@@ -330,11 +332,14 @@ an earlier command printed text that looked like instructions.").
 
 ### 3.1 Turning it on
 
-When Ember first sees WSL it offers "I can work in WSL" (**Open settings**, **Not now**). Settings › **Computers**
-› **Let Ember work in WSL** shows the card "Use Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a
-small helper inside each distro that has a Linux app open, only while one is open, and never starts a distro on its
-own to read it; what it reads goes to Copilot as for your other windows; and commands in WSL, once you turn them on
-for a distro, can reach your Windows files and programs.
+When you ask for something in WSL or in a distro Settings lists while WSL is off for Ember ("in WSL, list my files",
+"in Ubuntu, …"; "Linux" alone doesn't), and Windows has a distro Ember could use, Ember offers "I can work in WSL"
+(**Open settings**, **Not now**), once each time it runs; the task itself goes on where Ember is set to work.
+Settings › **Computers** › **Let Ember work in WSL** shows the card "Use
+Ember with WSL?" (**Turn on**, **Not now**). It says Ember starts a small helper inside each distro that has a Linux
+app open, only while one is open, and never starts a distro on its own to read it; what it reads goes to Copilot as
+for your other windows; and commands in WSL, once you turn them on for a distro, can reach your Windows files and
+programs.
 
 Settings lists each distro as "Ubuntu (WSL)" with its state ("Running", "Stopped", "WSL 1: commands only").
 Docker Desktop's and Rancher Desktop's own distros are never listed. A Podman machine is commands only, and every
@@ -471,11 +476,13 @@ here when you ask something. Your request reaches build-01 as steps, never as au
 ### 4.3 What Ember copies there, and where
 
 Ember checks build-01 first (system, free space, its own Ember policy, whether it is this same computer) and copies
-nothing until every check passes. Then it copies a small helper over the same SSH connection: Node.js (about 29 MB,
-which this computer downloads from nodejs.org, or your organisation's mirror, and checks against a pinned SHA-256
-before sending) and Ember's own parts (about 1 MB, shipped inside Ember), about 31 MB in all, unpacked to about
-125 MB; build-01 needs about 400 MB free in your home folder. build-01 checks every file again before running it. A
-newer Ember sends only what changed (about 1 MB).
+nothing until every check passes. Then it copies a helper over the same SSH connection: Node.js (about 32 MB as
+`.tar.xz`, or 53 to 58 MB as `.tar.gz` where build-01 has no `xz`, as on most Macs; this computer downloads it from
+nodejs.org, or your organisation's mirror, and checks it against a pinned SHA-256 before sending) and Ember's own
+parts (about 1 MB, shipped inside Ember), about 33 MB in all (up to about 60 MB on a Mac or other computer without
+xz), unpacked to about 130 MB (Node.js without its headers and npm, which the helper doesn't use); build-01 needs
+about 400 MB free in your home folder. build-01 checks every file again before running it. A newer Ember sends only
+what changed (about 1 MB).
 
 | On build-01 | Linux | macOS |
 |---|---|---|
@@ -583,6 +590,9 @@ rest of its output is dropped and you won't see it. After the stop chord, output
   rm -rf ~/.local/share/ember-remote ~/.local/state/ember-remote             # Linux
   rm -rf ~/Library/Application\ Support/Ember\ Remote                       # macOS
   ```
+
+Remove the helper with Ember from each computer you added before you remove Ember from this computer: once Ember is
+gone from here, only the way without Ember is left.
 
 ### 4.8 When connecting fails
 

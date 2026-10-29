@@ -179,7 +179,7 @@ export interface SshConsentFacts {
   desktop: "screen" | "headless" | "remote-session" | "wsl" | "mac";
   /** A Mac whose probe found full disk access for remote users off (critique remote-11). */
   tccBlocked?: boolean;
-  /** The helper's size and folder (defaults: 31 MB, 125 MB, its own folder on a Linux computer or a Mac). */
+  /** The helper's size and folder (defaults: 33 MB, 130 MB, its own folder on a Linux computer or a Mac). */
   bundleMB?: number;
   unpackedMB?: number;
   installDir?: string;
@@ -243,7 +243,7 @@ export function consentText(i: ConsentInput): ConsentText {
         first,
         desktop,
         `Your voice and ${s.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(s.byok)} from this computer when you ask something.`,
-        `It copies a small helper there: about ${s.bundleMB ?? 31} MB, unpacked to about ${s.unpackedMB ?? 125} MB in ${s.installDir ?? "its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
+        `It copies a helper there: about ${s.bundleMB ?? 33} MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about ${s.unpackedMB ?? 130} MB in ${s.installDir ?? "its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
         `${label} keeps its own record of what Ember does there.`,
       ],
       yes: "Connect",

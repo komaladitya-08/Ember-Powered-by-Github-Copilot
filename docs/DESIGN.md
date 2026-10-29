@@ -9,7 +9,7 @@ show expressions.
 
 ## Characters
 
-All four ship in the app and are chosen in setup, settings, the handle menu, or by voice.
+All four ship in the app and are chosen in setup, settings, or by asking Ember (aloud or typed).
 They share one emotion rig, so switching never changes behaviour.
 
 | Character | Look | Signature |

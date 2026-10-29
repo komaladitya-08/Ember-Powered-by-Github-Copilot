@@ -1,12 +1,41 @@
 # Release notes
 
-## Unreleased: commands, WSL and other computers
+## 0.1.0 (2026-10-27)
 
-Ember can now run commands for you on this computer, in WSL and on other computers, work with Linux apps in WSL, and
+Ember's first release: a small, expressive companion that lives beside your cursor, listens for "Hey Ember" and does
+the work in your real apps where you can watch, without taking over your mouse. It is powered by GitHub Copilot.
+[README.md](README.md) says how to install it on each computer.
+
+### Ember
+
+- **Where it runs**: RHEL 8 and its family (Rocky, Alma, Oracle Linux 8) on GNOME with Xorg, as an RPM or an
+  AppImage; Windows 10 22H2 and Windows 11 on x64, as a zip (Windows on Arm: best effort); macOS 13 or later on Apple
+  silicon, as a dmg or a zip (Intel Macs and macOS 13: best effort).
+- **In your real apps**: Ember reads apps through the system's accessibility (AT-SPI on Linux, UI Automation on
+  Windows, the accessibility API on a Mac) and screenshots, and uses their controls in the background, so your mouse
+  and keyboard stay yours. When an app can't be used that way, it asks to borrow the mouse, and gives it back the
+  moment you move. "Show me how…" guides you to each control instead of doing it.
+- **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), and every
+  time before sending, deleting, paying and the like. It never types into password, payment or terminal fields. The
+  stop shortcut, "Ember, stop" and **Stop everything** stop everything at once.
+- **Voice**: "Hey Ember", with speech recognition on this computer (the models download once, 126 MB, or come with
+  the `ember-voice-models` RPM); only the text of a request goes to Copilot. Ember can speak its replies, questions
+  and results with the system's voices.
+- **Four characters**: Cinder, Wisp, Glassling and Glint share one rig of twelve emotions. Pick one in setup or
+  settings, or ask Ember to switch.
+- **Ember's desk** (Linux): a private display where Ember uses a full mouse and keyboard out of your way, which you
+  can watch and take over.
+- **For organisations**: a policy (`/etc/ember/policy.json` on Linux, `/Library/Application Support/Ember/policy.json`
+  on a Mac, `HKLM\SOFTWARE\Policies\Ember` on Windows) turns features off, and an audit log records every decision
+  and action.
+- **Check-up**: `ember doctor` and the settings window's setup check say what this computer is missing and how to fix
+  it.
+
+### Commands, WSL and other computers
+
+Ember can also run commands for you on this computer, in WSL and on other computers, work with Linux apps in WSL, and
 work on other computers you reach over SSH. Each is off until you turn it on and accept its card.
 [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md) has the details.
-
-### New
 
 - **Commands on every computer** (Linux, Windows, macOS, WSL, SSH). They run in Ember's own **Ember commands**
   window, never in your terminal, with live output, a **Stop** button and a record in the audit log. Most run straight
@@ -23,9 +52,13 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   name as before. A script named with `..` (`sh sub/../t.sh`, `cd link && sh ../t.sh`) is read where the computer
   really runs it (beside the link's target), and asks ("Ember can't tell which script this runs.") when the computer
   can't say where that is; any other path with `..` is judged where it really leads too.
-- **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop**
-  ("Pushing feature-x to origin, as you asked."). Only your own typed or spoken words count, and only for what they
-  name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain "delete build" asks.
+- **When you asked for exactly that**, a dangerous command runs after an announcement with a 4-second **Stop** (15
+  seconds while a screen reader runs) ("Pushing feature-x to origin, as you asked."). Only your own words count, and
+  only for what they name: "delete build/" (with the slash) or "delete the build folder" covers `rm -r build`, plain
+  "delete build" asks. Typed words count everywhere, spoken ones only where Ember can tell your voice from what your
+  speakers play (Linux with speaker rejection on and parec installed). On Windows, on macOS and on Linux without it, a
+  dangerous command you asked for by voice asks with the card, as a call, a video or Ember's own voice could say the
+  same words.
   Secrets, downloading and running code, commands that outlive Ember and anything Ember can't read always ask. If your
   words also name another computer, or a place that looks like one Ember doesn't know ("delete build/ on prod-db",
   "from the server web-2", "at deploy@10.0.0.5", "prod-db: …"), nothing in that task runs on an announcement: every
@@ -41,18 +74,21 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   Ember makes every further command in that task ask.
 - **WSL** (Windows): Ember reads and uses the Linux apps WSLg shows ("gedit (Ubuntu)"), opens them from their Start
   menu entries, and runs commands in your distros. Each distro that has a Linux app open gets a small helper while one
-  is open; Ember never starts a distro to read it. The first command in a stopped distro starts it, and the task's
-  bubble and the command window say "Starting Ubuntu…" meanwhile: a line above the tabs while Ember checks the
-  command, then the command's tab.
+  is open; Ember never starts a distro to read it. A Linux app Ember can't identify is refused and blacked out of
+  screenshots like a Remote Desktop window, and so are Linux apps shown by an X server on Windows (VcXsrv, X410,
+  Xming, GWSL, Cygwin/X). The first command in a stopped distro starts it, and the task's bubble and the command
+  window say "Starting Ubuntu…" meanwhile: a line above the tabs while Ember checks the command, then the command's
+  tab.
 - **Other computers over SSH**: add a computer in Settings › **Computers**, or accept Ember's offer when it sees you
   `ssh` somewhere ("You're connected to build-01"). Ember opens its own connection with your SSH settings, keys, agent
   and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before copying
-  anything, then copies a small helper there (about 31 MB) that runs only while it is connected and leaves no service
-  or autostart behind. It works there on commands, and on the apps of that computer's screen when you are the person
-  logged in at it, asking before every step and showing a notice with **Stop** there. When that screen locks or its
-  session goes inactive, the tasks using the screen stop; a task only running commands there goes on (a **Stop** at
-  that computer, a lost connection, **Disconnect** and the stop chord stop everything there). Your voice, Copilot and
-  your GitHub sign-in stay on this computer. **Remove Ember from build-01** removes the helper again.
+  anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is connected
+  and leaves no service or autostart behind. It works there on commands, and on the apps of that computer's screen
+  when it is a Linux computer with an X11 desktop and you are the person logged in at it, asking before every step and
+  showing a notice with **Stop** there. When that screen locks or its session goes inactive, the tasks using the
+  screen stop; a task only running commands there goes on (a **Stop** at that computer, a lost connection,
+  **Disconnect** and the stop chord stop everything there). Your voice, Copilot and your GitHub sign-in stay on this
+  computer. Its **Remove helper** in Settings › **Computers** removes the helper again.
 - **SSH connections, in detail**: with OpenSSH older than 8.5 on this computer (RHEL 8, Ubuntu 20.04, Debian 11),
   every password or code is shown as "build-01 asks" with the question quoted, never as "Unlock your SSH key", because
   those clients can't mark a server's own questions. A silent connection shows "build-01 isn't answering" in the
@@ -61,20 +97,21 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   reconnecting needs you to sign in, Ember stops trying and says "build-01 needs you to sign in again", with
   **Reconnect**. If **Bring Ember** can't connect, the bubble says why. A Node.js download that gets nothing for 60
   seconds ends with "The download of what Ember needs for build-01 stalled. Try again."
-- **Settings**: new **Computers** and **Commands** sections (per-computer switches, **Ask me before every command**,
-  **Offer to bring Ember along when I connect with ssh**). The handle menu gains **Work on** (with more than one
-  computer), **Bring Ember to a computer…** and **Disconnect build-01**; the handle, task cards and questions say where
-  Ember works.
-- **Check-up** (`ember doctor` and the settings window's setup check): new rows for the SSH client, the command
-  window's terminal (`script`), PowerShell, WSL and each running distro's Linux apps and accessibility (with a button
-  in the setup check that turns accessibility on there, refused when your organisation has turned WSL or commands in
-  WSL off), the helper for other computers, and a connected Mac's protected folders. With WSL off in Ember's settings,
-  the check-up doesn't look inside your distros.
+- **Settings**: **Computers** and **Commands** sections (per-computer switches, **Ask me before every command**,
+  **Offer to bring Ember along when I connect with SSH**). The handle menu has **Work on** (with more than one
+  computer), **Bring Ember to a computer…** and **Disconnect build-01**; the handle, task cards and questions say
+  where Ember works.
+- **Check-up** (`ember doctor` and the settings window's setup check): rows for the SSH client, the command window's
+  terminal (`script`), PowerShell, WSL and each running distro's Linux apps and accessibility (with a button in the
+  setup check that turns accessibility on there, refused when your organisation has turned WSL or commands in WSL
+  off), the helper for other computers, and a connected Mac's protected folders. With WSL off in Ember's settings, the
+  check-up doesn't look inside your distros.
 
-### For administrators
+#### For administrators
 
-The organisation policy gains these keys. Compared with having no policy, none of them makes Ember less strict; but a
-policy that exists and doesn't mention `commands` turns commands off (below), so adding `commands` is what allows them.
+The organisation policy has these keys for them. Compared with having no policy, none of them makes Ember less strict;
+but a policy that exists and doesn't mention `commands` turns commands off (below), so adding `commands` is what
+allows them.
 
 | Key | Effect |
 |---|---|
@@ -102,29 +139,26 @@ policy that exists and doesn't mention `commands` turns commands off (below), so
   `/Library/Application Support/Ember/policy.json` on a Mac): the stricter of the two applies, and a broken one there
   refuses Ember.
 - **An older Ember locks down when it reads a policy with these keys.** The policy schema is strict, so an Ember from
-  before this release reads `features.wsl`, `features.ssh`, `commands` or `ssh` as a mistake and locks down (no
-  actions, no listening) until the policy is fixed or Ember is updated. Update Ember on every computer before
-  deploying a policy that uses them.
-
-### Changed
-
-- On Windows, a Linux app WSLg shows was refused and blacked out like a Remote Desktop window. With WSL on, Ember now
-  tells which app it is and treats it like any app (without borrowing the mouse there); one it can't identify is
-  still refused and blacked out. Linux apps
-  shown by an X server on Windows (VcXsrv, X410, Xming, GWSL, Cygwin/X) are now refused and blacked out too.
+  before this release (a pre-release build) reads `features.wsl`, `features.ssh`, `commands` or `ssh` as a mistake and
+  locks down (no actions, no listening) until the policy is fixed or Ember is updated. Update Ember on every computer
+  before deploying a policy that uses them.
 
 ### Limits you may meet
 
-- People who already use Ember aren't shown the "Before Ember starts" page again: each new feature's own card (WSL
-  once, each SSH computer, commands on each computer) asks first instead.
+- Ember isn't signed yet: Windows (SmartScreen, Smart App Control) and macOS (Gatekeeper) stop its first start, and
+  the README says what to do. On a Mac, permissions belong to the exact copy of Ember, so after an update give them
+  again.
+- On Linux, Ember needs GNOME on Xorg: it doesn't work in a Wayland session.
+- Each of commands, WSL and SSH asks with its own card when you turn it on (WSL once, each SSH computer, commands on
+  each computer), not on the "Before Ember starts" page.
 - Ember can't see when a program turns off echo for a password: it cuts everything you type out of what Copilot gets,
   and withholds the output after a password-like prompt, which may hide a little more than needed.
 - On Windows, commands run in Windows PowerShell 5.1 only and can't take typing, so they can't ask you for a password
   or an answer.
 - On a remote Linux screen, every step is asked, Ember never borrows the mouse and keyboard, and you aren't shown the
   screen.
-- On a remote Wayland desktop, reading and using controls only, no screenshots; until Ember's Wayland test passes,
-  commands only.
+- A remote Linux computer with a Wayland desktop gets commands only for now; reading and using its controls (with no
+  screenshots) waits for Ember's Wayland test to pass.
 - A Mac reached over SSH gets commands only, and they can't open Desktop, Documents or Downloads without "Allow full
   disk access for remote users"; Windows computers can't be reached over SSH yet.
 - Ember doesn't use the mouse or keyboard in Linux apps under WSL yet (it uses their controls), and doesn't use Linux

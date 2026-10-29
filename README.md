@@ -11,7 +11,25 @@ Ember runs on:
 
 Ember's desk, a private display where Ember can work out of your way, is Linux-only.
 
+## Download
+
+Each release's files are on this repository's
+[Releases page](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/releases), with `SHA256SUMS`, the
+SHA-256 checksum of each file. Check what you downloaded before you open it:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing                  # Linux: "OK" after each file you have
+shasum -a 256 Ember-0.1.0-mac-arm64.dmg                   # macOS: the same as its line in SHA256SUMS
+(Get-FileHash .\Ember-0.1.0-win-x64.zip).Hash.ToLower()    # Windows PowerShell: the same as its line in SHA256SUMS
+```
+
+To build them yourself, see [docs/DEVELOPING.md](docs/DEVELOPING.md) (§7 Linux, §10.5 Windows, §11.5 macOS). A
+manual CI run with **packages** ticked also keeps them for 3 days as artifacts (`ember-packages`, `ember-windows`,
+`ember-macos`, `ember-macos-x64`).
+
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
+
+Download `ember-0.1.0-1.el8.x86_64.rpm` from the Releases page, then:
 
 ```bash
 sudo dnf install ./ember-0.1.0-1.el8.x86_64.rpm
@@ -19,21 +37,44 @@ ember doctor               # checks this computer and explains anything to fix
 ```
 
 For “Hey Ember” without downloading the speech models on each computer, also install
-`ember-voice-models-0.1.0-1.el8.noarch.rpm` when you build it (`node scripts/voice/prepare.mjs` before packaging;
-see docs/DEVELOPING.md). Without it, Ember offers to download the models (126 MB) when voice is turned on.
+`ember-voice-models-0.1.0-1.el8.noarch.rpm` from the same release (to build it, run `node scripts/voice/prepare.mjs`
+before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (126 MB) when voice is
+turned on.
 
-Or run `Ember-0.1.0-x86_64.AppImage` without installing.
+Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
+system packages the RPM would bring for reading apps:
+
+```bash
+sudo dnf install python3-pyatspi python3-gobject at-spi2-core
+# Optional, for “Hey Ember”, speaking and Ember's desk:
+sudo dnf install pulseaudio-utils speech-dispatcher speech-dispatcher-espeak-ng xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon
+chmod +x Ember-0.1.0-x86_64.AppImage
+./Ember-0.1.0-x86_64.AppImage doctor    # checks this computer, as ember doctor does
+```
+
+The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM). Where user
+namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
+
+To update, install the new RPM the same way, then quit Ember and start it again. To remove Ember, first remove its
+helper from the computers you added over SSH (below). Then turn off **Start Ember when I log in** in its settings (or
+delete `~/.config/autostart/ember.desktop`), quit it, run `sudo dnf remove ember` (it removes `ember-voice-models`
+too) or delete the AppImage, and delete `~/.config/ember` (its settings, logs, audit log, speech models and sign-in)
+and `~/Ember` (what it made on its desk).
 
 ## Install on Windows
 
-1. Get `Ember-0.1.0-win-x64.zip`. `npm run package:win` builds it (docs/DEVELOPING.md §10.5), and a manual CI run with
-   **packages** ticked keeps it for 3 days as the `ember-windows` artifact.
+1. Download `Ember-0.1.0-win-x64.zip` from the Releases page.
 2. Extract it into a folder of your own, for example `%LOCALAPPDATA%\Programs` (the zip holds an `Ember` folder), and
    start `Ember\Ember.exe`. The first start adds Ember to the Start menu.
 3. Ember isn't signed yet, so Windows checks with you first:
    - SmartScreen says "Windows protected your PC": choose **More info**, then **Run anyway**.
-   - Smart App Control (on some new Windows 11 installations) blocks unsigned apps outright and can't make an
-     exception for one app.
+   - Smart App Control (on new Windows 11 installations) blocks apps that aren't signed and can't make an exception
+     for one app: Windows says "Smart App Control blocked an app that may be unsafe" (or "Smart App Control has
+     blocked part of this app"), with no **Run anyway**. To use Ember on that PC, turn it off in **Windows Security ›
+     App & browser control › Smart App Control settings** (Windows asks for an administrator's OK). Since the April
+     2026 update (Windows 11 24H2 build 26100.8116, 25H2 build 26200.8116) you can turn it on again there later; on
+     older builds, turning it back on needs a Windows reset. On a PC managed by your organisation, ask your
+     administrator instead. Otherwise, use Ember on another computer until a signed build is out.
    - Where your organisation lets PowerShell run downloaded scripts only when they are signed (`RemoteSigned`),
      Ember's setup check says Windows blocked its accessibility helper because it came from the internet: press
      **Unblock it**. (Or unblock the zip before you extract it: right-click it, **Properties**, tick **Unblock**.)
@@ -50,20 +91,18 @@ screenshots, because it can't tell what runs inside them.
 To check this computer, open a Command Prompt or PowerShell in the `Ember` folder and run `.\ember-doctor.cmd`.
 
 To update, quit Ember and replace the `Ember` folder with the new one, in the same place; your settings stay in
-`%LOCALAPPDATA%\ember`. To remove Ember, turn off **Start Ember when I log in** in its settings, quit it, and delete
-the `Ember` folder, `Ember.lnk` in `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember`
-(its settings, logs and sign-in).
+`%LOCALAPPDATA%\ember`. To remove Ember, first remove its helper from the computers you added over SSH (below), then
+turn off **Start Ember when I log in** in its settings, quit it, and delete the `Ember` folder, `Ember.lnk` in
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember` (its settings, logs and sign-in).
 
 ## Install on macOS
 
-1. Get `Ember-0.1.0-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac). `npm run package:mac` builds them
-   (docs/DEVELOPING.md §11.5), and a manual CI run with **packages** ticked keeps them as the `ember-macos` artifact
-   (`ember-macos-x64` when **intel** is ticked too).
+1. Download `Ember-0.1.0-mac-arm64.dmg` (or the `.zip`; `mac-x64` for an Intel Mac) from the Releases page.
 2. Open the dmg, drag Ember into **Applications** and open it from there. Run from the dmg or from Downloads, macOS
    starts Ember from a temporary copy, and its permissions and login item don't stick.
 3. Ember is signed ad hoc and not notarised, so macOS stops its first start:
-   - macOS 15: open Ember once and choose **Done**, then in **System Settings › Privacy & Security** choose **Open
-     Anyway** next to the message about Ember, and confirm.
+   - macOS 15 and later: open Ember once and choose **Done**, then in **System Settings › Privacy & Security** choose
+     **Open Anyway** next to the message about Ember, and confirm.
    - macOS 13 and 14: Control-click Ember in Applications, choose **Open**, then **Open** again.
    - If macOS says Ember "is damaged", clear the download mark and open it again:
      `xattr -dr com.apple.quarantine /Applications/Ember.app`.
@@ -84,9 +123,9 @@ macOS ties each permission to the exact copy of Ember. After you install a new b
 without the permission working: remove Ember from each list with **−** and add it again.
 
 To update, quit Ember, drag the new Ember.app into Applications over the old one, and give the permissions again as
-above. To remove Ember, turn off **Start Ember when I log in** in its settings, quit it, remove it from each Privacy &
-Security list with **−**, and delete Ember.app from Applications and `~/Library/Application Support/ember` (its
-settings, logs and sign-in).
+above. To remove Ember, first remove its helper from the computers you added over SSH (below), then turn off **Start
+Ember when I log in** in its settings, quit it, remove it from each Privacy & Security list with **−**, and delete
+Ember.app from Applications and `~/Library/Application Support/ember` (its settings, logs and sign-in).
 
 To check this Mac, run Ember's check-up through `open`, so that macOS judges Ember's own permissions (run from
 Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's instead):
@@ -132,6 +171,55 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
 If another app already holds one, the setup check says which, and Ember's handle in the bottom-right corner does the
 same things. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by default.
 
+## Accessibility
+
+Almost all of Ember works from the keyboard and with a screen reader (the rest is under **Known gaps**). Its own
+windows (settings, the ask box, the command window, the sign-in and consent cards) are ordinary pages with headings,
+labels and a visible focus. Ember itself, its bubble, its task cards and its handle can't be reached with the keyboard,
+so Ember never pulls the keyboard out of your app: the keys below reach what they do. Ember hasn't been tried with
+Orca, NVDA, JAWS, Narrator or VoiceOver on real computers yet; please
+[report](https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues) what doesn't work.
+
+**Screen readers.** Ember notices Orca on Linux (GNOME's screen reader switch), NVDA, JAWS and Narrator on Windows,
+and VoiceOver on a Mac. While one runs:
+
+- Ember speaks its questions and results itself, unless you choose otherwise in Settings › **Voice** › **Speak
+  replies, questions and results out loud**: **When a screen reader runs** (the default), **Always** or **Never**.
+  When your organisation turns speaking off, Ember never speaks.
+- The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
+  Ctrl+Alt+N not now"), and for a question shown in another of Ember's windows, how to get there ("press Alt+Tab to
+  go there").
+- The command window reads out what a command prints, and its lines can be read again one by one. A dangerous command
+  you asked for waits 15 seconds instead of 4 before it runs.
+
+**Keyboard routes.** The keys named here are Linux's; Windows and macOS use their own (see **Shortcuts**).
+
+| To | From the keyboard |
+|---|---|
+| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds the shortcut: **Ask Ember…** in settings, under **Comfort & access › Ember on screen** |
+| Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good |
+| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds the shortcut: **Stop everything** under **Comfort & access › Ember on screen** |
+| Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
+| What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
+| A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command |
+| The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
+| Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**) | Settings › **Computers** has the same; the bubble says so |
+| Sign-in and consent cards | Their window takes the keyboard; where the system keeps it in another app, a card you type into says so, and Alt+Tab reaches the card. Tab to a button, Enter presses the highlighted one, Esc cancels (**Not now** on a consent card). A consent card's yes counts once you have read all of it: Tab to its words and scroll with the arrow keys or Page Down. It is answered there only, never with Ember's keys or by voice |
+| Ember's desk (Linux) | **Take over** is a click; while you have the desk, every key goes to it, Tab included, until Ctrl+Alt+End hands it back. A screen reader is told so when you take over |
+
+**Seeing, motion and time.** Settings › **Comfort & access** has **Text size** (Large or Larger, for settings, the
+bubble, task cards, the handle, the command window and the password and consent cards; the ask box keeps its size),
+**Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion) and **More time to read
+and answer** (messages stay ten times as long, and a question waits 20 minutes instead of 2 before it counts as
+**Not now**). Windows' contrast themes keep switches, edges, focus and state visible, and the handle's microphone and
+computer badges change shape as well as colour.
+
+**Known gaps.**
+- A task card's own **Stop** and the desk's **Take over** are clicks only: the stop shortcut stops every task.
+- Ember's shortcuts can't be changed; when another app holds one, use the routes in the table.
+- On Windows, a command can't take typing (§2.9 of [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)). On a Mac,
+  Command+Tab doesn't list the command window: answer a command card with Ember's allow and not-now keys.
+
 ## Commands, WSL and other computers
 
 Ember can also run commands, work in WSL on Windows, and work on other computers you reach over SSH. Each is off until
@@ -145,14 +233,25 @@ you turn it on in settings (**Commands**, **Computers**) and accept the card tha
   settings, records or programs, or press keys in its own windows.
 - **WSL**: Ember reads and uses the Linux apps WSL shows on Windows, opens them, and runs commands in your distros.
 - **Other computers**: on your click, Ember opens its own SSH connection with your SSH settings and keys, copies a
-  small helper there (about 31 MB) that runs only while it is connected, and works there: commands, and the apps on
-  that computer's screen when you are the person logged in at it, asking before every step. When it sees you `ssh`
-  somewhere, it can offer to come along. Your voice and your GitHub sign-in always stay on this computer.
+  helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is connected, and works there:
+  commands, and the apps on that computer's screen when it is a Linux computer with an X11 desktop and you are the
+  person logged in at it, asking before every step. When it sees you `ssh` somewhere, it can offer to come along. Your
+  voice and your GitHub sign-in always stay on this computer.
 
 The same switches turn them off, and the stop shortcut stops every command at once. Administrators can turn each off,
 or make every command ask, in the organisation policy (`features.wsl`, `features.ssh`, `commands`, `ssh`); an Ember
 older than this release locks down when its policy uses those keys. [docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md)
 has the details, including what Ember can't do yet.
+
+**Before you remove Ember from this computer**, press **Remove helper** beside each computer you added in Settings ›
+**Computers**: it removes the helper there and keeps that computer's record of what Ember did. Once Ember is
+gone from here, the helper can only be removed on that computer itself
+([docs/COMMANDS-WSL-SSH.md](docs/COMMANDS-WSL-SSH.md) §4.7):
+
+```bash
+sh ~/.local/share/ember-remote/versions/*/uninstall.sh                     # Linux
+sh ~/Library/Application\ Support/Ember\ Remote/versions/*/uninstall.sh    # macOS
+```
 
 ## Develop
 

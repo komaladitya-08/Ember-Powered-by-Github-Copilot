@@ -14,6 +14,21 @@ export function autostartFile(env: NodeJS.ProcessEnv = process.env, home = os.ho
   return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "autostart", "ember.desktop");
 }
 
+/**
+ * The entry's TryExec line: the program it starts, so the desktop skips the entry quietly once that program is gone
+ * (dnf remove ember, a deleted AppImage), as the file stays in ~/.config/autostart, which no package can reach. None
+ * without a program: an older Ember's entry, from before TryExec, has none.
+ */
+function tryExec(command: readonly string[] | null): string[] {
+  const program = command?.[0];
+  return program ? [`TryExec=${stringValue(program)}`] : [];
+}
+
+/** A Desktop Entry string value (TryExec): no quoting or field codes, only the spec's escapes. */
+function stringValue(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/^ /, "\\s");
+}
+
 /** How to start this Ember: the AppImage, the installed launcher, or this Electron with this app. */
 export function launchCommand(o: { packaged: boolean; execPath: string; appPath: string; env?: NodeJS.ProcessEnv; exists?: (p: string) => boolean }): string[] {
   const env = o.env ?? process.env;
@@ -42,6 +57,7 @@ function entryLines(command: string[] | null, managed: boolean): string[] {
     "Comment=Your cursor companion, powered by GitHub Copilot",
     command ? `Exec=${[...command, "--autostart"].map(execArg).join(" ")}` : "Exec",
     "Icon=ember",
+    ...tryExec(command),
     "Terminal=false",
     "NoDisplay=true",
     "X-GNOME-Autostart-enabled=true",

@@ -430,7 +430,7 @@ describe("the first-use consent cards (§8.4)", () => {
       "Ember will connect to build-01 as deploy (deploy@build-01.example.com, port 22, through jump-host) with your own SSH settings and keys.",
       "On build-01's screen it reads and uses apps only when deploy is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there.",
       "Your voice and your GitHub sign-in stay on this computer. Ember sends build-01 only the steps it takes there and the commands it runs. What it reads there goes to GitHub Copilot from this computer when you ask something.",
-      "It copies a small helper there: about 31 MB, unpacked to about 125 MB in its own folder there (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press Ctrl+Alt+X. If the connection drops, a command running there stops within 20 seconds.",
+      "It copies a helper there: about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press Ctrl+Alt+X. If the connection drops, a command running there stops within 20 seconds.",
       "build-01 keeps its own record of what Ember does there.",
     ]);
     expect([c.yes, c.no]).toEqual(["Connect", "Not now"]);
@@ -449,7 +449,7 @@ describe("the first-use consent cards (§8.4)", () => {
     expect(keep(ssh({ desktop: "wsl" }).body[1])).toBe("build-01 is WSL on another computer: its Linux apps show on that computer's screen, so Ember will run commands only.");
     expect(keep(ssh({ desktop: "mac" }).body[1])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there.");
     expect(keep(ssh({ desktop: "mac", tccBlocked: true }).body[1])).toBe("Ember can't use a Mac's screen over SSH yet; it will run commands there. Commands there can't open your Desktop, Documents or Downloads folders until “Allow full disk access for remote users” is on (System Settings › General › Sharing › Remote Login › ⓘ).");
-    expect(ssh({ graceSeconds: 45, bundleMB: 33, unpackedMB: 130 }).body[3]).toContain("about 33 MB, unpacked to about 130 MB");
+    expect(ssh({ graceSeconds: 45, bundleMB: 34, unpackedMB: 131 }).body[3]).toContain("about 34 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 131 MB");
     expect(ssh({ graceSeconds: 45 }).body[3]).toMatch(/stops within 45 seconds\.$/);
   });
 
