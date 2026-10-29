@@ -83,6 +83,22 @@ describe("the ask box as it opens (review #78)", () => {
     expect(events.indexOf("reveal hotkey")).toBeGreaterThan(events.indexOf("focus"));
   });
 
+  it("says when it has the keyboard, once each time it opens (what was typed before went elsewhere)", () => {
+    let told = 0;
+    const { ask, win } = ready({ onKeyboard: () => { told++; } });
+    // A focus before it was asked for (a test, the window manager) isn't an opening.
+    win.emit("focus");
+    expect(told).toBe(0);
+    ask.show({ x: 400, y: 300 }, undefined, "hotkey");
+    win.emit("focus");
+    win.emit("focus");
+    expect(told).toBe(1);
+    ask.hide();
+    ask.show({ x: 400, y: 300 }, undefined, "hotkey");
+    win.emit("focus");
+    expect(told).toBe(2);
+  });
+
   it("has its page select what was left in the field when it goes away, while nothing can be typed", () => {
     const { ask, win } = ready();
     ask.show({ x: 400, y: 300 }, undefined, "hotkey");

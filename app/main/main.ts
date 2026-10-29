@@ -34,6 +34,7 @@ import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
+import { openAskInOrder } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
@@ -839,6 +840,8 @@ function start(): void {
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
   let askXid = 0;
+  /** When the ask box was last asked for (Date.now()): how long it took to have the keyboard is logged (ask.keyboard). */
+  let askAsked = 0;
   const askWindow = new AskWindow({
     os: platform.os,
     keepOff: () => handle?.bounds ?? null,
@@ -856,6 +859,8 @@ function start(): void {
     // (an X11 check, needed only where Ember holds the keyboard while the box opens).
     hasFocus: platform.keyboardHold ? (): boolean => !wsRef || (askXid !== 0 && wsRef.focusWindow()?.id === askXid) : undefined,
     onReveal: source => log.info("ask.reveal", { source }),
+    // How long the box took to have the keyboard, by Electron's word: what was typed before went elsewhere (review #78).
+    onKeyboard: () => log.info("ask.keyboard", { ms: Date.now() - askAsked }),
   });
   let agent: AgentHost | null = null;
   /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */
@@ -868,7 +873,11 @@ function start(): void {
   let callContext: Promise<QuickContext | null> = Promise.resolve(null);
   // Nothing is read from the screen or sent anywhere until the user has agreed (M8.8).
   const consented = () => hasConsent(settings.get());
-  const captureContext = () => {
+  /**
+   * `taken`: the window the user was in, read before the ask box took the keyboard (where the box opens before the
+   * screen is read: ask-open.ts); undefined: the window active now.
+   */
+  const captureContext = (taken?: NonNullable<ReturnType<WindowSystem["activeWindow"]>>) => {
     if (!consented()) { callContext = Promise.resolve(null); return; }
     // Set to work on another computer: its context (never this screen's: the user's window is the terminal they reached
     // it from, §2.8). Asked first, so it works without a window system here too.
@@ -877,10 +886,10 @@ function start(): void {
     if (!perception) { callContext = Promise.resolve(null); return; }
     // What is selected in the user's window, asked for now (some apps don't tell it through accessibility; Linux's
     // PRIMARY selection, which other OSes don't have).
-    const active = wsRef?.activeWindow();
+    const active = taken ?? wsRef?.activeWindow();
     const clip = platform.clipboard;
     const selected = active && active.pid !== process.pid && clip ? clip.readSelection(active.id).catch(() => "") : Promise.resolve("");
-    callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
+    callContext = Promise.all([perception.quickContext(taken), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
   /**
    * Main's own notice in the bubble for `ms`: held, so a task's hide doesn't wipe it, and given back after, so a task still
@@ -910,21 +919,31 @@ function start(): void {
    * `over` is the window it had the keyboard.
    */
   const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "test" } = {}) => {
-    // Every opening says where it came from (an ask box that opened by itself would show up here).
-    log.info("ask.open", { source });
-    if (!consented()) { showHome(); return; }
+    const asked = Date.now();
+    // Every opening says where it came from (an ask box that opened by itself would show up here), once the box is up
+    // where it opens: a line written first would hold up the keyboard (review #78).
+    if (!consented()) { log.info("ask.open", { source }); showHome(); return; }
     // Already open: the user is typing in it. Looking again would only find the ask box itself.
-    if (askWindow.visible) { askWindow.focus(); return; }
+    if (askWindow.visible) { log.info("ask.open", { source }); askWindow.focus(); return; }
     // From the hotkey, letters typed before the box has the keyboard would go to the user's app: Ember holds the
     // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 and
     // accessibility round trips can outlast the hotkey's own grab, and by then the first letter has gone.
     const held = look && platform.keyboardHold ? platform.keyboardHold({ log: (event, fields) => log.info(event, fields) }) : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
     askOver = look ? focusNow().id : over;
-    if (look) captureContext();
     // Where a request goes when it names no computer: the picker's choice, as a chip (§8.1).
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
-    askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source);
+    askAsked = asked;
+    // Linux holds the keyboard, so the screen is read first, as always. Windows and macOS can't: the box shows first,
+    // and the screen is read after it, of the window the user was in (ask-open.ts).
+    openAskInOrder({
+      holding: !!platform.keyboardHold, look,
+      activeWindow: () => wsRef?.activeWindow() ?? null,
+      read: active => captureContext(active),
+      show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source),
+    });
+    // ms: from the call (the shortcut's press, as Ember heard it) to the box shown.
+    log.info("ask.open", { source, ms: Date.now() - asked });
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
     // What Ember will read, shown as a chip once the quick look is done: the window, and what else goes with a request.
     void callContext.then(c => {
@@ -1388,8 +1407,10 @@ function start(): void {
     const env = readEnvironment();
     let compositing = ws ? ws.hasCompositor() : false;
     askWindow.setOpaque(!compositing);
-    // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed.
+    // Made now (hidden), so the ask shortcut opens it at once: a box still loading took the first letters typed. Agreed
+    // to later (the first run), it is made then (review #78).
     if (consented()) askWindow.prepare();
+    settings.onChange(() => { if (consented()) askWindow.prepare(); });
     // Where the pointer is, in global DIP, and the buttons held: from the window system (X11's XQueryPointer reports
     // physical pixels; Electron's position can be stale there), else Electron's.
     const cursor = () => {

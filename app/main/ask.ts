@@ -119,6 +119,8 @@ export class AskWindow {
   private menuUp = false;
   /** The box lost the keyboard while that menu was up and hasn't had it back since. */
   private menuBlur = false;
+  /** Shown, and not yet told by Electron that it has the keyboard (onKeyboard says when it is). */
+  private awaitingKeyboard = false;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -129,11 +131,12 @@ export class AskWindow {
    * actually shown (the only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
    * `windowId`: the box's id in the window system's id space (default: its X id), 0 when it can't be told.
    * `floating`: the platform's window options and workspace rule (default: today's Linux window). `os`: the page names
-   * its keys as this OS does (Return on a Mac).
+   * its keys as this OS does (Return on a Mac). `onKeyboard`: the first time Electron says the box has the keyboard
+   * after each reveal (letters typed before went elsewhere where Ember holds no keys: review #78).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
-    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS;
+    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void;
   } = {}) {}
 
   /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
@@ -170,7 +173,11 @@ export class AskWindow {
       if (this.menuUp) this.menuBlur = true;
       else this.hide();
     });
-    win.on("focus", () => { if (this.win === win) this.menuBlur = false; });
+    win.on("focus", () => {
+      if (this.win !== win) return;
+      this.menuBlur = false;
+      if (this.awaitingKeyboard) { this.awaitingKeyboard = false; this.o.onKeyboard?.(); }
+    });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
     win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
     // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
@@ -197,6 +204,8 @@ export class AskWindow {
     // has the keyboard, so nothing it does on opening lands on letters already typed into it (review #78).
     this.sendContext();
     try { win.setIgnoreMouseEvents(false); } catch { /* test double */ }
+    // Before show(): Windows activates the window, and says so ("focus"), inside it.
+    this.awaitingKeyboard = true;
     win.show();
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
@@ -290,6 +299,7 @@ export class AskWindow {
 
   hide(): void {
     this.wanted = false;
+    this.awaitingKeyboard = false;
     if (!this.win || this.win.isDestroyed()) return;
     this.win.hide();
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then
