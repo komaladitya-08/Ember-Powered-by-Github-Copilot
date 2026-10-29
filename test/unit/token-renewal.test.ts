@@ -1,15 +1,16 @@
 /**
  * Ember's own sign-in when its GitHub App expires user tokens (review #138): GitHub's default for a GitHub App gives an
- * eight-hour token and a six-month refresh token. The device flow keeps both, the store keeps them, and an hour before
- * the token runs out Ember renews it (no client secret: a device-flow sign-in's renews without one) and reconnects
- * Copilot with the new token once nothing is under way. An app whose tokens don't expire changes nothing.
+ * eight-hour token and a six-month refresh token. The device flow keeps both, the store keeps them, and from an hour
+ * before the token runs out, once nothing is under way, Ember renews it (no client secret: a device-flow sign-in's renews
+ * without one) and reconnects Copilot with the new token at once: the renewal revokes the old one (cross-review X11). An
+ * app whose tokens don't expire changes nothing.
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { GrantKeeper, RENEW_BEFORE_MS, RenewalRefused, TokenStore, pollDeviceGrant, renewGrant, type DeviceCode, type Grant, type SecretBox } from "../../app/main/agent/auth";
+import { GrantKeeper, RENEW_BEFORE_MS, RenewalRefused, TokenStore, pollDeviceGrant, renewGrant, resolveToken, type DeviceCode, type Grant, type SecretBox } from "../../app/main/agent/auth";
 
 const OLD = "ghu_" + "a".repeat(36); // not a real token
 const NEW = "ghu_" + "b".repeat(36); // not a real token
@@ -135,28 +136,141 @@ describe("keeping Ember's own sign-in alive", () => {
     keeper.stop();
   });
 
-  it("waits for nothing to be under way before reconnecting (a running task isn't cut off)", async () => {
+  it("renews only when it can switch: not while something is under way, which keeps the old token (still working) meanwhile (cross-review X11)", async () => {
     let idle = false;
-    const { keeper, reconnected } = setup({ idle: () => idle });
+    const { keeper, calls, reconnected } = setup({ idle: () => idle });
     keeper.use(OLD);
     await vi.advanceTimersByTimeAsync(7 * HOUR + 1000);
-    expect(reconnected).toEqual([]);
+    // Renewing would revoke the token Copilot is using for the task: GitHub isn't asked yet.
+    expect(calls).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(calls).toHaveLength(0);
     expect(reconnected).toEqual([]);
     idle = true;
     await vi.advanceTimersByTimeAsync(31_000);
+    expect(calls).toHaveLength(1);
     expect(reconnected).toEqual([NEW]);
     keeper.stop();
   });
 
-  it("reconnects anyway just before the old token runs out (what's under way would fail then regardless)", async () => {
-    const { keeper, reconnected } = setup({ idle: () => false });
+  it("renews anyway just before the old token runs out, and switches at once (what's under way would fail then regardless)", async () => {
+    const { keeper, calls, reconnected } = setup({ idle: () => false });
     keeper.use(OLD);
     await vi.advanceTimersByTimeAsync(8 * HOUR - 3 * 60_000);
+    expect(calls).toHaveLength(0);
     expect(reconnected).toEqual([]);
     await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(calls).toHaveLength(1);
     expect(reconnected).toEqual([NEW]);
     keeper.stop();
+  });
+
+  it("never leaves Copilot on a token the renewal revoked (GitHub: the old token stops working once its refresh token is used)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    const valid = new Set([OLD]);
+    // A pretend GitHub that does what its docs say: using the refresh token revokes the old token at once.
+    const fetch = async () => { valid.delete(OLD); valid.add(NEW); return renewed(); };
+    const store = tmpStore();
+    const grant: Grant = { token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    store.saveResult(grant);
+    let inUse: string | null = OLD;
+    let busy = true;
+    /** Each time the token in use was checked, whether GitHub still took it. */
+    const revokedInUse: boolean[] = [];
+    // Saved only after Copilot was switched: a slow keyring doesn't hold the switch.
+    const save = store.saveResult.bind(store);
+    store.saveResult = g => { revokedInUse.push(!valid.has(inUse!)); return save(g); };
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => !busy, reconnect: async t => { inUse = t; } });
+    keeper.use(OLD, grant);
+    await vi.advanceTimersByTimeAsync(7 * HOUR + 1000);
+    // A task runs for 40 minutes past the renewal time, checking the token every minute (Copilot renews its own session
+    // with it, and Ember's own reconnects use it).
+    for (let m = 0; m < 60; m++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      revokedInUse.push(!valid.has(inUse!));
+      if (m === 40) busy = false;
+    }
+    expect(inUse).toBe(NEW);
+    expect(revokedInUse.filter(Boolean)).toEqual([]);
+    keeper.stop();
+  });
+
+  it("asks GitHub once when Check again comes during a renewal (a refresh token works once)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    let answer: (r: Reply) => void = () => undefined;
+    const bodies: string[] = [];
+    const fetch = (_url: string, init: { body: string }) => { bodies.push(init.body); return new Promise<Reply>(r => { answer = r; }); };
+    const store = tmpStore();
+    const grant: Grant = { token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    store.saveResult(grant);
+    let inUse: string | null = OLD;
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; } });
+    keeper.use(OLD, grant);
+    await vi.advanceTimersByTimeAsync(7 * HOUR + 1000);
+    expect(bodies).toHaveLength(1);
+    const checking = keeper.freshen();
+    await vi.advanceTimersByTimeAsync(0);
+    answer(renewed());
+    await checking;
+    expect(bodies).toHaveLength(1);
+    expect(inUse).toBe(NEW);
+    expect(await store.load()).toBe(NEW);
+    keeper.stop();
+  });
+
+  it("renews at once when the computer wakes past the renewal time (timers stand still while it sleeps) (cross-review X12)", async () => {
+    const { keeper, calls, reconnected } = setup({ idle: () => false });
+    keeper.use(OLD);
+    // Half an hour awake, then the lid closes for 14 hours: the wall clock moves on, the timers don't.
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    vi.setSystemTime(Date.now() + 14 * HOUR);
+    keeper.wake();
+    await vi.advanceTimersByTimeAsync(0);
+    // The token ran out while it slept: renewed and switched to at once, whatever is under way.
+    expect(calls).toHaveLength(1);
+    expect(reconnected).toEqual([NEW]);
+    keeper.stop();
+  });
+
+  it("looks at the clock again every few minutes, so a wake it wasn't told about is noticed too (cross-review X12)", async () => {
+    const { keeper, calls, reconnected } = setup();
+    keeper.use(OLD);
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    vi.setSystemTime(Date.now() + 14 * HOUR);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(calls).toHaveLength(1);
+    expect(reconnected).toEqual([NEW]);
+    keeper.stop();
+  });
+
+  it("renews when Copilot refuses a sign-in whose renewal time has come, and leaves any other refusal alone (cross-review X12)", async () => {
+    const early = setup();
+    early.keeper.use(OLD);
+    await vi.advanceTimersByTimeAsync(60_000);
+    // Hours left: the refusal is the account's (no Copilot now); a renewed token would be refused too, so none is asked.
+    early.keeper.refused(OLD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(early.calls).toHaveLength(0);
+    early.keeper.stop();
+
+    const due = setup({ idle: () => false });
+    due.keeper.use(OLD);
+    await vi.advanceTimersByTimeAsync(60_000);
+    vi.setSystemTime(Date.now() + 9 * HOUR);
+    // Another sign-in's refusal (the GitHub CLI's) isn't this one's.
+    due.keeper.refused("gho_" + "c".repeat(36));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(due.calls).toHaveLength(0);
+    // Its own: renewed now, and Copilot reconnected with the new token, though the refused work is still winding down.
+    due.keeper.refused(OLD);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(due.calls).toHaveLength(1);
+    expect(due.reconnected).toEqual([NEW]);
+    // The new one refused too (the account lost Copilot): no second renewal.
+    due.keeper.refused(NEW);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(due.calls).toHaveLength(1);
+    due.keeper.stop();
   });
 
   it("tries again a minute later when GitHub can't be reached, and gives up when GitHub refuses", async () => {
@@ -225,6 +339,38 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("uses a stored sign-in renewed before use that couldn't be saved (a full or read-only disk), not the one on disk (cross-review X13)", async () => {
+    const logs: { event: string; data?: Record<string, unknown> }[] = [];
+    vi.useFakeTimers({ now: T0 });
+    const { fetch, calls } = github(renewed(), renewed(NEW, REFRESH2));
+    const store = tmpStore();
+    const file = (store as unknown as { file: string }).file;
+    expect(store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT })).toBe("kept");
+    // The disk is full (or read-only) by the next morning: the file can't be written (TokenStore says "write-failed").
+    fs.mkdirSync(`${file}.${process.pid}.tmp`);
+    let inUse: string | null = null;
+    const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; }, log: (event, data) => logs.push({ event, data }) });
+    vi.setSystemTime(T0 + 9 * HOUR);
+    await keeper.freshen();
+    expect(calls).toHaveLength(1);
+    expect(logs).toEqual([{ event: "auth.renewed", data: { when: "before use", kept: "write-failed" } }]);
+    // GitHub revoked the token and refresh token on disk with the renewal: Ember connects with the renewed one, as its own.
+    expect(await resolveToken(store, {}, async () => null)).toEqual({ token: NEW, source: "stored" });
+    // Check again a minute later doesn't spend the old refresh token again.
+    vi.setSystemTime(T0 + 9 * HOUR + 61_000);
+    await keeper.freshen();
+    expect(calls).toHaveLength(1);
+    // Connected with it: it is kept alive too (renewed seven hours later).
+    inUse = NEW;
+    keeper.use(NEW);
+    await vi.advanceTimersByTimeAsync(8 * HOUR);
+    expect(calls).toHaveLength(2);
+    keeper.stop();
+    // Signing out forgets it.
+    store.clear();
+    expect(await resolveToken(store, {}, async () => null)).toBeNull();
+  });
+
   it("doesn't renew a stored sign-in with hours left", async () => {
     const { keeper, calls } = setup();
     vi.setSystemTime(T0 + 8 * HOUR - RENEW_BEFORE_MS - 60_000);
@@ -232,14 +378,20 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("reads the stored sign-in as the store does (macOS: asynchronously, so the keychain prompt holds no main process)", async () => {
+  it("reads and saves the stored sign-in as the store does (macOS: asynchronously, so the keychain prompt holds no main process)", async () => {
     vi.useFakeTimers({ now: T0 });
     const { fetch, calls } = github(renewed(), renewed(NEW, REFRESH2));
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin");
     const syncReads = vi.fn((b: Buffer) => box.decryptString(b));
-    const mac: SecretBox = { ...box, decryptString: syncReads, decryptStringAsync: async b => ({ result: box.decryptString(b), shouldReEncrypt: false }) };
-    const store = new TokenStore(file, mac, { asyncDecrypt: true });
-    store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const syncSeals = vi.fn((s: string) => box.encryptString(s));
+    // Whether the keyring is there, asked on the main thread: on macOS that fetches the keychain's key, and can prompt.
+    const syncCheck = vi.fn(() => true);
+    const mac: SecretBox = {
+      ...box, decryptString: syncReads, encryptString: syncSeals, isEncryptionAvailable: syncCheck, isAsyncEncryptionAvailable: async () => true,
+      decryptStringAsync: async b => ({ result: box.decryptString(b), shouldReEncrypt: false }), encryptStringAsync: async s => box.encryptString(s),
+    };
+    new TokenStore(file, box).saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const store = new TokenStore(file, mac, { asyncKeyring: true });
     let inUse: string | null = OLD;
     const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; } });
     // A stored sign-in that ran out while Ember was off is renewed before use, read without decryptString.
@@ -253,6 +405,10 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(calls).toHaveLength(2);
     expect(inUse).toBe(NEW);
     expect(syncReads).not.toHaveBeenCalled();
+    // Both renewals were saved, sealed off the main thread too (follow-up to review #241).
+    expect(syncSeals).not.toHaveBeenCalled();
+    expect(syncCheck).not.toHaveBeenCalled();
+    expect(await new TokenStore(file, box).load()).toBe(NEW);
     keeper.stop();
   });
 
@@ -272,7 +428,7 @@ describe("main's sign-in wiring", () => {
 
   it("keeps the device flow's whole grant, and keeps the sign-in in use alive", () => {
     expect(MAIN).toContain("const grant = await pollDeviceGrant(fetch, clientId, code,");
-    expect(MAIN).toContain("tokens?.saveResult(grant)");
+    expect(MAIN).toContain("const saving = tokens?.saveAsync(grant) ?? Promise.resolve<SaveResult>(\"no-keyring\");");
     expect(MAIN).toContain("keeper.use(token, grant);");
     // Every connect says which sign-in is in use; signing out keeps none alive.
     expect(MAIN).toContain("currentToken = f?.token ?? null; keeper.use(currentToken);");
@@ -282,5 +438,29 @@ describe("main's sign-in wiring", () => {
     expect(MAIN).toContain("if (!provider) await keeper.freshen();");
     // Copilot is reconnected only when nothing is under way.
     expect(MAIN).toContain("idle: () => agent?.idle ?? true,");
+  });
+
+  it("seals the saved sign-in off the main thread on macOS, as it reads it (follow-up to review #241)", () => {
+    expect(MAIN).toContain(`safeStorage, { version: app.getVersion(), asyncKeyring: platform.os === "darwin" });`);
+    // Signed out while the keyring was asked (or Copilot connected): nothing more is said or logged for this sign-in.
+    expect(MAIN).toMatch(/const kept = await saving; if \(currentToken !== token\) return;/);
+  });
+
+  it("switches Copilot to a device-flow sign-in in the same step as it is put in use, the save going on beside the connection", () => {
+    // With no await between them, a refusal of the connection it replaces (still on the old token) is dropped by the
+    // host rather than taken for the new sign-in, and a Cancel during a macOS keychain prompt finds Ember already
+    // connecting, as it always did once the code was approved.
+    expect(MAIN).toContain([
+      "if (ac.signal.aborted) return; currentToken = token; keeper.use(token, grant);",
+      "const saving = tokens?.saveAsync(grant) ?? Promise.resolve<SaveResult>(\"no-keyring\");",
+      "const phase = await agent?.start(token, \"stored\"); const kept = await saving; if (currentToken !== token) return;",
+    ].join(" "));
+    expect(MAIN).toContain("await connected(phase, kept === \"kept\" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);");
+  });
+
+  it("tells the keeper when the computer wakes or Copilot refuses the sign-in in use (cross-review X12)", () => {
+    expect(MAIN).toContain(`powerMonitor.on("resume", () => { keeper.wake(); agent?.networkChanged(true); });`);
+    expect(MAIN).toContain(`powerMonitor.on("unlock-screen", () => keeper.wake());`);
+    expect(MAIN).toContain(`if (status.phase === "error" && status.reason === "sign-in" && currentToken) { refusedTokens.add(currentToken); keeper.refused(currentToken); }`);
   });
 });

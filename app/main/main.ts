@@ -55,7 +55,7 @@ import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } 
 import { expandedBubble, questionAloud, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
-import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken } from "./agent/auth";
+import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { speaksAloud } from "../shared/speech";
@@ -1074,8 +1074,9 @@ function start(): void {
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
-   * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed an hour before, and Copilot
-   * reconnected with the new token once nothing is under way (review #138).
+   * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed from an hour before, once nothing is
+   * under way (or two minutes before it runs out regardless, and at once when it ran out during sleep), and Copilot
+   * reconnected with the new token at once (review #138, cross-review X11, X12).
    */
   const keeper = new GrantKeeper({
     fetch: (url, init) => net.fetch(url, init), store: () => tokens, inUse: () => currentToken, idle: () => agent?.idle ?? true,
@@ -1183,13 +1184,21 @@ function start(): void {
       const token = grant.token;
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
-      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
-      const kept = tokens?.saveResult(grant) ?? "no-keyring";
-      if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
+      // In use from here, and Copilot switched to it in the same step (no await between): a renewal of the sign-in it
+      // replaces, finishing meanwhile, is neither switched to nor saved, and a refusal of the connection it replaces
+      // (still on the old token) is dropped by the host rather than taken for this one. The save goes on beside the
+      // connection: sealed off the main thread on macOS, so a keychain prompt holds neither the app nor the connection.
       currentToken = token;
       keeper.use(token, grant);
+      const saving = tokens?.saveAsync(grant) ?? Promise.resolve<SaveResult>("no-keyring");
+      const phase = await agent?.start(token, "stored");
+      const kept = await saving;
+      // Signed out meanwhile: its clear() made the save write nothing, and its start(null) runs after this one.
+      if (currentToken !== token) return;
+      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
+      if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
       const why = kept === "write-failed" ? "Ember couldn't save the sign-in on this computer" : sys.words.keyringMissing;
-      await connected(await agent?.start(token, "stored"), kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
+      await connected(phase, kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
     } catch (err) {
       if (!ac.signal.aborted) say({ state: "error", message: signInError(err) });
     }
@@ -1494,8 +1503,8 @@ function start(): void {
     }
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
-    // On macOS the saved sign-in is opened asynchronously: the keychain prompt after an update holds no main thread.
-    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncDecrypt: platform.os === "darwin" });
+    // On macOS the saved sign-in is opened and sealed asynchronously: the keychain prompt after an update holds no main thread.
+    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncKeyring: platform.os === "darwin" });
     // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
     let adminKey: string | undefined;
     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }
@@ -1768,7 +1777,8 @@ function start(): void {
       },
       onStatus: status => {
         // Copilot refused the sign-in in use (at a start, or mid-session): Check again passes over it to the next one.
-        if (status.phase === "error" && status.reason === "sign-in" && currentToken) refusedTokens.add(currentToken);
+        // Ember's own that ran out unnoticed (the computer slept) is renewed and reconnected instead (cross-review X12).
+        if (status.phase === "error" && status.reason === "sign-in" && currentToken) { refusedTokens.add(currentToken); keeper.refused(currentToken); }
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
@@ -1803,7 +1813,9 @@ function start(): void {
     let wasOnline = net.isOnline();
     const netWatch = setInterval(() => { const on = net.isOnline(); if (on !== wasOnline) { wasOnline = on; agent?.networkChanged(on); } }, 5000);
     netWatch.unref?.();
-    powerMonitor.on("resume", () => agent?.networkChanged(true));
+    // Timers stood still while the computer slept: its own sign-in may be due for renewal, or have run out (cross-review X12).
+    powerMonitor.on("resume", () => { keeper.wake(); agent?.networkChanged(true); });
+    powerMonitor.on("unlock-screen", () => keeper.wake());
     // The brain connects once the user has agreed to what Ember does (first run asks).
     let brainStarted = false;
     const startBrain = async () => {

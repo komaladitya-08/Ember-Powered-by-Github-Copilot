@@ -1498,7 +1498,8 @@ export class AgentHost {
 
   /**
    * Nothing a reconnect would cut off: no start under way, no answer or guide step, no request waiting for its turn,
-   * no task running or queued. A renewed sign-in waits for this before Copilot is reconnected with it (review #138).
+   * no task running or queued. A sign-in due for renewal waits for this before it is renewed and Copilot reconnected
+   * with it (review #138, cross-review X11).
    */
   get idle(): boolean {
     return this.starting === 0 && !this.presenter.atWork && !this.queued.length && !this.tasksAtWork();

@@ -23,9 +23,19 @@ export interface SecretBox {
   decryptString(b: Buffer): string;
   /** Electron's asynchronous read: the keyring's key is fetched off the main process's thread (macOS's keychain prompt). */
   decryptStringAsync?(b: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
+  /** Electron's asynchronous write, the same way (Electron 44 has both). */
+  encryptStringAsync?(s: string): Promise<Buffer>;
+  /**
+   * Whether the asynchronous write and read work, asked off the main process's thread too: on macOS the synchronous
+   * isEncryptionAvailable fetches the keychain's key on it, which can prompt.
+   */
+  isAsyncEncryptionAvailable?(): Promise<boolean>;
   /** "basic_text" means no keyring: nothing secret should be written to disk. */
   getSelectedStorageBackend?(): string;
 }
+
+/** Whether a sign-in was kept on disk, and why not: no keyring (or the keyring refused), or the file couldn't be written. */
+export type SaveResult = "kept" | "no-keyring" | "write-failed";
 
 export function isUsableToken(t: string | undefined | null): t is string {
   return !!t && /^(gho_|ghu_|github_pat_)[A-Za-z0-9_]+$/.test(t.trim());
@@ -40,15 +50,36 @@ export class TokenStore {
   unreadable = false;
 
   /**
-   * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
-   * `asyncDecrypt` (macOS): every read (load, loadGrant) opens it with decryptStringAsync, so the keychain prompt holds
-   * no main thread.
+   * A sign-in this run couldn't write (no keyring, the keyring refused, a full or read-only disk): every read gives it
+   * instead of the file's until one is written or the store is cleared (sign-out), so Ember carries on with it "for this
+   * run" whoever reads it next (cross-review X13). A renewal revokes the token and refresh token the file still holds.
    */
-  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncDecrypt?: boolean } = {}) {}
+  private held: Grant | null = null;
+  /** Counts clear() and saveResult(): a saveAsync begun before either is out of date, and writes nothing. */
+  private epoch = 0;
+  /** saveAsync's writes, one after another in the order they were asked for. */
+  private saving: Promise<unknown> = Promise.resolve();
+
+  /**
+   * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
+   * `asyncKeyring` (macOS): the keyring is asked off the main process's thread, so the keychain prompt holds none: every
+   * read (load, loadGrant) opens the sign-in with decryptStringAsync, and saveAsync seals it with encryptStringAsync.
+   */
+  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncKeyring?: boolean } = {}) {}
 
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
     return this.box.isEncryptionAvailable() && this.box.getSelectedStorageBackend?.() !== "basic_text";
+  }
+
+  /**
+   * canPersist, asking the keyring only off the main process's thread (saveAsync): isAsyncEncryptionAvailable, never
+   * isEncryptionAvailable (macOS: it fetches the keychain's key on the main thread, so a keychain prompt would hold Ember).
+   * A keyring without the question is tried: a refused encryptStringAsync means none.
+   */
+  private async canPersistAsync(): Promise<boolean> {
+    if (this.box.getSelectedStorageBackend?.() === "basic_text") return false;
+    return (await this.box.isAsyncEncryptionAvailable?.()) ?? true;
   }
 
   /** Is a sign-in saved (whether or not the keyring will open it)? Reads no secret. */
@@ -90,9 +121,13 @@ export class TokenStore {
   /**
    * The stored sign-in with what renews it (an expiring token from Ember's GitHub App), or a token alone (a file an
    * earlier Ember wrote, or an app whose tokens don't expire); null when there is none usable. Every read goes through
-   * here, so on macOS none holds the main process while the keychain asks (asyncDecrypt).
+   * here, so on macOS none holds the main process while the keychain asks (asyncKeyring).
    */
   async loadGrant(): Promise<Grant | null> {
+    if (this.held) {
+      this.unreadable = false;
+      return this.held;
+    }
     let raw: Buffer;
     try {
       raw = fs.readFileSync(this.file);
@@ -104,7 +139,7 @@ export class TokenStore {
     try {
       // Sealed by encryptString, opened by decryptStringAsync on macOS: the same keychain key, so shouldReEncrypt is
       // false and the file is left as it is (darwin-system checks both on a real Mac).
-      t = this.opts.asyncDecrypt && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
+      t = this.opts.asyncKeyring && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
     } catch {
       this.unreadable = true;
       return null;
@@ -130,18 +165,50 @@ export class TokenStore {
 
   /**
    * save(), saying why a token wasn't kept: "no-keyring" (nothing secret may go to disk, or the keyring refused) or
-   * "write-failed". The file is written whole or not at all (a temporary file renamed over it), owner-only.
+   * "write-failed". The file is written whole or not at all (a temporary file renamed over it), owner-only. One not
+   * kept is still read back for the rest of this run (held).
    */
-  saveResult(token: string | Grant): "kept" | "no-keyring" | "write-failed" {
-    if (!this.canPersist()) return "no-keyring";
-    // A token alone is written as it always was (an earlier Ember reads it); one that expires, with what renews it.
-    const text = typeof token === "string" ? token : token.expiresAt === undefined ? token.token : JSON.stringify(token);
-    let sealed: Buffer;
-    try {
-      sealed = this.box.encryptString(text);
-    } catch {
-      return "no-keyring";
+  saveResult(token: string | Grant): SaveResult {
+    this.epoch++;
+    let kept: SaveResult = "no-keyring";
+    if (this.canPersist()) {
+      try {
+        kept = this.write(this.box.encryptString(sealedText(token)));
+      } catch { /* the keyring refused: "no-keyring" */ }
     }
+    this.held = kept === "kept" ? null : grantOf(token);
+    return kept;
+  }
+
+  /**
+   * saveResult, sealed off the main process's thread where the keyring is asked that way (asyncKeyring, macOS:
+   * isAsyncEncryptionAvailable and encryptStringAsync, so a keychain prompt holds nothing up; the follow-up to review
+   * #241); elsewhere saveResult itself. Every read meanwhile gives this sign-in. Saves are written in the order asked; a
+   * sign-out (clear) while the keyring is asked wins, and nothing is written ("write-failed"). Never rejects.
+   */
+  saveAsync(token: string | Grant): Promise<SaveResult> {
+    const encrypt = this.box.encryptStringAsync?.bind(this.box);
+    if (!this.opts.asyncKeyring || !encrypt) return Promise.resolve(this.saveResult(token));
+    const grant = grantOf(token);
+    const epoch = this.epoch;
+    this.held = grant;
+    const run = this.saving.then(async (): Promise<SaveResult> => {
+      let sealed: Buffer | null = null;
+      try {
+        if (await this.canPersistAsync()) sealed = await encrypt(sealedText(token));
+      } catch { /* no keyring, or it refused: "no-keyring" */ }
+      if (epoch !== this.epoch) return "write-failed";
+      const kept = sealed ? this.write(sealed) : "no-keyring";
+      // Read from the file from now on, unless a newer sign-in is being saved meanwhile.
+      if (kept === "kept" && this.held === grant) this.held = null;
+      return kept;
+    });
+    this.saving = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Writes a sealed sign-in whole or not at all (a temporary file renamed over it), owner-only. */
+  private write(sealed: Buffer): SaveResult {
     const tmp = `${this.file}.${process.pid}.tmp`;
     try {
       fs.writeFileSync(tmp, sealed, { mode: 0o600 });
@@ -156,7 +223,9 @@ export class TokenStore {
   }
 
   clear(): void {
+    this.epoch++;
     this.unreadable = false;
+    this.held = null;
     try { fs.rmSync(this.file); } catch { /* already gone */ }
   }
 }
@@ -245,6 +314,13 @@ export interface Grant {
   /** The client id that issued it, the only one that may renew it (EMBER_GITHUB_CLIENT_ID may differ from the built-in one). */
   clientId?: string;
 }
+
+/** A token alone is written as it always was (an earlier Ember reads it); one that expires, with what renews it. */
+function sealedText(token: string | Grant): string {
+  return typeof token === "string" ? token : token.expiresAt === undefined ? token.token : JSON.stringify(token);
+}
+
+const grantOf = (token: string | Grant): Grant => typeof token === "string" ? { token } : token;
 
 /** A stored grant's fields, checked (a damaged file gives none). */
 function parseGrant(j: unknown): Grant | null {
@@ -371,14 +447,23 @@ export async function renewGrant(fetch: Fetch, grant: Grant, now: () => number =
   throw new RenewalRefused(`GitHub didn't renew the sign-in: ${String(j?.error ?? res.status)}`);
 }
 
-/** How long before an expiring sign-in runs out Ember renews it. */
+/** How long before an expiring sign-in runs out Ember renews it (once nothing is under way, or at FORCE_BEFORE_MS). */
 export const RENEW_BEFORE_MS = 60 * 60_000;
-/** A renewed sign-in waits for nothing to be under way before Copilot is reconnected with it, checking this often... */
+/**
+ * A sign-in due for renewal waits for nothing to be under way, checking this often: renewing it revokes the token
+ * Copilot holds (GitHub: "the old user access token will no longer work"), so Copilot is reconnected with the new one at
+ * once, which would cut off what's under way...
+ */
 const IDLE_CHECK_MS = 30_000;
-/** ...but no closer than this to the old one's end (which would cut off what's under way anyway). */
+/** ...but no closer than this to the old one's end: it is renewed then anyway (what's under way would fail regardless). */
 const FORCE_BEFORE_MS = 2 * 60_000;
 /** A renewal that failed in passing (no network) is tried again after this. */
 const RENEW_RETRY_MS = 60_000;
+/**
+ * The keeper's timer waits at most this long before the clock is looked at again: timers stand still while the computer
+ * sleeps (Linux, macOS), so one armed for hours could fire long after the token ran out (cross-review X12).
+ */
+const RECHECK_MS = 5 * 60_000;
 
 export interface GrantKeeperDeps {
   fetch: Fetch;
@@ -394,10 +479,12 @@ export interface GrantKeeperDeps {
 }
 
 /**
- * Keeps Ember's own sign-in working when its token expires (review #138): an hour before the end, the grant is renewed
- * and saved, and Copilot is reconnected with the new token once nothing is under way. A grant that doesn't expire (the
- * app's "Expire user authorization tokens" off) needs none of this. One GitHub won't renew is left to run out: Copilot
- * then refuses it, and the settings window offers Sign in again.
+ * Keeps Ember's own sign-in working when its token expires (review #138): from an hour before the end, once nothing is
+ * under way (or two minutes before the end regardless), the grant is renewed, Copilot is reconnected with the new token
+ * at once, and the new grant is saved. Renewing first and switching later would leave Copilot, and every reconnect it
+ * makes on its own, on a token GitHub revoked at the renewal (cross-review X11). A grant that doesn't expire (the app's
+ * "Expire user authorization tokens" off) needs none of this. One GitHub won't renew is left to run out: Copilot then
+ * refuses it, and the settings window offers Sign in again.
  */
 export class GrantKeeper {
   private grant: Grant | null = null;
@@ -405,6 +492,8 @@ export class GrantKeeper {
   private lastFreshen = -Infinity;
   /** Counts use() and stop() calls: a stored grant read for an earlier use() is dropped when another came meanwhile. */
   private turn = 0;
+  /** Renewals under way, by refresh token (see renewed). */
+  private readonly renewals = new Map<string, Promise<Grant>>();
 
   constructor(private d: GrantKeeperDeps) {}
 
@@ -438,14 +527,17 @@ export class GrantKeeper {
    * renewed first. At most once a minute (the GitHub CLI wait looks every 3 s). Never throws.
    */
   async freshen(): Promise<void> {
-    const g = await this.d.store()?.loadGrant();
-    if (!g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
+    const store = this.d.store();
+    const g = await store?.loadGrant();
+    if (!store || !g || !renewable(g, this.now()) || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
     if (this.now() - this.lastFreshen < RENEW_RETRY_MS) return;
     this.lastFreshen = this.now();
     try {
-      const next = await renewGrant(this.d.fetch, g, () => this.now());
-      this.d.store()?.saveResult(next);
-      this.d.log?.("auth.renewed", { when: "before use" });
+      const next = await this.renewed(g);
+      // The stored one stopped working with the renewal: the store gives the new one from now on, from the file or, not
+      // kept (a full or read-only disk), for this run (cross-review X13). Sealed off the main thread on macOS.
+      const kept = await store.saveAsync(next);
+      this.d.log?.("auth.renewed", { when: "before use", kept });
     } catch (err) {
       this.d.log?.("auth.renew_failed", { err, refused: err instanceof RenewalRefused });
     }
@@ -455,42 +547,85 @@ export class GrantKeeper {
     this.stop();
     if (!grant || !renewable(grant, this.now())) return;
     this.grant = grant;
-    this.after(grant.expiresAt! - RENEW_BEFORE_MS - this.now(), () => void this.renew(grant));
+    this.after(grant.expiresAt! - RENEW_BEFORE_MS - this.now(), () => this.due(grant));
   }
 
   private after(ms: number, fn: () => void): void {
     if (this.timer) clearTimeout(this.timer);
-    // (setTimeout can't wait longer than about 24 days: a longer wait is cut, and the time looked at again then.)
-    this.timer = setTimeout(fn, Math.min(Math.max(0, ms), 2 ** 31 - 1));
+    // A longer wait is cut, and the time looked at again then (due() re-arms when it fires early).
+    this.timer = setTimeout(fn, Math.min(Math.max(0, ms), RECHECK_MS));
     this.timer.unref?.();
   }
 
-  private async renew(grant: Grant): Promise<void> {
+  /**
+   * The computer woke from sleep, or its screen was unlocked: timers stood still while it slept, so the renewal time may
+   * have passed unnoticed (the token may even have run out). The clock is looked at now (cross-review X12).
+   */
+  wake(): void {
+    if (this.grant) this.due(this.grant);
+  }
+
+  /**
+   * Copilot refused the sign-in in use. Ember's own whose renewal time has come (it ran out while the computer slept,
+   * before the clock was looked at) is renewed now and Copilot reconnected with the new one, without waiting for what's
+   * under way: that failed already. Any other refusal stands: the account may have lost Copilot, and a renewed token
+   * would be refused too (cross-review X12).
+   */
+  refused(token: string): void {
+    const g = this.grant;
+    if (!g || g.token !== token || this.d.inUse() !== token || this.now() < g.expiresAt! - RENEW_BEFORE_MS) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    void this.renew(g);
+  }
+
+  /**
+   * The grant's renewal time came (or a check since). It is renewed only when Copilot can be switched to the new token
+   * at once: nothing under way, or the old token about to run out. Until then the old one, which still works, stays.
+   */
+  private due(grant: Grant): void {
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.grant !== grant || this.d.inUse() !== grant.token) return;
-    if (this.now() < grant.expiresAt! - RENEW_BEFORE_MS) { this.track(grant); return; }
+    const now = this.now();
+    if (now < grant.expiresAt! - RENEW_BEFORE_MS) { this.after(grant.expiresAt! - RENEW_BEFORE_MS - now, () => this.due(grant)); return; }
+    if (now < grant.expiresAt! - FORCE_BEFORE_MS && !this.d.idle()) { this.after(IDLE_CHECK_MS, () => this.due(grant)); return; }
+    void this.renew(grant);
+  }
+
+  private async renew(grant: Grant): Promise<void> {
     let next: Grant;
     try {
-      next = await renewGrant(this.d.fetch, grant, () => this.now());
+      next = await this.renewed(grant);
     } catch (err) {
       const refused = err instanceof RenewalRefused;
       this.d.log?.("auth.renew_failed", { err, refused });
-      if (!refused && this.grant === grant && renewable(grant, this.now())) this.after(RENEW_RETRY_MS, () => void this.renew(grant));
+      if (!refused && this.grant === grant && renewable(grant, this.now())) this.after(RENEW_RETRY_MS, () => this.due(grant));
       return;
     }
     if (this.grant !== grant || this.d.inUse() !== grant.token) return;
-    // Kept for the next start (the old refresh token no longer works); not kept (no keyring): for this run.
-    const kept = this.d.store()?.saveResult(next) ?? "no-keyring";
-    this.d.log?.("auth.renewed", { kept });
-    this.switchWhenIdle(grant, next);
-  }
-
-  private switchWhenIdle(old: Grant, next: Grant): void {
-    if (this.grant !== old || this.d.inUse() !== old.token) return;
-    const late = old.expiresAt === undefined || this.now() >= old.expiresAt - FORCE_BEFORE_MS;
-    if (!this.d.idle() && !late) { this.after(IDLE_CHECK_MS, () => this.switchWhenIdle(old, next)); return; }
+    // The old token stopped working with the renewal: Copilot is reconnected with the new one at once (with no await
+    // between, so the reconnects Copilot makes on its own use it too), and only then is it saved, so a slow keyring
+    // doesn't hold the switch (on macOS it is sealed off the main thread). Kept for the next start; not kept (no keyring,
+    // a full disk): for this run.
     this.track(next);
     void this.d.reconnect(next.token).catch(err => this.d.log?.("auth.renew_reconnect_failed", { err }));
+    const kept = (await this.d.store()?.saveAsync(next)) ?? "no-keyring";
+    this.d.log?.("auth.renewed", { kept });
+  }
+
+  /**
+   * The grant renewed, asking GitHub once however many ask at a time (the timer, freshen): a refresh token works only
+   * once, so a second request with it would be refused.
+   */
+  private renewed(grant: Grant): Promise<Grant> {
+    const key = grant.refreshToken ?? "";
+    let p = this.renewals.get(key);
+    if (!p) {
+      p = renewGrant(this.d.fetch, grant, () => this.now()).finally(() => this.renewals.delete(key));
+      this.renewals.set(key, p);
+    }
+    return p;
   }
 }
 
