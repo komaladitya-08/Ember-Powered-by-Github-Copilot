@@ -101,6 +101,7 @@ import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
 import { Confirmer } from "../../app/main/agent/confirm";
 import { PolicyEngine, type Agreement } from "../../app/main/policy/policy";
 import { SettingsStore } from "../../app/main/settings";
+import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 const TOKEN = "gho_" + "t".repeat(36); // not a real token
@@ -1324,6 +1325,30 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     expect(await tool("start_task")({ goal: "Open the terminal and create notes.txt" })).toMatch(/started/);
     await vi.waitFor(() => expect(specs).toHaveLength(1));
     expect(specs[0].userWords).toBe("open the terminal and create a file called notes.txt");
+    await host.stop();
+  });
+
+  it("describe_screen while this screen is locked reads nothing, and a task doesn't carry its answer as screen text (cross-review X9)", async () => {
+    let locked = true;
+    const read = vi.fn(async () => "<screen>Mail: Inbox (3)</screen>");
+    const { host, specs, session, tool } = await withTasks({ describeScreen: read, screenLocked: () => locked });
+    sim.holdTurns = true;
+    await host.ask("what's on my screen? then file the invoice");
+    session.nextTurn();
+    expect(await tool("describe_screen")()).toBe(LOCKED_DESCRIBE);
+    expect(read).not.toHaveBeenCalled();
+    await tool("start_task")({ goal: "file the invoice" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    // The refusal is Ember's own words, not something read on the screen: the task was given no screen text.
+    expect(specs[0].screen).toBeUndefined();
+    // Unlocked, the screen is read and goes with the turn's tasks as before.
+    locked = false;
+    await host.ask("and the next one");
+    session.nextTurn();
+    expect(await tool("describe_screen")()).toBe("<screen>Mail: Inbox (3)</screen>");
+    await tool("start_task")({ goal: "file the next invoice" });
+    await vi.waitFor(() => expect(specs).toHaveLength(2));
+    expect(specs[1].screen).toBe("<screen>Mail: Inbox (3)</screen>");
     await host.stop();
   });
 

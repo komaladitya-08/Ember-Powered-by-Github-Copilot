@@ -36,7 +36,7 @@ import { placeName, whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
-import { lockedOutSystem } from "../screen-lock";
+import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -131,6 +131,11 @@ export interface HostOptions {
   onStatus: (s: AgentStatus) => void;
   /** Text description of the user's screen, for the conductor's describe_screen tool. */
   describeScreen?: () => Promise<string>;
+  /**
+   * Whether this computer's screen is locked now: describe_screen then doesn't read it (describeScreen isn't called) and
+   * answers LOCKED_DESCRIBE, a refusal the turn's tasks don't carry as screen text (cross-review X9).
+   */
+  screenLocked?: () => boolean;
   hands?: Hands;
   onAnswer?: (text: string) => void;
   onTurnEnd?: (aborted: boolean) => void;
@@ -1115,7 +1120,7 @@ export class AgentHost {
         model: choice.conductor, provider: this.o.provider,
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
         describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); if (seen.read) turn?.screen.push(seen.text); return seen.text; }
-          : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.o.describeScreen!(); turn?.screen.push(seen); return seen; } : undefined,
+          : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.describeThisScreen(); if (seen.read) turn?.screen.push(seen.text); return seen.text; } : undefined,
         caps,
         ...(targets ? {
           listComputers: () => targets.describeTargets(),
@@ -1448,8 +1453,19 @@ export class AgentHost {
     if (!b.ok) return { text: b.why, read: false };
     const remote = targets.describeScreen(b.binding.id);
     if (remote) return { text: await remote, read: true };
-    if (this.o.describeScreen) return { text: await this.o.describeScreen(), read: true };
+    if (this.o.describeScreen) return this.describeThisScreen();
     return { text: `Ember can't read the screen in this session (${this.sys.words.noScreen}). Tell the user.`, read: false };
+  }
+
+  /**
+   * describe_screen of this computer's screen (a local or WSL target's), through main. While the screen is locked it
+   * reads nothing and answers LOCKED_DESCRIBE: a turn still running when the screen locks would otherwise read the
+   * focused window and the open windows for the model, and the refusal is Ember's own words, not screen text that the
+   * turn's tasks carry as read (cross-review X9).
+   */
+  private async describeThisScreen(): Promise<{ text: string; read: boolean }> {
+    if (this.o.screenLocked?.()) return { text: LOCKED_DESCRIBE, read: false };
+    return { text: await this.o.describeScreen!(), read: true };
   }
 
   /**

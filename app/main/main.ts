@@ -61,7 +61,7 @@ import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDevic
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { speaksAloud } from "../shared/speech";
-import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutDescribe, lockedOutHands, logindLock } from "./screen-lock";
+import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
 import { loadPlatform } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
@@ -1764,7 +1764,7 @@ function start(): void {
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
-      describeScreen: lockedOutDescribe(() => seeing.describe(), () => screenLock?.locked ?? false), hands,
+      describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.

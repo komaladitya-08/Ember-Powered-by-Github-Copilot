@@ -12,7 +12,7 @@ import { localTargetHands, type Hands } from "../../app/main/agent/host";
 import { LINUX_WORKER_SYSTEM, Worker, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
-import { LOCKED_DESCRIBE, LOCKED_SCREEN, lockedOutDescribe, lockedOutHands, lockedOutSystem } from "../../app/main/screen-lock";
+import { LOCKED_DESCRIBE, LOCKED_SCREEN, lockedOutHands, lockedOutSystem } from "../../app/main/screen-lock";
 import { localBinding, refusingPerception, refusingSidecar, screenHands, wslBinding } from "../../app/main/targets/hands";
 import type { DesktopApp } from "../../app/main/hands/system";
 import type { Logger } from "../../app/main/logger";
@@ -36,21 +36,11 @@ function recordingSystem() {
 }
 
 describe("describe_screen while this screen is locked", () => {
-  it("answers that the screen is locked and reads nothing; unlocked it reads as before", async () => {
-    let locked = true;
-    const describe = vi.fn(async () => "Focused window: Mail, “Inbox (3)”");
-    const read = lockedOutDescribe(describe, () => locked);
-    await expect(read()).resolves.toBe(LOCKED_DESCRIBE);
-    expect(describe).not.toHaveBeenCalled();
-    locked = false;
-    await expect(read()).resolves.toBe("Focused window: Mail, “Inbox (3)”");
-    expect(LOCKED_DESCRIBE).toMatch(/locked/);
-  });
-
-  it("is what main gives the conductor: the screen's reading behind the lock, not the reading itself", () => {
+  // AgentHost refuses to read it then (host.test.ts and host-targets.test.ts, "cross-review X9"); main tells it when.
+  it("is refused by the conversation's host, which main tells whether this screen is locked", () => {
     const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8").replace(/\s+/g, " ");
-    expect(main).toMatch(/describeScreen: lockedOutDescribe\(\(\) => seeing\.describe\(\), \(\) => screenLock\?\.locked \?\? false\)/);
-    expect(main).not.toMatch(/describeScreen: \(\) => seeing\.describe\(\)/);
+    expect(main).toMatch(/describeScreen: \(\) => seeing\.describe\(\), screenLocked: \(\) => screenLock\?\.locked \?\? false/);
+    expect(LOCKED_DESCRIBE).toMatch(/locked/);
   });
 });
 

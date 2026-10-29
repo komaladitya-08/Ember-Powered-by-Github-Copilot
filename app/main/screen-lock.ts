@@ -284,17 +284,12 @@ export function holdNotice<B>(b: MainBubble<B>, bubble: B, ms: number): NodeJS.T
 /** What a task reads when it tries to read or act on this computer's screen while it's locked. */
 export const LOCKED_SCREEN = "This computer's screen is locked, so Ember didn't read it or act on it.";
 
-/** What describe_screen answers about this computer's screen while it's locked (the model passes it on). */
-export const LOCKED_DESCRIBE = "This computer's screen is locked, so Ember didn't read it. Tell the user.";
-
 /**
- * describe_screen's reading of this screen, answering LOCKED_DESCRIBE without reading while `locked()`. The conversation
- * reads this screen through main, not through a task's hands, so their gate doesn't cover it: a turn still running when
- * the screen locks would read the focused window and the open windows for the model (cross-review X9).
+ * What describe_screen answers about this computer's screen while it's locked (the model passes it on). The
+ * conversation reads this screen through main, not through a task's hands, so their gate doesn't cover it: AgentHost
+ * answers this instead of reading while its screenLocked option says so (cross-review X9).
  */
-export function lockedOutDescribe(describe: () => Promise<string>, locked: () => boolean): () => Promise<string> {
-  return () => (locked() ? Promise.resolve(LOCKED_DESCRIBE) : describe());
-}
+export const LOCKED_DESCRIBE = "This computer's screen is locked, so Ember didn't read it. Tell the user.";
 
 /**
  * A task's system on this screen, whose steps refuse while `locked()` as the hands' reads and steps do: opening an app
