@@ -280,11 +280,12 @@ allows them.
   prompts, security, session, refresh and ID tokens, master and SSH keys, JWTs, webhook, private, GPG and SSH signing
   keys, and show-password switches in Korean, Danish, Norwegian, Hungarian, Romanian, Greek, Vietnamese, Indonesian,
   Arabic, Hebrew and Thai. On Windows and macOS, as on Linux, a name that carries a secret field's value is withheld.
-- The never-look list's 'keeper', 'seahorse' and 'strongbox' match those apps only, so a page titled "Housekeeper
-  wanted" isn't taken for a password manager. The first-run terms name only what the never-look list covers ("App
-  windows on your never-look list and password prompts are never read. The list is in settings, and common password
-  managers are on it already."), and say that the audit record includes what you asked each task to do and how it
-  went.
+- The never-look list's 'keeper', 'seahorse' and 'strongbox' match those apps, and a window title only where a word
+  starts with them, so a page titled "Housekeeper wanted" isn't taken for a password manager and Keeper's web vault
+  ("My Vault | Keeper") stays private, whether the word is a default or you added it. The first-run terms name only
+  what the never-look list covers ("App windows on your never-look list and password prompts are never read. The list
+  is in settings, and common password managers are on it already."), and say that the audit record includes what you
+  asked each task to do and how it went.
 - A screenshot of a window Ember can't find takes no picture, and says only that the window can't be found.
 - DevTools can't be opened in an installed Ember.
 

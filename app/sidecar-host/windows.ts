@@ -71,7 +71,8 @@ export function findWindow(windows: RawWindow[], q: WindowQuery): RawWindow | nu
 
 /**
  * Is this window on the user's never-look list (by app name or title, or by process)? Then it is found but not read.
- * Judged as main judges it (perception/elements.ts isNeverLook: an everyday word such as "keeper" by the app only).
+ * Judged as main judges it (perception/elements.ts isNeverLook: an everyday word such as "keeper" by the app, and by
+ * the title only where a word there starts with it).
  */
 export function neverLooked(w: AxWindow, neverLook: string[], skipPids: number[]): boolean {
   if (w.pid !== null && skipPids.includes(w.pid)) return true;

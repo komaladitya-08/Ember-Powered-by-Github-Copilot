@@ -51,8 +51,9 @@ describe("the never-look list", () => {
   it("keeps Ember out of an app whose name holds a soft hyphen, whichever side holds it", () => {
     expect(isNeverLook({ app: GERMAN_SETTINGS, name: "Kamera" }, ["Systemeinstellungen"])).toBe(true);
     expect(isNeverLook({ app: "Systemeinstellungen", name: "Kamera" }, [GERMAN_SETTINGS])).toBe(true);
-    // An entry that is an everyday word is still matched against the app only.
-    expect(isNeverLook({ app: "Notes", name: `Sea${SHY}horse notes` }, ["seahorse"])).toBe(false);
+    // An entry that is an everyday word is still matched against the app, and the title only where a word starts with it.
+    expect(isNeverLook({ app: "Notes", name: `Babysea${SHY}horse notes` }, ["seahorse"])).toBe(false);
+    expect(isNeverLook({ app: "Notes", name: `Sea${SHY}horse notes` }, ["seahorse"])).toBe(true);
     expect(isNeverLook({ app: `sea${SHY}horse`, name: "Passwords" }, ["seahorse"])).toBe(true);
     expect(engine({}, ["Systemeinstellungen"]).decide({ taskId: "t", kind: "read", app: GERMAN_SETTINGS, window: "Kamera" })).toMatchObject({ verdict: "deny" });
   });
