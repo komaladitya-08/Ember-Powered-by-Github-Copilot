@@ -46,6 +46,11 @@ export interface Question {
   panel?: QuestionPanel;
   /** The keys can't allow it (consent cards: a click only). */
   clickOnly?: boolean;
+  /**
+   * The whole of what its sentence shows only in part: a typed text cut to its two ends (Decision.detail), or fill_cells'
+   * cells each with all of its content, one to a line. Shown as the sentence shows typed text (policy.ts typedUnits).
+   */
+  detail?: string;
 }
 
 /** The hash a panel question's yes must carry back: the command card's, or the consent card's. */

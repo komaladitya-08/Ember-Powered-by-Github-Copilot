@@ -25,7 +25,7 @@ import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "..
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
-import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
+import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
@@ -682,6 +682,8 @@ const CELL_SETTLE_MS = 150;
 interface CellJob { cell: string; place: { col: number; row: number }; text: string; expected: string | undefined; seenKey: string; listed: AxNode | undefined }
 /** Text for a question to the user, quoted (cut short past `max` characters, line breaks and tabs shown as spaces). */
 const curly = (s: string, max: number) => { const t = s.replace(/\s+/g, " "); return `“${t.length > max ? t.slice(0, max - 1) + "…" : t}”`; };
+/** How much of a cell's new content fill_cells' question shows in its sentence (curly); its card shows all of it. */
+const CELL_SHOWN = 24;
 /** Why `text` can't go into a cell with the keyboard (null: it can). */
 function cellTextProblem(text: string): string | null {
   if (/[\n\r\t]/.test(text)) return "A cell takes one line: a line break or tab would move to another cell. Put each value in its own cell.";
@@ -2546,7 +2548,10 @@ export class Worker {
     }
     if (judged.every(j => j.d.verdict === "allow")) return null;
     // Each cell, with what goes in (and what it replaces): the values cut short, all of them listed.
-    const list = jobs.map(j => `${j.cell} ${j.text ? curly(j.text, 24) : "emptied"}${j.expected ? ` (replacing ${curly(j.expected, 16)})` : ""}`).join(", ");
+    const list = jobs.map(j => `${j.cell} ${j.text ? curly(j.text, CELL_SHOWN) : "emptied"}${j.expected ? ` (replacing ${curly(j.expected, 16)})` : ""}`).join(", ");
+    // A value cut short there is approved whole: the card shows each cell with all of it (review #116), one to a line.
+    const cut = jobs.some(j => j.text.replace(/\s+/g, " ").length > CELL_SHOWN);
+    const detail = cut ? jobs.map(j => `${j.cell} ${j.text ? `“${typedShown(j.text)}”` : "emptied"}`).join("\n") : undefined;
     // What each cell's own question would add (text carried from another app, a long text replaced), once each.
     const notes = new Map<string, string[]>();
     for (const { job, req, d } of judged) {
@@ -2561,7 +2566,7 @@ export class Worker {
     this.asked = true;
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
-    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
     const answer = await this.d.confirmer.ask(question, this.overSignal);
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
@@ -3432,7 +3437,8 @@ export class Worker {
     this.asked = true;
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}) };
+    // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
+    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}) };
     const answer = await this.d.confirmer.ask(question, this.overSignal);
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
