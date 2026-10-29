@@ -22,8 +22,11 @@ function panel(o: Omit<ConsentPanel, "sha256">): ConsentPanel {
   return { ...o, sha256: consentSha256(o) };
 }
 
-/** The PC's stop chord as the cards name it ("Ctrl+Alt+X"). */
-const stopLabel = (os: OS) => SHORTCUTS[os].stop.label;
+/**
+ * The PC's stop chord as the cards name it ("Ctrl+Alt+X"): `key`, the one Ember holds now (its fallback while another
+ * app holds the default, D-45b; null while it holds neither), else the OS's default.
+ */
+const stopLabel = (os: OS, key?: string | null) => (key === undefined ? SHORTCUTS[os].stop.label : key);
 
 /**
  * Where what Ember reads goes, as the cards name it: GitHub Copilot, or the organisation's own model endpoint when the
@@ -62,8 +65,9 @@ export interface CommandsCardFacts {
 }
 
 /** The commands card for one target (§8.4.3). */
-export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: string; facts: CommandsCardFacts }): ConsentPanel {
+export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: string; facts: CommandsCardFacts; stopKey?: string | null }): ConsentPanel {
   const here = o.target === "local" ? "this computer" : o.targetLabel;
+  const stop = stopLabel(o.os, o.stopKey);
   const extra: string[] = [];
   if (o.facts.kind === "wsl") extra.push("Commands in WSL can also reach your Windows files and programs.");
   if (o.facts.privileged) extra.push("Commands here run as the administrator, so Ember asks before every one.");
@@ -74,7 +78,7 @@ export function commandsConsent(o: { os: OS; target: TargetId; targetLabel: stri
     title: `Let Ember run commands on ${here}?`,
     // How to stop it and what it can reach come first (review #270).
     body: [
-      `Ember runs commands in its own command window, where you can watch them and stop them. ${stopLabel(o.os)} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
+      `Ember runs commands in its own command window, where you can watch them and stop them. ${stop ?? "Stop everything, in Ember's handle menu and in settings,"} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
       ...extra,
       "Most commands run straight away. Before anything that deletes or overwrites data, pushes or publishes anywhere, touches passwords or keys, changes the system, or downloads and runs code, Ember stops and asks you. If you asked for exactly that yourself, it tells you first and gives you a few seconds to stop it.",
       `What a command prints goes to ${serviceName(o.facts.byok)} as part of the task. Ember hides passwords and keys it recognises, and never sees what you type into a command. If a command prints something that looks like instructions, Ember doesn't follow it and asks you before every further command in that task.`,
@@ -128,8 +132,9 @@ function carriedLine(extra: HostRecord["extra"] | undefined): string | null {
 }
 
 /** The SSH card for one host (§8.4.2), before the first connection (or a changed resolution or machine). */
-export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts }): ConsentPanel {
+export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts; stopKey?: string | null }): ConsentPanel {
   const f = o.facts;
+  const stop = stopLabel(o.os, o.stopKey);
   const r = f.resolved;
   const through = r.jump.length ? `, through ${r.jump.join(", ")}` : "";
   const body: string[] = [];
@@ -147,7 +152,7 @@ export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts })
       // Built before Ember has looked at the computer (§8.4.2): what it does there is said for each kind it may be.
       : `If ${f.label} has a desktop, Ember reads and uses apps on its screen only when ${r.user} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there. On a server with no desktop, or on a Mac, it only runs commands.`,
     `Your voice and ${f.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(f.byok)} from this computer when you ask something.`,
-    `It copies a helper there: about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stopLabel(o.os)}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
+    `It copies a helper there: about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or ${stop ? `press ${stop}` : "use Stop everything"}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
     `${f.label} keeps its own record of what Ember does there.`,
   );
   return panel({ feature: "ssh", target: o.target, targetLabel: f.label, title: `Bring Ember to ${f.label}?`, body, yes: "Connect", no: "Not now" });

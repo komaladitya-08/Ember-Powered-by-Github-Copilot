@@ -52,7 +52,8 @@ import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
-import { freshAskPress } from "./hotkey";
+import { freshAskPress, holdShortcuts } from "./hotkey";
+import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
@@ -80,7 +81,8 @@ import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
-import { hello } from "./hello";
+import { hello, keysLine } from "./hello";
+import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
 // SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
@@ -191,9 +193,14 @@ if (process.argv.includes("--doctor")) {
   }
 }
 
-/** What openWindows() returned (undefined until it has run), and which of Ember's shortcuts another app holds. */
+/**
+ * What openWindows() returned (undefined until it has run), and the accelerators of Ember's shortcuts another app holds
+ * (a default whose fallback Ember holds, or both chords of a shortcut it holds by neither: hotkey.ts holdShortcuts).
+ */
 let wsState: WindowSystem | null | undefined;
 let shortcutsTaken: string[] | undefined;
+/** Of Allow and Not now (held only while a question is up), the accelerators another app held when Ember last took them. */
+let questionTaken: string[] = [];
 /** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
 let helper: HelperStatus | null | undefined;
 
@@ -409,9 +416,13 @@ function start(): void {
   };
   const homeOpen = () => !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized();
 
-  app.on("second-instance", () => {
-    log.info("instance.second", {});
-    showHomeFromKeys();
+  // Started again: settings from the keyboard, or the ask box when a launcher's Ask Ember started it with --ask (D-45b),
+  // on a first start's terms: once Ember is set up, and in a desktop session it can use (else settings and their check).
+  app.on("second-instance", (_e, argv) => {
+    const ask = wantsAsk(argv);
+    log.info("instance.second", ask ? { ask } : {});
+    const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings";
+    if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.
@@ -434,7 +445,8 @@ function start(): void {
   /** What the settings window says differently on this OS (shortcuts, the data folder, the microphone, fixes). */
   const platformStatus = (): NonNullable<Status["platform"]> => ({
     os: platform.os,
-    shortcuts: Object.fromEntries(Object.entries(sys.shortcuts).map(([id, d]) => [id, { label: d.label, keys: d.keys }])) as NonNullable<Status["platform"]>["shortcuts"],
+    // The chords Ember holds: a fallback while another app holds the default, none while it holds both (D-45b).
+    shortcuts: shownShortcuts(sc, heldShortcuts(sc, fb, [...shortcutsTaken ?? [], ...questionTaken])),
     dataDir: sys.paths.dataDirLabel(userData),
     settingsFile: sys.paths.dataDirLabel(userData, "settings.json"),
     auditCopy: sys.auditCopy(),
@@ -558,15 +570,22 @@ function start(): void {
   }, ms * readTime());
   /** Ember's shortcuts on this OS (one table: the accelerators, and how the copy names them). */
   const sc = sys.shortcuts;
-  /** Whether one of Ember's own shortcuts works (another app may hold it). */
-  const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
+  /** Each shortcut's fallback on this OS (D-45b): Ember holds it while another app holds the default. */
+  const fb = FALLBACK_SHORTCUTS[platform.os];
+  /**
+   * The chord Ember holds for one of its shortcuts now: its default, its fallback, or null (another app holds both).
+   * Allow and Not now: as Ember last took them, for a question.
+   */
+  const holding = (id: ShortcutId): ShortcutDef | null => heldShortcuts(sc, fb, [...shortcutsTaken ?? [], ...questionTaken])[id];
+  /** A shortcut as the copy names it ("Ctrl+Alt+E"), by the chord Ember holds; null while it holds neither. */
+  const keyName = (id: ShortcutId) => holding(id)?.label ?? null;
   /**
    * Settings opened from the keyboard (Ember started again, its settings shortcut, the Dock): while another app holds
-   * the ask or stop shortcut, at Ask Ember… or Stop everything, the keyboard's way to them then (review #45).
+   * the ask or stop shortcut and its fallback, at Ask Ember… or Stop everything, the keyboard's way to them then (review #45).
    */
   const showHomeFromKeys = () => {
     showHome();
-    const at = keyboardRoute(shortcutsTaken ?? [], sc);
+    const at = keyboardRoute(shortcutsTaken ?? [], sc, fb);
     if (at) sendToHome(IPC.focusSection, at);
   };
   const greet = () => {
@@ -574,16 +593,15 @@ function start(): void {
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
     const waiting = phase === "error" && (agent?.waitingForNetwork ?? false);
-    // Shortcuts another app holds: the handle for a pointer, and settings' Ask Ember… for the keyboard.
-    const keys = hasKey(sc.ask.accel) && hasKey(sc.stop.accel)
-      ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
-      : `Click my handle in the corner to ask me something or to stop me, or ${hasKey(sc.settings.accel) ? `press ${sc.settings.label}: settings opens` : "open Ember again: its settings open"} at Ask Ember… and Stop everything.`;
+    // The chords Ember holds (a fallback named as such); for shortcuts it holds by neither, the handle for a pointer,
+    // and settings' Ask Ember… for the keyboard.
+    const keys = keysLine(heldShortcuts(sc, fb, shortcutsTaken ?? []), sc);
     const settingsOpen = homeOpen();
     // Why Ember can't work here at all, said in place of everything else: the organisation's lockdown first (#107; no
     // session helps until the policy is fixed), then a session Ember can't use (Wayland, no X display, #240). Else what
     // Ember says and for how long (hello.ts): connected, it names a setup row that holds it back (review #95).
     const cannotWork = modelServiceRefusal(admin) ?? sessionGreeting(readEnvironment());
-    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: hasKey(sc.settings.accel) ? sc.settings.label : null, settingsOpen, rows: connected ? setupRows() : [], cannotWork });
+    const h = hello({ phase, waiting, overlay: !!overlay, keys, settingsKey: keyName("settings"), settingsOpen, rows: connected ? setupRows() : [], cannotWork });
     const bubble = { ...IDLE_BUBBLE, visible: true, mood: h.mood, title: "Hi, I'm Ember!", thought: h.thought, actions: h.actions };
     setState({ emotion: "happy", talking: true, bubble });
     if (greetTimer) clearTimeout(greetTimer);
@@ -672,10 +690,14 @@ function start(): void {
     const win = handle.win;
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
-    // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
-    // A Mac's own menus show it as the system does (⌃⇧⌘Space), from the accelerator, which is shown but never registered.
-    const keyed = (text: string, def: { accel: string; label: string }): Pick<Electron.MenuItemConstructorOptions, "label" | "accelerator"> =>
-      !hasKey(def.accel) ? { label: text } : platform.os === "darwin" ? { label: text, accelerator: def.accel } : { label: `${text}   ${def.label}` };
+    // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"): the chord Ember holds (its fallback while
+    // another app holds the default, D-45b), and none when another app holds both. A Mac's own menus show it as the
+    // system does (⌃⇧⌘Space), from the accelerator, which is shown but never registered.
+    const keyed = (text: string, def: ShortcutDef): Pick<Electron.MenuItemConstructorOptions, "label" | "accelerator"> => {
+      const id = (Object.keys(sc) as ShortcutId[]).find(k => sc[k] === def);
+      const now = id ? holding(id) : def;
+      return !now ? { label: text } : platform.os === "darwin" ? { label: text, accelerator: now.accel } : { label: `${text}   ${now.label}` };
+    };
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
@@ -806,21 +828,30 @@ function start(): void {
   };
   /**
    * Questions are answered with keys too (Orca and keyboard users can't click the bubble): Y allows, N says
-   * not now. "Always" is a click only: a global key would take an app's own Ctrl+Alt+A and grant for good.
+   * not now, each by its fallback while another app holds the default (D-45b). "Always" is a click only: a global key
+   * would take an app's own Ctrl+Alt+A and grant for good.
    */
-  const QUESTION_KEYS: readonly { accel: string; which: "primary" | "deny"; hint: string; say: string }[] = [
-    { accel: sc.allow.accel, which: "primary", hint: `${sc.allow.label} allow`, say: `${sc.allow.say} to allow` },
-    { accel: sc.deny.accel, which: "deny", hint: `${sc.deny.label} not now`, say: `${sc.deny.say} for not now` },
+  const QUESTION_KEYS: readonly { id: "allow" | "deny"; which: "primary" | "deny"; hint: string; say: string }[] = [
+    { id: "allow", which: "primary", hint: "allow", say: "to allow" },
+    { id: "deny", which: "deny", hint: "not now", say: "for not now" },
   ];
-  let questionKeys: string[] = [];
+  /** The question keys are held now (a question is up). */
+  let questionKeysUp = false;
   const holdQuestionKeys = () => {
-    if (questionKeys.length) return;
-    for (const k of QUESTION_KEYS) {
-      if (globalShortcut.register(k.accel, () => confirmer?.answerKey(k.which))) questionKeys.push(k.accel);
-      else log.warn("shortcut.question_key_taken", { accel: k.accel });
-    }
+    if (questionKeysUp && heldKeys().length) return;
+    const { taken } = holdShortcuts(QUESTION_KEYS.map(k => k.id), sc, fb, {
+      isRegistered: accel => globalShortcut.isRegistered(accel),
+      register: (id, accel) => globalShortcut.register(accel, () => confirmer?.answerKey(id === "allow" ? "primary" : "deny")),
+    });
+    for (const accel of taken.filter(a => !questionTaken.includes(a))) log.warn("shortcut.question_key_taken", { accel });
+    questionTaken = taken;
+    questionKeysUp = true;
   };
-  const heldKeys = () => QUESTION_KEYS.filter(k => questionKeys.includes(k.accel));
+  /** The question keys Ember holds now, each named by the chord it holds (its default or its fallback). */
+  const heldKeys = () => (questionKeysUp ? QUESTION_KEYS.flatMap(k => {
+    const def = holding(k.id);
+    return def ? [{ ...k, hint: `${def.label} ${k.hint}`, say: `${def.say} ${k.say}` }] : [];
+  }) : []);
   /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
   const questionKeyHint = () => { holdQuestionKeys(); return heldKeys().map(k => k.hint).join(" · ") || undefined; };
   const questionChanged = (q: { n: number; question: Question } | null) => {
@@ -832,8 +863,8 @@ function start(): void {
     targets?.questionChanged(q);
     stepAside();
     if (!q) {
-      for (const k of questionKeys) globalShortcut.unregister(k);
-      questionKeys = [];
+      for (const k of QUESTION_KEYS) for (const accel of [sc[k.id].accel, fb[k.id].accel]) if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
+      questionKeysUp = false;
       return;
     }
     holdQuestionKeys();
@@ -964,7 +995,7 @@ function start(): void {
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
    * `over` is the window it had the keyboard.
    */
-  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "test" } = {}) => {
+  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "launcher" | "test" } = {}) => {
     const asked = Date.now();
     // Every opening says where it came from (an ask box that opened by itself would show up here), once the box is up
     // where it opens: a line written first would hold up the keyboard (review #78).
@@ -1555,14 +1586,15 @@ function start(): void {
       app.on("will-quit", () => clearInterval(watch));
     }
 
-    // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
+    // Ember's shortcuts, each by its default chord or else its fallback (D-45b). What another app holds is reported
+    // (setup check, greeting); a shortcut held by neither chord is tried again every minute.
     let lastAskPress = 0;
-    const shortcuts: Record<string, () => void> = {
-      [sc.settings.accel]: showHomeFromKeys,
+    const shortcuts: Record<"ask" | "stop" | "settings" | "mute", () => void> = {
+      settings: showHomeFromKeys,
       // A callback is not a press: X11 reports the shortcut again when its grab ends, after the keyboard buffer lets
       // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it. Elsewhere a callback is
       // one press (trusted, debounced).
-      [sc.ask.accel]: () => {
+      ask: () => {
         const now = Date.now(), chord = platform.shortcutsReReported ? ws?.keysDown() ?? null : null;
         if (!freshAskPress(chord, now, lastAskPress)) {
           log.info("ask.hotkey_ignored", { at: now - lastAskPress, chord });
@@ -1571,22 +1603,31 @@ function start(): void {
         lastAskPress = now;
         openAsk();
       },
-      [sc.stop.accel]: () => stopEverything("hotkey"), [sc.mute.accel]: () => toggleMute(),
+      stop: () => stopEverything("hotkey"), mute: () => toggleMute(),
     };
     const registerShortcuts = () => {
-      const taken: string[] = [];
-      for (const [accel, fn] of Object.entries(shortcuts)) {
-        if (globalShortcut.isRegistered(accel)) continue;
-        if (!globalShortcut.register(accel, fn)) taken.push(accel);
-      }
+      const { taken, missing } = holdShortcuts(ALWAYS_HELD, sc, fb, {
+        isRegistered: accel => globalShortcut.isRegistered(accel),
+        register: (id, accel) => globalShortcut.register(accel, shortcuts[id as keyof typeof shortcuts]),
+      });
       const changed = JSON.stringify(taken) !== JSON.stringify(shortcutsTaken ?? []);
-      if (taken.length && changed) log.warn("shortcut.unavailable", { taken });
+      // Any default taken is said (CI's Windows run forbids it: nothing else holds them there), with what Ember holds instead.
+      if (taken.length && changed) log.warn("shortcut.unavailable", { taken, fallback: ALWAYS_HELD.filter(id => taken.includes(sc[id].accel) && !missing.includes(id)), missing });
       shortcutsTaken = taken;
-      return taken;
+      return missing;
     };
     if (registerShortcuts().length) {
       const retry = setInterval(() => { if (!registerShortcuts().length) clearInterval(retry); }, 60_000);
       retry.unref?.();
+    }
+    // Ask Ember in the OS's launcher, whatever another app holds (D-45b): the jump list (Windows) starts Ember with --ask,
+    // the Dock menu (macOS) opens the box here; Linux's is its desktop entry's action (packaging/ember.desktop). Each is
+    // logged once set (the smoke test requires it on its OS).
+    try {
+      if (platform.os === "win32") log.info("launcher.tasks", { ok: app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged })) });
+      if (platform.os === "darwin" && app.dock) { app.dock.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: "launcher" })))); log.info("launcher.dock", {}); }
+    } catch (err) {
+      log.warn("launcher.tasks_failed", { err });
     }
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
@@ -1858,8 +1899,8 @@ function start(): void {
       offers: () => agent?.offers ?? null,
       // Its bubbles' keyboard route names the settings shortcut only while Ember holds it, and its command window's
       // announcement the stop chord (cross-review X0).
-      settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
-      stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null),
+      settingsKey: () => keyName("settings"),
+      stopKey: () => keyName("stop"),
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
@@ -1913,10 +1954,11 @@ function start(): void {
       // A command the user asked for is announced aloud too when replies are spoken (D4.4); its Stop is on screen.
       onAnnounce: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
       // Its cancel words: the kill phrase only where Ember can tell its own voice from the user's (owner decision V1).
-      cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null }),
-      // Its bubbles name the settings shortcut and the stop chord only while Ember holds them (cross-review X0, X5).
-      settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
-      stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null),
+      cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: holding("stop")?.say ?? null }),
+      // Its bubbles name the settings shortcut and the stop chord only while Ember holds them (cross-review X0, X5), by
+      // the chord it holds: the fallback while another app holds the default (D-45b).
+      settingsKey: () => keyName("settings"),
+      stopKey: () => keyName("stop"),
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
@@ -2051,9 +2093,12 @@ function start(): void {
     // One listener for the policy watch and the screen lock, in that order: an 11th will-quit listener warns of a leak.
     app.on("will-quit", () => { unwatchPolicy(); screenLock?.stop(); lockControl.dispose(); });
 
-    // Started by the user (the launcher, a terminal), settings opens; started at login (--autostart), Ember only greets,
-    // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
-    if (!settings.get().onboarded || process.argv.includes("--show-settings") || !atLogin || sessionGreeting(env)) showHome();
+    // Started by the user (the launcher, a terminal), settings opens; by a launcher's Ask Ember (--ask), the ask box;
+    // started at login (--autostart), Ember only greets, unless the desktop session is one Ember can't use (a Wayland
+    // login after an Xorg one): then the check is shown.
+    const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv) });
+    if (view === "ask") openAsk({ source: "launcher" });
+    else if (view === "settings") showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
     else setTimeout(() => void Promise.race([brainStart, new Promise(r => setTimeout(r, 5000))]).then(() => greet()), 800);
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings

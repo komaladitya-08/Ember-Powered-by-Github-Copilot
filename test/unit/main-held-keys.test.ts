@@ -25,8 +25,8 @@ function between(from: string, to: string): string {
   return MAIN.slice(start, end);
 }
 
-const SETTINGS = "settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null)";
-const STOP = "stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null)";
+const SETTINGS = "settingsKey: () => keyName(\"settings\")";
+const STOP = "stopKey: () => keyName(\"stop\")";
 
 describe("main.ts names a shortcut only while Ember holds it (cross-review X0, X5)", () => {
   it("tells the agent's presenters the settings and stop shortcuts it holds", () => {
@@ -34,7 +34,7 @@ describe("main.ts names a shortcut only while Ember holds it (cross-review X0, X
     expect(agent).toContain(SETTINGS);
     expect(agent).toContain(STOP);
     // The spoken cancel words already did.
-    expect(agent).toContain("stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null");
+    expect(agent).toContain("stopKey: holding(\"stop\")?.say ?? null");
   });
 
   it("tells the targets runtime both: its bubbles' keyboard route and its command window's announcement", () => {

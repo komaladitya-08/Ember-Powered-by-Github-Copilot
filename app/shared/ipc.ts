@@ -5,7 +5,7 @@ import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
-import type { OS, ShortcutId } from "./shortcuts";
+import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
 import type { TargetSummary } from "./targets";
 
 export const IPC = {
@@ -83,8 +83,11 @@ export interface VoiceStatus {
  */
 export interface StatusPlatform {
   os: OS;
-  /** Each global shortcut as Ember's copy writes it ("Ctrl+Alt+Space") and as key caps (["Ctrl", "Alt", "Space"]). */
-  shortcuts: Record<ShortcutId, { label: string; keys: readonly string[] }>;
+  /**
+   * Each global shortcut as Ember's copy writes it ("Ctrl+Alt+Space") and as key caps (["Ctrl", "Alt", "Space"]): the
+   * chord Ember holds, its fallback while another app holds the default (D-45b); `taken` (label "") while it holds neither.
+   */
+  shortcuts: Record<ShortcutId, ShownShortcut>;
   /** How the window names the data folder ("~/.config/ember") and the settings file in it. */
   dataDir: string;
   settingsFile: string;

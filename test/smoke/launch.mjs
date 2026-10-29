@@ -1,4 +1,8 @@
-// Smoke test: the app starts, shows its window, and a second launch hands over to the first instance.
+// Smoke test: the app starts, shows its window, a second launch hands over to the first instance, and a third with
+// --ask (the launchers' Ask Ember: the Windows jump list, the Linux desktop entry's action) has it open its ask box.
+// Its profile is one that is set up (onboarded, as the integration tests' are): Ember opens the box only then. It also
+// requires Ask Ember in the OS's launcher: the jump list on Windows (launcher.tasks, ok), the Dock menu on a Mac
+// (launcher.dock); EMBER_SMOKE_PLATFORM names another OS for that check (packaging.test.ts's stand-in).
 // Linux needs an X display (in CI: xvfb-run -a npm run test:smoke). Windows and macOS need a logged-in desktop
 // session (GitHub's hosted runners have one).
 // By default it starts the development build (Electron with dist/app); --exe <path> (or EMBER_SMOKE_EXE) starts a
@@ -13,7 +17,7 @@
 // debugging port: a % in the name made every window blank once (review #200).
 // usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -46,11 +50,19 @@ const [command, appArgs] = exeArg ? [path.resolve(exeArg), []] : [createRequire(
 const flags = (process.platform === "linux" && process.getuid?.() === 0) || process.env.EMBER_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
 const env = { ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1" };
 const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform === "linux" ? 30_000 : 60_000);
+/** The OS whose launcher entry the run requires (its own; the unit test's stand-in names another). */
+const os = process.env.EMBER_SMOKE_PLATFORM || process.platform;
+// Set up, as after onboarding (the consent version is shared/consent.ts's): a launcher's --ask opens the box only then.
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: new Date().toISOString() } }));
 
-function launch(name) {
+function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];
-  const child = spawn(command, [...appArgs, ...flags, ...debug], { env, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(command, [...appArgs, ...flags, ...debug, ...extra], { env, stdio: ["ignore", "pipe", "pipe"] });
   const events = [];
+  /** Ask boxes opened for a launcher's --ask (ask.open from "launcher"). */
+  const asked = { count: 0 };
+  /** Ask Ember in the OS's launcher: the jump list (launcher.tasks: whether Windows took it), the Dock menu. */
+  const launcher = { tasks: undefined, dock: false };
   /** The log lines of forbidden events, as the app wrote them. */
   const forbiddenLines = [];
   const said = { stdout: "", stderr: "" };
@@ -63,8 +75,12 @@ function launch(name) {
     while ((i = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, i); buf = buf.slice(i + 1);
       try {
-        const msg = JSON.parse(line).msg;
+        const entry = JSON.parse(line);
+        const msg = entry.msg;
         events.push(msg);
+        if (msg === "ask.open" && entry.source === "launcher") asked.count++;
+        if (msg === "launcher.tasks") launcher.tasks = entry.ok;
+        if (msg === "launcher.dock") launcher.dock = true;
         if (msg === "app.start_failed") failed ??= line.trim();
         if (forbidden.includes(msg)) forbiddenLines.push(line.trim());
       } catch { /* not a log line */ }
@@ -75,7 +91,7 @@ function launch(name) {
     if (process.env.EMBER_SMOKE_VERBOSE) process.stderr.write(`[${name}] ${d}`);
   });
   child.on("error", err => { failed ??= `couldn't start ${command}: ${err.message}`; });
-  return { name, child, events, forbiddenLines, said, failed: () => failed };
+  return { name, child, events, asked, launcher, forbiddenLines, said, failed: () => failed };
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -127,7 +143,7 @@ const tail = (inst, stream) => inst.said[stream].trim()
   ? `--- ${inst.name} instance's ${stream} (last lines) ---\n${inst.said[stream].trim().split("\n").slice(-40).join("\n")}\n`
   : "";
 
-let first, second;
+let first, second, third;
 let ok = false;
 try {
   first = launch("first");
@@ -159,15 +175,32 @@ try {
     if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);
     console.log(`ok   the first instance logged none of ${forbidden.join(", ")}`);
   }
+  // Ask Ember in the OS's own launcher (D-45b), set up as Ember starts: Linux's is the desktop entry's action, which the
+  // package job checks.
+  if (os === "win32") {
+    await waitFor(first, () => first.launcher.tasks !== undefined, 5_000, "the first instance to put Ask Ember in its jump list");
+    if (first.launcher.tasks !== true) throw new Error(`Windows refused the jump list (launcher.tasks ok: ${JSON.stringify(first.launcher.tasks)})`);
+    console.log("ok   the first instance put Ask Ember in its jump list");
+  }
+  if (os === "darwin") {
+    await waitFor(first, () => first.launcher.dock, 5_000, "the first instance to put Ask Ember in its Dock menu");
+    console.log("ok   the first instance put Ask Ember in its Dock menu");
+  }
+  // Ask Ember from a launcher: Ember started again with --ask, in a profile that is set up.
+  third = launch("third", ["--ask"]);
+  await waitFor(third, () => exited(third), windowMs, "the third instance to exit", { exitOk: true });
+  if (third.child.exitCode !== 0) throw new Error(`third instance ${exitText(third)}`);
+  await waitFor(first, () => first.asked.count > 0, 10_000, "the first instance to open the ask box for a start with --ask");
+  console.log("ok   a start with --ask handed over and the first instance opened its ask box");
   ok = true;
 } catch (err) {
   console.error(`FAIL ${err.message}`);
   // What the app said, to tell why (with EMBER_SMOKE_VERBOSE its stderr was already shown as it came).
-  for (const inst of [first, second].filter(Boolean)) {
+  for (const inst of [first, second, third].filter(Boolean)) {
     process.stderr.write((process.env.EMBER_SMOKE_VERBOSE ? "" : tail(inst, "stderr")) + tail(inst, "stdout"));
   }
 } finally {
-  for (const inst of [second, first].filter(Boolean)) {
+  for (const inst of [third, second, first].filter(Boolean)) {
     try { await stop(inst); } catch (err) { console.log(`note couldn't stop the ${inst.name} instance: ${err.message}`); }
   }
   cleanUp();

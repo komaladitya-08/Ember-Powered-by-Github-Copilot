@@ -7,7 +7,7 @@
 import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
-import { KEYS, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
+import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
 import { NEVER_LOOK_DEFAULTS as NEVER_LOOK_BY_OS, NEVER_LOOK_NAMES, missingDefaults as missingFor } from "../../shared/never-look";
 import { onboardingRest } from "./computers-copy";
@@ -113,7 +113,9 @@ export function tagline(t: {
   if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
   // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
-  return `${where} Press ${askLabel} to ask it anything.${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
+  // An empty label: another app holds the ask shortcut and its fallback (D-45b), so settings' Ask Ember… is the way.
+  const ask = askLabel ? `Press ${askLabel} to ask it anything.` : "Ask it anything with Ask Ember…, under Comfort & access.";
+  return `${where} ${ask}${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
 }
 
 /** "1 thing", "2 things": how many setup rows, in a sentence. */
@@ -177,17 +179,20 @@ export function dayLabel(t: string, now = new Date()): string {
   return d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 }
 
-/** What the conversation list says while it is empty (its `data-empty`); `askLabel` is the ask shortcut as this OS writes it. */
+/**
+ * What the conversation list says while it is empty (its `data-empty`); `askLabel` is the ask shortcut Ember holds as
+ * this OS writes it, "" while it holds neither its default nor its fallback (D-45b).
+ */
 export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): string {
-  return `Nothing yet. Press ${askLabel} and ask Ember something.`;
+  return askLabel ? `Nothing yet. Press ${askLabel} and ask Ember something.` : "Nothing yet. Use Ask Ember…, under Comfort & access, to ask Ember something.";
 }
 
 /** Under "Speak replies" once Ember tried to speak and no voice started (review #101); the setup check says how to add one. */
 export const SPEAK_NO_VOICE = "Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.";
 
-/** The voice line while the microphone is off; `muteLabel` is the mute shortcut as this OS writes it. */
+/** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */
 export function micOffText(muteLabel = SHORTCUTS.linux.mute.label): string {
-  return `Microphone off (${muteLabel} to turn on)`;
+  return muteLabel ? `Microphone off (${muteLabel} to turn on)` : "Microphone off";
 }
 
 /**
@@ -268,13 +273,16 @@ export function keyLabel(key: string, os: OS = "linux"): string {
   }).join("+");
 }
 
-/** What "What Ember did" lines depend on beyond the entry: the OS (for key names) and the stop shortcut's label. */
-export interface EntryWords { readonly os: OS; readonly stopLabel: string }
+/**
+ * What "What Ember did" lines depend on beyond the entry: the OS (for key names). Not the stop chord: the record doesn't
+ * keep which one was pressed, and the one Ember holds now (its default, its fallback or none, D-45b) may not be it.
+ */
+export interface EntryWords { readonly os: OS }
 /** Linux's, today's words: what a line uses while the status names no OS. */
-export const LINUX_ENTRY_WORDS: EntryWords = { os: "linux", stopLabel: SHORTCUTS.linux.stop.label };
+export const LINUX_ENTRY_WORDS: EntryWords = { os: "linux" };
 /** The entry words for the OS a status names (Linux's without one). */
 export function entryWords(p?: StatusPlatform): EntryWords {
-  return p ? { os: p.os, stopLabel: p.shortcuts.stop.label } : LINUX_ENTRY_WORDS;
+  return p ? { os: p.os } : LINUX_ENTRY_WORDS;
 }
 
 /** The tools Ember's model is told to call: a sentence that names one is advice to the model, not news for the user. */
@@ -479,7 +487,7 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       // What pulled it: a control the user used, or the administrator's policy changing while Ember ran (killswitch.ts
       // StopSource). A source this page doesn't know is put on no control (cross-review X10).
       if (e.source === "policy") return { tag: "Stopped", cls: "no", what: "Everything stopped: your organisation changed Ember's policy" };
-      const how = e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
+      const how = e.source === "hotkey" ? "stop shortcut" : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
       return { tag: "Stopped", cls: "no", what: how ? `Everything stopped (${how})` : "Everything stopped" };
     }
     case "command":
@@ -532,8 +540,22 @@ export function auditCopySegments(auditCopy: string): Segment[] {
 export function homePatches(p: StatusPlatform): HomePatch[] {
   const chords = (Object.keys(SHORTCUTS.linux) as ShortcutId[])
     .map((id): HomePatch => ({ selector: `[data-shortcut="${id}"]`, content: chordSegments(p.shortcuts[id].keys) }));
+  // A shortcut another app holds with its fallback (D-45b): the sentences that name its chord give way to how to do it
+  // without the key.
+  const taken = (id: ShortcutId) => p.shortcuts[id].taken === true;
+  const toggles = (["stop", "ask", "mute"] as const).flatMap((id): HomePatch[] => [
+    { selector: `[data-key-held="${id}"]`, hidden: taken(id) },
+    { selector: `[data-key-taken="${id}"]`, hidden: !taken(id) },
+  ]);
+  // The question keys' sentence names each key Ember holds, and sends only the other one to the bubble.
+  const asked = !taken("allow") && !taken("deny") ? "both" : !taken("allow") ? "allow" : !taken("deny") ? "deny" : "none";
+  const questionKeys = (["both", "allow", "deny", "none"] as const).map((k): HomePatch => ({ selector: `[data-question-keys="${k}"]`, hidden: k !== asked }));
   return [
     ...chords,
+    ...toggles,
+    ...questionKeys,
+    { selector: 'p:has(> [data-shortcut="settings"])', hidden: taken("settings") },
+    { selector: "#settings-taken", content: [`Open Ember again ${OPEN_AGAIN[p.os]} any time to come back here, or click Ember's handle.`], hidden: !taken("settings") },
     { selector: "#permissions-note", content: [p.permissionsNote], hidden: !p.permissionsNote },
     { selector: "#data-dir", content: [p.dataDir] },
     { selector: "#autostart-note", content: [p.autostartNote ?? ""], hidden: !p.autostartNote },

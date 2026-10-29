@@ -315,8 +315,15 @@ allows them.
 - At the Large and Larger text sizes, an answer that needs more than six lines at that size offers **Read all**. With
   **More time to read and answer**, a bubble that waited behind another or was covered stays ten times its time, and
   so do Ember's own notices (the screen-lock notices, "I can't take screenshots", the "Commands are off" hint).
-- While another app holds Ember's stop or settings shortcut, the bubble, the command window and task results don't
-  name it: they say "in Ember's settings", and an announced command names only its **Stop**.
+- When another app already holds one of Ember's shortcuts, Ember takes its fallback: on Linux and Windows the same
+  chord with Shift (Ctrl+Alt+Shift+Space, Win+Alt+Shift+Space); on a Mac Control+Shift+Command with another key,
+  never Option, which is VoiceOver's (Control+Shift+Command+A asks, +Period stops, +Comma opens settings). The setup
+  check ("Ctrl+Alt+Space is taken by another app, so Ask Ember is Ctrl+Alt+Shift+Space"), the greeting, the handle's
+  menu, settings, the consent cards and every hint name the chord it holds.
+- **Ask Ember** is in the system's own launcher: the app menu's right-click on Linux, the taskbar's jump list on
+  Windows and the Dock menu on a Mac. `ember --ask` (`Ember.exe --ask`) opens the ask box, starting Ember if needed.
+- While another app holds Ember's stop or settings shortcut and its fallback, the bubble, the command window and task
+  results don't name it: they say "in Ember's settings", and an announced command names only its **Stop**.
 - "May I?" questions name controls in plain words: "Click the “Save” button", "Turn on the “Night Light” switch",
   "Tick the “Bold” checkbox", "on the “report.odt” window".
 - Calm mode also stops the springs and fades of the ask box, the command and card windows and the desk view, and

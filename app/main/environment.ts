@@ -7,7 +7,7 @@
  */
 
 import type { FixId } from "./platform/types";
-import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
+import { ALWAYS_HELD, FALLBACK_SHORTCUTS, OPEN_AGAIN, SHORTCUTS, SHORTCUT_NAMES, heldShortcuts, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { ISSUES_URL } from "../shared/support";
 
 export type { FixId };
@@ -165,34 +165,44 @@ const versionAtLeast = (v: string, min: string) => {
   return true;
 };
 
-/** Where the user opens Ember again on each OS: a second start shows its settings window, which has Ask Ember…. */
-const OPEN_AGAIN: Readonly<Record<OS, string>> = { linux: "from your apps", win32: "from the Start menu", darwin: "from Applications" };
-
 /**
  * Where settings opens when the user opens it from the keyboard (Ember started again, its settings shortcut, the Dock)
- * while another app holds Ember's ask or stop shortcut: at Ask Ember… (else Stop everything) under Comfort & access,
- * the keyboard's way to them then (review #45); null: where it was.
+ * while Ember holds neither chord of its ask or stop shortcut (another app holds the default and its fallback, D-45b):
+ * at Ask Ember… (else Stop everything) under Comfort & access, the keyboard's way to them then (review #45); null: where
+ * it was.
  */
-export function keyboardRoute(taken: readonly string[], sc: ShortcutTable): "access:ask" | "access:stop" | null {
-  return taken.includes(sc.ask.accel) ? "access:ask" : taken.includes(sc.stop.accel) ? "access:stop" : null;
+export function keyboardRoute(taken: readonly string[], sc: ShortcutTable, fallback: ShortcutTable): "access:ask" | "access:stop" | null {
+  const held = heldShortcuts(sc, fallback, taken);
+  return !held.ask ? "access:ask" : !held.stop ? "access:stop" : null;
 }
 
+/** "a", "a and b", "a, b and c". */
+const andList = (xs: readonly string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
 /**
- * The keyboard shortcuts check: the table's labels for those Ember holds, or which ones another app took and what to use
- * meanwhile, for the mouse (the handle) and for the keyboard (opening Ember again brings up its settings, at Ask Ember…
- * and Stop everything when it is their shortcut that is taken: keyboardRoute), since the handle can't be reached
- * without a pointer.
+ * The keyboard shortcuts check: the chords Ember holds, each by its default or its fallback (D-45b), saying which
+ * defaults another app has and what Ember uses instead; for a shortcut Ember holds by neither, which chords another app
+ * took and what to use meanwhile, for the mouse (the handle) and for the keyboard (opening Ember again brings up its
+ * settings, at Ask Ember… and Stop everything when it is theirs that are taken: keyboardRoute), since the handle can't
+ * be reached without a pointer.
  */
-function shortcutsCheck(taken: string[], sc: ShortcutTable, os: OS): Check {
-  // An accelerator as the copy writes it (on Linux the table's label is exactly "Control" → "Ctrl").
-  const label = (accel: string) => Object.values(sc).find(d => d.accel === accel)?.label ?? accel.replace(/Control/g, "Ctrl");
-  const named = taken.map(label);
-  return named.length
-    ? {
-      id: "shortcuts", label: "Keyboard shortcuts", status: "warn",
-      detail: `Another app already uses ${named.join(", ")}. Ember keeps trying to get ${named.length === 1 ? "it" : "them"}; meanwhile, click Ember's handle in the corner (it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again ${OPEN_AGAIN[os]}${keyboardRoute(taken, sc) ? ": its settings open at Ask Ember… and Stop everything, under Comfort & access." : " for its settings."}`,
-    }
-    : { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: `${sc.ask.label} ask · ${sc.stop.label} stop · ${sc.settings.label} settings · ${sc.mute.label} microphone` };
+function shortcutsCheck(taken: string[], sc: ShortcutTable, fallback: ShortcutTable, os: OS): Check {
+  const held = heldShortcuts(sc, fallback, taken);
+  const moved = ALWAYS_HELD.filter(id => held[id] === fallback[id]);
+  const none = ALWAYS_HELD.filter(id => !held[id]);
+  const holds = `${held.ask?.label} ask · ${held.stop?.label} stop · ${held.settings?.label} settings · ${held.mute?.label} microphone`;
+  if (!moved.length && !none.length) return { id: "shortcuts", label: "Keyboard shortcuts", status: "ok", detail: holds };
+  const said: string[] = [];
+  if (moved.length) {
+    said.push(`${andList(moved.map(id => sc[id].label))} ${moved.length === 1 ? "is taken by another app" : "are taken by other apps"}, so ${andList(moved.map(id => `${SHORTCUT_NAMES[id]} is ${fallback[id].label}`))}.`);
+  }
+  if (none.length) {
+    const named = none.flatMap(id => [sc[id].label, fallback[id].label]);
+    said.push(`Another app already uses ${named.join(", ")}. Ember keeps trying to get them; meanwhile, click Ember's handle in the corner (it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again ${OPEN_AGAIN[os]}${keyboardRoute(taken, sc, fallback) ? ": its settings open at Ask Ember… and Stop everything, under Comfort & access." : " for its settings."}`);
+  } else {
+    said.push(holds);
+  }
+  return { id: "shortcuts", label: "Keyboard shortcuts", status: "warn", detail: said.join(" ") };
 }
 
 /**
@@ -287,7 +297,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
     }
   }
 
-  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux, "linux"));
+  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.linux, FALLBACK_SHORTCUTS.linux, "linux"));
 
   checks.push(...speechCheck(i, "linux"));
 
@@ -377,7 +387,7 @@ function inspectWindows(i: EnvInputs): EnvReport {
       checks.push({ id: "elevated", label: "Administrator", status: "warn", detail: "Ember is running as administrator: start it normally so it can't act with administrator rights by mistake." });
     }
   }
-  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.win32, "win32"));
+  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.win32, FALLBACK_SHORTCUTS.win32, "win32"));
   return { os: osName, sessionType: w?.session ?? "unknown", desktop: "Windows", display: "", glibc: "unknown", versions: i.versions, checks };
 }
 
@@ -446,6 +456,6 @@ function inspectMac(i: EnvInputs): EnvReport {
 
     if (m.root) checks.push({ id: "elevated", label: "Root", status: "warn", detail: "Ember is running as root. Start it as yourself." });
   }
-  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.darwin, "darwin"));
+  if (i.shortcutsTaken) checks.push(shortcutsCheck(i.shortcutsTaken, i.shortcuts ?? SHORTCUTS.darwin, FALLBACK_SHORTCUTS.darwin, "darwin"));
   return { os: m?.version ? `macOS ${m.version}` : "macOS", sessionType: "macos", desktop: "macOS", display: "", glibc: "unknown", versions: i.versions, checks };
 }
