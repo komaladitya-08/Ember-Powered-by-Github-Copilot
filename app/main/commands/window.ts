@@ -85,6 +85,12 @@ export interface CommandWindowExtras {
 export interface CloseGuarded { setCloseGuard(fn: () => boolean): void }
 
 /**
+ * What windows.ts's createCommandWindow also adds (cross-review S2): `fn` is called when its page crashes. The window
+ * stays and the page loads again (revive), blank meanwhile, so the controller counts nothing on it as seen until then.
+ */
+export interface PageWatched { onPageGone(fn: () => void): void }
+
+/**
  * What windows.ts adds to the command and prompt windows (review #272): moving the window to the display the user is on
  * (nearest the pointer), and keeping it on every workspace (and over a full-screen app on macOS) while a card is up.
  */
@@ -258,6 +264,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   let closeAsk = false;
   /** The window is closing because the user said so (or Ember closes it): the guard lets it go. */
   let closing = false;
+  /** The window's page crashed and hasn't pulled the state again yet: the window shows nothing (cross-review S2). */
+  let pageDown = false;
   let size: { cols: number; rows: number } | null = null;
 
   const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
@@ -282,9 +290,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     win = w;
     closing = false;
     closeAsk = false;
+    pageDown = false;
     try { wire(); } catch (err) { note("error", "commands.ipc_failed", { err }); }
     // Closing the window while a command runs never leaves it running unseen (R1): the page asks first (review #262).
     safe("close-guard", () => (w as BrowserWindowLike & Partial<CloseGuarded>).setCloseGuard?.(() => keepOnClose(w)));
+    safe("page-gone", () => (w as BrowserWindowLike & Partial<PageWatched>).onPageGone?.(() => pageGone(w)));
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
@@ -331,6 +341,20 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     if (!w) return;
     closing = true;
     safe("close", () => w.close());
+  }
+
+  /**
+   * The window's page crashed (cross-review S2): the window stays, blank, until the page loads again (windows.ts's
+   * revive, up to a minute away if it keeps crashing). Until it pulls the state again, the card isn't in view (the
+   * approve chord's guard fails), and every countdown ends as not run, as when the window closes (the user didn't see it
+   * to the end); one that comes meanwhile waits for the page.
+   */
+  function pageGone(w: BrowserWindowLike): void {
+    if (disposed || w !== live()) return;
+    pageDown = true;
+    if (view) view = { ...view, inView: false };
+    note("warn", "commands.page_gone", { card: !!card, countdowns: queue.length });
+    cancelAnnouncements();
   }
 
   function keyHint(): string | null {
@@ -506,6 +530,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     reveal();
     // No window to count down in (it couldn't be made): the command doesn't run (R1: it runs only where it's seen).
     if (!live()) { settleAnnouncement(a, false); return; }
+    // Its page crashed and is loading again: the countdown starts when the page pulls the state (cross-review S2).
+    if (pageDown) return;
     a.endsAt = Date.now() + a.ms;
     a.timer = setTimeout(() => settleAnnouncement(a, true), a.ms);
     push();
@@ -542,6 +568,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
     o.ipc.handle(COMMANDS_IPC.state, e => {
       if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.state); return null; }
+      // A crashed page loaded again (its first message is this pull): a countdown that waited for it starts now.
+      if (pageDown) { pageDown = false; startHead(); }
       return snapshot();
     });
 
@@ -567,6 +595,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     o.ipc.on(COMMANDS_IPC.cardSeen, (e, raw) => {
       if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.cardSeen); return; }
       if (!isObj(raw) || !isN(raw.n) || typeof raw.inView !== "boolean" || typeof raw.seen !== "boolean") return;
+      // From a page that crashed (sent before it went): only the page loaded again says what is in view.
+      if (pageDown) return;
       if (!card || card.n !== raw.n) return;
       // "Seen" sticks for a card (the page can't take it back), and "in view" needs it.
       const seen = raw.seen || (view?.n === raw.n && view.seen);

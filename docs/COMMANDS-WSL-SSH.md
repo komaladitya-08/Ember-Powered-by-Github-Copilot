@@ -206,7 +206,8 @@ then why it asks ("Deletes build and everything in it.", "Pushes feature-x to or
 on its card's edge, and its **Allow** is a plain button rather than the highlighted one. **Allow** and **Not now**
 stay at the bottom of the card while a long command scrolls; **Allow** stays off until the whole command has been in
 view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win+Alt+Y, Control+Shift+Command+Y)
-works only while that card shows the whole command; **Not now** and the deny chord always work. While the card is up,
+works only while that card shows the whole command (not while the window is blank after its page crashed, until the
+page loads again and shows it); **Not now** and the deny chord always work. While the card is up,
 Ember and its bubble keep clear of the command window (as they do of settings), and the same goes for Ember's sign-in
 and consent cards. There is never an "Always" for commands, a voice "yes" never approves one, and a notification (and
 Ember's speech) only says "Ember wants to run a command on build-01." with how to get to the command window from the
@@ -233,8 +234,9 @@ the phrase and stop everything. There it never says "Ember, stop" or "Hey Ember"
 phrase" and "the wake phrase"; the bubble still shows them). When the command runs in WSL, or on this computer while
 your words named another, the spoken announcement starts with where it runs, as the bubble's badge does ("In Ubuntu
 (WSL): …", "On this computer: …"). **Stop** in either place, the stop chord or "Ember, stop" within those 4 seconds
-cancels it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. The
-audit log records it as requested by you.
+cancels it. While a screen reader runs, the countdown is 15 seconds instead, so there is time to hear it and act. If
+the command window's page crashes during the countdown, the command doesn't run; one announced while the page loads
+again counts down once it is back. The audit log records it as requested by you.
 
 Only what you typed or said counts, never the model's words, text on the screen, a file or a command's output; a
 task that didn't start from your own words always asks. What you said counts only where Ember can tell your voice from

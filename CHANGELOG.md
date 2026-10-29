@@ -421,7 +421,8 @@ allows them.
 - `EMBER_LOG_LEVEL` takes `debug`, `info`, `warn` or `error` in any case; anything else means `info`, and is logged.
   GPU, utility and page crashes are logged (`app.child_process_gone`, `window.renderer_gone`), a crashed SSH sign-in
   or consent window closes instead of staying blank, and a command window whose page crashes comes back with its
-  commands instead of closing.
+  commands instead of closing. While it is blank, the allow shortcut doesn't allow its question and a command counting
+  down there doesn't run.
 - Ember's windows load from a folder whose name has a % in it (for example "100% Free" or "50%AB").
 - Linux RPM: when an update replaces Ember's files while it runs, Ember offers to restart, and dnf says so too.
   AppImage: Ember starts without Chromium's sandbox where unprivileged user namespaces are off (Debian's

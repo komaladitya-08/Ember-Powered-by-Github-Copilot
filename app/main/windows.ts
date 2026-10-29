@@ -14,7 +14,7 @@ import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
 import type { SettingsPatch } from "./settings";
-import { placeOnDisplay, type CloseGuarded, type Placeable } from "./commands/window";
+import { placeOnDisplay, type CloseGuarded, type PageWatched, type Placeable } from "./commands/window";
 import { rescaledBounds, scaledSize } from "./page-prefs";
 import { pageUrl } from "./page-url";
 import { revive } from "./revive";
@@ -162,7 +162,7 @@ function placeable(win: BrowserWindow, panel = false): Placeable {
  * whose first click counts (one click allows; the user's app stays active). Windows: its controller shows it inactive.
  * On Windows and macOS it is left out of screen captures too (Linux has no such switch: Perception masks it, §3.10).
  */
-export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Placeable {
+export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & PageWatched & Placeable {
   const win = new BrowserWindow({
     ...forText({ width: 760, height: 480, ...COMMAND_MIN }),
     title: "Ember commands",
@@ -177,7 +177,11 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
   // A crashed page loads again (it pulls its state and the output kept for each run) rather than the window closing:
   // a window destroyed that way never asks the close guard, so its commands would run on unseen (review #91, #262).
-  revive(win);
+  // Its controller hears the page went: until the page is back, nothing on it counts as seen (cross-review S2).
+  let gone: (() => void) | null = null;
+  revive(win, () => {
+    try { gone?.(); } catch { /* a controller that fails never stops the page loading again */ }
+  });
   void win.loadURL(pageUrl(path.join(appDir, "renderer", "command", "index.html")));
   // Its close button asks the controller's guard first, so a command never runs on unseen (review #262). Never while
   // Ember quits or the session ends: then nothing holds the window (a held window would stop the quit).
@@ -191,7 +195,8 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
     try { return !leaving && guard?.() === true; } catch { return false; } // a guard that fails never holds the window
   };
   win.on("close", e => { if (keep()) e.preventDefault(); });
-  return Object.assign(win, { setCloseGuard: (fn: () => boolean) => { guard = fn; } }, placeable(win, os === "darwin"));
+  return Object.assign(win, { setCloseGuard: (fn: () => boolean) => { guard = fn; }, onPageGone: (fn: () => void) => { gone = fn; } },
+    placeable(win, os === "darwin"));
 }
 
 /**
