@@ -127,7 +127,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
   20 minutes instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead
   of 25.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
-  card in the corner instead; it grows to show a whole question.
+  card in the corner instead; it grows to show a whole question (up to 360 px, or 640 px within the work area for a
+  question with a long typed text, whose sentence keeps its lines while the text's box gives way first).
 
 ### Asking Ember to do things
 

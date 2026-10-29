@@ -4,6 +4,7 @@ import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters"
 import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
+import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
 import { idleLine as tasksLine } from "../overlay/stack";
@@ -122,11 +123,28 @@ function paintWhole(): void {
     if (unread && el.dataset.whole === "wait") el.setAttribute("aria-disabled", "true"); else el.removeAttribute("aria-disabled");
   }
 }
+/** A length in a computed style, in CSS px (0 for none or auto). */
+const px = (v: string): number => parseFloat(v) || 0;
+/** The words' rows shown now (the name, the bold line, the words, a whole text's block, its hint, the step). */
+const wordRows = (): HTMLElement[] => [...$("handle").querySelector<HTMLElement>(".text")!.children]
+  .filter((el): el is HTMLElement => el instanceof HTMLElement && getComputedStyle(el).display !== "none");
+/**
+ * The words have the room a whole text needs to count as seen (fit.ts): the question's sentence beside it, and nothing
+ * running into the buttons. A card too small for that (its limits, the work area) never takes the block's end as read.
+ */
+function wordsClear(): boolean {
+  const handleEl = $("handle");
+  const end = handleEl.getBoundingClientRect().bottom - px(getComputedStyle(handleEl).paddingBottom);
+  return cardClear({
+    sentence: { clientHeight: thoughtEl.clientHeight, scrollHeight: thoughtEl.scrollHeight, lineHeight: px(getComputedStyle(thoughtEl).lineHeight) },
+    wordsEnd: end, rowsEnd: wordRows().map(el => el.getBoundingClientRect().bottom),
+  });
+}
 /** Measured (a layout read) while it waits to be read: main told the first time all of it is in view on the shown card. */
 function judgeWhole(): void {
   if (!whole || whole.seen) return;
   const r = wholeEl.getBoundingClientRect();
-  const shown = fallback && document.visibilityState === "visible";
+  const shown = fallback && document.visibilityState === "visible" && wordsClear();
   const { view, report } = wholeJudged(whole, wholeInView(
     { scrollTop: wholeEl.scrollTop, scrollHeight: wholeEl.scrollHeight, clientHeight: wholeEl.clientHeight, top: r.top, bottom: r.bottom, viewportHeight: window.innerHeight },
     { shown, fontsLoaded: document.fonts.status === "loaded" },
@@ -190,6 +208,7 @@ api.onState(s => {
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;
   showWhole(b.visible ? b.whole ?? null : null);
+  keepLines();
   // While it streams, the newest lines show; once done, it reads (and scrolls) from the start.
   if (b.streaming) thoughtEl.scrollTop = thoughtEl.scrollHeight;
   else if (wasStreaming) thoughtEl.scrollTop = 0;
@@ -231,6 +250,49 @@ api.onState(s => {
 });
 
 /**
+ * Under a question with a whole text, the sentence keeps its first three lines (all, when it has fewer) and the block
+ * its first three, however little room is left (styles.css --lines-kept): the block gives way first, from the lines it
+ * shows unsqueezed (--lines-shown, up to its seven). Otherwise none.
+ */
+function keepLines(): void {
+  const set = (el: HTMLElement, name: string, n: number) => { if (el.style.getPropertyValue(name) !== String(n)) el.style.setProperty(name, String(n)); };
+  for (const el of [thoughtEl, wholeEl]) {
+    const cs = getComputedStyle(el);
+    const content = el.scrollHeight - px(cs.paddingTop) - px(cs.paddingBottom);
+    set(el, "--lines-kept", whole ? linesKept(content, px(cs.lineHeight), 3) : 0);
+    if (el === wholeEl) set(el, "--lines-shown", whole ? linesKept(content, px(cs.lineHeight), 7) : 7);
+  }
+}
+
+/**
+ * What the card needs to show all it holds, measured as if nothing were squeezed (fit.ts): each row of words at its own
+ * height (the words and a whole text's block at all of theirs, the block up to its own most), then the question's
+ * buttons and the task row with the gaps the stylesheet leaves under them (read, so the two can never drift apart).
+ */
+function cardMeasure(): CardMeasure {
+  const handleEl = $("handle");
+  const hs = getComputedStyle(handleEl);
+  const ts = getComputedStyle(handleEl.querySelector<HTMLElement>(".text")!);
+  const rows = wordRows().map((el): CardRow => {
+    const cs = getComputedStyle(el);
+    let natural = el.offsetHeight;
+    if (el === thoughtEl) natural = el.scrollHeight;
+    else if (el === wholeEl) {
+      const most = parseFloat(cs.maxHeight);
+      natural = Number.isFinite(most) ? Math.min(el.scrollHeight, most + px(cs.paddingTop) + px(cs.paddingBottom)) : el.scrollHeight;
+    }
+    return { natural, marginTop: px(cs.marginTop), marginBottom: px(cs.marginBottom) };
+  });
+  const below = ["actions", "task"].map(id => $(id)).filter(el => !el.hidden)
+    .map((el): CardRow => ({ natural: el.offsetHeight, marginTop: 0, marginBottom: px(getComputedStyle(el).marginBottom) }));
+  return {
+    top: { padTop: px(hs.paddingTop), padBottom: px(hs.paddingBottom), min: px(hs.minHeight), face: $("menu").offsetHeight },
+    text: { padTop: px(ts.paddingTop), gap: px(ts.rowGap), rows },
+    below,
+  };
+}
+
+/**
  * Asks the main process for a card as tall as what it shows (no empty gap under a short question,
  * room for a long one), when it offers that (`fit`); otherwise the card keeps the size main gives it.
  */
@@ -238,15 +300,7 @@ let askedHeight = 0;
 function fitCard(): void {
   const fit = (api as HandleApi & { fit?: (height: number) => void }).fit;
   if (!fallback || typeof fit !== "function") return;
-  const handleEl = $("handle");
-  const extra = thoughtEl.scrollHeight - thoughtEl.clientHeight;
-  let h = handleEl.offsetHeight + Math.max(0, extra);
-  for (const id of ["actions", "task"]) {
-    const el = $(id);
-    // Its own height and the gap the stylesheet leaves under it (read, so the two can never drift apart again).
-    if (!el.hidden) h += el.offsetHeight + parseFloat(getComputedStyle(el).marginBottom);
-  }
-  h = Math.ceil(h);
+  const h = cardNeed(cardMeasure());
   if (Math.abs(h - askedHeight) < 4) return;
   askedHeight = h;
   fit(h);

@@ -107,15 +107,28 @@ export class HandleWindow {
     this.last = state;
     if (this.win.isDestroyed()) return;
     this.win.webContents.send(OVERLAY.state, state);
+    // Grown for a question's whole text, and that question gone: back within the usual limit at once.
+    if (this.fallback && this.cardHeight > this.cardMax()) { this.cardHeight = this.cardMax(); this.reposition(); }
   }
 
   /** Fallback card: grows or shrinks (upward, same corner) to the height its content needs. */
   fit(height: number): void {
     if (!this.fallback || !Number.isFinite(height)) return;
-    const h = Math.round(Math.min(Math.max(height, CARD_MIN), CARD_MAX));
+    const h = Math.round(Math.min(Math.max(height, CARD_MIN), this.cardMax()));
     if (h === this.cardHeight) return;
     this.cardHeight = h;
     this.reposition();
+  }
+
+  /**
+   * The tallest the card may be now. A question showing a whole text (a long typed text, review #116) may take more, so
+   * its sentence, the text's block, its hint, its keys, its buttons and the task row all show (640 px holds them at the
+   * largest text size), never more than the work area less a margin above and below.
+   */
+  private cardMax(): number {
+    const b = this.last?.bubble;
+    if (!b?.visible || !b.whole) return CARD_MAX;
+    return Math.max(CARD_MAX, Math.min(640, screen.getPrimaryDisplay().workArea.height - 24));
   }
 
   /** The handle's place on screen (Ember keeps off it). */
