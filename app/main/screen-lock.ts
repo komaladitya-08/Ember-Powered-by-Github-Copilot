@@ -10,6 +10,8 @@
 
 import { execFile, spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import type { Hands } from "./agent/host";
+import type { WorkerSystem } from "./agent/worker";
+import type { DesktopApp, SettingName } from "./hands/system";
 import type { PerceptionPort, SidecarPort } from "./perception/ports";
 
 /** Electron's powerMonitor, as far as the lock goes. */
@@ -283,9 +285,32 @@ export function holdNotice<B>(b: MainBubble<B>, bubble: B, ms: number): NodeJS.T
 export const LOCKED_SCREEN = "This computer's screen is locked, so Ember didn't read it or act on it.";
 
 /**
+ * What describe_screen answers about this computer's screen while it's locked (the model passes it on). The
+ * conversation reads this screen through main, not through a task's hands, so their gate doesn't cover it: AgentHost
+ * answers this instead of reading while its screenLocked option says so (cross-review X9).
+ */
+export const LOCKED_DESCRIBE = "This computer's screen is locked, so Ember didn't read it. Tell the user.";
+
+/**
+ * A task's system on this screen, whose steps refuse while `locked()` as the hands' reads and steps do: opening an app
+ * and changing a desktop setting act on the desktop without reading it first, so the hands' gate never saw them
+ * (cross-review X9). Listing the apps and the settings there are isn't a step.
+ */
+export function lockedOutSystem(system: WorkerSystem, locked: () => boolean): WorkerSystem {
+  const { apps, settings } = system;
+  const refused = (): Promise<never> => Promise.reject(new Error(LOCKED_SCREEN));
+  return {
+    ...system,
+    apps: { ...apps, launch: (app: DesktopApp) => (locked() ? refused() : apps.launch(app)) },
+    settings: { ...settings, change: (name: SettingName, value: string) => (locked() ? refused() : settings.change(name, value)) },
+  };
+}
+
+/**
  * This screen's hands, refusing to read or act on it while `locked()`: the gate is at the desktop itself, so a task that
  * starts, or turns to the desktop, while the screen is locked can't read or touch it (the stop on locking and its sweep
- * are a backstop). Commands, which run in their own window, aren't hands. Its window is unknown meanwhile.
+ * are a backstop). Commands, which run in their own window, aren't hands. Its window is unknown meanwhile. They say
+ * whether it's locked (`screenLocked`), so a task's system steps on this screen refuse too (lockedOutSystem).
  */
 export function lockedOutHands(h: Hands, locked: () => boolean): Hands {
   const gate = <A extends unknown[], R>(f: (...a: A) => Promise<R>) => (...a: A): Promise<R> => (locked() ? Promise.reject(new Error(LOCKED_SCREEN)) : f(...a));
@@ -313,7 +338,7 @@ export function lockedOutHands(h: Hands, locked: () => boolean): Hands {
     scaleOf: id => s.scaleOf(id),
     stop: () => s.stop(),
   };
-  return { ...h, perception, sidecar, currentWindow: () => (locked() ? null : h.currentWindow()) };
+  return { ...h, perception, sidecar, currentWindow: () => (locked() ? null : h.currentWindow()), screenLocked: locked };
 }
 
 /**

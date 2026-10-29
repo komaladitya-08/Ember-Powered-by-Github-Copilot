@@ -17,6 +17,7 @@ import type { RemoteTargetParts } from "../remote/target";
 import type { HostRecord } from "../remote/types";
 import type { WslDistro } from "../wsl/types";
 import type { TargetBinding, TargetHands } from "./types";
+import { lockedOutSystem } from "../screen-lock";
 import { LOCAL_LABEL, distroLabel } from "./registry";
 import { isToolDistro } from "./wsl-service";
 
@@ -73,19 +74,26 @@ export interface HandsBase { audit: Hands["audit"]; confirmer: Hands["confirmer"
 /**
  * Hands on this screen (local and WSL: same perception, sidecar, policy, mouse; lease keys unchanged) or, without a
  * window system, hands that only carry commands. Each call made for one task's hands on this screen tells whether that
- * task has used it (DesktopUse: a read, a picture, a step, an app opened, Ember's desk), so this screen locking stops
- * only such tasks, and one running only commands goes on, as on a remote (review #81).
+ * task has used it (DesktopUse: a read, a picture, a step, an app opened, a setting changed, Ember's desk), so this
+ * screen locking stops only such tasks, and one running only commands goes on, as on a remote (review #81). Hands that
+ * say this screen is locked (lockedOutHands) refuse its app openings and setting changes meanwhile too (cross-review X9).
  */
 export function screenHands(o: { hands: Hands | null; base: HandsBase | null; binding: TargetBinding; system: WorkerSystem; commands: CommandService | null }): (TargetHands & Partial<DesktopUse>) | null {
   const keys = { grantKey: (app: string) => app.toLowerCase(), leaseKey: (k: string) => k };
   if (o.hands) {
     let used = false;
     const use = () => { used = true; };
-    const { desk } = o.hands, system = o.system;
+    const { desk, screenLocked } = o.hands;
+    const system = screenLocked ? lockedOutSystem(o.system, screenLocked) : o.system;
     return {
       ...o.hands, perception: usingPerception(o.hands.perception, use), sidecar: usingSidecar(o.hands.sidecar, use),
       ...(desk ? { desk: () => { use(); return desk(); } } : {}),
-      binding: o.binding, system: { ...system, apps: { ...system.apps, launch: app => { use(); return system.apps.launch(app); } } }, commands: o.commands, ...keys,
+      binding: o.binding, commands: o.commands, ...keys,
+      system: {
+        ...system,
+        apps: { ...system.apps, launch: app => { use(); return system.apps.launch(app); } },
+        settings: { ...system.settings, change: (name, value) => { use(); return system.settings.change(name, value); } },
+      },
       usedDesktop: () => used,
     };
   }

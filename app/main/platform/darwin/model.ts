@@ -135,7 +135,10 @@ const MAX_WINDOW_ID = 0xffffffff;
 
 /**
  * Checks and completes an entry. Without a number, an owner pid or bounds it is dropped. A missing layer or alpha
- * is taken as the cautious value (not an app window; opaque), so an odd window still covers what is below it.
+ * is taken as the cautious value (not an app window; opaque), so an odd window still covers what is below it. The
+ * owner is the app's name in the user's language, which Apple writes with soft hyphens in places (German System
+ * Settings is "System" + U+00AD + "einstellungen"): it loses its format characters, so the app as every list and
+ * check sees it (policy, never-look, security owners, grants, the app catalogue) has one form (cross-review X15).
  */
 export function windowEntry(raw: RawWindowInfo): CGWindowEntry | null {
   const { number, pid, bounds } = raw;
@@ -145,7 +148,7 @@ export function windowEntry(raw: RawWindowInfo): CGWindowEntry | null {
   return {
     id: number,
     pid,
-    owner: raw.owner ?? "",
+    owner: (raw.owner ?? "").replace(/\p{Cf}/gu, ""),
     title: raw.name ?? "",
     bounds: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     layer: raw.layer !== null && Number.isFinite(raw.layer) ? raw.layer : 1,

@@ -43,6 +43,7 @@ import type { TargetBinding } from "../targets/types";
 import type { CommandService, ShellId } from "../commands/types";
 import type { TargetId } from "../../shared/targets";
 import { placeName, runCommandTool, whereWords, type CommandFlowContext } from "../commands/flow";
+import { LOCKED_SCREEN } from "../screen-lock";
 
 /**
  * What a worker needs of the OS it runs on (main passes its SystemPlatform, which has all of it): how keys are named
@@ -1145,7 +1146,12 @@ export class Worker {
             // The app's window is a new one of its program (or titled after it); an app that was already open
             // (it only raises its window) is found by its program, never by a title that happens to contain its name.
             const key = (w: { pid: number | null; name: string }) => `${w.pid}:${w.name}`;
-            const before = new Set((await this.perception.windows().catch(() => [])).map(key));
+            // A screen that refuses to be read for being locked gets no app started on it either (cross-review X9: its
+            // system's launch refuses then too); any other failed read only leaves nothing to compare with.
+            const before = new Set((await this.perception.windows().catch((err: unknown) => {
+              if (err instanceof Error && err.message === LOCKED_SCREEN) throw err;
+              return [];
+            })).map(key));
             // Compared as the OS names programs (on Windows without ".exe").
             const programs = apps.programsOf(app);
             const ours = (w: { app: string }) => programs.has(apps.appKey(w.app));

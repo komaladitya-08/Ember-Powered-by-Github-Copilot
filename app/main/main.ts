@@ -33,6 +33,8 @@ import { useAppNames } from "../shared/apps";
 import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
+import { warmText } from "./perception/capture";
+import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow } from "./ask";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
@@ -1533,6 +1535,12 @@ function start(): void {
     if (launch) {
       setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, () => { helper = null; }), atLogin ? 60_000 : 10_000).unref();
     }
+    // The first screenshot with Ember's marks on a fresh Windows or macOS machine doesn't pay fontconfig's cache build:
+    // sharp's text is drawn once in the background, later at login (text-warm.ts).
+    scheduleTextWarm({
+      os: platform.os, argv: process.argv, marker: path.join(userData, "text-warmed"), key: app.getVersion(),
+      delayMs: atLogin ? 60_000 : TEXT_WARM_DELAY_MS, draw: warmText, log: log.child("perception"),
+    });
     perception = new Perception({
       sidecar: seenBy, x11: wsSeen, log: log.child("perception"),
       neverLook: () => settings.get().privacy.neverLook,
@@ -1764,7 +1772,8 @@ function start(): void {
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
-      describeScreen: () => seeing.describe(), hands,
+      // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
+      describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.

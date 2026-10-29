@@ -467,8 +467,13 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       return { ...answerTag(e.answer), what };
     case "action":
       return { tag: e.ok ? "Done" : "Didn't work", cls: e.ok ? "ok" : "no", what: `${what}${e.tier === 2 ? " (on Ember's desk)" : ""}`, why: userWords(forUser(e.error)) };
-    case "stop":
-      return { tag: "Stopped", cls: "no", what: `Everything stopped (${e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : "menu"})` };
+    case "stop": {
+      // What pulled it: a control the user used, or the administrator's policy changing while Ember ran (killswitch.ts
+      // StopSource). A source this page doesn't know is put on no control (cross-review X10).
+      if (e.source === "policy") return { tag: "Stopped", cls: "no", what: "Everything stopped: your organisation changed Ember's policy" };
+      const how = e.source === "hotkey" ? words.stopLabel : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
+      return { tag: "Stopped", cls: "no", what: how ? `Everything stopped (${how})` : "Everything stopped" };
+    }
     case "command":
       return commandLine(e);
     case "remote":

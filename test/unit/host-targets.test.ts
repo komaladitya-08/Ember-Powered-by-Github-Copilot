@@ -49,6 +49,7 @@ import { AgentHost, localTargetHands, type Hands, type HostOptions } from "../..
 import { LINUX_WORKER_SYSTEM, type TaskSpec, type Worker, type WorkerSystem } from "../../app/main/agent/worker";
 import { emberSystemMessage } from "../../app/main/agent/persona";
 import { SettingsStore } from "../../app/main/settings";
+import { LOCKED_DESCRIBE } from "../../app/main/screen-lock";
 import { PLATFORM_WORDS } from "../../app/shared/words";
 import { KEYS, SHORTCUTS } from "../../app/shared/shortcuts";
 import type { CommandService } from "../../app/main/commands/types";
@@ -474,6 +475,24 @@ describe("show_me and describe_screen by target (§2.6)", () => {
     await host.ask("what's on my screen?");
     expect(await tool("describe_screen")()).toBe("<screen>Mail</screen>");
     expect(await tool("describe_screen")({ target: "build-01" })).toBe("The user didn't name that computer. Use the one they chose, or ask them.");
+    await host.stop();
+  });
+
+  it("describe_screen of this screen while it is locked reads nothing and isn't screen text for the turn's tasks; another computer's still reads (cross-review X9)", async () => {
+    const { t } = fakeTargets({ bindings: [LOCAL, BUILD, UBUNTU], screens: { "ssh:build-01": "<screen>build-01: Terminal</screen>" } });
+    const read = vi.fn(async () => "<screen>Mail</screen>");
+    const { host, tool, specs } = await started({ hands: hands(), targets: t, describeScreen: read, screenLocked: () => true });
+    // WSL's windows are on this screen too.
+    await host.ask("what's open in Ubuntu (WSL)?");
+    expect(await tool("describe_screen")()).toBe(LOCKED_DESCRIBE);
+    await host.ask("what's on my screen? then tidy the desktop");
+    expect(await tool("describe_screen")()).toBe(LOCKED_DESCRIBE);
+    expect(read).not.toHaveBeenCalled();
+    await tool("start_task")({ goal: "tidy the desktop" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0].screen).toBeUndefined();
+    await host.ask("what's open on build-01?");
+    expect(await tool("describe_screen")()).toBe("<screen>build-01: Terminal</screen>");
     await host.stop();
   });
 });
