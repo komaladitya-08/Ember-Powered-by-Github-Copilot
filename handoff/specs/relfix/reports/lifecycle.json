@@ -1,0 +1,337 @@
+{
+ "key": "lifecycle",
+ "final": {
+  "findings": [
+   {
+    "id": 79,
+    "status": "fixed",
+    "how": "tasks.ts: the 'asked' and outcome audit lines go through record(), which catches a failed write, logs task.audit_failed and never stops the queue. start() always queues, pumps and publishes, so the task gets its card and starts. finish() publishes the card and sets its timer before the audit line and onFinished. run() disposes the worker and pumps the queue in a finally. pump() catches a run that still rejects and logs task.run_failed, so there is no unhandled rejection. Real app check: the reviewer's pw-audit-phantom scenario (audit file replaced by a directory) now gives 'Task … started: \"Job A\"' with 1 card, then ['Job A:done','Job B:done'], and A never runs a second time.",
+    "test": "test/unit/tasks-audit-failure.test.ts: 4 of 5 cases failed before (start threw, cards stayed 'running', unhandled rejections). All 5 pass now."
+   },
+   {
+    "id": 117,
+    "status": "fixed",
+    "how": "audit.ts: AuditLog.write still throws on failure, because the remote's write-ahead audit and the worker rely on that to fail closed. If the folder is gone (ENOENT), it makes it again (0700) and retries. A failed line still goes to the journal sink. A new onError hook is told once per run of failures, and main.ts logs it as audit.write_failed. New afterTheStep(e) is true for entries written after their step: actions, and commands that started, ended, were tainted or changed folder. worker.ts Worker.audit: when a write fails, it logs worker.audit_failed and stops the task with a plain sentence about the audit log (stopNow). It rethrows only for entries written before their step (decision, confirm, decided, answered), so that step isn't taken. A click already done comes back as 'Done', not as an error the model would retry.",
+    "test": "test/unit/audit-failure.test.ts: all 5 failed before (removed folder, journal fallback with one report per run of failures, afterTheStep, a click already done returned as an error, the decision path). All pass now."
+   },
+   {
+    "id": 80,
+    "status": "fixed",
+    "how": "New app/main/data-folder.ts (plain Node): dataFolderProblem() stats the folder and makes and removes a probe file. It gives one plain sentence for each case: not a folder, can't write, full disk (ENOSPC/EDQUOT), read-only disk (EROFS). main.ts: when requestSingleInstanceLock() returns false and the folder has a problem, startupFailed() shows the dialog and exits 1. Only a usable folder counts as handing over to another Ember. startupFailed points to the log only when the log file exists. Real app check (scratch ro-userdata.sh: Electron as uid 65534 on a root-owned folder): before, exit 0 and instance.handover with no window. After, app.start_failed and the 'Ember couldn't start' dialog naming the folder. The smoke test's second-launch handover still passes.",
+    "test": "test/unit/data-folder.test.ts (4 cases, new module). main.ts can't be unit-tested, so its wiring was checked with the before/after Electron run."
+   },
+   {
+    "id": 82,
+    "status": "fixed",
+    "how": "New app/main/text-file.ts: decodeText() drops a UTF-8 byte-order mark and decodes UTF-16 LE or BE when the byte-order mark says so. readTextFile() and stripBom() build on it. settings.ts read(), admin.ts loadAdminPolicy() and main.ts settingsText() (the doctor's WSL switch) now use readTextFile(). parseAdminPolicy() strips a leading byte-order mark, which covers the Windows registry value and a remote's policy text. A policy that still isn't JSON locks Ember down, as before.",
+    "test": "test/unit/settings-encoding.test.ts: 8 of 10 failed before (each encoding reset every setting and left a .bad copy, and the policy locked Ember down). All 10 pass now."
+   },
+   {
+    "id": 83,
+    "status": "fixed",
+    "how": "Round 1 (0f52735, b7f1bba), settings.ts: the start-up read is tried 3 more times (50, 100 and 200 ms) for EBUSY/EPERM/EACCES/EIO/ETIMEDOUT/EAGAIN. If it still fails (not ENOENT), Ember runs on defaults with a notice and an 'unread' flag. While the flag is set, update() keeps changes in memory as pending and flush() saves nothing. A file that reads again with a slip in it is waited on and repaired, never replaced with defaults plus the changes. Round 2 (3e09807), on the verifier's two points. (A) update() built its result from current + patch only, so changes held while the file was unreadable were dropped when update(), not the watcher, found the file readable. It now builds the result as SettingsSchema.parse({ ...current, ...pending, ...patch }), the same way reloadIfChanged() applies pending, and saves them together. This is unconditional: when update() didn't just read the file, current already contains pending, so nothing else changes. It also covers a case the verifier didn't list: a file that reads again with a slip, is deferred by the watcher, and is then found by update(). (B) The unread notice is now kept in unreadNotice. When the file turns out to be missing (ENOENT while unread), unread clears and withdraw() removes the notice if it is still the one shown. persist() uses the same withdraw() helper for its save notice. Before/after for the verifier's scratch file zz-verify-settings.test.ts: A, A2 and B failed, and all 5 cases pass now.",
+    "test": "test/unit/settings-transient.test.ts, 12 cases. The 5 new ones failed before 3e09807 and pass now: 'changes held meanwhile are kept when the next change, not the watcher, finds the file readable', 'the same through the size slider', 'goes once Ember can save a new file' with and without the watcher seeing it go first, and 'a change made while it is waited on keeps the changes held while it couldn't be read'."
+   },
+   {
+    "id": 84,
+    "status": "fixed",
+    "how": "Round 1 (ac7f760, b7f1bba): saves go through persist(). On failure it raises a plain notice to every window (saveFailure(): full disk, read-only disk, folder it can't write to, file another program holds). The main.ts IPC handler throws plainSaveError(). The renderer routes every updateSettings call through one save() helper, which shows saveFailedText(err) and puts the controls back. Round 2 (dc1c0a8), on the verifier's point: the 400 ms slider timer called flush(); when persist() threw, clearPending() was never reached, so pendingTimer kept pointing at a timer that had already fired, and no later slider change set a new one. The notice's promise to 'try again with your next change' was never kept. The timer callback now sets pendingTimer = null before it flushes. A failed save leaves the change pending, the next slider change sets a new timer and saves it, and the notice goes. The verifier's scratch file zz-verify-slider.test.ts showed size 70 on disk before and 91 now.",
+    "test": "test/unit/settings-save-failure.test.ts, 8 cases. The new case 'a slider change that couldn't be saved is saved with the next slider change, and the notice goes' (fake timers) failed before dc1c0a8 (70 on disk instead of 91) and passes now. The renderer wiring was checked in round 1 with the before/after Playwright run (pw-save-fail.mjs)."
+   },
+   {
+    "id": 85,
+    "status": "fixed",
+    "how": "autostart.ts: Ember's entry carries X-Ember-Managed=true. emberWrote() also recognises an older Ember's unmarked entry with any Exec. syncAutostart() never rewrites or removes any other entry. foreignAutostartNote() feeds Linux's autostart.note() (platform/linux/system.ts), so the settings window says when an entry Ember didn't make starts it at login. New loginItemFollower(): main.ts syncs the OS login item at start only when the setting is on, then only when it changes (and again after a failed try), on every OS. A start with the setting off (the default, another EMBER_USER_DATA, a dev build) removes nothing.",
+    "test": "test/unit/autostart-owned.test.ts: all 7 failed before and pass now. The existing packaging.test.ts and platform-linux-system.test.ts autostart cases still pass."
+   },
+   {
+    "id": 86,
+    "status": "fixed",
+    "how": "Round 1 (22aeb61): prune() goes by each entry's own time. A month that ended before the cutoff goes whole, a month that straddles it is trimmed in place, and AuditLog.pruneDaily() runs an unref'd daily timer (main.ts starts it). Round 2 (138366d), on the verifier's point that two remote agents for one machine share state/<machine>/audit/: (in fact agents for different PCs share it by design) the trim lost any line the other process appended between its read and its rename. trim() now keeps the month file open. It processes whole lines only, and a line still being written goes across as it is. It writes the kept lines to a 0600 temp file and copies whatever the other process adds until the file stops growing (copyAdded). It checks that the file is still the inode it read; if another trim replaced it first, it leaves it alone. Then it renames. Where an open file can be replaced (POSIX), it copies what reached the old file during the rename, and again 10 ms later for a writer that opened it just before. Where the rename is refused because the file is open (EPERM/EACCES/EBUSY: Windows), it copies what was added, closes the file and renames again; if the other writer still has it open, the trim fails safely and runs again later. A month with nothing kept is removed only once it has ended (no writer appends there any more), as before. I didn't take the verifier's first option (skip the current month or recently modified files): it would have undone #86 for the current month, the original bug. There is no process.platform test, so the platform-boundary rule D1 holds. Two-process stress (scratch stress.cjs: one process appends 20,000 lines while another trims every few ms): the round-1 trim lost 678 lines in 15 prunes. The final trim lost none in 8 runs of 120–150 prunes each. A variant without the 10 ms re-copy lost 1 line in 2 of 4 runs.",
+    "test": "test/unit/audit-retention.test.ts, new block 'trimming a file another process is writing to', 5 cases. 'keeps a line written after the trim read the file' (all OSes), 'keeps a line written just as the trimmed file replaces it' (POSIX), 'carries a line still being written across as it is' and 'leaves the file alone when another trim replaced it first' (POSIX) all failed on the round-1 code and pass now. 'lets go of the file and replaces it where the system won't replace an open file (Windows)' tests the fallback path on every OS. The earlier 4 retention cases and policy/safety/remote-agent-policy/sshwsl tests still pass."
+   },
+   {
+    "id": 87,
+    "status": "fixed",
+    "how": "Reworded the first-run card (app/renderer/home/index.html). It now says Ember keeps 'a record of every task and action it took, including what you asked for and how it went (kept N days)' and that 'The rest of your conversation with Ember is kept only while it runs.' What Ember keeps is unchanged, because the activity timeline reads those entries after a restart. CONSENT_VERSION is not bumped, because nothing has been released (0.1.0, no tags).",
+    "test": "test/unit/home-platform-copy.test.ts: the pinned 'data-dir' sentence (Linux, Windows, macOS) was updated first and failed on the old markup (2 cases). All 24 pass now."
+   },
+   {
+    "id": 88,
+    "status": "fixed",
+    "how": "follow.ts Follower.step takes a step's time only within 0 to 50 ms, so a negative or NaN dt moves nothing. overlay.ts tick() measures dt with performance.now(), a monotonic clock. The handle check and the frame heartbeat keep Date.now().",
+    "test": "test/unit/follow-clock.test.ts: all 3 failed before (dt=-3 threw Ember about 233,000 px off screen; NaN; the overlay used the wall clock) and pass now. follow.test.ts still passes."
+   },
+   {
+    "id": 90,
+    "status": "fixed",
+    "how": "logger.ts: new logLevel() takes a level name in any case and falls back to info for an unknown name. createLogger checks its level the same way. main.ts uses logLevel(process.env.EMBER_LOG_LEVEL) instead of an unchecked cast, and logs log.level_unknown (the value cut to 40 characters) when it falls back.",
+    "test": "test/unit/logger-level.test.ts: all 3 failed before ('trace' wrote the debug line) and pass now."
+   },
+   {
+    "id": 91,
+    "status": "fixed",
+    "how": "New app/main/crash-log.ts (plain Node): watchCrashes() logs app 'child-process-gone' as app.child_process_gone with type, reason, exitCode and service, and skips clean exits. Through 'web-contents-created' it logs every page's 'render-process-gone' as window.renderer_gone with the page name and reason. main.ts calls it at start. windows.ts: the command and prompt windows close when their page crashes (closeWhenGone), so their controllers act as if the user had closed them: an SSH prompt is answered no and a consent question comes back. desk/view.ts: revive() reloads the view and lets go of held keys and control. Real app check: forcefullyCrashRenderer and SIGKILL to the GPU process logged window.renderer_gone and app.child_process_gone {type:GPU, reason:killed}.",
+    "test": "test/unit/crash-log.test.ts: the logging cases cover the new module, and the card-window and wiring cases failed before and pass now. The desk-view tests and sshwsl-hooks.test.ts got an on() on their fake webContents (b24be1d)."
+   },
+   {
+    "id": 92,
+    "status": "fixed",
+    "how": "settings.ts keep() keeps only the newest 3 settings.json.bad-<time> copies (pruneBackups), with unique names even within one millisecond. While Ember runs, a repairable hand edit is used and rewritten only once it has stayed the same for 2 s (settled(), with an injected clock for tests). A change made in Ember meanwhile repairs it at once, now with any held changes on top (round 2). A deferred read changes nothing in memory and saves nothing.",
+    "test": "test/unit/settings-hand-edit.test.ts: 2 of 3 failed before (6 backups; 'size: 800' rewritten at once) and all pass now. The trailing-comma case in settings.test.ts waits the 2 s with an injected clock."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "74b9710",
+    "subject": "Keep the task queue moving when the audit log can't be written",
+    "ids": [
+     79
+    ]
+   },
+   {
+    "sha": "ed56731",
+    "subject": "Report a step already taken as done when its audit record fails, and stop the task",
+    "ids": [
+     117
+    ]
+   },
+   {
+    "sha": "b5d78d8",
+    "subject": "Say plainly when Ember can't write its data folder instead of quitting silently",
+    "ids": [
+     80
+    ]
+   },
+   {
+    "sha": "5c27989",
+    "subject": "Read settings.json and the admin policy saved with a byte-order mark or as UTF-16",
+    "ids": [
+     82
+    ]
+   },
+   {
+    "sha": "0f52735",
+    "subject": "Never save defaults over a settings.json that couldn't be read at start-up",
+    "ids": [
+     83
+    ]
+   },
+   {
+    "sha": "bf754d4",
+    "subject": "Keep three backups of broken hand edits and repair one only after it stops changing",
+    "ids": [
+     92
+    ]
+   },
+   {
+    "sha": "ac7f760",
+    "subject": "Say why a settings change wasn't saved instead of doing nothing",
+    "ids": [
+     84
+    ]
+   },
+   {
+    "sha": "50c7091",
+    "subject": "Leave a login entry Ember didn't make alone, and sync the login item only when asked",
+    "ids": [
+     85
+    ]
+   },
+   {
+    "sha": "22aeb61",
+    "subject": "Keep each audit entry only for the retention days, and prune once a day",
+    "ids": [
+     86
+    ]
+   },
+   {
+    "sha": "22e509f",
+    "subject": "Say in the consent card that the audit record keeps each task's request and result",
+    "ids": [
+     87
+    ]
+   },
+   {
+    "sha": "0f58c26",
+    "subject": "Keep Ember on screen when the system clock steps back",
+    "ids": [
+     88
+    ]
+   },
+   {
+    "sha": "9648c4c",
+    "subject": "Read EMBER_LOG_LEVEL in any case, and fall back to info for an unknown name",
+    "ids": [
+     90
+    ]
+   },
+   {
+    "sha": "77a0666",
+    "subject": "Log GPU, utility and page crashes, and close a card window whose page crashed",
+    "ids": [
+     91
+    ]
+   },
+   {
+    "sha": "b7f1bba",
+    "subject": "Word a failed save for the settings window at its IPC handler, and never save over a waiting edit",
+    "ids": [
+     84,
+     83,
+     92
+    ]
+   },
+   {
+    "sha": "b24be1d",
+    "subject": "Give the window-factory test's fake window a webContents",
+    "ids": [
+     91
+    ]
+   },
+   {
+    "sha": "dc1c0a8",
+    "subject": "Save a slider change with the next change after its save failed",
+    "ids": [
+     84
+    ]
+   },
+   {
+    "sha": "3e09807",
+    "subject": "Keep changes held while settings.json was unreadable when a change finds it readable",
+    "ids": [
+     83
+    ]
+   },
+   {
+    "sha": "138366d",
+    "subject": "Keep lines another process appends while a month's audit file is trimmed",
+    "ids": [
+     86
+    ]
+   }
+  ],
+  "checks": "Final state, 138366d:\n- npx tsc --noEmit: exit 0, no errors.\n- npm run lint (eslint .): exit 0, no problems.\n- npm test (full): Test Files 253 passed | 1 skipped (254); Tests 6033 passed | 8 skipped (6041); exit 0. An earlier full run on the intermediate #86 code failed 1 test: platform-boundary 'has no process.platform outside app/main/platform/ (D1)', because of a process.platform test in audit.ts. It was replaced by the OS-neutral refused-rename fallback, folded into 138366d before this run.\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: exit 0. 'ok first instance showed its window' and 'ok second launch handed over and the first instance focused its window'.\n- EMBER_INTEGRATION=1 EMBER_COMMANDS_TEST=1 npx vitest run test/integration/commands-flow-local.test.ts test/integration/commands-local.test.ts: Test Files 2 passed; Tests 33 passed | 13 skipped (46).\n- Verifier's scratch repros, copied into test/unit temporarily and then removed: zz-verify-slider.test.ts 1/1 passes (failed before). zz-verify-settings.test.ts 5/5 pass (A, A2 and B failed before).\n- Two-process audit stress (scratch /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/lc-r2/stress.cjs): round-1 trim lost 678 of 20,000 lines; final trim 0 lost in 8 runs.\n- Voice: not changed, so the voice suites were not run.",
+  "sharedHunks": [
+   "Round 2 touched only files this package owns (app/main/settings.ts, app/main/policy/audit.ts and its own tests). The round-1 shared hunks follow, unchanged:",
+   "app/main/agent/worker.ts: imports afterTheStep; new AUDIT_UNAVAILABLE const next to STOPPED; Worker.audit() try/catch that logs worker.audit_failed, calls stopNow and rethrows only before the step (#117)",
+   "app/main/main.ts (start-up and crash handling are this package's; other hunks listed): imports (logLevel, dataFolderProblem, loginItemFollower, watchCrashes, readTextFile, plainSaveError); createLogger level via logLevel plus log.level_unknown (#90); watchCrashes(app, log) after the process handlers (#91); startupFailed points to the log only if the file exists (#80); single-instance branch checks dataFolderProblem (#80); settingsText uses readTextFile (#82); the autostart block replaced by loginItemFollower (#85); AuditLog gets an onError argument plus audit.pruneDaily after the prune (#117, #86); update-settings IPC handler wraps settings.update in plainSaveError (#84)",
+   "app/main/admin.ts: imports readTextFile and stripBom; parseAdminPolicy parses stripBom(raw); loadAdminPolicy reads with readTextFile (#82)",
+   "app/main/platform/linux/system.ts: imports foreignAutostartNote; autostart.note() returns foreignAutostartNote(autostartFile(deps.env)) instead of null (#85)",
+   "app/main/windows.ts: closeWhenGone(win) helper, called in createCommandWindow and createPromptWindow (#91)",
+   "app/main/desk/view.ts: imports revive; revive(win, () => { releaseAll(); setControl(false); }) after the blur handler (#91)",
+   "app/main/overlay.ts: `last` starts from performance.now(); tick() measures dt on performance.now() (#88)",
+   "app/main/follow.ts: Follower.step clamps dt to [0, 0.05], and NaN counts as 0 (#88)",
+   "app/renderer/home/main.ts: imports SettingsPatch and saveFailedText; new save() helper after the Start handler; every `void window.ember.updateSettings(...)` call site now uses save(); Start scrolls to the notice when its save fails; the never-look form's error uses saveFailedText (#84)",
+   "app/renderer/home/copy.ts: new export saveFailedText() above tokens() (#84)",
+   "app/renderer/home/index.html: line 34, the 'On this computer' consent sentence reworded (#87)",
+   "test/unit/settings.test.ts: the trailing-comma hand-edit case uses an injected clock and waits 2 s (#92)",
+   "test/unit/home-platform-copy.test.ts: the pinned data-dir sentence and the macOS toContain string updated (#87)",
+   "test/unit/desk-view.test.ts and test/unit/desk-view-platform.test.ts: fake webContents gains on() (#91)",
+   "test/unit/sshwsl-hooks.test.ts: fake BrowserWindow gains webContents.on() (#91)"
+  ],
+  "forDocs": [
+   "CHANGELOG (Fixed): When Ember can't write its data folder (owned by root after `sudo ember`, a read-only home, a full disk), it says so in a dialog and exits with 1 instead of quitting silently.",
+   "CHANGELOG (Fixed): settings.json and /etc/ember/policy.json saved with a byte-order mark or as UTF-16 (Windows PowerShell 5.1 Set-Content/Out-File) are read as they are; settings no longer reset and the policy no longer locks Ember down.",
+   "CHANGELOG (Fixed): a settings.json that can't be read at start-up is never replaced with defaults. Ember says so, keeps changes in memory and saves them on top of the user's settings once the file reads again.",
+   "CHANGELOG (Fixed): a settings change that can't be saved (full disk, unwritable folder) is explained in the settings window, and the control goes back to the setting in use; a size-slider change that couldn't be saved is saved with the next change.",
+   "CHANGELOG (Fixed): Ember no longer deletes an ~/.config/autostart/ember.desktop it didn't make. Its own entry is marked X-Ember-Managed=true, and the settings window says when another entry starts it at login.",
+   "CHANGELOG (Fixed): audit entries are kept for auditRetentionDays by their own time (not by whole months), pruned at start and once a day, without losing lines another process writes meanwhile.",
+   "CHANGELOG (Fixed): when the audit log can't be written, a task stops with a plain sentence. A step already taken is reported as done (no retry), and the task queue keeps moving.",
+   "CHANGELOG (Fixed): EMBER_LOG_LEVEL takes debug/info/warn/error in any case; anything else means info (and is logged).",
+   "CHANGELOG (Fixed): GPU, utility and page crashes are logged (app.child_process_gone, window.renderer_gone); a crashed SSH prompt or command window closes instead of staying blank.",
+   "CHANGELOG (Changed): the first-run card says the audit record includes what you asked each task to do and how it went.",
+   "docs/DEVELOPING.md 'Where Ember keeps things' (Linux, Windows §10.6, macOS §11.6) audit row: 'every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days)'.",
+   "docs/DEVELOPING.md §7 line 344: 'Start Ember when I log in adds ~/.config/autostart/ember.desktop (marked X-Ember-Managed=true); an ember.desktop you made yourself is left alone, and the settings window says it is there.'",
+   "docs/DEVELOPING.md environment variables: 'EMBER_LOG_LEVEL: debug, info, warn or error (any case); anything else means info.'",
+   "docs/DEVELOPING.md troubleshooting: '\"Ember couldn't start: Ember can't write to its data folder\": make the folder yours again, for example `sudo chown -R $USER ~/.config/ember`.'",
+   "docs/DEVELOPING.md: hand edits of settings.json keep at most the three newest settings.json.bad-<time> copies; a fixable edit is tidied once it has stayed the same for 2 s."
+  ],
+  "ciOnly": [
+   "Windows: whether fs.renameSync refuses to replace an audit month file that is open. The trim tries first with its own handle open; on EPERM/EACCES/EBUSY it copies late lines, lets go and renames again. Windows unit CI runs the fallback case with a stubbed refusal. Only a real Windows remote (two agents sharing state\\<machine>\\audit) shows that a second agent holding the file makes the trim fail safely instead of losing a line (#86).",
+   "Windows: settings.json written by Windows PowerShell 5.1 `Set-Content -Encoding UTF8` (BOM) and `Out-File` (UTF-16LE) loads with every setting kept. The HKLM policy registry value with a leading BOM doesn't lock Ember down (#82).",
+   "Windows: antivirus or OneDrive locks on settings.json at sign-in (EBUSY/EPERM) are waited out by the start-up retry. If the lock lasts, Ember shows the 'won't save over the file' notice, saves nothing until the file reads, and then saves the held changes on top (#83).",
+   "Windows/macOS: a refused single-instance lock on an unwritable data folder shows the 'Ember couldn't start' dialog and exits 1. Only real CI shows whether Chromium's lock fails the same way there, and that a normal second launch still hands over (#80).",
+   "Windows/macOS: with 'Start Ember when I log in' off at start, the Run value or the SMAppService login item is no longer unregistered. Toggling the switch still registers and unregisters it (#85).",
+   "Windows/macOS: a failed settings save shows the plain notice in the settings window, and a failed slider save is retried with the next slider change (#84).",
+   "Windows/macOS/VMs/RDP: a real GPU-process crash loop and a crashed prompt or command window are logged, closed and made afresh (#91).",
+   "macOS/Windows: performance.now() keeps the overlay motion steady across sleep/resume and clock changes (#88).",
+   "Linux GNOME (real session): an entry made by GNOME Tweaks or Startup Applications in ~/.config/autostart/ember.desktop survives an Ember start with the switch off, and the settings window shows the note (#85).",
+   "SSH remotes: two agents sharing state/<machine>/audit/ keep every write-ahead line through the start-up prune's trim (#86). Verified here only with two local Node processes."
+  ],
+  "notes": "Yes, I've resumed. Worktree /home/user/wt/fx-lifecycle, branch fix/lifecycle: 18 commits on 1b39bb3 (15 from round 1, 3 from this round). Nothing pushed, and the tree is clean.\n\nRound 2 dealt with all four verifier problems (#84 slider retry, the two #83 points, #86 concurrent trim):\n- dc1c0a8 (#84): the slider's save timer is released before it saves, so a failed save is tried again with the next slider change.\n- 3e09807 (#83): update() puts changes not yet saved on top of what it has just read, the same as the watcher. The 'won't save over the file' notice goes when the file turns out to be missing.\n- 138366d (#86): the in-place audit trim no longer loses lines that another process appends. I chose an append-aware trim instead of skipping the current month, because skipping would have undone #86 for the current month. It needs no process.platform test, so the D1 platform-boundary rule still holds.\n\nFor the lead or the remote package (app/remote/audit.ts isn't this package's file):\n- createRemoteAudit() runs `new AuditLog(...)` and `audit.prune(...)` in one try. A prune that throws, for example a Windows rename refused while another agent has the file open, is logged as remote.audit_unavailable even though the log still works. I suggest giving the prune its own try with a remote.audit_prune_failed warning.\n- The remote agent has no daily prune, only the one at start.\n\nDesign choices worth reviewing at merge (from round 1, still true):\n- AuditLog.write keeps throwing on failure (fail-closed for the remote's write-ahead and the worker). Bookkeeping catches it in TaskManager.record. Worker.audit decides with afterTheStep.\n- #85 changes when main syncs the login item on every OS: at start only when the setting is on, then on change.\n- #87 is a wording change only; CONSENT_VERSION is not bumped.\n- New plain-Node modules: app/main/data-folder.ts, app/main/text-file.ts, app/main/crash-log.ts.\n\ndocs/COMMANDS-WSL-SSH.md §6.4 ('kept for the remote policy's auditRetentionDays') is still accurate, so I changed no docs.\n\nRound-2 scratch files are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/lc-r2/ (stress.cjs, check logs). The large stress outputs and bundles have been deleted."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/agent/worker.ts: import afterTheStep; new AUDIT_UNAVAILABLE const next to STOPPED; Worker.audit() try/catch that logs worker.audit_failed, calls stopNow and rethrows only before the step (#117)",
+   "app/main/main.ts (start-up and crash handling are mine; other hunks listed): imports (logLevel, dataFolderProblem, loginItemFollower, watchCrashes, readTextFile, plainSaveError); createLogger level via logLevel plus log.level_unknown (#90); watchCrashes(app, log) after the process handlers (#91); startupFailed points to the log only if the file exists (#80); single-instance branch checks dataFolderProblem (#80); settingsText uses readTextFile (#82); the autostart block replaced by loginItemFollower (#85); AuditLog gets an onError argument plus audit.pruneDaily after the prune (#117, #86); update-settings IPC handler wraps settings.update in plainSaveError (#84)",
+   "app/main/admin.ts: imports readTextFile and stripBom; parseAdminPolicy parses stripBom(raw); loadAdminPolicy reads with readTextFile (#82)",
+   "app/main/platform/linux/system.ts: imports foreignAutostartNote; autostart.note() returns foreignAutostartNote(autostartFile(deps.env)) instead of null (#85)",
+   "app/main/windows.ts: closeWhenGone(win) helper, called in createCommandWindow and createPromptWindow (#91)",
+   "app/main/desk/view.ts: imports revive; revive(win, () => { releaseAll(); setControl(false); }) after the blur handler (#91)",
+   "app/main/overlay.ts: `last` starts from performance.now(); tick() measures dt on performance.now() (#88)",
+   "app/main/follow.ts: Follower.step clamps dt to [0, 0.05], and NaN counts as 0 (#88)",
+   "app/renderer/home/main.ts: imports SettingsPatch and saveFailedText; new save() helper after the Start handler; every `void window.ember.updateSettings(...)` call site (character, login, reduce-motion, size, start, models, grants, never-look remove/defaults, wake, consent-yes, speak) now uses save(); Start scrolls to the notice when its save fails; the never-look form's error uses saveFailedText (#84)",
+   "app/renderer/home/copy.ts: new export saveFailedText() above tokens() (#84)",
+   "app/renderer/home/index.html: line 34, the 'On this computer' consent sentence reworded (#87)",
+   "test/unit/settings.test.ts: the trailing-comma hand-edit case uses an injected clock and waits 2 s (#92)",
+   "test/unit/home-platform-copy.test.ts: the pinned data-dir sentence and the macOS toContain string updated (#87)",
+   "test/unit/desk-view.test.ts and test/unit/desk-view-platform.test.ts: fake webContents gains on() (#91)",
+   "test/unit/sshwsl-hooks.test.ts: fake BrowserWindow gains webContents.on() (#91)"
+  ],
+  "forDocs": [
+   "CHANGELOG (Fixed): When Ember can't write its data folder (owned by root after `sudo ember`, a read-only home, a full disk), it says so in a dialog and exits with 1 instead of quitting silently.",
+   "CHANGELOG (Fixed): settings.json and /etc/ember/policy.json saved with a byte-order mark or as UTF-16 (Windows PowerShell 5.1 Set-Content/Out-File) are read as they are; settings no longer reset and the policy no longer locks Ember down.",
+   "CHANGELOG (Fixed): a settings.json that can't be read at start-up is never replaced with defaults. Ember says so, keeps changes in memory and saves them once the file reads again.",
+   "CHANGELOG (Fixed): a settings change that can't be saved (full disk, unwritable folder) is explained in the settings window, and the control goes back to the setting in use.",
+   "CHANGELOG (Fixed): Ember no longer deletes an ~/.config/autostart/ember.desktop it didn't make. Its own entry is marked X-Ember-Managed=true, and the settings window says when another entry starts it at login.",
+   "CHANGELOG (Fixed): audit entries are kept for auditRetentionDays by their own time (not by whole months), pruned at start and once a day.",
+   "CHANGELOG (Fixed): when the audit log can't be written, a task stops with a plain sentence. A step already taken is reported as done (no retry), and the task queue keeps moving.",
+   "CHANGELOG (Fixed): EMBER_LOG_LEVEL takes debug/info/warn/error in any case; anything else means info (and is logged).",
+   "CHANGELOG (Fixed): GPU, utility and page crashes are logged (app.child_process_gone, window.renderer_gone); a crashed SSH prompt or command window closes instead of staying blank.",
+   "CHANGELOG (Changed): the first-run card says the audit record includes what you asked each task to do and how it went.",
+   "docs/DEVELOPING.md 'Where Ember keeps things' (Linux, Windows §10.6, macOS §11.6) audit row: 'every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days)'.",
+   "docs/DEVELOPING.md §7 line 344: 'Start Ember when I log in adds ~/.config/autostart/ember.desktop (marked X-Ember-Managed=true); an ember.desktop you made yourself is left alone, and the settings window says it is there.'",
+   "docs/DEVELOPING.md environment variables: 'EMBER_LOG_LEVEL: debug, info, warn or error (any case); anything else means info.'",
+   "docs/DEVELOPING.md troubleshooting: '\"Ember couldn't start: Ember can't write to its data folder\": make the folder yours again, for example `sudo chown -R $USER ~/.config/ember`.'",
+   "docs/DEVELOPING.md: hand edits of settings.json keep at most the three newest settings.json.bad-<time> copies; a fixable edit is tidied once it has stayed the same for 2 s."
+  ],
+  "ciOnly": [
+   "Windows: settings.json written by Windows PowerShell 5.1 `Set-Content -Encoding UTF8` (BOM) and `Out-File` (UTF-16LE) loads with every setting kept. The HKLM policy registry value with a leading BOM doesn't lock Ember down (#82).",
+   "Windows: antivirus or OneDrive locks on settings.json at sign-in (EBUSY/EPERM) are waited out by the start-up retry. If the lock lasts, Ember shows the 'won't save over the file' notice and saves nothing until the file reads again (#83).",
+   "Windows/macOS: a refused single-instance lock on an unwritable data folder (%LOCALAPPDATA%\\ember denied by ACL; ~/Library/Application Support/ember owned by root) shows the 'Ember couldn't start' dialog and exits 1. Only real CI shows whether Chromium's lock on those OSes fails in the same way, and that a normal second launch still hands over (#80).",
+   "Windows/macOS: with 'Start Ember when I log in' off at start, the Run value or the SMAppService login item is no longer unregistered. Toggling the switch on and off still registers and unregisters it (loginItemFollower, #85).",
+   "Windows/macOS: a failed settings save (read-only profile, rename refused after retries) shows the plain notice in the settings window (#84).",
+   "Windows/macOS/VMs/RDP: a real GPU-process crash loop and a crashed prompt or command window (a macOS panel) are logged, closed and made afresh (#91).",
+   "macOS/Windows: performance.now() keeps the overlay motion steady across sleep/resume and clock changes (#88).",
+   "Linux GNOME (real session): an entry made by GNOME Tweaks or Startup Applications in ~/.config/autostart/ember.desktop survives an Ember start with the switch off, and the settings window shows the note (#85).",
+   "SSH remotes: AuditLog's per-entry prune also runs in the remote agent's start-up prune (app/remote/audit.ts). The remote agent has no daily prune; I left that file alone."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 84,
+   "severity": "should-fix",
+   "what": "After a size-slider save fails, Ember never tries again on the next slider change, even though the new notice says it will. The cause is in settings.ts update(): the 400 ms timer callback runs flush(), persist() throws, and clearPending() is never reached. So `pendingTimer` keeps pointing at a timer that has already fired, and later `update(..., {soon:true})` calls never schedule a new save. Repro: scratch test /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/lifecycle/scratch/zz-verify-slider.test.ts. It blocks the save, moves the slider to 90 and waits 600 ms. It then unblocks, moves the slider to 91 and waits 800 ms. Result: settings.json still says size 70, and the notice still reads '…It will try again with your next change.' Only a toggle (which saves at once) or the save on quit writes the change. The underlying timer bug was already in the base code; this package's new wording now promises a retry that doesn't happen.",
+   "fix": "In update(), clear the timer reference when it fires, before saving: `this.pendingTimer = setTimeout(() => { this.pendingTimer = null; try { this.flush(); } catch { /* … */ } }, 400)`. Add a case to test/unit/settings-save-failure.test.ts: slider save fails, the folder is unblocked, the next slider change reaches the disk and the notice goes."
+  },
+  {
+   "id": 83,
+   "severity": "should-fix",
+   "what": "Changes made while settings.json couldn't be read are lost when the read that finally succeeds comes from update() rather than the 2 s watcher. update() calls read(true,false), which turns `unread` off and loads the user's file. It then computes `next` from current + patch only, ignoring `this.pending`. persist(next) and clearPending() then drop the held change. Repro: /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/lifecycle/scratch/zz-verify-settings.test.ts, case A. Load with EIO, update({size:70}), the file becomes readable, update({speak:false}): size is 80 both in memory and on disk, so the 70 is lost. Case A2: reduceMotion:true, made while the file was unreadable, is lost the same way through the slider path. The b7f1bba commit message says held changes are saved 'whichever reload that is', which is not the case for update().",
+   "fix": "In update(), remember `wasUnread = this.unread` before the read. If it was unread and the read succeeded, build the result as `SettingsSchema.parse({ ...this.current, ...this.pending, ...patch })` (the same way reloadIfChanged() applies pending), then save. Add this case to test/unit/settings-transient.test.ts."
+  },
+  {
+   "id": 83,
+   "severity": "should-fix",
+   "what": "The notice 'Ember can't read …settings.json, so it started with its default settings. It won't save over the file until it can read it again.' stays on screen after Ember has already saved a new file. Steps: the file is unreadable at start, then the user deletes it, then Ember saves. read() clears `unread` on ENOENT but never clears its own notice. persist() only clears the notice when it is the save-failure notice. Repro: same scratch file, case B. After the file is removed and update({size:70}) runs, the file exists and lastProblem is still the 'won't save over the file' sentence.",
+   "fix": "Keep the unread notice text in a field, the way saveNotice is kept. When `unread` goes from true to false (the file is missing, or reads again), call problem(null) if lastProblem is still that notice, or clear it in persist() after the first successful save."
+  },
+  {
+   "id": 86,
+   "severity": "should-fix",
+   "what": "The new in-place trim in AuditLog.prune() reads the month file, writes a temp file, then renames it over the original. A line another process appends between the read and the rename is lost. On the PC only one Ember writes, so this is safe there. The remote helper uses the same AuditLog: app/remote/audit.ts prunes in createRemoteAudit() at agent start (app/remote/main.ts:167). That happens before the single-instance lock is taken at hello, and the lock can sit in the per-session folder. So two remote agents for the same machine can share state/<machine>/audit/. When the retention is shorter than the current day of the month, the current month's file is trimmed while the other agent appends write-ahead entries, and a recorded step can disappear from the remote's audit. Low likelihood, but it is the remote's safety record. Before this change, prune only ever deleted whole months that had already ended.",
+   "fix": "In trim(), leave alone the file of the month currently being written (now's UTC month), or any file modified in the last few seconds. Alternatively, after writing the temp file, compare the original's size with the size that was read, append any bytes added since the read, and retry until the size is stable before renaming. Add a test that appends from a second AuditLog between the read and the rename (stub fs.renameSync to append first)."
+  }
+ ]
+}

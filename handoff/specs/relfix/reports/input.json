@@ -1,0 +1,168 @@
+{
+ "key": "input",
+ "final": {
+  "findings": [
+   {
+    "id": 61,
+    "status": "fixed",
+    "how": "Unchanged since round 1, and the verifier raised nothing here. Reproduced on Xvfb: with setxkbmap ctrl:nocaps, Caps+Alt+Space read {control:false}, so freshAskPress returned false. x11.keysDown() now takes Ctrl and Alt from two sources: the modifier state the server reports (XQueryPointer's ControlMask/Mod1Mask, the same state Electron's grab matched on), or any held keycode whose level-0 keysym is Control_L/R or Alt_L/R (XKeycodeToKeysym). It no longer uses XKeysymToKeycode, which returns only the lowest keycode for a keysym. The logic is a pure export, chordHeld(mask, held, symOf). After the fix the Xvfb script gives the right answer for ctrl:nocaps, ctrl:swapcaps, altwin:swap_alt_win and altwin:alt_win, and nothing held is still rejected. With Electron 44's real globalShortcut under ctrl:nocaps, the Caps chord opens the ask box.",
+    "test": "test/unit/hotkey.test.ts 'the chord the X server says is held' (2 tests): fail before, pass now. Scratch scripts /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/k1.ts (FAIL before, PASS after) and /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/gs/main.js (Electron end to end)."
+   },
+   {
+    "id": 62,
+    "status": "fixed",
+    "how": "Round 1 (a7af91d): reproduced on Xvfb with AccessX set the way GNOME sets it. Slow Keys typed nothing but the borrow reported done, Bounce Keys gave 'helo world', and Ember's Ctrl+A switched Sticky Keys (TwoKeys) off. The optional XInput.keyboardBlockedReason(keys?) reads XkbControlsRec.enabled_ctrls. If Slow, Bounce or Sticky Keys is on it returns TYPING_ASSIST_REASON; with no XKB it returns null. The borrow asks it before the first key of keys() and type(), and in checkTyping(). Clicks and scrolls don't ask, and the user's setting is never changed. The check-up shows a 'Typing' warn row while it refuses.\n\nRound 2 (767ac7c), the verifier was right: on the default paste path the refusal came only after Ember had acted. Replace and append glided and clicked first. Insert wrote Ember's text to the clipboard, then waited pasteWaitMs. Fix: a new Hand.checkKeys(combo). It reads the combination with the same helper keys() uses (comboKeys) and calls keyboardUsable({modifiers, sym}), pressing nothing, so macOS still lets Command+V through under an input method. In worker.ts's cursor_text path, the callback now checks every combo it will press (select-all and Delete for replace, text-end for append, paste when pasting) next to checkTyping. That is before the first glide or click, and before clipboard.writeText. Now all three modes refuse with nothing clicked, pressed or written, and with no paste wait.\n\nOne gap from the verifier's description is left, outside its fix: a keys-only borrow (press_keys) still brings the target window to the front before keys() refuses. No key is sent, and when the borrow ends restoreFocus() gives the keyboard back to the window the user was in. Refusing before the raise would need the combination in the borrow's preflight, for example a BorrowOptions.keys checked next to blockedReason, which changes withCursor's signature in worker.ts. I propose that for a later round.\n\nCorrection to my round-1 report: 'the worker's up-front text check refuses before any click' was true only on the non-paste path and in fillCell. Now it is true on the paste path too.",
+    "test": "test/unit/typing-assist.test.ts: the 3 'type_text on the user's screen while the keyboard can't be used' tests (replace, append, insert) run a real Worker and CursorBorrow over a pretend input. They check that nothing is clicked or pressed, nothing is written to the clipboard and there is no restore or wait. Before the fix, replace and append got a click and insert got 'hello' written after a 2 s paste wait. A sanity test checks that with the keyboard usable the same flow clicks, writes and presses Ctrl+A, Delete, Ctrl+V, with each key asked about before the click and again as it is pressed. The borrow refusal test now also covers checkKeys. test/unit/platform-darwin-input.test.ts: a new test checks that under an input method Command+A, Delete, Command+Down and Command+V pass the check and 'a' is refused, with nothing posted. These 6 tests failed before 767ac7c and pass now (typing-assist 8/8, darwin 40/40). Round 1: typing-assist.test.ts (the first 4 tests) and scratch script /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/a1.ts (3 wrong before, PASS after). The worker integration suite test/integration/worker-safety.test.ts still passes: 93/93."
+   },
+   {
+    "id": 63,
+    "status": "fixed",
+    "how": "Unchanged since round 1, and the verifier raised nothing here. Reproduced on Windows with a fake French Win32Api (Ctrl+Shift+VK_1) and on X11 with real setxkbmap fr, be and cz (state Ctrl+Shift). CursorBorrow.keys() no longer adds the implicit Shift for a digit keysym (0x30-0x39) when Ctrl, Alt or Super/Meta is held. A bare '1' and 'ctrl+shift+1' still take Shift. macOS is left unchanged on purpose: its layout table reads the shortcut level with Command held, and a test pins that.",
+    "test": "test/unit/platform-win32-backend.test.ts 'Windows input: digit shortcuts on a layout that types digits with Shift' and test/unit/borrow-keys.test.ts 'digit shortcuts on layouts that type digits with Shift' each fail before and pass now. Scratch script /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/m3.ts (3 wrong before, PASS after)."
+   },
+   {
+    "id": 64,
+    "status": "fixed",
+    "how": "Unchanged since round 1, and the verifier raised nothing here. Reproduced on Xvfb: after XSetPointerMapping 3 2 1 5 4, a borrowed click arrived as button 3. XInput.button() now takes a logical button and sends the physical one the core pointer map turns into it. It re-reads XGetPointerMapping on every press (pure physicalButton(map, logical)). A release, and releaseAll(), let go of the physical button that went down. This deviates from the review on purpose: the wheel (4-7) is inverted too, because under a reversed wheel map the content would otherwise scroll the wrong way.",
+    "test": "test/unit/xtest-buttons.test.ts (4 tests): fail before, pass now. Scratch script /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/b1.ts (FAIL before, PASS after)."
+   },
+   {
+    "id": 65,
+    "status": "fixed",
+    "how": "Unchanged since round 1, and the verifier raised nothing here. darwin blockedReason() keeps Accessibility, secure input and Input Monitoring as global refusals and no longer checks the input source. keyboardBlockedReason(keys?) checks it for typed text, and for keys that type a character with no Command, Control or Option held. So clicks, scrolls, Command shortcuts, Return and Delete go through. The messages now say what is refused. The check-up's Mouse and keyboard row no longer fails under an input method; the Typing row says it instead. Round 2's checkKeys uses this same check, so it lets the typing path's Command shortcuts through under an input method.",
+    "test": "test/unit/platform-darwin-input.test.ts: the rewritten M16 test, 'under an input method still clicks, scrolls and presses Command shortcuts, and refuses typing before any key', and updated copy pins; all 40 tests in the file pass. Not run on a Mac."
+   },
+   {
+    "id": 66,
+    "status": "fixed",
+    "how": "Round 1 (580f3e0) added CursorBorrow.stopForQuit(). It stops the borrow, and the borrow driving at that moment releases every key and button, moves the pointer home and gives the keyboard back, all synchronously. Main's input will-quit called it before xinput.close().\n\nThe verifier was right that only the pointer half worked in the real app. main.ts registers the window system's will-quit (ws.close) before the input's, so the window system was already closed when stopForQuit() ran. Main's mayRefocus asks shownWindows() over wsRef.stack(), and a closed X11, Win32 or darwin window system returns []. So the keyboard stayed on the target. My round-1 unit test and q1 script passed no mayRefocus, which hid this.\n\nRound 2 (bbec53a): main.ts's window-system will-quit is now `app.on(\"will-quit\", () => { borrowRef?.stopForQuit(); ws?.close(); });`. The hand-back runs while the window system can still list the window. The input's handler later calls stopForQuit() again; handBack is null by then, so it only stops, then the input closes. The stopForQuit() doc comment now says where main calls it.\n\nOn Xvfb with mutter, a real openX11 window system and main's mayRefocus (my copy of the verifier's q2.ts, plus a main-fixed order):\n- main's old order: pointer home, focus still on the target (FAIL).\n- main's new order (stopForQuit, ws.close, stopForQuit, x.close): pointer home {2073,1296} and focus back where the user was, PASS twice.\n- borrow-first order: PASS (its first run failed during startup timing, with the pointer never reaching the glide target; the re-run passed).\n\nThe endSession path (power-monitor shutdown, Windows session-end) is unchanged on purpose: it still calls borrowRef.stop() and inputRef.releaseAll(), so keys and buttons come up but the pointer and the keyboard are not given back. The session is ending anyway.\n\nCorrection: 580f3e0's subject and my round-1 report said the keyboard went back. It did only while the window system was still open. Since bbec53a it does when Ember quits through will-quit.",
+    "test": "test/unit/borrow-quit.test.ts 'quitting while Ember borrows the mouse, as main.ts quits'. It reads main.ts's app.on(\"will-quit\", …) listeners from its source, comments stripped, in registration order (all are registered straight in whenReady), and pins main's shownWindows and mayRefocus lines. It then runs the borrowRef?.stopForQuit(), ws?.close() and xinput?.close() calls in that order against a pretend input and a window list that empties when the window system closes, with main's mayRefocus. Before the main.ts change it failed: focus stayed on 22, not 11, though the pointer went home. It passes now, as do the 2 earlier tests (3/3). Scratch script /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/q2.ts (bundled to q2.cjs, run with xvfb-run -a -s '-screen 0 2304x1440x24' bash wm.sh q2.cjs <order>): main FAIL; main-fixed PASS twice; borrow-first PASS."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "278d592",
+    "subject": "Open the ask box when Ctrl or Alt comes from a remapped key",
+    "ids": [
+     61
+    ]
+   },
+   {
+    "sha": "57f873e",
+    "subject": "Keep Ember's clicks left clicks under a left-handed pointer map",
+    "ids": [
+     64
+    ]
+   },
+   {
+    "sha": "a7af91d",
+    "subject": "Refuse the keyboard, not the mouse, while GNOME's Typing Assist is on",
+    "ids": [
+     62
+    ]
+   },
+   {
+    "sha": "1f65550",
+    "subject": "Let clicks and Command shortcuts through on a Mac with an input method selected",
+    "ids": [
+     65
+    ]
+   },
+   {
+    "sha": "8cc90f8",
+    "subject": "Press Ctrl+1 without Shift on layouts that type digits shifted",
+    "ids": [
+     63
+    ]
+   },
+   {
+    "sha": "580f3e0",
+    "subject": "Put the pointer and the keyboard back when Ember quits mid-borrow",
+    "ids": [
+     66
+    ]
+   },
+   {
+    "sha": "bbec53a",
+    "subject": "Give the keyboard back when Ember quits mid-borrow, not only the pointer",
+    "ids": [
+     66
+    ]
+   },
+   {
+    "sha": "767ac7c",
+    "subject": "Refuse pasted text under Typing Assist before the click and the clipboard",
+    "ids": [
+     62
+    ]
+   }
+  ],
+  "checks": "Final state, HEAD 767ac7c:\n- npx tsc --noEmit: exit 0, no errors.\n- npm run lint (eslint .): exit 0, 0 problems.\n- npm test, first full run under heavy load from other packages (load average 21-25): 2 failed, 242 passed, 1 skipped files (245); 2 failed, 5980 passed, 8 skipped tests (5990). The 2 failures were timing tests in files this package doesn't touch: perception-sidecar.test.ts 'keeps a helper connected…' and worker-tools.test.ts 'a press in a text editor's page (gedit…)', which hit its 5170 ms timeout. Re-run alone, those two files pass 61/61.\n- npm test, second full run: exit 0; 244 passed, 1 skipped files (245); 5982 passed, 8 skipped tests (5990).\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: exit 0, both checks ok (first instance showed its window; second launch handed over).\n- EMBER_INTEGRATION=1 xvfb-run -a npx vitest run test/integration/worker-safety.test.ts: 93/93 passed (run because worker.ts changed).\n- Targeted: borrow-quit 3/3, typing-assist 8/8, platform-darwin-input 40/40; borrow*, worker-platform, worker-tools, worker-scroll, typing-assist and darwin together 208/208.\n- Not run: the commands integration suite (nothing under app/main/commands/** changed) and the voice suites (voice untouched).",
+  "sharedHunks": [
+   "app/main/main.ts runDoctor (~line 226): the check-up adds a 'Typing' warn row from input.keyboardBlockedReason() when the mouse is allowed but typing is not (#62 on Linux, #65 on macOS). Round 1.",
+   "app/main/main.ts whenReady, the window system's will-quit (~line 1210): `app.on(\"will-quit\", () => { borrowRef?.stopForQuit(); ws?.close(); });` plus a 2-line comment, so a running borrow hands the keyboard back before the window system closes (#66). Round 2.",
+   "app/main/main.ts whenReady, the input's will-quit (~line 1367): borrowRef?.stop() became borrowRef?.stopForQuit() before xinput?.close(), with a comment saying the window system's handler already ran it (#66). Round 1; comment updated in round 2.",
+   "app/main/agent/worker.ts cursorAct (~lines 2105-2110): in the withCursor callback, next to checkTyping, it calls hand.checkKeys for the select-all, Delete, text-end and paste combos it will press, before the first glide or click and before clipboard.writeText (#62). Round 2."
+  ],
+  "forDocs": [
+   "README, macOS permissions, Input Monitoring row: without it Ember uses neither the mouse nor the keyboard. Today the row says only that it won't use the keyboard. The app now says: 'Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard, so it won't use the mouse or keyboard without it.' (#65)",
+   "README, macOS: with an input method selected (Japanese, Pinyin, Korean…), Ember still clicks, scrolls and presses Command shortcuts, but won't type with the keyboard. Switch to a keyboard layout, or let Ember fill the field directly. The check-up shows this as a 'Typing' warning. (#65)",
+   "README, Linux known limitations: while GNOME Typing Assist (Slow Keys, Bounce Keys or Sticky Keys, in Settings › Universal Access) is on, Ember won't use the keyboard on your screen, because its keys would be lost or changed. It still clicks and scrolls and can fill fields directly, Ember's desk is not affected, and the check-up shows a 'Typing' warning. Ember never changes the setting. (#62)",
+   "CHANGELOG: Ctrl+Alt+Space opens the ask box when Caps Lock or the Windows key is remapped to Ctrl or Alt (#61). Under GNOME Typing Assist, Ember refuses the keyboard before it clicks or touches the clipboard, instead of losing or changing keys or switching Sticky Keys off (#62). Ctrl+1, Alt+1 and similar shortcuts no longer add Shift on French, Belgian or Czech layouts (Windows, Linux) (#63). Ember's clicks stay left clicks under a left-handed pointer button map on X11 (#64). On macOS an input method no longer blocks clicks, scrolls or Command shortcuts (#65). Quitting Ember mid-borrow puts the pointer and the keyboard back where they were (#66)."
+  ],
+  "ciOnly": [
+   "Windows: Ctrl+1, Alt+1 and Ctrl+0 on a real French, Belgian or Czech layout reach Chrome, Edge or Excel as Ctrl+1 etc. without Shift (#63; checked here only with a fake Win32Api).",
+   "macOS: with an input method selected (Japanese, Pinyin, Korean), a borrowed click, scroll and Command shortcut go through. Typing and character keys are refused before any key, with INPUT_METHOD_REASON. type_text into a field that takes no text by accessibility (Command+A, Delete, Command+V paste) passes the up-front key check. The check-up shows the Typing warn row, not a failing Mouse and keyboard row (#65, #62; fakes only here).",
+   "macOS: without Input Monitoring the borrow refuses with the new INPUT_MONITORING_REASON wording (mouse and keyboard) (#65).",
+   "Quitting mid-borrow through will-quit only, that is Cmd+Q, app.quit() or SIGTERM, on Windows and macOS: the pointer goes home and the keyboard goes back to the window the user was in (#66; checked here on X11 with mutter). This does not cover power-monitor shutdown or Windows session-end: they go through endSession, which only stops the borrow and releases keys and buttons."
+  ],
+  "notes": "The user's request relayed above also mentions a first item ('I will do it and get back to you with the ID'), which concerns the GitHub App client id. That belongs to the agent package; this round leaves it alone.\n\nAll three of the verifier's round-2 problems are handled:\n- #66 must-fix: fixed by handing back before the window system closes. A unit test drives main.ts's real will-quit order from its source, and the verifier's Xvfb and mutter scenario now passes in main's order.\n- #62 should-fix: Hand.checkKeys is called in the worker's cursor_text path before any glide, click or clipboard write. The press_keys window raise is the one piece left, explained under #62 with a proposal.\n- #66 ciOnly wording: corrected to the will-quit paths only.\n\nI did not rewrite 580f3e0's message (history is kept as is). bbec53a's message states the correction.\n\nScratch files for this round are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-input/: q2.ts, q2.cjs, quit-test-add.ts, and the logs test.log, test2.log, build.log and smoke.log."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts runDoctor, right after `const blocked = …`: 3 added lines. `const typing = ws && input && !blocked ? input.keyboardBlockedReason?.() ?? null : null;` and, when set, `probes.extra.push({ id: \"typing\", status: \"warn\", label: \"Typing\", detail: typing })`, with a one-line comment (#62, #65)",
+   "app/main/main.ts will-quit handler right after `platform.openInput(ws, log)`: `borrowRef?.stop()` became `borrowRef?.stopForQuit()`, and the comment above it now reads 'lets go at once (keys up, pointer home, the keyboard back)' (#66)",
+   "app/main/platform/darwin/input.ts (an Input implementation, which pkg-input owns, but it sits under app/main/platform/**, which pkg-platform owns): module comment, the three reason strings, SHORTCUT_MODIFIERS/typesCharacter, DarwinInput.keyboardBlockedReason, blockedReason no longer checks the input source, new keyboardBlockedReason member (#65)",
+   "test/unit/platform-win32-backend.test.ts: an `import { CursorBorrow }` line and one new describe block, 'Windows input: digit shortcuts on a layout that types digits with Shift', inserted before 'Windows input: letting go' (#63)",
+   "test/unit/hotkey.test.ts: header sentence extended, `import { chordHeld } from \"../../app/main/x11\"`, and one new describe block at the end (#61)"
+  ],
+  "forDocs": [
+   "README.md Input Monitoring row (line ~78): 'To notice at once when you take the keyboard back. Without it, Ember won't use the mouse or keyboard for you' (it said only the keyboard; the code stops the mouse too) (#65)",
+   "docs/DEVELOPING.md §11.8 check-up table: Input Monitoring row → 'Not allowed: Ember won't use the mouse or keyboard for you'. Add a row: 'Typing | An input method (Japanese, Pinyin, Korean…) is selected, so Ember won't type with the keyboard; clicks and Command shortcuts still work | Choose a keyboard layout; Ember can still fill fields directly'. The symptom row 'Ember won't type, and says to switch to a keyboard layout' can add '(it still clicks and presses Command shortcuts)' (#65)",
+   "docs/DEVELOPING.md §7 (what `ember doctor` checks): add Typing Assist. Add a Linux troubleshooting line: 'Ember won't type and says Typing Assist is on: Slow Keys, Bounce Keys or Sticky Keys (Settings › Universal Access › Typing Assist) would drop or change its keys. Ember still clicks and fills fields directly, and never turns them off itself. The check-up shows a Typing row while they are on.' (#62)",
+   "CHANGELOG: The ask shortcut (Ctrl+Alt+Space) now works when Ctrl or Alt comes from a remapped key, such as Caps Lock as an extra Ctrl or Alt on the Win keys (#61)",
+   "CHANGELOG: With GNOME's Typing Assist (Slow, Bounce or Sticky Keys) on, Ember no longer loses or changes typed keys or switches Sticky Keys off: it says why and doesn't type, and still clicks; the check-up has a Typing row (#62)",
+   "CHANGELOG: Ctrl+1 and other Ctrl/Alt digit shortcuts no longer add Shift on French, Belgian or Czech layouts (Windows and Linux) (#63)",
+   "CHANGELOG: Ember's clicks stay left clicks with a left-handed pointer map (xmodmap), and scrolling keeps its direction under a reversed wheel map (#64)",
+   "CHANGELOG: macOS: with an input method selected, Ember still clicks, scrolls and presses Command shortcuts; only typing waits for a keyboard layout (#65)",
+   "CHANGELOG: Quitting Ember (logout, shutdown) while it borrows the mouse now puts the pointer and the keyboard back first (#66)"
+  ],
+  "ciOnly": [
+   "Windows, real French AZERTY (also Belgian, Czech): Ember's 'ctrl+1' switches Chrome/Edge to tab 1 and opens Format Cells in Excel, and SendInput sends LCtrl, VK_1, VK_1 up, LCtrl up with no LShift. Only verified with a fake Win32Api.",
+   "macOS, real Mac with a Japanese/Pinyin/Korean input source: a borrowed click, scroll, Cmd+A and Return go through; type() and a bare character key are refused with the new message before any event is posted; '--doctor' shows 'Mouse and keyboard' ok and a 'Typing' warn row; without Input Monitoring, mouse borrows are still refused with the new message.",
+   "macOS, French layout: whether Cmd+1 should be Cmd+& or Cmd+Shift+& (left as the layout's Command-level answer, unchanged).",
+   "macOS and Windows: quitting mid-borrow (Cmd+Q, power-monitor shutdown, Windows session end) puts the pointer home and re-activates the previous window before close(); on macOS, check that the CGEvent move posted just before poster.close() lands. Linux verified on Xvfb with mutter only.",
+   "Real RHEL 8 GNOME/Xorg session (not CI, but not provable on Xvfb): GNOME Tweaks 'Caps Lock as an additional Ctrl' opens the ask box under gnome-shell; Settings › Universal Access › Typing Assist toggled through gnome-settings-daemon is detected and Sticky Keys stays on after Ember refuses; xmodmap 'pointer = 3 2 1' keeps Ember's clicks left clicks."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 66,
+   "severity": "must-fix",
+   "what": "Only the pointer half of #66 is fixed in the real app. The keyboard still stays on the target after a quit mid-borrow. main.ts registers `app.on(\"will-quit\", () => ws?.close())` at line 1210, before the borrow's handler at line 1366 (both in whenReady, so they run in that order). So the window system is already closed when stopForQuit() runs. handBack's restoreFocus() asks main's mayRefocus, which is `shownWindows().some(...)` over `wsRef?.stack()`. A closed X11, Win32 or darwin window system returns [] from stack() (`if (!open) return [];`), so mayRefocus says false and the previous window is never activated. The new unit test (borrow-quit.test.ts) and the fix agent's q1 script both pass no mayRefocus, which hid this. My scratch script relfix-verify/input/scripts/q2.ts uses Xvfb, mutter, a real openX11 window system and main's mayRefocus. In main's order (ws.close, stopForQuit, x.close) the fix gives pointer home {2073,1296} but focus still on the target: FAIL. With stopForQuit before ws.close it gives pointer home and focus back where the user was: PASS. The base fails both ways. Commit 580f3e0 and the report say 'the keyboard back'.",
+   "fix": "Hand back before the window system closes. For example, change main.ts:1210 to `app.on(\"will-quit\", () => { borrowRef?.stopForQuit(); ws?.close(); });`. stopForQuit() is idempotent: the later call at line 1366 finds handBack null and only stops, then xinput.close() runs. Alternatively, register the borrow and input handler with app.prependListener(\"will-quit\", ...). List the hunk as shared. Add a unit test whose mayRefocus reads a window list that empties when the window system closes, driven in main's real order, so the ordering stays pinned. Correct the commit and report wording once it passes."
+  },
+  {
+   "id": 62,
+   "severity": "should-fix",
+   "what": "On the default typing path, the keyboard refusal comes only after Ember has already acted. Local cursor_text uses paste whenever a clipboard is available (worker.ts:2041), and checkTyping is skipped for paste (worker.ts:2104). Under Typing Assist, mode replace or append glides and clicks into the field, and only then does keys(selectAll) or keys(textEnd) refuse. Mode insert first writes Ember's text to the user's clipboard and sets pasting.pressed = true. Then keys(paste) refuses, and the finally waits pasteWaitMs for a paste that never comes before restoring the clipboard. keysOnly borrows (press_keys) also bring the target window to the front before the first key refuses. The report says 'the worker's up-front text check refuses before any click', which is true only on the non-paste path and in fillCell. The scenario itself is gone: nothing is lost or changed and Sticky Keys stays on.",
+   "fix": "Give the Hand a no-key check, for example `checkKeys(combo)`: parse it and call keyboardUsable({modifiers, sym}) without pressing anything, so macOS still lets Cmd+V through under an input method. In worker.ts's cursor_text path, call it for the select-all, text-end and paste combos it will press, before the first glide or click and before clipboard.writeText. That is a small shared hunk in worker.ts. A unit test should check that no click and no clipboard write happen while keyboardBlockedReason refuses."
+  },
+  {
+   "id": 66,
+   "severity": "should-fix",
+   "what": "The report's ciOnly item says quitting by 'power-monitor shutdown, Windows session end' puts the pointer home. Those go through endSession (main.ts:1132-1140), which still calls borrowRef?.stop() and inputRef?.releaseAll(), not stopForQuit(). Nothing there moves the pointer or gives focus back. CI would check a claim the code doesn't make.",
+   "fix": "Correct the ciOnly list to Cmd+Q / app.quit / SIGTERM through will-quit only. Changing endSession isn't needed, since the session is ending anyway."
+  }
+ ]
+}

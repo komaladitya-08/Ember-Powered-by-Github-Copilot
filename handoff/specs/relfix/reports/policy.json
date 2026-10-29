@@ -1,0 +1,458 @@
+{
+ "key": "policy",
+ "final": {
+  "findings": [
+   {
+    "id": 106,
+    "status": "fixed",
+    "how": "Round 1. A broken policy used to prune every monthly audit file except the current one, on the PC and on the remote helper. Now admin.ts auditRetentionDays() returns the policy's retention, 30 when it sets none, and null while the policy can't be used. main.ts prunes only when the retention is not null. app/remote/audit.ts createRemoteAudit takes number|null and skips pruning on null, and app/remote/main.ts passes auditRetentionDays(policy.current). Round 2: the settings window says records are 'none deleted until …' while locked down (Status.admin.retentionDays is nullable). DEVELOPING.md §5 and COMMANDS-WSL-SSH.md §6.4 say so.",
+    "test": "test/unit/admin-audit-retention.test.ts (4 cases) and test/unit/home-admin-copy.test.ts. Failed before, pass now."
+   },
+   {
+    "id": 107,
+    "status": "fixed",
+    "how": "Round 1. admin.ts modelServiceRefusal() gives a plain reason whenever the policy has an error. agent/host.ts has a refuseConnect option, checked in doStart before any CopilotClient is made, so no model service connects: not GitHub Copilot and not the organisation's endpoint. The status is phase error with reason 'policy'. Without a connection, describe_screen and show_me can't run either. The greeting shows the reason. Round 2: the settings data list says nothing is sent to a model service while locked down, instead of 'go to GitHub Copilot' (renderer/home/admin-copy.ts lockdownSendLine). DEVELOPING.md §5, §10.7 and §11.7 and COMMANDS-WSL-SSH.md §6.2 updated.",
+    "test": "test/unit/admin-lockdown.test.ts (2), test/unit/host-lockdown.test.ts (pretend SDK: no client is constructed) and test/unit/home-admin-copy.test.ts. Failed before, pass now."
+   },
+   {
+    "id": 109,
+    "status": "fixed",
+    "how": "Round 1. vocabulary.ts covers Windows' display languages in READ_ONLY_WINDOW's Run title, RUN_BOX, ADDRESS_BOX and OPENS_PROGRAMS' Open, Open with and Run as commands. ADDRESS_BOX also recognises the box by its shape when it shows a path, in any language. opensProgram now reads command labels as written: plainText had been folding Cyrillic and Greek into Latin look-alikes, so they never matched. The translations come from best knowledge and need a localized runner to confirm them. Not done: keying the rules off AutomationId or class name (see notes).",
+    "test": "test/unit/win32-policy-languages.test.ts (75 cases: 24 languages, plus the path shape and negatives). 66 failed before, all pass now."
+   },
+   {
+    "id": 110,
+    "status": "fixed",
+    "how": "Round 1: in File Explorer (where navigation-pane tree items are exempt as places) and in Finder, Ember refuses to open an item whose name shows no file type. Opening one that shows a document's type is asked every time and never remembered. Finder also refuses .app/.command and similar items, and its menu Open/Open With. Round 2, on the verifier's point: Finder's sidebar rows are tree items like the list view's, so vocabulary.ts adds OpensPrograms.placeNames. In Finder, a tree item whose whole name, as written, is one of the sidebar's places (Recents, AirDrop, Applications, Desktop, Documents, Downloads, Movies, Music, Pictures, iCloud Drive, Shared, Macintosh HD, Network, in the languages Finder's commands are listed in) opens like any other item. Untyped list-view rows, apps, look-alike or zero-width spellings, and the same names on icons are still refused. The cost is stated in DEVELOPING.md §10.9 (Explorer) and §11.8 (Finder): the home folder, other disks, servers and folders inside a window are opened by their path.",
+    "test": "test/unit/policy-hidden-types.test.ts: 6 cases in round 1, plus 2 pinned sidebar cases in round 2 (Documents/Downloads/… in 6 languages × click, borrowed click, Cmd+O and Cmd+Down are not refused; setup, Projects, Documents.app, a Cyrillic look-alike and a zero-width spelling are refused). The sidebar case failed with the round-1 sources and passes now."
+   },
+   {
+    "id": 111,
+    "status": "fixed",
+    "how": "Round 1. vocabulary.ts SETTINGS_APP lists gnome-control-center, Windows SystemSettings and the SystemProperties* programs, and macOS System Settings/Preferences. In those apps, policy.ts riskOf asks every time for every click or toggle on a setting control, every select or value change, and a key pressed on a setting. Control Panel pages hosted by explorer.exe can't be told apart by app and are not covered.",
+    "test": "test/unit/policy-settings-apps.test.ts (4). Failed before, passes now. The sshwsl-hooks corpus hash was re-pinned: a dump showed only the GNOME Settings theme choice changed."
+   },
+   {
+    "id": 112,
+    "status": "fixed",
+    "how": "Round 1: admin-watch.ts reads the policy every 10 s. On a change, main pulls the kill switch, stops listening, drops the model connection, holds Ember locked down (heldUntilRestart) and offers Restart Ember. Round 2, all of the verifier's points: (a) a change now counts only when the next read says the same new thing. One differing read followed by the original policy is ignored, and three differing reads in a row still count as a change (fail closed). (b) restartOptions() relaunches with execPath set to $APPIMAGE and argv.slice(1) inside an AppImage. main.ts honours ui:restart only while admin.held. (c) Status.admin has held and a nullable retention. renderer/home/admin-copy.ts writes the held notice ('Your organisation changed Ember's policy. Restart Ember to use it.'), the data list's send line and the retention words. host.ts offers Restart Ember instead of Open settings on the notice when the policy is held (HostOptions.policyHeld). (d) DEVELOPING.md §5, its table, §10.7 and §11.7, and COMMANDS-WSL-SSH.md §6.2 updated.",
+    "test": "test/unit/admin-watch.test.ts (5 failed against the round-1 watcher: one garbled read then the original reports nothing; a confirmed change; three differing reads; restartOptions with and without APPIMAGE), test/unit/host-lockdown.test.ts ('offers Restart Ember, not settings…', failed with the round-1 host.ts) and test/unit/home-admin-copy.test.ts (new module). All pass now."
+   },
+   {
+    "id": 113,
+    "status": "fixed",
+    "how": "Round 1. admin.ts commandMode() turns 'on' into 'ask' when the policy has confirmEveryAction ('off' stays off). The local, WSL and SSH services, the summary sent to a remote, and the remote's own gate therefore all ask. COMMANDS-WSL-SSH.md §6.2 updated. Round 2: DEVELOPING.md §5's confirmEveryAction row now says 'every action and every command'.",
+    "test": "test/unit/admin-commands-confirm.test.ts. Failed before, passes now."
+   },
+   {
+    "id": 114,
+    "status": "fixed",
+    "how": "Round 1. policy.ts RUN_WORDS, PROGRAM_WORD, EXECUTABLE_WORD, RUN_FILE_DIALOG and RUN_ANSWER cover RISKY_WORDS' languages, with CJK forms matched anywhere in the label. runsProgram() reads labels both with look-alikes mapped and as written, so Cyrillic words match.",
+    "test": "test/unit/policy-run-file-languages.test.ts. Failed before, passes now."
+   },
+   {
+    "id": 115,
+    "status": "fixed",
+    "how": "Round 2, both verifier points. isSystemKey on Linux is now `ctrlAlt && !NAMED_BY_LATIN.test(key)`. NAMED_BY_LATIN is an ASCII letter or digit, F-keys, and the named moving, editing, punctuation, modifier and lock keys. With Ctrl+Alt held, ctrl+alt+gbreve, odiaeresis, eacute, é, ccedilla, ssharp, dead_acute, ISO_Level3_Shift and Multi_key are now refused, as are every non-Latin keysym. Ctrl alone or Alt alone is judged as it was before the finding (alt+Greek_tau, alt+Cyrillic_ef, ctrl+é: confirm). Windows and macOS are unchanged.",
+    "test": "test/unit/policy-keys-layouts.test.ts: the accented Latin keys are refused; ASCII and named keys still confirm; Ctrl or Alt alone is judged as before, with the old 'refuses them with Ctrl or Alt alone too' expectation reversed. 2 failed against the round-1 policy.ts, all pass now."
+   },
+   {
+    "id": 116,
+    "status": "partial",
+    "how": "Round 1: quote() turns double-quote look-alikes into apostrophes, line breaks into spaces, and drops format characters. Typed text shows whole up to 160 characters; longer text shows its first 110 and last 40 characters and its length. Round 2: the 'value' question quotes the value with quote(r.value, 40), with an ellipsis when cut, so 'Set “Brightness” slider to “50 in Firefox? Nothing is sent. Delete…”' can't pass for Ember's own words. Decision.detail now carries the whole cleaned typed text whenever the question cut it. Left for the bubble and agent packages: show Decision.detail on the card, expandable (see notes).",
+    "test": "test/unit/policy-question-text.test.ts: 'hands over the whole of a typed text the question cut' (MIDDLE-SECRET-PAYLOAD is not in the prompt but is in detail; ⏎ and direction controls are cleaned; no detail when nothing was cut) and 'quotes a value set on a slider'. 2 failed against the round-1 policy.ts, both pass now."
+   },
+   {
+    "id": 118,
+    "status": "fixed",
+    "how": "Round 1: REMOTE_SURFACE has Linux and macOS rows, so every action is refused in those viewers and they are blacked out of screenshots. PLAN.md updated. Round 2: DEVELOPING.md §10.8 no longer says 'Linux and macOS are unaffected'. It lists the Linux viewers (Remmina, virt-manager, virt-viewer/remote-viewer, Boxes, Connections, Vinagre, KRDC, the VNC viewers, FreeRDP, rdesktop, X2Go, AnyDesk, TeamViewer, NoMachine, spicy, VirtualBox, VMware, QEMU, Citrix) and the macOS ones, matching remote-surface.ts, and keeps the Windows gap stated (vmconnect, VNC, TeamViewer, Citrix).",
+    "test": "test/unit/remote-surface-viewers.test.ts (round 1; failed before, passes now). The round-2 change is docs only, so it has no test."
+   },
+   {
+    "id": 119,
+    "status": "fixed",
+    "how": "Docs only. PLAN.md §5's Confirm row no longer lists new domains and downloads, with a note on what v1 does instead. M8.7 marks admin domain rules as not in v1.",
+    "test": "None: no code changed. The reviewer's engine run confirms the behaviour the docs now describe."
+   },
+   {
+    "id": 120,
+    "status": "fixed",
+    "how": "Round 1: elements.ts isNeverLook matches NEVER_LOOK_APP_ONLY (keeper, seahorse, strongbox) against the app only. Round 2, on the verifier's point: both sidecars now judge the list the same way. sidecar-host/windows.ts neverLooked() calls main's isNeverLook. ember_atspi.py never_looked() has the same NEVER_LOOK_APP_ONLY set and checks those words against window.app only. A parity test reads the Python set and compares it with app/shared/never-look.ts.",
+    "test": "sidecar/atspi/test_ember_atspi.py test_never_look_entries_that_are_everyday_words_match_the_app_only ('Seahorse facts' and 'Housekeeper wanted' are read; the seahorse and keeperpasswordmanager windows are still blocked; failed with the round-1 ember_atspi.py, passes now). test/unit/never-look-app-only.test.ts: a sidecar-host neverLooked case (failed with the round-1 windows.ts) and the parity case."
+   },
+   {
+    "id": 121,
+    "status": "fixed",
+    "how": "Round 1. parseAdminPolicy drops a leading U+FEFF before parsing. For an unknown key, the notice adds that this Ember may be older than the policy.",
+    "test": "Two new cases in test/unit/admin-parse.test.ts. Failed before, pass now."
+   },
+   {
+    "id": 122,
+    "status": "fixed",
+    "how": "Round 1. The WSL, commands and SSH consent cards (targets/consent.ts, and the prompt window's renderer/prompt/copy.ts) say 'your organisation's model service' when the policy names a provider. The SSH card says the key stays on this computer. targets/runtime.ts passes byok to the cards.",
+    "test": "test/unit/consent-model-service.test.ts. Failed before, passes now."
+   },
+   {
+    "id": 123,
+    "status": "fixed",
+    "how": "Round 1. killswitch.ts stillStoppingWords() names, in plain words, the parts still stopping, and the SSH computers when commands are among them. main.ts stopEverything() still shows 'Stopped' at once, then switches to 'Stopping: … Still stopping: …' when pull() reports late parts.",
+    "test": "test/unit/killswitch-late.test.ts. Failed before, passes now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "56fd51e",
+    "subject": "Keep every audit record while the administrator's policy can't be read",
+    "ids": [
+     106
+    ]
+   },
+   {
+    "sha": "082490a",
+    "subject": "Read a policy file saved with a byte-order mark, and name unknown keys plainly",
+    "ids": [
+     121
+    ]
+   },
+   {
+    "sha": "e47190e",
+    "subject": "Make the organisation's \"confirm every action\" ask before every command too",
+    "ids": [
+     113
+    ]
+   },
+   {
+    "sha": "ab8cb52",
+    "subject": "Connect to no model service while the administrator's policy locks Ember down",
+    "ids": [
+     107
+    ]
+   },
+   {
+    "sha": "7966906",
+    "subject": "Read the administrator's policy again while Ember runs, and hold it locked down once it changes",
+    "ids": [
+     112
+    ]
+   },
+   {
+    "sha": "292aa21",
+    "subject": "Keep quoted names and typed text from rewriting the question around them",
+    "ids": [
+     116
+    ]
+   },
+   {
+    "sha": "81c1e8e",
+    "subject": "Refuse keys named in another script with Ctrl or Alt on Linux",
+    "ids": [
+     115
+    ]
+   },
+   {
+    "sha": "20a569f",
+    "subject": "Refuse running files from Nautilus in the other languages RHEL desktops use",
+    "ids": [
+     114
+    ]
+   },
+   {
+    "sha": "fa8f608",
+    "subject": "Know Windows' Run dialog, address box and Run as commands in every display language",
+    "ids": [
+     109
+    ]
+   },
+   {
+    "sha": "709a78c",
+    "subject": "Stop opening items whose file type File Explorer or Finder may be hiding",
+    "ids": [
+     110
+    ]
+   },
+   {
+    "sha": "abab066",
+    "subject": "Ask about every setting changed in the system's own Settings apps",
+    "ids": [
+     111
+    ]
+   },
+   {
+    "sha": "21d8d76",
+    "subject": "Treat remote-desktop and virtual-machine viewers as remote surfaces on Linux and macOS",
+    "ids": [
+     118
+    ]
+   },
+   {
+    "sha": "bb81ff2",
+    "subject": "Match never-look defaults that are everyday words against the app only",
+    "ids": [
+     120
+    ]
+   },
+   {
+    "sha": "385a348",
+    "subject": "Name the organisation's model service on the consent cards when it is the one in use",
+    "ids": [
+     122
+    ]
+   },
+   {
+    "sha": "4707ec4",
+    "subject": "Say which parts are still stopping after Stop everything",
+    "ids": [
+     123
+    ]
+   },
+   {
+    "sha": "3f7ab19",
+    "subject": "Say in PLAN.md that new domains, downloads and admin domain rules aren't in v1",
+    "ids": [
+     119
+    ]
+   },
+   {
+    "sha": "9279921",
+    "subject": "Pin the policy corpus's decisions as the Settings and remote-window fixes leave them",
+    "ids": [
+     111,
+     118
+    ]
+   },
+   {
+    "sha": "78a7440",
+    "subject": "Match never-look's everyday words against the app in the sidecars too",
+    "ids": [
+     120
+    ]
+   },
+   {
+    "sha": "3161624",
+    "subject": "Refuse Ctrl+Alt with any key not named in Latin on Linux, and judge Ctrl or Alt alone as before",
+    "ids": [
+     115
+    ]
+   },
+   {
+    "sha": "ed982b3",
+    "subject": "Quote a slider's new value in the question, and hand over typed text the question cut",
+    "ids": [
+     116
+    ]
+   },
+   {
+    "sha": "33f01b8",
+    "subject": "Let Finder's sidebar places open again, and say what the hidden-types rule costs",
+    "ids": [
+     110
+    ]
+   },
+   {
+    "sha": "346dfd0",
+    "subject": "Hold Ember locked down only when the next read of the policy confirms the change",
+    "ids": [
+     112
+    ]
+   },
+   {
+    "sha": "45c2350",
+    "subject": "Restart the AppImage itself, and word the settings and notices for a held lockdown",
+    "ids": [
+     112
+    ]
+   },
+   {
+    "sha": "2e9f82e",
+    "subject": "Say in DEVELOPING.md what a locked-down Ember stops, and that a changed policy needs a restart",
+    "ids": [
+     112,
+     106,
+     107,
+     113
+    ]
+   },
+   {
+    "sha": "8c59a14",
+    "subject": "Say in DEVELOPING.md which Linux and macOS viewers are remote surfaces now",
+    "ids": [
+     118
+    ]
+   }
+  ],
+  "checks": "Final run on 8c59a14 (worktree clean):\n- npx tsc --noEmit: exit 0, no output.\n- npm run lint: exit 0, no findings.\n- npm test: exit 0. Test Files 257 passed | 1 skipped (258); Tests 6124 passed | 8 skipped (6132); 149.95 s. Nothing failed, so no file was re-run alone.\n- npm run build: exit 0 (dist/app/main.cjs 2.7 MB, the usual size warning).\n- xvfb-run -a npm run test:smoke: exit 0, 2 ok ('first instance showed its window', 'second launch handed over and the first instance focused its window'). Run because renderer/home changed.\n- npm run test:sidecar (python3 -B sidecar/atspi/test_ember_atspi.py): Ran 132 tests, OK. Run because ember_atspi.py changed.\n- EMBER_INTEGRATION=1 EMBER_COMMANDS_TEST=1 npx vitest run test/integration/commands-flow-local.test.ts test/integration/commands-local.test.ts: exit 0, 2 files, 33 passed | 13 skipped (46). Nothing under app/main/commands changed, but admin.ts commandMode does feed it.\n- Fail-first re-check for round 2: each fix's sources were put back to the parent commit with the new tests kept, then restored. Results: never-look-app-only 1 failed/5; policy-keys-layouts 2 failed/5; policy-question-text 2 failed/5; policy-hidden-types 1 failed/8; admin-watch 5 failed/8; host-lockdown 1 failed/4 ('offers Restart Ember…'); the Python never-look test FAILED, then OK once restored.",
+  "sharedHunks": [
+   "app/main/main.ts: import auditRetentionDays, heldUntilRestart, modelServiceRefusal from ./admin; stillStoppingWords; restartOptions and watchAdminPolicy (import lines)",
+   "app/main/main.ts start(): `let admin` and `let policy` instead of const, so the watch can replace them (#112)",
+   "app/main/main.ts status: admin gains `held` when held, and retentionDays comes from auditRetentionDays(admin), nullable (#106, #112)",
+   "app/main/main.ts greeting: thought = modelServiceRefusal(admin) ?? the existing text (#107)",
+   "app/main/main.ts stopEverything(): keeps pull()'s promise and, when it reports late parts, turns the bubble into 'Stopping … Still stopping: …' (#123)",
+   "app/main/main.ts bubble actions: `if (id === \"ui:restart\" && admin.held) { app.relaunch(restartOptions(process.env, process.argv)); app.quit(); return; }` (#112)",
+   "app/main/main.ts audit prune: prunes only with a non-null auditRetentionDays(admin) (#106; this hunk is the package's own)",
+   "app/main/main.ts AgentHost options: refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held (#107, #112)",
+   "app/main/main.ts wantVoice: adds policy.features.voice !== false, so listening follows the policy in force (#112)",
+   "app/main/main.ts after voice setup: the watchAdminPolicy block (on a change: heldUntilRestart, stop listening, agent.start(null), killSwitch.pull('policy'), bubble with Restart Ember) and app.on('will-quit', unwatchPolicy) (#112)",
+   "app/main/agent/host.ts: AgentReason 'policy'; HostOptions.refuseConnect and policyHeld; NOTICE_TITLE.policy and idleWord 'Locked down'; doStart returns early with status error/policy while refused; the notice offers ui:restart instead of ui:settings when the reason is policy and policyHeld() (#107, #112)",
+   "app/main/agent/killswitch.ts: StopSource gains 'policy'; new PART_WORDS, listed() and exported stillStoppingWords() (#112, #123)",
+   "app/main/perception/elements.ts isNeverLook: entries in NEVER_LOOK_APP_ONLY match the app only (#120)",
+   "app/shared/never-look.ts: new export NEVER_LOOK_APP_ONLY, and the header comment (#120)",
+   "app/sidecar-host/windows.ts neverLooked(): uses main's isNeverLook (imports ../main/perception/elements) (#120)",
+   "sidecar/atspi/ember_atspi.py: NEVER_LOOK_APP_ONLY frozenset and the never_looked() loop; sidecar/atspi/test_ember_atspi.py: one new test in class Windows (#120)",
+   "app/main/targets/consent.ts: the WSL, commands and SSH cards take `byok` and name the organisation's model service (#122)",
+   "app/main/targets/runtime.ts: three small hunks passing byok: admin().policy.provider !== undefined into the card facts (#122)",
+   "app/renderer/prompt/copy.ts: the prompt window's copy of the cards is worded for byok (#122)",
+   "app/renderer/home/admin-copy.ts (new file): lockdownNotice, lockdownSendLine and keptWords (#112, #106, #107)",
+   "app/renderer/home/main.ts renderAdmin(): import from ./admin-copy; the notice from lockdownNotice; the retention span from keptWords; the 'send' list item swapped for the lockdown line while locked down and restored afterwards (sendAsWritten); the model-service name only when not locked down (#112)",
+   "app/renderer/home/index.html line 32: the retention span now holds 'kept 30 days' whole: `(<span id=\"retention\">kept 30 days</span>)` (#112)",
+   "app/shared/ipc.ts Status.admin: new optional `held`; retentionDays is now number | null (#112, #106)",
+   "app/remote/audit.ts createRemoteAudit: retentionDays number|null, no pruning on null; app/remote/main.ts passes auditRetentionDays(policy.current) (#106)",
+   "docs/DEVELOPING.md: §5 lockdown paragraph and table rows (confirmEveryAction, auditRetentionDays); §10.7 and §11.7 re-read and restart sentence; §10.8 remote viewers paragraph; new troubleshooting rows in §10.9 (Explorer) and §11.8 (Finder) (#106, #107, #110, #112, #113, #118)",
+   "docs/COMMANDS-WSL-SSH.md §6.2 and §6.4: lockdown connects to no model service and prunes nothing; confirmEveryAction row; 10 s re-read with second-read confirmation (#106, #107, #112, #113)",
+   "PLAN.md §5 and M8.7: remote viewers on Linux/macOS; no new-domain/download confirmation and no admin domain rules in v1 (#118, #119)"
+  ],
+  "forDocs": [
+   "CHANGELOG (Security): If the administrator's policy can't be read or has a mistake, Ember locks down. It now also connects to no model service (neither GitHub Copilot nor the organisation's own endpoint) and deletes no audit records until the policy is fixed.",
+   "CHANGELOG (Admin): Ember reads the administrator's policy again every 10 seconds. When it changes, and the next read confirms it, Ember stops everything and stays locked down until the user clicks Restart Ember, which reads the new policy whole.",
+   "CHANGELOG (Admin): confirmEveryAction now asks before every command too (on this computer, in WSL and over SSH).",
+   "CHANGELOG (Admin): a policy.json saved with a UTF-8 byte-order mark is read normally. An unknown key's message says this Ember may be older than the policy.",
+   "CHANGELOG (Safety): Linux and macOS remote-desktop and virtual-machine viewers (Remmina, virt-manager, Boxes, VNC/RDP viewers, Screen Sharing, UTM, Parallels, VMware, VirtualBox…) are remote surfaces. Ember never acts in them and blacks them out of screenshots.",
+   "CHANGELOG (Safety): in File Explorer and Finder, Ember never opens an item whose name shows no file type, because it may be a program, and it asks every time before opening one that shows a document's type. Folders are opened by their path, from Explorer's navigation pane, or from Finder's sidebar places.",
+   "CHANGELOG (Safety): every setting changed in GNOME Settings, Windows Settings or macOS System Settings asks first, every time.",
+   "CHANGELOG (Safety): on Linux, Ember refuses Ctrl+Alt with a key not named in Latin (another script's or an accented letter), which another keyboard layout could put on Ctrl+Alt+T or Ember's own shortcuts.",
+   "CHANGELOG (Safety): questions about typed text show texts up to 160 characters whole; longer ones show the start, the end and the length. Quote marks in names can no longer rewrite the question, and a slider's new value is quoted.",
+   "CHANGELOG (Fix): the never-look defaults 'keeper', 'seahorse' and 'strongbox' match the app only, so a page titled 'Housekeeper wanted' is no longer treated as private.",
+   "CHANGELOG (Fix): when the organisation's own model service is in use, the WSL, commands and SSH consent cards name it instead of GitHub Copilot.",
+   "CHANGELOG (Fix): after Stop everything, the bubble names any part still stopping (commands, an SSH computer…).",
+   "Release notes / README (Admin): v1 has no confirmation for new domains or downloads in a granted browser, and the policy has no domain rules.",
+   "README admin-policy section (if it repeats DEVELOPING.md §5): a locked-down Ember means no actions, commands or listening, no model service, and no audit pruning. A changed policy needs Ember restarted."
+  ],
+  "ciOnly": [
+   "Windows: the Run dialog title, Run box, Explorer address box and Open/Run as command labels in each localized display language (the vocabulary comes from best knowledge; needs localized runners)",
+   "Windows: File Explorer with hidden extensions. Enter or a click on 'setup' (setup.exe) is refused, the navigation pane still opens folders, and 'invoice.pdf' asks",
+   "Windows: SystemSettings and SystemProperties* window app names as UIA reports them, so every setting change asks",
+   "Windows: the 10 s registry re-read through koffi (HKLM\\SOFTWARE\\Policies\\Ember\\PolicyJson). A one-off failed read is ignored, and a changed value holds Ember until restart",
+   "Windows and macOS: sidecar-host neverLooked() on real UIA/AX windows (a browser tab 'Housekeeper wanted' is read; Keeper's own window is blocked)",
+   "macOS: Finder's sidebar is an AXOutline whose rows reach policy as 'tree item' with the place's name, and the localized place names (Dokumente, 書類, 문서…) are right; the list view's untyped rows are still refused",
+   "macOS: System Settings' app name or bundle id as AX reports it, and the remote-viewer app names and bundle ids (Screen Sharing, UTM, Parallels, Windows App…)",
+   "macOS: re-reading /Library/Application Support/Ember/policy.json every 10 s, and Restart Ember relaunching the .app",
+   "Linux AppImage: Restart Ember after a policy change relaunches $APPIMAGE and Ember comes back (a real AppImage build, not a unit test)",
+   "Linux: on a real X session with a us,tr(f) or us,ru layout, ctrl+alt+gbreve and ctrl+alt+Cyrillic_ie are refused before the borrowed keyboard resolves them to E or T",
+   "Linux: the AT-SPI sidecar's never_looked on a live Firefox tab titled 'Seahorse facts' (unit-tested only with fakes)"
+  ],
+  "notes": "Yes, resumed. The worktree already had 8 round-2 commits (78a7440 to 8c59a14) from the interrupted run, one per verifier problem, and no uncommitted edits. I reviewed each diff against the verifier's list. Every new test fails against the round-1 sources and passes now. All checks were re-run on 8c59a14. No new commits were needed this pass.\n\nProposals for other packages:\n(1) #116, bubble and agent packages: carry PolicyEngine's new Decision.detail (the whole typed text, cleaned, set only when the question cut it) into Question.detail, and show it expandable on the card ('Show all 225 characters').\n(2) #109 and #110, perception and agent packages: put the UIA element's AutomationId/ClassName, the window class, and the item's ItemType (or the Type column) into ActionRequest. The Run box (a combo in an explorer #32770 dialog) and the address band could then be keyed off them in any language, and Explorer or Finder folders could open again by type rather than by name.\n\nTrade-off in the Finder fix (#110), noted in a code comment: in the list view, an item whose whole name is a sidebar place is treated as that place. Examples are a downloaded app renamed 'Documents', or Music.app showing as 'Music' in /Applications. Gatekeeper still asks before a downloaded app starts, and Ember refuses that question's Open.\n\nScratch logs are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/ff-policy/ (small text files only)."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts: imports (auditRetentionDays, heldUntilRestart, modelServiceRefusal, stillStoppingWords, watchAdminPolicy)",
+   "app/main/main.ts start(): `const admin`/`const policy` become `let` (the watch replaces them), with a comment",
+   "app/main/main.ts greet(): the thought is modelServiceRefusal(admin) when locked down or held",
+   "app/main/main.ts stopEverything(): keeps pull()'s promise and, if parts are late, changes the bubble to 'Stopping…' with stillStoppingWords (#123)",
+   "app/main/main.ts bubble actions: new 'ui:restart' (app.relaunch(); app.quit()) (#112)",
+   "app/main/main.ts audit setup: prune only when auditRetentionDays(admin) isn't null (#106)",
+   "app/main/main.ts new AgentHost(...): refuseConnect: () => modelServiceRefusal(admin) (#107)",
+   "app/main/main.ts voice: wantVoice also requires policy.features.voice !== false (#112)",
+   "app/main/main.ts after the voice setup: the watchAdminPolicy block (hold, kill switch, setWanted(false), agent.start(null), bubble) and will-quit unwatch (#112)",
+   "app/main/agent/host.ts: AgentReason gains 'policy'; HostOptions.refuseConnect; NOTICE_TITLE.policy; idleWord 'Locked down'; doStart's refusal before any client starts (#107)",
+   "app/main/agent/killswitch.ts: StopSource gains 'policy' (#112); PART_WORDS and stillStoppingWords() appended (#123)",
+   "app/main/perception/elements.ts: import NEVER_LOOK_APP_ONLY; isNeverLook matches app-only defaults against the app (#120)",
+   "app/shared/never-look.ts: NEVER_LOOK_APP_ONLY export and a header comment clause (#120)",
+   "app/main/targets/consent.ts: serviceName(); byok on wslConsent input, CommandsCardFacts, SshCardFacts and their sentences (#122)",
+   "app/renderer/prompt/copy.ts: byok in SshConsentFacts and the wsl/commands ConsentInput variants; serviceName(); three sentences (#122)",
+   "app/main/targets/runtime.ts: sshFacts gains byok; the wslConsent call gains byok; cardFacts gains byok (#122)",
+   "app/remote/audit.ts: createRemoteAudit retentionDays is number | null; prunes only when not null (#106)",
+   "app/remote/main.ts: import auditRetentionDays; retentionDays: auditRetentionDays(policy.current) (#106)",
+   "PLAN.md §5: the Confirm row drops 'new domain; uploads/downloads' and a 'Not in v1' note is added (#119); a sentence on Linux/macOS remote surfaces (#118); the M8.7 row marks domain rules as not in v1 (#119)",
+   "docs/COMMANDS-WSL-SSH.md §6.2: confirmEveryAction row (#113), a locked-down Ember connects to no model service and prunes nothing (#106/#107), the PC reads its policy every 10 s (#112); §6.4: the remote prunes nothing under a broken policy (#106)",
+   "test/unit/policy.test.ts: the app-naming case clicks a page button in Settings instead of a toggle (#111)",
+   "test/unit/win32-policy-explorer.test.ts: extensionless names are refused; macOS has Finder (#110)",
+   "test/unit/remote-surface.test.ts: REASON text; Linux/macOS have rows (#118)",
+   "test/unit/sshwsl-hooks.test.ts: corpus decisions hash re-pinned with a note (#111, #118)"
+  ],
+  "forDocs": [
+   "DEVELOPING.md §5/§10.7/§11.7 (admin policy): a broken policy locks Ember down: no actions, listening, commands, WSL or SSH, no model service at all (neither GitHub Copilot nor the organisation's own endpoint, since its provider can't be read), and nothing is pruned from the audit log until the policy reads fine.",
+   "DEVELOPING.md §5/§10.7/§11.7: Ember reads the policy again every 10 seconds. When it changes, Ember stops everything, holds itself locked down and shows 'Your organisation changed my policy' with a Restart Ember button; the restart applies the new policy.",
+   "DEVELOPING.md admin policy keys: confirmEveryAction also makes every command ask (as commands.<kind>: \"ask\") on every kind whose commands are on.",
+   "DEVELOPING.md: a policy.json saved with a UTF-8 byte-order mark is read normally; an unknown key is named in the settings notice with a hint that this Ember may be older than the policy.",
+   "DEVELOPING.md §10.8 (remote surfaces): remote-desktop and virtual-machine viewers on Linux (Remmina, virt-manager, virt-viewer, GNOME Boxes, VNC/RDP viewers, X2Go, NoMachine, VirtualBox, VMware, QEMU) and macOS (Screen Sharing, UTM, Parallels, VMware Fusion, VirtualBox, Windows App, TeamViewer, AnyDesk) are refused for every action and blacked out of screenshots, as on Windows. Replace 'Linux and macOS are unaffected'.",
+   "DEVELOPING.md / README safety section: Ember never opens an item from File Explorer or Finder whose name shows no file type (it may be a program whose type is hidden), asks every time before opening a document from them, and never opens Finder's .app, .command, .tool, .terminal, .jar or .fileloc items or uses Finder's Open / Open With menus.",
+   "DEVELOPING.md / README safety section: every setting changed in GNOME Settings, Windows Settings (and System Properties) or macOS System Settings is asked about every time.",
+   "README / never-look docs: the defaults 'keeper', 'seahorse' and 'strongbox' match the app only, never a window title.",
+   "CHANGELOG release notes: not in v1: confirmation before a new web domain or a download, and admin domain rules (PLAN.md §5, M8.7).",
+   "CHANGELOG: the consent cards for WSL, commands and SSH name 'your organisation's model service' when the administrator set its own endpoint.",
+   "CHANGELOG: on Linux, a key named in another script with Ctrl or Alt (e.g. Ctrl+Alt+Cyrillic_ie on a us,ru keyboard) is refused as a system key.",
+   "CHANGELOG: questions quote names and typed text safely, and long typed text shows its start, its end and its length; after Stop everything the bubble names parts still stopping (commands, connected computers)."
+  ],
+  "ciOnly": [
+   "Windows on localized runners: the Run dialog's title and Open box, Explorer's address box (edit and breadcrumb states), and the Open / Open with / Run as administrator / Run as different user / Run with PowerShell labels as UIA really names them in each display language added in vocabulary.ts (ru, pl, tr, sv, da, nb, fi, cs, sk, hu, el, uk, he, ar, bg, hr, sl, et, lv, lt, ro, th, ja 名前(O):, zh-TW 位址). These strings are best knowledge.",
+   "Windows: that File Explorer's items-view entries arrive as 'list item' and navigation-pane entries as 'tree item'; that hidden-extension files really show as 'setup'; whether a folder opened by accessibility is a click that only selects (clickSelects) or one that opens.",
+   "Windows: the app name the backend reports for Settings (the UWP-hosted 'SystemSettings') and for the System Properties pages (SystemPropertiesRemote.exe and others), and the roles of their toggles (switch, check box).",
+   "macOS: Finder's app name and the roles of its items in icon, list and column views (whether they reach CONTENT_ROLES: list item, tree item, icon), Cmd+O and Cmd+Down canonicalisation, Return renaming; System Settings' localized app names; the viewer apps' names (Screen Sharing, UTM, Parallels' prl_client_app, VirtualBoxVM, Windows App) and their blackout in desktopCapturer captures.",
+   "RHEL 8 GNOME: the WM_CLASS/AT-SPI names of Remmina, virt-manager, virt-viewer, GNOME Boxes and VNC viewers; GNOME Settings' app name; Nautilus 3.28's run-or-display dialog and Properties check box in a localized session (nl, pl, ru, sv, da, nb, fi, cs, tr, ja, zh_CN, zh_TW, ko).",
+   "Linux with a us,ru (or us,gr) layout: that Ctrl+Alt+Cyrillic_ie is refused before it reaches the keyboard (the unit tests cover the rule only).",
+   "Every OS: the 10-second policy watch against the real source (Windows HKLM PolicyJson read through koffi, the macOS root-owned file, /etc/ember/policy.json), the held lockdown on a change, and Restart Ember relaunching a packaged Ember (Ember.exe, Ember.app, the AppImage/RPM, including --autostart args).",
+   "Every OS: AgentHost's refuseConnect with a real broken policy (no Copilot runtime process is spawned), and the 'Stopping…' bubble's late parts with a real slow command kill ladder or SSH link."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 120,
+   "severity": "must-fix",
+   "what": "Only the main-process matcher changed. Both sidecars still block a window when a never-look entry appears anywhere in its app name or title, so the reviewer's scenario is still there when Ember reads a window. Perception.read and atPoint (app/main/perception/index.ts:157, :213) send the full list as params.neverLook. On Linux, sidecar/atspi/ember_atspi.py:2231 never_looked() runs `t in \"app title\"`: called directly with {app:'Firefox', name:'Seahorse facts - Mozilla Firefox'} and ['keepassxc','seahorse'], it returns True. On Windows and macOS, app/sidecar-host/windows.ts:72 neverLooked() does the same: a scratch vitest gave true for {app:'msedge', name:'Housekeeper wanted - Microsoft Edge'} with ['keeper']. The sidecar then returns blocked, Seen.blocked is set, and the worker is told 'This window is private ... Do not interact with it.' The new test only exercises isNeverLook in elements.ts.",
+   "fix": "Match the app-only entries against the app in the sidecars too. Option one: perception sends them as their own param (for example neverLookApps: entries in NEVER_LOOK_APP_ONLY) and the rest as neverLook. never_looked (python) and neverLooked (sidecar-host) then test neverLookApps against window.app only. Option two: give each sidecar the same set, with a parity test. Add a test in sidecar/atspi/test_ember_atspi.py and a sidecar-host unit test ('Seahorse facts' and 'Housekeeper wanted' are read; seahorse and keeperpasswordmanager windows are still blocked)."
+  },
+  {
+   "id": 110,
+   "severity": "should-fix",
+   "what": "Finder can no longer move through its own sidebar, and nothing says so. Finder's sidebar is an AXOutline, which app/sidecar-host/roles.ts:207 maps to 'tree item', and that role is in CONTENT_ROLES. The Finder rule sets hidesTypes but has no `places`. Probe on the branch: mac.decide(click on 'Documents', a tree item in Finder) and the borrowed-mouse click both give tier never, reason 'Finder hides file types, so it never opens an item whose name shows none'. The report lists this cost for Explorer's item view only, where the navigation pane is exempt as `places`. List-view rows are also 'tree item' (AXOutlineRow), so a role exemption alone won't separate them.",
+   "fix": "Exempt Finder's sidebar rows from the untyped rule. Either carry the containing outline's name or role into ActionRequest (the sidebar outline is named 'Sidebar'), or treat a tree item whose name is a known sidebar place (Recents, Applications, Desktop, Documents, Downloads, iCloud Drive, AirDrop, volumes) as a place. At minimum, state the cost in the report and in DEVELOPING.md, and add a pinned test for the sidebar decision."
+  },
+  {
+   "id": 115,
+   "severity": "should-fix",
+   "what": "A Latin keysym with an accent still gets past the rule with Ctrl+Alt. OTHER_SCRIPT_KEY catches only non-ASCII characters and names of other scripts. Probe: canonicalKeys('ctrl+alt+gbreve') gives isSystemKey false and decide gives confirm. The same holds for ctrl+alt+odiaeresis and ctrl+alt+eacute. On a us,tr(f) keyboard ğ is on the physical E key, so the borrowed keyboard presses Ctrl+Alt+E, Ember's own settings chord (SHORTCUTS.linux settings 'E'). ö is on X there, which gives Ctrl+Alt+X.",
+   "fix": "On Linux, when both Ctrl and Alt are held, refuse any key that is not an ASCII letter or digit, or a named key from the navigation, function or punctuation set. This is the reviewer's 'ctrl+alt unless in the safe list'. Alternatively resolve the keysym to its physical keycode through the input package's keymap and judge that key's Latin name."
+  },
+  {
+   "id": 115,
+   "severity": "should-fix",
+   "what": "The new rule is wider than the bypass needs, and changes Linux behaviour that no finding names. A non-Latin key with Ctrl alone or Alt alone is now 'never': alt+Greek_tau gives deny, ctrl+é gives deny, and so would alt+Cyrillic_ef, the GTK access key for 'Файл' in a Russian app. Yet no Linux system key can be reached with only one of the two. Every letter rule in isSystemKey needs Ctrl+Alt, and the Alt-only rules are F1 and F2. The test 'refuses them with Ctrl or Alt alone too' pins this.",
+   "fix": "Require both modifiers: `if (kc.os === \"linux\") return ctrlAlt && OTHER_SCRIPT_KEY.test(key);`. Change the Ctrl-or-Alt-alone test to expect what the decision was before the change (confirm or allow)."
+  },
+  {
+   "id": 116,
+   "severity": "should-fix",
+   "what": "Partly fixed, as the report says. Typed text over 160 characters shows its first 110 and last 40 characters, so the middle is still approved unseen. Probe with a 225-character text: 'MIDDLE-SECRET-PAYLOAD' is cut at 'MIDDLE-SEC…'. Separately, the new 'value' case puts the model's value in the question without quote marks, cut silently at 40 code points with no ellipsis. Probe in GNOME Settings: 'Set “Brightness” slider to 50 in Firefox? Nothing is sent. Delete e in Settings?' still reads like Ember's own sentence.",
+   "fix": "Quote the value: `Set ${el} to ${quote(r.value ?? \"\", 40)}`, as 'select' does. For the rest, the lead should send the report's proposal to the bubble and agent packages: a Question.detail field holding the full typed text, shown expandable on the card whenever the question cut it."
+  },
+  {
+   "id": 112,
+   "severity": "should-fix",
+   "what": "The 'Restart Ember' button can fail on the Linux AppImage. main.ts:1069 calls `app.relaunch(); app.quit();` with no execPath. Inside an AppImage, process.execPath is under the /tmp/.mount_* squashfs, which is unmounted when the app quits, so Ember quits and doesn't come back. autostart.ts:19 already uses env.APPIMAGE for this reason. Also, 'ui:restart' is honoured from any overlay or handle message, whether or not the held lockdown is in force.",
+   "fix": "`if (id === \"ui:restart\" && admin.held) { app.relaunch(process.env.APPIMAGE ? { execPath: process.env.APPIMAGE, args: process.argv.slice(1) } : undefined); app.quit(); return; }`"
+  },
+  {
+   "id": 112,
+   "severity": "should-fix",
+   "what": "One bad read holds Ember until a restart. watchAdminPolicy acts on the first read that differs. A policy.json caught mid-write by a non-atomic writer (a hand edit, some management tools), or one transient koffi or registry failure on Windows (load() returns lockedDown on any exception), stops everything and holds Ember locked down. The user then sees 'Your organisation changed my policy' though nothing changed.",
+   "fix": "Hold only when two consecutive reads differ from `first` in the same way (samePolicy(next, previousNext)). If they keep differing, still fail closed. Add a watch test where one garbled read is followed by the original policy and nothing is reported."
+  },
+  {
+   "id": 112,
+   "severity": "should-fix",
+   "what": "The settings copy doesn't fit the lockdown states. In the held state, renderAdmin (renderer/home/main.ts:308) shows 'Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (it changed while Ember was running; restart Ember to use it)', which calls a valid change a problem. A question asked while held gets the notice with 'Open settings', not 'Restart Ember'. In any lockdown, the data list still says requests 'go to GitHub Copilot' (index.html:32) and that records are 'kept 30 days' (main.ts:372 sends policy.auditRetentionDays ?? 30). Lockdown now sends nothing and prunes nothing (#106, #107).",
+   "fix": "Send held, and a nullable retention, in the admin status. In renderAdmin, word the held case as 'Your organisation changed Ember's policy. Restart Ember to use it.' While locked down, say that nothing is sent to a model service and that records are kept until the policy is fixed. Offer ui:restart on the policy notice when the policy is held. These are small hunks in a hot shared file: list them."
+  },
+  {
+   "id": 112,
+   "severity": "should-fix",
+   "what": "docs/DEVELOPING.md wasn't updated, and the report doesn't hand these lines to the docs package. §5 (line 257) says a broken policy 'locks down (no actions, no listening)'; lockdown now also means no model service and no audit pruning (#106, #107). Nothing says the policy is read again every 10 s and Ember holds locked down until a restart (#112). The `confirmEveryAction` row (line 280) says 'A click before every action', which now covers commands too (#113). §10.7 and §11.7 don't mention the restart either. Only COMMANDS-WSL-SSH.md §6.2 was changed.",
+   "fix": "Update the DEVELOPING.md §5 sentence and table row, and add a line to §10.7 and §11.7. Or list each exact line under the report's 'tell the docs package' section."
+  },
+  {
+   "id": 118,
+   "severity": "should-fix",
+   "what": "docs/DEVELOPING.md §10.8 (lines 701–703) still says 'Other remote viewers ... aren't covered yet ... Linux and macOS are unaffected'. That is now false: REMOTE_SURFACE.linux and .darwin refuse every action in Remmina, virt-manager, Boxes, VNC/RDP viewers, Screen Sharing, UTM, Parallels, VMware and VirtualBox, and black them out of screenshots. The reviewer's evidence cited this exact paragraph. Only PLAN.md was updated.",
+   "fix": "Rewrite the §10.8 sentence to list the Linux and macOS viewers now covered. Keep the Windows gap (vmconnect, VNC, TeamViewer, Citrix on Windows) stated."
+  }
+ ]
+}

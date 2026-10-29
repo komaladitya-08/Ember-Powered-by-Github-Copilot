@@ -1,0 +1,391 @@
+[
+ {
+  "package": "agent",
+  "id": 147,
+  "status": "partial",
+  "how": "Code part fixed (74b9e0f): main.ts's stopEverything comment no longer says failed cards stay until closed. tasks.ts failureCardMs is 60 s, on purpose since c7efcdf. The verifier is right that docs/DEVELOPING.md:131 still says 'a failed card stays until you close it'. docs/** belongs to the docs package, and fix/docs does not touch that line (git diff 1b39bb3 fix/docs checked). The exact replacement is in forDocs for the lead's docs follow-up. A failed task is kept in the settings window's Conversation section as a 'problem' entry (host.ts remember(\"problem\", \u2026)), so the proposed wording is accurate.",
+  "test": "None new: the code change is a comment only. tasks.test.ts 'a failed card goes on its own after the longer failure time' pins the 60 s behaviour."
+ },
+ {
+  "package": "agent",
+  "id": "forDocs",
+  "forDocs": [
+   "docs/DEVELOPING.md:131 (#147): replace 'a failed card stays until you close it' with 'a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong)'.",
+   "docs/RESEARCH.md:368 (#148): replace 'finished workers stay resumable for ~10 minutes (for \"undo that\" or \"do the same for the other file\"), then close' with 'a finished worker's session, which holds the screen text the task read, is deleted as soon as the task ends (a crash's leftovers are swept at the next start); a follow-up such as \"undo that\" starts a new task'.",
+   "docs/DEVELOPING.md \u00a7Connecting Copilot (lines 191-205): Ember's own GitHub App is now built in (client id in app/main/agent/github-app.ts; EMBER_GITHUB_CLIENT_ID overrides it). Sign in with GitHub shows a code to enter in the browser. Ember also uses COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN or `gh auth login` (stored first, then the environment, then gh; one Copilot refuses gives way to the next; Sign out forgets refusals). Ember renews its own sign-in before the app's 8-hour token runs out. Only a build without a client id (a fork) shows 'Connect with GitHub CLI' and the gh install steps.",
+   "PLAN.md \u00a77 open question 1 (line 389) and the M2 row (line 531): mark Ember's GitHub App as registered, with its client id built in (Iv23liXa8A1wDXYg2jYw). The device flow is live; EMBER_GITHUB_CLIENT_ID is an override, not a requirement.",
+   "CHANGELOG: Sign in with GitHub now signs in from the browser in release builds, and Ember renews that sign-in before it expires.",
+   "CHANGELOG: when Copilot refuses a sign-in partway through a session, the handle says 'Sign-in refused' and settings offer Sign in and Check again.",
+   "CHANGELOG: a refused GITHUB_TOKEN/GH_TOKEN gives way to the GitHub CLI's sign-in and is named in the message; gh is asked for github.com's token.",
+   "CHANGELOG: passing Copilot problems while connecting (5xx, rate limits, timeouts) are retried on their own.",
+   "CHANGELOG: the sign-in survives a network blip while waiting for approval, and a sign-in that can't be saved still connects for this run.",
+   "CHANGELOG: Copilot errors are shown in plain words.",
+   "CHANGELOG: a 'show me' guide starts at once beside running tasks.",
+   "CHANGELOG: default models are chosen with cost in mind, and premium models are marked in settings.",
+   "CHANGELOG: with commands off, Ember points to Settings \u203a Commands.",
+   "CHANGELOG: a finished task's session is deleted at once."
+  ]
+ },
+ {
+  "package": "ask",
+  "id": 75,
+  "status": "partial",
+  "how": "Done in round 1 (ddd253c): Hide Ember shrinks the 200x56 pill to a 56x56 tab with the face, and Show Ember brings the pill back. Left open, as the verifier asked, because it needs the owner's yes, which this agent cannot get: while Ember is shown the pill stays at the primary display's bottom-right, it is movable:false, and HandleWindow.corner() has no setting. Proposal for the owner: a \"Handle position\" setting (bottom right / bottom left) in settings.ts, read by HandleWindow.corner(), by the overlay's card stack (the overlay package's #126 anchors it bottom-right in overlay/styles.css) and by the home copy that says \"bottom-right corner\", plus a \"Move to the other side\" item in the handle menu. Please keep #75 open in the lead's table.",
+  "test": "handle-window.test.ts compact case. Verifier's hide.cjs under mutter: 200x56, then 56x56, then 200x56. Nothing yet for the position, which is not built."
+ },
+ {
+  "package": "ask",
+  "id": 78,
+  "status": "partial",
+  "how": "99e6445 adds the probe the verifier asked for to the real-runner suites. ember-win32.test.ts starts the built Ember as at login and presses Win+Alt+Space through SendInput. ember-darwin.test.ts presses \u2303\u21e7\u2318Space as CGEvents. Each lets go of the keys, types \"quick brown fox\" at 40 ms a letter, and prints what the box holds and what that decides: nothing lost means telling users to let go of the keys before typing is enough; letters lost means the OS needs a typed-ahead hold. A run fails only if the chord doesn't open the box, or the box holds letters out of order. DEVELOPING.md's suite table describes it. Still open until those runs report: the native hold or the documented sentence (handed to docs below).",
+  "test": "typeahead-probe.test.ts covers the verdict, and tsc covers the suites. The probes run only on windows-2022 and macos-15."
+ },
+ {
+  "package": "ask",
+  "id": 45,
+  "status": "partial",
+  "how": "(a) is done. Round 1 (53969aa) added Ask Ember\u2026 and Stop everything to settings. Round 2 (6606cb1): environment.ts keyboardRoute gives \"access:ask\" while another app holds the ask shortcut, else \"access:stop\". Ember started again (second-instance), the Dock (activate) and the settings shortcut all open settings through showHomeFromKeys, which sends that section request. section-request.ts maps it to p-ask / p-stop. The handle menu's Settings\u2026 is unchanged, since that is a pointer's way in. The setup check now says \"open Ember again from the Start menu: its settings open at Ask Ember\u2026 and Stop everything, under Comfort & access\" (\"for its settings\" when only the settings or microphone shortcut is taken). The greeting says \"press Ctrl+Alt+E: settings opens at Ask Ember\u2026 and Stop everything\". (b) is left as open work for the owner: shortcuts that can be remapped, an automatic fallback chord when one is taken, and an Ask entry in the launcher (Windows setUserTasks jump list, and .desktop Actions=Ask on Linux).",
+  "test": "section-request.test.ts (access:ask \u2192 p-ask, access:stop \u2192 p-stop), environment-platforms.test.ts (keyboardRoute and the new words) and main-privacy-wiring.test.ts (the three keyboard openings go through showHomeFromKeys) all failed before. Scratch keyroute.cjs under Xvfb, with a client holding Ctrl+Alt+Space, with mutter and without: second-instance and Ctrl+Alt+E both open settings with p-ask focused and in view. Without the grab, settings opens at the top with BODY focused, as before."
+ },
+ {
+  "package": "ask",
+  "id": "forDocs",
+  "forDocs": [
+   "README, Shortcuts: when another app holds one of Ember's shortcuts, click the handle, or from the keyboard open Ember again (from your apps, the Start menu or Applications) or press the settings shortcut. Settings then opens at Ask Ember\u2026 and Stop everything, under Comfort & access.",
+   "README, Shortcuts (Windows and macOS), pending the #78 probe: 'On Windows and macOS, let go of the shortcut's keys before you start typing: Ember can't hold letters typed while the ask box opens (on Linux it does).' Drop this if the ember-win32/ember-darwin probe prints 'nothing lost'.",
+   "CHANGELOG: the ask box keeps a paste's lines and grows to four lines. When a paste is cut at 2000 characters, a note on its own line says so, and the line that says what Ember will see keeps the window's name (it shortens what else is sent, and the other computer's name but never its state).",
+   "CHANGELOG: a right-click in the ask box offers Cut, Copy, Paste and Select all. Dismissing that menu by clicking another app puts the box away instead of taking the keyboard back.",
+   "CHANGELOG: the handle menu's 'Bring Ember to a computer\u2026' shows whenever SSH is allowed, and a host that is connecting can be cancelled from the menu. Settings opens at Computers with the host field focused.",
+   "CHANGELOG: 'Hide Ember' shrinks the handle to a small tab showing Ember's face. Moving the handle or choosing its corner is not there yet (#75, awaiting the owner).",
+   "CHANGELOG: on a Mac, keys are named Command everywhere, and Intel Macs are 'best effort'. The ask box's example is 'turn on dark mode'. Long notifications end at a word with an ellipsis."
+  ]
+ },
+ {
+  "package": "bubble",
+  "id": 14,
+  "status": "partial",
+  "how": "Done:\n- Offers expire 25 s after they reach the screen, counted as a Not now. The time scales with More time.\n- A press on an offer: or conn: button within 500 ms is ignored, and the arm time is kept while only the words change.\n- Unsolicited offers (ssh seen, WSL) claim 'reply', so they wait behind an answer being read.\nLead's call, round 2: I took the bounded park. overlay.ts parks Ember beside any bubble with buttons so they don't run away from a pointer heading to them. Not parking would make Bring Ember unclickable, because the follower moves the bubble with the pointer. Parking only when the pointer heads towards the bubble would be a follower change in the overlay package. The expiry now bounds the park, as an answer's reading time does. docs/COMMANDS-WSL-SSH.md \u00a74.1, where the offer is described (\u00a72.7 is 'What Copilot gets back'), now says Ember holds still while an offer is up, for 25 s or ten times that with More time (e7edefd).\nNot done (optional): when an offer_connect offer expires, the conversation's answer that waited behind it ('I've shown a Connect button\u2026') still shows. Dropping it would discard the model's other words, which the Conversation section keeps anyway.",
+  "test": "targets-runtime 'offers in the bubble (review #14)': three tests (expiry, press too soon, waits behind an answer) failed before and pass now. Also presenter 'keeps its buttons' time on screen while only its words change'. The bounded park is a docs change with no test."
+ },
+ {
+  "package": "bubble",
+  "id": "forDocs",
+  "forDocs": [
+   "README (Accessibility or Settings): 'More time to read and answer' (Settings \u203a Comfort & access) keeps every message ten times as long and lets a question wait 20 minutes instead of 2.",
+   "README (Keyboard): Ember's bubble never takes the keyboard. Under a mouse-only button it says where the keyboard reaches the same thing: Settings \u203a Computers for connection buttons, and Settings \u203a Conversation for an answer cut short ('Read all'). There is no global shortcut for 'Read the last answer' in this release (known limitation).",
+   "CHANGELOG: offers to bring Ember to a computer go after 25 seconds as Not now, ignore a press in their first half second, and hold Ember still while they are up.",
+   "CHANGELOG: a notice saying Ember can't reach Copilot, or that it needs you to sign in, now goes as soon as Copilot is back or you have signed in.",
+   "CHANGELOG: problems on the organisation's model service are titled with its name, never Copilot's."
+  ]
+ },
+ {
+  "package": "cmdcore",
+  "id": 27,
+  "status": "partial",
+  "how": "Round 1: inside sh and bash scripts, the if/then/elif/else/fi/for/while/until/do/done/in findings no longer ask by themselves. Scripts got the 'Ember can't read all of build.sh (\u2026)' line and a 'script:<name>' widening. Round 2, from the verifier: (a) c7482bb was committed by this round's earlier run, before the pause; I kept it and re-verified it. 'unclear.keyword' ({, }, [[, ]]) is no longer dropped. A `[[` is dropped only when it ends at its one `]]` and has no -eq/-ne/-lt/-le/-gt/-ge/-v/-R operator (plainTest). The flow words are dropped only in sh and bash, not zsh. I also probed `then ( rm -rf ~ )`, `for ((\u2026a[$(rm)]\u2026))`, `while (( a[$(rm)] ))` and `[[ -n ${a[$(rm)]} ]]`: each still leaves a non-flow finding, so each asks. (b) intent.ts mentioned(): the script's name counts only when every finding is an unclear finding of a named script. A dangerous finding needs the words to name it, as before. This is stricter than the verifier's per-finding version: mentioned() is any-of, so with that version an eval beside an upload would still have dropped the line. (c) scripts.ts: unreadPart is used only for SAYS.unclear syntax and the limits (unclear.too-many, unclear.too-long, unclear.depth). eval, interactive and unresolved-argument findings read 'In build.sh: Runs code Ember can't see.' etc. Docs \u00a72.4, \u00a72.9 and L8 are updated. Still left from round 1: case, functions, trap, select, `{ }` groups, `[[` with arithmetic, zsh flow words, PowerShell and cmd if/for, and scripts over 64 commands or 8,000 characters still ask. Proposal for the classify package: teach lex-posix case, functions and groups, then chunk long scripts with the cd state carried between chunks.",
+  "test": "command-flow.test.ts 'still asks for a brace group, `[[` arithmetic and zsh's short forms\u2026' covers the verifier's 10 shapes plus 2 more; all ran with no card on 2b36549 and pass now. 'still says the user didn't ask for what a named script does that is dangerous (review #27, second round)' (curl upload of ~/.ssh/id_ed25519, rm -rf ~/Documents, eval beside the upload) and 'says what a command in a script does, and that Ember can't read all of it only for its own limits\u2026' both failed on c7482bb and pass now."
+ },
+ {
+  "package": "cmdcore",
+  "id": "forDocs",
+  "forDocs": [
+   "README and CHANGELOG (scripts, #27): Ember reads a shell script before running it. A script that deletes, publishes or reads secrets asks. So does a script Ember can't read in full: case, functions, trap, `{ \u2026 }` groups, a `[[` that compares numbers or uses -v, zsh's if/for/while, PowerShell's or cmd's if/for, more than 64 commands, or more than 8,000 characters. Most real build and install scripts therefore ask. An sh or bash script with only if, for, while and plain `[[ \u2026 ]]` tests is read through. The card says why ('Ember can't read all of build.sh (it has more commands than Ember can check one by one).' / 'In build.sh: Runs code Ember can't see.'). When the user named the script and that is all the card says, it doesn't add 'You didn't ask for this.'.",
+   "README and CHANGELOG (announcements, #28): only a request counts. 'delete build/', 'please delete build/', 'can you delete build/?' and 'I want to delete build/' announce. Questions ('should I delete build/?'), how-tos, past tense ('I pushed my branch'), maybes ('I might \u2026 later') and words about something else ('fix the script that deletes build/') ask.",
+   "README and CHANGELOG (voice, #252, owner V1): on Windows, macOS, and Linux without parec, a dangerous command asked for by voice asks with the card ('You asked by voice. Ember can't tell your voice from what your speakers play, so it checks first.'). Typed requests still announce.",
+   "CHANGELOG (#30): read-only cloud commands run without a card (aws s3 ls, aws logs tail, terraform validate/output/fmt/show/state list/providers, kubectl config current-context/get-contexts, kubectl api-resources, kubectl rollout status/history, helm repo list/history/status, gsutil ls, gcloud storage ls, az webapp log tail, ansible-playbook --syntax-check/--list-*). `ansible-playbook --check`, `terraform providers mirror/lock` and `terraform init` still ask. An unknown cloud verb asks with 'Ember can't tell whether this changes AWS.'.",
+   "CHANGELOG (#31): 'delete build/ in my-app' no longer counts my-app as another computer when my-app is a folder there or above the task's folder (or 'on feature-x' when it is the current branch). The command announces only for build directly in my-app. An unknown name's card line is now 'It looks like you named another computer (prod-db), but this runs on this computer.'.",
+   "CHANGELOG (#29): ordinary system reports (hostnamectl, docker info, kubectl describe node, inxi) no longer make every later command ask. Transcript-like 'System:' or 'Assistant:' lines still do.",
+   "CHANGELOG (#216): What Ember did no longer says 'Ember doesn't run commands'. Terminal refusals now say Ember doesn't use terminal windows and runs commands in its own command window when Commands is on.",
+   "CHANGELOG (#26, #32): one very long line of command output no longer freezes Ember, and runs that print more than 4 MiB no longer slow the overlay or the stop chord."
+  ]
+ },
+ {
+  "package": "cmdwin",
+  "id": 46,
+  "status": "partial",
+  "how": "Round 1, unchanged. window.ts announceMs(base) gives at least 15 s (ANNOUNCE_SCREEN_READER_MS) while a screen reader runs. flow.ts announceTime() uses it, clamped to 4 s..1 min, for both the bubble and the window. presenter.announce(text, stopId, ms) says 'It starts in N seconds. <stop chord> stops everything at once.', and the bubble's live region reads the same text. The command window's announcement says 'Or press <stop chord> to stop everything.'. Left: (1) the spoken line is in host.ts, which the voice package owns; its #251 replaces 'Say Ember, stop' with the stop chord. (2) Answering an announcement with the deny chord needs main.ts's held keys, which the ask package owns. I took the reviewer's screen-reader route instead of a 'More time to react' setting, which would need a settings change.",
+  "test": "command-flow.test.ts 'counts down as long as the command window says', command-window.test.ts 'the announcement's time and keys', tasks-where.test.ts 'an announcement says the time it is given and the PC's own stop chord'. All failed before."
+ },
+ {
+  "package": "cmdwin",
+  "id": 263,
+  "status": "partial",
+  "how": "Round 1: attach() raises the window on every run (moveTop, no focus). window.ts awaitsTyping() looks for SECRET_PROMPT, or a short line whose words end in ':', '?', '>' or '[y/N]'. After 2 s at such a prompt the tab shows 'Waiting for you to type in this window.', the window is raised and flashFrame'd, and onWaiting listeners are told. flow.ts followWaiting puts 'A command is waiting for you to type in the command window.' in the task's bubble. A time limit reached while waiting gets its own status line. Round 2 (verifier's should-fix): followWaiting returned early on waiting=false, so the bubble kept the waiting line. It now remembers the bubble's thought before the waiting line (presenter.bubble). When the run stops waiting (typing, or the run ending), it puts that thought back, or 'The command is running.' if the bubble was empty, but only while the bubble still shows the waiting line, so newer words stay. Docs \u00a72.2 says the line lasts until you type or the command ends. Left: a 'Show' button on the bubble (bubble and task actions belong to the presenter and bubble packages), an OS notification, and pausing the time limit while it waits. The limit is \u00a73.13's safety bound; changing it is a design decision, so the status line says it was waiting instead.",
+  "test": "command-flow.test.ts 'says in the task's bubble when its command waits for the user to type (review #263)' now also checks the false case: the earlier thought comes back, a newer thought is kept, and the earlier thought comes back when the run ends while waiting. New test 'puts a plain running line back after the wait when the bubble said nothing before it'. Both failed before the round-2 fix ('expected waiting line to be Cloning the private repository.'). Round-1 tests in command-window.test.ts cover the raise, waiting and flash."
+ },
+ {
+  "package": "cmdwin",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG: In the command window, Tab and Shift+Tab always move between the window's buttons and tabs and never go to the command. Ctrl+V pastes into a command that takes typing (Command+V on a Mac), Ctrl+C copies selected output, and a Copy output button copies all of it.",
+   "CHANGELOG: While a screen reader runs, a command's output is read to it, and an announced command waits at least 15 seconds before it starts. Every announcement names the stop chord.",
+   "CHANGELOG: Closing the command window while a command runs now asks 'Stop and close' or 'Keep it open'. A command never keeps running unseen.",
+   "CHANGELOG: When a command waits for you to type (a password, a [y/N] question), its tab says so, the window comes up and flashes, and the task's bubble says so until you type.",
+   "CHANGELOG: The May I? question names controls in plain words: 'Click the \u201cSave\u201d button', 'Turn on the \u201cNight Light\u201d switch', 'Tick the \u201cBold\u201d checkbox', 'on the \u201creport.odt\u201d window'.",
+   "CHANGELOG: The command card underlines look-alike letters per word. Your own folders in your alphabet (C:\\Users\\\u0418\u0432\u0430\u043d) are no longer marked, and an address spelled in letters that only look Latin (https://\u0430\u0440\u0440\u04cf\u0435.com) still is. Hebrew and Arabic text is shown in the order it runs.",
+   "CHANGELOG: The command card says which computer a command runs on, and marks deleting commands. A command another computer sends back for your OK says 'Not run: you didn't allow it.' if you don't allow it.",
+   "README (accessibility section, if there is one): the command window works with the keyboard alone, and screen readers can read command output."
+  ]
+ },
+ {
+  "package": "css",
+  "id": 57,
+  "status": "partial",
+  "how": "Round 1 (29b0b29): a Text size setting (Default, Large 115%, Larger 130%) in Settings > Comfort & access. It multiplies the type tokens and each page's own px sizes through html[data-text-size], which main's page-prefs.ts sets on every page, in Settings, the bubble, task cards, the handle, and the command and prompt windows. Round 2, for each verifier problem: (1) Windows (84312e3): createCommandWindow and createPromptWindow size themselves by the text scale (windows.ts setTextScale, which main sets at start and on change): width, height, minWidth and minHeight, inside the primary work area and never below the usual size. The command window is 874x552 at Large and 988x624 at Larger; the prompt window 506x345 and 572x390. New in this round (14d1cae): the controllers make each window once and then only hide it, so a size chosen later never reached it until a restart. windows.ts now keeps both windows and resizes any open one when the scale changes: size times the change, never below the scaled minimum, centred where it was and inside its display. Checked on real Electron under Xvfb, hidden and non-resizable windows included. Measured at the new sizes (scratchpad/fx-css/vsize2.mjs): the prompt's buttons sit 16 px from the bottom at every size, and Allow and Not now end at y=501 of 552 and y=542 of 624. In a fresh scratch merge with fix/cmdwin's tip (9011512), Allow and Not now are the topmost element at their centre at all three sizes, in the old and the new window sizes (allow-merge.mjs). On fix/css alone the card area's 72vh cap covers them even at the default size (base's #265, fixed by cmdwin's sticky row). The terminal still fits at every size: its reported rows end about 125 px above the window's bottom (term-fit.mjs). (2) Pill (1a6c577, the verifier's option a): the pill's width is 200 px times the scale (230 and 260 px), and it repositions when the size changes; main tells the desk view, and the overlay re-reads the handle's place about once a second. Renders show 'Microphone problem' and the 'build-01' badge whole at Larger (lineClipped false). (3) Bubble (2e52d11): the caps are 6lh, 3lh, 10lh and 16lh, the same px at the default size and whole lines at every size. (4) Hint (ea34e2d): \"Changes the text in this window, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards. The Ask box keeps its size.\" (5) DEVELOPING.md's Comfort & access line names Text size. (6) The media-query guard (f86d159) unwraps @media and @supports, nested ones too, and requires a twin of the same size. Left, beyond this package: the Ask box (a 92 px window) and the desk's 30 px bar keep their type size. The terminal's type stays 13 px (DESIGN.md says so): the window grows, so it gets more columns and rows. Scaling its font needs fix/cmdwin's terminal.ts, terminal-options.ts and command/main.ts, which that branch rewrites. Proposal: XTERM_OPTIONS.fontSize and cellSize() multiply by the scale read from html[data-text-size], and on a change set term.options.fontSize and call reportSize(). The prompt window's per-card sizes come from fix/prompt and need forText at merge (see notes).",
+  "test": "test/unit/text-size-windows.test.ts \"grow or shrink with the text while they are open\" and \"leave a closed window alone\", plus page-prefs.test.ts \"grows an open window when the text size changes\u2026\" (failed before 14d1cae: the open windows kept 760x480 and 440x300; pass now). From 84312e3: text-size-windows \"grow with the text at Large and Larger, their smallest size too\" and \"stay inside a small screen's work area\". handle-window.test.ts (pill width 230 and 260 px). page-prefs.test.ts: the lh max-height test, \"checks the rules inside a media query too\", the hint copy test and \"grows the windows sized for their words by the same scale as the type\". All failed on the earlier code and pass now."
+ },
+ {
+  "package": "css",
+  "id": "forDocs",
+  "forDocs": [
+   "README settings list: Settings > Comfort & access has Text size (Default, Large, Larger). It changes the text in Settings, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards; the handle and those windows grow to fit. The Ask box keeps its size.",
+   "CHANGELOG: Windows contrast themes are supported. Switches, the slider, the chosen character, button edges, tabs, state symbols and keyboard focus stay visible.",
+   "CHANGELOG: Keyboard focus on filled buttons, checked switches and the chosen character shows as a ring with a gap, also under Increase Contrast.",
+   "CHANGELOG: The handle's microphone badge has a shape for each state (listening, muted, starting, problem) and is read out. A microphone problem or voice not being set up shows on the handle's line, and the menu offers 'Microphone problem: open Settings\u2026'.",
+   "CHANGELOG: Calm mode now also stops springs and fades in the Ask box, the command and prompt windows and the desk view.",
+   "CHANGELOG: New Text size setting (see the README line above)."
+  ]
+ },
+ {
+  "package": "docs",
+  "id": "forDocs",
+  "forDocs": [
+   "This is the docs package. One line left for the merge: docs/COMMANDS-WSL-SSH.md \u00a74.1 still says '**Offer to bring Ember along when I connect with ssh**'. fix/settings renames the switch to '\u2026with SSH', and fix/bubble rewrites that paragraph, so editing it on fix/docs would add a conflict. Change it to 'SSH' when merging those two.",
+   "\u00a74.7's first bullet still says 'Remove Ember from build-01' on fix/docs on purpose: fix/settings's rewrite of that bullet ('build-01's **Remove helper**\u2026') now merges cleanly over it."
+  ]
+ },
+ {
+  "package": "input",
+  "id": "forDocs",
+  "forDocs": [
+   "README, macOS permissions, Input Monitoring row: without it Ember uses neither the mouse nor the keyboard. Today the row says only that it won't use the keyboard. The app now says: 'Ember needs Input Monitoring (System Settings \u203a Privacy & Security \u203a Input Monitoring) to notice when you take over the keyboard, so it won't use the mouse or keyboard without it.' (#65)",
+   "README, macOS: with an input method selected (Japanese, Pinyin, Korean\u2026), Ember still clicks, scrolls and presses Command shortcuts, but won't type with the keyboard. Switch to a keyboard layout, or let Ember fill the field directly. The check-up shows this as a 'Typing' warning. (#65)",
+   "README, Linux known limitations: while GNOME Typing Assist (Slow Keys, Bounce Keys or Sticky Keys, in Settings \u203a Universal Access) is on, Ember won't use the keyboard on your screen, because its keys would be lost or changed. It still clicks and scrolls and can fill fields directly, Ember's desk is not affected, and the check-up shows a 'Typing' warning. Ember never changes the setting. (#62)",
+   "CHANGELOG: Ctrl+Alt+Space opens the ask box when Caps Lock or the Windows key is remapped to Ctrl or Alt (#61). Under GNOME Typing Assist, Ember refuses the keyboard before it clicks or touches the clipboard, instead of losing or changing keys or switching Sticky Keys off (#62). Ctrl+1, Alt+1 and similar shortcuts no longer add Shift on French, Belgian or Czech layouts (Windows, Linux) (#63). Ember's clicks stay left clicks under a left-handed pointer button map on X11 (#64). On macOS an input method no longer blocks clicks, scrolls or Command shortcuts (#65). Quitting Ember mid-borrow puts the pointer and the keyboard back where they were (#66)."
+  ]
+ },
+ {
+  "package": "lifecycle",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG (Fixed): When Ember can't write its data folder (owned by root after `sudo ember`, a read-only home, a full disk), it says so in a dialog and exits with 1 instead of quitting silently.",
+   "CHANGELOG (Fixed): settings.json and /etc/ember/policy.json saved with a byte-order mark or as UTF-16 (Windows PowerShell 5.1 Set-Content/Out-File) are read as they are; settings no longer reset and the policy no longer locks Ember down.",
+   "CHANGELOG (Fixed): a settings.json that can't be read at start-up is never replaced with defaults. Ember says so, keeps changes in memory and saves them on top of the user's settings once the file reads again.",
+   "CHANGELOG (Fixed): a settings change that can't be saved (full disk, unwritable folder) is explained in the settings window, and the control goes back to the setting in use; a size-slider change that couldn't be saved is saved with the next change.",
+   "CHANGELOG (Fixed): Ember no longer deletes an ~/.config/autostart/ember.desktop it didn't make. Its own entry is marked X-Ember-Managed=true, and the settings window says when another entry starts it at login.",
+   "CHANGELOG (Fixed): audit entries are kept for auditRetentionDays by their own time (not by whole months), pruned at start and once a day, without losing lines another process writes meanwhile.",
+   "CHANGELOG (Fixed): when the audit log can't be written, a task stops with a plain sentence. A step already taken is reported as done (no retry), and the task queue keeps moving.",
+   "CHANGELOG (Fixed): EMBER_LOG_LEVEL takes debug/info/warn/error in any case; anything else means info (and is logged).",
+   "CHANGELOG (Fixed): GPU, utility and page crashes are logged (app.child_process_gone, window.renderer_gone); a crashed SSH prompt or command window closes instead of staying blank.",
+   "CHANGELOG (Changed): the first-run card says the audit record includes what you asked each task to do and how it went.",
+   "docs/DEVELOPING.md 'Where Ember keeps things' (Linux, Windows \u00a710.6, macOS \u00a711.6) audit row: 'every decision and action Ember took, with each task's request and result (JSON lines, each entry kept 30 days)'.",
+   "docs/DEVELOPING.md \u00a77 line 344: 'Start Ember when I log in adds ~/.config/autostart/ember.desktop (marked X-Ember-Managed=true); an ember.desktop you made yourself is left alone, and the settings window says it is there.'",
+   "docs/DEVELOPING.md environment variables: 'EMBER_LOG_LEVEL: debug, info, warn or error (any case); anything else means info.'",
+   "docs/DEVELOPING.md troubleshooting: '\"Ember couldn't start: Ember can't write to its data folder\": make the folder yours again, for example `sudo chown -R $USER ~/.config/ember`.'",
+   "docs/DEVELOPING.md: hand edits of settings.json keep at most the three newest settings.json.bad-<time> copies; a fixable edit is tidied once it has stayed the same for 2 s."
+  ]
+ },
+ {
+  "package": "onboard",
+  "id": 95,
+  "status": "partial",
+  "how": "Done: settingsSection() keeps settings open at the setup check after Start (and for Open settings) when a row holds Ember back. The hello (pure app/main/hello.ts) names the rows, with Open settings and a 15 s hold. The sidebar Setup link has a count badge with words for screen readers, and the ready tagline adds 'The setup check has 1 thing worth a look.' The handle says 'Setup needed' (setupIdle) while Copilot is ready and a row holds Ember back. Round 2: (a) hello() takes cannotWork, so platform's sessionGreeting / policy's modelServiceRefusal merge as one argument (574b393). (b) bd3b079 had made environmentNow a block, which broke base test setup-check.test.ts; 4db7f6d restores the pinned line, and readEnvironment now tells an onSetupRead hook. (c) Driving the real app showed the handle still said 'Ready': start() runs while main.ts loads, and the hook's later `let \u2026 = null` wiped it. 5985287 declares the hook before the start() call; the real app now shows Connecting\u2026 then Setup needed, through Start and after settings closes. (d) The badge uses --type-caption so it scales with fix/css's text size (cb14b73). Left: an 'Open settings' action on a task's own can't-read/can't-capture reply. Those replies are model-written (agent/host.ts, conductor.ts, presenter.ts), so this belongs with the agent/bubble packages (bubble review #18). Proposal: when a step fails on a permission or screen-reading row that holdsBack(), presenter adds {id:'ui:settings'} to that bubble.",
+  "test": "onboarding.test.ts: 'keeps settings open at the setup check\u2026' (settingsSection); \"Ember's hello once it starts\", 5 tests incl. new 'says first why Ember can't work here at all\u2026' (failed first: no cannotWork); 'says Setup needed instead of Ready\u2026' (setupIdle); \"sets the badge's number in a type style\u2026\" (failed on the 11px literal); call sites 'in main.ts', incl. the declaration-before-start() order check (failed on the old order); setup-check.test.ts (failed since bd3b079, passes again). Real app: scratchpad onboard-r2/idle-trace.mjs and onboard-render/start-flow2.mjs end with 'IDLE Setup needed' (was 'Ready')."
+ },
+ {
+  "package": "onboard",
+  "id": "forDocs",
+  "forDocs": [
+   "README Linux install: after turning on screen reading (the setup check's Turn on, or `gsettings set org.gnome.desktop.interface toolkit-accessibility true`), restart apps that were already open, or log out and in, so Ember can read them.",
+   "README Linux/Windows/macOS: if Ember's spoken replies are silent, settings shows a Speaking row and a note under Speak. Linux: `sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng`; Windows: Settings \u203a Time & language \u203a Speech; macOS: System Settings \u203a Accessibility \u203a Spoken Content; then restart Ember.",
+   "README macOS permissions: once a row's Open System Settings didn't take, the setup check offers Reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists; switch each on again.",
+   "README/CHANGELOG first run: the setup check stays on the first-run screen until Start when something needs you. After Start, settings stays at the setup check while a row holds Ember back, Ember's hello names it, and the handle says 'Setup needed'.",
+   "README: the settings window's About section lists 'Report a problem' with the issue address (https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues).",
+   "README/any sample `ember doctor` output: rows are now 'Transparent windows' (was Compositor), 'Window sandbox' (Sandbox) and \"Copilot's file watchers\" (File watchers); another Linux's OS row says Ember is tested on the RHEL 8 family and may work but isn't supported.",
+   "CHANGELOG: first-run terms name only what the never-look list covers ('App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.'); WSL is mentioned only on Windows."
+  ]
+ },
+ {
+  "package": "overlay",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG: A task waiting its turn behind running tasks now shows a grey clock and 'Waiting its turn' instead of the purple 'Needs you'.",
+   "CHANGELOG: While tasks run, Ember's handle says 'Working on 1 task\u2026' / 'Working on N tasks\u2026' instead of 'Ready'. A reason it can't answer you, such as 'Waiting for tasks' or 'Reconnecting\u2026', still shows.",
+   "CHANGELOG: Pressing Stop on a task card shows 'Stopping\u2026' at once. Stop is now larger and red-tinted, and a long result is kept to four lines on its card.",
+   "CHANGELOG: The status pill moves to the bottom of the screen when it would cover the control Ember is typing into or clicking. The task cards move to the bottom-left when they would cover it.",
+   "CHANGELOG: With more than one display, Ember keeps off only the task cards on its own display, and shows its bubble only on the display it is on.",
+   "CHANGELOG: Ember's movement follows the desktop's reduce-motion setting as soon as it changes, without a restart.",
+   "CHANGELOG: In the desk window, once you take over, screen readers are told that your keys go to the desk and that Ctrl+Alt+End hands it back."
+  ]
+ },
+ {
+  "package": "packaging",
+  "id": "forDocs",
+  "forDocs": [
+   "README.md, Linux section, new 'Updating' line: \"Quit Ember, then run sudo dnf upgrade ember (and ember-voice-models if you installed it); Ember starts again at your next login. If Ember was running during an update (GNOME Software or automatic updates included), it asks the next time it opens a window: choose Restart Ember to finish the update.\"",
+   "README.md uninstall list (#39): add Ember's remote runtime cache, ~/.config/ember/remote/runtime/ (Linux; the same 'remote/runtime' folder in Ember's data folder on Windows and macOS). Ember now deletes archives of Node versions it no longer pins, but the folder stays until you remove Ember's data folder.",
+   "docs/DEVELOPING.md \u00a713, replace the sentences from \"CI builds both packages on `rockylinux:8`\" through \"filled the account's artifact storage.\" with: \"CI builds Ember's RPM, the speech models RPM (from the cached, checksum-verified models) and the AppImage on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It then installs the speech models RPM, runs `rpm -V` on both, writes an administrator's `/etc/ember/policy.json`, rebuilds both as Release 2 (`EMBER_RPM_RELEASE=2 scripts/package/rpm.sh`), upgrades to them with `dnf upgrade`, runs `rpm -V` again, checks `chrome-sandbox` is still setuid root and removes both with `rpm -e`. It fails if `/opt/ember`, `/usr/share/ember`, `/usr/bin/ember`, the menu entry or `/usr/share/doc/ember` is left, or if the policy changed or belongs to a package. It uploads Release 1's packages only when asked (\u00a713): **Actions \u203a ci \u203a Run workflow** with **packages** ticked (kept 3 days); at about 450 MB a run with the speech models, uploading them every time filled the account's artifact storage.\"",
+   "docs/DEVELOPING.md \u00a713, replace \"staging stops if a bundled package's licence isn't in the spec's `License:` tag\" with: \"staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles (sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly holds, eSpeak NG's GPL-3.0-or-later among them: scripts/package/licences.mjs), or if a bundled package ships no licence file and licences.mjs supplies none (the texts are in packaging/licences/; sherpa-onnx's is pinned to 1.13.8, whose WebAssembly was checked)\".",
+   "docs/DEVELOPING.md \u00a713: under the package table, add that the example policy (/usr/share/doc/ember/policy.example.json) turns commands on for this computer, WSL and SSH, and leaves ssh.allowedHosts out. With allowedHosts set, even to [\"*\"], the settings window says SSH is limited to some computers. Its notes are in /usr/share/doc/ember/policy.README.",
+   "docs/DEVELOPING.md \u00a714.4, replace the paragraph starting \"**Integration suites**\" with: \"**Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them on pull requests and pushes to `main` (and `ember-improve/20261022-sshwsl-*`) that touch SSH, WSL or commands code (its `paths` list: `app/main/{commands,remote,wsl,targets}`, `app/main/admin.ts`, `app/remote`, `app/askpass`, `app/shared`, the command and prompt windows, `sidecar/atspi`, `scripts/package`, the suites and the workflow), and on every `v*` tag. **Actions \u203a remote \u203a Run workflow** (or `gh workflow run remote.yml --ref <branch> -f only=ssh`) takes `ref` and `only` (`all`, `unit`, `commands`, `wsl`, `ssh`, `macos`, `wayland`, `arm64`). The macOS job and the Linux arm64 job run only on release tags, when dispatched, and on Mondays (macOS minutes cost ten times Linux's). The arm64 job runs on `vars.EMBER_ARM64_RUNNER` (default `ubuntu-24.04-arm`; set it to `none` where the repository has no such runner). A suite named in a job that doesn't exist yet is skipped (`run-integration.mjs --allow-missing`). Each job's set-up belongs to the package named above it in the workflow.\"",
+   "docs/DEVELOPING.md \u00a714.4 table: `unit-matrix` runner becomes \"`ubuntu-24.04`, `windows-2022`, and `macos-15` when dispatched and on release tags\". In the `ssh-linux` row add \"a third sshd on 2224 that takes only passwords (and keyboard-interactive), for a user with a password made for the run\" and the variables `EMBER_SSH_TEST_PASSWORD_PORT`, `EMBER_SSH_TEST_PASSWORD_USER`, `EMBER_SSH_TEST_PASSWORD`. New row `ssh-el8-client` | \"a `rockylinux:8` container as the client (OpenSSH 8.0, as on RHEL 8), as a normal user, against sshds in the container on 2222, 2223 (jump host) and 2224 (passwords only)\" | `ssh-transport` | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_PASSWORD_PORT`, `EMBER_SSH_TEST_PASSWORD_USER`, `EMBER_SSH_TEST_PASSWORD`. New row `ssh-linux-arm64` | \"`vars.EMBER_ARM64_RUNNER` (default `ubuntu-24.04-arm`), sshd on 127.0.0.1:2222; release tags, dispatch and Mondays\" | `remote-ssh`, `remote-e2e`, `remote-desktop` (under Xvfb, koffi's arm64 build) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_REMOTE_DEV` (desktop). `ssh-macos` row: \"`macos-15`; release tags, dispatch and Mondays\".",
+   "docs/DEVELOPING.md command table (near line 469): add the row \"`node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII)\".",
+   "CHANGELOG.md: \"Ember's windows load from a folder whose name has a % in it (for example '100% Free' or '50%AB'); before, they stayed blank or every settings request failed.\" / \"Linux RPM: when an update replaces Ember's files while it runs, Ember offers to restart; dnf also says so.\" / \"AppImage: starts without Chromium's sandbox where unprivileged user namespaces are off (Debian's kernel.unprivileged_userns_clone=0 too); the check-up warns instead of failing.\" / \"The example policy turns commands on for this computer, WSL and SSH, and has notes beside it (policy.README).\" / \"Licences: the packages now carry the licence texts for the Copilot SDK, koffi's platform builds and sherpa-onnx (whose WebAssembly includes eSpeak NG under GPL-3.0-or-later); the RPM's License tag names GPL-3.0-or-later.\" / \"CI runs the SSH, WSL and commands suites on pull requests, main and release tags, including RHEL 8's OpenSSH 8.0 client, password sign-in and Linux arm64.\""
+  ]
+ },
+ {
+  "package": "perception",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG: On macOS without the Screen Recording permission, Ember now says so instead of 'the window is off screen', and once a run shows 'I can't take screenshots' with a button to the setup check.",
+   "CHANGELOG: Secret-field words now cover wallet seed and recovery phrases, '6-digit code' style and other 2FA code prompts, security, session, refresh and ID tokens, master and SSH keys, JWT, webhook, private, GPG and SSH signing keys, and show-password toggles in Korean, Danish, Norwegian, Hungarian, Romanian, Greek, Vietnamese, Indonesian, Arabic, Hebrew and Thai.",
+   "CHANGELOG: On Windows, long web pages scrolled down are read by what shows (no more empty reads or refused screenshots on very big pages); names that carry a secret field's value are withheld on Windows and macOS as on Linux.",
+   "CHANGELOG: A window screenshot of a window that can't be found takes no picture, and the text says only that it can't be found.",
+   "README / privacy notes: an app's own popups over its window are checked for secret fields only when accessibility lists them as windows (macOS menus and some Windows popups aren't), as DEVELOPING.md now says."
+  ]
+ },
+ {
+  "package": "platform",
+  "id": "forDocs",
+  "forDocs": [
+   "README (macOS update steps, next to the Accessibility, Screen Recording and Input Monitoring re-grant steps): After every update macOS asks for your login keychain password so Ember can read its saved sign-in ('Ember Safe Storage'). Choose Always Allow. If you choose Deny, Ember says it couldn't read the saved sign-in and you sign in again from settings.",
+   "README.md:44 and docs/DEVELOPING.md:731 (Windows microphone): give both Windows paths, matching WINDOWS_MIC_FIX: Settings \u203a Privacy & security \u203a Microphone \u203a Let desktop apps access your microphone (on Windows 10: Settings \u203a Privacy \u203a Microphone \u203a Allow desktop apps to access your microphone). Also mention that the setup check now has a Microphone row with an Open button, and the Voice line has the same button.",
+   "docs/DEVELOPING.md:941 (Secure input row): use the doctor's wording: an app (the row names it) has secure keyboard entry on, so Ember won't take screenshots or use the mouse or keyboard until it's off. Fix: close the password field, or turn off Secure Keyboard Entry there (Terminal: Terminal \u203a Secure Keyboard Entry). Note that the settings setup check now shows this row too.",
+   "docs/DEVELOPING.md:730 (Windows Accessibility helper / display scaling row): mention the advice: Set every monitor to the same scale in Settings \u203a System \u203a Display, then restart Ember. If it still clicks in the wrong place, report it at https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues.",
+   "README: add a 'Report a problem' link to https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues (the setup check and doctor advice now point there).",
+   "README / Linux install docs: in a GNOME on Wayland session Ember says so in its greeting, takes no screenshots and doesn't borrow the mouse or keyboard (reading apps still works), and opens settings even when started at login. To use it fully, log out, click the gear on the login screen, choose 'GNOME on Xorg' and log in again.",
+   "CHANGELOG: macOS names secure keyboard entry and the app holding it, instead of 'a system dialog'. A setup-check Secure input row is added.",
+   "CHANGELOG: on macOS, Ember reads its saved sign-in without freezing while the keychain asks after an update. It says when the keychain refused, and shows 'Reading your saved sign-in from the keychain\u2026' only on the first start after an update.",
+   "CHANGELOG: on non-English Macs, open_app finds Apple's apps by their localized names (Rechner, Systemeinstellungen) and recognises their windows.",
+   "CHANGELOG: Windows setup check has a Microphone row, and the Voice line has a button to open the microphone privacy settings. The microphone advice names both Windows 10 and Windows 11 paths.",
+   "CHANGELOG: the mixed display scaling advice gives a workaround and the issue-tracker link instead of 'Tell the Ember team.'",
+   "CHANGELOG: on Windows and macOS the command window and Ember's small cards stay out of screen captures, so capture-based remote tools show a blank space there (docs/COMMANDS-WSL-SSH.md L27)."
+  ]
+ },
+ {
+  "package": "policy",
+  "id": 116,
+  "status": "partial",
+  "how": "Round 1: quote() turns double-quote look-alikes into apostrophes, line breaks into spaces, and drops format characters. Typed text shows whole up to 160 characters; longer text shows its first 110 and last 40 characters and its length. Round 2: the 'value' question quotes the value with quote(r.value, 40), with an ellipsis when cut, so 'Set \u201cBrightness\u201d slider to \u201c50 in Firefox? Nothing is sent. Delete\u2026\u201d' can't pass for Ember's own words. Decision.detail now carries the whole cleaned typed text whenever the question cut it. Left for the bubble and agent packages: show Decision.detail on the card, expandable (see notes).",
+  "test": "test/unit/policy-question-text.test.ts: 'hands over the whole of a typed text the question cut' (MIDDLE-SECRET-PAYLOAD is not in the prompt but is in detail; \u23ce and direction controls are cleaned; no detail when nothing was cut) and 'quotes a value set on a slider'. 2 failed against the round-1 policy.ts, both pass now."
+ },
+ {
+  "package": "policy",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG (Security): If the administrator's policy can't be read or has a mistake, Ember locks down. It now also connects to no model service (neither GitHub Copilot nor the organisation's own endpoint) and deletes no audit records until the policy is fixed.",
+   "CHANGELOG (Admin): Ember reads the administrator's policy again every 10 seconds. When it changes, and the next read confirms it, Ember stops everything and stays locked down until the user clicks Restart Ember, which reads the new policy whole.",
+   "CHANGELOG (Admin): confirmEveryAction now asks before every command too (on this computer, in WSL and over SSH).",
+   "CHANGELOG (Admin): a policy.json saved with a UTF-8 byte-order mark is read normally. An unknown key's message says this Ember may be older than the policy.",
+   "CHANGELOG (Safety): Linux and macOS remote-desktop and virtual-machine viewers (Remmina, virt-manager, Boxes, VNC/RDP viewers, Screen Sharing, UTM, Parallels, VMware, VirtualBox\u2026) are remote surfaces. Ember never acts in them and blacks them out of screenshots.",
+   "CHANGELOG (Safety): in File Explorer and Finder, Ember never opens an item whose name shows no file type, because it may be a program, and it asks every time before opening one that shows a document's type. Folders are opened by their path, from Explorer's navigation pane, or from Finder's sidebar places.",
+   "CHANGELOG (Safety): every setting changed in GNOME Settings, Windows Settings or macOS System Settings asks first, every time.",
+   "CHANGELOG (Safety): on Linux, Ember refuses Ctrl+Alt with a key not named in Latin (another script's or an accented letter), which another keyboard layout could put on Ctrl+Alt+T or Ember's own shortcuts.",
+   "CHANGELOG (Safety): questions about typed text show texts up to 160 characters whole; longer ones show the start, the end and the length. Quote marks in names can no longer rewrite the question, and a slider's new value is quoted.",
+   "CHANGELOG (Fix): the never-look defaults 'keeper', 'seahorse' and 'strongbox' match the app only, so a page titled 'Housekeeper wanted' is no longer treated as private.",
+   "CHANGELOG (Fix): when the organisation's own model service is in use, the WSL, commands and SSH consent cards name it instead of GitHub Copilot.",
+   "CHANGELOG (Fix): after Stop everything, the bubble names any part still stopping (commands, an SSH computer\u2026).",
+   "Release notes / README (Admin): v1 has no confirmation for new domains or downloads in a granted browser, and the policy has no domain rules.",
+   "README admin-policy section (if it repeats DEVELOPING.md \u00a75): a locked-down Ember means no actions, commands or listening, no model service, and no audit pruning. A changed policy needs Ember restarted."
+  ]
+ },
+ {
+  "package": "prompt",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG: First-use consent cards (commands, WSL, SSH) now open big enough to show the whole card on most screens, and Turn on or Connect works only once the whole card has been in view ('Scroll down to read it all first.').",
+   "CHANGELOG: The SSH sign-in, host-key and consent cards now take the keyboard on macOS and Windows. If another app keeps it, the card and a notification say so before you type.",
+   "CHANGELOG: Cancel or Esc on an SSH sign-in card now ends the connection quietly. A sign-in card Ember can't show ends with \"Ember couldn't show build-01's sign-in question.\" and Try again.",
+   "CHANGELOG: The SSH consent card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac, and says that a server with no desktop gets commands only.",
+   "CHANGELOG: Ember and its bubble now step clear of the command window and the sign-in or consent window while they ask."
+  ]
+ },
+ {
+  "package": "remote",
+  "id": 195,
+  "status": "partial",
+  "how": "I took the reviewer's docs option and added no offer the user didn't ask for. Starting discovery at launch would start a new process for every Windows user. In code, while WSL is off, naming a distro that discovery already listed ('in Ubuntu') now offers 'Ember can work in WSL' once a run, as 'in WSL' does. 'Linux' alone never offers. Since round 2 only distribution names count, so 'in build' with build-env listed offers nothing. Left for the docs package: docs/COMMANDS-WSL-SSH.md \u00a73.1, now line 281 ('When Ember first sees WSL it offers\u2026'), needs one sentence. That package rewrites the same line for its #36, so I left it alone to avoid a conflict (see forDocs).",
+  "test": "targets-runtime 'while WSL is off, still binds here for in Ubuntu but counts it for the guard and offers to turn WSL on (review #195)'. It failed before and passes now."
+ },
+ {
+  "package": "remote",
+  "id": "forDocs",
+  "forDocs": [
+   "docs/COMMANDS-WSL-SSH.md \u00a73.1 (line 281, 'When Ember first sees WSL it offers\u2026'), owned by the docs package because of its #36: say the offer comes when you ask for WSL while it is off. For example: 'While WSL is off in Ember, asking for it (\"in WSL\", or a distro Ember has listed, such as \"in Ubuntu\") offers \"Ember can work in WSL\" (Open settings, Not now) once a run; \"Linux\" alone never does. Otherwise turn it on in Settings \u203a Computers.'",
+   "CHANGELOG: 'Ember looks for your own ssh sessions, and offers to bring Ember along, only after you have added a computer. ssh runs that carry a command (git over ssh, scp, rsync) or use -T, and git hosting services, are never offered.'",
+   "CHANGELOG: 'A computer added by its full name also answers to its first part (\"on build-01\" for build-01.example.com), and a distribution's WSL distro to its first word (\"in Ubuntu\" for Ubuntu-22.04). A distro you imported, such as build-env, answers only to its full name. A longer name wins only when written as one name (\"on db-01, back up\u2026\" with db-01 and db-01-backup added asks which one).'",
+   "CHANGELOG: 'Adding a computer Ember already has under another spelling connects the one it has and says \"Already added as build-01\".'",
+   "README/install: when SSH is missing, Ember now gives only your OS's install step (Linux: sudo dnf install openssh-clients; Windows: Settings \u203a Apps \u203a Optional features \u203a OpenSSH Client). Any README text that quotes the old combined message should match."
+  ]
+ },
+ {
+  "package": "settings",
+  "id": "forDocs",
+  "forDocs": [
+   "README.md line 91 (line 130 on fix/docs): 'To check this Mac, run Ember's check-up through `open`' \u2192 'run Ember's setup check through `open`'. `ember doctor`'s report now opens 'Ember <v> setup check', the window's name for it (review #229).",
+   "CHANGELOG.md (fix/docs line 104): the '**Check-up** (`ember doctor` and the settings window's setup check)' bullet \u2192 '**Setup check** (`ember doctor` and the settings window)'; line 108 '\u2026the check-up doesn't look inside your distros' \u2192 'the setup check doesn't look inside your distros'; line 31 '**Check-up**:' \u2192 '**Setup check**:'.",
+   "CHANGELOG.md: `ember doctor`'s heading now reads 'Ember <version> setup check' (it was 'check-up'), and rows take the settings window's names. Linux 'Reading apps' \u2192 'Screen reading'. macOS 'Accessibility' \u2192 'Reading and using apps', 'Microphone access' \u2192 'Microphone', 'Location' \u2192 'Applications folder'. Windows 'Microphone privacy' \u2192 'Microphone'. On Windows and macOS the extra 'Microphone \u00b7 Not checked here' row is gone. Scripts that parse the report should accept both headings, as scripts/package/doctor-rows.mjs now does.",
+   "CHANGELOG.md: Settings \u203a What Ember did now lists each command's question, answer, refusal and end (where it ran, the shell and how it ended, never the command's text), and each connection made, lost, ended or failed. A reconnect that gives up is one line ('Reconnect to build-01'), and Ember's helper removed is a line too. Reasons there speak to you ('your never-look list', '\u2026wasn't yours.').",
+   "CHANGELOG.md: Settings \u203a Computers. 'Remove helper' (it was 'Remove Ember from <computer>') asks first, says it stops anything running there and forgets the computer here, shows 'Removing Ember's helper\u2026' with a Cancel, and says when it is done. Forget asks first. A connecting computer offers Cancel. Rows say 'Connected, commands off' (with what to do, or the organisation's line when it turned commands off on SSH) and 'Connected, but not answering'. A distro reads 'Off' while WSL is off in Ember. The default distro is marked 'default for \u201cin WSL\u201d'."
+  ]
+ },
+ {
+  "package": "shell",
+  "id": 177,
+  "status": "partial",
+  "how": "Round 1 (a8e1c4d): mac-bundle.mjs signs with --options runtime and --entitlements. ENTITLEMENTS are allow-jit and allow-unsigned-executable-memory (V8), disable-library-validation (an ad hoc signature has no team ID), device.audio-input and automation.apple-events. After signing it reads back the runtime flag and the entitlements, and it fails closed if the flag is missing or if allow-dyld-environment-variables or get-task-allow is present. The fuses.mjs RunAsNode comment now states the TCC caveat. Round 2 (232ecef), for the verifier's CI point: the macOS runner logs say 'System Integrity Protection status: disabled.' (cilogs/ci133, 2 matches). In both packaged checks (macos and macos-x64), the `codesign --display | grep runtime` line stays unconditional. The DYLD_INSERT_LIBRARIES probe now runs only when `[[ \"$(csrutil status 2>&1)\" == *\"status: enabled\"* ]]`. Otherwise the step prints `::notice::SIP is off on this runner: the DYLD_* check can't prove anything here`. I used a [[ ]] string test rather than `csrutil | grep -q`, so GitHub's `bash -eo pipefail` can't turn an early grep exit into a false result. Checked by parsing the YAML, running `bash -n` on both run blocks, and running the SIP block with stub csrutil (on/off) and stub binaries (one honours DYLD, one ignores it). SIP on: the ignoring binary passes and the honouring one fails the step (exit 134). SIP off: the notice prints and the step goes on. So the DYLD behaviour is unproven in CI on the hosted runners: there only the runtime flag is checked. The docs lines the verifier asked for are in forDocs (docs/** belongs to the docs package). Still left, as in round 1: RunAsNode stays on. The AX sidecar host, the Linux desk helper, the commands' job host, SSH askpass and the WSL launcher all run Ember's binary with ELECTRON_RUN_AS_NODE. So on macOS, a program running as the user can start Ember's binary as Node and, when launchd starts it, act with Ember's Accessibility and Screen Recording grants. Proposal: move those helpers to utilityProcess.fork (stdio pipes) or a small separately signed Node helper, then set RunAsNode:false and drop CI's 'node mode kept' checks. That spans the perception, cmdcore/commands, remote and platform packages. Library validation stays off until Ember has a Developer ID team.",
+  "test": "test/unit/packaging.test.ts. Round 1: 'signs under the hardened runtime with only the entitlements Ember needs (review #177)' and 'refuses a signature without the hardened runtime, or with an entitlement that lets code in'. Round 2: 'read the hardened runtime's flag on both Macs, and try DYLD_* only where SIP is on, as on users' Macs (review #177)'. For both jobs it checks that the unconditional flag line comes before the exact csrutil-guarded if/else/fi block, and that DYLD_INSERT_LIBRARIES appears once. It failed before the ci.yml change and passes now. Scratch: scratchpad/shell/r2/{macos,macos-x64}-sip.sh with the stubs in scratchpad/shell/r2/stub."
+ },
+ {
+  "package": "shell",
+  "id": 245,
+  "status": "partial",
+  "how": "Round 1 (e149eac): setUpAppChrome sets nativeTheme.themeSource = 'dark' on every OS before any window opens. That makes Windows title bars and Electron menus dark, and macOS title bars, menus and NSAlert dialogs. Round 2 (272fbbe), for the verifier's must-fix: themeSource doesn't reach GTK. I reproduced it on the round-1 build with the verifier's variant-probe.mjs: both Ember windows had variant=None. createHomeWindow, createCommandWindow and createPromptWindow now pass darkTheme: true (one line each; Electron reads it on Linux only). After a rebuild, the same probe shows the settings window ('Ember') with variant=b'dark'. The other window, still None, is the handle (mapped by getNativeWindowHandle in scratchpad/shell/r2/app-variant.mjs). It is frameless and has no title bar. The command and prompt windows aren't opened at start, so I bundled windows.ts on its own with esbuild and made all three windows with its factories in Electron 44 (scratchpad/shell/r2/winmod/factories.cjs). Settings 'Ember', command 'Ember commands' and prompt 'Ember' all read _GTK_THEME_VARIANT=b'dark'. For the should-fix, the setUpAppChrome JSDoc and DESIGN.md's Colour line now say only what is true: title bars are dark on Windows, macOS and GNOME, native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the GTK theme, and Windows' message boxes (the quit question) stay light. The main.ts comment now says 'the dark native theme', not 'dark native chrome'. Marked partial because part of the finding's scenario can't be met by themeSource or darkTheme. The GTK quit question and Menu.popup menu on Linux stay light under a light GTK theme (verifier's dark.png). The Windows quit question is a TaskDialog, which has no dark mode. Proposals, both beyond this package: on Linux, set GTK_THEME=Adwaita:dark in the launchers (/usr/bin/ember, the AppImage's AppRun), since GTK is initialised before main.js runs; on Windows, a dark quit question would need Ember to draw its own dialog, which is a design task.",
+  "test": "test/unit/app-chrome.test.ts 'the native theme (review #245)'. 'is dark on every OS, as every page is' is from round 1. New: 'asks GTK for its dark variant on the settings, command and prompt windows, so GNOME draws their title bars dark', which checks options.darkTheme === true for all three factories on linux, win32 and darwin, through an electron mock that records BrowserWindow options. It failed before the change ('settings on linux: expected undefined to be true') and passes now. Real X11 evidence: variant-probe.mjs (before None, after b'dark') and factories.cjs (all three b'dark')."
+ },
+ {
+  "package": "shell",
+  "id": "forDocs",
+  "forDocs": [
+   "DEVELOPING.md \u00a711.5 macOS staging, the 'signs the whole bundle ad hoc last and verifies it' bullet (~line 878): signs the whole bundle ad hoc last, under the hardened runtime (`--options runtime`), with mac-bundle.mjs's ENTITLEMENTS: JIT and unsigned executable memory for V8, library validation off (an ad hoc signature has no team ID, so library validation would refuse Electron Framework, koffi, sharp and the speech runtime), the microphone and Apple events. It then reads back the runtime flag and the entitlements, fails if `allow-dyld-environment-variables` or `get-task-allow` is there, and verifies the bundle (`codesign --verify --deep --strict`). Keep the rest of the bullet (flipping the fuses voids Electron's signature\u2026).",
+   "DEVELOPING.md, a caveat by the macOS fuses bullet (~line 876), with the node-mode wording at ~line 328 (Linux) and ~line 580 (Windows, 'Node mode kept for the accessibility host') naming every helper: RunAsNode stays on because Ember's helpers run its binary as plain Node: the accessibility host, the desk helper on Linux, the commands' job host, SSH's askpass helper and the WSL launcher. So any program running as the user can start Ember's binary as Node with a script of its own. On macOS, if it is started so that macOS holds Ember responsible for it (by launchd, say), it acts with Ember's Accessibility and Screen Recording grants. This stays so until the helpers leave ELECTRON_RUN_AS_NODE (review #177). The hardened runtime closes the DYLD_* and debugger ways in.",
+   "DEVELOPING.md, where CI's macOS packaged checks are described: CI reads the hardened-runtime flag on Ember.app's signature, and tries DYLD_INSERT_LIBRARIES only where SIP is on. The hosted macOS runners report SIP off, so there it leaves a notice, and the DYLD behaviour is unproven in CI.",
+   "DEVELOPING.md ~line 875 ('Ember has a Dock icon and an app menu, whose Quit goes through Ember's own question while a task runs'): the app menu also starts with About Ember, which shows the version and the MIT licence.",
+   "README (keyboard or settings section) and CHANGELOG: on Windows and Linux Ember's windows have no menu bar any more. Ctrl+Q no longer quits from a window (use Quit Ember on the handle's menu, which asks first while something is running), and Ctrl+R, Ctrl+W, F11, Ctrl+Shift+I and the Alt menu bar are gone. The settings window zooms with Ctrl+= or Ctrl++, Ctrl+- and Ctrl+0 (back to 100%), from 58% to 249%.",
+   "CHANGELOG: DevTools can't be opened in a packaged Ember.",
+   "CHANGELOG: Ember's title bars are dark on Windows, macOS and GNOME whatever the system's appearance; menus and dialogs are dark on macOS, and menus on Windows. On Linux, menus and dialogs follow the GTK theme, and Windows' message boxes stay light.",
+   "CHANGELOG: macOS: About Ember in the Ember menu; the app is signed (ad hoc) under the hardened runtime.",
+   "CHANGELOG: a simpler app icon at 16 to 32 px that holds on dark taskbars; on Linux every Ember window carries the icon (AppImage and development runs included).",
+   "CHANGELOG: the quit question says 'Quitting stops them where they are' for several tasks; 'the tasks that are running finish' in the reconnect messages."
+  ]
+ },
+ {
+  "package": "voice",
+  "id": 255,
+  "status": "partial",
+  "how": "Round 1, unchanged. SilenceWatch (app/voice/watchdog.ts) sends 'silent' on after a minute of frames that are exactly zero, and off when sound returns. VoiceService shows \"The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.\" (state error, no restart). Left: the optional part, starting the voice process only once the mic page captures, which would free the ~300 MB kept loaded with no microphone. Doing it adds the 3-6 s model load to every start. Proposal: kill the process while the mic page reports 'lost' with NotFound, and start it again on 'capturing'.",
+  "test": "voice-process.test.ts 'tells main when the microphone sends only digital silence\u2026' and voice-service.test.ts 'says when the microphone sends only silence\u2026' failed before and pass now."
+ },
+ {
+  "package": "voice",
+  "id": 260,
+  "status": "partial",
+  "how": "Round 1: `pactl subscribe` runs beside parec. A server change starts parec again at once, without reporting the stream off, and the microphone consent's Linux note says the monitor keeps the sound output from going idle. Round 2 (verifier, the restart fired too often): parec's run remembers the default output it started on, from the 'Default Sink:' line of `pactl info` (RHEL 8's PulseAudio 14 has no get-default-sink). pactl runs with LC_ALL=C because its words are translated. 500 ms after \"Event 'change' on server\", parec restarts only when the default output is a different one, or when `pactl info` can't tell (fails or takes over 2 s). A change to the default input or another server setting leaves parec running with no gap. Left: proof on real PulseAudio. This container has no PulseAudio, so the RHEL 8 hardware check is listed under CI-only.",
+  "test": "voice-speakers.test.ts: 'starts parec again on the new default output when it changes', 'leaves parec running when the server changed but the default output didn't', 'starts parec again when it can't tell which output is the default' and 'reads pactl in English'. All 4 fail on 3e036ed^ and pass now (10/10)."
+ },
+ {
+  "package": "voice",
+  "id": "forDocs",
+  "forDocs": [
+   "CHANGELOG: \"Speak replies, questions and results out loud\" is now a choice: When a screen reader runs (default), Always, or Never. Never keeps Ember quiet even while a screen reader runs. An organisation that turns speaking off shows it as Never (managed).",
+   "CHANGELOG: While this computer's screen is locked, or another session is in front, Ember doesn't listen for \"Hey Ember\", doesn't speak, takes no requests (\"Your screen is locked, so I didn't take that.\") and doesn't read or act on the screen. Tasks that used the screen stop, and are reported once you're back. A task running only commands goes on.",
+   "Install docs (Linux): lock detection uses logind through `gdbus` (glib2, installed with GNOME on RHEL 8). Without gdbus, Ember reads loginctl every 5 s.",
+   "CHANGELOG: Where Ember can't tell its own voice from yours (Windows, macOS, and Linux without parec), spoken announcements name the stop shortcut (\"Press Windows key, Alt, X to cancel.\") instead of \"Say 'Ember, stop'\".",
+   "CHANGELOG: Damaged speech models show \"The speech models look damaged. Download them again.\", and the download button repairs them. Models installed with Ember are never changed: the download goes to your own models folder.",
+   "CHANGELOG: A microphone that sends only silence (muted, or the wrong input) is now reported instead of \"Listening for 'Hey Ember'\".",
+   "CHANGELOG: The model download shows \"Unpacking speech models\u2026 N%\" after the last byte, instead of sitting at 100%.",
+   "CHANGELOG / install docs (Linux): speaker rejection follows the default sound output when it changes (pactl from pulseaudio-utils, as for parec). While Ember listens, it keeps the output device from idle-suspending.",
+   "CHANGELOG: The voice process restarts by itself when it stops responding or its recognizer keeps failing, using the 1/5/30 s backoff."
+  ]
+ }
+]

@@ -1,0 +1,17 @@
+{
+ "title": "An unasked SSH or WSL offer never waits indefinitely and never shows after the session ended",
+ "owns": "app/main/targets/runtime.ts (showSeenOffer, the WSL first-seen offer), the noticer, the offers board wiring",
+ "items": [
+  {
+   "title": "An unasked SSH offer can wait behind a held \"Can't connect\" / \"Lost\" bubble with no time limit, then show \"You're connected to web-07\" long after that ssh session ended",
+   "severity": "minor",
+   "file": "app/main/targets/runtime.ts",
+   "line": 1194,
+   "scenario": "build-01 is added. A connect fails, so \"Can't connect to build-01 [Try again][Close]\" is shown and held until the user closes it. The user runs `ssh deploy@web-07` in a terminal, and the noticer posts the unasked offer on the new offers board (X3 fix: claim \"reply\", ms OFFER_MS). The user then ends that ssh session and leaves the failure bubble up. 45 minutes later they press Close. The waiting offer then appears: \"You're connected to web-07 \u2014 Bring me there too? [Bring Ember][Not now][Don't offer again]\". It is untrue at that point, and it holds Ember still for 25 s (250 s with More time on). It also uses up the one offer per run for that destination, because noticer.offered was marked when the offer was posted. The same happens behind a held \"Lost build-01\", and with the WSL first-seen offer (line 1284).",
+   "evidence": "I reproduced it with a scratch vitest file that copies test/unit/targets-runtime.test.ts and adds one case. It uses the file's own screenRig/rig with both boards (bubbles + offers). The noticer sees `ssh deploy@web-07`, then userSshProcesses returns [] for 10 ticks, the test advances 45 min and presses the failure bubble's Close. Output: `SCRATCH after Close: {\"title\":\"You're connected to web-07\",\"thought\":\"Bring me there too? I'll open my own connection with your SSH settings.\",\"actions\":[\"Bring Ember\",\"Not now\",\"Don't offer again\"]}` and the assertion fails. File: /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix2-review/tree/test/unit/xr-stale-offer.test.ts (run from that tree with `npx vitest run --config vitest.config.mts test/unit/xr-stale-offer.test.ts -t SCRATCH`). Cause in the code: showSeenOffer posts with `{ ms: OFFER_MS, claim: \"reply\" }` (runtime.ts:1194) to the offers board (runtime.ts:696-701). Presenter.armHide only stores pendingHide while the bubble is unseen (presenter.ts:716), so the 25 s count starts only once the offer reaches the screen, and a held bubble can keep it unseen forever. Nothing withdraws the offer when the ssh process goes away, and nothing checks again at show time. The existing X3 test ('wait behind a held \"Can't connect\" bubble, which stays until it is closed') only checks that the offer is still waiting after 60 s.",
+   "fix": "Bound how long an unasked offer may wait. Either (a) drop it when it hasn't reached the screen within OFFER_MS of being posted (or check the noticer's live ssh processes when it is about to show), and take its key out of noticer.offered so it can be offered again while the user is still connected; or (b) take X3's other suggestion: skip posting an unasked offer while a held lost:/fail:/stalled:/connecting: bubble is shown, and leave it unoffered for a later tick. Add a test where the ssh session ends before the held bubble is closed.",
+   "id": "R-stale-offer",
+   "from": "round 2 final adversarial review"
+  }
+ ]
+}

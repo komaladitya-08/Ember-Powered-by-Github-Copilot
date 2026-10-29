@@ -1,0 +1,26 @@
+{
+ "title": "Text size reaches the terminal and card buttons; forced colours keep onboarding's Start row readable",
+ "owns": "app/renderer/shared/ember.css and page styles, app/renderer/command/** (terminal options), app/renderer/onboard or home onboarding styles, app/main/page-prefs.ts",
+ "items": [
+  {
+   "id": "F-termfont",
+   "from": "follow-up",
+   "text": "The command window's terminal (xterm) font doesn't scale with Settings > Comfort & access > Text size (Default, Large 115%, Larger 130%), while the rest of the window does. Make the terminal's font size follow the page's text scale (and refit the terminal when it changes), with a test."
+  },
+  {
+   "id": "F-btn-minheight",
+   "from": "follow-up",
+   "text": "Card buttons' min-heights (task cards, prompt and consent cards, the bubble's buttons) don't grow with Text size, so larger text overflows or clips them. Scale them with the text scale; test through the repo's DOM/CSS tests or a pure helper."
+  },
+  {
+   "id": "F-forced-colours",
+   "from": "follow-up",
+   "text": "Under forced colours (Windows High Contrast, @media (forced-colors: active)), onboarding's sticky Start row loses its opaque cover (backgrounds are dropped), so the content scrolling under it shows through the Start button's row. Keep it opaque with system colours (Canvas/CanvasText) and a border; test the CSS rule exists."
+  },
+  {
+   "id": "F-57-left",
+   "from": "follow-up",
+   "text": "css #57 (text size) left items, from its report: Round 1 (29b0b29): a Text size setting (Default, Large 115%, Larger 130%) in Settings > Comfort & access. It multiplies the type tokens and each page's own px sizes through html[data-text-size], which main's page-prefs.ts sets on every page, in Settings, the bubble, task cards, the handle, and the command and prompt windows. Round 2, for each verifier problem: (1) Windows (84312e3): createCommandWindow and createPromptWindow size themselves by the text scale (windows.ts setTextScale, which main sets at start and on change): width, height, minWidth and minHeight, inside the primary work area and never below the usual size. The command window is 874x552 at Large and 988x624 at Larger; the prompt window 506x345 and 572x390. New in this round (14d1cae): the controllers make each window once and then only hide it, so a size chosen later never reached it until a restart. windows.ts now keeps both windows and resizes any open one when the scale changes: size times the change, never below the scaled minimum, centred where it was and inside its display. Checked on real Electron under Xvfb, hidden and non-resizable windows included. Measured at the new sizes (scratchpad/fx-css/vsize2.mjs): the prompt's buttons sit 16 px from the bottom at every size, and Allow and Not now end at y=501 of 552 and y=542 of 624. In a fresh scratch merge with fix/cmdwin's tip (9011512), Allow and Not now are the topmost element at their centre at all three sizes, in the old and the new window sizes (allow-merge.mjs). On fix/css alone the card area's 72vh cap covers them even at the default size (base's #265, fixed by cmdwin's sticky row). The terminal still fits at every size: its reported rows end about 125 px above the window's bottom (term-fit.mjs). (2) Pill (1a6c577, the verifier's option a): the pill's width is 200 px times the scale (230 and 260 px), and it repositions when the size changes; main tells the desk view, and the overlay re-reads the handle's place about once a second. Renders show 'Microphone problem' and the 'build-01' badge whole at Larger (lineClipped false). (3) Bubble (2e52d11): the caps are 6lh, 3lh, 10lh and 16lh, the same px at the default size and whole lines at every size. (4) Hint (ea34e2d): \"Changes the text in this window, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards. The Ask box keeps its size.\" (5) DEVELOPING.md's Comfort & access line names Text size. (6) The media-query guard (f86d159) unwraps @media and @supports, nested ones too, and requires a twin of the same size. Left, beyond this package: the Ask box (a 92 px window) and the desk's 30 px bar keep their type size. The terminal's type stays 13 px (DESIGN.md says so): the window grows, so it gets more columns and rows. Scaling its font needs fix/cmdwin's terminal.ts, terminal-options.ts and command/main.ts, which that branch rewrites. Proposal: XTERM_OPTIONS.fontSize and cellSize() multiply by the scale read from html[data-text-size], and on a change set term.options.fontSize and call reportSize(). The prompt window's per-card sizes come from fix/prompt and need forText at merge (see notes)."
+  }
+ ]
+}

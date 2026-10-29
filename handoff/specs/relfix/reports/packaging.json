@@ -1,0 +1,336 @@
+{
+ "key": "packaging",
+ "final": {
+  "findings": [
+   {
+    "id": 200,
+    "status": "fixed",
+    "how": "Round 1: isTrustedSender reads the URL undecoded, so it can't throw ('100%%20Free' stopped failing every settings request), and autostart execArg doubles % in Exec=. Round 2, verifier #200: I confirmed with a real Electron 44.5 probe that loadFile from a '50%AB' folder fails with ERR_FILE_NOT_FOUND (-6), while loadURL(pathToFileURL(file).href) loads it ('50%25AB'). It also loads '100% Free' and 'Tools C# 100% Free (x86) & Zoë's [x]', and keeps ?opaque=1. A new plain-Node module, app/main/page-url.ts, has pageUrl(file, query). It builds the URL with pathToFileURL, so % becomes %25 and #, ? and brackets are encoded. All 9 loadFile calls in app/main now use win.loadURL(pageUrl(...)): windows.ts (home, command, prompt), ask.ts (keeps opaque=1), voice.ts (mic, twice), overlay.ts, handle.ts and desk/view.ts. isTrustedSender is unchanged and trusts these URLs. I relabelled the 50%AB unit case to the %25 form Ember now produces, and the raw forms are still checked not to throw. test/smoke/launch.mjs has a new --folder <name> option. It copies dist/app into a temp folder of that name, with the rest of the repository linked beside it (junctions on Windows), and starts Electron with --remote-debugging-port=0. It fails unless the settings page's title is 'Ember'; a page that failed to load has 'index.html' as its title. Cleanup unlinks the links before removing the copy. ci.yml runs it on Linux (as a normal user, sandbox on), on Windows (ASCII name, Git Bash) and on macOS (dev build). Real runs here: the staged/dev build from '50%AB' before the fix showed the home and handle pages titled 'index.html' with 2 ERR_FILE_NOT_FOUND. After the fix they are titled 'Ember' with 0 errors. The special folder shows 0 'URI malformed' and 0 handler errors.",
+    "test": "test/unit/page-url.test.ts (new). 'nothing calls loadFile' failed before (9 calls in 6 files) and passes now. Its pageUrl cases (%25, query, isTrustedSender trusts every result) and the CI-coverage case pass. The smoke run 'node test/smoke/launch.mjs --folder \"Tools C# 100% Free 50%AB (x86) & Zoë's [x]\"' failed on the pre-fix build ('its title is \"index.html\"', ERR_FILE_NOT_FOUND in stderr) and passes now. From round 1: trusted-sender.test.ts ('encoded slash', '% in folder name… never throws') and packaging.test.ts ('doubles a % in an Exec argument'). The 10 test fakes that stubbed loadFile now stub loadURL (sshwsl-hooks checks the file:// URL)."
+   },
+   {
+    "id": 201,
+    "status": "fixed",
+    "how": "Both compiles in sidecar/uia/ember_uia.ps1 use 'Add-Type -LiteralPath $source' (line 78 with -OutputAssembly, line 95 in memory), with a comment saying why. Nothing changed in round 2.",
+    "test": "test/unit/uia-files.test.ts: the bootstrap check expects -LiteralPath, and a new case forbids 'Add-Type -Path'. Both failed before and pass now. A new Windows-only case in test/integration/uia-bridge.test.ts (EMBER_UIA_TEST, windows CI job) stages the bridge under 'Ember [portable]' with a cache under 'Jane [Work]'. It is skipped here."
+   },
+   {
+    "id": 202,
+    "status": "fixed",
+    "how": "Round 1: the Linux doctor probe sees APPIMAGE (sandbox.appImage). With no user namespaces and no setuid helper, an AppImage now gets a warn row ('Ember runs without Chromium's sandbox here…', fix: install the RPM) instead of FAIL with /opt/ember chown advice. Round 2, verifier #202: AppRun in scripts/package/appimage.sh now reads the same two files as doctor-probes.ts. It adds --no-sandbox when /proc/sys/user/max_user_namespaces is 0 or missing, and also when /proc/sys/kernel/unprivileged_userns_clone is 0 (Debian, some hardened Ubuntu). So on a host where the doctor says user namespaces are off, the AppImage really does start without the sandbox, and the doctor's warn and 'Ember can work.' are true.",
+    "test": "packaging.test.ts 'the launchers': 'start the AppImage without Chromium's sandbox where either switch the doctor reads turns user namespaces off (review #202)' runs the real AppRun against a stand-in /proc/sys. It failed before (max=15000 with clone=0 started with the sandbox) and passes now. It also checks that the AppRun reads exactly those two files. Round 1 cases ('only warns about the sandbox in an AppImage…', platform-linux-system 'say when Ember runs as an AppImage') still pass."
+   },
+   {
+    "id": 203,
+    "status": "fixed",
+    "how": "Round 1: ember.spec %posttrans prints 'Ember is still running the version before this update: quit Ember and start it again…' when a process runs /opt/ember/ember or '/opt/ember/ember (deleted)'. Round 2, verifier #203: the in-app check is done now. A new plain-Node module, app/main/install-watch.ts, provides installStamp, createUpdateCheck, UPDATED_QUESTION and updatedDetail. At start-up a packaged Ember records its install's package.json (<appPath>/package.json, inode:size:mtime), so a same-version rebuild also counts. A small main.ts hunk calls updateCheck.beforeWindow() on app 'browser-window-created', which covers every window: home, ask, command, prompt, mic, desk, overlay and handle. If the stamp changed, Ember asks once per change with a native dialog: title 'Ember was updated', 'Restart Ember to finish the update.', buttons [Restart Ember] [Not now]. The detail is 'Until it starts again, some of its windows may not work as they should.', or, when tasks, commands or connections are under way, the quit question's words with 'Restarting' ('Ember is connected to build-01. Restarting disconnects.'). Restart calls app.relaunch() then app.quit(). Only one question is open at a time. 'Not now' is asked again only after another change, and a missing file (mid-upgrade) waits. Logged as app.updated_while_running and app.restart_after_update. Limit: the question comes up as the window opens, so that one window can still load the new pages before the user answers. Fully holding the load back would mean gating every window factory before new BrowserWindow, because preloads are read at creation. Real run with the staged Linux tree (first instance --autostart, onboarded): renaming a copy of package.json over the original (as rpm does) and then opening settings logged app.updated_while_running. The control run without the rename asked nothing. The README Linux update line is handed to the docs package (forDocs).",
+    "test": "test/unit/install-watch.test.ts (new, 7 cases): it asks nothing while the files are unchanged, offers a restart after a new inode and restarts on yes, asks once per update, never asks two at once, waits while the file is missing, asks nothing if the file was unreadable at start-up, and checks the question's words against quitQuestion. It failed before (no module) and passes now. Round 1: packaging.test.ts 'the RPM's upgrade (review #203)' runs the real %posttrans with /bin/sh against a stand-in /proc."
+   },
+   {
+    "id": 205,
+    "status": "fixed",
+    "how": "packaging/ember and the AppImage's AppRun check DISPLAY before starting Ember normally. Without one they print \"Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run 'ember doctor'.\" to stderr and exit 1; the AppImage names its own file. 'doctor' and starts with a display are unchanged.",
+    "test": "packaging.test.ts 'the launchers': 'say Ember needs the desktop session when there is no display…' failed before (exit 0, Ember started) and passes now. With DISPLAY=:0 both still start Ember."
+   },
+   {
+    "id": 207,
+    "status": "fixed",
+    "how": "ci.yml package job: it restores and verifies the cached real speech models before staging, so rpm.sh also builds ember-voice-models. Then it installs that RPM, runs rpm -V on both, writes an administrator's /etc/ember/policy.json and rebuilds both as Release 2 (EMBER_RPM_RELEASE=2). It dnf-upgrades both, checks the release, runs rpm -V again, checks chrome-sandbox is 4755 root, and runs rpm -e on both. It fails if /opt/ember, /usr/share/ember, /usr/bin/ember, the desktop file or /usr/share/doc/ember is left, or if the policy changed or is owned by a package. Release 2's RPMs aren't uploaded. The timeout is 55 minutes. ember.spec: 'Release: %{?ember_release}%{!?ember_release:1}%{?dist}'. rpm.sh validates EMBER_RPM_RELEASE. Nothing changed in round 2.",
+    "test": "packaging.test.ts 'staging in CI': '…upgrades, verifies and removes both RPMs, keeping the admin's policy (review #207)' and 'lets rpm.sh build another release…' failed before and pass now. The job itself runs only in CI (no rpmbuild or dnf here). actionlint passes."
+   },
+   {
+    "id": 208,
+    "status": "fixed",
+    "how": "Round 1: policy.example.json gained features.wsl and features.ssh (true) and 'commands': {local, wsl, ssh: 'on'}. A new packaging/policy.README is installed beside it by the RPM. It says where the file goes, that a policy without 'commands' turns commands off, that JSON takes no comment key, the lockdown older Embers apply, and one line per key. Round 2, verifier #208: I took the first option. The example's 'ssh' is now {\"desktop\": true}, with no allowedHosts. main.ts:372 marks SSH as limited whenever allowedHosts is set, even to [\"*\"], so the copied example would have shown 'only some computers'. policy.README now says the example leaves allowedHosts out so Ember may connect to every computer, and gives the allowedHosts form to copy: \"ssh\": { \"allowedHosts\": [\"build-*.example.com\", \"deploy@db-01.example.com:22\"], \"desktop\": true }. I didn't touch main.ts:372 (see notes).",
+    "test": "packaging.test.ts 'ships an example policy that takes the current keys, so copying it as-is turns nothing off (review #208, #37)' now asserts loaded.policy.ssh equals {desktop: true} with allowedHosts undefined, and that the README shows the allowedHosts form. It failed before (allowedHosts [\"*\"] present) and passes now."
+   },
+   {
+    "id": 209,
+    "status": "fixed",
+    "how": "layout.mjs: Linux and macOS require askpass.cjs and remote-link.cjs. Windows requires remote-link.cjs and job-host.cjs (it compiles ember-askpass.exe instead). Nothing changed in round 2.",
+    "test": "test/unit/layout.test.ts: the new case failed before (no target required them) and passes now. It also checks that build-app.mjs builds each one."
+   },
+   {
+    "id": 211,
+    "status": "fixed",
+    "how": "Round 1: LICENCE_TEXTS and suppliedLicence in licences.mjs. Texts are checked in under packaging/licences/: MIT for the GitHub Copilot SDK and runtime packages; Apache-2.0 for sherpa-onnx, plus what its WebAssembly holds, with ONNX Runtime's MIT text; eSpeak NG's GPL-3 COPYING. koffi's platform builds use koffi's LICENSE.txt. Staging stops for any other bundled package without a licence file, and for a sherpa-onnx other than 1.13.8. Round 2, verifier #211: ember.spec's License: tag now includes GPL-3.0-or-later. Its comment says sherpa-onnx's WebAssembly also holds ONNX Runtime and piper-phonemize (MIT), Protocol Buffers and RE2 (BSD-3-Clause), and eSpeak NG (GPL-3.0-or-later), part of a text-to-speech Ember never calls. BUNDLED_LIBRARIES now takes an 'embedded' map: libraries built into a package's binaries that no README table lists. A sherpa-onnx entry lists the 12 libraries the 1.13.8 .wasm holds, with their SPDX ids, and uncoveredLicences checks each against the tag. The d.mts types were updated: libraries and embedded are both optional. A real Linux staging run passes the check. OWNER DECISION NEEDED (legal): Ember redistributes GPL-3.0 object code (eSpeak NG inside sherpa-onnx-wasm-nodejs.wasm). Either meet GPL-3.0 §6, by shipping or offering in writing the corresponding source of the eSpeak NG (and piper-phonemize) that sherpa-onnx 1.13.8 builds in, or ship a sherpa-onnx WebAssembly built without text-to-speech (SHERPA_ONNX_ENABLE_TTS=OFF), which drops eSpeak NG. I have done neither.",
+    "test": "licences.test.ts 'checks the libraries sherpa-onnx's WebAssembly holds, eSpeak NG's GPL among them (review #211)'. It failed before ([] instead of [\"sherpa-onnx's eSpeak NG (GPL-3.0-or-later)\"]) and passes now. It also checks that the real spec covers it and that the comment names eSpeak NG with GPL-3.0-or-later. The round 1 licence-text cases still pass."
+   },
+   {
+    "id": 37,
+    "status": "fixed",
+    "how": "It shares the example-policy file with #208 (see #208 for both rounds). Round 1 also reworded ssh-errors.ts execDenied to 'Ask its administrator to allow Ember's helper there (with fapolicyd, by trusting its folders).', with no 'Ember remote package', which doesn't exist. I changed the same sentence in docs/COMMANDS-WSL-SSH.md §4.8 and §6.6.",
+    "test": "ssh-errors.test.ts: the exec-denied case failed before and passes now. packaging.test.ts example-policy case (see #208)."
+   },
+   {
+    "id": 38,
+    "status": "fixed",
+    "how": "Round 1 (remote.yml): triggers are pull_request and push to main (plus the sshwsl-* branches), filtered to app/main/{commands,remote,wsl,targets}, admin.ts, app/remote, app/askpass, app/shared, the command and prompt windows, sidecar/atspi, scripts/package, build-app.mjs, run-integration.mjs, the suites, package-lock.json and the workflow itself; plus tags v*. New job ssh-el8-client: ssh-transport as a normal user in a rockylinux:8 container, with OpenSSH 8.0 as the client. A password-only sshd on 2224, with a masked password made for the run, is added in ssh-linux and ssh-el8-client (EMBER_SSH_TEST_PASSWORD_PORT/_USER/ and EMBER_SSH_TEST_PASSWORD), and ssh-transport.test.ts signs in through Ember's prompt by password and by keyboard-interactive. New job ssh-linux-arm64 on vars.EMBER_ARM64_RUNNER (default ubuntu-24.04-arm; 'none' leaves it out), on tags, dispatch and Mondays. macOS also runs on tags, and the unit matrix adds macos-15 on dispatch and tags. Round 2, verifier #38: docs/** (including DEVELOPING.md §13 and §14.4) belongs to the docs package, so I wrote the exact replacement text for those lines in forDocs: triggers, the `only` arm64 option, tag runs, the ssh-el8-client and ssh-linux-arm64 rows, the password variables, and the RPM lifecycle and licence-text stop for #207 and #211.",
+    "test": "Round 1: packaging.test.ts workflow checks (triggers, el8 client job, password sshd, arm64 job) failed before and pass now. actionlint finds nothing on ci.yml or remote.yml. The jobs themselves run only on GitHub. There is no test for the DEVELOPING.md text, which goes to the docs package."
+   },
+   {
+    "id": 39,
+    "status": "fixed",
+    "how": "runtime-download.ts: pruneRuntimes runs after a successful ensureRuntime, whether the runtime came from a download or the cache. It deletes archives no target in the manifest names, and partial downloads older than a day. It keeps every pinned archive, a fresh partial download and files that aren't archives. A failed listing never fails the connection. connections.ts passes readdir (one line). The README uninstall list line goes to the docs package (forDocs).",
+    "test": "runtime-download.test.ts: the prune cases failed before and pass now."
+   },
+   {
+    "id": 41,
+    "status": "fixed",
+    "how": "I deleted ssh-config.ts's unused sshClientRow (only its own test used it; it said fail where targets/doctor.ts says warn). ssh-config.test.ts now checks that no second copy exists, and targets-runtime.test.ts keeps testing the row cases against the doctor's own function.",
+    "test": "ssh-config.test.ts: the 'no second copy' check failed before (the copy was exported) and passes now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "97a8a17",
+    "subject": "Keep Ember's windows working when its folder's name has a % in it",
+    "ids": [
+     200
+    ]
+   },
+   {
+    "sha": "ec2a00d",
+    "subject": "Compile the UI Automation bridge by literal path, so brackets in Ember's folder work",
+    "ids": [
+     201
+    ]
+   },
+   {
+    "sha": "8d5bbc4",
+    "subject": "Stop the AppImage's doctor failing the sandbox on hosts with user namespaces off",
+    "ids": [
+     202
+    ]
+   },
+   {
+    "sha": "dec201a",
+    "subject": "Say Ember needs the desktop session when it is started without a display",
+    "ids": [
+     205
+    ]
+   },
+   {
+    "sha": "df6bc28",
+    "subject": "Stop staging an Ember whose SSH or command helpers weren't built",
+    "ids": [
+     209
+    ]
+   },
+   {
+    "sha": "010a157",
+    "subject": "Remove the unused second SSH client row, which disagreed with the doctor's",
+    "ids": [
+     41
+    ]
+   },
+   {
+    "sha": "defcadf",
+    "subject": "Delete the Node archives of versions Ember no longer pins from the remote runtime cache",
+    "ids": [
+     39
+    ]
+   },
+   {
+    "sha": "918c6b1",
+    "subject": "Ship an example policy that keeps commands, WSL and SSH on, with notes beside it",
+    "ids": [
+     208,
+     37
+    ]
+   },
+   {
+    "sha": "08b582b",
+    "subject": "Tell whoever upgrades the RPM that a running Ember must be started again",
+    "ids": [
+     203
+    ]
+   },
+   {
+    "sha": "cb7317c",
+    "subject": "Ship licence texts for the bundled packages that carry none, and stop staging without one",
+    "ids": [
+     211
+    ]
+   },
+   {
+    "sha": "6a45147",
+    "subject": "Build the speech models RPM in CI, and upgrade, verify and remove both RPMs there",
+    "ids": [
+     207
+    ]
+   },
+   {
+    "sha": "7daa539",
+    "subject": "Run the SSH, WSL and commands suites on pull requests, main and release tags, with RHEL 8's client",
+    "ids": [
+     38
+    ]
+   },
+   {
+    "sha": "5b64a59",
+    "subject": "Leave allowedHosts out of the example policy, so copying it doesn't say SSH is limited",
+    "ids": [
+     208,
+     37
+    ]
+   },
+   {
+    "sha": "369b6d4",
+    "subject": "Name eSpeak NG's GPL-3.0-or-later in the RPM's licence, and check sherpa-onnx's libraries when staging",
+    "ids": [
+     211
+    ]
+   },
+   {
+    "sha": "964f8b9",
+    "subject": "Load Ember's pages by a URL that writes % as %25, so they load from a folder named like 50%AB",
+    "ids": [
+     200
+    ]
+   },
+   {
+    "sha": "4fa618e",
+    "subject": "Start the AppImage without Chromium's sandbox where Debian's userns switch is off too",
+    "ids": [
+     202
+    ]
+   },
+   {
+    "sha": "5e60787",
+    "subject": "Offer to restart Ember when an update replaced its files while it was running",
+    "ids": [
+     203
+    ]
+   },
+   {
+    "sha": "bb6ccba",
+    "subject": "Say plainly in the policy notes that the example leaves allowedHosts out",
+    "ids": [
+     208,
+     37
+    ]
+   }
+  ],
+  "checks": "Final run after the last code commit (5e60787). The later bb6ccba changes only packaging/policy.README; packaging.test.ts was re-run after it: 76/76.\n- npx tsc --noEmit: 0 errors.\n- npm run lint (eslint .): 0 problems.\n- npm test: Test Files 243 passed | 1 skipped (244); Tests 5995 passed | 8 skipped (6003); exit 0.\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: ok (first instance showed its window; second launch handed over).\n- xvfb-run -a node test/smoke/launch.mjs --folder \"Tools C# 100% Free 50%AB (x86) & Zoë's [x]\": ok, 3/3 lines, including 'the settings window's page loaded from a folder named …'. On the pre-fix build it FAILED: title \"index.html\", 2× ERR_FILE_NOT_FOUND.\n- actionlint (-shellcheck=) on ci.yml and remote.yml: 0 findings; both parse with PyYAML.\n- npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs: staged dist/package/ember (466M); the licence checks pass with the new sherpa-onnx embedded entry and GPL-3.0-or-later in the tag.\n- Real-Electron scratch runs: the 50%AB before/after probe (pct-before.log and pct-after.log under the scratchpad's fx-packaging folder), and the update-run.sh keep/replace runs: app.updated_while_running only after the rename.\n- I changed nothing under app/main/commands/**, so the commands integration suites weren't required.\n- Voice: voice-service.test.ts and the other voice unit tests pass in npm test. The real-model voice integration suite can't run here (no models in .cache/voice).",
+  "sharedHunks": [
+   "app/main/windows.ts: home, command and prompt windows load with win.loadURL(pageUrl(path.join(appDir, \"renderer\", X, \"index.html\"))) instead of loadFile (3 one-line hunks), plus one import line for ./page-url. The isTrustedSender doc comment was reworded (rounds 1 and 2). isTrustedSender's body is url.startsWith(\"file://\") && url.includes(\"/renderer/\") (round 1).",
+   "app/main/main.ts: one import line (UPDATED_QUESTION, createUpdateCheck, updatedDetail from ./install-watch). One 16-line block right after quitEmber: a packaged-only createUpdateCheck({file: <appPath>/package.json, ask: native dialog with quitWords() detail, restart: app.relaunch(); app.quit()}) and app.on(\"browser-window-created\", () => updateCheck?.beforeWindow()).",
+   "app/main/ask.ts: win.loadURL(pageUrl(…ask/index.html, opaque ? {opaque: \"1\"} : {})) instead of loadFile with query; one import line.",
+   "app/main/voice.ts: the two mic window loads use loadURL(pageUrl(…mic/index.html)); one import line.",
+   "app/main/overlay.ts, app/main/handle.ts, app/main/desk/view.ts: each loadFile becomes loadURL(pageUrl(…)); one import line each.",
+   "app/main/autostart.ts (round 1): execArg doubles % in Exec= arguments, and its comment says so.",
+   "app/main/doctor.ts (round 1): the sandbox row is a warn for an AppImage with no user namespaces and no helper (no chown advice, not counted as a problem).",
+   "app/main/platform/linux/doctor-probes.ts (round 1): sandbox.appImage from env.APPIMAGE; deps take env.",
+   "app/main/platform/linux/system.ts (round 1): passes env: deps.env to linuxDoctorProbes.",
+   "app/main/platform/types.ts (round 1): PlatformDoctorProbes.sandbox gains appImage?: boolean.",
+   "app/main/remote/connections.ts (round 1): the real RuntimeFs gains readdir: p => fsp.readdir(p).",
+   "app/main/remote/ssh-errors.ts (round 1): execDenied no longer mentions an 'Ember remote package'.",
+   "docs/COMMANDS-WSL-SSH.md (round 1): the same execDenied sentence in §4.8's table and §6.6.",
+   "test/smoke/launch.mjs: new --folder <name> option (copy of dist/app in a folder of that name, repository linked beside it, --remote-debugging-port=0 on the first instance, check of the home page's title, cleanup that unlinks links first); usage comment updated.",
+   "Test fakes switched from loadFile to loadURL (one line each): test/integration/desk-robust.test.ts, test/unit/{ask-window,ask-window-platform,desk-view,desk-view-platform,handle-platform,overlay-hover,voice-service}.test.ts, and test/unit/handle-window.test.ts (interface and class). test/unit/sshwsl-hooks.test.ts records loadURL and expects a file:// URL ending in /renderer/{command,prompt}/index.html.",
+   "test/unit/trusted-sender.test.ts: the % cases use the %25 form pageUrl produces; the raw '100%%20' and '100%/' forms are still checked not to throw.",
+   "test/integration/ssh-transport.test.ts (round 1): password and keyboard-interactive cases behind EMBER_SSH_TEST_PASSWORD_*.",
+   "test/integration/uia-bridge.test.ts (round 1): Windows-only bracketed-folder case.",
+   "test/unit/platform-linux-system.test.ts, ssh-config.test.ts, ssh-errors.test.ts, runtime-download.test.ts, layout.test.ts, uia-files.test.ts (round 1): cases for #202, #41, #37, #39, #209, #201.",
+   "New files (no other owner): app/main/page-url.ts, app/main/install-watch.ts, test/unit/page-url.test.ts, test/unit/install-watch.test.ts."
+  ],
+  "forDocs": [
+   "README.md, Linux section, new 'Updating' line: \"Quit Ember, then run sudo dnf upgrade ember (and ember-voice-models if you installed it); Ember starts again at your next login. If Ember was running during an update (GNOME Software or automatic updates included), it asks the next time it opens a window: choose Restart Ember to finish the update.\"",
+   "README.md uninstall list (#39): add Ember's remote runtime cache, ~/.config/ember/remote/runtime/ (Linux; the same 'remote/runtime' folder in Ember's data folder on Windows and macOS). Ember now deletes archives of Node versions it no longer pins, but the folder stays until you remove Ember's data folder.",
+   "docs/DEVELOPING.md §13, replace the sentences from \"CI builds both packages on `rockylinux:8`\" through \"filled the account's artifact storage.\" with: \"CI builds Ember's RPM, the speech models RPM (from the cached, checksum-verified models) and the AppImage on `rockylinux:8`, checks every binary against glibc 2.28, installs the RPM with `dnf`, checks the installed binary's fuses (no debugger, `NODE_OPTIONS` ignored), runs `ember doctor` and starts the installed Ember as a normal user. It then installs the speech models RPM, runs `rpm -V` on both, writes an administrator's `/etc/ember/policy.json`, rebuilds both as Release 2 (`EMBER_RPM_RELEASE=2 scripts/package/rpm.sh`), upgrades to them with `dnf upgrade`, runs `rpm -V` again, checks `chrome-sandbox` is still setuid root and removes both with `rpm -e`. It fails if `/opt/ember`, `/usr/share/ember`, `/usr/bin/ember`, the menu entry or `/usr/share/doc/ember` is left, or if the policy changed or belongs to a package. It uploads Release 1's packages only when asked (§13): **Actions › ci › Run workflow** with **packages** ticked (kept 3 days); at about 450 MB a run with the speech models, uploading them every time filled the account's artifact storage.\"",
+   "docs/DEVELOPING.md §13, replace \"staging stops if a bundled package's licence isn't in the spec's `License:` tag\" with: \"staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles (sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly holds, eSpeak NG's GPL-3.0-or-later among them: scripts/package/licences.mjs), or if a bundled package ships no licence file and licences.mjs supplies none (the texts are in packaging/licences/; sherpa-onnx's is pinned to 1.13.8, whose WebAssembly was checked)\".",
+   "docs/DEVELOPING.md §13: under the package table, add that the example policy (/usr/share/doc/ember/policy.example.json) turns commands on for this computer, WSL and SSH, and leaves ssh.allowedHosts out. With allowedHosts set, even to [\"*\"], the settings window says SSH is limited to some computers. Its notes are in /usr/share/doc/ember/policy.README.",
+   "docs/DEVELOPING.md §14.4, replace the paragraph starting \"**Integration suites**\" with: \"**Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them on pull requests and pushes to `main` (and `ember-improve/20261022-sshwsl-*`) that touch SSH, WSL or commands code (its `paths` list: `app/main/{commands,remote,wsl,targets}`, `app/main/admin.ts`, `app/remote`, `app/askpass`, `app/shared`, the command and prompt windows, `sidecar/atspi`, `scripts/package`, the suites and the workflow), and on every `v*` tag. **Actions › remote › Run workflow** (or `gh workflow run remote.yml --ref <branch> -f only=ssh`) takes `ref` and `only` (`all`, `unit`, `commands`, `wsl`, `ssh`, `macos`, `wayland`, `arm64`). The macOS job and the Linux arm64 job run only on release tags, when dispatched, and on Mondays (macOS minutes cost ten times Linux's). The arm64 job runs on `vars.EMBER_ARM64_RUNNER` (default `ubuntu-24.04-arm`; set it to `none` where the repository has no such runner). A suite named in a job that doesn't exist yet is skipped (`run-integration.mjs --allow-missing`). Each job's set-up belongs to the package named above it in the workflow.\"",
+   "docs/DEVELOPING.md §14.4 table: `unit-matrix` runner becomes \"`ubuntu-24.04`, `windows-2022`, and `macos-15` when dispatched and on release tags\". In the `ssh-linux` row add \"a third sshd on 2224 that takes only passwords (and keyboard-interactive), for a user with a password made for the run\" and the variables `EMBER_SSH_TEST_PASSWORD_PORT`, `EMBER_SSH_TEST_PASSWORD_USER`, `EMBER_SSH_TEST_PASSWORD`. New row `ssh-el8-client` | \"a `rockylinux:8` container as the client (OpenSSH 8.0, as on RHEL 8), as a normal user, against sshds in the container on 2222, 2223 (jump host) and 2224 (passwords only)\" | `ssh-transport` | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_PASSWORD_PORT`, `EMBER_SSH_TEST_PASSWORD_USER`, `EMBER_SSH_TEST_PASSWORD`. New row `ssh-linux-arm64` | \"`vars.EMBER_ARM64_RUNNER` (default `ubuntu-24.04-arm`), sshd on 127.0.0.1:2222; release tags, dispatch and Mondays\" | `remote-ssh`, `remote-e2e`, `remote-desktop` (under Xvfb, koffi's arm64 build) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_REMOTE_DEV` (desktop). `ssh-macos` row: \"`macos-15`; release tags, dispatch and Mondays\".",
+   "docs/DEVELOPING.md command table (near line 469): add the row \"`node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII)\".",
+   "CHANGELOG.md: \"Ember's windows load from a folder whose name has a % in it (for example '100% Free' or '50%AB'); before, they stayed blank or every settings request failed.\" / \"Linux RPM: when an update replaces Ember's files while it runs, Ember offers to restart; dnf also says so.\" / \"AppImage: starts without Chromium's sandbox where unprivileged user namespaces are off (Debian's kernel.unprivileged_userns_clone=0 too); the check-up warns instead of failing.\" / \"The example policy turns commands on for this computer, WSL and SSH, and has notes beside it (policy.README).\" / \"Licences: the packages now carry the licence texts for the Copilot SDK, koffi's platform builds and sherpa-onnx (whose WebAssembly includes eSpeak NG under GPL-3.0-or-later); the RPM's License tag names GPL-3.0-or-later.\" / \"CI runs the SSH, WSL and commands suites on pull requests, main and release tags, including RHEL 8's OpenSSH 8.0 client, password sign-in and Linux arm64.\""
+  ],
+  "ciOnly": [
+   "Windows and macOS: Ember's pages load from a folder named with a % (the new 'Launch smoke test from a folder whose name has %…' steps in ci.yml). This is also the first real run of the smoke's --folder copy with directory junctions on Windows and Git Bash argv.",
+   "Windows: the UI Automation bridge compiles and caches with -LiteralPath under 'Ember [portable]' and 'Jane [Work]' (uia-bridge.test.ts, EMBER_UIA_TEST).",
+   "rockylinux:8 package job: the speech models RPM build, then dnf install, rpm -V, upgrade to Release 2, rpm -V, rpm -e, the leftover checks and keeping the policy. Also %posttrans output under a real rpm/dnf.",
+   "remote.yml: pull_request, main and v* tag triggers with the paths filter; ssh-el8-client with OpenSSH 8.0 (askpass through DISPLAY); password and keyboard-interactive sign-in through a real sshd; ssh-linux-arm64 on an arm64 runner (if the repository has one: vars.EMBER_ARM64_RUNNER).",
+   "A real Debian or hardened host with kernel.unprivileged_userns_clone=0: the AppImage now starts with --no-sandbox, and the doctor's warn matches.",
+   "A real dnf upgrade under a running RPM-installed Ember: the 'Ember was updated' question appears on the next window and Restart Ember relaunches into the new version (simulated here only by renaming package.json in the staged tree)."
+  ],
+  "notes": "The round-2 problems are all addressed in 6 new commits (5b64a59, 369b6d4, 964f8b9, 4fa618e, 5e60787, bb6ccba) on top of round 1's 12. The worktree is clean.\n\nFor the lead and owner:\n(1) #211 needs a legal decision. Ember's packages redistribute GPL-3.0-or-later object code: eSpeak NG inside sherpa-onnx-wasm-nodejs.wasm 1.13.8. The tag, notices and staging check now say so honestly. The owner must either meet GPL-3.0 §6 (ship, or offer in writing, the corresponding source of the eSpeak NG and piper-phonemize that sherpa-onnx 1.13.8 builds in) or switch to a sherpa-onnx WebAssembly built with SHERPA_ONNX_ENABLE_TTS=OFF. Ember uses only keyword spotting, voice activity detection and speech recognition.\n(2) #208: a separate small issue remains in main.ts:372 (hot file, not this package's). sshHostsLimited is policy.ssh?.allowedHosts !== undefined, so an administrator who writes allowedHosts: [\\\"*\\\"] still sees \\\"only some computers\\\". The shipped example no longer triggers it. The one-line fix would be sshHostsLimited: !!list && !list.includes(\\\"*\\\"), if the owner of main.ts wants it.\n(3) #203: the restart offer comes up as a window is created after an update. That first window may already load the new pages before the user answers. Holding the load back fully would need a gate before every new BrowserWindow, because preloads are read at creation. The question can be asked of the windows created at start too, but only after a change, so it never fires at start-up.\n(4) #200 changed every window factory from loadFile to loadURL(pageUrl(...)). Other packages' tests that fake BrowserWindow need loadURL rather than loadFile. I updated the 10 existing fakes. Any new fake another package adds with only loadFile would make that window's load throw in its test.\n(5) Scratch evidence is under /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-packaging/: pct-probe/, run-pct.sh, pct-before.log, pct-after.log, update-run.sh, upd-first-{keep,replace}.log and the r2-*.log check logs."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/windows.ts: isTrustedSender reads the URL undecoded (decodeURIComponent removed) and its doc comment says why (#200)",
+   "app/main/autostart.ts (lifecycle): execArg doubles % inside the quoted Exec argument, and its doc comment says so (#200)",
+   "app/main/doctor.ts (settings): DoctorProbes.sandbox gains appImage?; the sandbox row gets a warn branch for an AppImage, label 'Sandbox' unchanged (#202)",
+   "app/main/platform/types.ts (platform): PlatformDoctorProbes.sandbox gains appImage?: boolean (#202)",
+   "app/main/platform/linux/doctor-probes.ts (platform): LinuxDoctorDeps gains env?; sandbox probe sets appImage from APPIMAGE (#202)",
+   "app/main/platform/linux/system.ts (platform): doctorProbes passes env: deps.env to linuxDoctorProbes (#202)",
+   "app/main/remote/connections.ts: the real RuntimeFs gains readdir: p => fsp.readdir(p) (#39)",
+   "app/main/remote/ssh-errors.ts: MESSAGES.execDenied reworded, no 'Ember remote package' (#37)",
+   "docs/COMMANDS-WSL-SSH.md: the §4.8 table row and the §6.6 quote of the exec-denied message updated to the new wording (#37)",
+   "test/integration/uia-bridge.test.ts: one new Windows-only case staging the bridge under a bracketed folder (#201)",
+   "test/integration/ssh-transport.test.ts: one new case, gated on EMBER_SSH_TEST_PASSWORD_PORT, for sign-in by password and keyboard-interactive and a wrong password (#38)",
+   "test/unit/trusted-sender.test.ts, platform-linux-system.test.ts, ssh-errors.test.ts, ssh-config.test.ts, runtime-download.test.ts, layout.test.ts, licences.test.ts, uia-files.test.ts, packaging.test.ts: new or updated cases for the findings above (the platform-linux probe test helper now passes env: {})"
+  ],
+  "forDocs": [
+   "README (Linux): add an update line: 'Quit Ember, then sudo dnf upgrade ember; start Ember again (or log in again). If Ember was still running, dnf says so.' (#203)",
+   "README uninstall list: Node.js downloaded for other computers lives in ~/.config/ember/remote/runtime/ (Windows %LOCALAPPDATA%\\ember\\remote\\runtime, macOS ~/Library/Application Support/ember/remote/runtime). Ember now deletes older versions there by itself; remove the folder to uninstall completely. (#39)",
+   "docs/DEVELOPING.md data tables (lines ~234 and ~898, and the Windows one): 'Node.js downloaded for other computers (SHA-256 checked; older versions deleted once a new one is in place)'. (#39)",
+   "docs/DEVELOPING.md 'For administrators': the RPM installs /usr/share/doc/ember/policy.example.json (now with features.wsl and features.ssh, commands on for local, wsl and ssh, and ssh.allowedHosts ['*']), with policy.README beside it naming every key; copying the example as-is turns nothing off. (#208, #37)",
+   "docs/DEVELOPING.md packaging paragraph (~line 330): CI also builds ember-voice-models from the real models, installs it, upgrades both RPMs to Release 2 (EMBER_RPM_RELEASE=2 scripts/package/rpm.sh), runs rpm -V, removes both and checks nothing is left and /etc/ember/policy.json is kept. Uploaded packages are now about 450 MB. rpm.sh takes EMBER_RPM_RELEASE (default 1). (#207)",
+   "docs/DEVELOPING.md licences: staging also stops if a bundled package ships no licence file and scripts/package/licences.mjs supplies none. The supplied texts are in packaging/licences/ (the Copilot SDK's MIT, sherpa-onnx's Apache-2.0 with what its WebAssembly holds, eSpeak NG's GPL-3 COPYING). A sherpa-onnx upgrade needs that text checked again. (#211)",
+   "docs/DEVELOPING.md remote.yml paragraph (~line 1103): runs on pull requests and pushes to main that touch SSH, WSL or commands code, and on every v* tag. `only` gains arm64. macOS also runs on release tags. New jobs: ssh-el8-client (RHEL 8's OpenSSH 8.0 client in rockylinux:8, with a password sshd) and ssh-linux-arm64 (vars.EMBER_ARM64_RUNNER, default ubuntu-24.04-arm; 'none' leaves it out). ssh-linux now also signs in by password and keyboard-interactive. Add both jobs to the job table. (#38)",
+   "README/DEVELOPING (AppImage): on a host with user namespaces off, 'Ember-….AppImage doctor' now warns 'Sandbox' (no failure) and suggests the RPM. (#202)",
+   "README (Linux): running 'ember' without a display (ssh without -X, a text console) now prints \"Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run 'ember doctor'.\" (#205)",
+   "CHANGELOG: Ember's windows work when its folder's name has a % in it, and autostart Exec doubles %. The Windows UI Automation helper works in folders with [ ]. The AppImage doctor no longer fails 'Sandbox' where user namespaces are off. The launcher explains a missing display. The RPM tells whoever upgrades to restart a running Ember. The example policy covers commands, WSL and SSH, with a README beside it. The exec-denied message no longer mentions a remote package. Old Node archives for remotes are deleted. Licence texts are shipped for the Copilot SDK, its runtime, sherpa-onnx and koffi's platform builds. CI covers the RPM lifecycle and the SSH, WSL and commands suites on pull requests and tags."
+  ],
+  "ciOnly": [
+   "Windows (ci.yml windows job, EMBER_UIA_TEST=1): the UI Automation bridge starts from a folder named 'Ember [portable]', from memory and with its cache under 'Jane [Work]' (new uia-bridge.test.ts case). The log line 'uia-bridge: a cache under \"Jane [Work]\" holds …' shows whether -OutputAssembly could cache there.",
+   "Windows and macOS staging: the new requiredDist helpers (remote-link.cjs and job-host.cjs on Windows; askpass.cjs and remote-link.cjs on macOS) and the licence fail-closed check. The koffi and Copilot platform packages on those OSes are covered by the patterns; any other package without a licence file there will stop staging, as intended.",
+   "ci.yml package job (rockylinux:8): the ember-voice-models RPM is built from the real models and installed; the upgrade to Release 2 works; rpm -V passes for both (with the container's tsflags=nodocs); rpm -e leaves nothing in /opt/ember, /usr/share/ember, /usr/bin/ember, /usr/share/applications or /usr/share/doc/ember; /etc/ember/policy.json is kept and owned by no package.",
+   "Real rpm: the %posttrans notice under an upgrade with Ember running (here it was only run with sh and bash against a stand-in /proc).",
+   "remote.yml ssh-el8-client: RHEL 8's OpenSSH 8.0 client works with Ember's transport, including the host-key prompt and password through askpass with DISPLAY and no SSH_ASKPASS_REQUIRE. If it fails, that is the bug the reviewer suspected.",
+   "remote.yml ssh-linux and ssh-el8-client: the 2224 password sshd, and sign-in by password and keyboard-interactive through Ember's prompt (new ssh-transport case).",
+   "remote.yml ssh-linux-arm64: whether this repository has an ubuntu-24.04-arm runner (otherwise set vars.EMBER_ARM64_RUNNER to a runner label, or to 'none'), and that the agent installs, serves and runs its desktop child on arm64.",
+   "remote.yml triggers: pull requests and main pushes on the listed paths, v* tags running every job (macOS and arm64 included). If any remote.yml job is a required status check, a path-filtered pull request that skips the workflow would leave it pending.",
+   "AppImage on a host with user.max_user_namespaces=0: 'Ember-….AppImage doctor' shows 'warn Sandbox' and 'Ember can work'."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 208,
+   "severity": "should-fix",
+   "what": "The new example policy contains \"ssh\": {\"allowedHosts\": [\"*\"], \"desktop\": true}. main.ts:372 sets sshHostsLimited whenever policy.ssh?.allowedHosts !== undefined, and computers-copy.ts:141 then shows SSH_LIMITED. So an administrator who copies the example as-is gets \"Your organisation lets Ember connect only to some computers.\" in the Computers tab, even though [\"*\"] allows every computer. That contradicts policy.README (\"[\\\"*\\\"] allows every computer\") and the fix's own aim that copying the file restricts nothing. Before the change this line never appeared for the example. Same for #37, which shares the file.",
+   "fix": "Take allowedHosts out of policy.example.json (keep \"ssh\": {\"desktop\": true}) and show the allowedHosts form only in policy.README. Or, if the key must stay, make main.ts:372 treat a list that contains \"*\" as unlimited (sshHostsLimited: !!list && !list.includes(\"*\")), as a small shared hunk with a unit case. Then add an assertion to the packaging.test.ts example-policy case that the example doesn't mark SSH as limited."
+  },
+  {
+   "id": 211,
+   "severity": "should-fix",
+   "what": "The fix found, and its supplied text says, that sherpa-onnx-wasm-nodejs.wasm 1.13.8 contains eSpeak NG under GPL-3.0-or-later. I confirmed it: strings in the .wasm include 'The specified espeak-ng voice does not exist' and 'use espeak for %s'. It ships the GPL text in THIRD_PARTY_NOTICES. But packaging/rpm/ember.spec's License: tag (line 26) and its comment still give sherpa-onnx as Apache-2.0 only, and BUNDLED_LIBRARIES has no sherpa-onnx entry, so uncoveredLicences can't flag it. Ember never calls the text-to-speech part, but it still redistributes GPL-3.0 object code, and that brings source-offer obligations nobody has decided on.",
+   "fix": "Add GPL-3.0-or-later to the main package's License: tag and to the spec comment. Add a BUNDLED_LIBRARIES entry for sherpa-onnx (eSpeak NG: GPL-3.0-or-later) so staging enforces it. Raise it with the owner in the report: either meet GPL-3.0 §6 (offer the corresponding source for the eSpeak NG in that .wasm) or ship a sherpa-onnx build without text-to-speech."
+  },
+  {
+   "id": 200,
+   "severity": "should-fix",
+   "what": "The reported case is gone: a folder like '100% Free' now works. A real Electron 44.5 window with a sandboxed preload, loaded from 'Tools C# 100% Free (x86) & Zoë's [x]', reports senderFrame.url '...100%%20Free...'. The old check throws URIError on it; the new one returns true. A % followed by two hex digits still breaks Ember another way, though. loadFile from a folder named '50%AB' fails with ERR_FILE_NOT_FOUND (-6), because Chromium decodes %AB, so Ember's windows stay blank there. The new unit case asserts isTrustedSender('file:///opt/50%AB/...') === true for a URL Ember can never actually load.",
+   "fix": "In windows.ts, load the bundled pages with loadURL(pathToFileURL(file).href) (keeping any query or hash) instead of loadFile, so Chromium never decodes a literal %. isTrustedSender's undecoded check still matches '/renderer/' with %25 in the path. Add an Electron or smoke case for a '50%AB' folder. If the hot-file change is out of scope, list '%XX' folder names as a known limitation and drop or relabel the 50%AB unit case."
+  },
+  {
+   "id": 202,
+   "severity": "should-fix",
+   "what": "AppRun (scripts/package/appimage.sh) adds --no-sandbox only when /proc/sys/user/max_user_namespaces is 0. doctor-probes.ts also sets userNamespaces=false when kernel.unprivileged_userns_clone is 0 (Debian and some hardened Ubuntu). On such a host the AppImage starts without --no-sandbox and Chromium aborts, because the AppImage has no setuid helper. Yet `sudo ./Ember.AppImage doctor` (root adds --no-sandbox) now prints warn 'Ember runs without Chromium's sandbox here…' and 'Ember can work.', which is wrong. The old code reported FAIL in this case.",
+   "fix": "Use the same test in AppRun as the probe: also treat `cat /proc/sys/kernel/unprivileged_userns_clone` = 0 as user namespaces off before adding --no-sandbox. Alternatively, give the doctor the warn only when max_user_namespaces is 0. Add a launcher test with a stand-in /proc value, or a doctorChecks case."
+  },
+  {
+   "id": 203,
+   "severity": "should-fix",
+   "what": "Partial, as the fix agent reported. The %posttrans notice works: I ran its test with /bin/sh against a stand-in /proc, and it fails on 1b39bb3 and passes now. Still missing: the Linux README update line (owned by the docs package), and the reviewer's preferred in-app check that offers 'Restart Ember' before a window loads pages from a changed install. Until both land, someone who updates through GNOME Software or a dnf-automatic timer never sees the scriptlet's output, and a mixed-version Ember can still happen.",
+   "fix": "Lead: make sure the docs package adds the README line ('quit Ember, then dnf upgrade; Ember starts again at your next login'). Decide whether to schedule the proposed start-up check (inode and mtime of <appPath>/package.json, checked before the home, ask, command, prompt and mic windows open) as a follow-up in the hot files."
+  },
+  {
+   "id": 38,
+   "severity": "should-fix",
+   "what": "docs/DEVELOPING.md §14.4 (lines 1103-1121) still says pushes to the ember-improve/20261022-sshwsl-* branches run every group, that `only` takes all, unit, commands, wsl, ssh, macos and wayland, and that macOS runs only on dispatch and on Mondays. Its job table has no ssh-el8-client or ssh-linux-arm64 row and no EMBER_SSH_TEST_PASSWORD_* variables. For #207, §13 (lines 330-337) still describes the package job without the models RPM, upgrade, rpm -V and removal, still says 'about 340 MB', and says staging stops only on the License: tag, not on a missing licence text.",
+   "fix": "Update those DEVELOPING.md lines to match the new triggers, jobs and variables, the arm64 `only` option, the tag runs for macOS and arm64, the RPM lifecycle step and the new licence-text stop. If the docs package owns DEVELOPING.md, hand it these lines in the report's forDocs."
+  }
+ ]
+}

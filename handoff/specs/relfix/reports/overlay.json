@@ -1,0 +1,263 @@
+{
+ "key": "overlay",
+ "final": {
+  "findings": [
+   {
+    "id": 124,
+    "status": "fixed",
+    "how": "New pure app/renderer/overlay/layout.ts with pillSpot() and pillBottom(). placeStatus() in the overlay renderer runs on state, init and resize. When the padded ring of the control Ember works on is under the pill at the top (40 px, centred), the pill moves to the bottom-centre, 20 px above the work area (.status.low). OverlayInit now carries the display's workArea (overlay.ts initFor). .focus has z-index 4, so the ring is drawn above the pill. c29f5f6 does the layout read only when the status, the control or the screen changed. Checked in the built overlay on the reviewer's address bar (260,48 920x32 at 1440x900): the pill moves to y=784. For a control mid-screen, or no control, it stays at y=40.",
+    "test": "test/unit/overlay-pill.test.ts: 6 tests (pillSpot top/bottom/ribbon/tall control, pillBottom, init carries workArea). All failed before and pass now."
+   },
+   {
+    "id": 126,
+    "status": "fixed",
+    "how": "Round 1: besideControl() in follow.ts takes `avoid`. When its usual spot is under the handle or the cards, it tries the other side, then above, then below. OverlayManager parks Ember with that display's keep-off area, and re-parks it when cards that come up cover its spot. layout.ts cardsCorner() moves the card stack to the bottom-left while the control's ring is under it at the bottom-right. .focus (z-index 4) is drawn above .tasks (3). Round 2, the verifier's band: keepOff(display) now returns Rect[]. The handle and cards make one area only when they overlap across (cards stacked above the handle). Otherwise each is its own area, so cards at the bottom-left no longer make a band across the bottom. followTarget() lifts Ember above whichever area it covers (and above the next, if that lift lands on one). besideControl() takes a spot only when it covers none. Both still accept a single Rect, so existing callers and tests are unchanged. setCards re-parks when any area covers the spot. The verifier's own scratch test (relfix-verify/overlay/zz-verify-band.test.ts) now logs keepOff=[{1154,660,200x56},{16,555,270x101}], and the hold-still spot is (730,660.74) with the cards on either side. Before, it was y=515 with the cards on the left. Output saved in relfix-verify/overlay/band-after.txt. Its first case now fails by design, because it asserted the band.",
+    "test": "test/unit/overlay-keepoff.test.ts, describe 'the handle at the bottom-right and the cards moved to the bottom-left'. 3 new tests failed before: the hold-still spot was 145.74 px off the no-cards spot; followTarget over the handle was not lifted; besideControl beside the handle parked under it. All pass now. Round 1's tests ('Ember beside a control near the task cards', 'the task cards and the ring round a control') still pass."
+   },
+   {
+    "id": 127,
+    "status": "fixed",
+    "how": "OverlayManager.keepOff(display) covers only the handle (if it is on that display) and that display's own cards, clipped to its work area. It is no longer one union over every display. The follow tick and setState's hold-still spot pass the cursor's display. The park beside a control passes the control's display. Round 2 also returns areas that don't touch as separate rects (see #126).",
+    "test": "test/unit/overlay-keepoff.test.ts 'what Ember keeps off, with more than one display' simulates OverlayManager.tick() on two 1920x1080 displays. Before the fix, Ember settled 231 px off the cursor with the second display on the left and 517 px off with stacked displays. Now it settles where it does with no cards and still keeps off its own display's cards. All 4 pass."
+   },
+   {
+    "id": 128,
+    "status": "fixed",
+    "how": "Each frame from main carries `on`, the id of the display nearest Ember's centre (it is part of the still-frame check too). The pure helper layout.ts bubbleHere() uses that id, or failing that the display that holds Ember's centre. The overlay shows the bubble only on that display. Ember's body is still drawn on every display it straddles, so a click on its visible half never lands on the control it hides. Checked with two 1440x900 overlay pages and Ember at x=1470: before, both displays showed the bubble; now only display 2 does.",
+    "test": "test/unit/overlay-keepoff.test.ts 'Ember near the seam between two displays': 3 tests. They failed before (on undefined, no bubbleHere) and pass now."
+   },
+   {
+    "id": 130,
+    "status": "fixed",
+    "how": "Added a 'queued' TaskCard status, and TaskManager.publish no longer maps queued to 'waiting'. The STATE_WORD table in overlay/stack.ts and the handle's TASK_WORD both say 'Waiting its turn: '. underWay() and cardTask() count queued as under way. ember.css has --sym-queued (a grey clock) and a [data-status=\"queued\"] rule, and DESIGN.md names the state. Round 2 (the duplicate fix/bubble 8b66ef8): I can't change that branch from here, so this has to be settled at merge. Keep this branch's implementation, and drop 8b66ef8's code hunks in app/main/agent/tasks.ts, app/shared/overlay.ts, app/renderer/overlay/stack.ts, app/renderer/handle/main.ts ('Queued: '), app/renderer/overlay/main.ts (its STATE_WORD line; on this branch STATE_WORD lives in stack.ts, so the line goes entirely) and app/renderer/shared/ember.css (its --sym-queued and its [data-status=\"queued\"] rule). Its handle/card.ts hunk is the same as this branch's. 8b66ef8's two test hunks (test/unit/tasks.test.ts, test/unit/ui-copy.test.ts) can be kept. I applied them to this branch and ran them: 82 passed, CSS regexes included. Then I reverted them. The patch is saved at relfix-verify/overlay/bubble-130-tests.patch. git grep on fix/bubble finds 'Queued: ' only in those two code lines.",
+    "test": "test/unit/overlay-cards.test.ts 'a task waiting its turn': 3 tests (published status 'queued' with Stop, STATE_WORD, under way / stack order / cardTask). They failed before and pass now. fix/bubble's #130 tests also pass on this branch."
+   },
+   {
+    "id": 131,
+    "status": "fixed",
+    "how": "Round 1 added busyLine(tasks): 'Working on 1 task…' / 'Working on N tasks…' while a task is running or queued. Round 2: the verifier is right that the count replaced every idle word, so 'Waiting for tasks', the word host.ts sets exactly while tasks work, could never show. A new pure idleLine(idle, tasks) in overlay/stack.ts returns idle when it is set and not 'Ready', otherwise busyLine(tasks) ?? idle ?? null. handle/main.ts now uses `s.status ?? (said || idleLine(s.idle, s.tasks) || \"Ready\")` for the pill and `s.status ?? idleLine(s.idle, s.tasks)` for the fallback card. I rebuilt and ran the verifier's harness (relfix-verify/overlay/h/handle.mjs) on the built handle with 0, 1 and 2 tasks, pill and fallback. 'Ready' becomes 'Working on 1 task…' / 'Working on 2 tasks…'. 'Waiting for tasks', 'Reconnecting…' and 'Copilot problem' stay as they are with tasks running.",
+    "test": "test/unit/overlay-cards.test.ts 'the handle's line while tasks run': 2 new idleLine tests. 'Waiting for tasks', 'Reconnecting…' and 'Copilot problem' stay with tasks running; 'Ready' and a missing idle word become the count; with no tasks it says Ready, the reason, or null. They failed before (idleLine not exported) and pass now. The 2 busyLine tests still pass."
+   },
+   {
+    "id": 132,
+    "status": "fixed",
+    "how": "TaskManager.cancel() of a running task aborts it, marks it stopping and publishes at once. publish() shows TASK_STOPPING ('Stopping…', in shared/overlay.ts) until finish(), so the worker's last progress lines don't overwrite it. In the overlay renderer, a Stop press sets the card to 'Stopping…' immediately and marks the button aria-disabled, so a second press is ignored. The pure stopPending() re-enables Stop after 3 s if main never says the task is stopping. Checked in the built overlay.",
+    "test": "test/unit/overlay-cards.test.ts 'pressing Stop on a running task': 2 tests (the card says Stopping… through a later progress line, then Stopped.; stopPending timing). Both failed before and pass now."
+   },
+   {
+    "id": 133,
+    "status": "fixed",
+    "how": "While the stack scrolls, cards drop their outer depth shadow and keep only the sheen and rim (.tasks.scroll .task), so the scroller no longer cuts a hard-edged slab. I chose this over padding the scroller, which would widen its click area and the X input region over the handle. Reorders slide (FLIP, transform only, 150 ms) using the pure slides() in stack.ts. A card that goes fades where it was. In Calm mode or with the desktop's reduced motion on, both happen at once. Checked in the built overlay with six running cards at 1366x768.",
+    "test": "test/unit/overlay-cards.test.ts slides() test: failed before (no such function), passes now. The visual part (the shadow slab) was checked in a scratch Chromium harness, because no DOM test covers CSS painting."
+   },
+   {
+    "id": 134,
+    "status": "fixed",
+    "how": "TaskManager.finish() clamps the card's detail to 400 characters with an ellipsis (finish_task's own limit). The conversation still gets the whole summary. styles.css clamps .task .detail to four lines and makes button.stop 28 px with a red tint, against Close's 24 px. Checked in the built overlay at 1366x768: before, a 2000- and a 343-character result folded every other card into '+2 more'; now both show, four lines each.",
+    "test": "test/unit/overlay-cards.test.ts: a 2000-character summary went onto the card whole before; it is now at most 400 characters. Failed before, passes now."
+   },
+   {
+    "id": 135,
+    "status": "fixed",
+    "how": "The overlay's page sends overlay:motion when prefers-reduced-motion changes. That is live, with no polling and no gsettings call on the main thread. main.ts accepts it only from an overlay and only as a boolean, and calls OverlayManager.reducedMotionChanged(), which replaces the reading taken at start. New channel and preload method setReducedMotion(). Checked in the built overlay: emulating the media query on, then off, reports [true, false] to main.",
+    "test": "test/unit/overlay-motion.test.ts: failed before (the spring's calm flag came only from the start-up reading), passes now."
+   },
+   {
+    "id": 54,
+    "status": "fixed",
+    "how": "New pure desk/a11y.ts with screenName() and modeNews(). Once the user takes over, the picture is named \"Ember's desk. Your keys go to the desk. Press Ctrl+Alt+End to hand back.\" A status region (#live) says 'You have the keyboard on the desk…', and after hand-back it says 'You handed the desk back to Ember.' The picture has a tab stop only while taken over, and on hand-back focus returns to the Take over button. Checked in the desk page's accessibility tree in Chromium.",
+    "test": "test/unit/desk-a11y.test.ts: failed before (no such words), passes now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "698981d",
+    "subject": "Show a task waiting its turn as queued, not as needing the user",
+    "ids": [
+     130
+    ]
+   },
+   {
+    "sha": "0d78c23",
+    "subject": "Say how many tasks Ember is working on instead of Ready while tasks run",
+    "ids": [
+     131
+    ]
+   },
+   {
+    "sha": "51787c8",
+    "subject": "Show Stopping… on a task's card the moment its Stop is pressed",
+    "ids": [
+     132
+    ]
+   },
+   {
+    "sha": "88b3d6c",
+    "subject": "Make Stop the card's prominent control and keep long results to four lines",
+    "ids": [
+     134
+    ]
+   },
+   {
+    "sha": "505bf93",
+    "subject": "Keep Ember off only the cards of the display it is on",
+    "ids": [
+     127
+    ]
+   },
+   {
+    "sha": "982b2c4",
+    "subject": "Keep the task cards and Ember off the control Ember works on",
+    "ids": [
+     126
+    ]
+   },
+   {
+    "sha": "811f782",
+    "subject": "Move the status pill off the control Ember types into or clicks",
+    "ids": [
+     124
+    ]
+   },
+   {
+    "sha": "b1dc0e2",
+    "subject": "Show Ember's bubble only on the display Ember is on",
+    "ids": [
+     128
+    ]
+   },
+   {
+    "sha": "987d344",
+    "subject": "Follow the desktop's reduce-motion switch in Ember's spring while it runs",
+    "ids": [
+     135
+    ]
+   },
+   {
+    "sha": "b3c4f1c",
+    "subject": "Stop the scrolling card stack cutting its shadows and let cards slide",
+    "ids": [
+     133
+    ]
+   },
+   {
+    "sha": "f9e7769",
+    "subject": "Tell screen-reader users how to hand the desk back once they take over",
+    "ids": [
+     54
+    ]
+   },
+   {
+    "sha": "c29f5f6",
+    "subject": "Measure the pill's and the cards' place only when what decides it changes",
+    "ids": [
+     124,
+     126
+    ]
+   },
+   {
+    "sha": "878b8c5",
+    "subject": "Drive both clocks in the multi-display overlay test",
+    "ids": [
+     126,
+     127,
+     128
+    ]
+   },
+   {
+    "sha": "6166f21",
+    "subject": "Keep the handle's reason it can't answer while tasks run; count tasks only in place of Ready",
+    "ids": [
+     131
+    ]
+   },
+   {
+    "sha": "283d06c",
+    "subject": "Keep Ember off the handle and cards moved to the other corner as two areas, not a band",
+    "ids": [
+     126
+    ]
+   }
+  ],
+  "checks": "Run on the final HEAD 283d06c. Logs are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/overlay/r2-*.log.\n- npx tsc --noEmit: exit 0, no errors.\n- npm run lint (eslint .): exit 0, no problems.\n- npm test (full): exit 0. Test Files 246 passed | 1 skipped (247); Tests 5998 passed | 8 skipped (6006). No timing failures.\n- npm run build: exit 0 (dist/app/main.cjs 2.7mb).\n- xvfb-run -a npm run test:smoke: exit 0. 'ok first instance showed its window', 'ok second launch handed over and the first instance focused its window'.\n- While iterating: npx vitest run test/unit/overlay-cards.test.ts (12 passed) and test/unit/overlay-keepoff.test.ts + test/unit/follow.test.ts (31 passed). fix/bubble's #130 test hunks, applied here temporarily: tasks.test.ts + ui-copy.test.ts, 82 passed, then reverted.\n- Commands integration suite: not run, because nothing under app/main/commands/** changed. Voice suites: not run, because the voice process didn't change.",
+  "sharedHunks": [
+   "app/main/follow.ts: followTarget() and besideControl() take `avoid: Rect | readonly Rect[] | null` (still accept one Rect). There is a new private helper areasOf(). followTarget lifts Ember above whichever area it covers; besideControl tries the other side, above, then below when its spot is under any area (#126, rounds 1 and 2).",
+   "app/main/agent/tasks.ts: imports TASK_STOPPING. detailOf() clamps a card's detail to 400 chars (#134). The private `stopping` set; cancel() of a running task marks it stopping and publishes (#132). finish() clears it and clamps the detail. publish() no longer maps queued to 'waiting' (#130) and shows TASK_STOPPING for a stopping running task (#132).",
+   "app/main/main.ts: one ipcMain.on(OVERLAY.motion) handler after the OVERLAY.cards handler, accepted from an overlay only and as a boolean only (#135).",
+   "app/preload/overlay.ts: setReducedMotion in the overlay API (#135).",
+   "app/shared/overlay.ts: OVERLAY.motion channel (#135); OverlayInit.workArea? (#124); OverlayFrame.on? (#128); TaskCard status adds 'queued' (#130); export TASK_STOPPING (#132); OverlayApi.setReducedMotion? (#135).",
+   "app/renderer/handle/main.ts: imports idleLine from ../overlay/stack. TASK_WORD adds queued: 'Waiting its turn: ' (#130). The pill line uses idleLine(s.idle, s.tasks) before 'Ready', and the fallback card uses s.status ?? idleLine(s.idle, s.tasks) (#131, rounds 1 and 2).",
+   "app/renderer/handle/card.ts: cardTask() counts 'queued' as busy (#130); identical to fix/bubble's hunk.",
+   "app/renderer/shared/ember.css: symbol-family comment names queued; new --sym-queued (grey clock); [data-status=\"queued\"] rule (#130).",
+   "docs/DESIGN.md: the State bullet names 'waiting its turn' in the symbol family (#130)."
+  ],
+  "forDocs": [
+   "CHANGELOG: A task waiting its turn behind running tasks now shows a grey clock and 'Waiting its turn' instead of the purple 'Needs you'.",
+   "CHANGELOG: While tasks run, Ember's handle says 'Working on 1 task…' / 'Working on N tasks…' instead of 'Ready'. A reason it can't answer you, such as 'Waiting for tasks' or 'Reconnecting…', still shows.",
+   "CHANGELOG: Pressing Stop on a task card shows 'Stopping…' at once. Stop is now larger and red-tinted, and a long result is kept to four lines on its card.",
+   "CHANGELOG: The status pill moves to the bottom of the screen when it would cover the control Ember is typing into or clicking. The task cards move to the bottom-left when they would cover it.",
+   "CHANGELOG: With more than one display, Ember keeps off only the task cards on its own display, and shows its bubble only on the display it is on.",
+   "CHANGELOG: Ember's movement follows the desktop's reduce-motion setting as soon as it changes, without a restart.",
+   "CHANGELOG: In the desk window, once you take over, screen readers are told that your keys go to the desk and that Ctrl+Alt+End hands it back."
+  ],
+  "ciOnly": [
+   "Windows and macOS: whether prefers-reduced-motion in the overlay's page follows the OS switch live (Windows 'Show animations', macOS 'Reduce motion'), so overlay:motion reaches main without a restart (#135). Only Linux Chromium emulation was checked.",
+   "Real multi-monitor layouts with mixed scale factors (Windows per-monitor DPI, macOS Retina plus external display): the display chosen for keepOff, for `on` and for the bubble near the seam (#127, #128). Tested with fakes at scale 1 only.",
+   "Windows and macOS hover-to-interact (no input region) with the card stack moved to the bottom-left and the pill moved to the bottom: clicks on Stop and Close still reach the overlay (#124, #126). Linux X input region checked only through the unit and smoke paths.",
+   "Screen readers (Orca on GNOME, NVDA/Narrator on Windows, VoiceOver on macOS) reading the desk's new picture name and live region (#54), the 'Waiting its turn: ' card word (#130) and 'Stopping…' (#132). Checked only through Chromium's accessibility tree.",
+   "The real time a stopped worker takes to wind down: the 3 s re-enable of Stop in the renderer if main never says the task is stopping (#132)."
+  ],
+  "notes": "I fixed both round-2 should-fix items (#131, #126), each with a test that failed first. For #130 I couldn't change anything here, because the duplicate is on another branch (fix/bubble 8b66ef8). At merge, keep this branch's code and drop 8b66ef8's code hunks: tasks.ts, shared/overlay.ts, stack.ts, handle/main.ts, overlay/main.ts's STATE_WORD line, and ember.css's second --sym-queued and queued rule. Its card.ts hunk is identical to this branch's, and its two test hunks pass against this branch, so they can stay. That leaves one word, 'Waiting its turn: ', on the overlay card and the handle, and one --sym-queued.\n\nThe verifier's scratch test relfix-verify/overlay/zz-verify-band.test.ts asserts the band (keepOff width > 1300), so its first case now fails on purpose. Its second case logs the same hold-still spot (730,660.74) with the cards on either side.\n\nThe worktree is clean at 283d06c. Nothing was pushed."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/agent/tasks.ts (lifecycle; agent also has findings there): publish() keeps status 'queued' instead of mapping it to 'waiting' (#130); a private `stopping` Set, cancel() of a running task aborts then adds it to the set and publishes, finish() deletes it, publish() shows TASK_STOPPING as the detail of a running task in the set (#132); a module-level detailOf() and finish() clamping task.detail to 400 characters (#134). run() is untouched (agent #145 moves makeWorker there).",
+   "app/shared/overlay.ts: TaskCard.status gains 'queued' (#130); export TASK_STOPPING = 'Stopping…' (#132); OverlayInit.workArea? (#124); OverlayFrame.on? (#128); OVERLAY.motion channel and OverlayApi.setReducedMotion? (#135).",
+   "app/renderer/handle/main.ts (ask): TASK_WORD gains queued: 'Waiting its turn: ' (#130); imports busyLine from ../overlay/stack and uses it in the pill line and in the no-compositor card's line, before s.idle/'Ready' (#131).",
+   "app/renderer/handle/card.ts (ask): cardTask's busy() also counts 'queued' (#130).",
+   "app/renderer/shared/ember.css (css): the symbols comment mentions queued; new --sym-queued token (a clock); [data-status=\"queued\"] { --sym-tint: var(--gray); --sym: var(--sym-queued) } (#130).",
+   "app/main/follow.ts (unowned): besideControl(r, size, area, avoid = null) tries the other side, above and below when its spot is under `avoid`; exported overlapsBody() (#126). Without avoid its result is unchanged.",
+   "app/main/main.ts (hot): one ipcMain.on(OVERLAY.motion) handler right after the OVERLAY.cards handler, calling overlay.reducedMotionChanged(on) for a boolean from an overlay only (#135).",
+   "app/preload/overlay.ts (unowned): setReducedMotion: on => ipcRenderer.send(OVERLAY.motion, on) (#135).",
+   "docs/DESIGN.md (docs owns docs/**; common.md asks fixers to update DESIGN.md): the State bullet's symbol family adds 'waiting its turn' (#130).",
+   "app/renderer/overlay/styles.css is mine, but css owns its forced-colors and Calm rules: my hunks touch .status (.low), .tasks.scroll .task, .task .detail, .task.gone, .task-actions button.stop and [aria-disabled], and .focus z-index. css #129 should give the new button.stop the same forced-colors edge as the other card buttons."
+  ],
+  "forDocs": [
+   "CHANGELOG: A task waiting its turn behind running tasks now shows a grey clock and is read as 'Waiting its turn', no longer as the purple 'Needs you' question.",
+   "CHANGELOG: While tasks run, Ember's handle says 'Working on 1 task…' / 'Working on 2 tasks…' instead of 'Ready'.",
+   "CHANGELOG: Pressing Stop on a task card says 'Stopping…' at once. Stop is now the card's larger, red-tinted button, and a long result is kept to four lines on its card (the conversation still gets all of it).",
+   "CHANGELOG: The status line ('Using your keyboard: press a key or move the mouse to take over') moves to the bottom of the screen while Ember types into or clicks something under it (an address bar, ribbon tabs). The task cards move to the bottom-left corner while the control Ember works on is under them, and Ember never waits beside a control under its own cards.",
+   "CHANGELOG: With more than one display, Ember keeps off only the task cards of the display it is on, and its bubble no longer appears twice at the seam between displays.",
+   "CHANGELOG: Turning the computer's reduce-motion setting on or off now reaches Ember's movement without a restart.",
+   "CHANGELOG: Desk view (Linux): after Take over, screen readers hear that your keys go to the desk and that Ctrl+Alt+End hands it back.",
+   "README/DEVELOPING (optional): where task cards are described, mention that they move to the bottom-left while Ember works on something in the bottom-right corner."
+  ],
+  "ciOnly": [
+   "Windows and macOS: toggling the OS reduce-motion setting while Ember runs (Windows: Accessibility > Visual effects > Animation effects; macOS: Accessibility > Display > Reduce motion) fires the overlay page's prefers-reduced-motion change, logs overlay.reduced_motion {on}, and switches the follow spring to and from critically damped. RHEL 8 GNOME: whether Chromium's media query follows org.gnome.desktop.interface enable-animations live; if it doesn't, Linux behaves as before (read once at start).",
+   "Real multi-monitor layouts (Windows per-monitor DPI with mixed scale factors, macOS displays in different arrangements, GNOME Xorg with displays side by side and stacked): frame.on from screen.getDisplayNearestPoint gives one bubble at the seam; keepOff per display with the handle on the primary; Ember follows the cursor freely on a display whose own cards aren't near.",
+   "The pill's bottom spot relative to the real work area: above the Windows taskbar (at the bottom, at the side, auto-hidden), the macOS Dock (including auto-hide, where work area equals bounds), and under the GNOME top bar for the top spot.",
+   "The card stack in the bottom-left corner on Windows and macOS with hover polling (no input region): Stop and Close clickable there, and clicks on cards that just slid (rects are re-measured 180 ms after a slide).",
+   "Desk view (Linux only): Orca on RHEL 8 GNOME reads the new picture name on take-over and the status announcement, and Tab no longer stops on the picture before take-over."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 131,
+   "severity": "should-fix",
+   "what": "busyLine now wins over every idle word, not only over \"Ready\". In the built handle (relfix-verify/overlay/h/handle.mjs), base vs fix with one running task: idle \"Waiting for tasks\" gave \"Waiting for tasks\" on base and gives \"Working on 1 task…\" on fix. \"Reconnecting…\" and \"Copilot problem\" behave the same way, both in the pill and in the fallback card. This matters because host.ts:960-966 sets phase error/not-answering with waitingForTasks exactly while tasks are at work. So idleWord's \"Waiting for tasks\" can now never show. That word is the only one that tells the user why Ember isn't answering them and that it will reconnect once the tasks are done. The finding asked for the count only \"when nothing else is to be said\".",
+   "fix": "Let the task count replace only \"Ready\" (or a missing idle word). Add a pure helper in app/renderer/overlay/stack.ts: `idleLine(idle: string | undefined, tasks) => idle && idle !== \"Ready\" ? idle : busyLine(tasks) ?? idle ?? null`. In handle/main.ts use `s.status ?? (said || idleLine(s.idle, s.tasks) || \"Ready\")` for the pill and `s.status ?? idleLine(s.idle, s.tasks)` for the fallback card. Add unit tests: \"Waiting for tasks\" and \"Reconnecting…\" stay as they are with tasks running; \"Ready\" becomes \"Working on 1 task…\"."
+  },
+  {
+   "id": 126,
+   "severity": "should-fix",
+   "what": "OverlayManager.keepOff(display) still merges the handle and the cards into one box. Once the renderer moves the cards to the bottom-left (new in this branch), the handle (bottom-right) and the cards no longer touch, so the box becomes a band across the whole bottom of the display. My scratch test (relfix-verify/overlay/zz-verify-band.test.ts, run against 878b8c5) shows this. On a 1366x768 display with the cards at the bottom-left, keepOff = {x:16,y:555,width:1338,height:161}. Then I set focus on Next at (1210,620) and cleared it with a done answer, cursor at (683,690). Ember's hold-still spot is y=660.7 with the cards on the right but y=515 with the cards on the left: 146 px above the cursor, nowhere near the cards or the handle. This happens every time in that sequence. setState(focus:null) parks Ember before the renderer has moved the cards back, and setCards re-parks only while focus is set, so Ember stays there while the answer is up. It is the same kind of union-band bug that #127 fixed.",
+   "fix": "Stop merging boxes that don't touch. Have keepOff return Rect[]: the handle and the cards separately, or one merged box only when they overlap horizontally (cards stacked above the handle). Make followTarget and besideControl in follow.ts take `readonly Rect[]`: followTarget lifts Ember above the rect it overlaps; besideControl treats a spot as clear only when it overlaps none. Add a test with the cards at the bottom-left, the handle at the bottom-right and the cursor at the bottom-centre: the hold-still spot after focus clears must equal the spot with no cards."
+  },
+  {
+   "id": 130,
+   "severity": "should-fix",
+   "what": "#130 is implemented twice. fix/bubble commit 8b66ef8 (#19) makes the same change with different copy: screen-reader word \"Queued: \" in overlay STATE_WORD and handle TASK_WORD, against this branch's \"Waiting its turn: \". fix/bubble edits the STATE_WORD line in app/renderer/overlay/main.ts, which this branch moved into stack.ts. Both branches add --sym-queued (slightly different clock path) and the [data-status=\"queued\"] rule, and both change the tasks.ts mapping and the TaskCard type. A careless merge leaves two names for one state (copy rule: the same name for the same thing everywhere) and conflicts in six files.",
+   "fix": "At merge, keep one implementation. This branch's matches the finding's suggested word \"Waiting its turn: \" and has the tests in overlay-cards.test.ts. Drop 8b66ef8's hunks in tasks.ts, shared/overlay.ts, stack.ts, card.ts, handle/main.ts, overlay/main.ts and ember.css, so the overlay card and the handle say the same word and only one --sym-queued is defined."
+  }
+ ]
+}

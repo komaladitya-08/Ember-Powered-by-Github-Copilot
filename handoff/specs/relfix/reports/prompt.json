@@ -1,0 +1,266 @@
+{
+ "key": "prompt",
+ "final": {
+  "findings": [
+   {
+    "id": 182,
+    "status": "fixed",
+    "how": "Round 1: the window is fitted to each card before it is drawn and shown. prompt-window.ts PROMPT_SIZE is 440x300 for SSH prompts and 520x600 for consent cards. fitBounds keeps the centre and stays inside the work area with a 16 px margin. The fit() hook is in windows.ts. A consent card's yes stays off until every word has been in view (copy.ts readThrough; pressResult takes `seen`). While words run on below, the page shows 'Scroll down to read it all first.', fades the foot and makes the block keyboard-focusable.\n\nVerifier must-fix (font), commit 6cbf394: the fix the verifier suggested. readThrough(m, fontsLoaded) is in copy.ts. main.ts judge() reads document.fonts.status after measuring, because the layout starts the font load. `seen` becomes true only with fonts loaded. The page judges again on document.fonts 'loadingdone' and 'loadingerror'. The hint shows only while words are actually below. Re-ran the verifier's e2e-font.cjs scenario on a scratch copy of this branch's built page with the Carlito fallback, using the real windows.ts factory, controller and consent.ts cards. At judge time the probe still shows 'Ember Sans:loading'. At 1280x600 and at 1280x580 the changed-settings SSH card now ends with 478 px of words in a 440 or 420 px block, Connect off and the 'Scroll down to read it all first.' hint. After scrolling to the end, Connect is on and the hint is gone. Cards that fit enable once the font has loaded, and at 1920x1080 every card enables.\n\nVerifier should-fix (frame), commit 4b1a246: createPromptWindow uses useContentSize:true. fit adds the frame (getBounds minus getContentBounds) to the size and caps the whole window to the work area. On Linux the frame is 0, so nothing changes there. The guide now says the card opens 'big enough to show the whole card on most screens'.",
+    "test": "prompt-window.test.ts: 'counts nothing as read while the page's typeface is still loading…' fails on the old one-argument readThrough (a fitting block counted as read). It also pins judge()'s fonts check and the loadingdone/loadingerror listeners from the page source. The hint-line test now covers 'not read, nothing below'. prompt-window-factory.test.ts: 'sizes the page, not the window…' uses a fake Windows frame (16x39) and macOS frame (0x28). It checks useContentSize, a 520x600 page inside a 536x639 or 520x628 window, and the cap on a 520 px high work area. It failed on the old fit. Round-1 tests: 'keeps a consent card's yes off until every word…', 'judges every word in view only…', 'is fitted to each card before it shows…', 'keeps the window's centre…'. Real-window evidence: scratchpad/prompt-fix/font/e2e-font.cjs and e2e-font-scroll.cjs (plus round 1's measure.cjs and gate.cjs)."
+   },
+   {
+    "id": 270,
+    "status": "fixed",
+    "how": "Same window sizing and read-through gate as #182, including the round-2 font guard and content sizing. The commands card names the stop chord in its first line, with the target's reach lines straight after it. The SSH card says what it can do on the screen there and that voice and GitHub sign-in stay on this computer before it says what it copies. This is applied in consent.ts and in copy.ts consentText. FEATURE_CONSENT_VERSION is not bumped: the order changed, not the meaning.",
+    "test": "Same tests as #182. targets-runtime.test.ts 'builds each card per OS…' checks that the stop chord is in body[0]. ui-copy.test.ts and home-platform-copy.test.ts pin the new order."
+   },
+   {
+    "id": 235,
+    "status": "fixed",
+    "how": "windows.ts createPromptWindow(os, { takeKeyboard }) sets acceptFirstMouse:true on macOS and gives the window takeKeyboard(): main's hook if there is one, else show and focus. main.ts wires the hook as bringToFront (focusOwnApp, the input backend's activate), plus focusInput where activateOwnWithInput is set. The controller takes the keyboard through the hook. If a secret card's window is still not focused after 0.8 s, it raises one notification through main's notify, which runtime.ts passes in. The page shows 'Click here before you type: the keyboard is still in another app.' when its window has lost focus, after a 600 ms grace.",
+    "test": "prompt-window.test.ts 'the keyboard (review #235)' has 4 tests, plus the promptHint tests. prompt-window-factory.test.ts covers acceptFirstMouse on darwin only and the takeKeyboard hook. targets-runtime.test.ts checks that the runtime passes notify. All of these failed before. Real-window check: scratchpad/prompt-fix/focus.cjs."
+   },
+   {
+    "id": 125,
+    "status": "fixed",
+    "how": "windows.ts keepClearOf (pure) says what Ember steps beside and what the bubble keeps off: the prompt window while it shows a card, and the command window while a question's command card is up, ahead of settings, whose rule is unchanged. main.ts registers both windows through the targets runtime's window factories. Their show, hide, move, resize, minimise, restore and close re-run stepAside, and questionChanged records whether a command card is up. Verifier should-fix (commit f3c2086): the 'How it asks' paragraph in docs/COMMANDS-WSL-SSH.md is re-wrapped to the file's width (about 116-118 columns). The 42-character line is gone.",
+    "test": "keep-clear.test.ts has 3 tests, which failed before because the function didn't exist. main-privacy-wiring.test.ts pins the new factories. The doc re-wrap has no test (it is layout only): checked with awk line lengths."
+   },
+   {
+    "id": 186,
+    "status": "fixed",
+    "how": "runtime.ts askCard(card, signal) dismisses its own card when the connection's AbortSignal aborts. connect() passes abort.signal for the first-use card and both machine-changed cards. A card dismissed that way ends 'Cancelled.', not 'Not now.'",
+    "test": "targets-runtime.test.ts 'takes the host's card down when its connection is cancelled, forgotten or stopped while it is up (review #186)'. It timed out before. Now each of cancel, forget and stop dismisses the card, nothing connects, and an answered card is never dismissed afterwards."
+   },
+   {
+    "id": 193,
+    "status": "fixed",
+    "how": "Round 1: runtime.ts connect() treats a ConnectError of kind 'cancelled' like the bubble's Cancel. It hides the connecting bubble and returns 'Cancelled.' with no error bubble.\n\nVerifier should-fix (refusals counted as the user's cancel), commit e7502ee: PromptAnswer (app/shared/remote-ui.ts) gets an optional `refused: true`, which is main's own no and never the page's. The controller sets it on every ask() refusal (disposed, a card validPromptCard rejects such as a server prompt over 2000 characters or a host name over 255, a consent kind, a duplicate id) and on the no-window answer in reveal(). connections.ts attempt() sets cancelledByUser only for a no that is not refused. It records promptRefused, and failureOf turns the resulting ssh auth failure into 'Ember couldn't show build-01's sign-in question.' with retry true (a new MESSAGES.promptRefused). So the error bubble 'Can't connect to build-01' stays, with Try again. It no longer vanishes, and it no longer says the host rejected a sign-in nobody typed. The user's Cancel or Esc, closing the window and dismiss() still answer a plain no, which is still the quiet cancel. The guide says what a card Ember can't show ends with (commit 7e9cab9).",
+    "test": "ssh-connections.test.ts 'never counts a sign-in card Ember couldn't show as the user's cancel: the failure says so (review #193)' failed before: the ConnectError kind was 'cancelled'. It passes now with kind 'auth' and the new message. prompt-window.test.ts: the refusal tests now expect `refused: true` for a malformed card, a consent card through ask, a 2001-character keyboard-interactive prompt, a 256-character host, a duplicate id and the no-window case. They failed before, when there was no flag. sshwsl-contract.test.ts now expects the no-window answer with refused:true (still ok:false, fail closed). Round 1's targets-runtime test for the quiet user cancel still passes."
+   },
+   {
+    "id": 192,
+    "status": "fixed",
+    "how": "consent.ts sshConsent names the helper's folder for a Linux computer and for a Mac. The screen line applies only if the computer has a desktop, and says that a server with no desktop, or a Mac, gets commands only. The new sshChangedFrom and a changedFrom fact (passed by runtime.ts sshFacts) make a card asked again for a changed user, hostname or port start with 'Your SSH settings now send build-01 to … (before: …)'. sshNeedsConsent shares the comparison. copy.ts consentText's default folder wording follows.",
+    "test": "targets-runtime.test.ts 'leads a card asked again for changed SSH settings with what changed, and never on the first card (review #192)' and the per-OS card test. Both failed on the old code. ui-copy.test.ts was updated."
+   },
+   {
+    "id": 60,
+    "status": "fixed",
+    "how": "index.html keeps <main> as the landmark and puts the dialog inside it: <div id=card role=dialog aria-labelledby aria-describedby>. styles.css follows.",
+    "test": "prompt-window.test.ts pins the structure from the page source: a main landmark containing the dialog, with its name and description. It failed on the old <main role=dialog>."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "a14f323",
+    "subject": "Keep the prompt window's main landmark and put its dialog inside it",
+    "ids": [
+     60
+    ]
+   },
+   {
+    "sha": "961707d",
+    "subject": "End a connection quietly when the user cancels its sign-in card",
+    "ids": [
+     193
+    ]
+   },
+   {
+    "sha": "077296f",
+    "subject": "Take a host's consent card down when its connection is cancelled",
+    "ids": [
+     186
+    ]
+   },
+   {
+    "sha": "032d92e",
+    "subject": "Make the SSH card right for a Mac or a server, and say what changed when asked again",
+    "ids": [
+     192
+    ]
+   },
+   {
+    "sha": "020f6ac",
+    "subject": "Show a consent card whole, and let its yes count only once it has been read",
+    "ids": [
+     182,
+     270
+    ]
+   },
+   {
+    "sha": "1656077",
+    "subject": "Give the prompt window the keyboard as settings gets it, and say when it hasn't",
+    "ids": [
+     235
+    ]
+   },
+   {
+    "sha": "23a6ce5",
+    "subject": "Keep Ember and its bubble clear of its own approval windows while they ask",
+    "ids": [
+     125
+    ]
+   },
+   {
+    "sha": "12eae42",
+    "subject": "Say in the commands and SSH guide how the consent and sign-in cards now behave",
+    "ids": [
+     182,
+     270,
+     125,
+     192,
+     186,
+     235,
+     193
+    ]
+   },
+   {
+    "sha": "8ff30c0",
+    "subject": "Pin main's new approval-window factories in the wiring test",
+    "ids": [
+     125,
+     235
+    ]
+   },
+   {
+    "sha": "6cbf394",
+    "subject": "Count a consent card as read only in its final layout, once its typeface has loaded",
+    "ids": [
+     182,
+     270
+    ]
+   },
+   {
+    "sha": "4b1a246",
+    "subject": "Size the prompt window by its page, so the title bar doesn't take the card's last lines",
+    "ids": [
+     182
+    ]
+   },
+   {
+    "sha": "f3c2086",
+    "subject": "Re-wrap the guide's \"How it asks\" paragraph to the file's width",
+    "ids": [
+     125
+    ]
+   },
+   {
+    "sha": "e7502ee",
+    "subject": "Tell a sign-in card Ember couldn't show from the user's cancel",
+    "ids": [
+     193
+    ]
+   },
+   {
+    "sha": "7e9cab9",
+    "subject": "Say in the guide what a sign-in card Ember can't show ends with",
+    "ids": [
+     193
+    ]
+   },
+   {
+    "sha": "b3b9661",
+    "subject": "Expect the prompt window's no-window answer to say it was refused in the contract test",
+    "ids": [
+     193
+    ]
+   }
+  ],
+  "checks": "Final state (HEAD b3b9661):\n- npx tsc --noEmit: exit 0, no output.\n- npm run lint (eslint .): exit 0, no problems.\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: exit 0. 'ok first instance showed its window' and 'ok second launch handed over and the first instance focused its window'.\n- npm test (full), first run after the #193 commit: 1 failed | 5983 passed | 8 skipped (5992), 242 of 244 files passed. The failure was sshwsl-contract.test.ts pinning the old no-window answer { id, ok:false }. That expectation now includes refused:true (commit b3b9661), and the file alone passes 69/69.\n- npm test (full) re-run after that: 3 failed | 5981 passed | 8 skipped (5992). All 3 failures were 'Test timed out in 5000ms' in targets-runtime.test.ts, under load from other packages (load average about 7). The file passed in the previous full run, and passed 96/96 three times when run alone afterwards.\n- Targeted: prompt-window.test.ts + ssh-connections.test.ts 77/77. ssh-errors.test.ts + targets-runtime.test.ts 106/106.\n- Commands integration suite not run: nothing under app/main/commands/** changed.\n- Real-window font check (xvfb, scratch copy of the built page with a Carlito fallback, real factory, controller and cards; scratchpad/prompt-fix/font): at 1280x600 and 1280x580 the changed-settings SSH card keeps Connect off with the hint until scrolled, then turns it on. Fitting cards and every card at 1920x1080 turn it on once the font has loaded.",
+  "sharedHunks": [
+   "app/main/main.ts: import of keepClearOf; stepAside uses keepClearOf and the targets runtime's command and prompt window factories register keepClear (show/hide/move/resize/minimise/restore/close re-run stepAside) (#125); the prompt window factory gets takeKeyboard = bringToFront plus focusInput where activateOwnWithInput (#235); questionChanged records whether a command card is up (#125)",
+   "app/main/windows.ts: keepClearOf (pure, new export) (#125); createPromptWindow takes { takeKeyboard }, acceptFirstMouse on darwin, useContentSize:true, fit() adding the frame and capping to the work area (#182, #235); createCommandWindow unchanged except as wired from main",
+   "app/main/targets/runtime.ts: askCard(card, signal) dismisses its card on abort, and connect() passes abort.signal and ends 'Cancelled.' (#186); a ConnectError of kind 'cancelled' hides the bubble quietly (#193); passes deps.notify to the prompt window (#235); sshFacts passes changedFrom (#192)",
+   "app/main/remote/connections.ts: attempt() sets cancelledByUser only for a no that is not refused, records promptRefused and returns it; failureOf takes promptRefused (default false) and gives MESSAGES.promptRefused for an interactive auth failure; both interactive failureOf call sites pass run.promptRefused (#193)",
+   "app/main/remote/ssh-errors.ts: one new MESSAGES line, promptRefused: \"Ember couldn't show ${h}'s sign-in question.\" (#193)",
+   "app/shared/remote-ui.ts: PromptAnswer gets optional `refused?: true` with a doc comment (#193)",
+   "docs/COMMANDS-WSL-SSH.md: §2.1 commands card line (opens whole on most screens, stop chord first, Turn on after reading); 'How it asks' paragraph sentence on keeping clear plus re-wrap; SSH card bullet (desktop/server/Mac, folder, changed settings, Cancel/Forget/stop take it away); sign-in bullet (keyboard, quiet cancel, refused card's message) (#182, #270, #125, #192, #186, #235, #193)",
+   "test/unit/targets-runtime.test.ts: new tests for #186, #193, #192, #235 and the stop chord in body[0]",
+   "test/unit/ssh-connections.test.ts: one new test (#193)",
+   "test/unit/sshwsl-contract.test.ts: the no-window prompt answer expects refused:true (#193)",
+   "test/unit/ui-copy.test.ts, test/unit/home-platform-copy.test.ts: pin the reordered consent text (#270, #192)",
+   "test/unit/main-privacy-wiring.test.ts: pins the new prompt and command window factories (#125, #235)"
+  ],
+  "forDocs": [
+   "CHANGELOG: First-use consent cards (commands, WSL, SSH) now open big enough to show the whole card on most screens, and Turn on or Connect works only once the whole card has been in view ('Scroll down to read it all first.').",
+   "CHANGELOG: The SSH sign-in, host-key and consent cards now take the keyboard on macOS and Windows. If another app keeps it, the card and a notification say so before you type.",
+   "CHANGELOG: Cancel or Esc on an SSH sign-in card now ends the connection quietly. A sign-in card Ember can't show ends with \"Ember couldn't show build-01's sign-in question.\" and Try again.",
+   "CHANGELOG: The SSH consent card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac, and says that a server with no desktop gets commands only.",
+   "CHANGELOG: Ember and its bubble now step clear of the command window and the sign-in or consent window while they ask."
+  ],
+  "ciOnly": [
+   "Windows and macOS frame sizes: with useContentSize, getBounds minus getContentBounds gives the real title bar and borders (about 16x39 on Windows, 0x28 on macOS), and a consent card's page gets the full 520x600. Unit-tested with fake frames only.",
+   "macOS: takeKeyboard through focusOwnApp makes the prompt window the key window after a hotkey or the ask box, and acceptFirstMouse makes the first click on Connect or Allow count.",
+   "Windows: activateOwnWithInput gets past the foreground lock for the prompt window, and the 'Click Ember's window before you type' notification shows when it doesn't.",
+   "Real Windows, macOS and RHEL fallback faces (Segoe UI, SF, Cantarell): document.fonts.status reads 'loading' at the first judge in a new window and 'loadingdone' fires there. Shown on Linux xvfb with Carlito standing in.",
+   "The overlay stepping beside, and the bubble keeping off, the command and prompt windows on screen (#125). Unit-tested through keepClearOf; not run end to end."
+  ],
+  "notes": "An earlier run of this second round had already committed the #182 font guard (6cbf394), the frame sizing (4b1a246) and the #125 re-wrap (f3c2086). It had also left an uncommitted prompt-window.test.ts edit for #193. I checked those commits by reading them and by re-running the verifier's font scenario against this branch's built page. I kept them and finished #193.\n\nOne step beyond the verifier's minimal fix for #193: without it, a refused sign-in would have said 'build-01 didn't accept that sign-in.' for a sign-in nobody typed. So a refused prompt gets its own honest message: one new MESSAGES line in ssh-errors.ts, plus a guide sentence.\n\nLeft as it was (not raised and pre-existing): runtime.ts askCard still treats a consent-direct card the prompt window refuses (no window) as 'Not now.'."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts: import keepClearOf from ./windows (import line)",
+   "app/main/main.ts: stepAside now uses keepClearOf, with new approvals/commandCardUp/shownWindow/keepClear declared just before it (~line 316) (#125)",
+   "app/main/main.ts: questionChanged sets commandCardUp from q.question.panel.kind and calls stepAside() after targets.questionChanged (#125)",
+   "app/main/main.ts: createTargets windows: command -> keepClear(\"command\", createCommandWindow(...)); prompt -> keepClear(\"prompt\", createPromptWindow(os, { takeKeyboard: bringToFront + focusInput })) (#125, #235)",
+   "app/main/targets/runtime.ts: import sshChangedFrom from ./consent (#192)",
+   "app/main/targets/runtime.ts: parts.promptWindow({... notify: deps.notify }) (#235)",
+   "app/main/targets/runtime.ts: askCard(card, signal?) dismisses its card when the signal aborts (#186)",
+   "app/main/targets/runtime.ts: sshFacts adds changedFrom: sshChangedFrom(host, resolved) (#192)",
+   "app/main/targets/runtime.ts: connect(): the three askCard calls pass abort.signal and end 'Cancelled.' when aborted (#186)",
+   "app/main/targets/runtime.ts: connect() catch: ConnectError kind 'cancelled' -> stopped('Cancelled.') with no error bubble (#193)",
+   "app/main/windows.ts: new exports ShownWindow and keepClearOf (outside the prompt window's own hunk) (#125); import { screen } from electron and { PROMPT_SIZE, fitBounds } from ./remote/prompt-window",
+   "test/unit/targets-runtime.test.ts: rig records pwOpts; new tests for #186, #192, #193, #235; stop-chord pins moved to body[0] (#270)",
+   "test/unit/ui-copy.test.ts: consent card order pins updated (#270), helper folder wording (#192), PROPER allows 'Support/Ember'",
+   "test/unit/home-platform-copy.test.ts: stop chord pins moved to body[0] / body[3] (#270)",
+   "test/unit/main-privacy-wiring.test.ts: pins the new window factories (#125, #235)",
+   "docs/COMMANDS-WSL-SSH.md: §2.1 commands card, 'How it asks', the SSH 'The card.' bullet and the sign-in cards bullet"
+  ],
+  "forDocs": [
+   "CHANGELOG: The consent cards for commands, SSH and WSL now open big enough to read in full. Turn on / Connect works only once the whole card has been in view; in a window too small for it, the card fades at the bottom and says 'Scroll down to read it all first.'",
+   "CHANGELOG: The commands card names the stop chord in its first line and what commands on that computer can reach right after it. The SSH card says what Ember can reach there before what it copies.",
+   "CHANGELOG: The SSH card names the helper's folder on Linux and on a Mac, and says that a server with no desktop, or a Mac, gets commands only. When the card comes back because your SSH settings now send the name elsewhere, it starts with what changed.",
+   "CHANGELOG: Cancel on the connecting bubble, Forget and the stop chord now also take away an open 'Bring Ember to …' card.",
+   "CHANGELOG: Cancelling a password or passphrase card now ends the connection quietly, with no 'Can't connect' error.",
+   "CHANGELOG: On macOS and Windows the sign-in window now takes the keyboard as the settings window does, and on macOS its first click counts. If another app keeps the keyboard, the card says 'Click here before you type: the keyboard is still in another app.' and a notification says so too.",
+   "CHANGELOG: Ember and its bubble now keep clear of the command card and of the sign-in and consent cards while they ask, as they already do for settings.",
+   "CHANGELOG (accessibility): the prompt window keeps its main landmark; the card is a dialog inside it."
+  ],
+  "ciOnly": [
+   "macOS: after a hotkey or the ask box (Ember not the active app), the SSH password card becomes the key window through bringToFront/focusOwnApp, so typing goes into its field; acceptFirstMouse makes the first click on Connect/Allow count instead of only activating Ember.",
+   "Windows: under the foreground lock (a task started by voice or an earlier hotkey), inputRef.activate plus focusInput give the prompt window the keyboard. When they don't, the card's line and the notification appear after 0.8 s.",
+   "Windows and macOS: setBounds on the non-resizable prompt window really resizes it (fit 440x300 <-> 520x600). Proven only on Linux/Xvfb here, via scratch fit.cjs.",
+   "Windows and macOS: a 520x600 outer window (title bar included) shows the longest real consent card without scrolling in Segoe UI / SF fonts. On Xvfb the longest needs 518 px of content area; any overflow keeps the yes off with the hint, which fails closed.",
+   "All OSes on a real desktop: Ember and its bubble step beside the prompt window and the command window while a command card is up (overlay at screen-saver level), including on a second monitor at negative coordinates (DIP).",
+   "Linux with a real window manager (GNOME/Mutter): the prompt window now also gets bringToFront's EWMH activation, as settings does. This is the same documented rule, but it is a small Linux change; check that it takes the keyboard without breaking the ask box's keyboard hold.",
+   "Real SSH (remote.yml): Cancel on the connecting bubble, Forget and the stop chord take an open 'Bring Ember to …' card down; Cancel or Esc on a real password card ends with no 'Can't connect' bubble."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 182,
+   "severity": "must-fix",
+   "what": "The new read-through gate can fail open on the first consent card of a session (this also covers #270, which asks for the same gate). The page judges the words synchronously in show(). In a newly created prompt window, the 'Ember Sans' face (InterVariable.woff2, font-display: block) is still loading at that moment, so the layout uses the fallback face. `seen` is sticky, so if the card fits in the fallback metrics it stays true after Inter loads and the words run past the fold. The window is made lazily and only hidden between cards, so the first card after launch is always shown in a fresh window. Evidence: scratch copy of the built page with a narrower fallback face (Carlito), real windows.ts factory, real controller and real consent.ts cards (relfix-verify/prompt/e2e/e2e-font.cjs). A probe at judge time shows 'Ember Sans:loading'. On 1280x600 and 1280x580 screens the SSH card asked again with changed settings has 478 px of words in a 466 or 446 px body after the font loads, yet Connect is enabled, the hint is hidden and only the fade shows ('<<< YES ON WITH WORDS BELOW, NO HINT'). Real Windows, macOS and RHEL machines without Inter installed fall back to Segoe UI, SF or Cantarell, so any card that loses a line in those metrics passes the gate. With the guard below applied to the same page, the same cards keep Connect off and show 'Scroll down to read it all first.', while cards that fit still enable.",
+   "fix": "In app/renderer/prompt/main.ts judge(), let `seen` become true only when the layout is final: `if (document.fonts.status === \"loaded\" && readThrough(m)) seen = true;`, and re-judge when fonts finish with `document.fonts.addEventListener(\"loadingdone\", judge)` (checked to work on the scratch page). Alternatives: preload the face at page start and await `document.fonts.ready` before the first judge, or reset `seen` on loadingdone. Put the condition in copy.ts (for example `readThrough(m, fontsLoaded)`) and add a unit test that a fitting block with fonts still loading does not count as read."
+  },
+  {
+   "id": 182,
+   "severity": "should-fix",
+   "what": "PROMPT_SIZE.consent (520x600) is the outer window size, because the window is framed and has no useContentSize. The fix agent's evidence that every real card fits (measure.cjs) used `useContentSize: true` on xvfb with no window manager, where outer and content sizes are equal. On Windows the title bar and borders take about 39 px, and on macOS the title bar takes 28 px, so the body gets about 459 or 470 px. The SSH card asked again with changed settings (478 px) and cards with long key paths (454 to 472 px) still scroll there. The gate catches this, but the main remedy the finding asks for (the window shows the whole card) is not met on two of the three OSes. The guide's new line 'It opens big enough to show the whole card' is also wrong there.",
+   "fix": "In windows.ts fit, size by content: add the frame (getBounds() minus getContentBounds()) to `size` before fitBounds, either for the consent size only or for both sizes, keeping the work-area cap. Alternatively create the window with `useContentSize: true` and size it with setContentBounds. Then soften the guide's line to 'big enough to show the whole card on most screens'."
+  },
+  {
+   "id": 193,
+   "severity": "should-fix",
+   "what": "connections.ts attempt() sets cancelledByUser for any `!answer.ok` from the prompt window, not only for a user's Cancel or Esc. That includes the controller's own refusals: no window could be made (reveal answers no at once), or a card that fails validPromptCard, such as a server's keyboard-interactive prompt longer than 2000 characters or a host name longer than 255. With runtime.ts now ending kind 'cancelled' silently, these failures make the connecting bubble vanish with no explanation and no Try again. Before the change they at least showed 'Can't connect to build-01 — Connection cancelled' with Try again.",
+   "fix": "Tell a user's answer apart from a refusal. One way: prompt-window.ts ask() refusals and the no-window path answer `{ id, ok: false, refused: true }`, and connections.ts sets cancelledByUser only when `!answer.ok && !answer.refused` (a hunk in connections.ts, listed as shared). A refused prompt then keeps the error bubble."
+  },
+  {
+   "id": 125,
+   "severity": "should-fix",
+   "what": "Copy and layout in docs/COMMANDS-WSL-SSH.md: re-wrapping the 'How it asks' paragraph after the new sentence left a 42-character line ('is never an \"Always\" for commands, a voice') in a paragraph wrapped at about 116 columns.",
+   "fix": "Re-wrap that paragraph to the file's usual width."
+  }
+ ]
+}

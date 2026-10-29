@@ -1,0 +1,59 @@
+{
+ "title": "The docs for everything round 1 and round 2 changed",
+ "owns": "README.md, CHANGELOG.md, docs/DEVELOPING.md, docs/COMMANDS-WSL-SSH.md, docs/RESEARCH.md and any other docs/**",
+ "items": [
+  {
+   "title": "README names a Windows 11-only microphone path for a supported Windows 10, and promises an Intel Mac artifact that a packages-only CI run doesn't make",
+   "severity": "minor",
+   "file": "README.md",
+   "line": 85,
+   "scenario": "(a) A Windows 10 22H2 user (README line 9 lists it as supported) follows README.md:84-85, \"Settings \u203a Privacy & security \u203a Microphone \u203a Let desktop apps access your microphone\". That page doesn't exist on Windows 10, where it is Settings \u203a Privacy \u203a Microphone \u203a Allow desktop apps to access your microphone. The merged code already gives both paths (WINDOWS_MIC_FIX, used by win32/system/doctor.ts and the setup check, review #100). (b) README.md:26-28 says a manual CI run with packages ticked keeps ember-packages, ember-windows, ember-macos and ember-macos-x64. ci.yml's macos-x64 job runs on dispatch only when `inputs.intel` is ticked too (ci.yml:723-725), so packages alone yields no ember-macos-x64. DEVELOPING.md \u00a715 rightly says 'packages and intel'.",
+   "evidence": "The Windows packaged doctor output in ci.yml run 40797546710 prints the both-versions fix text from WINDOWS_MIC_FIX. README.md:85 still has only the Windows 11 path. reports/platform.json forDocs asks for both paths at README.md:44. The macos-x64 `if:` is in ci.yml.",
+   "cause": "platform #100's forDocs line wasn't applied at merge; the README Download text came from fix/docs",
+   "fix": "README.md:84-85: give both paths, as WINDOWS_MIC_FIX does. README.md:26-28: say that ember-macos-x64 needs intel ticked too.",
+   "area": "ship",
+   "id": "X17",
+   "from": "cross-review",
+   "skeptic": "I could not refute either part. Both are confirmed in /home/user/wt/relfix-int, and both are minor documentation defects.\n\n(a) Microphone path. README.md:84-85 gives only the Windows 11 path, \"Settings \u203a Privacy & security \u203a Microphone \u203a Let desktop apps access your microphone\". README.md:9 lists Windows 10 22H2 as supported. The code knows the Windows 10 wording is different. app/main/environment.ts:320-325 defines WINDOWS_MIC_FIX with both paths, and its comment says \"Windows 10 22H2 calls the page 'Privacy' and the switch 'Allow desktop apps to access your microphone'\". The doctor (win32/system/doctor.ts:79) and the setup check (environment.ts:369) both use that constant. docs/DEVELOPING.md:752 also still has only the Windows 11 path.\n\nThe fix was requested and not applied. reports/platform.json forDocs (line 195) and the verifier note (line 307-308) ask for both paths at README.md:44 and DEVELOPING.md:731. The docs package ran in parallel and its report never mentions it. The merged diff of README.md leaves the microphone line untouched.\n\nThis is not a scheduled item. Neither \"Open interaction notes\" nor \"Follow-ups after merge\" in lead-notes.md lists it. Plan step 3 (\"collect every report's forDocs lines; apply\") has no commit in 63b88cd..HEAD.\n\nThe impact is limited. A Windows 10 user who runs the setup check or the doctor gets the right path; only the README text is wrong.\n\n(b) Intel Mac artifact. README.md:26-28 says a manual run with **packages** ticked keeps ember-packages, ember-windows, ember-macos and ember-macos-x64. In .github/workflows/ci.yml:723-725, the macos-x64 job runs on workflow_dispatch only when `inputs.intel` is also ticked (and `only` is all or macos). Its upload step (ci.yml:809-812) sits inside that job. So a run with packages ticked and intel unticked produces no ember-macos-x64.\n\nThis is a regression against 63b88cd. The old README.md:60-61 said \"(`ember-macos-x64` when **intel** is ticked too)\". fix/docs replaced it with the new Download text and dropped that qualifier; README.md:28 is now the only place that names the artifact. docs/DEVELOPING.md \u00a715 (line 1207) correctly says to tick both packages and intel."
+  },
+  {
+   "title": "DEVELOPING.md's GitHub CLI install line for builds without a client id doesn't work on RHEL 8",
+   "severity": "minor",
+   "file": "docs/DEVELOPING.md",
+   "line": 203,
+   "scenario": "A developer on RHEL 8 (Ember's first platform), with a fork or a development build without a client id, follows 'Connecting Copilot': `sudo dnf install -y gh`. RHEL 8's repositories have no gh package, so dnf answers 'No match for argument: gh' and sign-in can't proceed. The repo's own source says RHEL 8 needs GitHub's repository: github-app.ts:33-36 GH_INSTALL.linux = 'sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo, then sudo dnf install gh'. Every sign-in message and the README (README.md:155-156) give that form. Commit 4e47b13 rewrote this paragraph for S1 and kept the wrong command.",
+   "evidence": "The GH_INSTALL comment in app/main/agent/github-app.ts ('RHEL 8 needs GitHub's own repository'); README.md's RHEL 8 bullet; docs/DEVELOPING.md:203 unchanged in 4e47b13's hunk.",
+   "cause": "pre-existing line kept by the S1 docs update (4e47b13; docs package)",
+   "fix": "Replace line 203 with GH_INSTALL.linux's two commands (add GitHub's gh-cli.repo, then dnf install gh), as the README does.",
+   "area": "ship",
+   "id": "X18",
+   "from": "cross-review",
+   "skeptic": "Confirmed, but it is minor and the scenario overstates the impact. The defect: docs/DEVELOPING.md:203 still says `sudo dnf install -y gh      # or download from cli.github.com`, and that command fails on RHEL 8.\n\nEvidence:\n- The page's own scope (DEVELOPING.md:3) says \u00a71\u2013\u00a79 cover RHEL 8.4, Ember's first platform.\n- I asked Fedora's package source API for gh's branches (src.fedoraproject.org/api/0/rpms/gh/git/branches). It lists epel9 and epel10.x and f34\u2013f45, with no epel8. Bodhi has 0 gh updates for EPEL-8. RHEL 8's BaseOS and AppStream don't carry gh either. So the command fails even with EPEL turned on.\n- The same release adds app/main/agent/github-app.ts (new since 63b88cd). Its GH_INSTALL.linux at lines 33-36 says RHEL 8 needs GitHub's gh-cli.repo, and the README's RHEL 8 bullet (README.md:155-156) says the same.\n- This is an unapplied hand-off, not just an old line. The agent package's report (reports/agent.json \"forDocs\") told the docs side to give the RHEL 8 form in DEVELOPING.md \u00a7Connecting Copilot: add gh-cli.repo with dnf config-manager, then dnf install gh. Commit 4e47b13 rewrote that paragraph for S1 and kept the old line as it was. The 4e47b13 diff shows line 203 as unchanged context.\n- Neither lead-notes.md list (\"Follow-ups after merge\" or \"Open interaction notes\") schedules it. Their DEVELOPING.md items are only the #147 line at :131, More time to read, and remote.yml macOS.\n- docs/COMMANDS-WSL-SSH.md L1-L26 has no accepted limitation that covers it.\n\nWhy it is minor:\n- The line itself offers \"or download from cli.github.com\". A developer who gets dnf's \"No match for argument: gh\" still has a way through, so \"sign-in can't proceed\" is too strong.\n- Only forks and builds without a client id are affected. The release build has the client id built in, and CI checks that id (device-code step green on bbe8ab2).\n- The line was already there at 63b88cd (line 197), so it is not a regression. It is an incomplete docs follow-through of the agent package's hand-off.\n\nFix as proposed: replace the dnf line with GH_INSTALL.linux's two commands, as the README does."
+  },
+  {
+   "id": "F-fordocs-round1",
+   "from": "follow-up",
+   "text": "Round 1's 21 packages each left lines for the docs (their reports' forDocs), and nobody applied them: the docs package ran at the same time. They are in specs/relfix2/partials.json (entries with id 'forDocs', per package), and the full reports are specs/relfix/reports/<package>.json (key 'final', field forDocs). For each line: check the current text on your branch (some may already be there, or the code may have changed since: read the code), then write it, in the docs' own style. List each line with done / already there / changed because <reason>."
+  },
+  {
+   "id": "F-fordocs-round2",
+   "from": "follow-up",
+   "text": "This round's packages' forDocs lines are given in your task text. Same treatment."
+  },
+  {
+   "id": "F-devlines",
+   "from": "follow-up",
+   "text": "docs/DEVELOPING.md: (1) the 'More time to read and answer' setting (Settings > Comfort & access): what it scales (every bubble's time ten times, a question's wait 20 minutes instead of 2, offers' 25 s) where DEVELOPING describes bubble timing; (2) remote.yml's macOS commands and SSH job now runs on every push (the repository is public, so runners are free), not only on dispatch or the weekly schedule; (3) #147: line ~131 says 'a failed card stays until you close it': replace with 'a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong)'."
+  },
+  {
+   "id": "F-cmds41",
+   "from": "follow-up",
+   "text": "docs/COMMANDS-WSL-SSH.md \u00a74.1 still names the switch '**Offer to bring Ember along when I connect with ssh**'; settings renamed it '\u2026with SSH'. Fix the name (check app/renderer/home for the exact label)."
+  },
+  {
+   "id": "F-changelog-ci",
+   "from": "follow-up",
+   "text": "CHANGELOG: add what the post-merge CI rounds fixed, for users: on Windows, Ember reads long lists and pages that are scrolled down (it reads what shows in full and leaves most of what is scrolled away out); on a German Mac, Ember finds System Settings as 'Systemeinstellungen'; a command window whose page crashes comes back with its commands instead of closing; if GitHub refuses Ember's sign-in request, Ember says so instead of showing a code of 'undefined'. Read the commits on ember-improve/20261027-release-fixes after 3d80b0c (git log 3d80b0c..bbe8ab2) for the exact behaviour."
+  }
+ ]
+}

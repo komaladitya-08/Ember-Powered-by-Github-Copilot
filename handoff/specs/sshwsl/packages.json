@@ -1,0 +1,107 @@
+[
+  {
+    "key": "s0a",
+    "id": "S0a",
+    "title": "Step 0a: the SSH/WSL contract (types, schemas, launcher texts, stubs, build entries, lint rules, remote.yml)",
+    "dependsOn": [],
+    "note": "Starts first and alone; no behaviour change. Everyone else branches from its merge. Writes @xterm/xterm 5.5.0 lockfile-only: the lead runs npm ci in the main checkout after it merges. Brief: pkg-s0a.md."
+  },
+  {
+    "key": "s0b",
+    "id": "S0b",
+    "title": "Step 0b: the shared hooks (Confirmer panels, perception text functions and own-window masking, sidecar mayStart/noRevive/ownsId, policy seam, TaskManager without hands, windows.ts factories, main.ts hooks)",
+    "dependsOn": ["s0a"],
+    "note": "Runs in parallel with MX, CL, RUN, UI, WA, SA, SB, DOC. Merges second. AG, TG, WB and SC finish on top of it. Edits main.ts in parallel with I-win/I-mac: small separate hunks, listed in the report. Brief: pkg-s0b.md."
+  },
+  {
+    "key": "mx",
+    "id": "MX",
+    "title": "The framed stream (mux) shared by the PC's link and the remote agent",
+    "dependsOn": ["s0a"],
+    "note": "Small and fast; merges right after S0b so SA's and SB's integration tests use the real mux (they code against the Mux interface with fakes until then). Brief: pkg-mx.md."
+  },
+  {
+    "key": "cl",
+    "id": "CL",
+    "title": "Command classifier, decision, intent matcher (user words only), output shaping, redaction, output taint, visible text",
+    "dependsOn": ["s0a"],
+    "note": "Pure, plain Node, OS-neutral; the heart of OWNER DECISION 4. Corpus of at least 800 cases incl. every critique case. Brief: pkg-cl.md."
+  },
+  {
+    "key": "run",
+    "id": "RUN",
+    "title": "Local command runners (POSIX PTY via script(1), Windows PowerShell via the job host), environment, kill ladder, sweep, inspect, git facts",
+    "dependsOn": ["s0a"],
+    "note": "Exports launchers and the ladder for WA and SB. CI job commands-linux (EMBER_COMMANDS_TEST); Windows/macOS cases run in wsl-windows and ssh-macos. Brief: pkg-run.md."
+  },
+  {
+    "key": "ui",
+    "id": "UI",
+    "title": "Command window (card, xterm runs, Stop, typing), prompt window (host keys, passwords, consent), badges, settings sections, every new string",
+    "dependsOn": ["s0a"],
+    "note": "Needs @xterm/xterm in node_modules (lead's npm ci after S0a). Touches renderer/home in parallel with I-win/I-mac platform copy: separate hunks. Brief: pkg-ui.md."
+  },
+  {
+    "key": "wa",
+    "id": "WA",
+    "title": "WSL discovery (no accidental boots) and WSL commands (job host + wsl.exe + script, in-distro sweep)",
+    "dependsOn": ["s0a"],
+    "note": "Windows-only at run time, OS-neutral tests on Linux. CI jobs wsl-windows (WSL1) and wsl2-windows (WSL2, non-root user; also proves L22's binary-safe stream). Brief: pkg-wa.md."
+  },
+  {
+    "key": "sa",
+    "id": "SA",
+    "title": "SSH transport: hardened ssh argv, ProxyJump rewrite, askpass (POSIX helper; Windows compiled helper), bootstrap with READY handshake, runtime download, link worker, reconnect, same-machine check, noticing the user's ssh",
+    "dependsOn": ["s0a"],
+    "note": "Fakes the mux until MX merges. Integration ssh-transport (ssh-linux job) and ssh-windows (wsl-windows job), EMBER_SSH_TEST. Brief: pkg-sa.md."
+  },
+  {
+    "key": "sb",
+    "id": "SB",
+    "title": "Remote agent ember-remote (serve, gate 2, commands, Linux desktop child, notice, audit, lock, grace, orphans), remote parts pipeline, its CI jobs",
+    "dependsOn": ["s0a"],
+    "note": "Biggest package; starts on S0a with fakes for MX, RUN and CL, which merge before it. CI jobs ssh-linux, ssh-el8, wayland-remote, ssh-macos (EMBER_SSH_TEST, EMBER_SSH_TEST_MACOS). Owns package.json package* scripts and stage.mjs's remote-parts block. Brief: pkg-sb.md."
+  },
+  {
+    "key": "sc",
+    "id": "SC",
+    "title": "The PC's side of a remote target: remote perception, sidecar, async apps, runner, image checks, gate 1 per remote",
+    "dependsOn": ["s0a", "s0b"],
+    "note": "Needs S0b's perception text functions. Fake RemoteLink in tests. Brief: pkg-sc.md."
+  },
+  {
+    "key": "wb",
+    "id": "WB",
+    "title": "WSLg GUI: in-distro AT-SPI sidecar, router and routed windows, matching and coordinate mapping, Linux vocabulary for WSLg apps, launching WSLg apps, X servers as remote surfaces",
+    "dependsOn": ["s0a", "s0b"],
+    "note": "Uses S0b's sidecar and perception hooks; fakes WslService until WA merges. Two-line win32 layout.mjs entry through the lead (I-win's file). CI job wslg-probe records artefacts only. Tier 3 in WSLg waits on two I-win hooks. Brief: pkg-wb.md."
+  },
+  {
+    "key": "ag",
+    "id": "AG",
+    "title": "Agent integration: run_command and the command flow, commandWords (never the goal), conductor target tools, per-target workers, caps-aware prompts (today's text when off)",
+    "dependsOn": ["s0a", "s0b"],
+    "note": "May start on S0a and merge S0b in when it lands. Edits agent/** and vocabulary.ts. Brief: pkg-ag.md."
+  },
+  {
+    "key": "tg",
+    "id": "TG",
+    "title": "Targets runtime: registry, binding, per-target hands and command services, consent cards, ssh-noticing offer, settings IPC (home window only), menu, quick context, kill-switch part, doctor rows, pcId",
+    "dependsOn": ["s0a", "s0b"],
+    "note": "Starts on S0a+S0b against the other packages' stubs and final signatures; the lead merges it last of the main packages, after every factory it wires (RUN, UI, WA, SA, SC) has merged. Brief: pkg-tg.md."
+  },
+  {
+    "key": "doc",
+    "id": "DOC",
+    "title": "Documentation: README, DEVELOPING.md, PLAN.md, release notes (every limitation L1-L26, admin keys, older-Ember lock-down warning)",
+    "dependsOn": ["s0a"],
+    "note": "Drafts from the design early; finalises against the shipped UI after TG merges; merges after TG. Brief: pkg-doc.md."
+  },
+  {
+    "key": "sx",
+    "id": "SX",
+    "title": "Remote extras (may slip): Linux remote view and tier 3 on remotes, Windows remotes and their desktop helper, macOS remote desktop",
+    "dependsOn": ["tg"],
+    "note": "Spikes first, each sub-part separately scheduled by the lead; never blocks the main packages; the Windows desktop helper needs the owner's yes (Q4). Brief: pkg-sx.md."
+  }
+]

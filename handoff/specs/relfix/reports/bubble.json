@@ -1,0 +1,559 @@
+{
+ "key": "bubble",
+ "final": {
+  "findings": [
+   {
+    "id": 9,
+    "status": "fixed",
+    "how": "The runtime's bubbles now go through the shared BubbleOwner instead of main's setState. AgentHost.notices is a Presenter on the owner, and Presenter.post/clear were added. A runtime bubble takes the bubble the way a user's request does: the conversation's and the tasks' bubbles wait behind it, and it waits behind a question. Main wires TargetsDepsExtra.bubbles = () => agent?.notices. Without an agent, the runtime falls back to setState.",
+    "test": "targets-runtime.test.ts 'keeps offer_connect's Connect button up while the conversation's turn goes on and ends (review #9)', run with a real Presenter and BubbleOwner behind guardWhileAsking. It failed on the base and passes now. Also presenter.test 'Presenter.post…' and host.test 'AgentHost.notices'."
+   },
+   {
+    "id": 10,
+    "status": "fixed",
+    "how": "Fixed by the same routing. The runtime's info timers run through the board's hideLater. hide() pushes IDLE only when the board's own bubble is the one on screen, so a presenter's hide never blanks a runtime bubble.",
+    "test": "targets-runtime.test.ts 'never lets the connected bubble's timer blank an answer…' and 'never lets an earlier answer's timer blank a runtime bubble shown since (review #10)'. Both failed on the base and pass now."
+   },
+   {
+    "id": 11,
+    "status": "fixed",
+    "how": "The Lost bubble is held: it has no timer, it comes back after anything that covers it, and a stopped task's outcome waits behind it. When the lost host was the active target, the text adds '; until then I'll work on this computer'. A task cut off with its computer now says why (stopTasksOn and AgentHost.cancelTasksOn take a reason, target-copy stoppedTask) in the bubble, speech, notification and transcript. docs §4.1 updated.",
+    "test": "host-targets.test 'says why a task cut off with its computer stopped (review #11)' and targets-runtime 'says work moves to this computer until it's back, and keeps its Reconnect over the stopped task's result'. Both failed before and pass now."
+   },
+   {
+    "id": 12,
+    "status": "fixed",
+    "how": "Presenter offers 'Read all' when the answer is over 260 characters or answerLines() is over 6. answerLines() counts about 36 characters per line, and an empty line counts as one. A Chromium render of the built overlay confirms the reviewer's options answer needs 9 lines. Round 2: under 'Read all' the answer now also says 'Or press Ctrl+Alt+E and go to Conversation.' (see #47).",
+    "test": "presenter.test 'Read all: by the lines an answer takes (review #12)' failed before and passes now."
+   },
+   {
+    "id": 13,
+    "status": "fixed",
+    "how": "Where the question comes from ('on build-01') now reaches every channel:\n- announcement() takes BubbleView.where, so screen readers hear 'Ember needs you, on build-01: …'.\n- questionAloud() puts it in the spoken question and the notification.\n- cardBadge() puts it on the corner card, with the task row naming the place.\n- fill_cells' question carries where.\nRound 2: the fill_cells test no longer string-matches worker.ts. It calls authorizeCells for two cells through the worker rig: a remote target, a policy that asks about every step, and the rig's recording confirmer. It asserts that question.where is 'on build-01', and that this computer's question has no where.",
+    "test": "bubble.test 'announcement: where it is (review #13)', ui-copy 'badges the corner card… (review #13)', presenter 'a question said aloud… (review #13)', and worker-commands 'fill_cells' one question for all its cells carries where too (review #13)'. The last one is now behavioural: with where removed from authorizeCells' question (a temporary mutation), it fails ('-\"where\": \"on build-01\"'), and it passes on the real code."
+   },
+   {
+    "id": 14,
+    "status": "partial",
+    "how": "Done:\n- Offers expire 25 s after they reach the screen, counted as a Not now. The time scales with More time.\n- A press on an offer: or conn: button within 500 ms is ignored, and the arm time is kept while only the words change.\n- Unsolicited offers (ssh seen, WSL) claim 'reply', so they wait behind an answer being read.\nLead's call, round 2: I took the bounded park. overlay.ts parks Ember beside any bubble with buttons so they don't run away from a pointer heading to them. Not parking would make Bring Ember unclickable, because the follower moves the bubble with the pointer. Parking only when the pointer heads towards the bubble would be a follower change in the overlay package. The expiry now bounds the park, as an answer's reading time does. docs/COMMANDS-WSL-SSH.md §4.1, where the offer is described (§2.7 is 'What Copilot gets back'), now says Ember holds still while an offer is up, for 25 s or ten times that with More time (e7edefd).\nNot done (optional): when an offer_connect offer expires, the conversation's answer that waited behind it ('I've shown a Connect button…') still shows. Dropping it would discard the model's other words, which the Conversation section keeps anyway.",
+    "test": "targets-runtime 'offers in the bubble (review #14)': three tests (expiry, press too soon, waits behind an answer) failed before and pass now. Also presenter 'keeps its buttons' time on screen while only its words change'. The bounded park is a docs change with no test."
+   },
+   {
+    "id": 15,
+    "status": "fixed",
+    "how": "Runtime bubbles use six looks: notice (no chip, neutral face), good (no chip, happy), working (Working, focused, no thinking glow), decide (Needs you, curious), trouble (Problem, worried) and failed (Problem, sad). Presenter.notice takes a mood, and the signed-out notice is 'attention', as the greeting is. Round 2 regression fixed (405c550): AgentHost withdrew its not-ready notice by raw text and only in mood error. notice() shows forBubble(text), and the signed-out notice is 'attention', so a notice that no longer held stayed up 12 s (36 s with More time). withdraw() now matches b.thought === forBubble(text) in mood error or attention, while nothing is busy.",
+    "test": "host.test 'Needs you' pins (failed before, pass now). Round 2: host.test 'a notice saying why Ember couldn't answer goes once that no longer holds'. 'offline…': ask while unreachable, the network comes back (networkChanged), status ready, bubble hidden at once. 'signed out…': ask signed out, sign in, bubble hidden at once. Both failed on the round-1 branch ('expected true to be false') and pass now."
+   },
+   {
+    "id": 16,
+    "status": "fixed",
+    "how": "Titles in attention and error moods wrap onto two lines. The where badge is shortened from the middle (shortWhere, over 20 characters) and capped at 136 px.",
+    "test": "bubble.test 'lets a question's or a problem's title wrap… (review #16)' and the shortWhere pins in ui-copy. Both failed before and pass now."
+   },
+   {
+    "id": 17,
+    "status": "fixed",
+    "how": "Error bubbles show whole like questions: up to ten lines, then they scroll (thoughtScrolls). Runtime text goes through plainMarkdown, so backticks no longer show. Checked in a Chromium render.",
+    "test": "bubble.test 'shows all of a problem as of a question… (review #17)' and the targets-runtime plain-text test. Both failed before and pass now."
+   },
+   {
+    "id": 18,
+    "status": "fixed",
+    "how": "session.error and fail() offer 'Open settings' only when settingsHelps(said): sign-in, model or access. The not-ready notice drops it while Ember waits for the network or reconnects by itself. forBubble rewrites settings-window button references ('Press Check again' becomes 'Open settings to try again').",
+    "test": "presenter 'a problem's buttons follow what failed (review #18)' and the host.test pins. They failed before and pass now."
+   },
+   {
+    "id": 19,
+    "status": "fixed",
+    "how": "Fixed by the overlay package's 698981d (#130) on fix/overlay. That commit edits the same lines with its own test and reads the state as 'Waiting its turn: '. This branch reverted its duplicate 8b66ef8 (f3cc96d), so the two cannot conflict at merge and only one screen-reader word and one clock symbol remain.",
+    "test": "test/unit/overlay-cards.test.ts on fix/overlay (698981d). This branch's copy of the test went with the revert."
+   },
+   {
+    "id": 20,
+    "status": "fixed",
+    "how": "Progress rewrites the connecting bubble only when its words change (once per MB), and only while it is the runtime's bubble. While the buttons stay the same, they keep their arm time.",
+    "test": "targets-runtime: 30 MB in 60 KB chunks gave 501 writes before and 31 now. Also the Cancel-pressable test. Both failed before and pass now."
+   },
+   {
+    "id": 21,
+    "status": "fixed",
+    "how": "titleRepeatsChip hides a title that only repeats the chip's word. point_at's step is now 'Pointing at it'. problemTitle titles a problem with what failed. Round 2: fail() now calls problemTitle(said, this.provider), as session.error does, so a failure on the organisation's model service reads 'I can't reach the model service' or 'The model service had a problem', never 'Copilot'.",
+    "test": "bubble.test 'titleRepeatsChip (review #21)' and presenter 'titles a problem with what failed'. Round 2 adds fail() cases with provider=true to that test: it failed before ('I can't reach Copilot') and passes now."
+   },
+   {
+    "id": 22,
+    "status": "fixed",
+    "how": "The bubble speaks as Ember: target-copy's words, and firstPerson/forBubble for the settings window's sentences. No command in brackets reaches the bubble. The announcement says 'It starts in a few seconds.', and 'Thinking…' marks a cut quote with '…'. The withdraw regression this caused is fixed in 405c550 (see #15).",
+    "test": "presenter 'the bubble speaks in one voice (review #22)', the ui-copy and tasks-where pins, and the round-2 host.test withdraw tests."
+   },
+   {
+    "id": 24,
+    "status": "fixed",
+    "how": "Every runtime and announcement bubble is built from target-copy. A test checks that the runtime and the presenter import every function target-copy exports. Dead copies were removed.",
+    "test": "ui-copy 'builds every bubble from target-copy (review #24)' failed before and passes now."
+   },
+   {
+    "id": 25,
+    "status": "fixed",
+    "how": "bubblePosition no longer takes the clear-place fallback when it would cover Ember's body. The usual placement beside Ember stands instead.",
+    "test": "bubble.test with the reviewer's numbers failed before ((712,8) over Ember) and passes now."
+   },
+   {
+    "id": 185,
+    "status": "fixed",
+    "how": "After an automatic reconnect, Ember says 'build-01 is back' and makes it the picker's choice again if it was when it dropped, unless the user picked a computer meanwhile. The Lost bubble says work moves here until then.",
+    "test": "targets-runtime reconnect tests failed before and pass now."
+   },
+   {
+    "id": 187,
+    "status": "fixed",
+    "how": "Progress updates claim the bubble only when nobody holds it, so they never replace an answer or task. They show how far the connection got once that goes.",
+    "test": "targets-runtime 'never over an answer' failed before and passes now."
+   },
+   {
+    "id": 183,
+    "status": "fixed",
+    "how": "A failed connect stays up until it is closed (Close, plus Try again when another try may help). The settings row keeps the reason (TargetSummary.problem). A changed host key opens the 'identity changed' card. The bubble scrolls a long problem.",
+    "test": "targets-runtime and computers-copy tests failed before and pass now."
+   },
+   {
+    "id": 47,
+    "status": "fixed",
+    "how": "Under every mouse-only runtime button the bubble says where the keyboard reaches it ('Or press Ctrl+Alt+E and go to Computers.'). offer_connect's result names settings. Round 2:\n- announcement() now reads an error bubble's step after it, so 'Lost build-01', 'Can't connect' and 'Can't reconnect' tell a screen reader the route.\n- A finished answer cut short carries 'Or press Ctrl+Alt+E and go to Conversation.' in its step row. It shows quiet under 'Read all' (idle mood styled like attention and error) and screen readers hear it.\n- A turn stopped mid-step drops the task's step, so an idle bubble's step is only ever this route. A guide's step is still never read.\nChecked in a Chromium render of the built overlay: the live region and the line placement are right, and a task step keeps its arrow.",
+    "test": "bubble.test 'reads a problem's keyboard route after it… (review #47)' failed before (no route in the live text) and passes now. Also 'reads under an answer cut short where the keyboard finds it whole (review #47)', the updated step-row CSS pin, presenter 'says under Read all where the keyboard finds the whole answer' and 'leaves no task's step on a turn stopped mid-step'. All failed before and pass now."
+   },
+   {
+    "id": 51,
+    "status": "fixed",
+    "how": "'More time to read and answer' is now ten times as long, so a question waits 20 minutes. Three times met none of WCAG 2.2.1's options; ten times meets its 'adjust' option. readTimeOf() in presenter.ts is the single source, and main.ts uses it for hideIfStill and the Confirmer. The settings label, the settings.ts comment, DESIGN.md and COMMANDS-WSL-SSH.md §2.4 say so. 'Read the last answer' still has no global shortcut. That is recorded as a known limitation in DESIGN.md, and every cut-short answer now names the keyboard route (Settings › Conversation).",
+    "test": "presenter 'is ten times the usual time… a question waits 20 minutes' and the ui-copy label pin both failed before (3 and the old label) and pass now. The test hygiene item is fixed too: presenter.test.ts has a file-level afterEach(vi.useRealTimers)."
+   },
+   {
+    "id": 52,
+    "status": "fixed",
+    "how": "announcement() reads a question's key hint after it. A panel question's step says how to reach its window (panelHint). Round 2 extends this to error steps and cut-short answers (#47).",
+    "test": "bubble.test 'announcement: how to answer a question (review #52)' and the targets-runtime/sshwsl-hooks panel tests. They failed before and pass now."
+   },
+   {
+    "id": 227,
+    "status": "fixed",
+    "how": "'15 seconds' in sentences, and a no-break space before 's' and 'min' in status lines.",
+    "test": "command copy, remote-runner and home-platform-copy pins failed before and pass now."
+   },
+   {
+    "id": 228,
+    "status": "fixed",
+    "how": "Every bubble error, the doctor and the macOS permission text say 'model service', and 'computer' replaces 'machine' and 'PC'. Round 2: fail()'s title also names the model service (see #21).",
+    "test": "presenter 'one name for the organisation's own model service (review #228)', tasks.test, and the round-2 fail() provider cases."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "f38dde5",
+    "subject": "Keep the targets runtime's bubbles from being wiped or blanked by the conversation's",
+    "ids": [
+     9,
+     10
+    ]
+   },
+   {
+    "sha": "e35cce7",
+    "subject": "Build every runtime and announcement bubble from target-copy so its tests pin what users see",
+    "ids": [
+     24
+    ]
+   },
+   {
+    "sha": "6c1026b",
+    "subject": "Keep \"Lost build-01\" up, say work moves here, and work there again when it comes back",
+    "ids": [
+     11,
+     185
+    ]
+   },
+   {
+    "sha": "4548bff",
+    "subject": "Rewrite the connecting bubble only when its words change, and never over an answer",
+    "ids": [
+     20,
+     187
+    ]
+   },
+   {
+    "sha": "6b64743",
+    "subject": "Let offers expire as a Not now, ignore a press in their first half second, and wait their turn",
+    "ids": [
+     14
+    ]
+   },
+   {
+    "sha": "a3bb713",
+    "subject": "Say \"Needs you\" only when a button needs a decision, and give connection bubbles a face",
+    "ids": [
+     15
+    ]
+   },
+   {
+    "sha": "d039718",
+    "subject": "Keep a failed connection's reason until it is read, show the changed-key card, scroll problems",
+    "ids": [
+     183,
+     17
+    ]
+   },
+   {
+    "sha": "e5a5f09",
+    "subject": "Offer \"Read all\" when an answer's lines don't fit, not only when it is long",
+    "ids": [
+     12
+    ]
+   },
+   {
+    "sha": "aa43228",
+    "subject": "Say which computer a question or answer is on to screen readers, aloud, in notifications and on the card",
+    "ids": [
+     13
+    ]
+   },
+   {
+    "sha": "f7cfaaf",
+    "subject": "Tell screen readers how to answer a question, and how to reach a command's window by keyboard",
+    "ids": [
+     52
+    ]
+   },
+   {
+    "sha": "22eb131",
+    "subject": "Say where the keyboard reaches what the runtime's mouse-only buttons do",
+    "ids": [
+     47
+    ]
+   },
+   {
+    "sha": "7c6463b",
+    "subject": "Offer \"Open settings\" on a problem only where settings can fix it, and never name its buttons",
+    "ids": [
+     18
+    ]
+   },
+   {
+    "sha": "b4bc6aa",
+    "subject": "Stop the bubble's header saying its state twice, and title problems with what failed",
+    "ids": [
+     21
+    ]
+   },
+   {
+    "sha": "978c7db",
+    "subject": "Speak in one voice in the bubble, and never let \"15 s\" wrap away from its number",
+    "ids": [
+     22,
+     227
+    ]
+   },
+   {
+    "sha": "8aa0efc",
+    "subject": "Let a question's title wrap rather than lose its end, and shorten the badge from the middle",
+    "ids": [
+     16
+    ]
+   },
+   {
+    "sha": "25811e6",
+    "subject": "Pin the announcement's new words in the task-place tests",
+    "ids": [
+     22
+    ]
+   },
+   {
+    "sha": "8b66ef8",
+    "subject": "Show a task waiting its turn as queued, not as the purple \"Needs you\" (reverted by f3cc96d)",
+    "ids": [
+     19
+    ]
+   },
+   {
+    "sha": "114238c",
+    "subject": "Never place an answer opened in full over Ember when no clear place is left",
+    "ids": [
+     25
+    ]
+   },
+   {
+    "sha": "92315c7",
+    "subject": "Pin the command tab's stalled words and a status line's unit in the remaining tests",
+    "ids": [
+     227
+    ]
+   },
+   {
+    "sha": "f0d6ac9",
+    "subject": "Call the organisation's model service one thing, and a computer a computer, everywhere",
+    "ids": [
+     228
+    ]
+   },
+   {
+    "sha": "8b4b8f2",
+    "subject": "Pin a failed task's model service words in the task manager's tests",
+    "ids": [
+     228
+    ]
+   },
+   {
+    "sha": "50ebd22",
+    "subject": "Add \"More time to read and answer\": bubbles stay three times as long, questions wait 6 minutes",
+    "ids": [
+     51
+    ]
+   },
+   {
+    "sha": "651e46d",
+    "subject": "Put a problem's keyboard route quietly under its buttons, as a question's key hint is",
+    "ids": [
+     47
+    ]
+   },
+   {
+    "sha": "410186e",
+    "subject": "Keep Cancel pressable while a download rewrites the connecting bubble",
+    "ids": [
+     14,
+     20
+    ]
+   },
+   {
+    "sha": "50ccb5f",
+    "subject": "Keep review numbers out of two source comments",
+    "ids": [
+     47,
+     227
+    ]
+   },
+   {
+    "sha": "80c891a",
+    "subject": "Rewrap the commands guide's paragraphs edited for the bubble fixes",
+    "ids": [
+     14,
+     11,
+     51,
+     227
+    ]
+   },
+   {
+    "sha": "405c550",
+    "subject": "Withdraw a notice as it was shown, so \"I can't reach GitHub\" goes when Copilot is back",
+    "ids": [
+     22,
+     15
+    ]
+   },
+   {
+    "sha": "23ba0c4",
+    "subject": "Title a failure on the organisation's model service with its name, not Copilot's",
+    "ids": [
+     21,
+     228
+    ]
+   },
+   {
+    "sha": "01d4b60",
+    "subject": "Give each presenter test the real clock back after it fakes one",
+    "ids": [
+     9,
+     51
+    ]
+   },
+   {
+    "sha": "8d95111",
+    "subject": "Make \"More time to read and answer\" ten times as long, so a question waits 20 minutes",
+    "ids": [
+     51
+    ]
+   },
+   {
+    "sha": "ea8947c",
+    "subject": "Read a problem's keyboard route to screen readers, after it as it is seen under its buttons",
+    "ids": [
+     47
+    ]
+   },
+   {
+    "sha": "80acaa6",
+    "subject": "Say under \"Read all\" where the keyboard finds the whole answer",
+    "ids": [
+     47,
+     51
+    ]
+   },
+   {
+    "sha": "e7edefd",
+    "subject": "Say in the commands guide that an offer holds Ember still while it is up, for its 25 seconds",
+    "ids": [
+     14
+    ]
+   },
+   {
+    "sha": "f3cc96d",
+    "subject": "Leave a queued task's card to the overlay package (drop this package's copy of its fix)",
+    "ids": [
+     19
+    ]
+   },
+   {
+    "sha": "99ad546",
+    "subject": "Ask fill_cells' one question in its test, rather than read the worker's source",
+    "ids": [
+     13
+    ]
+   }
+  ],
+  "checks": "Final state at 99ad546:\n- npx tsc --noEmit: 0 errors.\n- npm run lint: 0 problems.\n- npm test: 241 test files passed, 1 skipped; 6016 tests passed, 8 skipped (6024). Nothing flaked.\n- npm run build: ok.\n- xvfb-run -a npm run test:smoke: 2/2 ok ('first instance showed its window', 'second launch handed over…').\n- Commands integration suite: not required. Nothing under app/main/commands/** changed on this branch (git diff 1b39bb3 --stat -- app/main/commands is empty).\n- While iterating, these files ran: host, presenter, bubble, targets-runtime, host-targets, ui-copy, sshwsl-hooks and worker-commands, all green.\n- Chromium render of the built overlay, checking the answer's Conversation route and the Lost bubble's live text.",
+  "sharedHunks": [
+   "app/main/main.ts: round 2 swaps readTime's inline 3 for readTimeOf(settings.get().moreTime), imported from ./agent/presenter, and changes the Confirmer comment from '6' to '20' minutes. Round 1: readTime, hideIfStill scaled, Confirmer timeoutMs and panelHint, TargetsDepsExtra.bubbles and settingsKey wiring, questionAloud for the spoken question and notification, AgentHost readTime option.",
+   "app/main/agent/host.ts: notices board (a Presenter on the owner), readTime option, cancelTasksOn reason, NOTICE_TITLE and notice mood 'attention' when signed out, settings offered only where it helps. withdraw() is unchanged in round 2 (the fix is in presenter.ts).",
+   "app/main/agent/confirm.ts: timeoutMs may be a function (read as each question shows); panelHint step for panel questions.",
+   "app/main/agent/worker.ts: fill_cells' question carries where (WhereQuestion).",
+   "app/main/settings.ts: moreTime field; round 2 changes its comment to ten times and 20 minutes.",
+   "app/renderer/home/index.html: the More time switch; round 2 label 'messages stay ten times as long, and questions wait 20 minutes'.",
+   "app/renderer/home/main.ts: More time switch wiring; problem note on the Computers row.",
+   "app/renderer/home/computers-copy.ts: the row's note shows TargetSummary.problem while not connected.",
+   "app/renderer/home/copy.ts: tagline counts things and says 'this computer'.",
+   "app/shared/targets.ts: TargetSummary.problem.",
+   "app/main/targets/registry.ts: 'isn't connected' and 'dropped' refusals name settings (Computers).",
+   "app/renderer/handle/main.ts and app/renderer/handle/badge.ts: announcement gets where and step; cardBadge and whereText for the corner card.",
+   "app/renderer/overlay/main.ts: passes the badge's words to the bubble (setWhere).",
+   "app/renderer/overlay/styles.css: .where max-width 160 to 136 px.",
+   "app/renderer/command/copy.ts: no-break space before s and min; stalled words.",
+   "app/renderer/prompt/copy.ts and app/main/remote/remote-policy.ts: 'another PC' becomes 'another computer'.",
+   "app/main/remote/remote-runner.ts: doc comment quotes the new stalled words.",
+   "app/main/doctor.ts: 'Your organisation's model service'.",
+   "scripts/package/mac-bundle.mjs: NSLocalNetworkUsageDescription says 'model service'.",
+   "docs/COMMANDS-WSL-SSH.md: §1, §2.4 (question waits 20 minutes with More time), §4.1 (offers expire, hold Ember still while up, keyboard route, Lost and back), plus rewraps.",
+   "docs/DESIGN.md: Bubble and motion (Needs you rule, More time ten times, Read all's keyboard route and no last-answer shortcut).",
+   "8b66ef8 touched tasks.ts, shared/overlay.ts, ember.css, overlay/stack.ts, overlay/main.ts, handle/card.ts and handle/main.ts; it is fully reverted by f3cc96d (net zero in those hunks)."
+  ],
+  "forDocs": [
+   "README (Accessibility or Settings): 'More time to read and answer' (Settings › Comfort & access) keeps every message ten times as long and lets a question wait 20 minutes instead of 2.",
+   "README (Keyboard): Ember's bubble never takes the keyboard. Under a mouse-only button it says where the keyboard reaches the same thing: Settings › Computers for connection buttons, and Settings › Conversation for an answer cut short ('Read all'). There is no global shortcut for 'Read the last answer' in this release (known limitation).",
+   "CHANGELOG: offers to bring Ember to a computer go after 25 seconds as Not now, ignore a press in their first half second, and hold Ember still while they are up.",
+   "CHANGELOG: a notice saying Ember can't reach Copilot, or that it needs you to sign in, now goes as soon as Copilot is back or you have signed in.",
+   "CHANGELOG: problems on the organisation's model service are titled with its name, never Copilot's."
+  ],
+  "ciOnly": [
+   "The settings shortcut's label in the keyboard route ('Or press … and go to Conversation/Computers.') as each OS's shortcut table names it on real Windows and macOS.",
+   "That NVDA, Narrator and VoiceOver actually read the overlay's live region with the new route text after an error or a cut-short answer; Orca under GNOME was not run here either.",
+   "macOS: panelHint names no key (the command window is a panel Command+Tab doesn't list); only a real Mac shows whether a keyboard user finds it.",
+   "WSL offers ('I can work in WSL') on real Windows, now with the 25 s expiry scaling to 250 s under More time.",
+   "macOS 15 local-network prompt shows the new 'model service' wording."
+  ],
+  "notes": "Round 2 addressed every verifier item:\n- **Withdraw regression (must-fix, no id):** fixed in presenter.withdraw (405c550), with two host.test cases (offline, then the network comes back; signed out, then the user signs in). Both failed on the round-1 branch and pass now.\n- **Test hygiene (no id):** presenter.test.ts has a file-level afterEach(() => vi.useRealTimers()) (01d4b60).\n- **#19:** I dropped this branch's copy, so fix/overlay's 698981d is the only one ('Waiting its turn: ', its clock symbol). Merge fix/overlay for #19.\n- **#14 (lead's call):** I took the bounded park and documented it in COMMANDS-WSL-SSH §4.1 rather than §2.7, which is about tool results. The optional cleanup of a stale offer_connect answer after expiry is not done.\n- **#51:** the More time factor is now 10. Watch at merge: main.ts imports readTimeOf from ./agent/presenter. Unsolicited offers then last up to 250 s, and Ember holds still that long. That is consistent with answers, which hold Ember up to 300 s with More time.\n- **#47:** the verifier asked for a 'Read the last answer' shortcut or a named Conversation route. I chose the named route; a new global chord would need a seventh entry in every OS's shortcut table and the settings window.\n\nThe worktree is clean at 99ad546, 35 commits since 1b39bb3."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/agent/host.ts (agent): noticeBoard Presenter and `get notices()`; abortAll quiets it; stoppedWhy map, and cancelTasksOn(target, only, why) used in onFinished's summary and text; the can't-take-request notice gets mood attention when signed out and no Open settings while starting, offline or not answering; readTime option passed to every presenter",
+   "app/main/agent/presenter.ts friendlyError (agent owns it): 'AI endpoint/AI service' → 'model service' in 6 strings; the content filter says Copilot's when there is no provider",
+   "app/main/agent/confirm.ts (agent): ConfirmerTiming.panelHint, used as a panel question's step; timeoutMs may be a function, read as each question shows",
+   "app/main/agent/tasks.ts (lifecycle): publish() maps queued to 'queued', no longer 'waiting'",
+   "app/main/agent/worker.ts (agent): fill_cells' question carries where (WhereQuestion)",
+   "app/main/main.ts: createTargets gets bubbles, settingsKey and stopTasksOn's why; questionChanged uses questionAloud for speech and notification; the Confirmer gets panelHint and timeoutMs; readTime() scales hideIfStill and is passed to AgentHost; import questionAloud",
+   "app/main/targets/runtime.ts, non-bubble parts (remote owns records, naming and offers): summaries() adds problem; Conn.wasActive and Conn.problem; userPicked in pick and activate; picker restored on auto-reconnect; showKeyChanged (prompt window card); offer_connect result and the handsFor refusal mention settings (Computers); questionWords hint and a new panelHint method",
+   "app/main/targets/registry.ts (remote): two 'why' strings add 'or in Ember's settings (Computers)'",
+   "app/main/remote/remote-policy.ts: 'another PC' → 'another computer'",
+   "app/main/remote/remote-runner.ts (remote): doc comment quotes the new stalled words",
+   "app/main/doctor.ts (settings): model service detail",
+   "app/main/settings.ts (lifecycle): moreTime boolean, default false",
+   "app/shared/overlay.ts (contract): TaskCard.status adds 'queued'",
+   "app/shared/targets.ts (contract): TargetSummary.problem?",
+   "app/renderer/command/copy.ts (cmdwin): no-break space in durationText and countdownText; stalledText says seconds",
+   "app/renderer/handle/badge.ts (ask): cardBadge() and shortWhere()",
+   "app/renderer/handle/card.ts (ask): busy includes queued",
+   "app/renderer/handle/main.ts (ask): announcement gets where and step; fallback badge from cardBadge; task row names where; TASK_WORD queued",
+   "app/renderer/home/computers-copy.ts (settings): ssh row note = problem while not connected",
+   "app/renderer/home/copy.ts (settings): tagline counts things and says 'this computer'",
+   "app/renderer/home/index.html (settings): More time switch row under Motion and keys",
+   "app/renderer/home/main.ts (settings/onboard): more-time switch wiring; setup summary 'worth a look'",
+   "app/renderer/overlay/main.ts (overlay): showWhere uses setWhere(whereText) and shortWhere for the badge; STATE_WORD queued",
+   "app/renderer/overlay/stack.ts (overlay): underWay includes queued",
+   "app/renderer/overlay/styles.css (overlay): .where max-width 160px → 136px",
+   "app/renderer/prompt/copy.ts (prompt): WSL remote line says 'another computer'",
+   "app/renderer/shared/ember.css (css): --sym-queued and [data-status=\"queued\"] gray",
+   "scripts/package/mac-bundle.mjs (packaging): NSLocalNetworkUsageDescription says 'model service'",
+   "docs/COMMANDS-WSL-SSH.md: §1 where, §2.4 hints and 6 minutes, §2.5 announcement, §3.1 WSL offer, §4.1 offers, keyboard route, Lost and back, §4.6 stalled words, §4.8 failures persist and the key card",
+   "docs/DESIGN.md: bubble paragraph (Needs you rule, first person, units, More time)",
+   "Tests outside packages/bubble: targets-runtime, presenter, host, host-targets, tasks, tasks-where, ui-copy, sshwsl-hooks, worker-commands, command-window, remote-runner, remote-policy, packaging, targets-registry, home-platform-copy"
+  ],
+  "forDocs": [
+   "README.md:81: 'your organisation's AI service or proxy' → 'your organisation's model service or proxy' (review #228)",
+   "docs/DEVELOPING.md:952: 'Ember can't reach your organisation's AI service…' → 'model service' (review #228)",
+   "README (accessibility or settings): new switch Settings › Comfort & access › 'More time to read and answer' (bubbles stay 3× as long, questions wait 6 minutes instead of 2) (review #51)",
+   "CHANGELOG: runtime bubbles (offers, connecting, Lost, failures) no longer get wiped or blanked by the conversation's bubble, and wait behind a question (review #9, #10)",
+   "CHANGELOG: 'Lost build-01' stays until answered and says Ember works on this computer meanwhile; tasks cut off say why; an automatic reconnect says 'build-01 is back' and works there again (review #11, #185)",
+   "CHANGELOG: offers expire after 25 s as Not now, ignore presses in their first half second, and wait until the user has read the current bubble (review #14)",
+   "CHANGELOG: failed connections stay until closed, the host's row in Settings › Computers keeps the reason, and a changed host key opens the 'identity changed' card (review #183, #17)",
+   "CHANGELOG: queued tasks show a grey clock ('Queued') instead of the purple 'Needs you' (review #19)",
+   "CHANGELOG: screen readers, Ember's speech and notifications now name the computer a question comes from, and read a question's key hint; command and consent questions say how to reach their window by keyboard (review #13, #52)",
+   "CHANGELOG: 'Read all' now appears whenever an answer's lines don't fit; problem bubbles show up to ten lines and scroll, titled with what failed, offering Open settings only where settings help (review #12, #17, #18, #21)",
+   "Wording in the README or install docs: the bubble now speaks in the first person ('I'm on build-01'); the stalled message says '15 seconds'; announcements say 'It starts in a few seconds.' (review #22, #227)"
+  ],
+  "ciOnly": [
+   "Windows/macOS: speech and the Electron notification carrying 'Ember asks, on build-01: …' and 'On build-01: …' (questionAloud); the notification for a command question now includes 'press Alt+Tab to go there'",
+   "Windows and Linux: Alt+Tab actually reaches Ember's command window and the prompt window. macOS: the command window is a panel that Command+Tab doesn't list, so no key is named; confirm that is right",
+   "Screen readers (NVDA/Narrator, VoiceOver, Orca): the live region reading 'Ember needs you, on build-01: …' with the key hint, and the corner card's version",
+   "The overlay's real parking while an offer is up (Windows and macOS hover polling): parking ends when the 25 s expiry hides the offer",
+   "Real SSH (remote.yml): drop then auto-reconnect showing 'build-01 is back' and restoring the picker; a real changed host key opening the identity-changed card; progress throttling on a real runtime download; a failure staying until Close and its reason shown in Settings › Computers",
+   "The packaged macOS app: the new NSLocalNetworkUsageDescription wording in the Local Network permission prompt",
+   "Two-line title clamp, the middle-cut where badge and the grey queued clock, with each OS's real fonts in the overlay and corner card"
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": null,
+   "severity": "must-fix",
+   "what": "Regression from #22/#15: Presenter.notice() now shows forBubble(text) as the thought, and the signed-out notice now uses mood \"attention\". AgentHost still withdraws the notice by its raw text (host.ts:1379 `this.unreachable = why`; host.ts:705 `presenter.withdraw(this.unreachable)`). withdraw() (presenter.ts:732) needs `b.mood === \"error\" && b.thought === text`. Scenario: the network is down and the user asks. The bubble shows \"I can't reach Copilot / I can't reach GitHub right now. I'll try again when the network is back.\" The network comes back and the status turns ready. withdraw(\"Ember can't reach GitHub right now. It will try again…\") matches nothing, so the stale notice stays up to 12 s, or 36 s with More time. The same happens to the signed-out \"I need Copilot first\" after the user signs in. Evidence: scratch tests built on the fix branch's Presenter (notice, then withdraw with the same raw text) fail in both cases. The same tests on 1b39bb3's Presenter pass. No host.test covers it, and the full suite is green.",
+   "fix": "Make withdraw match what notice() put on screen. Either compare `b.thought === forBubble(text)` and accept mood \"attention\" as well as \"error\", or have notice() record that a notice is up (a flag or its shown text) and have withdraw() hide on that. Add a host.test: ask while offline (and while signed out), bring the status to ready, and expect the bubble hidden at once."
+  },
+  {
+   "id": 21,
+   "severity": "should-fix",
+   "what": "Presenter.fail() titles the bubble with `problemTitle(said)` and never passes `this.provider` (the session.error path does pass it). On an install that uses the organisation's model service, conductor.ts:543 fails with friendlyError(..., {provider:true}). The bubble then reads title \"I can't reach Copilot\" over the text \"I can't reach your organisation's model service right now…\". Any other failure there falls back to \"Copilot had a problem\". A scratch test confirmed the wrong title. This also breaks #228's \"one name\" rule.",
+   "fix": "Call `problemTitle(said, this.provider)` in fail(), and add a presenter test with provider=true."
+  },
+  {
+   "id": 47,
+   "severity": "should-fix",
+   "what": "The keyboard route under error-mood bubbles is for the eye only. These are \"Lost build-01\" [Reconnect][Stop trying], \"Can't reconnect\", the sign-in-again bubble's siblings, and \"Can't connect\" [Try again][Close]. announcement() appends the step row only in attention mood. The rendered live region for an error bubble with step \"Or press Ctrl+Alt+E and go to Computers.\" reads \"Ember has a problem: Can't connect to build-01. …\" with no route, so a screen-reader user is still never told how to reach Reconnect. Separately, \"Read all\" and \"Read the last answer\", which the finding lists, still have no keyboard route (no global shortcut, nothing says where).",
+   "fix": "In packages/bubble announcement(), add the step after the text for mood \"error\" when one is present. Extend the bubble.test for #52 to cover it. Give \"Read the last answer\" a global shortcut, or name the Conversation section in settings under a cut-short answer."
+  },
+  {
+   "id": 51,
+   "severity": "should-fix",
+   "what": "\"More time to read and answer\" makes bubbles last three times as long and questions wait 6 minutes. The settings.ts comment cites WCAG 2.2.1, which asks for the limit to be turned off, adjusted to at least 10 times, or extended. Three times meets none of these. The reviewer's other half, a global shortcut for \"Read the last answer\", is not done.",
+   "fix": "Offer \"Keep messages until I close them\" (no auto-hide, questions wait 20 minutes or more), or scale by 10 (the presenter already clamps at 10). Otherwise drop the WCAG claim from the comment. Add the shortcut, or track it as a known limitation."
+  },
+  {
+   "id": 14,
+   "severity": "should-fix",
+   "what": "This one is partial, and the fix agent says so. Expiry (25 s, as Not now), the 500 ms arm and waiting behind an answer all work: they fail on the base and pass now. But overlay.ts still parks the follower for any offer with buttons, so an unsolicited \"You're connected to build-01\" still freezes Ember. It now lasts up to 25 s, or 75 s with More time. A related leftover: when an offer_connect offer expires, the conversation's answer that waited behind it (\"I've shown a Connect button…\") then shows with no button.",
+   "fix": "The lead decides. Either don't park for offers posted with claim \"reply\" (or park only once the pointer heads towards the bubble), or accept the bounded park and record it in docs §2.7. Optionally drop or shorten a conversation answer that waited behind an offer that expired."
+  },
+  {
+   "id": 19,
+   "severity": "should-fix",
+   "what": "Duplicate of the overlay package's commit 698981d (#130), already on fix/overlay. Both edit tasks.ts publish, TaskCard.status in shared/overlay.ts, --sym-queued in ember.css, underWay in stack.ts, cardTask, and the overlay and handle STATE_WORD tables. Their screen-reader words differ (\"Queued: \" here, \"Waiting its turn: \" there). Merging both is certain to conflict.",
+   "fix": "Keep one of the two: drop 8b66ef8 here, or the overlay's 698981d. Then align the screen-reader word and the clock path."
+  },
+  {
+   "id": 13,
+   "severity": "should-fix",
+   "what": "The fill_cells test (worker-commands.test 'fill_cells' one question… carries where too') only checks the source text of worker.ts with string matching. It never runs authorizeCells, so a refactor that keeps the strings but drops `where` would still pass.",
+   "fix": "Call authorizeCells through the worker rig: a remote target, a policy that answers \"ask\", and a fake confirmer that records the question. Assert `question.where === \"on build-01\"`."
+  },
+  {
+   "id": null,
+   "severity": "should-fix",
+   "what": "Test hygiene in test/unit/presenter.test.ts. The new describe blocks (\"Presenter.post…\" board(), \"More time to read and answer\") call vi.useFakeTimers() and vi.setSystemTime() and never restore real timers. Every later test in the file runs on a fake clock fixed at 5000.",
+   "fix": "Add `afterEach(() => vi.useRealTimers())` to those describe blocks, or at file level."
+  }
+ ]
+}

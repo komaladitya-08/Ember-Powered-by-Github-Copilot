@@ -1,0 +1,357 @@
+{
+ "key": "voice",
+ "final": {
+  "findings": [
+   {
+    "id": 251,
+    "status": "fixed",
+    "how": "Round 1, unchanged (owner decision V1(b)). VoiceService.rejectsSpeakers is true while Ember listens with the speakers' stream on. Main passes AgentHost a cancelWords() option. Announcements use the kill phrase only where speaker rejection runs. Otherwise they say the stop shortcut aloud when Ember holds it (\"Press Windows key, Alt, X to cancel.\"), else \"Press Stop to cancel.\". AgentHost's own default is the shortcut. As a backstop, VoiceService.speak() says \"the stop phrase\" and \"the wake phrase\" instead of \"Ember, stop\" and \"Hey Ember\" while Ember listens without the speakers' stream (withoutOwnPhrases in app/voice/spoken.ts). docs/COMMANDS-WSL-SSH.md §2.5 is updated. V1(a) is #252 (cmdcore), which can read VoiceService.rejectsSpeakers.",
+    "test": "host-targets.test.ts 'an announced command says how to cancel it…' (the old default said \"Say 'Ember, stop'\"), plus the voice-spoken.test.ts cancelWords/withoutOwnPhrases cases and the voice-service.test.ts rejectsSpeakers and speak-rewrite cases. All failed before and pass now."
+   },
+   {
+    "id": 253,
+    "status": "fixed",
+    "how": "Round 1: engine.ts skips the barge-in transcript under 0.1 s. sherpa.ts transcribe() returns \"\" under 0.1 s and reports a recognizer throw through onError. process.ts catches throws out of feed()/feedMonitor() and sends engine-error, at most once a minute. Round 2 (verifier, failures were swallowed without limit): failures are now bounded. More than 20 within 10 s mark the recognizers unusable (a WebAssembly abort or out-of-memory error leaves them so). The voice process then sends {type:'engine-broken'} once and stops feeding them. VoiceService logs voice.engine_broken and calls restartLater(\"The speech recognizer kept failing.\"), so the 1/5/30 s backoff applies and the restart loads fresh models. Failures spread out over time never count as broken.",
+    "test": "Round 1: voice-engine.test.ts 'cutting in while a listening window is open (review #253)', voice-process.test.ts' two #253 cases, the voice-service engine_error case and two real-model cases in test/integration/voice.test.ts. Round 2: voice-process.test.ts 'says the recognizers are broken, once, when they keep failing (more than 20 times in 10 s), and stops feeding them' and 'isn't broken by failures spread out over time', plus voice-service.test.ts 'starts the voice process again when its recognizers are broken … with the backoff'. Both round-2 'broken' tests fail on e9482f6^ and pass now."
+   },
+   {
+    "id": 254,
+    "status": "fixed",
+    "how": "Round 1: a model that won't load (a throw, or an empty handle) becomes ModelLoadError, and the process sends {type:'error', models:true}. VoiceService then removes the .ok markers (forgetModels) and goes to needs-models with \"The speech models look damaged. Download them again.\". Round 2 (verifier, a writable bundled folder lost its markers and the download wrote about 110 MB into the app): main passes VoiceOptions.bundled = { userRoot: userData/models } when the root came with Ember. For a bundled root the service never calls forgetModels. It logs voice.bundled_models_damaged and switches its models root to the user's folder. It starts from there if models were downloaded before; otherwise it goes to needs-models, and downloadModels() writes to the user's folder. The \"can't replace\" error remains only for a non-bundled folder whose markers can't be removed. Not done: per-file size checks at start (optional).",
+    "test": "Round 2: voice-service.test.ts 'never changes models that came with Ember when they turn out damaged: the download goes to the user's own folder' (the bundled .ok markers stay, modelsReady is false and the download creates userRoot, not files in the bundle) and 'uses models already in the user's own folder…'. Both fail on 4479770^ and pass now. Round 1: the voice-process #254 cases, 'a model folder that won't load is forgotten…' and the real-model 'fails to load, with a ModelLoadError…'."
+   },
+   {
+    "id": 255,
+    "status": "partial",
+    "how": "Round 1, unchanged. SilenceWatch (app/voice/watchdog.ts) sends 'silent' on after a minute of frames that are exactly zero, and off when sound returns. VoiceService shows \"The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.\" (state error, no restart). Left: the optional part, starting the voice process only once the mic page captures, which would free the ~300 MB kept loaded with no microphone. Doing it adds the 3-6 s model load to every start. Proposal: kill the process while the mic page reports 'lost' with NotFound, and start it again on 'capturing'.",
+    "test": "voice-process.test.ts 'tells main when the microphone sends only digital silence…' and voice-service.test.ts 'says when the microphone sends only silence…' failed before and pass now."
+   },
+   {
+    "id": 256,
+    "status": "fixed",
+    "how": "Round 1, unchanged. teardown() still calls kill(), and when the process has no pid yet it also kills it on its 'spawn' event. A process already running is killed once, as before.",
+    "test": "voice-service.test.ts 'kills a voice process stopped before it had started, once it starts' (kill was called 1 time instead of 2 before)."
+   },
+   {
+    "id": 257,
+    "status": "fixed",
+    "how": "Round 1, unchanged. The voice process sends {type:'alive'} every second. From 'ready' on, VoiceService treats 15 s without it as stuck: it logs voice.unresponsive and restarts through restartLater (\"The voice process stopped responding. Trying again in 1 s…\"), which also drops the mic page's queued audio. A late check caused by main itself (the computer slept) doesn't count. Not done: backpressure in the mic page; the restart bounds the queue to about 15 s.",
+    "test": "voice-process.test.ts 'says it's alive every second…' and voice-service.test.ts 'starts again when the voice process stops saying it's alive…' failed before; the sleep case guards against false restarts."
+   },
+   {
+    "id": 258,
+    "status": "fixed",
+    "how": "Round 1, unchanged. spokenText emphasis follows CommonMark flanking (no space just inside a marker, and __ only around whole words). Wildcards, arithmetic and __init__.py are said as shown.",
+    "test": "voice-spoken.test.ts' five 'keeps its stars and underscores (review #258)' cases failed before ('Delete .tmp and .log', '6  7  1', 'init.py') and pass now."
+   },
+   {
+    "id": 259,
+    "status": "fixed",
+    "how": "Round 1, unchanged. An archive's download fills 80% of its share of the bar. Checking and unpacking (extractTarBz2 onRead) fill the rest, and a model reaches 100% only once it is in place. ModelsProgress carries phase 'unpacking', and settings says \"Unpacking speech models… N%\".",
+    "test": "voice-models.test.ts 'keeps the last part of an archive's share…' failed before and passes now."
+   },
+   {
+    "id": 260,
+    "status": "partial",
+    "how": "Round 1: `pactl subscribe` runs beside parec. A server change starts parec again at once, without reporting the stream off, and the microphone consent's Linux note says the monitor keeps the sound output from going idle. Round 2 (verifier, the restart fired too often): parec's run remembers the default output it started on, from the 'Default Sink:' line of `pactl info` (RHEL 8's PulseAudio 14 has no get-default-sink). pactl runs with LC_ALL=C because its words are translated. 500 ms after \"Event 'change' on server\", parec restarts only when the default output is a different one, or when `pactl info` can't tell (fails or takes over 2 s). A change to the default input or another server setting leaves parec running with no gap. Left: proof on real PulseAudio. This container has no PulseAudio, so the RHEL 8 hardware check is listed under CI-only.",
+    "test": "voice-speakers.test.ts: 'starts parec again on the new default output when it changes', 'leaves parec running when the server changed but the default output didn't', 'starts parec again when it can't tell which output is the default' and 'reads pactl in English'. All 4 fail on 3e036ed^ and pass now (10/10)."
+   },
+   {
+    "id": 55,
+    "status": "fixed",
+    "how": "Round 1: 'Speak replies, questions and results out loud' is a three-way choice: When a screen reader runs (the default), Always, or Never, which wins over a screen reader. It is stored as speak plus speakWithScreenReader (default true), mapped in app/shared/speech.ts, and main's maySpeak uses it. The macOS a11y comment is corrected. Round 2 (verifier): the managed-control loop in home/main.ts now uses input.closest(MANAGED_ROW), where MANAGED_ROW is 'label, .choice' in home/copy.ts, so the whole speech row dims, label included. docs/DEVELOPING.md:129 now describes the Always / When a screen reader runs (default) / Never choice. README and CHANGELOG lines are under forDocs.",
+    "test": "Round 2: home-platform-copy.test.ts 'dims its whole row, its words included: speak (review #55)' fails with the old selector 'label' (the select has no label ancestor) and passes with MANAGED_ROW. Round 1: speech-choice.test.ts failed before and passes now."
+   },
+   {
+    "id": 81,
+    "status": "fixed",
+    "how": "Round 1: while this computer's screen is locked, VoiceService stops listening and speaking, askEmber refuses and maySpeak is false. Round 2 covers the verifier's six points. (1) The gate is at the desktop itself. lockedOutHands (screen-lock.ts) wraps this screen's hands so that, while locked, every perception and sidecar read or step rejects with \"This computer's screen is locked, so Ember didn't read it or act on it.\" and currentWindow() is null. This also covers WSL apps' windows, which are on this screen. The borrowed mouse's input is lockAwareInput(xinput, …), so CursorBorrow's screenLocked() check is true whenever ScreenLock says locked, including GNOME's lock shield. The 2-s sweep is now a backstop. In addition, screenHands (targets/hands.ts) now implements DesktopUse per task (a read, a step, an app opened, the desk). Locking stops only tasks that used the screen, and a task running only commands goes on, as docs §4.4 already said; before, every running local task was stopped because local hands couldn't say. (2) A wrong 'locked' reading. On Linux, initial() is no longer trusted: Ember starts unlocked, and only a logind read that says locked locks it, so a first read that can't tell leaves it unlocked. graphicalSession() uses XDG_SESSION_ID only when its Type is x11, wayland or mir, and otherwise the user's Display session, so a terminal's or SSH session that is never in front can't pin Ember as locked. A request refused while locked shows \"Your screen is locked, so I didn't take that.\" (3) The onChange body is now LockController (inject stopDesktopTasks, setLocked and showNotice), unit-tested. (4) The notice is shown through holdNotice: claimBubble, then after 8 s, if still showing, releaseBubble(notice), and the bubble is hidden only if that returns false. A running task shows its progress again at once. The refusal bubble uses the same helper. (5) There is no process every 2 s. One `gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1/session/<escaped id>` (LC_ALL=C) runs for the whole session, and loginctl is read only on a PropertiesChanged line or when the watch begins. If gdbus is missing or exits, loginctl is read every 5 s; with no graphical session nothing is watched. stop() kills the watcher on quit. Checked here against real gdbus and a private bus: it stays up and is killed on stop, and with no bus it falls back. Not done: stopping that fallback poll while Ember is idle (it only runs without gdbus, which glib2 ships). WSL tasks aren't stopped on lock (their screen use is refused by the gate; their commands go on). docs/COMMANDS-WSL-SSH.md §4.4 is updated.",
+    "test": "test/unit/screen-lock.test.ts, 30 tests, all failing on bf22035^ (23 of them; the rest are the kept parse cases). They cover the gdbus watch (one monitor, reads only on PropertiesChanged or when the watch begins, none in 60 s otherwise), the 5-s fallback when gdbus is missing or stops, 'starts unlocked, whatever Electron says…' (the old code stayed locked with initial true and a poll returning null) and the graphical-session choice and session-path escaping. They cover LockController's four cases (lock stops tasks and starts the sweep; sweep stops count; unlock notice once with singular/plural, sweep cleared; nothing stopped says nothing) and holdNotice (release after 8 s, hide only when nothing else shows, a replaced notice left alone). They also cover lockedOutHands (every read and step refused while locked, untouched while unlocked) and lockAwareInput. targets-hands.test.ts adds 'tell whether their own task used this screen…'. Round 1: the ScreenLock and VoiceService lock tests."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "e92fa9a",
+    "subject": "Say stars and underscores that aren't emphasis, such as \"*.tmp\" and \"6 * 7\"",
+    "ids": [
+     258
+    ]
+   },
+   {
+    "sha": "944f7cb",
+    "subject": "Keep the voice process alive when the recognizer fails on too little audio",
+    "ids": [
+     253
+    ]
+   },
+   {
+    "sha": "a97b191",
+    "subject": "Offer the speech models' download again when they turn out damaged",
+    "ids": [
+     254
+    ]
+   },
+   {
+    "sha": "532334b",
+    "subject": "Kill a voice process stopped before it had started, once it starts",
+    "ids": [
+     256
+    ]
+   },
+   {
+    "sha": "b29968a",
+    "subject": "Start the voice process again when it stops responding",
+    "ids": [
+     257
+    ]
+   },
+   {
+    "sha": "b1c2dfe",
+    "subject": "Say when the microphone sends only silence instead of showing \"Listening\"",
+    "ids": [
+     255
+    ]
+   },
+   {
+    "sha": "22dec3f",
+    "subject": "Show the speech models being unpacked instead of sitting at 100%",
+    "ids": [
+     259
+    ]
+   },
+   {
+    "sha": "050631f",
+    "subject": "Never say \"Ember, stop\" where Ember can't tell its own voice from the user's",
+    "ids": [
+     251
+    ]
+   },
+   {
+    "sha": "e6eac55",
+    "subject": "Follow the default output with speaker rejection when it changes",
+    "ids": [
+     260
+    ]
+   },
+   {
+    "sha": "a2a478e",
+    "subject": "Let the user turn Ember's speech off while a screen reader runs",
+    "ids": [
+     55
+    ]
+   },
+   {
+    "sha": "bf47030",
+    "subject": "Stop listening, speaking and desktop tasks while this computer's screen is locked",
+    "ids": [
+     81
+    ]
+   },
+   {
+    "sha": "14e03d6",
+    "subject": "Hold the bubble for the screen-lock notice so a task's hide doesn't wipe it",
+    "ids": [
+     81
+    ]
+   },
+   {
+    "sha": "e9482f6",
+    "subject": "Start the voice process again when its recognizer keeps failing",
+    "ids": [
+     253
+    ]
+   },
+   {
+    "sha": "4479770",
+    "subject": "Never change speech models that came with Ember when they turn out damaged",
+    "ids": [
+     254
+    ]
+   },
+   {
+    "sha": "10d8b0a",
+    "subject": "Dim the whole speech row when the organisation manages speaking",
+    "ids": [
+     55
+    ]
+   },
+   {
+    "sha": "3e036ed",
+    "subject": "Start parec again only when the default output really changed",
+    "ids": [
+     260
+    ]
+   },
+   {
+    "sha": "bf22035",
+    "subject": "Refuse this screen at the hands while it's locked, and watch logind instead of polling",
+    "ids": [
+     81
+    ]
+   }
+  ],
+  "checks": "Final state, all run after the last commit (bf22035): `npx tsc --noEmit` exited 0 with no errors. `npm run lint` (eslint .) exited 0 with no problems. `npm test`: 244 test files passed, 1 skipped (245); 6041 tests passed, 8 skipped (6049); exit 0. `npm run build` exited 0. `xvfb-run -a npm run test:smoke` exited 0 ('ok first instance showed its window', 'ok second launch handed over and the first instance focused its window'). Real-model voice suite: the models were downloaded with scripts/voice/prepare.mjs into the scratchpad and deleted afterwards; `EMBER_INTEGRATION=1 EMBER_VOICE_TEST=1 npx vitest run test/integration/voice.test.ts` gave 1 file, 20/20 passed. Targeted runs: screen-lock.test.ts 30/30, targets-hands.test.ts 12/12, targets-runtime.test.ts 91/91, voice-speakers.test.ts 10/10, voice-service and host-targets passing. Failed-before checks, each run by putting the parent commit's source back: voice-speakers 4 of 10 failed; screen-lock 23 failed; voice-process/voice-service #253 2 failed; voice-service #254 2 failed; home-platform-copy #55 'speak' failed with the old 'label' selector. The commands integration suites weren't needed: nothing under app/main/commands/** changed.",
+  "sharedHunks": [
+   "app/main/main.ts: imports of cancelWords, speaksAloud and the screen-lock exports (#251, #55, #81)",
+   "app/main/main.ts: maySpeak uses speaksAloud(...) and returns false while screenLock is locked (#55, #81)",
+   "app/main/main.ts: `let screenLock` declaration (#81)",
+   "app/main/main.ts: new showNotice helper (holdNotice with claim/release); askEmber refuses while locked with LOCKED_ASK (#81)",
+   "app/main/main.ts: downloadModels forwards the progress phase (#259)",
+   "app/main/main.ts: CursorBorrow gets lockAwareInput(xinput, …) (#81)",
+   "app/main/main.ts: hands object wrapped in lockedOutHands(…, () => screenLock?.locked ?? false), a change to its first and last lines only (#81)",
+   "app/main/main.ts: AgentHost cancelWords option (#251)",
+   "app/main/main.ts: VoiceService bundled: { userRoot } option (#254)",
+   "app/main/main.ts: screen-lock section after the voice setup (LockController, ScreenLock with logindLock on Linux / getSystemIdleState elsewhere, will-quit stop) (#81)",
+   "app/main/agent/host.ts: cancelWords?() option and the announcement sentence using it (#251)",
+   "app/main/targets/hands.ts: screenHands wraps perception/sidecar/desk/apps.launch to track DesktopUse per task; return type (TargetHands & Partial<DesktopUse>) | null (#81)",
+   "app/main/admin.ts: organisation speak:false also sets speakWithScreenReader false (#55)",
+   "app/main/settings.ts: speakWithScreenReader schema field, default true (#55)",
+   "app/main/platform/darwin/system/a11y.ts: header comment corrected (#55)",
+   "app/preload/home.ts and app/shared/ipc.ts: voiceProgress carries phase?: 'unpacking' (#259)",
+   "app/renderer/home/index.html: speech choice select (#55); Linux speaker note in the microphone consent (#260)",
+   "app/renderer/home/main.ts: speech choice wiring (#55); managed loop uses MANAGED_ROW (#55); 'Unpacking speech models… N%' (#259)",
+   "app/renderer/home/styles.css: .choice row layout (#55)",
+   "app/renderer/home/copy.ts: new export MANAGED_ROW (#55)",
+   "app/shared/speech.ts: new file, speakChoice/speakSettings/speaksAloud (#55)",
+   "docs/COMMANDS-WSL-SSH.md: §2.5 cancel words and speech choice (#251, #55); §4.4 this computer's screen lock (#81)",
+   "docs/DEVELOPING.md:129: the three-way speech choice (#55)",
+   "test/unit/host-targets.test.ts: announced command cancel words (#251)",
+   "test/unit/targets-hands.test.ts: identity asserts skip perception/sidecar; new DesktopUse test for this screen (#81)",
+   "test/unit/targets-runtime.test.ts: two identity asserts loosened (line ~288 skips perception/sidecar; WSL test checks policy instead of perception) (#81)",
+   "test/unit/home-platform-copy.test.ts: consent note copy (#260), speech choice copy (#55), managed-row test (#55)"
+  ],
+  "forDocs": [
+   "CHANGELOG: \"Speak replies, questions and results out loud\" is now a choice: When a screen reader runs (default), Always, or Never. Never keeps Ember quiet even while a screen reader runs. An organisation that turns speaking off shows it as Never (managed).",
+   "CHANGELOG: While this computer's screen is locked, or another session is in front, Ember doesn't listen for \"Hey Ember\", doesn't speak, takes no requests (\"Your screen is locked, so I didn't take that.\") and doesn't read or act on the screen. Tasks that used the screen stop, and are reported once you're back. A task running only commands goes on.",
+   "Install docs (Linux): lock detection uses logind through `gdbus` (glib2, installed with GNOME on RHEL 8). Without gdbus, Ember reads loginctl every 5 s.",
+   "CHANGELOG: Where Ember can't tell its own voice from yours (Windows, macOS, and Linux without parec), spoken announcements name the stop shortcut (\"Press Windows key, Alt, X to cancel.\") instead of \"Say 'Ember, stop'\".",
+   "CHANGELOG: Damaged speech models show \"The speech models look damaged. Download them again.\", and the download button repairs them. Models installed with Ember are never changed: the download goes to your own models folder.",
+   "CHANGELOG: A microphone that sends only silence (muted, or the wrong input) is now reported instead of \"Listening for 'Hey Ember'\".",
+   "CHANGELOG: The model download shows \"Unpacking speech models… N%\" after the last byte, instead of sitting at 100%.",
+   "CHANGELOG / install docs (Linux): speaker rejection follows the default sound output when it changes (pactl from pulseaudio-utils, as for parec). While Ember listens, it keeps the output device from idle-suspending.",
+   "CHANGELOG: The voice process restarts by itself when it stops responding or its recognizer keeps failing, using the 1/5/30 s backoff."
+  ],
+  "ciOnly": [
+   "RHEL 8 GNOME: with Ember running, Super+L makes `gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1/session/_3N` print a PropertiesChanged line for LockedHint, and Ember logs screen.lock {locked:true}. Unlocking logs locked:false, and switching users or VTs (Active=no) does the same. The audit log shows no periodic loginctl execve.",
+   "RHEL 8: Ember started from a terminal or an SSH login's session reads the user's graphical session (Type check) and is not stuck 'locked'.",
+   "RHEL 8 GNOME lock shield: a task's accessibility reads and borrowed input are refused while locked (lockedOutHands, lockAwareInput), and a local commands-only task keeps running across a lock.",
+   "Windows/macOS: powerMonitor lock-screen/unlock-screen and getSystemIdleState(1)==='locked' at start. The unlock notice gives the bubble back after 8 s, so a running task's progress shows again.",
+   "RHEL 8 PulseAudio 14: after switching the default sink (headphones, Bluetooth), `pactl list short source-outputs` shows parec on the new sink's monitor. Changing only the default input leaves parec's source-output id unchanged.",
+   "Windows/macOS with speakers and a microphone: a spoken announcement names the stop shortcut and no longer triggers the kill switch (#251).",
+   "Windows/macOS spawn latency: a voice process stopped before 'spawn' is killed once it spawns (#256).",
+   "A signed macOS Ember.app, or a per-user Windows install, with a damaged bundled model folder: the bundle is untouched, and the download repairs into the user's models folder (#254)."
+  ],
+  "notes": "Yes, I resumed. The earlier run of this round had already committed e9482f6 (#253 bound), 4479770 (#254 bundled) and 10d8b0a (#55 dim + DEVELOPING.md). It had also left an uncommitted #260 edit (speakers.ts plus its test). I reviewed all three commits and kept them as they were, checked the uncommitted edit (its 4 new tests fail on the old code), and committed it as 3e036ed. Then I did the six #81 points in bf22035.\n\nOne thing beyond the verifier's list, needed for #81: local tasks had no DesktopUse, so locking stopped every running local task, including commands-only ones, contrary to docs §4.4. screenHands now tracks use per task. app/main/targets/hands.ts and its tests are untouched by every other fix branch, so this shouldn't conflict.\n\nThe fallback poll (5 s, only where gdbus is missing) is not stopped while Ember is idle.\n\nScratch files deleted: the models download, the gdbus and lock checks, and the old-code copies."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/agent/host.ts: HostOptions gains optional cancelWords?: () => string (5 lines); taskPresenter's announcement line uses this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.` in place of the fixed \"Say 'Ember, stop' to cancel.\" (#251)",
+   "app/main/main.ts: imports (cancelWords from ../voice/spoken, speaksAloud from ../shared/speech, ScreenLock/execText/loginctlLocked from ./screen-lock) (#251, #55, #81)",
+   "app/main/main.ts: maySpeak becomes policy && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn()) (#55, #81)",
+   "app/main/main.ts: `let screenLock: ScreenLock | null` declared next to `let voice` (#81)",
+   "app/main/main.ts: askEmber drops a request while screenLock?.locked, logging ask.refused {reason:'screen_locked'} (#81)",
+   "app/main/main.ts: IPC.voiceDownload forwards the progress phase: broadcast(IPC.voiceProgress, { done, total, ...(phase ? { phase } : {}) }) (#259)",
+   "app/main/main.ts: AgentHost options gain cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null }) (#251)",
+   "app/main/main.ts: new 'Screen lock' block after the voice setup: ScreenLock on powerMonitor (+ loginctl poll on Linux), onChange → voice.setLocked, cancelTasksOn('local','desktop') now and every 2 s while locked, claimBubble + notice on unlock; screenLock.start(), stop at will-quit (#81)",
+   "app/main/settings.ts: new SettingsSchema field speakWithScreenReader: z.boolean().default(true) after speak (#55)",
+   "app/main/admin.ts: applyAdminPolicy sets speakWithScreenReader = false with speak = false when features.speak is false (#55)",
+   "app/main/platform/darwin/system/a11y.ts: header comment only: VoiceOver running means Ember speaks too unless the user chose Never (#55)",
+   "app/shared/ipc.ts: onVoiceProgress payload type gains phase?: \"unpacking\" (#259)",
+   "app/preload/home.ts: onVoiceProgress listen<> type gains phase?: \"unpacking\" (#259)",
+   "app/shared/speech.ts: new file (speakChoice/speakSettings/speaksAloud), imported by main and the home renderer (#55)",
+   "app/renderer/home/index.html: the 'speak' switch becomes <div class=\"choice\"><label for=speak>…</label><select id=speak> with When a screen reader runs/Always/Never (#55)",
+   "app/renderer/home/index.html: Motion and keys hint ends 'With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.' (#55)",
+   "app/renderer/home/index.html: #speaker-note (Linux-only consent span) adds ', which keeps the sound output from going idle while Ember listens' (#260)",
+   "app/renderer/home/main.ts: import speakChoice/speakSettings/SpeakChoice; applyVoiceSettings sets the select's value; the change handler sends speakSettings(value) (#55)",
+   "app/renderer/home/main.ts: onVoiceProgress text says 'Unpacking' or 'Downloading' by p.phase (#259)",
+   "app/renderer/home/styles.css: new .choice grid rule; the .models select selectors (base, :focus-visible, option) extended with .choice select; a narrow (max-width: 480px) rule stacks .choice (#55)",
+   "docs/COMMANDS-WSL-SSH.md §2.5: when Ember speaks the announcement, and that it names the stop chord (and never says the wake or stop phrase) where speaker rejection doesn't run (#251, #55)",
+   "docs/COMMANDS-WSL-SSH.md §4.4: this computer's own locked screen is treated like a remote one (#81)",
+   "test/unit/host-targets.test.ts: new #251 test for the announcement's cancel words",
+   "test/unit/home-platform-copy.test.ts: pinned consent and allow/deny hint strings updated (#260, #55)"
+  ],
+  "forDocs": [
+   "README/DEVELOPING (Voice; DEVELOPING.md:129 says \"Speak replies on (or a screen reader running)\"): 'Speak replies, questions and results out loud' is now a choice: When a screen reader runs (the default), Always, or Never; Never also silences Ember while a screen reader runs. An administrator's features.speak:false shows as Never.",
+   "DEVELOPING.md troubleshooting: \"The speech models look damaged. Download them again.\" appears when a model file is missing or cut short (an antivirus quarantine, a disk error); the Download speech models button repairs it. With models installed with Ember (ember-voice-models, ProgramData, /Library/…) that can't be replaced, reinstall them.",
+   "DEVELOPING.md troubleshooting: \"The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings.\" means a minute of digital silence (mute key, GNOME input mute, a monitor/HDMI input chosen as default). A headset with a noise gate can show it in a very quiet room, and it clears as soon as sound arrives.",
+   "DEVELOPING.md troubleshooting: \"The voice process stopped responding. Trying again in 1 s…\": the voice process went 15 s without answering (stuck, or suspended by security software), and Ember restarted it.",
+   "Settings: while the speech models install, the line says \"Unpacking speech models… N%\" after the download.",
+   "README/DEVELOPING (privacy/voice): while the computer's screen is locked (or the session isn't the one in front), Ember doesn't listen, speak or take requests, and tasks using its desktop stop; commands-only tasks go on. On Linux this needs systemd-logind (GNOME sets LockedHint); Windows and macOS use the OS's lock events.",
+   "README/DEVELOPING (voice, Linux): speaker rejection follows the default output when it changes (needs pactl from pulseaudio-utils besides parec), and its always-on recording of the output keeps the sound output from going idle while Ember listens.",
+   "CHANGELOG: on Windows, macOS and Linux without parec (no speaker rejection), Ember never says \"Ember, stop\" or \"Hey Ember\" aloud. An announced command ends with the stop shortcut (\"Press Windows key, Alt, X to cancel.\") so Ember's own voice can't pull the kill switch.",
+   "CHANGELOG: the voice process no longer dies on very short audio while you cut in on Ember, and recovers from a stuck process; wildcard and arithmetic stars are read aloud as shown."
+  ],
+  "ciOnly": [
+   "Windows and macOS: Electron powerMonitor 'lock-screen'/'unlock-screen' events and getSystemIdleState(1) === 'locked' drive ScreenLock: lock the session (Win+L / Ctrl+Cmd+Q) and check that voice.setLocked(true) fires (log 'screen.lock {locked:true}'), listening stops and asks are refused.",
+   "RHEL 8 GNOME on Xorg (real session, not Xvfb): GNOME Shell sets logind LockedHint=yes on Super+L, and `loginctl show-session $XDG_SESSION_ID -p LockedHint -p Active` reads it within the 2 s poll; fast user switching gives Active=no.",
+   "Linux with PulseAudio (RHEL 8) and with PipeWire: `pactl subscribe` prints \"Event 'change' on server #…\" when the default sink changes, and after switching outputs `pactl list short source-outputs` shows parec on the new default's monitor. Also whether the always-on monitor really prevents the sink's idle suspend.",
+   "Windows/macOS: UtilityProcess.pid is undefined before 'spawn' and kill() is a no-op then, so the once('spawn') kill reaps a process torn down within the slower spawn latency (#256).",
+   "A real suspended voice process (SIGSTOP on Linux, or security software on Windows) is restarted after ~15 s, with 'voice.unresponsive' in the log (#257).",
+   "A muted or wrong-input microphone delivers exact zeros through Chromium's capture with echoCancellation on (PulseAudio, WASAPI, CoreAudio), so the 'only silence' message appears after a minute and clears on sound (#255).",
+   "Windows Narrator/SAPI and macOS voices saying 'Press Windows key, Alt, X to cancel.' and 'the stop phrase' don't trigger the keyword spotter on a laptop's speakers and microphone (#251).",
+   "Orca, Narrator and VoiceOver with the speech choice on Never: Ember stays silent while the reader runs, and the select's accessible name is read (#55)."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 254,
+   "severity": "should-fix",
+   "what": "A damaged bundled model folder gets its markers deleted, and the next download is written into the app's own install folder. voiceModelsRoot() (main.ts:156) hands VoiceService a bundled root (Ember.app/Contents/Resources/voice-models on macOS, resources\\voice-models on Windows from --with-models builds, /usr/share/ember/voice-models, %ProgramData%). On a models:true error, voice.ts:293 calls forgetModels(this.o.modelsRoot). For a writable bundle, such as a drag-installed Ember.app owned by the user or a per-user Windows install, the .ok markers are removed and the state goes to needs-models with 'Download them again.'. downloadModels() then runs ensureModels(this.o.modelsRoot), so about 110 MB goes into the signed app bundle on macOS (the seal is broken, and updates replace it). Only the read-only case was handled.",
+   "fix": "Pass `bundled` (speechModels.bundled) into VoiceOptions. For a bundled root, never call forgetModels on it: switch the service's models root to the user's own folder (path.join(userData, 'models')) and go to needs-models there, so the download repairs it outside the bundle. Or, if that's too wide a change, show the reinstall error. Add a voice-service test with a bundled root that asserts its markers stay and the download targets the user folder."
+  },
+  {
+   "id": 253,
+   "severity": "should-fix",
+   "what": "Failures are now swallowed without limit. process.ts `failed()` counts every throw out of feed()/feedMonitor() and reports one engine-error a minute, and VoiceService only logs it (voice.ts:300). A recognizer that fails on every frame stays deaf for the rest of the session while the UI says 'Listening for “Hey Ember”', and there is no restart: for example, a WebAssembly abort or out-of-memory error leaves the module unusable. Before the fix, that crash restarted the process with fresh models through restartLater.",
+   "fix": "Bound it. In process.ts, when failures keep coming (say more than 20 in 10 s, or N frames in a row), exit with code 1 or send a new {type:'engine-broken'}, so VoiceService calls restartLater('The speech recognizer kept failing.') and the backoff applies. Add a voice-process test (spot throws on every frame: one exit/report after the threshold) and a voice-service test (restart scheduled)."
+  },
+  {
+   "id": 81,
+   "severity": "should-fix",
+   "what": "Local tasks can still use the desktop for up to 2 s while the screen is locked. cancelTasksOn('local','desktop') skips queued tasks, and running tasks whose taskDesktop() is still false (host.ts:1415). A queued local task that starts while the screen is locked can read the screen or send input until the next 2-s sweep. On Linux, the local hands' own lock check (hands/input.ts XScreenSaver/DPMS) doesn't see GNOME's lock shield, so typed input in that window can land in the lock screen's password field. This is not a regression (nothing stopped before), but the gate is at the wrong layer.",
+   "fix": "Gate the desktop itself while screenLock.locked. Give the local hands a screenLocked() that is true when ScreenLock says so (a one-line OR in the input package's check, coordinated with the input package), or hold queued local tasks while locked and release them on unlock. Then the sweep is only a backstop."
+  },
+  {
+   "id": 81,
+   "severity": "should-fix",
+   "what": "A wrong 'locked' reading makes Ember ignore the user silently. askEmber drops every request while locked with only a log line (main.ts:757), and the voice line says 'Not listening while the screen is locked.'. On Linux there is no unlock event, and a poll that can't tell keeps the last state (screen-lock.ts tick). If initial() (powerMonitor.getSystemIdleState(1)==='locked') says locked at start and loginctl is unavailable or fails, Ember stays 'locked' until it restarts. The same happens if logind reports Active=no for the session id Ember inherited. Typed requests then do nothing, with no message.",
+   "fix": "On Linux, when a poll is configured, don't take initial() as authoritative: start unlocked, or only trust 'locked' once a poll confirms it. Treat a first poll that can't tell as unlocked. When askEmber refuses because of the lock, show a short bubble, e.g. 'Your screen is locked, so I didn't take that.'. If the user can see it, the detection was wrong, and they learn why nothing happened."
+  },
+  {
+   "id": 81,
+   "severity": "should-fix",
+   "what": "The main.ts lock wiring has no test. The onChange handler (voice.setLocked, desktop-task sweep every 2 s, the unlock notice counted once and reset), askEmber's refusal and maySpeak's lock clause are covered only by typecheck and the smoke test, which never locks.",
+   "fix": "Move the onChange body into a small controller in app/main/screen-lock.ts (inject cancelTasks, setLocked and showNotice). Unit-test four cases: lock stops desktop tasks and starts the sweep; a sweep while locked adds to the count; unlock shows the notice once with the right singular/plural and clears the sweep; a lock/unlock with nothing stopped shows nothing."
+  },
+  {
+   "id": 81,
+   "severity": "should-fix",
+   "what": "After an unlock, the notice holds the bubble longer than it shows. main.ts:1650 calls agent.claimBubble() (a 30 s MAIN_HOLD_MS) and hides the notice after 8 s, but never releases the claim. A commands-only or remote task still running then shows no progress for about 22 s after the notice goes.",
+   "fix": "Release the claim when the notice ends, as main.ts:886-893 do. Replace hideIfStill(bubble, 8000) with a timer that, if the notice is still showing, calls `if (!(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: 'neutral', bubble: IDLE_BUBBLE })`."
+  },
+  {
+   "id": 81,
+   "severity": "should-fix",
+   "what": "The Linux lock poll starts a new process every 2 s for the whole session (`loginctl show-session …` from main, screen-lock.ts:89), about 43,000 runs a day. On RHEL 8 machines that audit execve, which is common in the enterprises Ember targets, every run is logged.",
+   "fix": "Use one long-lived watcher instead of polling: `gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1/session/<id>` (glib2 ships it on RHEL 8 GNOME). Re-read LockedHint/Active on each PropertiesChanged, and fall back to polling only if gdbus is missing. If polling stays, use a longer interval (5-10 s) and stop it while Ember has nothing listening or running."
+  },
+  {
+   "id": 55,
+   "severity": "should-fix",
+   "what": "When the organisation manages speaking, the label no longer dims. #speak is now a <select> beside a <label for>, not inside a <label>. home/main.ts:328 does `(input.closest('label') ?? input).classList.toggle('locked', …)`, so the opacity 0.5 lands on the select only. 'Speak replies, questions and results out loud' stays at full strength while its control is disabled, unlike the other managed rows.",
+   "fix": "Use `input.closest('label, .choice') ?? input` in that loop, so the whole .choice row gets `locked`."
+  },
+  {
+   "id": 55,
+   "severity": "should-fix",
+   "what": "Docs are stale. docs/DEVELOPING.md:129 still says '**Speak replies** on (or a screen reader running) it says the question out loud', but speaking is now a three-way choice where Never wins over a screen reader. The README/CHANGELOG need the docs package to know about the new choice.",
+   "fix": "Update DEVELOPING.md:129, e.g. 'With Speak … out loud set to Always, or a screen reader running and it set to When a screen reader runs (the default), it says the question out loud', and list the new choice in the report for the docs package."
+  },
+  {
+   "id": 260,
+   "severity": "should-fix",
+   "what": "Unverified, and broader than needed. speakers.ts restarts parec on every `Event 'change' on server`, which also fires when the default input changes and, under pipewire-pulse, for other server-level changes. Each restart is a short gap in the speakers' stream (the replaced run isn't reported off). Nothing here proves the new parec actually lands on the new sink's monitor: there is no PulseAudio in this container.",
+   "fix": "On a server change, read the default sink (`pactl info`, 'Default Sink:' line; RHEL 8's PulseAudio 14 has no get-default-sink) and restart parec only when it differs from the last one. Before release, verify on RHEL 8 hardware with `pactl list short source-outputs` after switching sinks, as the reviewer asked."
+  }
+ ]
+}

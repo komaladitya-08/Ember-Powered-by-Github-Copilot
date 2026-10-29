@@ -1,0 +1,312 @@
+{
+ "key": "css",
+ "final": {
+  "findings": [
+   {
+    "id": 44,
+    "status": "fixed",
+    "how": "Reproduced with a Chromium forced-colours probe over every window, dark and light (scratchpad/fx-css/forced-probe.mjs): 104 of 114 checks failed. ember.css got a forced-colours block. It maps the tokens to system colours (the accent becomes Highlight; the state colours become CanvasText or GrayText) and gives .btn a ButtonText border, with the prominent button filled with Highlight. Switches and checkboxes are drawn as they are (forced-color-adjust: none) in system colours. Focus is `outline: 2px solid Highlight !important; outline-offset: 2px` on :focus-visible, except on programmatic headings. Each page's styles.css and BUBBLE_CSS got its own block: borders on cards, Start, pop-ups, fields, tabs, the command block, task and bubble buttons, and desk buttons. The slider track and thumb and the fold chevrons use system colours, the chosen character gets a 3 px Highlight border, and the selected tab is Highlight-filled. Controls filled with Highlight use forced-color-adjust: none, because the system's text backplate hid their words. After the fix 108 of 114 checks pass. The other 6 are probe artefacts, each confirmed in screenshots: a checked switch shows its state by its fill, the slider's edge is on its track pseudo-element, and the Ask glyph is decorative.",
+    "test": "test/unit/design-system.test.ts \"Windows contrast themes (forced colours)\": 5 tests failed on the base stylesheets and pass now. The render probe went from 104 of 114 failing to 108 of 114 passing."
+   },
+   {
+    "id": 151,
+    "status": "fixed",
+    "how": "Same fix as #44: switch border and knob in system colours, the slider's track (Highlight and CanvasText) and its ButtonText thumb, the chosen character's 3 px Highlight border plus its tick, and real focus outlines. The reviewer's forced-fix.css was the starting point. 98d1814 removes the doubled chevron on Settings' pop-ups (the system's own chevron plus the painted one).",
+    "test": "design-system.test.ts forced-colours tests, including the pop-up chevron assertion (failed before 98d1814, passes now); forced-probe.mjs renders"
+   },
+   {
+    "id": 242,
+    "status": "fixed",
+    "how": "Same fix as #44. It also covers the first-run consent checkbox, drawn as it is with a ButtonText edge and a HighlightText tick, and Start, which is Highlight-filled (GrayText when disabled). Every mask symbol and dot takes a system colour through the tokens, and Chromium keeps a system colour an author sets. That covers the task, tab and pending-line symbols, the card tick, .dot, .status i, the mic badge, .eb-dot (BUBBLE_CSS sets --eb-mood: CanvasText) and the sidebar icons (LinkText). The glass keeps its border, which the system colours. DESIGN.md has a new contrast-themes line.",
+    "test": "design-system.test.ts forced-colours tests; forced-probe.mjs (first-run, overlay, handle and command checks all pass)"
+   },
+   {
+    "id": 129,
+    "status": "fixed",
+    "how": "The overlay's block gives .task-actions buttons a ButtonText border and the where badge an outline. .task::before, .task.more::before and .status i take system colours from the token overrides. The focus ring around the control Ember works on becomes Highlight. The bubble's chip dot uses CanvasText, and the handle's dots are covered by the #246 badge work.",
+    "test": "design-system.test.ts forced-colours tests (overlay, bubble and handle entries); forced-probe.mjs overlay and handle checks pass in dark and light"
+   },
+   {
+    "id": 267,
+    "status": "fixed",
+    "how": "Same fix as #44. Allow is Highlight-filled; Not now and Stop are .btn.quiet with a ButtonText border. Tabs and the command block have borders, and the selected tab is Highlight-filled with a HighlightText symbol. Focus is a 2 px Highlight outline on controls, tabs and .command, and the tab row has 4 px of padding so the outline isn't clipped. Hidden-character tokens (.vt) keep a box once their tint is gone, in both the command and prompt windows.",
+    "test": "design-system.test.ts forced-colours tests (command entries); forced-probe.mjs command focus checks (.card .btn and .tab :focus-visible) pass"
+   },
+   {
+    "id": 244,
+    "status": "fixed",
+    "how": "--focus-ring is now two layers: a 2 px gap in --surface-0, then 2 px of the accent (75% by default, full under Increase Contrast). The BUBBLE_CSS fallbacks are the same two layers. The command tab row's padding goes from 2 px to 4 px so the ring isn't clipped. The accent stays the ring colour, because the design rule says the accent marks focus; the gap is what separates the ring from accent fills. A pixel scan of the focused 'Install and connect' at 2x shows, in both modes, the button, then 4 device px of window colour, then 4 device px of ring.",
+    "test": "design-system.test.ts \"the keyboard focus ring … is set off from a filled control by a gap\" failed before (one layer) and passes now; scratchpad/fx-css/focus-ring.mjs pixel scan"
+   },
+   {
+    "id": 246,
+    "status": "fixed",
+    "how": "The 8 px dot is now a 16 px dark disc with a 12 px symbol drawn from new --sym-mic and --sym-mic-off tokens in ember.css. Listening shows an accent microphone, with a halo under it while it hears you. Muted or not set up shows a struck-out grey microphone, starting or downloading shows the working ring, and a problem shows a red mark. The disc no longer reads as Cinder's mitten. Renders of the pill cover every state and all four characters, plus the no-compositor card.",
+    "test": "test/unit/handle-mic.test.ts (new; failed before: no app/shared/mic.ts, no distinct masks, aria-hidden) passes; scratchpad/fx-css/mic-shots.mjs renders"
+   },
+   {
+    "id": 59,
+    "status": "fixed",
+    "how": "Round 1: #mic is role=\"img\" with its state words as aria-label and title. A change to muted, a problem or voice not set up is said in the handle's live region. The computer badge draws connecting, not connected and lost as different shapes. Round 2, for the verifier's report that the card said 'Microphone off' twice: the status line and the microphone's news now go through HandleLive.news() (app/renderer/handle/live.ts, pure). It remembers the mic news it last said, and when the status line then changes to exactly those words it records them without saying them again; it also handles the reverse order and both arriving together. 672740e keeps announce() and its announcement({...}, name) line in handle/main.ts as at base, so fix/bubble's change to that line lands where it expects. With the verifier's own DOM probe (relfix-verify/css/vmic.mjs) on the final build, the live region changes once on mute in both the card and the pill: 'mute (voice state)' -> ['Microphone off'], 'mute (status line)' -> [].",
+    "test": "handle-mic.test.ts: \"says \\\"Microphone off\\\" once in the no-compositor card when the shortcut mutes it\", \"says it once in whichever order the two updates come, or when they come together\" and \"still says the same status line again later\". They failed on the round-1 logic and pass now. The round-1 tests \"says its state in words\" and \"draws ready, connecting, not connected and lost as different shapes\" also pass."
+   },
+   {
+    "id": 73,
+    "status": "fixed",
+    "how": "Round 1: every state has its own shape (#246); app/shared/mic.ts holds one set of words. idleLine() says 'Microphone problem' or \"Voice isn't set up\" instead of 'Ready', with Copilot's connection words still first. The badge also shows while the speech models are missing, downloading or starting. The handle menu offers 'Microphone problem: open Settings…' while micState is error, which opens Settings at Voice (a main.ts hunk). Round 2, for the verifier's report that the problem was repeated at each retry: HandleLive.micNews treats starting and downloading as passing states. It keeps the last settled state through them and resets only on waiting, active, off, muted or needs-models. So error, starting, error is said once, and error, starting, waiting, error twice. The verifier's vmic.mjs now shows 'error again' -> [] in both pill and card.",
+    "test": "handle-mic.test.ts \"says a microphone problem once while Ember keeps retrying, not at every retry\" and \"says it again when listening worked in between, and when it breaks while starting\" (failed on the round-1 logic, pass now); round-1 tests \"says a microphone problem … instead of Ready\" and \"offers the way to fix a microphone problem in the handle's menu\""
+   },
+   {
+    "id": 57,
+    "status": "partial",
+    "how": "Round 1 (29b0b29): a Text size setting (Default, Large 115%, Larger 130%) in Settings > Comfort & access. It multiplies the type tokens and each page's own px sizes through html[data-text-size], which main's page-prefs.ts sets on every page, in Settings, the bubble, task cards, the handle, and the command and prompt windows. Round 2, for each verifier problem: (1) Windows (84312e3): createCommandWindow and createPromptWindow size themselves by the text scale (windows.ts setTextScale, which main sets at start and on change): width, height, minWidth and minHeight, inside the primary work area and never below the usual size. The command window is 874x552 at Large and 988x624 at Larger; the prompt window 506x345 and 572x390. New in this round (14d1cae): the controllers make each window once and then only hide it, so a size chosen later never reached it until a restart. windows.ts now keeps both windows and resizes any open one when the scale changes: size times the change, never below the scaled minimum, centred where it was and inside its display. Checked on real Electron under Xvfb, hidden and non-resizable windows included. Measured at the new sizes (scratchpad/fx-css/vsize2.mjs): the prompt's buttons sit 16 px from the bottom at every size, and Allow and Not now end at y=501 of 552 and y=542 of 624. In a fresh scratch merge with fix/cmdwin's tip (9011512), Allow and Not now are the topmost element at their centre at all three sizes, in the old and the new window sizes (allow-merge.mjs). On fix/css alone the card area's 72vh cap covers them even at the default size (base's #265, fixed by cmdwin's sticky row). The terminal still fits at every size: its reported rows end about 125 px above the window's bottom (term-fit.mjs). (2) Pill (1a6c577, the verifier's option a): the pill's width is 200 px times the scale (230 and 260 px), and it repositions when the size changes; main tells the desk view, and the overlay re-reads the handle's place about once a second. Renders show 'Microphone problem' and the 'build-01' badge whole at Larger (lineClipped false). (3) Bubble (2e52d11): the caps are 6lh, 3lh, 10lh and 16lh, the same px at the default size and whole lines at every size. (4) Hint (ea34e2d): \"Changes the text in this window, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards. The Ask box keeps its size.\" (5) DEVELOPING.md's Comfort & access line names Text size. (6) The media-query guard (f86d159) unwraps @media and @supports, nested ones too, and requires a twin of the same size. Left, beyond this package: the Ask box (a 92 px window) and the desk's 30 px bar keep their type size. The terminal's type stays 13 px (DESIGN.md says so): the window grows, so it gets more columns and rows. Scaling its font needs fix/cmdwin's terminal.ts, terminal-options.ts and command/main.ts, which that branch rewrites. Proposal: XTERM_OPTIONS.fontSize and cellSize() multiply by the scale read from html[data-text-size], and on a change set term.options.fontSize and call reportSize(). The prompt window's per-card sizes come from fix/prompt and need forText at merge (see notes).",
+    "test": "test/unit/text-size-windows.test.ts \"grow or shrink with the text while they are open\" and \"leave a closed window alone\", plus page-prefs.test.ts \"grows an open window when the text size changes…\" (failed before 14d1cae: the open windows kept 760x480 and 440x300; pass now). From 84312e3: text-size-windows \"grow with the text at Large and Larger, their smallest size too\" and \"stay inside a small screen's work area\". handle-window.test.ts (pill width 230 and 260 px). page-prefs.test.ts: the lh max-height test, \"checks the rules inside a media query too\", the hint copy test and \"grows the windows sized for their words by the same scale as the type\". All failed on the earlier code and pass now."
+   },
+   {
+    "id": 248,
+    "status": "fixed",
+    "how": "Only home, the handle and the overlay set html.calm. New app/main/page-prefs.ts (plain Node) applies Calm, and later the text size, to a page of Ember's own (a file:// page under renderer/, nothing else) with a script built from a boolean and an enum only. main.ts applies it on every page's dom-ready and to every window when the prefs change (only then: the size slider changes the settings many times a second). Checked in the real app under Xvfb with Calm on at start: before, the Ask box had no html.calm; now every window has it, and loses and regains it when the setting changes. DESIGN.md says Calm reaches every window.",
+    "test": "test/unit/page-prefs.test.ts Calm tests (failed before: no such module; pass now); scratchpad/fx-css/calm-app.mjs real-app check"
+   }
+  ],
+  "commits": [
+   {
+    "sha": "cd57757",
+    "subject": "Keep switches, edges, focus and state symbols visible under Windows contrast themes",
+    "ids": [
+     44,
+     151,
+     242,
+     267,
+     129
+    ]
+   },
+   {
+    "sha": "e0aeeee",
+    "subject": "Set the focus ring off from accent-filled controls with a gap, so focus shows as a ring",
+    "ids": [
+     244
+    ]
+   },
+   {
+    "sha": "0c02d9e",
+    "subject": "Give the handle's microphone and computer badges a shape per state, words and a way to fix",
+    "ids": [
+     246,
+     59,
+     73
+    ]
+   },
+   {
+    "sha": "25fed44",
+    "subject": "Stop springs and slides in the Ask box, command, prompt and desk windows in Calm mode",
+    "ids": [
+     248
+    ]
+   },
+   {
+    "sha": "29b0b29",
+    "subject": "Add a text size setting that reaches Settings, the bubble, cards, handle and command windows",
+    "ids": [
+     57
+    ]
+   },
+   {
+    "sha": "98d1814",
+    "subject": "Show one chevron on Settings' pop-ups under Windows contrast themes",
+    "ids": [
+     151,
+     242
+    ]
+   },
+   {
+    "sha": "9533f05",
+    "subject": "Say a microphone problem once across Ember's retries, and \"Microphone off\" once in the card",
+    "ids": [
+     59,
+     73
+    ]
+   },
+   {
+    "sha": "f86d159",
+    "subject": "Check the text size's twins inside media queries too, and at the same size",
+    "ids": [
+     57
+    ]
+   },
+   {
+    "sha": "ea34e2d",
+    "subject": "Say where the text size reaches in a whole sentence, in Settings and in DEVELOPING.md",
+    "ids": [
+     57
+    ]
+   },
+   {
+    "sha": "1a6c577",
+    "subject": "Widen the handle's pill with the text size, so its words and the computer's name aren't cut",
+    "ids": [
+     57
+    ]
+   },
+   {
+    "sha": "84312e3",
+    "subject": "Open the command and prompt windows larger at Large and Larger text, so their words keep their room",
+    "ids": [
+     57
+    ]
+   },
+   {
+    "sha": "2e52d11",
+    "subject": "Count the bubble's heights in lines, so it shows as many lines at every text size",
+    "ids": [
+     57
+    ]
+   },
+   {
+    "sha": "672740e",
+    "subject": "Keep the handle's announce() in its page, so the bubble's words are said where they were",
+    "ids": [
+     59,
+     73
+    ]
+   },
+   {
+    "sha": "14d1cae",
+    "subject": "Grow the command and prompt windows at once when the text size changes while they are open",
+    "ids": [
+     57
+    ]
+   }
+  ],
+  "checks": "Final state 14d1cae, run after the last code change: `npx tsc --noEmit` exit 0, no output. `npm run lint` exit 0, no problems. `npm test` exit 0: Test Files 244 passed, 1 skipped (245); Tests 5998 passed, 8 skipped (6006). The first full run, before sshwsl-hooks' electron mock got `on()`, had 2 failures in test/unit/sshwsl-hooks.test.ts (\\\"win.on is not a function\\\"); that file alone then passed 48 of 48, and the full run above is after the fix. `npm run build` exit 0. `xvfb-run -a npm run test:smoke` exit 0: 'ok first instance showed its window', 'ok second launch handed over and the first instance focused its window'. After those runs, only one comment line in app/main/main.ts changed; `npx eslint app/main/main.ts` is clean and text-size-windows.test.ts passes 6 of 6. Nothing under app/main/commands/** or the voice process changed, so the commands integration and voice suites don't apply. Probes on the final build: the verifier's relfix-verify/css/vmic.mjs (one announcement per mute and per problem, pill and card); scratchpad/fx-css/vsize2.mjs (window, prompt and pill sizes); term-fit.mjs (the terminal fits at every size); allow-merge.mjs (with fix/cmdwin merged: Allow and Not now on top at all sizes); a real-Electron Xvfb setBounds and setMinimumSize check on hidden and non-resizable windows.",
+  "sharedHunks": [
+   "app/main/main.ts: imports (setTextScale from ./windows, MIC_PROBLEM_MENU from ../shared/mic, applyPagePrefs/pagePrefs/textScale from ./page-prefs). Conflicts with fix/prompt on the windows import line: take the union (setTextScale and keepClearOf).",
+   "app/main/main.ts: applyPagePrefs on each webContents' dom-ready (Calm and text size on every page, #248/#57).",
+   "app/main/main.ts: settings.onChange block that re-applies page prefs only when they change and calls setTextScale(textScale(...)), plus setTextScale at start (#57).",
+   "app/main/main.ts: handle menu item 'Microphone problem: open Settings…' while voice.micState is error, opening Settings at Voice (#73).",
+   "app/main/main.ts: `if (handle?.sendSettings(s)) deskViewRef?.handleMoved();` so the desk view follows the widened pill (#57).",
+   "app/main/windows.ts: imports `screen` and `rescaledBounds, scaledSize` from ./page-prefs. Conflicts with fix/cmdwin and fix/prompt on the import lines: take the union. A scratch merge with fix/cmdwin built cleanly after that.",
+   "app/main/windows.ts: textScaleNow, setTextScale (which resizes open windows), sizedForText/sizeForText, forText and COMMAND_MIN, as one block after webPreferences (#57).",
+   "app/main/windows.ts: createCommandWindow `...forText({ width: 760, height: 480, ...COMMAND_MIN })` and `sizeForText(win, COMMAND_MIN);` after the constructor (#57).",
+   "app/main/windows.ts: createPromptWindow `...forText({ width: 440, height: 300 })` and `sizeForText(win, null);` after the constructor. Conflicts with fix/prompt's PROMPT_SIZE/useContentSize/fit (#182/#270); see notes for the resolution (#57).",
+   "app/main/handle.ts: the pill's width from the settings' text size (scaledSize/textScale); sendSettings returns true when the pill moved; reposition uses this.pill() (#57).",
+   "app/main/settings.ts: textSize: z.enum([\"default\",\"large\",\"larger\"]).default(\"default\") (#57).",
+   "app/renderer/home/index.html: the Text size select and its hint in Comfort & access (#57).",
+   "app/renderer/home/main.ts: 3 lines wiring the text-size select to the settings (#57).",
+   "app/renderer/home/styles.css: forced-colours block, scaled html[data-text-size] twins for literal px sizes (including .jump a in the min-width 640px media query), chevron rule (#44/#151/#242/#57).",
+   "app/renderer/handle/main.ts: mic badge as role=img with words, idleLine from shared/mic, live-region news through HandleLive, announce(b, status, micNews) (#246/#59/#73). With fix/bubble: take this announce() and add `where: b.where, step: b.step` to its announcement() call. With fix/overlay: both import an `idleLine`; see notes.",
+   "app/renderer/handle/index.html: #mic is role=\"img\" with an aria-label (it was aria-hidden) (#59).",
+   "app/renderer/handle/live.ts (new) and app/shared/mic.ts (new): microphone words, badge glyphs and live-region logic (#59/#73/#246).",
+   "app/renderer/handle/styles.css: mic disc and glyphs, computer-badge masks per state, forced-colours and text-size rules (#246/#59/#44/#57).",
+   "packages/bubble/src/bubble.ts (BUBBLE_CSS): forced-colours block, two-layer focus-ring fallbacks, text-scale font sizes, and line-based max-heights 6lh/3lh/10lh/16lh (#44/#244/#57). With fix/bubble the `max-height: 10lh` line conflicts with their new :is(attention, error) selector right above it: take their selector with `10lh`.",
+   "app/renderer/command/styles.css: forced-colours block, text-size twins, tab-row padding 2 px -> 4 px so the focus ring isn't clipped (#267/#244/#57).",
+   "app/renderer/prompt/styles.css, overlay/styles.css, ask/styles.css, desk/styles.css: forced-colours, text-size and Calm rules only.",
+   "docs/DESIGN.md: contrast-themes line, Calm reaches every window, text-size paragraph (the pill and windows grow, open ones too; the Ask box, desk bar and terminal type keep their size).",
+   "docs/DEVELOPING.md:116: Comfort & access names Text size (Default, Large, Larger) and where it reaches.",
+   "test/unit/sshwsl-hooks.test.ts: `on(event: string) { this.calls.push([\"on\", event]); }` in the electron mock, the same line fix/cmdwin adds at the same place."
+  ],
+  "forDocs": [
+   "README settings list: Settings > Comfort & access has Text size (Default, Large, Larger). It changes the text in Settings, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards; the handle and those windows grow to fit. The Ask box keeps its size.",
+   "CHANGELOG: Windows contrast themes are supported. Switches, the slider, the chosen character, button edges, tabs, state symbols and keyboard focus stay visible.",
+   "CHANGELOG: Keyboard focus on filled buttons, checked switches and the chosen character shows as a ring with a gap, also under Increase Contrast.",
+   "CHANGELOG: The handle's microphone badge has a shape for each state (listening, muted, starting, problem) and is read out. A microphone problem or voice not being set up shows on the handle's line, and the menu offers 'Microphone problem: open Settings…'.",
+   "CHANGELOG: Calm mode now also stops springs and fades in the Ask box, the command and prompt windows and the desk view.",
+   "CHANGELOG: New Text size setting (see the README line above)."
+  ],
+  "ciOnly": [
+   "Windows 10/11 contrast themes (Aquatic, Desert, High Contrast Black/White) on real hardware: PLAN manual item 14. Only Chromium's forced-colours emulation was checked here.",
+   "macOS Increase Contrast and GNOME high contrast: the two-layer focus ring was checked only in emulated prefers-contrast renders.",
+   "Resizing an open command window (a macOS panel; inactive on Windows) and the non-resizable prompt window with setBounds/setMinimumSize on Windows and macOS. Checked only on Linux Electron under Xvfb without a window manager.",
+   "The handle pill's wider window (230 and 260 px) in its corner on Windows and macOS, including the macOS click-through forward mode.",
+   "Live-region announcements with NVDA, Narrator, VoiceOver and Orca: microphone news said once, nothing repeated at each retry. Checked only by DOM mutation probes."
+  ],
+  "notes": "Round 2 resumed from a paused run. Six round-2 commits were already in place (9533f05, f86d159, ea34e2d, 1a6c577, 84312e3, 2e52d11), plus one uncommitted edit identical to docs/release-review/wip/css.patch. I checked that edit and committed it as 672740e: it keeps announce() in handle/main.ts, so fix/bubble's change to the announcement line merges. I also found and fixed one more gap the verifier didn't name (14d1cae): a text size chosen after the command or prompt window had been made never reached that window until a restart, because the controllers keep their window. All seven verifier problems are addressed:\n- #57 windows and pill: 84312e3, 1a6c577 and 14d1cae.\n- #59 'Microphone off' twice: 9533f05 and 672740e.\n- #73 repeats at each retry: 9533f05.\n- Settings hint: ea34e2d.\n- DEVELOPING.md: ea34e2d.\n- The @media guard: f86d159.\n\nMerge guidance for the lead:\n(1) fix/prompt, windows.ts. Keep fix/prompt's signature, useContentSize, fit and takeKeyboard. Size the constructor with `...forText({ width: PROMPT_SIZE.card.width, height: PROMPT_SIZE.card.height })`. Keep `sizeForText(win, null);` right after the constructor. In `fit`, scale the page size first: `const want = forText(size);`, then pass `want.width + frame.width, want.height + frame.height` to fitBounds. With fix/cmdwin also merged: `return Object.assign(win, { fit, takeKeyboard }, placeable(win));`. In main.ts, the windows import is the union.\n(2) fix/cmdwin: only the windows.ts import lines conflict (union). A scratch merge with its tip 9011512 built, and Allow and Not now were on top at every size.\n(3) fix/bubble: in bubble.ts, take their :is(attention, error) selector with `max-height: 10lh`. In handle/main.ts, keep this branch's announce(b, status, micNews) and add `where: b.where, step: b.step` to its announcement() call.\n(4) fix/overlay: handle/main.ts gets two different `idleLine` imports, theirs from ../overlay/stack (idle, tasks) and this one from ../../shared/mic (idle, mic). Import theirs under another name, e.g. busyIdle, then: `const idle = idleLine(s.idle, s.mic); const line = idle === \\\"Ready\\\" ? (busyIdle(s.idle, s.tasks) ?? idle) : idle;`. That keeps Copilot's reason first, then a microphone problem, then the tasks' count. Use it in both the pill's line and cardText.\n(5) fix/wslg-rail isn't based on 1b39bb3, so its apparent removals in the handle are base content it lacks, not a conflict with this package.\n\nStill open and not in this package: the terminal's 13 px type (proposal in #57, needs fix/cmdwin's terminal files) and cmdwin's #265 sticky row, which keeps Allow in view at every size, including Default on this branch alone. The scratch merge clone was deleted. Probes are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/fx-css/ (vsize2.mjs, term-fit.mjs, allow-merge.mjs; shots in r2/)."
+ },
+ "round1": {
+  "sharedHunks": [
+   "packages/bubble/src/bubble.ts (bubble): a forced-colours @media block appended at the end of BUBBLE_CSS (--eb-mood CanvasText, button borders, Highlight primary, focus outline)",
+   "packages/bubble/src/bubble.ts (bubble): the --focus-ring fallback in both .eb-actions button:focus-visible rules is now '0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)'",
+   "packages/bubble/src/bubble.ts (bubble): a text-size block appended at the end of BUBBLE_CSS (html[data-text-size] font-size/line-height for .ember-bubble, .eb-chip, .eb-step, attention .eb-step, .eb-actions button)",
+   "app/main/main.ts: two imports after the shared/overlay import (MIC_PROBLEM_MENU from ../shared/mic; applyPagePrefs and pagePrefs from ./page-prefs)",
+   "app/main/main.ts: one line in the web-contents-created handler: contents.on(\"dom-ready\", () => void applyPagePrefs(...))",
+   "app/main/main.ts: a new settings.onChange block right after the IPC.settingsChanged broadcast, applying page prefs to every window when Calm or the text size changes",
+   "app/main/main.ts: handle menu item 'Microphone problem: open Settings…' after the Mute microphone item (the ask package owns the handle menu)",
+   "app/main/settings.ts (lifecycle): new field textSize: z.enum([\"default\",\"large\",\"larger\"]).default(\"default\") after reduceMotion",
+   "app/renderer/home/index.html (settings): new 'Text' sub-group with the #text-size select and a hint in Comfort & access, before 'Motion and keys'",
+   "app/renderer/home/main.ts (settings): applySettings sets #text-size's value; a change listener calls updateSettings({ textSize })",
+   "app/renderer/home/styles.css (settings): '#text-size' added to the three .models select rules (base, :focus-visible, option); new line .switch-row:has(> select) { justify-content: space-between; }; forced-colours block and text-size block after the prefers-contrast block and at the end of the file",
+   "app/renderer/handle/main.ts (ask): import from ../../shared/mic; announce() takes micNews; the mic block uses micBadge (glyph, label, aria-label); the pill's line uses idleLine(...) instead of s.idle || \"Ready\" (the same line overlay #131 edits); cardText gets s.status ?? idle",
+   "app/renderer/handle/index.html (ask): #mic is role=\"img\" aria-label=\"Microphone\" instead of aria-hidden, with a comment",
+   "app/renderer/handle/styles.css (ask): target-dot state rules use symbol masks; the .mic rules are rewritten (disc, ::before glyph, data-glyph variants, halo under the glyph); forced-colours and text-size blocks at the end",
+   "app/renderer/overlay/styles.css (overlay): forced-colours block and text-size block at the end",
+   "app/renderer/command/styles.css (cmdwin): .tabs padding 2px -> 4px (for the focus ring, #244); forced-colours block and text-size block at the end",
+   "app/renderer/prompt/styles.css (prompt): forced-colours block and text-size block at the end",
+   "app/renderer/desk/styles.css (overlay): forced-colours block at the end",
+   "app/renderer/ask/styles.css (ask): forced-colours block at the end (.where in CanvasText)",
+   "docs/DESIGN.md (docs): the Type bullet gains a text-size sentence; a new 'Contrast themes' bullet; the Motion bullet now says Calm reaches every window",
+   "test/unit/design-system.test.ts: CSS helpers (selectors, forcedRules, forced) added near the top; new describes 'the keyboard focus ring' and 'Windows contrast themes (forced colours)'"
+  ],
+  "forDocs": [
+   "CHANGELOG: Windows contrast themes are supported in every window: switches, the size slider, buttons, the chosen character, the selected command tab, keyboard focus and the task and status symbols now show (review #44, #151, #242, #267, #129).",
+   "CHANGELOG: the keyboard focus ring has a gap, so focus shows on filled buttons such as Allow, also under Increase Contrast (review #244).",
+   "CHANGELOG: Calm mode now also stops motion in the Ask box, the command and prompt windows and the desk view (review #248).",
+   "CHANGELOG and README (accessibility): new Settings > Comfort & access > Text size (Default, Large, Larger). It enlarges text in Settings, Ember's bubble, task cards and handle, and the command and prompt windows; the Ask box, the desk bar and the terminal keep their size (review #57).",
+   "CHANGELOG and README (voice): the handle's microphone badge shows a microphone (listening), a struck-out microphone (muted, or voice not set up), a ring (starting) or a warning mark (a problem), and screen readers get the same words. The handle says 'Microphone problem' or \"Voice isn't set up\" instead of 'Ready', and while the microphone has a problem its menu offers 'Microphone problem: open Settings…' (review #246, #59, #73).",
+   "README/handle-menu docs (with the ask package's #76): add the 'Microphone problem: open Settings…' item, shown only while the microphone has a problem.",
+   "DEVELOPING.md (settings.json fields, if listed there): textSize is \"default\", \"large\" or \"larger\".",
+   "Accessibility/install docs: Windows contrast themes are supported; the manual check is PLAN.md item 14."
+  ],
+  "ciOnly": [
+   "A real Windows 10/11 contrast theme (Aquatic, Desert, Dusk, Night sky; High Contrast Black/White on Windows 10) on every window: this was checked only with Chromium's forced-colors emulation. CI must confirm that real system colours are kept where Ember sets them, that the text backplate no longer hides words on Highlight-filled buttons (Allow, Start, the selected tab, the desk's Take over), and that switches, the slider, the chosen character and focus outlines show. This is PLAN.md manual item 14.",
+   "Windows: the handle's mic badge and computer badge symbols, and the bubble's chip dot, in a real contrast theme; the overlay stays transparent there.",
+   "Windows and macOS: that webContents.executeJavaScript applies html.calm and data-text-size under each page's CSP. It was proven on Linux Electron 44 under xvfb only.",
+   "macOS Increase Contrast and Windows with forced colours off: the two-layer focus ring (gap plus accent) on filled buttons, the switch and the chosen character, at 1x and 2x.",
+   "Text size at 'Larger' on Windows and macOS display scaling (125–200%): the handle pill still fits its 56 px, and the no-compositor card's fit().",
+   "Screen readers (NVDA, Narrator, VoiceOver, Orca): whether the mic badge's role=img name and the handle's live-region announcements are read from the non-focusable handle window."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 57,
+   "severity": "should-fix",
+   "what": "#57 is only partly fixed, as the fix agent reported. The command and prompt windows do not grow with the text size. In a 760x480 command window, Allow and Not now end at y=464 at the default size, y=523 at Large and y=567 at Larger, so at both larger sizes they fall below the fold (measured with /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/css/vsize.mjs). The prompt window stays fixed at 440x300; it is still usable there because its buttons stay at y=284 and the body scrolls. The bubble's calc(20px*N) max-heights still cut a line sooner, and the terminal stays at 13 px.",
+   "fix": "The lead should pass the rest on explicitly when merging. Have cmdwin's #265 sticky action row cover Large and Larger. In app/main/windows.ts, give createCommandWindow and createPromptWindow the text scale (from pagePrefs(settings).textSize: 1, 1.15 or 1.3) and multiply width, height, minWidth and minHeight by it. For the prompt window, land this together with the prompt package's #182/#270 sizing so the two hunks don't collide. Have the bubble package write its line-count max-heights in lh units."
+  },
+  {
+   "id": 57,
+   "severity": "should-fix",
+   "what": "At Large and Larger the handle pill clips its words sideways. The pill window is a fixed 200x56 (PILL in app/main/handle.ts), but its type grows. 'Microphone problem' becomes 'Microphone pro…' or 'Microphone pr…', and the computer badge 'build-01' becomes 'build…' or 'bui…', which no longer names the computer. Seen in shots/size-handle-large.png, shots/size-handle-larger.png and handle-sizes.png under /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/css/, and in the fix agent's own after-ts-handle.png. The report only says 'the handle pill still fits (42.9 of 46 px)', which covers the height alone.",
+   "fix": "Choose one. (a) Widen the pill with the scale: in app/main/handle.ts set the pill to { width: Math.round(200 * scale), height: 56 } and pass the scale in from main's settings.onChange. (b) Keep the pill's type fixed, as for the Ask box, and scale only the no-compositor card: have main pass the handle's mode to page-prefs, or scope handle/styles.css's html[data-text-size] rules to body.fallback and set data-text-size on the handle only while fallback is on. Note that overriding --text-scale on body does not work, because the --type-* tokens are already resolved on :root. Then correct the report and the Settings hint."
+  },
+  {
+   "id": 59,
+   "severity": "should-fix",
+   "what": "In the no-compositor card, muting the microphone with the shortcut or the menu now says 'Microphone off' twice. First the voice state changes to muted, and micAnnouncement() writes 'Microphone off' to #live. Then toggleMute's setStatus('mic', 'Microphone off') arrives as a second update, and announce() pushes the changed status, rewriting #live with the same words. A DOM probe confirmed it: in card mode the live region changed to 'Microphone off' on both updates; in pill mode only once (vmic.mjs in the scratchpad folder).",
+   "fix": "In app/renderer/handle/main.ts announce(), keep the last mic news that was said (e.g. `lastMicNews`). When the status changes to exactly that text, update announcedStatus but do not push it again. Alternatively, skip micNews when it equals `status ?? announcedStatus`. Add a handle-mic test that runs announce() twice in the order main sends the updates."
+  },
+  {
+   "id": 73,
+   "severity": "should-fix",
+   "what": "'Microphone problem' is said again on every retry while listening is broken. In VoiceService.restartLater, after a voice-process crash, a lost mic page or no sound, the state cycles error → starting → error at 1 s, 5 s, then every 30 s. The handle treats every move back into error as news, because lastMic was 'starting'. The DOM probe shows a new live announcement on each 'error again', in pill and card mode alike, so a screen reader hears it about every 30 s indefinitely.",
+   "fix": "In handle/main.ts, treat 'starting' and 'downloading' as passing states: keep the last announced mic state through them and reset it only on waiting, active, off or muted. Then error → starting → error is said once, and error → waiting → error is said again. Cover both orders in handle-mic.test.ts."
+  },
+  {
+   "id": 57,
+   "severity": "should-fix",
+   "what": "The copy of the new Settings hint (app/renderer/home/index.html) is a fragment without a verb: \"In this window, Ember's bubble, its task cards and handle, and the command windows. The Ask box keeps its size.\" It also says 'command windows' (plural), while the same page says 'Open the command window' and the app has one command window with tabs. And it leaves out the prompt window (password, host-key and consent cards), which also takes the text size.",
+   "fix": "Use, for example: \"Changes the text in this window, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards. The Ask box keeps its size.\" Keep 'command window' singular, as elsewhere."
+  },
+  {
+   "id": 57,
+   "severity": "should-fix",
+   "what": "Docs: docs/DEVELOPING.md:116 lists what Comfort & access holds ('Calm mode …') and does not mention the new Text size setting. DESIGN.md was updated; DEVELOPING.md was not, and the report doesn't pass this on to the docs package.",
+   "fix": "Add one sentence to DEVELOPING.md:116, e.g. 'and Text size (Default, Large, Larger) for Settings, the bubble, task cards, the handle and the command window; the Ask box keeps its size'. Or name it in the report for the docs package (along with any settings list in the README)."
+  },
+  {
+   "id": 57,
+   "severity": "should-fix",
+   "what": "Weak guard: page-prefs.test.ts \"grows every literal font size too\" never checks rules inside an @media block. Its regex captures '@media (...) ' as the selector, and the `!/^\\s*@/` filter then drops it. A future px font size inside a media query would pass unscaled; home's `.jump a` at min-width 640 px is covered today only because a twin was written by hand.",
+   "fix": "Remove the @media wrappers before matching, e.g. replace /@media[^{]*\\{([\\s\\S]*?\\})\\s*\\}/g with '$1' over the comment-stripped CSS, or walk nested braces. Then check twins for nested rules too."
+  }
+ ]
+}

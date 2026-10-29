@@ -1,0 +1,460 @@
+{
+ "key": "cmdwin",
+ "final": {
+  "findings": [
+   {
+    "id": 42,
+    "status": "fixed",
+    "how": "Round 1, unchanged. Reproduced in Chromium against the built page: Tab from a run's tab went tab -> command block -> xterm's textarea and stayed there. New pure module app/renderer/command/keys.ts (termKeyAction) is wired through term.attachCustomKeyEventHandler in terminal.ts. Tab and Shift+Tab always move focus and are never sent to the run (Ctrl+I still types a tab). A run that takes no typing keeps xterm's textarea out of the Tab order (tabIndex -1, aria-readonly). The status line, Copy output and Stop now come before the terminal in the DOM and on screen, and .term:focus-within shows the focus ring. I chose 'Tab always leaves' over the reviewer's escape chord: no stray tab lands in a sudo password, and there is no chord to discover. Documented in COMMANDS-WSL-SSH.md §2.2.",
+    "test": "renderer-command.test.ts 'the terminal's options' keys and wiring tests: keys.ts did not exist before, and the DOM-order pin failed. Scratch Chromium script scratchpad/cmdwin/keys.mjs: before 'TEXTAREA -> TEXTAREA', after 'tab -> command -> Copy output -> Stop -> terminal -> BODY -> tab'."
+   },
+   {
+    "id": 261,
+    "status": "fixed",
+    "how": "Same change as #42: the footer comes before the terminal, xterm's textarea has tabIndex -1 when the run takes no typing, Tab and Shift+Tab never reach the process, and .term:focus-within shows a focus ring.",
+    "test": "The same renderer-command tests as #42 (DOM-order pin, tabIndex rule, focus-within CSS) plus scratchpad/cmdwin/keys.mjs."
+   },
+   {
+    "id": 43,
+    "status": "fixed",
+    "how": "Round 1, unchanged. The controller takes screenReader(), which runtime.ts gives from deps.sys.a11y.screenReaderOn(). Every state says whether one runs. terminalOptions sets screenReaderMode from it (the fixed default stays false), and terminal.ts setScreenReader() switches xterm's mirror live. xterm 5.5's mirror misses the first render's rows, so terminal.ts redraws 150 ms after output while it is on. COMMANDS-WSL-SSH.md §2.2 says output is read to a screen reader, so nothing is added to L1-L26.",
+    "test": "command-window.test.ts 'the command window and a screen reader (review #43)' and renderer-command 'screenReaderMode' tests, which failed before. scratchpad/cmdwin/sr.mjs: the CDP accessibility tree has no PASS/FAIL nodes with it off and has them with it on."
+   },
+   {
+    "id": 46,
+    "status": "partial",
+    "how": "Round 1, unchanged. window.ts announceMs(base) gives at least 15 s (ANNOUNCE_SCREEN_READER_MS) while a screen reader runs. flow.ts announceTime() uses it, clamped to 4 s..1 min, for both the bubble and the window. presenter.announce(text, stopId, ms) says 'It starts in N seconds. <stop chord> stops everything at once.', and the bubble's live region reads the same text. The command window's announcement says 'Or press <stop chord> to stop everything.'. Left: (1) the spoken line is in host.ts, which the voice package owns; its #251 replaces 'Say Ember, stop' with the stop chord. (2) Answering an announcement with the deny chord needs main.ts's held keys, which the ask package owns. I took the reviewer's screen-reader route instead of a 'More time to react' setting, which would need a settings change.",
+    "test": "command-flow.test.ts 'counts down as long as the command window says', command-window.test.ts 'the announcement's time and keys', tasks-where.test.ts 'an announcement says the time it is given and the PC's own stop chord'. All failed before."
+   },
+   {
+    "id": 264,
+    "status": "fixed",
+    "how": "Round 1: keys.ts shouldFocusTerminal plus main.ts focusTerminal(). When the selected run takes typing, no card is up and focus is on the page body, the page focuses the run's terminal, after each render and when the window gains focus. It never takes OS focus from another app. Off macOS, Ctrl+V is left to the browser's own paste, which xterm sends to the run (no async Clipboard API). The typing hint names Ctrl+V (Command+V on a Mac). Round 2: added the missing source-match pins for the focusTerminal() wiring.",
+    "test": "renderer-command keys tests (Ctrl+V -> browser, shouldFocusTerminal cases) and ui-copy typing-hint pins, which failed before. New in round 2: renderer-command 'puts the keyboard in a run that takes typing after each render and when the window comes up (#264)' pins focusTerminal() in render() and in window.addEventListener(\"focus\"). It fails when either line is removed from main.ts (mutation run). scratchpad/cmdwin/keys.mjs: before, focus on BODY and Ctrl+V sent \\u0016; after, Ctrl+V sent the clipboard text."
+   },
+   {
+    "id": 263,
+    "status": "partial",
+    "how": "Round 1: attach() raises the window on every run (moveTop, no focus). window.ts awaitsTyping() looks for SECRET_PROMPT, or a short line whose words end in ':', '?', '>' or '[y/N]'. After 2 s at such a prompt the tab shows 'Waiting for you to type in this window.', the window is raised and flashFrame'd, and onWaiting listeners are told. flow.ts followWaiting puts 'A command is waiting for you to type in the command window.' in the task's bubble. A time limit reached while waiting gets its own status line. Round 2 (verifier's should-fix): followWaiting returned early on waiting=false, so the bubble kept the waiting line. It now remembers the bubble's thought before the waiting line (presenter.bubble). When the run stops waiting (typing, or the run ending), it puts that thought back, or 'The command is running.' if the bubble was empty, but only while the bubble still shows the waiting line, so newer words stay. Docs §2.2 says the line lasts until you type or the command ends. Left: a 'Show' button on the bubble (bubble and task actions belong to the presenter and bubble packages), an OS notification, and pausing the time limit while it waits. The limit is §3.13's safety bound; changing it is a design decision, so the status line says it was waiting instead.",
+    "test": "command-flow.test.ts 'says in the task's bubble when its command waits for the user to type (review #263)' now also checks the false case: the earlier thought comes back, a newer thought is kept, and the earlier thought comes back when the run ends while waiting. New test 'puts a plain running line back after the wait when the bubble said nothing before it'. Both failed before the round-2 fix ('expected waiting line to be Cloning the private repository.'). Round-1 tests in command-window.test.ts cover the raise, waiting and flash."
+   },
+   {
+    "id": 262,
+    "status": "fixed",
+    "how": "Round 1: windows.ts createCommandWindow's close event asks a guard the controller installs, never after before-quit or session-end. While a command runs, the window stays and shows the 'A command is still running' alert dialog. 'Stop and close' stops every run with the user's Stop and closes; 'Keep it open' stops nothing; a second close press stops and closes. Otherwise the window closes at once. A run the window can't show is stopped (R1). Round 2: added unit pins for the page side that only Chromium scripts covered.",
+    "test": "command-window.test.ts close-guard tests (failed before: closing with a live run destroyed the window and the run went on). sshwsl-hooks factory test checks the 'close' listener. New in round 2: renderer-command 'asks before closing with an alert dialog whose keyboard starts on Keep it open, and answers main both ways (#262)' pins role alertdialog, keep.focus(), api.closeWindow(true) and api.closeWindow(false) on trusted clicks, and buildClosing used by render(). Each pin fails when its line is removed (mutation run)."
+   },
+   {
+    "id": 265,
+    "status": "fixed",
+    "how": "Round 1, unchanged. The hint, the buttons and the key hint form the card's .actions bar, sticky at the bottom of the card area on the card's surface, using design tokens. The card area drops its 72vh cap (.window.cards-only) when no tab or pending line sits below. measureCard clips the command block at the top of the bar, so a command running under the buttons doesn't count as in view.",
+    "test": "renderer-command 'the question card's layout (review #265)' (sticky, cap and clip pins, and judgeMetrics with the clip). Chromium at 760x480 with a 12-line command and 4 reasons: Allow's top went from y=434 (below the fold) to y=318-346."
+   },
+   {
+    "id": 268,
+    "status": "fixed",
+    "how": "Round 1, unchanged, in the same commit as #42. Off macOS, termKeyAction makes Ctrl+C with a selection and Ctrl+Shift+C copy; without a selection Ctrl+C is still ^C to the run. A 'Copy output' button sits next to Stop and uses the browser's copy command on the user's own gesture (no async Clipboard API, no OSC 52). macOS keeps the Edit menu. Documented in §2.2.",
+    "test": "renderer-command termKeyAction cases (Ctrl+C with/without selection, Ctrl+Shift+C) and the foot.append(status, live, copy, action) pin, which failed before. scratchpad/cmdwin/keys.mjs copy checks."
+   },
+   {
+    "id": 269,
+    "status": "fixed",
+    "how": "Round 1, unchanged. The announcement card draws cardLines(card) (the plain line and the model's Why) under the command. The heading is 'About to run this, as you asked'. Under the countdown it says 'Or press <stop chord> to stop everything.', and Stop is the prominent button. The countdown is 15 s or more while a screen reader runs (#46). §2.5 updated.",
+    "test": "command-window.test.ts 'the announcement's time and keys' and ui-copy ANNOUNCE_HEADING and announceKeyText pins, which failed before. Chromium render scratchpad/cmdwin/announce.png."
+   },
+   {
+    "id": 271,
+    "status": "fixed",
+    "how": "Round 1: runtime.ts confirmAnswer returns whether the Confirmer took the answer. When it didn't, the window bumps the card's retry count and pushes the state. The page re-enables both buttons and shows 'Ember couldn't take that answer just now. Try again.'. Round 2: added the missing page-side pins.",
+    "test": "command-window.test.ts retry tests and targets-runtime confirmAnswer test, which failed before. New in round 2: renderer-command 'gives the card's buttons back when main says the answer wasn't taken (#271)' pins render()'s '(card.retry ?? 0) > ask.retry', 'ask.sent = false;', 'ask.deny.disabled = false;', the paintAllow() call and paintAllow's 'if (!ask.sent) ask.allow.disabled = !on;'. It fails when the comparison or the deny line is removed (mutation run)."
+   },
+   {
+    "id": 272,
+    "status": "fixed",
+    "how": "Round 1: placeOnDisplay plus windows.ts placeable(). The command window (while a card or countdown is up) and the prompt window come up on the display nearest the pointer and on every workspace. settle() unpins the command window when the card goes. Round 2 (verifier's must-fix): on macOS the command window is a panel, which already joins every Space and floats over full-screen apps (platform/compose.ts). settle()'s setVisibleOnAllWorkspaces(false) would clear NSWindowCollectionBehaviorCanJoinAllSpaces. placeable(win, panel) now makes setOnAllWorkspaces a no-op for the darwin command window. Linux, Windows and the prompt window (not a panel on macOS) are unchanged.",
+    "test": "window-placement.test.ts and command-window placement tests (round 1). New in round 2: sshwsl-hooks 'puts the command window on every workspace while a card is up, except the macOS panel, which is on every Space already (review #272)'. For darwin, setOnAllWorkspaces(true/false) makes no setVisibleOnAllWorkspaces call; linux and win32 make [true,false]; the darwin prompt window makes [true]. It failed before ('darwin: expected [[…],[…]] to deeply equal []')."
+   },
+   {
+    "id": 274,
+    "status": "fixed",
+    "how": "Round 1: a run that ends refused-remote with needsConfirm reads 'Not run: build-01's own check asks for your OK first.', and the retry (same task and sha256, new run id) replaces its tab. Round 2 (verifier's should-fix): the tab kept that label when no question was up. The flow now tells the window (new UI extra reaskEnded(runId, why)). After Not now or an expired question: 'Not run: you didn't allow it.'. After a task stop during the question: 'Not run: the task was stopped.'. These are sent from a finally, so a throwing ask counts as stopped. When the allowed retry is sent back again and the flow won't ask twice: the remote's own refusal line ('build-01 refused it: …', outcome failed). The tab loses its reask mark, so a later run of the same command doesn't replace it. On Allow nothing is sent, and the retry replaces the tab as before. Docs §4.5 updated.",
+    "test": "New: command-window.test.ts 'says the run didn't happen once no OK is coming: a no, a stopped task, or the remote refusing the retry too'. command-flow.test.ts reaskEnded checks on 'asks only once' ([run2,'refused']) and 'a no to the remote's question' ([run1,'no']), plus new tests for the Allow path (nothing sent) and a task stopped during the question ([run1,'stopped']). ui-copy reaskEndText pins. All failed before (ctl.reaskEnded is not a function; expected [] to equal …)."
+   },
+   {
+    "id": 275,
+    "status": "fixed",
+    "how": "Round 1, unchanged. askHeading(card) names the computer for SSH and WSL targets. CommandCard gains optional classes (set by the flow on ask and announce cards; validCard refuses unknown ones). Deleting commands (destroy, remote-delete) get a yellow edge and a plain Allow. A tab for another computer shows a badge ('build-01: make test' to a screen reader). The model's reason is label-2. Programs a run left running get 'Ask Ember to stop it, or end it yourself.'. §2.4 updated.",
+    "test": "command-window, command-flow ('tells the card what kind of danger it asks about') and ui-copy tests, which failed before. Chromium render scratchpad/cmdwin/risky.png."
+   },
+   {
+    "id": 276,
+    "status": "fixed",
+    "how": "Round 1, unchanged. model.ts sameAnnouncement(a, b) treats two statuses with the same words but different numbers as the same announcement. The visible status line is no longer a live region; a visually hidden role=status line takes the status only when it says something new.",
+    "test": "renderer-command 'a tab's status line and a screen reader (review #276)', which failed before. scratchpad/cmdwin/live.mjs: an 18-step countdown changed the live region 19 times before and 2 times after."
+   },
+   {
+    "id": 48,
+    "status": "fixed",
+    "how": "Round 1, unchanged. commandBlock has role=textbox, aria-readonly and aria-multiline beside its label, and the command as its value, with ids for the card's and the announcement's blocks. Allow and the announcement's Stop are aria-describedby it.",
+    "test": "renderer-command test pinning the textbox attributes and aria-describedby, which failed before. scratchpad/cmdwin/ax.mjs: Chromium's AX tree shows a textbox whose value is the command."
+   },
+   {
+    "id": 214,
+    "status": "fixed",
+    "how": "Round 1, unchanged. SAYS.openApp now reads 'This opens an app window, which Ember can do itself without a command. Say no and ask Ember to open it.' Other model-directed lines in classify.ts, lex-posix.ts, lex-powershell.ts and tables.ts are worded for the person deciding ('Ember can't tell which arguments <program> gets.', …). Verdicts and rules are unchanged.",
+    "test": "commands-classify.test.ts card-wording test, which failed before: 'Open apps with open_app instead.' for gedit, firefox, notepad, regedit and Out-GridView."
+   },
+   {
+    "id": 220,
+    "status": "fixed",
+    "how": "Round 1: app/shared/role-words.ts (ROLE_WORDS, roleWord, aRoleWord) is shared by policy.ts describe() and home/copy.ts's activity list: 'Click the “Save” button in Mousepad?', 'Choose “Vegetarian” in the “Meal” drop-down…'. Round 2 (verifier's must-fix and should-fix): (1) The missed pin at worker-safety.test.ts:1857 is updated. (2) The toggle question now says which way the control goes: 'Turn on/Turn off the “Night Light” switch', 'Tick/Untick the “Bold” checkbox', and 'Flip …' when the request names no state (value on/off from the worker's toggle tool). (3) The role table gains root pane -> window and static -> text, so the questions read '…on the “budget.ods — LibreOffice Calc” window…' and 'Click the “Remove” text…'. 'section' is plain English and stays. (4) The real AT-SPI suites run here with EMBER_PYTHON=/usr/bin/python3.12 under dbus-run-session. They caught one more pin: worker.test.ts now expects 'First step: turn on the “Night Light” switch.'.",
+    "test": "policy-role-words.test.ts: new tests 'says which way a switch or checkbox goes, never \"Switch the … switch\"' and 'calls a window and a piece of text by plain words, not \"root pane\" or \"static\"', with root pane and static added to the never-raw-role list. Both failed before ('Received: Switch the “Night Light” switch in Settings?'). worker-tools.test.ts 'Click the “Remove” text' pin. Integration: worker-safety failed 1 of 93 before (verifier) and passes 93/93 now. worker.test failed on the 'First step: switch' pin in my first AT-SPI run and passes now. safety, worker, perception-electron and worker-safety give 106/106."
+   },
+   {
+    "id": 231,
+    "status": "fixed",
+    "how": "Round 1, unchanged. decide.ts LINES.tainted, flow.ts CARD_LINES.tainted and OUTPUT_TAINT_LINE say 'Ember is checking each step: …'. The bubble's first-person step questions are unchanged. COMMANDS-WSL-SSH.md quotes the new line.",
+    "test": "ui-copy.test.ts: every fixed command-card line has no first-person 'I'. It failed on the two 'I'm checking each step' lines before (typed as string[] in 05fcefa so tsc passes)."
+   },
+   {
+    "id": 266,
+    "status": "fixed",
+    "how": "Round 1: a word ends at whitespace and at / \\ = : , ; @ | & < > ( ) [ ] { } and quotes, so C:\\Users\\Иван and /home/ana/Документы mark nothing. Run tabs show the legend too. Round 2 (verifier's must-fix regression): https://аррӏе.com marked the Latin 'com', https://раураl.com marked 'l' and 'com', and deploy@аррӏе:/srv marked nothing. I didn't keep scheme://host together as one word: by counts, that marks 'https' on a real Cyrillic address such as https://пример.рф. Instead I extended the tie rule, as the verifier's second option suggests, with a table of letters from other alphabets that look Latin (LATIN_LOOKALIKE: common Cyrillic, Greek and Armenian confusables). (a) A word that mixes Latin with only look-alikes is judged Latin, so the look-alikes are marked. (b) A word written wholly in look-alikes, in a whitespace token that also holds Latin letters, is marked. Results: base marking is back for https://[аррӏе].com, https://[раура]l.com and deploy@[аррӏе]:/srv; curl [аррӏе].com/x (no scheme) is better than base, which marked com and x. Still unmarked: C:\\Users\\Иван, /home/ana/Документы, --author=Иван, иван@build-01, https://пример.рф, Ανδρέας, and a look-alike word with no Latin in its token (echo аррӏе, as on base). One known side effect: a native word made only of look-alike letters inside a path with Latin, such as /home/ana/сухое, is marked, as it was on base. The legend's 'letters from another alphabet' is true for it. §2.4 docs line updated.",
+    "test": "visible-text.test.ts new 'marks a host spelled in look-alike letters of another alphabet, not the real Latin beside it (review #266)' pins both URLs, the scheme-less URL, the scp host, a Greek look-alike host and the unmarked cases. It failed before. The round-1 per-word tests still pass. Side-by-side script scratchpad/cmdwin/r2/vt.ts (built with esbuild) compares base, round 1 and now for 18 commands."
+   },
+   {
+    "id": 273,
+    "status": "fixed",
+    "how": "Round 1, unchanged. .command, .where and .tab-label use direction: ltr with unicode-bidi: bidi-override, so text keeps the shell's order. visible.ts legendFor gains rtl, and the card and tabs add 'Right-to-left text is shown in the order it runs.' when a line has right-to-left letters. §2.4 updated.",
+    "test": "renderer-command bidi CSS and legend-flag pins and the ui-copy legend words, which failed before. scratchpad/cmdwin/bidi.mjs: 'chmod -R 755 שלום 777 /srv/data' read '755 777 שלום' before and reads in logical order now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "0217612",
+    "subject": "Speak of Ember in the third person on the command card's taint lines",
+    "ids": [
+     231
+    ]
+   },
+   {
+    "sha": "3a39a3b",
+    "subject": "Word the classifier's card lines for the person deciding, not the model",
+    "ids": [
+     214
+    ]
+   },
+   {
+    "sha": "c5231a4",
+    "subject": "Call controls by plain words in the May I? question, from one shared table",
+    "ids": [
+     220
+    ]
+   },
+   {
+    "sha": "05fcefa",
+    "subject": "Type the card-voice test's line list so the test files typecheck",
+    "ids": [
+     231
+    ]
+   },
+   {
+    "sha": "fd670b4",
+    "subject": "Judge mixed letters per word of a path, and explain the marks on run tabs too",
+    "ids": [
+     266
+    ]
+   },
+   {
+    "sha": "7260cd2",
+    "subject": "Show Hebrew and Arabic text in a command in the order it runs",
+    "ids": [
+     273
+    ]
+   },
+   {
+    "sha": "de2d8fe",
+    "subject": "Expose the command block as a read-only text box whose value is the command",
+    "ids": [
+     48
+    ]
+   },
+   {
+    "sha": "32e5186",
+    "subject": "Free the keyboard in the command window: Tab leaves the terminal, paste and copy work",
+    "ids": [
+     42,
+     261,
+     264,
+     268
+    ]
+   },
+   {
+    "sha": "980da06",
+    "subject": "Read a command's output to a screen reader while one runs",
+    "ids": [
+     43
+    ]
+   },
+   {
+    "sha": "e9df008",
+    "subject": "Give the announcement time, its plain lines and the stop chord",
+    "ids": [
+     46,
+     269
+    ]
+   },
+   {
+    "sha": "4ff3b27",
+    "subject": "Keep Allow and Not now in view on a long command card",
+    "ids": [
+     265
+    ]
+   },
+   {
+    "sha": "2c2c533",
+    "subject": "Give the command card's buttons back when Ember couldn't take the answer",
+    "ids": [
+     271
+    ]
+   },
+   {
+    "sha": "d61209d",
+    "subject": "Replace the tab of a run the remote sent back for an OK with the run you allow",
+    "ids": [
+     274
+    ]
+   },
+   {
+    "sha": "92ee913",
+    "subject": "Say where a command runs and mark deleting ones on the command card",
+    "ids": [
+     275
+    ]
+   },
+   {
+    "sha": "5b69c37",
+    "subject": "Tell a screen reader a tab's status once, not every second of a countdown",
+    "ids": [
+     276
+    ]
+   },
+   {
+    "sha": "dbe3bfc",
+    "subject": "Ask before closing the command window while a command runs, and never leave it running unseen",
+    "ids": [
+     262
+    ]
+   },
+   {
+    "sha": "3007060",
+    "subject": "Tell the user when a command waits for their typing, and raise the window for every run",
+    "ids": [
+     263
+    ]
+   },
+   {
+    "sha": "a01aeab",
+    "subject": "Bring the command and prompt windows up on the user's display and workspace",
+    "ids": [
+     272
+    ]
+   },
+   {
+    "sha": "51cf1c3",
+    "subject": "Let the second close press go ahead instead of closing the window from inside its close",
+    "ids": [
+     262
+    ]
+   },
+   {
+    "sha": "28de032",
+    "subject": "Keep the card's button bar on the design tokens and pin the window's new channel and hooks",
+    "ids": [
+     265,
+     262
+    ]
+   },
+   {
+    "sha": "95c80ef",
+    "subject": "Mark a host spelled in letters that only look Latin, as the card did before words split at : / @",
+    "ids": [
+     266
+    ]
+   },
+   {
+    "sha": "48644ef",
+    "subject": "Say which way a switch goes in the May I? question, and call a window and text plainly",
+    "ids": [
+     220
+    ]
+   },
+   {
+    "sha": "c5a8e80",
+    "subject": "Pin the first-step question's new toggle words in the real GTK worker suite",
+    "ids": [
+     220
+    ]
+   },
+   {
+    "sha": "204a351",
+    "subject": "Leave the macOS command panel on every Space when a card goes",
+    "ids": [
+     272
+    ]
+   },
+   {
+    "sha": "7fc6198",
+    "subject": "Put the task's bubble back once its command stops waiting for typing",
+    "ids": [
+     263
+    ]
+   },
+   {
+    "sha": "c1e7277",
+    "subject": "Say a sent-back run didn't happen once no OK is coming for it",
+    "ids": [
+     274
+    ]
+   },
+   {
+    "sha": "9011512",
+    "subject": "Pin the command page's closing card, button return and terminal focus wiring",
+    "ids": [
+     262,
+     264,
+     271
+    ]
+   }
+  ],
+  "checks": "Final state (9011512):\n- npx tsc --noEmit: exit 0, 0 errors.\n- npm run lint: exit 0, 0 problems.\n- npm test: 243 files passed, 1 skipped (244); 6020 tests passed, 8 skipped (6028).\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: exit 0, 2 ok ('first instance showed its window', 'second launch handed over…').\n- EMBER_INTEGRATION=1 EMBER_COMMANDS_TEST=1 npx vitest run test/integration/commands-flow-local.test.ts test/integration/commands-local.test.ts: 2 files passed; 33 tests passed, 13 skipped (46).\n- Changed integration suites, with AT-SPI working here: EMBER_INTEGRATION=1 EMBER_ATSPI_TEST=1 EMBER_PYTHON=/usr/bin/python3.12 dbus-run-session -- xvfb-run -a -s \"-screen 0 1280x1024x24\" npx vitest run test/integration/worker-safety.test.ts test/integration/safety.test.ts test/integration/worker.test.ts test/integration/perception-electron.test.ts gives 4 files passed, 106/106 tests. Earlier in this round: worker-safety alone 93/93 after the pin fix (verifier saw 1 failed, 92 passed). The first AT-SPI run of safety+worker gave 1 failed, 5 passed (the worker 'First step: switch' pin), then 13/13 after c5a8e80. The default python3 here (3.13) can't import gi, which is why these suites skipped for the verifier; python3.12 has pyatspi.",
+  "sharedHunks": [
+   "app/main/policy/policy.ts: import roleWord; describe() names controls 'the “X” <plain word>' (round 1); the toggle case says 'Turn on/Turn off', 'Tick/Untick' for a check box, or 'Flip' when no state is named (round 2) (#220)",
+   "app/shared/role-words.ts (new shared file): ROLE_WORDS and roleWord/aRoleWord; round 2 adds 'root pane' -> window and static -> text (#220)",
+   "app/renderer/home/copy.ts: the activity list's private ROLE table is replaced by aRoleWord from role-words.ts (#220)",
+   "app/main/agent/presenter.ts: announce(text, stopId, ms = ANNOUNCE_MS) and a stopKey field; the bubble says the given seconds and '<stop chord> stops everything at once.' (#46). Round 2 reads only the existing public getter presenter.bubble from flow.ts; presenter.ts itself is unchanged this round.",
+   "app/main/targets/runtime.ts: passes screenReader (deps.sys.a11y.screenReaderOn) to the command window (#43); confirmAnswer returns whether the Confirmer took the answer, and CommandWindow.onAnswer's callback type allows boolean (#271)",
+   "app/main/windows.ts: placeable(win, panel) gives placeNearUser/setOnAllWorkspaces to both windows (#272), and round 2 makes setOnAllWorkspaces a no-op for the darwin command panel; createCommandWindow gets the close guard (#262). The prompt-window factory hunk is outside the owned command-window hunk.",
+   "app/main/remote/prompt-window.ts reveal(): places the prompt window near the user and on every workspace before showing (#272)",
+   "app/preload/command.ts: closeWindow(stop) on the page bridge (#262)",
+   "app/main/commands/types.ts: CommandCard.classes optional (#275)",
+   "app/main/commands/classify.ts, lex-posix.ts, lex-powershell.ts, tables.ts: card-line wording only, no verdict or rule change (#214)",
+   "app/main/commands/decide.ts: LINES.tainted in the third person (#231)",
+   "docs/COMMANDS-WSL-SSH.md: §2.2 keys, focus, Copy output, screen reader, close question and waiting line (round 2: 'until you type or the command ends'); §2.4 card (round 2: look-alike hosts underlined); §2.5 announcement; §4.5 re-ask tab (round 2: 'Not run: you didn't allow it.' and the refusal line)",
+   "test/integration/worker-safety.test.ts (round 2: the :1857 pin now says '…on the “budget.ods — LibreOffice Calc” window…'), safety.test.ts, worker.test.ts (round 2: 'First step: turn on the “Night Light” switch.'), perception-electron.test.ts: question pins in plain role words (#220)",
+   "test/unit/borrow.test.ts, desk.test.ts, policy.test.ts, worker-tools.test.ts (round 2: 'Click the “Remove” text'), sshwsl-hooks.test.ts (electron mock: app, screen, on, and round 2 setVisibleOnAllWorkspaces; corpus SHA re-pinned; new darwin panel test), targets-runtime.test.ts, tasks-where.test.ts, trusted-sender.test.ts, ui-copy.test.ts: pins for the changes above",
+   "test/demo/m1-checks.mjs: the demo question string reads 'Click the “Save” button in Text Editor?' (#220)"
+  ],
+  "forDocs": [
+   "CHANGELOG: In the command window, Tab and Shift+Tab always move between the window's buttons and tabs and never go to the command. Ctrl+V pastes into a command that takes typing (Command+V on a Mac), Ctrl+C copies selected output, and a Copy output button copies all of it.",
+   "CHANGELOG: While a screen reader runs, a command's output is read to it, and an announced command waits at least 15 seconds before it starts. Every announcement names the stop chord.",
+   "CHANGELOG: Closing the command window while a command runs now asks 'Stop and close' or 'Keep it open'. A command never keeps running unseen.",
+   "CHANGELOG: When a command waits for you to type (a password, a [y/N] question), its tab says so, the window comes up and flashes, and the task's bubble says so until you type.",
+   "CHANGELOG: The May I? question names controls in plain words: 'Click the “Save” button', 'Turn on the “Night Light” switch', 'Tick the “Bold” checkbox', 'on the “report.odt” window'.",
+   "CHANGELOG: The command card underlines look-alike letters per word. Your own folders in your alphabet (C:\\Users\\Иван) are no longer marked, and an address spelled in letters that only look Latin (https://аррӏе.com) still is. Hebrew and Arabic text is shown in the order it runs.",
+   "CHANGELOG: The command card says which computer a command runs on, and marks deleting commands. A command another computer sends back for your OK says 'Not run: you didn't allow it.' if you don't allow it.",
+   "README (accessibility section, if there is one): the command window works with the keyboard alone, and screen readers can read command output."
+  ],
+  "ciOnly": [
+   "macOS: after a card leaves, the command panel stays on every Space and over full-screen apps (round 2: setVisibleOnAllWorkspaces is no longer called for it); the prompt window (not a panel) comes up over a full-screen app (#272)",
+   "Windows and macOS with several displays: the command and prompt windows open on the display nearest the pointer; Linux/X11 multi-monitor too (#272)",
+   "Windows and macOS: moveTop raises without taking focus, and flashFrame flashes the taskbar or Dock, when a run waits for typing (#263)",
+   "Real screen readers (NVDA/JAWS on Windows, VoiceOver on macOS, Orca on GNOME) read xterm's mirror, the hidden status line, the alert dialog and the read-only textbox (#43, #276, #262, #48)",
+   "macOS: Command+V and the Edit menu paste and copy in the terminal; Windows: Ctrl+V/Ctrl+C in a content-protected window (#264, #268)",
+   "Windows and macOS: the close guard never holds the window during quit, logoff or session end (#262)",
+   "A real SSH host whose helper sends a command back (needs_confirm): the tab shows 'Not run: you didn't allow it.' after Not now, and build-01's refusal line when the retry is sent back again (#274)",
+   "Prompt detection on real WSL/SSH interactive runs (sudo, git over https), and the task bubble going back to its earlier line after typing (#263)"
+  ],
+  "notes": "I addressed all seven verifier problems in round 2 (7 commits on top of round 1's 20). Each has a test that failed first, except the page-wiring pins, which cover code that already existed. For those, a mutation run confirmed each pin fails when its line is removed from main.ts.\n\n#266: I didn't keep scheme://host together as one word, the verifier's first option, because counting scripts that way marks 'https' on a real Cyrillic address such as https://пример.рф. I extended the tie rule instead, with a look-alike letter table, which also covers deploy@аррӏе.\n\n#220: the AT-SPI suites the verifier couldn't run do run here with EMBER_PYTHON=/usr/bin/python3.12 under dbus-run-session. They caught one more pin (worker.test.ts), now fixed.\n\nScratch files are under /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/cmdwin/r2/ (vt.ts comparison, logs). Key files:\n- /home/user/wt/fx-cmdwin/app/shared/visible-text.ts\n- /home/user/wt/fx-cmdwin/app/main/policy/policy.ts\n- /home/user/wt/fx-cmdwin/app/shared/role-words.ts\n- /home/user/wt/fx-cmdwin/app/main/windows.ts\n- /home/user/wt/fx-cmdwin/app/main/commands/flow.ts\n- /home/user/wt/fx-cmdwin/app/main/commands/window.ts\n- /home/user/wt/fx-cmdwin/app/renderer/command/copy.ts\n- /home/user/wt/fx-cmdwin/test/unit/renderer-command.test.ts"
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/commands/decide.ts (cmdcore): LINES.tainted wording 'Ember is checking each step: …' (#231)",
+   "app/main/commands/flow.ts (beyond the countdown): CARD_LINES.tainted / OUTPUT_TAINT_LINE wording (#231); card() adds `classes` on ask/announce cards (#275); followWaiting + WAITING_BUBBLE in runOnce (#263); announceTime() and the ms passed to presenter.announce/window.announce (#46, my countdown area)",
+   "app/main/commands/classify.ts (classify): SAYS.openApp, 'which arguments X gets' (6 template + 2 literal sites), $ExecutionContext and ^-caret unclear lines (#214)",
+   "app/main/commands/lex-posix.ts (classify): locale-string note text (#214)",
+   "app/main/commands/lex-powershell.ts (classify): two execution-context note texts (#214)",
+   "app/main/commands/tables.ts (classify): GUI_PROGRAMS doc comment quotes the new openApp line (#214)",
+   "app/main/commands/types.ts (contract): CommandCard gains optional `classes?: DangerClass[]` (#275)",
+   "app/main/policy/policy.ts (policy): import roleWord; describe() builds 'the “X” <plain role>' for element and place (#220)",
+   "app/shared/role-words.ts: new shared module ROLE_WORDS/roleWord/aRoleWord (#220)",
+   "app/renderer/home/copy.ts (settings): local ROLE table replaced by an import of aRoleWord from app/shared/role-words.ts (same words, plus 'a tab list'/'a toolbar') (#220)",
+   "app/main/agent/presenter.ts (bubble): announce(text, stopId, ms = ANNOUNCE_MS) and the thought '… It starts in N seconds. <stop chord> stops everything at once.'; new private stopKey field set from opts.shortcuts (#46). Likely to conflict with bubble #227 (time units) on the same line",
+   "app/main/targets/runtime.ts: screenReader: () => deps.sys.a11y.screenReaderOn() passed to the command window (#43); CommandWindow.onAnswer callback type returns boolean | void and confirmAnswer returns the Confirmer's boolean (#271)",
+   "app/main/windows.ts: imports app and screen; placeable(win) helper; createCommandWindow returns BrowserWindow & CloseGuarded & Placeable with a close guard that never fires after before-quit or session-end (#262, #272); createPromptWindow returns Object.assign(win, placeable(win)) (#272, the prompt package's function, one line; prompt #182 also edits this function)",
+   "app/main/remote/prompt-window.ts (prompt): reveal() calls placeNearUser/setOnAllWorkspaces before show (#272, one line; prompt #235 edits the next line)",
+   "app/preload/command.ts: closeWindow(stop) bridge on commands:close-window (#262)",
+   "docs/COMMANDS-WSL-SSH.md: §2.2 (keys, focus, paste/copy, Copy output, screen reader, close question, waiting for typing, raise), §2.4 (heading names the computer, per-word marks, RTL order, yellow edge/plain Allow, sticky buttons), §2.5 (announcement card, chord in bubble, 15 s with a screen reader), §2.7 taint quote, §4.5 'Not run: …' tab",
+   "test/unit/policy.test.ts, borrow.test.ts, desk.test.ts, worker-tools.test.ts, test/integration/perception-electron.test.ts, safety.test.ts, worker-safety.test.ts, worker.test.ts, test/demo/m1-checks.mjs: pinned May I? prompts use the new role words (#220)",
+   "test/unit/sshwsl-hooks.test.ts: decision digest renewed for #220; electron mock gains app/screen/BrowserWindow.on and the factory test checks the close guard (#262)",
+   "test/unit/trusted-sender.test.ts: commands:close-window in the command window's channel lists (#262)",
+   "test/unit/targets-runtime.test.ts: onAnswer type and a test that the window learns whether the answer was taken (#271)",
+   "test/unit/tasks-where.test.ts: presenter announcement pins include the stop chord, plus a 15 s/Win+Alt+X test (#46)"
+  ],
+  "forDocs": [
+   "CHANGELOG: Command window: Tab and Shift+Tab always move out of the terminal (Ctrl+I types a tab); the keyboard is in an interactive command's terminal when its tab comes up; Ctrl+V pastes (Command+V on a Mac); Ctrl+C copies a selection and Ctrl+Shift+C always copies; a Copy output button copies everything a command printed.",
+   "CHANGELOG: Command window: with a screen reader running, a command's output is read and can be browsed line by line; the command block is announced as the command itself; a tab's status is announced once, not every second of a countdown.",
+   "CHANGELOG: Announced commands ('…, as you asked') show what they do and the model's reason, name the stop chord in the window and the bubble, and count down 15 s instead of 4 s while a screen reader runs.",
+   "CHANGELOG: Closing the command window while a command runs now asks (Stop and close / Keep it open) instead of leaving the command running unseen.",
+   "CHANGELOG: A command waiting for typing (a password, a user name, a yes/no) says so on its tab and in the task's bubble, and the window comes up and flashes; every new command brings the command window above other windows without taking the keyboard.",
+   "CHANGELOG: The command card keeps Allow and Not now in view for long commands, names the computer in its heading for SSH and WSL ('… on build-01'), marks commands that delete data with a quiet yellow edge and a plain Allow, and comes up on the display (and macOS Space / workspace) you are on; the prompt window does too.",
+   "CHANGELOG: Users with non-Latin folder names (C:\\Users\\Иван, ~/Документы) no longer see their paths underlined as another alphabet; Hebrew and Arabic text in a command is shown in the order it runs.",
+   "CHANGELOG: May I? questions call controls by plain names ('Click the “Save” button in Mousepad?', 'drop-down', 'switch', 'tab') instead of screen-reader roles ('push button', 'combo box').",
+   "README accessibility section (docs package #58): describe the command window's keyboard (Tab leaves the terminal, Ctrl+I types a tab, paste/copy keys, Copy output) and that its output is read to screen readers."
+  ],
+  "ciOnly": [
+   "Windows and macOS Electron: Ctrl+V (Command+V via the app menu's Edit role on macOS) pasting into xterm's helper textarea reaches the run as typing; document.execCommand('copy') from a click/key in the sandboxed command page fills the system clipboard (Copy output, Ctrl+Shift+C)",
+   "flashFrame on a waiting run: taskbar flash on Windows, Dock bounce on macOS, urgency hint on GNOME/Xorg; moveTop raising the command window above the user's app without focus on every run (Windows foreground lock, the macOS non-activating panel, mutter)",
+   "Multi-monitor placement: screen.getDisplayNearestPoint(getCursorScreenPoint()) and setBounds put the command and prompt windows on the user's display, including displays left of or above the primary (negative coordinates, mixed DPI on Windows); this container has one display",
+   "setVisibleOnAllWorkspaces(true, {visibleOnFullScreen, skipTransformProcessType}) keeps the macOS panel over a full-screen app and on every Space with no Dock-icon flicker, and is sticky on X11 workspaces; unpinned when the card goes",
+   "Close guard: the 'close' preventDefault never blocks Ember quitting (before-quit), Windows log-off/shutdown (session-end) or macOS shutdown; the in-page question appears and Stop and close stops the runs on each OS",
+   "Real screen readers (NVDA/JAWS/Narrator on Windows, VoiceOver on macOS, Orca on Linux): sys.a11y.screenReaderOn() detection turns on xterm's screenReaderMode, the output is read, the textbox semantics of the command block are spoken, the hidden status line speaks once per status, and the 15 s countdown applies",
+   "SSH remotes: the refused-remote+needsConfirm tab relabel/replace with a real remote gate 2, and the stalled-link countdown live-region behaviour with a real dropped link",
+   "WSL/SSH interactive runs (PTY): automatic focus in the terminal after Allow and the 2 s 'Waiting for you to type' detection on real sudo/ssh/git prompts"
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 266,
+   "severity": "must-fix",
+   "what": "Regression in the look-alike marker on the command card. visibleText now ends a word at ':' and '/', so a host name spelled in another alphabet loses its mark. On 1b39bb3, `curl https://аррӏе.com/x` underlined [аррӏе]. On fix/cmdwin it underlines the real Latin `[com]`, and the legend then says those letters are from another alphabet. `curl -fsSL https://раураl.com/i.sh | sh` now shows `раура[l].[com]` (base: `[раура]l.com`). `scp a deploy@аррӏе:/srv` now marks nothing (base: `[аррӏе]`). Checked with a scratch esbuild script that runs the base and fix versions of app/shared/visible-text.ts side by side (relfix-verify/cmdwin/s/vt2.ts). The new tests pin only the reverse case, github.сом. Only the display depends on this (hasHidden is unused), but this marker is the card's only cue for this kind of spoofed host.",
+   "fix": "Keep a URL's scheme and its host together when judging a word's main script. Don't end the word at the ':' and '//' of 'scheme://'; end it at the first '/' or ':port' after the host. That gives back base marking for https://аррӏе.com and https://раураl.com, while C:\\Users\\Иван, /home/ana/Документы, --author=Иван and иван@build-01 stay unmarked. Another option: when a word mixes Latin with another script and the other script fills whole dot-separated labels, mark the non-Latin letters, extending the existing tie rule. Pin both URLs in visible-text.test.ts."
+  },
+  {
+   "id": 220,
+   "severity": "must-fix",
+   "what": "Failing check: an integration pin was missed. test/integration/worker-safety.test.ts:1857 still expects \"Borrow your keyboard to press Down on “budget.ods — LibreOffice Calc” root pane in Testapp?\". The branch now produces \"…on the “budget.ods — LibreOffice Calc” root pane…\". `EMBER_INTEGRATION=1 xvfb-run -a npx vitest run test/integration/worker-safety.test.ts` gives 1 failed and 92 passed. The other changed integration suites (safety, worker, perception-electron) skip here because there is no AT-SPI/GTK, so CI may find more.",
+   "fix": "Update the pin at worker-safety.test.ts:1857. Then run worker-safety, safety, worker and perception-electron where AT-SPI runs."
+  },
+  {
+   "id": 272,
+   "severity": "must-fix",
+   "what": "macOS behaviour changed beyond the finding. On macOS the command window is created with `type: \"panel\"` (windows.ts). The owner's note in platform/compose.ts says an Electron panel already joins every Space and floats over full-screen apps, so it needs no setVisibleOnAllWorkspaces. settle() now calls setOnAllWorkspaces(false), which runs win.setVisibleOnAllWorkspaces(false, {visibleOnFullScreen:true, skipTransformProcessType:true}). On macOS that clears NSWindowCollectionBehaviorCanJoinAllSpaces. Result: once the first card leaves, the window with its running tabs stays on one Space until the next card comes. The unit tests use a fake window and can't see this. Only real macOS can confirm it.",
+   "fix": "In windows.ts placeable(), take the OS and make setOnAllWorkspaces a no-op for the darwin command window, since the panel already does this. Or have settle() skip the false call on darwin. Pin it in the sshwsl-hooks factory test for os 'darwin'."
+  },
+  {
+   "id": 263,
+   "severity": "should-fix",
+   "what": "The bubble goes stale once the run stops waiting. flow.ts followWaiting returns early when waiting is false (`if (id !== runId || !waiting) return;`). After the user types the password, the window clears 'waiting', but the task's bubble keeps saying \"A command is waiting for you to type in the command window.\" (presenter.progress set it as the thought). It stays that way until something else updates the bubble, often for the rest of a long run.",
+   "fix": "On waiting=false, put back the line it replaced: remember the bubble's thought before the waiting line, or set the run's usual line again. Add the false case to command-flow.test.ts 'says in the task's bubble when its command waits'."
+  },
+  {
+   "id": 274,
+   "severity": "should-fix",
+   "what": "The tab for a run sent back by the remote is labelled unconditionally. finish() marks any refused-remote exit with needsConfirm as a re-ask and shows \"Not run: build-01's own check asks for your OK first.\" Two cases leave that wrong: (a) the user says Not now or lets the question expire, and (b) the retry is refused again with needsConfirm, where flow.ts returns the refusal without asking because `asked` is already true. In both cases no question is up, but the tab still says one is waiting for an OK.",
+   "fix": "Only label the tab this way while the question is actually up. For example, when that task's card is hidden with no replacing attach of the same sha256, relabel the tab \"Not run: you said no.\" (or use the refusal's statusLine). Have the flow tell the window when it won't ask again. Add a test for the 'no' path."
+  },
+  {
+   "id": 220,
+   "severity": "should-fix",
+   "what": "Copy: toggle questions now read \"Switch the “Night Light” switch in Settings?\" (and \"Switch the “Urgent” checkbox …\"), which sounds awkward. Some roles are still the screen reader's own terms: \"the “budget.ods — …” root pane\", \"Click the “Remove” static\", \"the “Block user” section\" (worker-tools test pins).",
+   "fix": "For the toggle kind on a switch or checkbox, use a verb that reads well, such as \"Turn the “Night Light” switch on\" or \"Turn … off\" from the requested state, or \"Flip …\". Add \"root pane\" → \"window\" and \"static\" → \"text\" to app/shared/role-words.ts and update the pins."
+  },
+  {
+   "id": null,
+   "severity": "should-fix",
+   "what": "Missing unit tests on the page side. Three page behaviours are checked only by scratch Chromium scripts: #262's closing card (role alertdialog, focus on Keep it open, api.closeWindow(true/false)), #271's re-enabling of the buttons in render() when card.retry grows, and #264's focusTerminal() wiring (called from render() and from the window 'focus' listener). renderer-command.test.ts pins other wiring by matching source, but not these. A refactor could drop them unnoticed.",
+   "fix": "Add source-match pins to renderer-command.test.ts in the existing style: buildClosing sets role alertdialog, calls keep.focus() and calls api.closeWindow(true) and api.closeWindow(false); render() compares card.retry with ask.retry and clears sent and deny.disabled; focusTerminal() is called in render() and from window.addEventListener(\"focus\")."
+  }
+ ]
+}

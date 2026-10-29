@@ -1,0 +1,426 @@
+{
+ "key": "ask",
+ "final": {
+  "findings": [
+   {
+    "id": 67,
+    "status": "fixed",
+    "how": "Round 1: removed the menuClosing guard in showMenu (Electron 44 sends menu-will-close about 1 ms before the picked item's click). Round 2 (9161cdb): ci.yml's RHEL 8 job, which builds first and has Xvfb, now runs test/integration/handle-menu-live.test.ts with its other live X checks, and under EMBER_ATSPI_TEST=1 the file fails instead of skipping when Xvfb or the build is missing. The showMenu comment now says only the released() gate guards against a pick nobody made. ask.spurious_after_menu catches only a box that opened with no item's click, and a click on Ask Ember… counts as a pick.",
+    "test": "handle-menu-live.test.ts \"opens the ask box when Ask Ember… is picked with the keyboard\" failed on base with ask.menu_ignored {reason: menu-closing}. It passes now (3/3 in the file with EMBER_INTEGRATION=1 EMBER_ATSPI_TEST=1 on the final build), and it is in the el8 CI list."
+   },
+   {
+    "id": 68,
+    "status": "fixed",
+    "how": "(a) The menu-item conversion moved from main.ts toMenu into targets/menu.ts as menuOptions, which is pure; main calls it as before. An `opens` item calls opened() before its own click. Other items, including the picker's radios in their submenu, do not, and `opens` never reaches Electron's options. (b) Settings opens at Computers with the host field focused, through the section request (see #184).",
+    "test": "target-menu.test.ts menuOptions cases click every item the computers part offers (radios, Bring, Disconnect, Cancel connecting). They check that only Bring calls opened(), and before its click, and that no option carries `opens`. They failed before because menuOptions did not exist and the wiring in main.ts was untested. main-privacy-wiring pins main's call. Verifier: (b) went 5/5 to Computers with host-add focused."
+   },
+   {
+    "id": 184,
+    "status": "fixed",
+    "how": "renderer/home/section-request.ts (pure: sectionRequest, PendingSection). showSection holds a request for a hidden section and shows it once it appears, unless the user clicks, types or scrolls first. Main sends computers:wsl and computers:host. Round 2 (6606cb1): whatever showSection focused is brought back into view for 3 s while sections above it are still appearing, until the user moves on. Before, Computers and Commands appeared later and pushed a focused control below the window.",
+    "test": "section-request.test.ts, targets-runtime tests (openSettings(\"computers\",\"wsl\"/\"host\")). Scratch keyroute.cjs under Xvfb: before the keep-in-view change, the focused button sat at top 781 px in a 640 px window. After it, 314 px."
+   },
+   {
+    "id": 69,
+    "status": "fixed",
+    "how": "renderer/ask/history.ts (AskHistory): only an `opened` context resets the place in history and the draft. A late update keeps both.",
+    "test": "ask-history.test.ts. Built page in Chromium: ↑↑, late context, ↑ now gives \"first question\", and ↓ brings the draft back."
+   },
+   {
+    "id": 70,
+    "status": "fixed",
+    "how": "Round 1: the field is a textarea that grows to four lines and keeps a paste's lines (Enter sends, Shift+Enter adds a line), with a note at 2000 characters. Round 2 (de27370): the note \"Only the first 2000 characters will be sent.\" now has a line of its own under the line that says what Ember will see. The page asks main for one more row (AskWindow.fit and grownBounds take up to 5 rows: four field lines plus the note), so the note never takes the window name's room. I did not call fitMeta when the note appears, as the verifier suggested: with the note on the same line, even hiding every hint, using the brief extras and shortening the where chip left the lost-SSH case about 81 px short of zero room for the name.",
+    "test": "handle-menu-live.test.ts \"keeps the window's name readable…\" (Xvfb, built app, real ask window). Before: with a 2000-character paste the name was 0 px wide in every case, a private window's line overflowed by 17 px, and the window stayed 164 px. Now: name >= min(160, its full width), no overflow, the note is off the line and the window is 188 px. ui-place.test.ts grownBounds(…, 5) is 188, and it failed before at 164. ask-box.test.ts pins the markup. Scratch renders: ask-r2/after-sheet.png."
+   },
+   {
+    "id": 71,
+    "status": "fixed",
+    "how": "The placeholder is “turn on dark mode”, which Ember can change on Linux, Windows and macOS (dark_style).",
+    "test": "ask-box.test.ts placeholder case, which failed on the old page."
+   },
+   {
+    "id": 72,
+    "status": "fixed",
+    "how": "main/ask-sees.ts reads what the quick context carries (selection, field text, other windows' titles). The chip shows app · title plus \"+ field text, N window titles\". The tooltip and screen readers get the whole sentence. A private window shows \"Ember won't look at this window\".",
+    "test": "ask-box.test.ts builds contexts with perception's own quickContextText and withSelection."
+   },
+   {
+    "id": 74,
+    "status": "fixed",
+    "how": "Round 1: an eye icon, title= with the full text, a full-width line from the start, and state words on the target chip. Round 2 (de27370): a crowded line gives way in order. First the key hints (Esc, ↑, Enter), then the extras in fewer words (SeesView.brief: \"+ text, 2 titles\", \"+ selection, 5 titles\"), then the other computer's name is shortened (.where.tight). The where chip is split by targetChipParts into a name that can shorten and a state (\"(lost)\") that never does. Whether the name is cut is measured to a fraction of a pixel; an ellipsis hid inside less than 1 px, and the hints had stayed.",
+    "test": "Same live check: the lost-SSH case gave the name 97 px before and 172 px now, with \" (lost)\" still shown. ask-box.test.ts covers brief forms, targetChipParts and markup, and failed before. Chromium renders before/after in the scratchpad ask-r2/."
+   },
+   {
+    "id": 75,
+    "status": "partial",
+    "how": "Done in round 1 (ddd253c): Hide Ember shrinks the 200x56 pill to a 56x56 tab with the face, and Show Ember brings the pill back. Left open, as the verifier asked, because it needs the owner's yes, which this agent cannot get: while Ember is shown the pill stays at the primary display's bottom-right, it is movable:false, and HandleWindow.corner() has no setting. Proposal for the owner: a \"Handle position\" setting (bottom right / bottom left) in settings.ts, read by HandleWindow.corner(), by the overlay's card stack (the overlay package's #126 anchors it bottom-right in overlay/styles.css) and by the home copy that says \"bottom-right corner\", plus a \"Move to the other side\" item in the handle menu. Please keep #75 open in the lead's table.",
+    "test": "handle-window.test.ts compact case. Verifier's hide.cjs under mutter: 200x56, then 56x56, then 200x56. Nothing yet for the position, which is not built."
+   },
+   {
+    "id": 76,
+    "status": "fixed",
+    "how": "Deleted the dead app/renderer/handle/menu-copy.ts. targets/menu.ts follows §8.1: Bring Ember to a computer… shows whenever SSH is allowed, and a host that is connecting gets \"Cancel connecting to <host>\". ui-copy.test.ts now pins the live menu. COMMANDS-WSL-SSH.md §4.1 says when the item shows.",
+    "test": "target-menu.test.ts: the two new cases fail on the old menu.ts. ui-copy and targets-runtime tests updated."
+   },
+   {
+    "id": 77,
+    "status": "fixed",
+    "how": "Round 1: a right-click in the field opens Cut, Copy, Paste and Select all; Return and ⌃⇧⌘ glyph chords on a Mac. Round 2 (09b9c0a): AskWindow notes a blur that comes while the menu is up; a focus clears it. When the menu closes, the callback gives the OS 120 ms to say where the keyboard went, and a blur in that time closes the box as usual. After that the box keeps the keyboard, takes it back if nothing else took it, or, after such a blur, goes away instead of calling focus().",
+    "test": "ask-window.test.ts: \"goes away … when the user dismissed its menu by clicking another app\" and \"… when that click's blur comes just after the menu has closed\" both failed before (the box stayed visible, and focus() was called at once). \"takes the keyboard back when nothing else took it\" passes. Under Xvfb with and without mutter (scratch rclick-away.cjs), Paste still lands in the box, and a click on an xterm only closes the GTK menu (no blur, the box keeps the keyboard), as before. ember-win32.test.ts adds a real-runner check."
+   },
+   {
+    "id": 78,
+    "status": "partial",
+    "how": "99e6445 adds the probe the verifier asked for to the real-runner suites. ember-win32.test.ts starts the built Ember as at login and presses Win+Alt+Space through SendInput. ember-darwin.test.ts presses ⌃⇧⌘Space as CGEvents. Each lets go of the keys, types \"quick brown fox\" at 40 ms a letter, and prints what the box holds and what that decides: nothing lost means telling users to let go of the keys before typing is enough; letters lost means the OS needs a typed-ahead hold. A run fails only if the chord doesn't open the box, or the box holds letters out of order. DEVELOPING.md's suite table describes it. Still open until those runs report: the native hold or the documented sentence (handed to docs below).",
+    "test": "typeahead-probe.test.ts covers the verdict, and tsc covers the suites. The probes run only on windows-2022 and macos-15."
+   },
+   {
+    "id": 45,
+    "status": "partial",
+    "how": "(a) is done. Round 1 (53969aa) added Ask Ember… and Stop everything to settings. Round 2 (6606cb1): environment.ts keyboardRoute gives \"access:ask\" while another app holds the ask shortcut, else \"access:stop\". Ember started again (second-instance), the Dock (activate) and the settings shortcut all open settings through showHomeFromKeys, which sends that section request. section-request.ts maps it to p-ask / p-stop. The handle menu's Settings… is unchanged, since that is a pointer's way in. The setup check now says \"open Ember again from the Start menu: its settings open at Ask Ember… and Stop everything, under Comfort & access\" (\"for its settings\" when only the settings or microphone shortcut is taken). The greeting says \"press Ctrl+Alt+E: settings opens at Ask Ember… and Stop everything\". (b) is left as open work for the owner: shortcuts that can be remapped, an automatic fallback chord when one is taken, and an Ask entry in the launcher (Windows setUserTasks jump list, and .desktop Actions=Ask on Linux).",
+    "test": "section-request.test.ts (access:ask → p-ask, access:stop → p-stop), environment-platforms.test.ts (keyboardRoute and the new words) and main-privacy-wiring.test.ts (the three keyboard openings go through showHomeFromKeys) all failed before. Scratch keyroute.cjs under Xvfb, with a client holding Ctrl+Alt+Space, with mutter and without: second-instance and Ctrl+Alt+E both open settings with p-ask focused and in view. Without the grab, settings opens at the top with BODY focused, as before."
+   },
+   {
+    "id": 53,
+    "status": "fixed",
+    "how": "A polite live region (#sees-live) is cleared on open and filled once with the full sentence when the late update arrives. Round 2 (6270b7b): that decision is now the pure chips.ts liveWords(said, context), and ask/main.ts only applies it.",
+    "test": "ask-box.test.ts walks the sequence: cleared on opening, the full sentence once on the late update, nothing for the same update again, said again for a changed window, left alone when there is nothing to say. It failed before because the logic lived only in the page."
+   },
+   {
+    "id": 230,
+    "status": "fixed",
+    "how": "KEYS.darwin.labels names ⌘ \"Command\"; the file-dialog hint says Command+Shift+G; an Intel Mac reads \"macOS on Intel (best effort)\". Round 2 (d447951) is comment-only: home/copy.ts keyLabel and policy.ts keyLabelsOf, keyLabel and selectAllLabel now say Command+S / Command+A.",
+    "test": "shortcuts.test.ts, environment-platforms.test.ts, policy-platform.test.ts and home-platform-copy.test.ts pin the labels. The round-2 change is comments only."
+   },
+   {
+    "id": 234,
+    "status": "fixed",
+    "how": "notificationBody() cuts a body over 240 characters at the last whole word that fits and adds \"…\". The placeholder half is #71.",
+    "test": "ask-box.test.ts notification cases."
+   },
+   {
+    "id": 0,
+    "status": "fixed",
+    "how": "The verifier's unnumbered should-fix: settings' Stop everything was recorded as coming from the handle menu. KillSwitch's StopSource gains \"settings\", main's IPC.stopEverything handler passes it, and What Ember did reads \"Everything stopped (settings)\".",
+    "test": "home-platform-copy.test.ts, main-privacy-wiring.test.ts and safety.test.ts (the audit log gets the new source) each failed before."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "c7164e2",
+    "subject": "Open the ask box when \"Ask Ember…\" is picked from the handle's menu",
+    "ids": [
+     67
+    ]
+   },
+   {
+    "sha": "2da3a8a",
+    "subject": "Keep settings in front when \"Bring Ember to a computer…\" opens it from the handle",
+    "ids": [
+     68
+    ]
+   },
+   {
+    "sha": "4e70cb9",
+    "subject": "Open settings at Computers, with its field focused, from \"Bring Ember\" and the WSL offer",
+    "ids": [
+     68,
+     184
+    ]
+   },
+   {
+    "sha": "dbcf112",
+    "subject": "Give the handle menu's computers one source of words and rules, and let it cancel a connection",
+    "ids": [
+     76
+    ]
+   },
+   {
+    "sha": "8321090",
+    "subject": "Keep the ask box's place in history and the half-typed text when what Ember will see arrives",
+    "ids": [
+     69
+    ]
+   },
+   {
+    "sha": "171a846",
+    "subject": "Suggest dark mode in the ask box, and cut long notifications at a word with an ellipsis",
+    "ids": [
+     71,
+     234
+    ]
+   },
+   {
+    "sha": "8562bb2",
+    "subject": "Keep a pasted text's lines in the ask box, grow it to four lines, and say when a paste was cut",
+    "ids": [
+     70
+    ]
+   },
+   {
+    "sha": "951bb6c",
+    "subject": "Say all that a request carries under the ask box, whole in its tooltip and to screen readers",
+    "ids": [
+     72,
+     74,
+     53
+    ]
+   },
+   {
+    "sha": "98f59a2",
+    "subject": "Name the Command key one way on a Mac, and say Intel Macs are best effort",
+    "ids": [
+     230
+    ]
+   },
+   {
+    "sha": "4a8bca4",
+    "subject": "Give the ask box a Cut, Copy, Paste menu, and name keys as a Mac does there and in the handle menu",
+    "ids": [
+     77
+    ]
+   },
+   {
+    "sha": "53969aa",
+    "subject": "Give keyboard users a way to ask Ember when another app holds its shortcut",
+    "ids": [
+     45
+    ]
+   },
+   {
+    "sha": "ddd253c",
+    "subject": "Shrink the handle to Ember's face while Ember is hidden",
+    "ids": [
+     75
+    ]
+   },
+   {
+    "sha": "d447951",
+    "subject": "Say Command in the comments that describe how a Mac names its keys",
+    "ids": [
+     230
+    ]
+   },
+   {
+    "sha": "229d55f",
+    "subject": "Record settings' Stop everything as coming from settings, not the handle's menu",
+    "ids": [
+     0
+    ]
+   },
+   {
+    "sha": "6270b7b",
+    "subject": "Test what the ask box's live region says, through a pure function",
+    "ids": [
+     53
+    ]
+   },
+   {
+    "sha": "e78c6ce",
+    "subject": "Test that only \"Bring Ember to a computer…\" keeps the keyboard off the user's app",
+    "ids": [
+     68
+    ]
+   },
+   {
+    "sha": "9161cdb",
+    "subject": "Run the handle menu's live check in CI, and say only what still guards the menu",
+    "ids": [
+     67
+    ]
+   },
+   {
+    "sha": "99e6445",
+    "subject": "Probe on real Windows and Mac runners what the ask box holds of letters typed straight after its shortcut",
+    "ids": [
+     78
+    ]
+   },
+   {
+    "sha": "de27370",
+    "subject": "Keep the window's name readable under the ask box when the line is crowded or a paste was cut",
+    "ids": [
+     70,
+     74
+    ]
+   },
+   {
+    "sha": "09b9c0a",
+    "subject": "Put the ask box away, not back in front, when its right-click menu is dismissed by a click on another app",
+    "ids": [
+     77
+    ]
+   },
+   {
+    "sha": "6606cb1",
+    "subject": "Open settings at Ask Ember… from the keyboard while another app holds the ask shortcut, and say where it is",
+    "ids": [
+     45,
+     184
+    ]
+   }
+  ],
+  "checks": "Final tree (6606cb1): `npx tsc --noEmit` exit 0, no errors. `npm run lint` exit 0. `npm test`: Test Files 246 passed, 1 skipped (247); Tests 6006 passed, 8 skipped (6014). `npm run build` exit 0. `xvfb-run -a npm run test:smoke` exit 0: \"ok first instance showed its window\", \"ok second launch handed over and the first instance focused its window\". `EMBER_INTEGRATION=1 EMBER_ATSPI_TEST=1 npx vitest run test/integration/handle-menu-live.test.ts` on the final build: 3 passed (3). Nothing under app/main/commands/** or the voice process changed, so the commands and voice suites were not needed. Scratch repros are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/ask-r2/: row.cjs (crowded line before/after, after-sheet.png), rclick-away.cjs (#77 on Linux), keyroute.cjs plus grab.py (#45).",
+  "sharedHunks": [
+   ".github/workflows/ci.yml: the RHEL 8 job's integration file list gains test/integration/handle-menu-live.test.ts (#67; this now also runs the #70/#74 live check)",
+   "app/main/main.ts (outside the handle menu and showHome navigation): the ask context built through askSees (#72); the IPC.openAsk handler and stopEverything(\"settings\") (#45, unnumbered); showHomeFromKeys, used by second-instance, activate and the settings-shortcut entry, plus the greeting's keyboard words (#45); keeping the handle compact while Ember is hidden (#75); the menuOptions call (#68)",
+   "app/main/agent/killswitch.ts: StopSource gains \"settings\" (unnumbered finding)",
+   "app/main/handle.ts: setCompact, the 56x56 tab while Ember is hidden (#75)",
+   "app/main/notification.ts: notificationBody cuts at a word with … (#234)",
+   "app/main/policy/policy.ts: comments only, Cmd → Command (#230)",
+   "app/main/targets/menu.ts, runtime.ts, types.ts: Bring shown whenever SSH is allowed, Cancel connecting, the `opens` flag, menuOptions, openSettings(section, focus) (#76, #68, #184)",
+   "app/main/ask-sees.ts: new module, what the quick context carries (#72)",
+   "app/preload/home.ts: openAsk and stopEverything (#45)",
+   "app/shared/ipc.ts: AskContext.carries/privateWindow (#72), EmberAskApi.fit(rows) (#70), openAsk/stopEverything (#45)",
+   "app/shared/words.ts: the macOS file-dialog hint says Command+Shift+G (#230)",
+   "app/renderer/home/index.html: Ask Ember… and Stop everything buttons in Ember on screen (#45)",
+   "app/renderer/home/main.ts: showSection holds a hidden section's request; keptInView keeps the focused control in view for 3 s; p-ask/p-stop handlers (#184, #45)",
+   "app/renderer/home/section-request.ts: new module; CONTROLS gains access:ask and access:stop (#184, #45)",
+   "app/renderer/home/copy.ts: \"Everything stopped (settings)\" and a Command comment (unnumbered, #230)",
+   "docs/COMMANDS-WSL-SSH.md §4.1: when Bring Ember to a computer… shows, and Cancel connecting (#76)",
+   "docs/DEVELOPING.md: the ember-win32 and ember-darwin rows mention the typed-ahead probe (#78)",
+   "test/integration/ember-win32.test.ts and ember-darwin.test.ts: the typed-ahead probe (#78); win32 also has the right-click-then-click-the-bench check (#77)"
+  ],
+  "forDocs": [
+   "README, Shortcuts: when another app holds one of Ember's shortcuts, click the handle, or from the keyboard open Ember again (from your apps, the Start menu or Applications) or press the settings shortcut. Settings then opens at Ask Ember… and Stop everything, under Comfort & access.",
+   "README, Shortcuts (Windows and macOS), pending the #78 probe: 'On Windows and macOS, let go of the shortcut's keys before you start typing: Ember can't hold letters typed while the ask box opens (on Linux it does).' Drop this if the ember-win32/ember-darwin probe prints 'nothing lost'.",
+   "CHANGELOG: the ask box keeps a paste's lines and grows to four lines. When a paste is cut at 2000 characters, a note on its own line says so, and the line that says what Ember will see keeps the window's name (it shortens what else is sent, and the other computer's name but never its state).",
+   "CHANGELOG: a right-click in the ask box offers Cut, Copy, Paste and Select all. Dismissing that menu by clicking another app puts the box away instead of taking the keyboard back.",
+   "CHANGELOG: the handle menu's 'Bring Ember to a computer…' shows whenever SSH is allowed, and a host that is connecting can be cancelled from the menu. Settings opens at Computers with the host field focused.",
+   "CHANGELOG: 'Hide Ember' shrinks the handle to a small tab showing Ember's face. Moving the handle or choosing its corner is not there yet (#75, awaiting the owner).",
+   "CHANGELOG: on a Mac, keys are named Command everywhere, and Intel Macs are 'best effort'. The ask box's example is 'turn on dark mode'. Long notifications end at a word with an ellipsis."
+  ],
+  "ciOnly": [
+   "#78: whether Windows (SendInput Win+Alt+Space) and macOS (CGEvent ⌃⇧⌘Space) lose the first letters typed straight after the chord. The ember-win32 and ember-darwin probes print it; that result decides between a native typed-ahead hold and the documented 'let go of the keys first'.",
+   "#77 on Windows: after a right-click in the box, a click on the bench either activates the bench (the box must then be gone) or is swallowed by the menu loop (the box must keep the keyboard). ember-win32.test.ts checks this.",
+   "#77 on macOS: no runner check was added. Whether a click outside an NSMenu activates the other app (and blurs the box) can only be seen on a real Mac.",
+   "#45: the Start-menu relaunch (second-instance) on Windows and the Dock reopen (activate) on macOS opening settings at Ask Ember…. Linux second-instance and the settings chord were verified under Xvfb.",
+   "#68(a) on Windows/macOS: settings stays in front of the user's app after Bring Ember to a computer…. This rests on code reading plus the menuOptions unit test.",
+   "#67, #70, #74: handle-menu-live.test.ts runs in the RHEL 8 CI job (built app, Xvfb)."
+  ],
+  "notes": "Round 2 addressed every verifier problem. 9161cdb, e78c6ce, 6270b7b, 229d55f and d447951 came from an earlier run of this step and were kept. That run left the #78 probe uncommitted; this run finished it (fixed a tsc error in ember-win32's waitFor call and added a unit test of the verdict) and committed it as 99e6445.\n\nStill open, for the owner:\n- #75: needs a yes on the handle-position proposal in its finding. Please keep it open in the lead's table, as the verifier asked.\n- #45 (b): remappable shortcuts, an automatic fallback chord, and an Ask entry in the launcher (setUserTasks on Windows, .desktop Actions=Ask on Linux).\n\nWaiting on CI:\n- #78: the native hold or the documented sentence depends on the probe results from the real runners.\n\nDesign choice on #70: the cut note now has its own row, and the window grows one row (24 px) for it, instead of calling fitMeta when it appears. With the note on the same line, nothing on that line could keep the name readable in the remote-target case.\n\nId 0 in findings and commits stands for the verifier's unnumbered should-fix: settings' Stop everything was recorded as coming from the menu."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts (hot): imports gain notificationBody and askSees, and friendlyApp is dropped from the ../shared/apps import",
+   "app/main/main.ts: showState calls syncHandle(); new syncHandle const below it (#75)",
+   "app/main/main.ts: greet()'s keys-taken sentence adds \"or use Ask Ember… in settings (chord)\" (#45)",
+   "app/main/main.ts: showMenu: menuClosing guard and menu-will-close listener removed (#67); label() becomes keyed(), with native accelerators on darwin (#77); toMenu(items, opened) (#68); Hide item calls syncHandle (#75)",
+   "app/main/main.ts: toMenu takes an `opened` callback and wraps clicks of items with opens (#68)",
+   "app/main/main.ts: notify() uses notificationBody(body) (#234)",
+   "app/main/main.ts: new AskWindow({ os: platform.os, … }) (#77)",
+   "app/main/main.ts: openAsk source union adds \"settings\"; the chip context comes from askSees(c) (#72)",
+   "app/main/main.ts: ipcMain.handle IPC.openAsk / IPC.stopEverything; setPresence calls syncHandle (#45, #75)",
+   "app/main/main.ts: createTargets deps openSettings: (section, focus) sends \"section:focus\" (#68/#184)",
+   "app/main/main.ts: makeHandle calls handle.setCompact(overlay?.isHidden()) (#75)",
+   "app/main/targets/types.ts: MenuItemLike.opens; TargetsDeps.openSettings gains optional focus \"host\"|\"wsl\"",
+   "app/main/targets/runtime.ts (hot): two call sites, openSettings(\"computers\",\"wsl\") for the WSL offer and (\"computers\",\"host\") for Bring",
+   "app/main/targets/menu.ts: Bring whenever SSH is allowed, opens flag, Cancel connecting to <host>",
+   "app/renderer/home/main.ts (hot): import of section-request; showSection holds/drops pending requests and focuses the named control; MutationObserver plus pointerdown/keydown/wheel drop; p-ask/p-stop listeners; section comment",
+   "app/renderer/home/index.html: Ask Ember… and Stop everything buttons at the start of #presence-actions",
+   "app/renderer/home/section-request.ts: new file",
+   "app/shared/ipc.ts: askFit channel and EmberAskApi.fit?; AskContext.carries and privateWindow; openAsk and stopEverything channels plus EmberHomeApi methods; focusSection comment",
+   "app/preload/ask.ts: fit",
+   "app/preload/home.ts: openAsk, stopEverything",
+   "app/shared/words.ts: darwin fileDialogPathHint Command+Shift+G (#230)",
+   "app/main/environment.ts: Intel row \"(best effort)\" in inspectMac (platform package's area); shortcutsCheck wording plus os parameter (mine)",
+   "app/main/handle.ts: TAB size, compact flag, setCompact(), reposition uses TAB (#75)",
+   "app/renderer/handle/badge.ts: targetChip adds the badge's state words (remote's #189 edits STATE_WORDS/targetBadge; the chip follows whatever targetBadge says)",
+   "app/renderer/handle/menu-copy.ts: deleted (#76)",
+   "docs/COMMANDS-WSL-SSH.md §4.1: when Bring shows, and the Cancel connecting item",
+   "test/unit/sshwsl-hooks.test.ts: decision-corpus hash c8585b24618a027e → 0ac8fec6bc81ec3f (Cmd+V → Command+V); may meet other packages' hash changes at merge",
+   "test/unit/main-privacy-wiring.test.ts: hook 8 snippet now reads toMenu(…, () => { opens = true; })",
+   "test/unit/targets-runtime.test.ts: nothing-set-up menu expects Bring; openSettings expectations take the focus argument",
+   "test/unit/policy-platform.test.ts, home-platform-copy.test.ts: Cmd → Command expectations",
+   "test/integration/handle-menu-live.test.ts: new; needs adding to ci.yml's el8 desktop list (packaging/lead)"
+  ],
+  "forDocs": [
+   "README Shortcuts: if another app holds one of Ember's shortcuts, click Ember's handle, or from the keyboard open Ember again (from your apps, the Start menu or Applications) and choose Ask Ember… (or Stop everything) in settings › Comfort & access › Ember on screen",
+   "README Shortcuts (#78): on Windows and macOS, let go of the shortcut's keys before you start typing; letters typed while Win+Alt (Control+Shift+Command) are held can go to another shortcut, and letters typed before the box appears go to the app you were in",
+   "CHANGELOG.md:66: the handle menu has Bring Ember to a computer… whenever your organisation allows SSH (not only once a computer is added), Disconnect build-01 while connected, and Cancel connecting to build-01 while connecting",
+   "CHANGELOG: the ask box keeps a pasted text's lines and grows to four lines (Shift+Enter adds a line), says \"Only the first 2000 characters will be sent.\" when a paste is cut, has a Cut/Copy/Paste/Select all menu on right-click, and its example is “turn on dark mode”",
+   "CHANGELOG: the line under the ask box says all a request carries (the window, the selected text or the field's text, other windows' titles; the whole sentence in its tooltip and to screen readers), \"Ember won't look at this window\" for a private window, and the computer chip shows its state (\"On build-01 (lost)\")",
+   "CHANGELOG: Hide Ember shrinks the handle to Ember's face in the corner; Show Ember brings the pill back",
+   "CHANGELOG: on a Mac, keys are named Command everywhere (\"Command+S\"), the ask box says Return, and the handle menu shows its shortcuts as macOS does; Intel Macs show \"macOS on Intel (best effort)\"",
+   "docs/DESIGN.md:12 (#233): drop \"the handle menu\" as a place where a character is chosen (no such item exists)"
+  ],
+  "ciOnly": [
+   "macOS: the handle menu shows its chords natively (⌃⇧⌘Space) from accelerator with registerAccelerator:false, and nothing is registered twice",
+   "macOS: the ask box hint reads \"Return to send\" and the box opens Cut/Copy/Paste/Select all on a right-click without hiding (the box is a panel there)",
+   "Windows and macOS: \"Ask Ember…\" picked from the handle menu opens the box (the menu-will-close/click order there; the guard is gone on every OS but only Linux was run)",
+   "Windows and macOS: settings stays in front after \"Bring Ember to a computer…\", and opens scrolled to Computers with the host field focused",
+   "Windows and macOS: the ask window grows and shrinks with its field (setBounds on a Windows tool window or macOS panel), and the right-click menu keeps it open",
+   "Windows and macOS: Hide Ember shrinks the handle to the 56x56 face tab and Show Ember restores the pill",
+   "Windows (PowerToys holding Win+Alt+Space): the setup-check wording, and that opening Ember again from the Start menu brings settings up so Ask Ember… is reachable by keyboard",
+   "Windows and macOS (#78): whether letters typed while Win+Alt / Control+Shift+Command are still down are lost or fire other shortcuts (no keyboard hold there)"
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 75,
+   "severity": "should-fix",
+   "what": "Only partly fixed. Hide Ember now shrinks the pill to a 56x56 tab: hide.cjs under mutter gave 200x56, then 56x56 at the corner, then 200x56 again. The other half of the scenario is still there: while Ember is shown, the 200x56 pill stays fixed at the primary display's bottom-right, over status bars and scroll corners. It is still movable:false, and HandleWindow.corner() has no setting. The fix agent left this undone with a proposal.",
+   "fix": "Get the owner's yes on the agent's proposal, then build it: a 'Handle position' setting (bottom right / bottom left) in settings.ts, read by HandleWindow.corner(), the overlay's card stack (coordinate with the overlay package's #126) and the home copy that says 'bottom-right corner', plus a 'Move to the other side' item in the handle menu. Until then, keep #75 open in the lead's table, not fixed."
+  },
+  {
+   "id": 45,
+   "severity": "should-fix",
+   "what": "Only partly fixed. Keyboard users now have a way in: Ember again → settings → Ask Ember…. settings-ask.cjs gave ask.open and ask.reveal with source=settings. Still missing: shortcuts can't be remapped, there is no fallback chord, and there is no Ask entry in the launcher or jump list. Also, the setup check and the greeting say 'choose Ask Ember… in its settings' but not where it is. The button sits deep in Comfort & access › Ember on screen, and settings opens at the top, so a keyboard user must Tab through the whole page to reach it.",
+   "fix": "(a) When the ask chord is taken, have the second-instance and activate showHome send a focus request through the new section-request mechanism (e.g. 'access:ask' mapped to p-ask in section-request.ts CONTROLS), or name the place in the copy ('…choose Ask Ember… under Comfort & access'). (b) Track the remap / fallback chord / setUserTasks + .desktop Actions=Ask proposal as open work for the owner."
+  },
+  {
+   "id": 78,
+   "severity": "should-fix",
+   "what": "No change on this branch. I confirmed keyboardHold is null at platform/win32/platform.ts:69 and platform/darwin/platform.ts:56. The only outcome is a line handed to the docs package. Nothing in this branch documents 'release the keys before typing', and nothing checks for lost letters on a real Windows or macOS runner.",
+   "fix": "Add a CI probe to the existing real-runner suites (test/integration/ember-win32.test.ts and ember-darwin.test.ts). It sends the real chord with SendInput or CGEvent, types letters straight away, then reads the ask box's value. Its result decides between a native hold and a documented 'release the keys first'. Make sure the docs package's handoff lands."
+  },
+  {
+   "id": 70,
+   "severity": "should-fix",
+   "what": "When a paste reaches 2000 characters, the cut note pushes the window name off the 'what Ember will see' line. fitMeta() runs only in onContext, never when the note appears, and .cut is flex:none. Rendered with sees 'Firefox · Inbox (12) — Mail' and field text + 3 windows (scratchpad relfix-verify/ask/scripts/cutrow-after.png): #sees shrank to 67 px, #sees-text clientWidth 0. The row shows only the eye, '+ field t' and the note, so the privacy line loses the window name just when a big paste is about to be sent. #74 says the title shrinks first and the extras never shrink; that no longer holds here.",
+   "fix": "In ask/main.ts fit(), call fitMeta() whenever cut.hidden changes, and count the note in fitMeta's crowding loop (hide the key hints first while the note shows). Or show the note in place of the hint keys. Add a page-level check, like cutrow.cjs, that the sees text keeps at least its minimum width while the note shows."
+  },
+  {
+   "id": 74,
+   "severity": "should-fix",
+   "what": "With a remote target the window name is still cut very short. The fix agent's own chips-ssh.png shows 'On deploy@build-server-01 (lost)', then the eye, 'Terminal · depl…' and '+ field text, 2 window titles', with every key hint gone. The extras never shrink and the where chip now goes up to 240 px, so the title gets about 90 px, which is the scenario the finding complained about (the document or terminal can't be told). The full text is now in the tooltip and for screen readers, so this is polish.",
+   "fix": "When the line is crowded, use a shorter extras form (e.g. '+ text, 2 titles' or '+2 more'), or cap .where lower (e.g. 180 px) when a sees chip is present, so the title keeps the 160 px that fitMeta aims for."
+  },
+  {
+   "id": 67,
+   "severity": "should-fix",
+   "what": "The fix is right: on base, the new handle-menu-live test fails with ask.menu_ignored {reason:'menu-closing'}; on fix/ask it passed 2/2 three times. But that test runs nowhere in CI. In ci.yml's checks job, `npm run test:integration` runs before `npm run build`, with ELECTRON_SKIP_BINARY_DOWNLOAD=1, so `built` is false and the suite skips. The el8 job runs only the files it lists, and this one isn't listed. Separately, the new comment in showMenu says an ask box that opens without a pick 'is put away once the menu has closed (ask.spurious_after_menu)'. A spurious click on 'Ask Ember…' runs the click handler, which sets opens=true, so that check never puts it away. The comment overstates the protection that is left.",
+   "fix": "Hand to the CI package: add test/integration/handle-menu-live.test.ts to the el8 job's integration file list (it builds first and has Xvfb). Reword the main.ts comment to say only the released() gate stays, or add the reviewer's optional guard: ignore Ask clicks within ~150 ms of menu.popup(), never after menu-will-close."
+  },
+  {
+   "id": 68,
+   "severity": "should-fix",
+   "what": "Part (a), keeping settings in front of the user's app, rests on main.ts toMenu calling opened() before an item marked opens. Nothing tests that wiring: target-menu.test.ts checks only the flag in targets/menu.ts, and main-privacy-wiring pins a literal string. My run of the reviewer's mouse scene (scene11, big xterm, mutter) on base also ended with settings focused in this environment, so nothing observed proves (a). Only code reading supports it, and the reading is correct. Part (b) is proven: base gave scrollY 0 with focus on BODY in 5 of 5 runs; fix gave Computers in view with host-add focused in 5 of 5.",
+   "fix": "Move toMenu into a pure module (e.g. app/main/targets/menu.ts, or a small main/menu-items.ts) and unit-test it: an `opens` item calls opened() before click, other items, submenu radios included, don't, and `opens` never reaches the Electron options."
+  },
+  {
+   "id": 53,
+   "severity": "should-fix",
+   "what": "The test checks only the live region's markup (a regex on index.html). The behaviour that matters is untested: cleared on `opened`, filled once with the full sentence on the late update, and not repeated for the same text. It lives in renderer/ask/main.ts, which has no tests. My Chromium run shows it works: '' on open, the full sentence after the late context.",
+   "fix": "Move the 'what the live region says' decision, (said, context) → text or null, into chips.ts as a pure function, and test that sequence in ask-box.test.ts."
+  },
+  {
+   "id": 77,
+   "severity": "should-fix",
+   "what": "Plausible on Windows and macOS; I couldn't check it here. While the right-click menu is up, the box ignores blur (menuUp). The popup callback then calls win.focus() whenever the box isn't focused. If the user dismisses the menu by clicking another app, the box doesn't close, and it can take focus back from that app once the menu has closed. On Windows that click can also activate the other window. On Linux under GTK, I confirmed with and without mutter that the box stays focused and Paste works.",
+   "fix": "In editMenu, note whether a blur arrived while the menu was up. In the callback, if the OS focus is now outside Ember (BrowserWindow.getFocusedWindow() === null and not the box), hide the box rather than calling focus(). Re-check right-click, then click elsewhere, on the win32 and darwin CI runners."
+  },
+  {
+   "id": 230,
+   "severity": "should-fix",
+   "what": "The labels are fixed and the corpus change is exactly as reported. I hashed base's decisions with 'Cmd+' replaced by 'Command+' and got 0ac8fec6bc81ec3f; that string occurs once. Some comments that describe the output still say 'Cmd': app/renderer/home/copy.ts:142 ('\"cmd+s\" → \"Cmd+S\" on a Mac'), and app/main/policy/policy.ts:1418, 1427 and 1484 ('Cmd+S', 'Cmd+A').",
+   "fix": "Update those comments to 'Command+S' / 'Command+A' (comment-only hunks)."
+  },
+  {
+   "id": null,
+   "severity": "should-fix",
+   "what": "Settings' new Stop everything button calls stopEverything(\"menu\") (main.ts, IPC.stopEverything), so the kill switch's log and audit record a settings press as coming from the handle menu.",
+   "fix": "Add a 'settings' source to stopEverything / killSwitch.pull's type and pass it from the IPC handler, as openAsk already does with source 'settings'."
+  }
+ ]
+}

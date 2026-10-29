@@ -1,0 +1,431 @@
+{
+ "key": "settings",
+ "final": {
+  "findings": [
+   {
+    "id": 152,
+    "status": "fixed",
+    "how": "Round 1: describeEntry returned null for every command, remote and wsl entry, and main sent only the newest 150 of the 500 entries the log keeps. copy.ts now writes lines for a command's question, answer, refusal, announcement and end: where it ran, the shell when known, and how it ended, never the command's text. It also writes lines for connections made, lost, ended and failed, and for Ember's helper removed. withCommandShells carries the shell from a command's decision to its answer and its end. main.ts returns recent(500). A disconnect reads 'Ended · Connection to build-01', because the 'Disconnected' tag was cut off in Chromium. Round 2 (verifier): every batch reconnect try got its own 'Didn't work · Connect to build-01' line, about 24 in 10 minutes. connections.ts now marks a reconnect's failed try with reconnect: true and, when onLost gives up, audits {step:'gave-up', host, kind} once. connectionLine hides the marked tries and shows the end as 'Didn't work · Reconnect to build-01 · Ember couldn't reach it.' A connect the user started still has its own line. COMMANDS-WSL-SSH.md §6 says that a reconnect's tries make one line and that the audit keeps each try.",
+    "test": "home-activity.test.ts 'What Ember did: commands' and 'other computers' (round 1), and the new 'shows a reconnect's tries as one line' test, where 24 marked tries plus 'gave-up' give one line. ssh-connections.test.ts 'tells each failed reconnect…' now also checks that the audit marks each try and gives up once. All of these failed before and pass now. Chromium render of the built page (scratch settings/activity2.mjs): Lost, then one 'Didn't work | Reconnect to build-01 | Ember couldn't reach it.', and no tag is cut."
+   },
+   {
+    "id": 224,
+    "status": "fixed",
+    "how": "Same change as #152: command and connection lines in What Ember did, and main sends every entry the log keeps. No code writes 'wsl' audit events today; if any are added they get the same connection lines.",
+    "test": "Same as #152 (home-activity.test.ts command and connection blocks, and the test that main asks for at least KEEP entries)."
+   },
+   {
+    "id": 217,
+    "status": "fixed",
+    "how": "Round 1: userWords capitalises a reason, ends it with a full stop and turns 'the user' into 'you' (with the verb), and 'the user's' into 'your'. Every reason in What Ember did goes through it. Round 2 (verifier): decide.ts:130's tainted-task reason ends a clause with 'wasn't the user's' and came out as 'wasn't your.' A 'the user's' followed by punctuation or the end of the text now becomes 'yours', before the general rule.",
+    "test": "home-activity.test.ts 'reasons in your words' now feeds decide.ts' exact reasons, alone ('It asks first: an earlier step in the task wasn't yours.') and with every other reason, through userWords and through describeEntry. It failed before and passes now. Chromium render of the built page: 'Asked you | Run a bash command on build-01 | It asks first: an earlier step in the task wasn't yours.'"
+   },
+   {
+    "id": 154,
+    "status": "fixed",
+    "how": "styles.css now has [hidden] { display: none !important; }. Under an SSH-off policy #host-form, and with no targets runtime #computers and #commands, now compute to display:none. Before, they computed to flex and grid.",
+    "test": "home-settings.test.ts 'hidden means hidden' failed before and passes now. Scratch hidden.mjs shows the computed styles before and after."
+   },
+   {
+    "id": 155,
+    "status": "fixed",
+    "how": "Each fix button gets aria-label fixButtonName(label, row), for example 'Open System Settings: Screen Recording'. While a fix runs, the button is aria-disabled rather than disabled, so focus stays on it. A refused fix says why in its row and in a #checks-msg status line that exists from page load, and focus goes back to the button, including after a redraw.",
+    "test": "home-settings.test.ts 'setup check fix buttons' failed before and passes now. Chromium (fix.mjs): every button has its own name, and after a refused fix focus stays on the button and the status line is filled."
+   },
+   {
+    "id": 49,
+    "status": "fixed",
+    "how": "Same change as #155.",
+    "test": "Same as #155."
+   },
+   {
+    "id": 50,
+    "status": "fixed",
+    "how": "When the start row goes away while Start or 'I agree' has focus, applySettings scrolls to the top, focuses #pick-h ('Your Ember') and puts 'Ember has started.' in a new #home-live status line.",
+    "test": "home-settings.test.ts 'Start hands focus on' failed before and passes now. Chromium start.mjs: focus moves to H2#pick-h (it was BODY)."
+   },
+   {
+    "id": 56,
+    "status": "fixed",
+    "how": "The <output> beside Size is now an aria-hidden span, so the slider's aria-valuetext is the only thing that speaks the value.",
+    "test": "home-settings.test.ts slider block failed before and passes now. Chromium AX tree: 6 live status regions instead of 7, and the slider still reads 'Size', '60 pixels'."
+   },
+   {
+    "id": 156,
+    "status": "fixed",
+    "how": "Round 1: sshStatus works from the state and the registry's words. 'nothing yet' reads 'Connected, commands off' with 'Turn on commands for build-01 under Commands to use it.' 'isn't answering' reads 'Connected, but not answering'. registry canWords no longer says 'commands once you agree only'. Round 2 (verifier): with admin.commands.ssh 'off' the note pointed to a switch that is turned off. computersView now passes modeFor(admin,'ssh') into sshStatus. Under 'off' the row keeps 'Connected, commands off' and its note is the organisation's line, 'Your organisation has turned off commands on computers reached over SSH.', the same words the Commands section shows. Under 'ask' or no policy the hint stays.",
+    "test": "home-computers.test.ts status block (round 1), plus the new 'doesn't point to the Commands switch when the organisation has turned commands off there' test (admin { source:'x', features:{}, commands:{ ssh:'off' } }). It checks the note, that commandsView shows the same line, that the run switch is disabled, and that the hint stays under 'ask'. It failed before and passes now."
+   },
+   {
+    "id": 190,
+    "status": "fixed",
+    "how": "Round 1: 'Connected, commands off' and 'Connected, but not answering' as in #156. A distro listed while WSL is off in Ember reads 'Off'. A host that is still connecting offers 'Cancel' ('Stop connecting to build-01'), which sends the disconnect act that aborts a connection in progress. Round 2 (verifier, weak test): a test now builds the registry for real (buildRegistry plus summaryOf) for a stalled link, a distro while WSL is off in Ember, and a connected headless host with commands off. It feeds the summaries into computersView.",
+    "test": "home-computers.test.ts 'reads the registry's own words…' expects 'Connected, but not answering', 'Off' and 'Connected, commands off' from real registry output. I changed each of the three strings in registry.ts in turn ('isn't responding', 'WSL is switched off in Ember', 'nothing for now'): each change makes the new test fail, while the old tests passed with them. registry.ts was restored afterwards."
+   },
+   {
+    "id": 158,
+    "status": "fixed",
+    "how": "commandsView gives each 'Ask me before every command' switch an ariaLabel that says where, for example 'Ask me before every command on build-01', 'on this computer' or 'in Ubuntu (WSL)'. computers.ts sets it on the input.",
+    "test": "home-computers.test.ts ask-every block failed before and passes now. Chromium reads three different names."
+   },
+   {
+    "id": 159,
+    "status": "fixed",
+    "how": "The add form now waits for the act. The field is cleared only when addResult says ok and the field still holds that host. Connect is marked busy while the act runs, and a second submit does nothing.",
+    "test": "home-computers.test.ts add block failed before and passes now. Chromium add.mjs: the typed host stays while the act is pending and after {ok:false}, and is cleared after {ok:true}."
+   },
+   {
+    "id": 188,
+    "status": "fixed",
+    "how": "Same change as #159, plus addPending. While the card or the connection is pending, the line says 'Connecting to <host>… If Ember asks, answer in the window that opens.'",
+    "test": "Same tests as #159."
+   },
+   {
+    "id": 191,
+    "status": "fixed",
+    "how": "Round 1: the confirm now says the removal stops anything running there and forgets the computer here. The button reads 'Remove helper' and is named 'Remove Ember's helper from build-01'. While the removal runs, the row reads 'Removing Ember's helper…' and the line says 'Removing Ember's helper from build-01…'; on success it says 'Removed. build-01 is no longer in your list.' Cancel: connections.uninstall takes a signal, the runtime keeps an AbortController per removal, and a disconnect of that host aborts it. The answer then says 'Stopped removing Ember's helper from build-01. Part of it may still be there: remove it again to finish.' and the computer is kept. The row shows a silent Cancel, and focus moves to it. Round 2 (verifier, one name per act): What Ember did now says 'Didn't work · Remove Ember's helper from build-01' and 'Removed · Ember's helper from build-01'. Not changed: the password or host-key card that a removal may show is the prompt window's (prompt package), and it is still titled for signing in.",
+    "test": "Round 1: home-computers.test.ts removal and cancel blocks, ssh-connections.test.ts (a cancelled removal runs nothing and is audited as cancelled) and targets-runtime.test.ts (a disconnect stops the removal and keeps the computer). Round 2: home-activity.test.ts 'other computers' expects the helper's name. All of these failed before and pass now. Chromium: 'Removed | Ember's helper from build-01'."
+   },
+   {
+    "id": 163,
+    "status": "fixed",
+    "how": "A computer's buttons now wrap onto their own line under its name and status, so the address no longer breaks mid-word. The third button is 'Remove helper'. Forget asks first ('Forget build-01? Ember disconnects, removes it from this list and forgets your OKs for it. Ember's helper stays on build-01.'). The placeholder is 'Host name or user@host', which fits at 420 px.",
+    "test": "home-computers.test.ts layout and Forget blocks failed before and pass now. Chromium at 760 and 420 px confirms the layout."
+   },
+   {
+    "id": 198,
+    "status": "fixed",
+    "how": "The Computers intro mentions WSL only on Windows (computersIntro). The placeholder is shorter. The WSL switch now sits above the list in its own group. The default distro is marked 'default for “in WSL”' (TargetSummary.wslDefault, set by summaryOf).",
+    "test": "home-computers.test.ts 'fits its OS and the window' block failed before and passes now, including a buildRegistry and summaryOf check of wslDefault."
+   },
+   {
+    "id": 162,
+    "status": "fixed",
+    "how": "The sidebar labels now match the headings: 'Apps & privacy', 'Comfort & access', 'What Ember did', 'Setup check'.",
+    "test": "home-settings.test.ts sidebar block failed before and passes now. Chromium at 760 and 640 px: every label fits."
+   },
+   {
+    "id": 250,
+    "status": "fixed",
+    "how": "The wide sidebar sets scrollbar-width: auto, so the slim ember.css scrollbar shows. Only the narrow horizontal row of links still hides it.",
+    "test": "home-settings.test.ts sidebar-scroll block failed before and passes now. Chromium at 760×420: the scrollbar thumb shows."
+   },
+   {
+    "id": 56,
+    "status": "fixed",
+    "how": "See above (listed once).",
+    "test": "See above."
+   },
+   {
+    "id": 194,
+    "status": "fixed",
+    "how": "friendlyApp turns 'ssh:<host>:<app>' into '<App> on <host>', for example 'gedit on build-01', naming the app from the Linux or macOS table. The Remove button's name follows.",
+    "test": "apps-grants.test.ts failed before and passes now."
+   },
+   {
+    "id": 164,
+    "status": "fixed",
+    "how": "'App windows on your never-look list'; 'Offer to bring Ember along when I connect with SSH'; the device-code row keeps 'Enter it at github.com/login/device' in one nowrap piece, so no line starts with a dash; the Linux name table adds google-chrome, google-chrome-stable, code and slack. Two items belong to other packages under their own findings: the welcome's WSL sentence on Linux and macOS (fix/onboard has onboardingRest, WSL on Windows only, review #221) and 'Model for tasks (needs vision)' (fix/agent removes it, review #222). I checked both on those branches.",
+    "test": "home-settings.test.ts copy block, apps-grants.test.ts Linux-names block and home-platform-copy.test.ts failed before and pass now."
+   },
+   {
+    "id": 229,
+    "status": "fixed",
+    "how": "Round 1: doctor.ts gives a row the setup check also has the window's own label: Linux 'Screen reading'; macOS 'Reading and using apps', 'Applications folder', 'Microphone'; 'Root'/'Administrator'. A platform microphone row is 'Microphone' and replaces the general 'Not checked here' row. The report heading is 'Ember <v> setup check'. doctor-rows.mjs reads either heading, and the ci.yml macOS steps expect 'Reading and using apps'. Round 2 (verifier, docs): DEVELOPING.md now says 'setup check' everywhere it said 'check-up' (about 20 places). Its §10.9 Windows table now has 'Microphone', and the 'As on Linux' row no longer lists Microphone. Its §11.8 macOS table now has 'Reading and using apps', 'Microphone' and 'Applications folder', and 'As on Linux' no longer lists Microphone. The CI paragraph names 'Reading and using apps'. COMMANDS-WSL-SSH.md §3.3 and the §5 heading say 'setup check'. README.md and CHANGELOG.md belong to the docs package: their lines are under forDocs. A merge-tree check shows fix/settings merges with fix/docs cleanly. With fix/onboard (which renames 'Compositor' to 'Transparent windows' in the same tables), adjacent table lines conflict; it is a trivial merge.",
+    "test": "doctor-names.test.ts (round 1: labels and heading). The new 'is what the developer docs call the tool and each row' test checks that DEVELOPING.md and COMMANDS-WSL-SSH.md never say 'check-up', and that the §10.9 and §11.8 tables use the report's labels with one Microphone row each. It failed before (22 'check-up' matches) and passes now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "4eed3bd",
+    "subject": "Show commands, connections and plain-worded reasons in What Ember did",
+    "ids": [
+     152,
+     224,
+     217
+    ]
+   },
+   {
+    "sha": "467cda9",
+    "subject": "Keep hidden parts of the settings window hidden",
+    "ids": [
+     154
+    ]
+   },
+   {
+    "sha": "1c48425",
+    "subject": "Name each setup check fix button after its row and keep focus on it",
+    "ids": [
+     155,
+     49
+    ]
+   },
+   {
+    "sha": "3519dae",
+    "subject": "Say what each computer in settings can do now and what to do next",
+    "ids": [
+     156,
+     190
+    ]
+   },
+   {
+    "sha": "b98581b",
+    "subject": "Name each \"Ask me before every command\" switch after its computer",
+    "ids": [
+     158
+    ]
+   },
+   {
+    "sha": "f880a38",
+    "subject": "Keep the typed host until it is added, and say Ember is connecting",
+    "ids": [
+     159,
+     188
+    ]
+   },
+   {
+    "sha": "6239367",
+    "subject": "Say what Remove helper and Forget do, ask before both, and show removal progress",
+    "ids": [
+     191,
+     163
+    ]
+   },
+   {
+    "sha": "6df0bfa",
+    "subject": "Fit Settings › Computers to its OS and the window, and mark the WSL default",
+    "ids": [
+     198,
+     163
+    ]
+   },
+   {
+    "sha": "0798efa",
+    "subject": "Name the sidebar's links after the sections they open",
+    "ids": [
+     162
+    ]
+   },
+   {
+    "sha": "0c0d8dc",
+    "subject": "Show the settings sidebar's scrollbar when its links outgrow the window",
+    "ids": [
+     250
+    ]
+   },
+   {
+    "sha": "6777839",
+    "subject": "Say the Size slider's value once",
+    "ids": [
+     56
+    ]
+   },
+   {
+    "sha": "1a361da",
+    "subject": "Hand focus to \"Your Ember\" when Start goes, and say Ember started",
+    "ids": [
+     50
+    ]
+   },
+   {
+    "sha": "3bd69e3",
+    "subject": "Name a grant for an app on another computer as that app there",
+    "ids": [
+     194
+    ]
+   },
+   {
+    "sha": "38729ec",
+    "subject": "Fix small copy slips in the settings window and name common Linux apps",
+    "ids": [
+     164
+    ]
+   },
+   {
+    "sha": "494dc12",
+    "subject": "Call each doctor row what the setup check calls it, and the report the setup check",
+    "ids": [
+     229
+    ]
+   },
+   {
+    "sha": "fb5c689",
+    "subject": "Let the user cancel removing Ember's helper from a computer",
+    "ids": [
+     191
+    ]
+   },
+   {
+    "sha": "053056d",
+    "subject": "Pin the consent's \"App windows\" sentence in the OS words test too",
+    "ids": [
+     164
+    ]
+   },
+   {
+    "sha": "ad4ee35",
+    "subject": "Fit the ended-connection line's tag in What Ember did",
+    "ids": [
+     152
+    ]
+   },
+   {
+    "sha": "b3a9017",
+    "subject": "Say \"yours\" where a reason's \"the user's\" ends its clause",
+    "ids": [
+     217
+    ]
+   },
+   {
+    "sha": "b7f40ef",
+    "subject": "Call a removal in What Ember did what the Remove helper button calls it",
+    "ids": [
+     191
+    ]
+   },
+   {
+    "sha": "17a5048",
+    "subject": "Show a reconnect's tries in What Ember did as one line, when it gives up",
+    "ids": [
+     152
+    ]
+   },
+   {
+    "sha": "511d2e3",
+    "subject": "Don't point to the Commands switch when the organisation turned commands off on SSH",
+    "ids": [
+     156
+    ]
+   },
+   {
+    "sha": "9b0e723",
+    "subject": "Tie the Computers rows' status words to what the registry really says",
+    "ids": [
+     190
+    ]
+   },
+   {
+    "sha": "7eae11c",
+    "subject": "Call the doctor the setup check, and its rows by their new names, in the docs",
+    "ids": [
+     229
+    ]
+   }
+  ],
+  "checks": "Final run, at 7eae11c on fix/settings:\n- npx tsc --noEmit: exit 0, no errors.\n- npm run lint (eslint .): clean, no output.\n- npm test (full): 246 files passed, 1 skipped (247); 6002 tests passed, 8 skipped (6010); 126 s. No timing-sensitive failures.\n- npm run build: exit 0 (main.cjs 2.7 MB).\n- xvfb-run -a npm run test:smoke: 2/2 ok (first instance showed its window; second launch handed over and the first focused its window).\n\nNot needed: the commands integration suites (nothing under app/main/commands/** changed) and the voice suites (voice untouched).\n\nExtra check: a Chromium render of the built page (scratch /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/settings/activity2.mjs) shows the round-2 lines ('…wasn't yours.', one 'Reconnect to build-01' line for 24 tries, the helper's name for removal), with no tag cut.",
+  "sharedHunks": [
+   "app/main/main.ts: the doctor report heading 'Ember ${version} setup check' (#229); IPC.activity returns audit.recent(500) instead of recent(150) (#152)",
+   "app/main/remote/connections.ts: uninstall(host, { signal }) stops where it is when the signal fires (#191); doConnect's failed audit adds reconnect: true on a reconnect try; onLost audits { step: 'gave-up', host, kind } once when it stops trying (#152)",
+   "app/main/remote/types.ts: Connections.uninstall takes an optional { signal } (#191)",
+   "app/main/targets/runtime.ts: a removals Map of AbortControllers per host; a disconnect aborts that host's removal; the uninstall act passes the signal and answers 'Stopped removing Ember's helper from <host>…' when aborted (#191)",
+   "app/main/targets/registry.ts (remote package): canWords no longer says 'commands once you agree only' (#156); summaryOf sets wslDefault for the distro 'WSL' names (#198)",
+   "app/shared/targets.ts: TargetSummary.wslDefault?: boolean (#198)",
+   "app/shared/apps.ts: friendlyApp names 'ssh:<host>:<app>' as '<App> on <host>' (#194); the Linux table adds google-chrome, google-chrome-stable, code and slack (#164)",
+   "app/renderer/home/main.ts (onboarding / setup check parts): fix button aria-labels, aria-disabled while running, #checks-msg status and focus kept (#155/#49); Start hands focus to #pick-h and says 'Ember has started.' in #home-live (#50); the device-code row's nowrap piece (#164); the activity refresh uses withCommandShells (#152)",
+   "app/renderer/home/index.html (onboarding / setup check parts): #checks-msg and #home-live status lines (#155, #50); the never-look 'App windows' sentence (#164); sidebar labels (#162); the Size output as an aria-hidden span (#56)",
+   "app/renderer/home/styles.css (css package's file for forced-colors rules): [hidden]{display:none !important} (#154); the wide sidebar's scrollbar-width:auto (#250); computer rows wrap their buttons (#163)",
+   "app/main/doctor.ts: row labels follow the window's (owned per 'doctor.ts check names', listed for completeness) (#229)",
+   "scripts/package/doctor-rows.mjs (packaging): the header regex accepts 'setup check' or 'check-up' (#229)",
+   ".github/workflows/ci.yml (packaging): the two macOS doctor-rows steps expect 'Reading and using apps' instead of 'Accessibility' (#229)",
+   "docs/DEVELOPING.md (docs package): 'check-up' → 'setup check' throughout; the §10.9 Windows table 'Microphone privacy' → 'Microphone' and 'Microphone, Speech models, Speaking' → 'Speech models, Speaking'; the §11.8 macOS table 'Accessibility' → 'Reading and using apps', 'Microphone access' → 'Microphone', 'Location' → 'Applications folder', and Microphone dropped from 'As on Linux'; the §11 CI paragraph names 'Reading and using apps'; three paragraphs reflowed (#229). It merges cleanly with fix/docs, and conflicts on adjacent lines with fix/onboard's 'Compositor' → 'Transparent windows'.",
+   "docs/COMMANDS-WSL-SSH.md (docs package; common.md allows doc-line updates): §3.3 and the §5 heading say 'setup check' (#229); the §6 What Ember did paragraph says a reconnect's tries make one line (#152); round 1: §4.7 Remove helper, Forget and Cancel, and the §6 What Ember did lines (#191, #152)",
+   "test/unit/ssh-connections.test.ts, test/unit/targets-runtime.test.ts, test/unit/packaging.test.ts, test/unit/ui-copy.test.ts, test/unit/home-platform-copy.test.ts, test/unit/app-names-os.test.ts, test/unit/apps-names-platforms.test.ts: expectations follow the changes above"
+  ],
+  "forDocs": [
+   "README.md line 91 (line 130 on fix/docs): 'To check this Mac, run Ember's check-up through `open`' → 'run Ember's setup check through `open`'. `ember doctor`'s report now opens 'Ember <v> setup check', the window's name for it (review #229).",
+   "CHANGELOG.md (fix/docs line 104): the '**Check-up** (`ember doctor` and the settings window's setup check)' bullet → '**Setup check** (`ember doctor` and the settings window)'; line 108 '…the check-up doesn't look inside your distros' → 'the setup check doesn't look inside your distros'; line 31 '**Check-up**:' → '**Setup check**:'.",
+   "CHANGELOG.md: `ember doctor`'s heading now reads 'Ember <version> setup check' (it was 'check-up'), and rows take the settings window's names. Linux 'Reading apps' → 'Screen reading'. macOS 'Accessibility' → 'Reading and using apps', 'Microphone access' → 'Microphone', 'Location' → 'Applications folder'. Windows 'Microphone privacy' → 'Microphone'. On Windows and macOS the extra 'Microphone · Not checked here' row is gone. Scripts that parse the report should accept both headings, as scripts/package/doctor-rows.mjs now does.",
+   "CHANGELOG.md: Settings › What Ember did now lists each command's question, answer, refusal and end (where it ran, the shell and how it ended, never the command's text), and each connection made, lost, ended or failed. A reconnect that gives up is one line ('Reconnect to build-01'), and Ember's helper removed is a line too. Reasons there speak to you ('your never-look list', '…wasn't yours.').",
+   "CHANGELOG.md: Settings › Computers. 'Remove helper' (it was 'Remove Ember from <computer>') asks first, says it stops anything running there and forgets the computer here, shows 'Removing Ember's helper…' with a Cancel, and says when it is done. Forget asks first. A connecting computer offers Cancel. Rows say 'Connected, commands off' (with what to do, or the organisation's line when it turned commands off on SSH) and 'Connected, but not answering'. A distro reads 'Off' while WSL is off in Ember. The default distro is marked 'default for “in WSL”'."
+  ],
+  "ciOnly": [
+   "macOS CI: the packaged doctor run through LaunchServices prints 'Reading and using apps' (fail before the grant, ok after), which the two edited ci.yml steps now expect; only the real macOS runner proves the TCC-backed rows",
+   "Windows CI: ember-doctor.cmd shows one 'Microphone' row (from microphone-privacy) and no general 'Not checked here' row; the expected rows in ci.yml:409 don't name Microphone, so only a real run shows the full report",
+   "VoiceOver and NVDA reading the setup check's per-row fix button names, the 'Ask me before every command on …' names, the single Size announcement and focus moving to 'Your Ember' after Start; checked here only in Chromium's AX tree",
+   "The sidebar's scrollbar on macOS with overlay scrollbars and on Windows with its own scrollbar style",
+   "A real SSH link that drops for good: about 24 batch reconnect tries over 10 minutes leave one 'Didn't work · Reconnect to build-01' line (proved here with fake timers and fake ssh)",
+   "Cancelling a real removal from Ember's helper on a real SSH host, including while its password or host-key card is open"
+  ],
+  "notes": "I fixed all six of the verifier's problems with tests that fail first. #190 was a missing test, not a bug: the new test builds the real registry, and I showed it fails when any of the three registry strings changes.\n\n#56 appears twice in the findings array by mistake: the second entry just points to the first.\n\nMerging: a read-only `git merge-tree` against every fix/* branch merges cleanly with fix/docs, fix/remote and most others. Conflicts:\n- app/renderer/home/main.ts with fix/agent, fix/lifecycle, fix/platform and fix/voice.\n- app/renderer/home/copy.ts with fix/ask.\n- app/main/targets/runtime.ts with fix/bubble.\n- index.html, home-platform-copy.test.ts and the adjacent rows of the DEVELOPING.md tables with fix/onboard.\n\nAll of these are hot files; the lead resolves them at merge.\n\nSmall things that are not user copy and that I left alone: 'check-up' in code comments, in the ci.yml step names and in doctor-rows.mjs's CI-only messages (packaging owns those).\n\nWorktree: /home/user/wt/fx-settings, clean, 24 commits on 1b39bb3."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts: IPC.activity returns audit.recent(500) instead of 150, with a one-line comment (#152)",
+   "app/main/main.ts: runDoctor heading 'Ember <v> setup check' instead of 'check-up' (#229)",
+   "app/renderer/home/main.ts (onboard owns setup-check/first-run): renderChecks gives fix buttons an aria-label, aria-disabled busy state, #checks-msg on refusal, and refocus on the same row's button after a redraw (#155/#49)",
+   "app/renderer/home/main.ts (onboard owns Start): applySettings focus hand-off to #pick-h plus STARTED_TEXT in #home-live (#50)",
+   "app/renderer/home/main.ts: refreshActivity iterates withCommandShells(entries); the import line gains fixButtonName, fixFailedText, STARTED_TEXT, withCommandShells (#152)",
+   "app/renderer/home/main.ts (agent owns Copilot strings): showCode's ' — enter it at …' is now a nowrap span 'Enter it at …' (#164); fix/agent also edits nearby showCode lines",
+   "app/renderer/home/index.html: #home-live under the tagline (#50); welcome 'App windows on your never-look list' (#164, onboard's welcome section); #checks-msg after #checks (#155); the Computers intro gets id=computers-intro with Linux's words, which fix/onboard d2d52b9 changes identically, and the WSL switch moves into its own group above the list (#198)",
+   "app/main/targets/registry.ts (remote): canWords doesn't append 'only' to 'commands once you agree' (#156); summaryOf sets wslDefault for the distro WSL_WORDS[0] names (#198)",
+   "app/shared/targets.ts (contract): TargetSummary.wslDefault?: boolean (#198)",
+   "app/main/targets/runtime.ts (remote/hot): a `removals` map; disconnect() aborts a removal of that host; the uninstall act passes a signal, says when it was stopped, and keeps the host (#191)",
+   "app/main/remote/types.ts (contract): Connections.uninstall(host, o?: { signal?: AbortSignal }) (#191)",
+   "app/main/remote/connections.ts: uninstall links the signal to its AbortController, checks it before each step, and removes the listener in finally (#191)",
+   "app/shared/apps.ts: remoteApp for 'ssh:<host>:<app>' keys, familiar() split out of friendlyApp, and the Linux table gains google-chrome, google-chrome-stable, code and slack; comment says 26 names (#194/#164)",
+   "app/main/doctor.ts check names are owned by this package: WINDOW_ROW and MIC_ROWS mapping (#229)",
+   ".github/workflows/ci.yml (packaging): the macOS doctor-rows steps expect 'Reading and using apps=fail' and '=ok' instead of 'Accessibility=…' (#229). If another package renames environment.ts's macOS accessibility label, these two steps must follow, because the doctor now takes the window's label",
+   "scripts/package/doctor-rows.mjs (packaging): header regex accepts 'setup check' or 'check-up' (#229)",
+   "docs/COMMANDS-WSL-SSH.md (docs): §6.7 one sentence on what What Ember did shows for commands and connections (#152/#224); §4.7 Remove helper button name, its question, progress, Cancel and Forget's question (#191/#163)",
+   "test/unit/ui-copy.test.ts: pins for COMPUTERS_INTRO(+_WINDOWS), the placeholder, OFFER_SWITCH 'SSH', the Remove/Forget words, and two reason lines with a capital and full stop. fix/onboard also edits this test's intro pins",
+   "test/unit/packaging.test.ts: the CI step order pins use 'Reading and using apps' (#229)",
+   "test/unit/apps-names-platforms.test.ts and test/unit/app-names-os.test.ts: the frozen Linux table now has 26 names (#164)",
+   "test/unit/home-platform-copy.test.ts: the Linux permissions sentence 'App windows …' (#164)",
+   "test/unit/targets-runtime.test.ts and test/unit/ssh-connections.test.ts: one new test each for cancelling a removal (#191)",
+   "Merge note: fix/onboard d2d52b9 also defines COMPUTERS_INTRO_WINDOWS and computersIntro(os) in computers-copy.ts and patches #computers-intro through homePatches; this branch sets it from computers.ts draw(). Both write the same text, so keep one definition (tsc will flag a duplicate function)"
+  ],
+  "forDocs": [
+   "README / install docs: `ember --doctor` (and ember-doctor.cmd) now prints 'Ember <version> setup check' (was 'check-up'). Call it the setup check everywhere, the same name as the settings window's section",
+   "README macOS: the doctor's rows now match the settings window: 'Reading and using apps' (the Accessibility permission; the fix line still names System Settings › Privacy & Security › Accessibility), 'Applications folder' (was 'Location'), and one 'Microphone' row (was 'Microphone access' plus a 'Microphone: Not checked here' row). Linux: 'Screen reading' (was 'Reading apps')",
+   "docs/DEVELOPING.md:140 ('What Ember did lists every request, question, action and refusal'): now also true of commands and connections. Optionally add: 'including each command's question, answer and end (where it ran, the shell and how it ended, never the command's text) and each SSH connection made, lost, ended or failed'",
+   "README / docs where they name Settings › Computers' button 'Remove Ember from build-01': it is now 'Remove helper'. It shows progress, has a Cancel, and says 'Removed. build-01 is no longer in your list.' when done; Forget now asks first",
+   "CHANGELOG (Settings): What Ember did shows commands and SSH connections, with reasons in plain words; Computers rows give clearer statuses ('Connected, commands off', 'Connected, but not answering', WSL 'Off'), Cancel while connecting, a Remove helper that can be cancelled and shows progress, a Forget that asks first, the default WSL distro marked, and the WSL switch above the list; the add field keeps the host until it is added; the sidebar uses the section names; each setup-check fix button is named after its row and keeps focus; the Size slider is read once; focus moves to 'Your Ember' after Start; grants for apps on SSH computers read 'gedit on build-01'; Chrome, VS Code and Slack get familiar names on Linux"
+  ],
+  "ciOnly": [
+   "macOS: the packaged `Ember.app --doctor` row is now 'Reading and using apps', and ci.yml's TCC steps expect it to read fail before the grant and ok after. Only the macOS job proves the renamed expectation passes",
+   "macOS and Windows: the doctor shows a single 'Microphone' row (the platform permission row), with the generic 'Not checked here' row dropped, in a real report",
+   "Windows: WSL rows with real discovery: 'Off' while WSL is off in Ember, and 'default for “in WSL”' on the default distro (registry names include 'WSL'). The fix-button names ('Turn on: Accessibility in Ubuntu') as Narrator reads them",
+   "Windows Narrator and macOS VoiceOver: what is announced from #checks-msg, #home-live ('Ember has started.') and the Size slider (one announcement per arrow press). Only Chromium's accessibility tree was checked here",
+   "SSH (remote.yml sshd job): cancelling a real removal mid-run. The abort kills the ssh child, the answer says it stopped, the host record stays, and a second removal finishes the job",
+   "Each OS's real Electron window at its 420 px minimum height: the sidebar's slim scrollbar is visible (checked only in headless Chromium with scrollbars on)"
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 217,
+   "severity": "should-fix",
+   "what": "userWords maps every \"the user's\" to \"your\", including the possessive at the end of a clause. decide.ts:130 writes the reason \"an earlier step in the task wasn't the user's\" into every command decision once a task is tainted. What Ember did then shows \"Asked you · Run a bash command on build-01 · It asks first: an earlier step in the task wasn't your.\" I saw this both in an esbuild probe of userWords and in the Chromium render of the built page (run2/dom/activity.mjs). decide.ts:130 is the only audit reason with this shape today.",
+   "fix": "In userWords (app/renderer/home/copy.ts), before the general rule, change a \"the user's\" that is followed by punctuation or the end of the text (e.g. /\\b([Tt])he user's(?=\\s*[.,;:!?)]|$)/) to \"yours\". Add decide.ts's exact taint reason to home-activity.test.ts \"reasons in your words\" (expected: \"It asks first: an earlier step in the task wasn't yours.\")."
+  },
+  {
+   "id": 156,
+   "severity": "should-fix",
+   "what": "The new note is wrong under a policy that turns commands off on SSH. With admin.commands.ssh = \"off\", local-service returns state \"off\" and the registry says can \"nothing yet\". computersView then shows \"Connected, commands off\" with the note \"Turn on commands for build-01 under Commands to use it.\" In the same window, commandsView shows \"Run commands on build-01\" disabled, next to \"Your organisation has turned off commands on computers reached over SSH.\" (I checked this with an esbuild probe of computersView and commandsView.) The runtime's own connected bubble already tells this case apart (byAdmin in runtime.ts).",
+   "fix": "In computersView, pass modeFor(i.admin, \"ssh\") into sshStatus. When it is \"off\", keep the status and give no note, or OFF_LINES.ssh, instead of the \"Turn on commands…\" hint. Add a home-computers test with admin { source: \"x\", features: {}, commands: { ssh: \"off\" } }."
+  },
+  {
+   "id": 152,
+   "severity": "should-fix",
+   "what": "Each failed reconnect now gets its own line in What Ember did. connections.ts doConnect audits {step:\"failed\", host, kind} on every batch reconnect try. onLost retries at 1, 2, 4, 8, 16 and then every 30 s for up to 10 minutes, which is about 24 tries. connectionLine shows each one as \"Didn't work · Connect to build-01 · Ember couldn't reach it.\", so one link that drops for good can take about 24 of the 80 lines and push out task and command lines. That is the crowding #152 is about.",
+   "fix": "In connections.ts:618 add `reconnect: true` to the failed audit when mode.reconnect. In copy.ts connectionLine, return null for those entries: the \"Lost\" line already says it, and one line can be kept for when it gives up. Alternatively, collapse consecutive identical lines in refreshActivity. Add a test."
+  },
+  {
+   "id": 191,
+   "severity": "should-fix",
+   "what": "Copy: the same act now has two names. Settings and the docs call it \"Remove helper\" / \"Remove Ember's helper from build-01\" / \"Removing Ember's helper…\". What Ember did calls it \"Didn't work · Remove Ember from build-01\" and \"Removed · Ember from build-01\" (copy.ts connectionLine). This breaks the rule of one name for the same thing everywhere.",
+   "fix": "In copy.ts connectionLine, use `Remove Ember's helper from ${name}` for the failed uninstall and `Ember's helper from ${name}` for \"Removed\". Update the two expectations in home-activity.test.ts."
+  },
+  {
+   "id": 229,
+   "severity": "should-fix",
+   "what": "The doctor's header is now \"setup check\" and several rows were renamed: macOS Accessibility → \"Reading and using apps\", \"Microphone access\" and Windows \"Microphone privacy\" → \"Microphone\", Location → \"Applications folder\", Linux \"Reading apps\" → \"Screen reading\". On macOS and Windows the general Microphone row is dropped. docs/DEVELOPING.md still lists the old names in its check-up row tables (Windows about lines 723-731, macOS about lines 931-944, including \"Microphone\" in the \"As on Linux\" row) and says \"check-up\" about 20 times. README.md:91 also says check-up. fix/docs changes none of these. #229 asked for one name in the README, the window and the CLI.",
+   "fix": "Update DEVELOPING.md's row tables and the tool's name to match the new labels. If DEVELOPING.md and README.md belong to the docs package, hand both to it explicitly (the exact rows and lines above) so the merge carries the change."
+  },
+  {
+   "id": 190,
+   "severity": "should-fix",
+   "what": "Weak test. computers-copy.ts matches the registry's exact strings (STALLED_CAN \"isn't answering\", WSL_OFF_CAN \"WSL is off in Ember\", NOTHING_CAN \"nothing yet\"), but only \"commands once you agree\" is tied to real registry output (buildRegistry in home-computers.test.ts). If the wording in registry.ts changes, the rows silently go back to \"Connected: isn't answering\" and WSL \"Not available\", and no test fails.",
+   "fix": "Add home-computers tests that build the registry (buildRegistry plus summaryOf) for a stalled link, a distro listed while WSL is off in Ember, and a connected headless host with commands off. Feed the summaries into computersView and expect \"Connected, but not answering\", \"Off\" and \"Connected, commands off\". Alternatively, export the three strings from app/shared/targets.ts and use them in both places."
+  }
+ ]
+}

@@ -1,0 +1,478 @@
+{
+ "key": "agent",
+ "final": {
+  "findings": [
+   {
+    "id": 93,
+    "status": "fixed",
+    "how": "Round 1 (fd057ea): app/main/agent/github-app.ts holds GITHUB_CLIENT_ID, the one checked-in place for the client id. It is bundled into main.cjs, and EMBER_GITHUB_CLIENT_ID overrides it. Builds without an id get the GitHub CLI wording in every message, the doctor row and the README. Round 2: cdce845 sets GITHUB_CLIENT_ID = \"Iv23liXa8A1wDXYg2jYw\" (common.md S1 Update), so release builds run the device flow and the button reads 'Sign in with GitHub'. After npm run build, dist/app/main.cjs contains `GITHUB_CLIENT_ID = \"Iv23liXa8A1wDXYg2jYw\"` (grep: 1 hit). 5067888: an EMBER_GITHUB_CLIENT_ID that isn't a client id no longer turns the device flow off; the built-in id is used. The README 'Sign in to Copilot' section now starts with Sign in with GitHub: the code in the browser, a GitHub account with Copilot, the Copilot CLI policy for Business or Enterprise, and encrypted storage. The environment tokens and gh auth login are the alternatives. The GitHub CLI steps for each OS are kept only for a build without an id. The auth.ts and github-app.ts doc comments, main.ts's comment on the GitHub CLI wait (3719b80) and copy.ts's comment (d6100ef) no longer say 'until the app is registered'. The id is in its own commit (cdce845), so it can be reverted alone if the lead finds it did not come from the user.",
+    "test": "signin-requirement.test.ts 'is Ember's own GitHub App's, checked in' asserts GITHUB_CLIENT_ID matches /^Iv23[A-Za-z0-9]{16}$/ and githubClientId({}) === GITHUB_CLIENT_ID. It failed with the old empty constant. Builds without an id are tested through builtIn: githubClientId({}, \"\") is null, an override applies, and an invalid override keeps the built-in id (this last case failed before 5067888). Round 1 cases are unchanged: the doctor row, Check again's hint, the host's signed-out line and signInLabel. The file has 16 tests and all pass."
+   },
+   {
+    "id": 136,
+    "status": "fixed",
+    "how": "Same as #93. Also, while Ember waits for gh and gh is missing, the Copilot section shows an 'Open cli.github.com' button (0c6d6e9). Round 2 (0112435): the wait's first progress (the message, the link label and the one page it may open) now comes from the pure cliWaitStart(os, ghInstalled) in github-app.ts, and main calls it. The host.test.ts refused-task test no longer has the `?? \"failed\"` fallback. 3719b80 adds a wiring test for the rest of the path: the preload exposes openSignInPage, the renderer adds a button labelled with p.link that calls it, and main opens only signInPage through mayOpenSignInPage. The repo has no DOM library, and no new dependency is allowed, so the renderer is checked from its source, in the same style as main-privacy-wiring.test.ts. Correction to my round 1 report: the signInLabel and retryMessage-with-hint asserts are in signin-requirement.test.ts, not ui-copy.test.ts.",
+    "test": "signin-requirement.test.ts 'the wait for a GitHub CLI sign-in offers it, with an Open button, only while gh is missing' covers gh missing (win32) and gh present (darwin). It failed before because cliWaitStart did not exist. 'is offered by the settings window's Open button…' passes, and fails when `if (p.link) addOpenButton(p.link);` is removed from app/renderer/home/main.ts (checked, then restored). host.test.ts 'a task that fails on a refused sign-in' now asserts status 'failed' directly."
+   },
+   {
+    "id": 199,
+    "status": "fixed",
+    "how": "Same as #93: release builds have the device flow built in. The README sign-in section, the in-window messages and the doctor row name the GitHub CLI and how to install it on each OS, for builds without an id.",
+    "test": "signin-requirement.test.ts, as for #93."
+   },
+   {
+    "id": 213,
+    "status": "fixed",
+    "how": "Same as #93. A build with the id shows 'Sign in with GitHub' and runs the device flow. A build without one labels the button 'Connect with GitHub CLI', and Check again shows main's hint (copy.ts retryMessage). The README section names the GitHub account with Copilot, the GitHub CLI and GH_TOKEN.",
+    "test": "signin-requirement.test.ts: signInLabel, retryMessage with a hint, and the default retryMessage unchanged."
+   },
+   {
+    "id": 137,
+    "status": "fixed",
+    "how": "Round 1 (cc2675d): 5xx, 429, rate limit, 'timed out' and 'Timeout waiting for CLI server to start' map to 'not-answering'. They are retried with the offline backoff, retried on ask, and worded with TRANSIENT_DETAIL. Round 2 (83ef321): the verifier was right that SessionToolsTimeoutError's message ('Copilot didn't report its session tools within 10 s.') matched neither pattern. host.ts now imports SessionToolsTimeoutError from ./session-config. A transient(err, msg) helper (err instanceof SessionToolsTimeoutError || TRANSIENT.test(msg)) is used in both startErrorReason and explainStartError.",
+    "test": "host.test.ts 'a passing problem while connecting' has a new case, 'a conversation whose tools Copilot doesn't report in time is retried too, and said plainly'. The fake runtime hangs initializeAndValidate, so verifySessionTools times out after 10 s. The test expects reason 'not-answering', plain wording and 'Reconnecting…'. It expects no retry at 14 s and a retry by 16 s that reaches 'ready'. With the old TRANSIENT.test(msg) back in place it fails ('other' instead of 'not-answering'); checked, then restored."
+   },
+   {
+    "id": 138,
+    "status": "fixed",
+    "how": "Mid-session refusal (round 1, 7b1b2cb): an authentication error or 401 in a conversation or task makes the host call getAuthStatus(). If the sign-in no longer holds, the phase becomes error/sign-in: the handle says 'Sign-in refused', settings show Sign in and Check again, and the bubble gets Open settings. Expiring GitHub App tokens (round 2, 9a3a788): pollDeviceGrant keeps access_token, refresh_token, expires_in and refresh_token_expires_in, plus the issuing client id. TokenStore stores the grant as JSON, a token alone in the old format, and still reads old files. GrantKeeper renews the grant an hour before it expires with GitHub's refresh_token grant, which needs no client secret for a device-flow token. GitHub's docs (docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens, fetched 2026-10-28) say client_secret is 'Required unless the user access token was generated using the device flow'. So the verifier's 'needs the client secret' does not hold for Ember. The keeper saves the renewed grant and reconnects Copilot once AgentHost.idle is true (no start, answer, queued request or task), or two minutes before the old token ends. If GitHub can't be reached it retries a minute later. If GitHub refuses, it stops, and the round 1 sign-in error then appears. A stored grant that ran out while Ember was off is renewed before it is used (freshen, at most once a minute). Sign out stops renewal. With 'Expire user authorization tokens' off, nothing changes. Either app setting therefore works. The owner's choice of setting and the first real long session are still worth a release-checklist line (see ciOnly).",
+    "test": "token-renewal.test.ts (16 tests, new). It covers: the grant is kept, not dropped; non-expiring apps; store round-trip and old-format files; the refresh request with no client_secret; refused vs passing failures; renewal at 7 h; waiting for idle; the forced reconnect near expiry; retry when offline; no renewal for gh or env tokens, after sign-out, or for non-expiring grants; in-memory grants; freshen on launch; and main's wiring. They failed before because pollDeviceGrant, GrantKeeper and renewGrant did not exist. host.test.ts 'says it is idle only when…'. The round 1 host.test.ts 'a sign-in refused after connecting' tests (4)."
+   },
+   {
+    "id": 139,
+    "status": "fixed",
+    "how": "Round 1 (5a23a4b): resolveToken skips refused tokens and names the environment variable. connectFirstAccepted falls through stored → environment → gh, at most once each. Check again retries a refused token only when nothing else is left. Round 2 (9810eed): the IPC.signOut handler in main.ts now calls refusedTokens.clear() next to `currentToken = null`. The verifier's scenario (gh refused, user gets a Copilot seat, signs out, presses Connect with GitHub CLI) now tries gh again at once instead of waiting 10 minutes.",
+    "test": "auth-sources.test.ts: the round 1 cases (skip, fall-through, no fall-through when offline, named variable). New: 'is forgotten when the user signs out…' checks resolveToken with and without the refused set, and that main's signOut handler body contains refusedTokens.clear(). It fails with that line removed; checked, then restored."
+   },
+   {
+    "id": 140,
+    "status": "fixed",
+    "how": "043e972: pollDeviceFlow treats a fetch that throws, a body that isn't JSON (a proxy's HTML 502) or any 5xx as a blip. It waits one interval and polls again until the code expires or the user cancels, and main logs auth.poll_blip. explainSignInError gives a failed sign-in its own plain sentences, with no promised retry and no raw 'Unexpected token'. pollDeviceGrant (round 2) keeps the same loop.",
+    "test": "device-flow.test.ts: fetch failed, HTML 502 and 503 mid-poll each keep waiting and then succeed; explainSignInError wording. These failed before."
+   },
+   {
+    "id": 141,
+    "status": "fixed",
+    "how": "fb8f224: TokenStore.save never throws. saveResult says 'kept', 'no-keyring' or 'write-failed', and writes atomically (a temp file renamed over it, owner-only). The device flow connects anyway and says the sign-in couldn't be saved on this computer. explainStartError and startErrorReason blame the runtime only for a failed spawn, the SDK's 'not found at', or a file error naming the runtime path. Other ENOENT/EACCES/EPERM/ENOSPC/EROFS/EBUSY errors get a sentence naming the file.",
+    "test": "auth-files.test.ts (new) and auth-save.test.ts: save into a missing folder returns false; file errors are worded plainly. These failed before (ENOENT was thrown, and the text said the runtime was missing)."
+   },
+   {
+    "id": 89,
+    "status": "fixed",
+    "how": "Same change as #141: a failed token write no longer ends a completed sign-in. main connects with the token for this run and says 'you'll need to sign in again next time'.",
+    "test": "auth-files.test.ts, as for #141."
+   },
+   {
+    "id": 142,
+    "status": "fixed",
+    "how": "b93a4fb + 30a7637: guides don't count toward maxRunning. They have their own limit of maxRunning (two can run, as host-targets G14 needs), so a guide never waits behind long tasks. show_me says a queued guide waits, rather than telling the user to follow the pointer.",
+    "test": "tasks-agent.test.ts: with two running tasks a guide starts at once. This failed before ('queued'). Also the show_me test in host.test.ts and host-targets G14."
+   },
+   {
+    "id": 143,
+    "status": "fixed",
+    "how": "5a23a4b: ghCliToken runs `gh auth token --hostname github.com`, so GH_HOST or an enterprise-only login gives no token instead of one Copilot can't use.",
+    "test": "auth-sources.test.ts asserts the argv includes --hostname github.com. This failed before."
+   },
+   {
+    "id": 144,
+    "status": "fixed",
+    "how": "d039938: chooseModels reads Copilot's billing multiplier (unknown counts as 1). The worker is a strong standard vision model. The conversation model is a small standard one, not code-tuned and not a reasoning model. Premium models are chosen only when nothing standard fits, cheapest first. The user's choice still wins. The settings lists show '(N× premium requests)' for models that cost more than 1.",
+    "test": "models-cost.test.ts (new; failed before). A host.test.ts status test. agent-misc chooseModels is unchanged without billing info."
+   },
+   {
+    "id": 145,
+    "status": "fixed",
+    "how": "6878a41: TaskManager.run makes the worker inside a try. A throw logs task.error, fails the task with a plain sentence and a Close button, and lets the queue move on.",
+    "test": "tasks-agent.test.ts 'a worker that can't be made'. It failed before: the task stayed queued and the rejection went unhandled."
+   },
+   {
+    "id": 147,
+    "status": "partial",
+    "how": "Code part fixed (74b9e0f): main.ts's stopEverything comment no longer says failed cards stay until closed. tasks.ts failureCardMs is 60 s, on purpose since c7efcdf. The verifier is right that docs/DEVELOPING.md:131 still says 'a failed card stays until you close it'. docs/** belongs to the docs package, and fix/docs does not touch that line (git diff 1b39bb3 fix/docs checked). The exact replacement is in forDocs for the lead's docs follow-up. A failed task is kept in the settings window's Conversation section as a 'problem' entry (host.ts remember(\"problem\", …)), so the proposed wording is accurate.",
+    "test": "None new: the code change is a comment only. tasks.test.ts 'a failed card goes on its own after the longer failure time' pins the 60 s behaviour."
+   },
+   {
+    "id": 148,
+    "status": "fixed",
+    "how": "f4453c7: TaskManager keepMs defaults to 0, so a finished task's Copilot session, which holds the screen text the task read, is deleted as soon as the task ends. Sessions left after a crash are still swept at the next start. docs/RESEARCH.md:368 still says finished workers stay resumable for about 10 minutes. It belongs to the docs package; the line is in forDocs.",
+    "test": "tasks-agent.test.ts 'a finished task's session'. It failed before: deletion came 10 minutes later."
+   },
+   {
+    "id": 149,
+    "status": "fixed",
+    "how": "fa0df39: start_task's goal takes up to 4,000 characters in both forms. The ask box takes 2,000, the goal wraps them, and type_text takes 5,000.",
+    "test": "conductor-agent.test.ts: a goal of more than 500 characters is accepted. This failed before."
+   },
+   {
+    "id": 150,
+    "status": "fixed",
+    "how": "e79adc3: Conductor.ask hands the reports back (deps.returnReports) when session.send fails. The host puts them back at the front of `carried`, so the next conductor gets them with the next message after the reconnect.",
+    "test": "host.test.ts 'a task's result when the request can't be sent'. It failed before: the result was lost."
+   },
+   {
+    "id": 219,
+    "status": "fixed",
+    "how": "225ca37: friendlyError maps a timed-out request to 'Copilot took too long to answer', and a prompt-token-limit error to a plain sentence that says how to start a new conversation. Anything unrecognised gets 'Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (<shortcut>)' without the raw text. The conductor logs each session.error's type, status and message (cut to 300 characters).",
+    "test": "friendly-error.test.ts (new; failed before: 'Copilot reported a problem: <raw>')."
+   },
+   {
+    "id": 23,
+    "status": "fixed",
+    "how": "Same change as #219: a bare 400 becomes 'Copilot refused that request (400). Try asking in other words.', and token-limit errors are mapped.",
+    "test": "friendly-error.test.ts, as for #219."
+   },
+   {
+    "id": 40,
+    "status": "fixed",
+    "how": "e74c14d + e82d30a: CommandCapability.userOff marks commands that are off only because of the user's own switch. The runtime's caps add commandsOffered when commands are off everywhere and, somewhere, only by that switch (not by the administrator). The conversation's identity and method rule then say commands can be turned on in Settings › Commands; the frozen prompts are unchanged. Once per run, a 'Commands are off' bubble with Open settings follows a request about terminals or commands, or an answer that points to the Commands setting. Generic uses of 'command' no longer trigger it.",
+    "test": "persona-commands (prompt), targets-runtime (caps) and host-targets ('what offers the Commands switch' and the bubble). All failed before."
+   },
+   {
+    "id": 222,
+    "status": "fixed",
+    "how": "b91902e + 3b74451: user-facing internal terms are replaced. 'job host' becomes 'Part of Ember's install is missing… Reinstall Ember' (local runner, WSL runner, WSL exec) and 'Ember couldn't start the command safely'. 'The worker stopped' becomes 'The task stopped without saying what happened.'. 'Node download' becomes 'what it downloaded'. 'Ember v1'/'in v1' are dropped. 'needs vision' becomes 'must understand images'. The conductor's error now says 'Ember isn't connected to Copilot yet.'.",
+    "test": "internal-terms.test.ts (new; failed before). The expected text in commands-run-argv, wsl-runner, wsl-discover, environment, doctor and packaging tests is updated to match."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "fd057ea",
+    "subject": "Say plainly that signing in needs a GitHub account with Copilot and the GitHub CLI",
+    "ids": [
+     93,
+     136,
+     199,
+     213
+    ]
+   },
+   {
+    "sha": "5a23a4b",
+    "subject": "Try the next sign-in when Copilot refuses one, and ask gh for github.com's token",
+    "ids": [
+     139,
+     143
+    ]
+   },
+   {
+    "sha": "043e972",
+    "subject": "Keep waiting for the device-flow approval through a network blip",
+    "ids": [
+     140
+    ]
+   },
+   {
+    "sha": "fb8f224",
+    "subject": "Keep a completed sign-in when its file can't be saved, and name file errors plainly",
+    "ids": [
+     141,
+     89
+    ]
+   },
+   {
+    "sha": "cc2675d",
+    "subject": "Retry a start that failed on a passing Copilot problem, and say so plainly",
+    "ids": [
+     137
+    ]
+   },
+   {
+    "sha": "7b1b2cb",
+    "subject": "Leave Ready for the sign-in error when Copilot refuses the sign-in mid-session",
+    "ids": [
+     138
+    ]
+   },
+   {
+    "sha": "225ca37",
+    "subject": "Say Copilot errors in plain words: timeouts, token limits, bare codes and the rest",
+    "ids": [
+     219,
+     23
+    ]
+   },
+   {
+    "sha": "b93a4fb",
+    "subject": "Start a \"show me\" guide at once beside running tasks",
+    "ids": [
+     142
+    ]
+   },
+   {
+    "sha": "6878a41",
+    "subject": "Fail a task whose worker can't be made instead of leaving it waiting",
+    "ids": [
+     145
+    ]
+   },
+   {
+    "sha": "74b9e0f",
+    "subject": "Say in main.ts that a failed task card goes on its own after about a minute",
+    "ids": [
+     147
+    ]
+   },
+   {
+    "sha": "f4453c7",
+    "subject": "Delete a finished task's session as soon as the task ends",
+    "ids": [
+     148
+    ]
+   },
+   {
+    "sha": "fa0df39",
+    "subject": "Let start_task take the ask box's whole text in its goal",
+    "ids": [
+     149
+    ]
+   },
+   {
+    "sha": "e79adc3",
+    "subject": "Keep finished tasks' results when the request carrying them can't be sent",
+    "ids": [
+     150
+    ]
+   },
+   {
+    "sha": "d039938",
+    "subject": "Pick the default models by cost too, and mark costly ones in settings",
+    "ids": [
+     144
+    ]
+   },
+   {
+    "sha": "7547e90",
+    "subject": "Tell workers they may borrow the mouse or keyboard, always asking first",
+    "ids": [
+     146
+    ]
+   },
+   {
+    "sha": "30a7637",
+    "subject": "Let two guides run at once again, beside the tasks that act",
+    "ids": [
+     142
+    ]
+   },
+   {
+    "sha": "e74c14d",
+    "subject": "Point to Settings › Commands when commands are off by the user's own switch",
+    "ids": [
+     40
+    ]
+   },
+   {
+    "sha": "b91902e",
+    "subject": "Replace internal terms in what the user reads with plain words",
+    "ids": [
+     222
+    ]
+   },
+   {
+    "sha": "0c6d6e9",
+    "subject": "Offer an Open button for the GitHub CLI's download page while Ember waits without it",
+    "ids": [
+     136
+    ]
+   },
+   {
+    "sha": "3b74451",
+    "subject": "Expect the plain missing-install sentence in the WSL exec test",
+    "ids": [
+     222
+    ]
+   },
+   {
+    "sha": "e82d30a",
+    "subject": "Offer the Commands switch only for a request or answer about commands",
+    "ids": [
+     40
+    ]
+   },
+   {
+    "sha": "83ef321",
+    "subject": "Retry a start whose conversation tools Copilot didn't report in time",
+    "ids": [
+     137
+    ]
+   },
+   {
+    "sha": "0112435",
+    "subject": "Test what the GitHub CLI wait offers, and a refused task's status, without loopholes",
+    "ids": [
+     136
+    ]
+   },
+   {
+    "sha": "9810eed",
+    "subject": "Forget refused sign-ins at Sign out, so a sign-in refused before is tried afresh",
+    "ids": [
+     139
+    ]
+   },
+   {
+    "sha": "5067888",
+    "subject": "Keep the built-in client id when EMBER_GITHUB_CLIENT_ID isn't one",
+    "ids": [
+     93
+    ]
+   },
+   {
+    "sha": "cdce845",
+    "subject": "Build in Ember's GitHub App client id, so release builds sign in with GitHub",
+    "ids": [
+     93,
+     136,
+     199,
+     213
+    ]
+   },
+   {
+    "sha": "9a3a788",
+    "subject": "Renew Ember's own sign-in before its eight-hour token runs out",
+    "ids": [
+     138
+    ]
+   },
+   {
+    "sha": "3719b80",
+    "subject": "Test the settings window's Open button for the GitHub CLI's page end to end",
+    "ids": [
+     136,
+     93
+    ]
+   },
+   {
+    "sha": "d6100ef",
+    "subject": "Say in copy.ts that Check again's hint is for a build without Ember's GitHub App",
+    "ids": [
+     93
+    ]
+   }
+  ],
+  "checks": "Final checks at 3719b80, the last code commit; d6100ef after it changes only a comment in copy.ts:\n- npx tsc --noEmit: exit 0.\n- npm run lint: exit 0.\n- npm test (full): 252 test files passed, 1 skipped (253). 6044 tests passed, 8 skipped (6052). Exit 0.\n- npm run build: exit 0. grep of dist/app/main.cjs finds `GITHUB_CLIENT_ID = \"Iv23liXa8A1wDXYg2jYw\"` (1 hit).\n- xvfb-run -a npm run test:smoke: \"ok first instance showed its window\" and \"ok second launch handed over and the first instance focused its window\". Exit 0.\n- EMBER_INTEGRATION=1 EMBER_COMMANDS_TEST=1 npx vitest run test/integration/commands-flow-local.test.ts test/integration/commands-local.test.ts: 2 files passed. 33 tests passed, 13 skipped (46).\nRe-run after d6100ef: tsc exit 0, lint exit 0, build exit 0 (id in the bundle: 1 hit). signin-requirement, ui-copy and home-platform-copy: 3 files, 90 tests passed.\nFails-first checks this round, each file restored afterwards with git checkout:\n- host.ts back to TRANSIENT.test: the #137 test fails with 'other' instead of 'not-answering'.\n- refusedTokens.clear() removed: the #139 sign-out test fails.\n- `if (p.link) addOpenButton(p.link)` removed from the renderer: the #136 wiring test fails.\nSign-in tests: signin-requirement 16, token-renewal 16. With auth-sources, host, device-flow, auth-files and auth-save, 162 tests passed across those 7 files before the new wiring test was added.",
+  "sharedHunks": [
+   "README.md: the 'Sign in to Copilot' section (agent owns this paragraph per pkg-agent.json; listed because docs owns the rest of README). fd057ea adds it; cdce845 rewrites it to lead with Sign in with GitHub, with the GitHub CLI steps kept for builds without a client id.",
+   "app/main/main.ts (hot file): the sign-in block in start() (owned: ghInstalled helper, refusedTokens, findToken/connectWith via connectFirstAccepted, GrantKeeper wiring, signOut clears refusedTokens and keeper.use(null), openSignInPage handler, retrySignIn hint, device flow via pollDeviceGrant/saveResult, cliWaitStart, explainSignInError). Also: runDoctor passes DoctorProbes.signIn (#93), the AgentHost is created with signInWith (#93), startBrain calls keeper.freshen() and connectWith(found, 'auto') (#138/#139), the stopEverything comment on failed cards (#147), and the comment on the GitHub CLI wait (3719b80).",
+   "app/main/agent/presenter.ts: friendlyError (owned), plus SIGN_IN_REFUSED exported (#138), and Presenter.outcome takes optional `actions` (one-line signature + bubble field, #40).",
+   "app/main/doctor.ts: import of cliSteps/SignInWith, a new optional DoctorProbes.signIn, and the copilot row's fix chooses the GitHub CLI steps when signIn.with === 'github-cli' (#93).",
+   "app/main/environment.ts: two detail strings, 'is not supported in v1' -> \"isn't supported\" and 'Ember v1 needs' -> 'Ember needs' (#222).",
+   "app/main/commands/run/local.ts: three error strings ('job host' wording, #222).",
+   "app/main/commands/types.ts: optional CommandCapability.userOff (#40).",
+   "app/main/targets/local-service.ts: commandCapability's off-by-setting return adds userOff: true (#40).",
+   "app/main/targets/runtime.ts (hot file): the module doc comment line, and buildTargets' caps add commandsOffered when commands are off everywhere and somewhere only by the user's switch (#40).",
+   "app/main/targets/types.ts: optional PromptCaps.commandsOffered (#40).",
+   "app/main/remote/ssh-errors.ts: MESSAGES.downloadMismatch wording (#222).",
+   "app/main/wsl/discover.ts: one refuse() string (#222).",
+   "app/main/wsl/runner.ts: one error string (#222).",
+   "app/renderer/home/main.ts (hot file): imports modelLabel/signInLabel, the sign-in button label from signInLabel(a.signInWith), model options labelled with modelLabel (#144), retryFound type adds hint, the new addOpenButton function, and the waiting branch adds the button for p.link (#93/#136/#144).",
+   "app/renderer/home/copy.ts: retryMessage takes main's hint (and its comment, d6100ef), plus new modelLabel and signInLabel (Copilot section strings, owned per pkg-agent.json).",
+   "app/renderer/home/index.html: the worker model label 'needs vision' -> 'must understand images' (#222).",
+   "app/shared/ipc.ts: optional SignInProgress.link, and retrySignIn's result type adds hint?: string (#136/#93).",
+   "Tests in files other packages may own (expected text only, or a hash re-pinned): agent-misc, commands-run-argv, doctor-platforms, environment-platforms, packaging, persona-commands, persona-platform, presenter, targets-runtime, wsl-discover, wsl-runner, host-targets."
+  ],
+  "forDocs": [
+   "docs/DEVELOPING.md:131 (#147): replace 'a failed card stays until you close it' with 'a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong)'.",
+   "docs/RESEARCH.md:368 (#148): replace 'finished workers stay resumable for ~10 minutes (for \"undo that\" or \"do the same for the other file\"), then close' with 'a finished worker's session, which holds the screen text the task read, is deleted as soon as the task ends (a crash's leftovers are swept at the next start); a follow-up such as \"undo that\" starts a new task'.",
+   "docs/DEVELOPING.md §Connecting Copilot (lines 191-205): Ember's own GitHub App is now built in (client id in app/main/agent/github-app.ts; EMBER_GITHUB_CLIENT_ID overrides it). Sign in with GitHub shows a code to enter in the browser. Ember also uses COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN or `gh auth login` (stored first, then the environment, then gh; one Copilot refuses gives way to the next; Sign out forgets refusals). Ember renews its own sign-in before the app's 8-hour token runs out. Only a build without a client id (a fork) shows 'Connect with GitHub CLI' and the gh install steps.",
+   "PLAN.md §7 open question 1 (line 389) and the M2 row (line 531): mark Ember's GitHub App as registered, with its client id built in (Iv23liXa8A1wDXYg2jYw). The device flow is live; EMBER_GITHUB_CLIENT_ID is an override, not a requirement.",
+   "CHANGELOG: Sign in with GitHub now signs in from the browser in release builds, and Ember renews that sign-in before it expires.",
+   "CHANGELOG: when Copilot refuses a sign-in partway through a session, the handle says 'Sign-in refused' and settings offer Sign in and Check again.",
+   "CHANGELOG: a refused GITHUB_TOKEN/GH_TOKEN gives way to the GitHub CLI's sign-in and is named in the message; gh is asked for github.com's token.",
+   "CHANGELOG: passing Copilot problems while connecting (5xx, rate limits, timeouts) are retried on their own.",
+   "CHANGELOG: the sign-in survives a network blip while waiting for approval, and a sign-in that can't be saved still connects for this run.",
+   "CHANGELOG: Copilot errors are shown in plain words.",
+   "CHANGELOG: a 'show me' guide starts at once beside running tasks.",
+   "CHANGELOG: default models are chosen with cost in mind, and premium models are marked in settings.",
+   "CHANGELOG: with commands off, Ember points to Settings › Commands.",
+   "CHANGELOG: a finished task's session is deleted at once."
+  ],
+  "ciOnly": [
+   "The GitHub App Iv23liXa8A1wDXYg2jYw must have 'Enable Device Flow' on. The planned ci.yml step POSTs https://github.com/login/device/code with client_id=Iv23liXa8A1wDXYg2jYw and expects a device_code. This container's proxy blocks that endpoint.",
+   "That Copilot accepts this app's ghu_ user tokens, and whether the app needs a Copilot-related account permission for that: only a first real sign-in on a machine with a Copilot account can prove it.",
+   "Token renewal against real GitHub: the request shape (client_id, grant_type=refresh_token, refresh_token, no client_secret, as GitHub's docs allow for device-flow tokens) is unit-tested with a fake GitHub. A real renewal happens only after about 7 h of a real session, so it should be on the release checklist. The owner can instead turn 'Expire user authorization tokens' off for the app; then Ember stores a token without expiry and renews nothing. Either setting works with this branch.",
+   "The Windows and macOS wording of the GitHub CLI install steps (winget, brew), and the doctor row on those OSes, are unit-tested with fakes only. Real Windows/macOS CI or a manual run shows the rendered window (only builds without a client id show it).",
+   "safeStorage keeping the larger JSON grant under Windows DPAPI and the macOS Keychain: TokenStore is unit-tested with a fake box only."
+  ],
+  "notes": "On the relayed user request (\"Have you resumed?\"): yes. This run picked up the package's second round. An earlier, stopped run of this step had already committed six round-two commits (83ef321..9a3a788). I reviewed each of them, kept them, re-checked that their tests fail without the fix, and added two commits (3719b80, d6100ef).\n\nLead to confirm before merging (#93): the relayed user request in this run says nothing about the client id. The id Iv23liXa8A1wDXYg2jYw comes from common.md's S1 Update and lead-notes.md ('from the user, 2026-10-27 ~06:05'). It is public by design and sits alone in cdce845, so it can be reverted without touching anything else if the user did not send it.\n\n#138: the verifier said refresh needs the client secret. GitHub's own docs say client_secret is 'Required unless the user access token was generated using the device flow' (docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/refreshing-user-access-tokens, fetched 2026-10-28). So the refresh was implemented, and Ember works with 'Expire user authorization tokens' on or off.\n\nOne edge case is left on purpose. If renewal before use (freshen) succeeds but the keyring-backed write then fails (full or read-only disk), the old refresh token is already used up. The user then has to sign in again, which is the same outcome as before this change.\n\n#147 is marked partial only because its doc line lives in the docs package's file (forDocs has the exact text). Scratch backups made for the fails-first checks were deleted."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts (sign-in handling is this package's): import of explainSignInError, the auth helpers and github-app; ghInstalled() and signInWith() beside ghOptions; runDoctor passes signIn; refusedTokens, findToken and connectWith; retrySignIn returns a hint; signInError uses explainSignInError; the CLI wait uses githubClientId, cliWaitingMessage, the Open link and findToken/connectWith; pollDeviceFlow onBlip; saveResult and its message; AgentHost signInWith option; onStatus adds refused tokens; startBrain uses connectWith; the stopEverything comment about failed cards (#147)",
+   "app/main/agent/presenter.ts (bubble owns all but friendlyError): SIGN_IN_REFUSED constant just above friendlyError; outcome() takes an optional actions field (#40)",
+   "app/main/agent/tasks.ts (lifecycle owns): module doc lines; maxRunning/keepMs doc comments; pump() gives guides a limit of their own (#142); run() wraps makeWorker in try/catch (#145; lifecycle's #79 also restructures run()); keepMs default 10 min -> 0 (#148)",
+   "app/main/doctor.ts (settings owns check names): DoctorProbes.signIn field; the Copilot row's fix when signIn.with is 'github-cli'; import of cliSteps/SignInWith",
+   "app/shared/ipc.ts: SignInProgress.link; retrySignIn() return type gains hint",
+   "app/renderer/home/copy.ts (settings owns the file; Copilot strings are this package's): retryMessage takes hint; new signInLabel and modelLabel",
+   "app/renderer/home/main.ts: import of modelLabel/signInLabel; sign-in button textContent from signInLabel; the model option text from modelLabel; retryFound type; addOpenButton and the waiting branch calling it",
+   "app/renderer/home/index.html: 'Model for tasks (needs vision)' -> '(must understand images)'",
+   "README.md: new '## Sign in to Copilot' section between the macOS install section and Shortcuts (the package's own paragraph)",
+   "app/main/targets/types.ts: PromptCaps.commandsOffered optional field (#40)",
+   "app/main/targets/runtime.ts (hot file): caps() adds commandsOffered; module doc comment line (#40)",
+   "app/main/targets/local-service.ts: commandCapability returns userOff: true for the user-switch-off case (#40)",
+   "app/main/commands/types.ts: CommandCapability.userOff optional field (#40)",
+   "app/main/commands/run/local.ts: three job-host strings (#222)",
+   "app/main/wsl/discover.ts: one job-host refusal string (#222)",
+   "app/main/wsl/runner.ts: one job-host error string (#222)",
+   "app/main/remote/ssh-errors.ts: MESSAGES.downloadMismatch wording (#222)",
+   "app/main/environment.ts (platform owns): platform detail 'isn't supported' and the Wayland detail without 'v1' (#222)",
+   "Test files outside the package's own (expectations only): auth-save, agent-misc, presenter, persona-platform and persona-commands (worker prompt hash re-pinned for #146, new #40 block), targets-runtime (caps expectation), host-targets (new #40 blocks), host.test (new sim hooks startError/modelsError and new blocks), commands-run-argv, wsl-runner, wsl-discover, doctor-platforms, environment-platforms, packaging"
+  ],
+  "forDocs": [
+   "docs/DEVELOPING.md:131: 'a failed card stays until you close it' -> 'a failed card stays about a minute (the settings window's Conversation keeps the result); Close or Stop everything removes it sooner' (review #147).",
+   "docs/DEVELOPING.md §Connecting Copilot: the client id lives in app/main/agent/github-app.ts (GITHUB_CLIENT_ID, one line; EMBER_GITHUB_CLIENT_ID overrides it at run time). Without it the button reads 'Connect with GitHub CLI'. Install gh per OS: RHEL 8 `sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo` then `sudo dnf install gh`; Windows `winget install --id GitHub.cli`; macOS `brew install gh`. Ember asks gh for github.com's token (`--hostname github.com`). A token Copilot refuses gives way to the next source, and Check again passes over it.",
+   "docs/DEVELOPING.md:11: 'Ember v1 needs an X11 session' -> 'Ember needs an X11 session' (review #222, same as the setup check).",
+   "PLAN.md M4 row and docs/RESEARCH.md:368: finished task sessions are now deleted as soon as the task ends, not kept 10 minutes for follow-ups (review #148).",
+   "PLAN.md §7 Q1 (registering Ember's GitHub App): register it with 'Expire user authorization tokens' turned off. Ember can't refresh expiring ghu_ tokens because GitHub's refresh grant needs the client secret. If it is left on, users must sign in again every 8 hours; Ember now shows 'Sign-in refused' and Sign in again when that happens (review #138).",
+   "README (docs package): optionally point each install section to the new 'Sign in to Copilot' section, which this package wrote.",
+   "CHANGELOG lines:\n- Sign-in now says it needs a GitHub account with Copilot and the GitHub CLI, says how to install gh on this computer, and offers an Open cli.github.com button.\n- A token Copilot refuses no longer hides a working gh sign-in, and a refused GITHUB_TOKEN or GH_TOKEN is named.\n- The device-flow sign-in keeps waiting through network blips.\n- A full or read-only disk no longer throws away a finished sign-in, and file errors name the file instead of saying 'reinstall'.\n- GitHub 5xx, rate limits and timeouts while connecting are retried and said plainly.\n- A sign-in refused mid-session shows 'Sign-in refused' with Sign in and Check again.\n- Copilot errors no longer show raw text.\n- 'Show me' guides no longer wait behind running tasks.\n- Finished task sessions are deleted at once.\n- Default models avoid premium ones, and costly models are marked in settings.\n- With commands off, Ember points to Settings › Commands."
+  ],
+  "ciOnly": [
+   "Windows: a winget-installed gh (Program Files\\GitHub CLI\\gh.exe) is found by ghCliPath, so ghInstalled() is true. `gh auth token --hostname github.com` runs hidden (windowsHide) and returns the github.com token. 'Connect with GitHub CLI' then connects within a few seconds of `gh auth login` in a new terminal. Without gh, 'Open cli.github.com' opens the browser.",
+   "macOS: from a Finder launch, Homebrew's gh in /opt/homebrew/bin is found and the same flow works. The token file's temporary-file-then-rename write works with the Keychain-sealed blob on APFS.",
+   "Windows: renameSync of github-token.bin.<pid>.tmp over an existing github-token.bin succeeds (MoveFileEx replace), including with Defender scanning.",
+   "Real Copilot runtime: what a revoked or expired token produces mid-session. The code assumes a session.error with errorType 'authentication' or statusCode 401, then getAuthStatus() answering isAuthenticated:false. The exact 5xx/429/timeout wording from models.list, and whether 'Timeout waiting for CLI server to start' is what a slow first launch throws.",
+   "Real Copilot listModels: billing.multiplier is present and meaningful, and the default picks are sensible. Only then is '(N× premium requests)' in the settings lists correct.",
+   "Device flow against github.com once the client id is in: polling survives a Wi-Fi or VPN drop and a proxy 502. Whether the registered app hands out expiring ghu_ tokens. Ember doesn't refresh them, so register with 'Expire user authorization tokens' turned off.",
+   "The rpm repository steps (dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo, then dnf install gh) on a clean RHEL 8.4 with dnf-plugins-core."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 93,
+   "severity": "must-fix",
+   "what": "The client id from S1's update is not in the code. common.md S1 'Update' gives the GitHub App client id Iv23liXa8A1wDXYg2jYw and says the agent package puts it in the checked-in place. lead-notes.md records it as coming from the user at about 06:05. The branch still has `export const GITHUB_CLIENT_ID = \"\";` at app/main/agent/github-app.ts:15. After `npm run build`, dist/app/main.cjs contains `GITHUB_CLIENT_ID = \"\"`. So a release build still has no device flow: the button reads 'Connect with GitHub CLI' and only waits for gh. The blocker in #93, #136 and #199 ('no client id ships') is still there. Only the id-less fallback wording is done, and that part is correct. The test 'is checked in empty until the app is registered' (signin-requirement.test.ts) asserts the empty id. The README 'Sign in to Copilot' section says 'Until Ember has its own GitHub sign-in, it uses the sign-in of the GitHub CLI'. Both become wrong once the id is in. (The user request relayed to this run said the user would send the id later. common.md and lead-notes say it has arrived. The lead should confirm before merging.)",
+   "fix": "1. Set `export const GITHUB_CLIENT_ID = \"Iv23liXa8A1wDXYg2jYw\";` in github-app.ts. 2. Change the first signin-requirement test: assert `githubClientId({}) === GITHUB_CLIENT_ID` and that the id matches the format; test id-less builds through the `builtIn` parameter (`githubClientId({}, \"\")` is null). 3. Rewrite the README section to start with 'Sign in with GitHub' (a code in the browser, a GitHub account with Copilot, the Copilot CLI policy for Business or Enterprise), with `gh auth login` / GH_TOKEN as the alternatives. Keep the GitHub CLI wording only for builds without an id. 4. Re-run signin-requirement.test.ts and `npm run build`, then grep the bundle for the id."
+  },
+  {
+   "id": 137,
+   "severity": "should-fix",
+   "what": "A SessionToolsTimeoutError is still not treated as passing. The report says TRANSIENT's 'timeout' covers it, but the error's message is \"Copilot didn't report its session tools within 10 s.\" (session-config.ts:56): no 'timeout' or 'timed out'. I ran the reviewer's repro (release-review/rev-agent/startErr.ts) against the fix branch. That message still gives reason 'other' and is shown as it is. doStart retries only offline or 'not-answering', so a conductor whose verifySessionTools times out (conductor.ts:485) during a start is never retried. The reviewer's fix named SessionToolsTimeoutError explicitly. The 5xx, 429, 'timed out' and 'Timeout waiting for CLI server to start' cases are fixed and tested.",
+   "fix": "In startErrorReason and explainStartError, treat `err instanceof SessionToolsTimeoutError` (import it from ./session-config), or /didn't report its session tools/, as 'not-answering' / TRANSIENT_DETAIL. Add a case to host.test.ts 'a passing problem while connecting' where the start fails with that error: it should be retried after about 15 s and reach ready."
+  },
+  {
+   "id": 138,
+   "severity": "should-fix",
+   "what": "The refresh-token part is left undone, and it now matters. The fix agent marked #138 partial: the mid-session refusal is handled and tested, and I verified it. Expiring GitHub App user tokens are not handled. With the client id now supplied (a GitHub App id, Iv23li…), this applies to release builds. GitHub Apps expire user tokens after 8 h unless the owner turns that off. pollDeviceFlow returns only access_token (it drops refresh_token and expires_in). With the default app setting, every device-flow user would get 'Sign-in refused' about every 8 hours.",
+   "fix": "Before release, the lead and owner confirm that 'Expire user authorization tokens' is off for app Iv23liXa8A1wDXYg2jYw. Put it on the release checklist next to the planned CI device-code check. If it must stay on: implement refresh (GitHub's refresh grant needs the client secret), or at least keep expires_in and ask the user to sign in again before it runs out."
+  },
+  {
+   "id": 147,
+   "severity": "should-fix",
+   "what": "Only main.ts's comment was corrected. docs/DEVELOPING.md:131 still says 'a failed card stays until you close it', and the code closes it after 60 s. docs/** belongs to the docs package and the diff doesn't touch it. The fix agent's report I was given is cut off at #147, so I can't see whether its forDocs asks for this change. In the same way, docs/RESEARCH.md:368 still describes finished workers staying resumable for about 10 minutes (#148 now deletes them at once).",
+   "fix": "Make sure the lead's docs follow-up includes: DEVELOPING.md:131 → 'a failed card stays about a minute (the settings window's Conversation section keeps the result)'. Also update or annotate RESEARCH.md:368 for #148."
+  },
+  {
+   "id": 139,
+   "severity": "should-fix",
+   "what": "A behaviour change beyond the finding. refusedTokens lasts for the whole run and Sign out doesn't clear it. Scenario: the user's gh token was refused (the account had no Copilot). They get a seat, press Sign out, then 'Connect with GitHub CLI'. findToken skips the refused gh token every 3 s, and after 10 minutes the user is told 'Ember didn't see a new GitHub sign-in'. Before the fix, after Sign out (currentToken = null), the same press connected at once. Check again still works, because it falls back to a refused token.",
+   "fix": "Clear refusedTokens in the IPC.signOut handler (main.ts, next to `currentToken = null`). Or let the GitHub CLI wait loop fall back to a refused token, as Check again does, when nothing else is found."
+  },
+  {
+   "id": 136,
+   "severity": "should-fix",
+   "what": "Some tests are weak. signin-requirement.test.ts 'the GitHub CLI's download page' passes on the base once github-app.ts exists: it tests only the pure mayOpenSignInPage. Nothing checks that the waiting message carries `link`, that openSignInPage opens GH_CLI_PAGE only while gh is missing, or that the renderer adds the button. In host.test.ts, 'a task that fails on a refused sign-in' asserts `host.tasks?.get(t.id)?.status ?? \"failed\"`, which also passes when the task is gone. The report also says it added asserts to ui-copy.test.ts; that file isn't in the diff (the asserts are in signin-requirement.test.ts).",
+   "fix": "Move the GitHub CLI wait's first progress (message, link, page) into a pure function in github-app.ts that main calls, and test it for gh missing and gh present. Drop the `?? \"failed\"` fallback."
+  }
+ ]
+}

@@ -1,0 +1,11 @@
+{
+ "title": "Text size reaches the Ask box and the desk's bar",
+ "owns": "app/main/ask.ts, app/renderer/ask/** (field.ts, styles.css), app/main/desk/view.ts, app/renderer/desk styles, app/main/page-prefs.ts FIXED_TYPE, the text-size hint copy, README/DEVELOPING/DESIGN lines that say the Ask box and desk keep their size",
+ "items": [
+  {
+   "id": "F-57-ask-desk",
+   "from": "round 2 css2 left",
+   "text": "Settings > Comfort & access > Text size (Default, Large 115%, Larger 130%) now reaches every page but the Ask box and the desk's 30 px bar, which keep their size (round 2 could not edit them: other packages owned them). Make both follow it, keeping the Ask box's typed-ahead changes (round 2's typeahead package: the box shows before the screen read and keeps letters typed into it) intact. css2's proposal: Done or confirmed (the verifier agrees):\n- The terminal's type follows the text size (49e98a2, 789c5cd, 37b8c76).\n- The prompt card's per-card sizes: `const want = forText(size)` is already in windows.ts on the base.\n- Allow and Not now are topmost and inside the window at every size (allow-top.mjs).\n- Buttons, pop-ups and fields grow with the text (6bf0fe0, 632dcf5).\n\nLeft, because css2 may not edit those files this round:\n- The Ask box (app/main/ask.ts, app/renderer/ask/**, owned by typeahead2).\n- The desk's 30 px bar (app/main/desk/**, owned by lifecycle2).\n\nProposals for the lead to queue after the merge (for example with handle2, or as a follow-up package):\n(1) Ask box: ask.ts SIZE width 560*s, height 25+67*s and LINE 24*s; field.ts FIELD.line/oneLine times --text-scale; ask/styles.css html[data-text-size] twins. Then drop 'ask' from page-prefs' FIXED_TYPE, 'The Ask box keeps its size.' from the hint, and the README/DEVELOPING/docs-test wording.\n(2) Desk: view.ts bar height times the scale, desk/styles.css twins, and drop 'desk' from FIXED_TYPE.\n\nUntil then, the hint, DESIGN.md, README and DEVELOPING.md correctly say both keep their size."
+  }
+ ]
+}

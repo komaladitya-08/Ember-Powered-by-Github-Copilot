@@ -1,0 +1,326 @@
+{
+ "key": "perception",
+ "final": {
+  "findings": [
+   {
+    "id": 0,
+    "status": "fixed",
+    "how": "capture.ts maskRect returns early when the clipped rectangle is empty (the guard app/remote/mask.ts already had). A never-look or remote-surface mask outside the picture no longer reaches Buffer.fill with a negative end. No change in round 2.",
+    "test": "test/unit/perception-capture.test.ts: maskRect cases for masks left of, above, right of and touching the picture, plus a captureRect case with a private window left of the target on its top rows. Three threw 'RangeError: The value of \"end\" is out of range' before the fix; all pass now."
+   },
+   {
+    "id": 1,
+    "status": "fixed",
+    "how": "ember_uia.cs Walk lists an offscreen element (not the root) with its flag but doesn't read its subtree, except inside a combo box. Children are visited on-screen ones first. Past maxNodes an offscreen element is skipped without ending the walk. A cut that left out only offscreen elements is reported as \"offscreen\", not \"nodes\". PROTOCOL.md and providers/fake.ts follow. Compiles as C# 5 against net48 with 0 warnings. No change in round 2.",
+    "test": "test/unit/sidecar-host-offscreen.test.ts 'a long page scrolled down': 0 of 25 visible links were listed after 1700 or 3000 offscreen links before; all 25 now, with nothing cut. A 40x200-link offscreen page reads whole and its secret_fields scan is complete. Windows only: test/integration/uia-bridge.test.ts on test/fixtures/win_long_list.ps1."
+   },
+   {
+    "id": 2,
+    "status": "fixed",
+    "how": "Round 1: tree.ts keeps the secret fields it doesn't list (offscreen, or past maxNodes) with their values, attached to the nearest listed element. secrets.ts withholds names that carry those values, and withholds value-like words where a value is unknown or the snapshot ended early. Round 2, verifier must-fix (1c6ad92): reading.ts now also counts the bridge's \"offscreen\" cut in unreadAfter. The verifier's v2-offscreen-cut probe now gives leaked=[] with truncated=false. Round 2, verifier should-fix on unnamed fields (fa28312): buildNodes look mode keeps unnamed FIELD_ROLES fields (and combo boxes) it doesn't list as candidates, with bounds and values. Secrets.redact runs secretByLayout over the listed labels plus those candidates (labels.ts secretByLayoutAmong). Flagged ones are treated like named unlisted secrets: their values are withheld from containers' names and remembered, and their keys stay secret. The verifier's v2-unnamed probe itself still lists the name, and that is correct: its unnamed field sits 32 px under the 'Card number' text, beyond the shared 'label just above' rule (-4 <= gap < 24, nearby_label in ember_atspi.py and inferLabels in elements.ts), which also governs listed fields. The Linux sidecar does the same, so the verifier's statement that Linux covers it does not hold for that geometry. Evidence: scratch probe /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-r2/py/probe_unnamed.py on the Python sidecar's own fakes gives: gap 32 unnamed -> leaked; gap 6 unnamed -> withheld; gap 32 named 'Card number' -> withheld. The TS host gives the same three results on the verifier's exact structure, so Windows/macOS now match Linux. Widening the rule would change Linux and listed-field behaviour that no finding names; if the owner wants it, change nearby_label and labelFor together.",
+    "test": "test/unit/sidecar-host-offscreen.test.ts. Round 1: four cases failed before the fix (twins of the Python PERC9-1 and PERC9-3 cases). Round 2: 'withholds such a name when the snapshot left the field out as offscreen past its limit' (the verifier's probe as a test: 1596 groups + cell = 1600 raw nodes, plus the 'nodes'-cut and under-cap variants, and truncated stays false). It fails with the reading.ts change undone. 'judges an unnamed field it doesn't list by the label the read lists beside or above it' covers above, beside, an unknown value and a plain label, plus read_element and a remembered value. It fails with fa28312's source undone."
+   },
+   {
+    "id": 3,
+    "status": "fixed",
+    "how": "Round 1: SECRET_WORDS (elements.ts and ember_atspi.py, kept identical) gained seed and recovery phrases, N-digit codes, authenticator, SMS, login and similar codes, security, session, refresh and ID tokens, master and SSH keys, and more reveal verbs. A bare 'signing keys' row was dropped because it made LibreOffice's 'OpenPGP signing key:' chooser secret (policy W11-2). Round 2, verifier should-fix (313f124): the narrower row \"(jwt|webhook|private|gpg|ssh) signing keys?\" is in both lists. 'OpenPGP signing key:', 'Signing key' and 'PGP signing key' stay plain.",
+    "test": "test/fixtures/secret-labels.json gains secret rows 'JWT signing key', 'Webhook signing key', 'Private signing key', 'GPG signing key' and 'SSH signing keys', and plain rows 'Signing key' and 'PGP signing key'. With the row removed, perception.test.ts and sidecar-host-secrets.test.ts fail ('JWT signing key: expected false to be true'), and so does the Python self-test (1 failure). All pass with it (Python: 132 OK)."
+   },
+   {
+    "id": 4,
+    "status": "fixed",
+    "how": "app/remote/screen.ts ignoreXErrors() installs a no-op XSetErrorHandler once per process, loading koffi and libX11 lazily. It returns false, never throws, when they can't load. desktop-child.ts calls it before the first X call. No change in round 2.",
+    "test": "test/unit/remote-agent-screen.test.ts with a fake koffi: it failed before (ignoreXErrors is not a function). Real repro on Xvfb under plain Node: BadWindow exited 1 before, and returns 0 with exit 0 after."
+   },
+   {
+    "id": 5,
+    "status": "fixed",
+    "how": "Round 1: with scope 'window' and no window read, perceive takes no picture, never one of the whole screen. Round 2, verifier should-fix (3cf9761): in that case the text is now only \"That window can't be found (it may have closed, or its app isn't answering).\" with capture null, without the 'focused window ... use the screenshot' line. A busy app keeps its busy text plus '(No screenshot: the app isn't answering.)'. Ember's own window keeps its text plus '(No screenshot: Ember takes no pictures of its own windows.)'. Re-checked live on Xvfb with the real AT-SPI sidecar and X11 (throwaway integration test, since deleted): targets {pid:999999,path:'/x'} and {title:'no such window'} both returned capture=false and exactly that sentence.",
+    "test": "test/unit/perception-platform.test.ts: 'takes no picture at all, not one of the whole screen' now expects the exact sentence, and the new 'says the app is busy when it is, and Ember's own window when the user is in one'. Both fail with the round-2 change undone."
+   },
+   {
+    "id": 6,
+    "status": "fixed",
+    "how": "ember_atspi.py walk(): a page (document) that shows with neither children nor size cuts the read \"loading\", from facts the walk already has. sidecar-host notHandedOver() does the same in buildNodes and secret_fields. Perception maps cut 'loading' to the note \"(The page is still loading, so its content isn't listed yet. Try again in a moment.)\". The remote wire and protocol schema accept it. No change in round 2.",
+    "test": "A new Python walk test (self-test 132 OK), new host tests in sidecar-host-offscreen.test.ts (the read is cut 'loading', and secret_fields answers busy), a perception-platform case (the note replaces a 'depth' mapping), and remote-perception.test.ts (carried over SSH unchanged)."
+   },
+   {
+    "id": 7,
+    "status": "fixed",
+    "how": "Round 1: windows.ts samePopups and isPopupOf. perceive (window scope) looks through each of the app's own popups that accessibility lists as a window with secret_fields, and blacks out its fields; one that can't be looked through, or opens during the capture, is blacked out whole. Round 2, verifier should-fix (42043b8, 0fe3ebe, 9f490a7): popupMasks logs perception.popup_unmatched with app, width, height and the OS, once a run for each app and size (at most 32), when a popup of the app's has no listed window. The OS comes from a new optional PerceptionOptions.os that main.ts passes (platform.os), because perception may not read process.platform (platform-boundary D1). DEVELOPING.md section 12 now says an app's own popups are scanned only when accessibility lists them as windows, and names the log line.",
+    "test": "test/unit/perception-platform.test.ts 'logs such a popup, once a run for each app and size': two perceives log one line {app:'gedit',width:120,height:80,os:'darwin'}, and a popup that was looked through logs nothing. It fails with 42043b8's source undone, and fails without the os option. test/unit/platform-boundary.test.ts passes (it failed on the intermediate process.platform version, 0fe3ebe, now fixed in 9f490a7). main-screen-recording-notice.test.ts checks that main passes os."
+   },
+   {
+    "id": 8,
+    "status": "fixed",
+    "how": "Perception.remoteSurfaces asks the remote-surface check about the whole app name and each part of WM_CLASS ('remmina Org.remmina.Remmina'), as the security-window check reads them. The Linux and macOS rows are policy/remote-surface.ts's (policy package's #118); fix/policy merges cleanly with this branch. No change in round 2.",
+    "test": "test/unit/remote-surface.test.ts: a Remmina, virt-viewer or Screen Sharing window under a Linux or macOS check was not blacked out before and is now; 'gedit' titled 'remmina notes' is not."
+   },
+   {
+    "id": 96,
+    "status": "fixed",
+    "how": "Round 1: PLATFORM_WORDS.darwin.noScreenAccess, which Perception says instead of 'the window is off screen' (before the capture, and when the permission goes during it). Round 2, verifier should-fix (bf0de1f, 085ce29, 9f490a7): Perception calls a new onNoScreenAccess option the first time in a run it refuses a picture for that reason. A throwing callback is logged and changes nothing. main.ts shows the bubble 'I can't take screenshots' / \"I don't have macOS's Screen Recording permission. Open the setup check to allow it, then quit and reopen me.\" with the button 'Open setup check', on macOS only (where the open-screen-recording-settings fix exists). Main claims the bubble while it shows (agent.claimBubble, as for 'Listening…'), because mid-task the worker's progress would otherwise replace it and its button at once. After 15 s main lets go (the task's progress comes back, or it hides). The button opens the settings window at the Setup check (IPC.focusSection 'checks'), whose Screen Recording row has the existing 'Open System Settings' fix. It does not open the pane itself: setup-check.test.ts pins the lead's ruling that only the settings window's guarded IPC applies a fix, and the full suite failed on bf0de1f's direct sys.fixes.apply until 9f490a7. The handle's 'Ready' status is not changed: no state for it exists, and the notice plus the Setup row cover the finding's case.",
+    "test": "test/unit/perception-platform.test.ts 'tells Ember the first time a run' (refused before the picture and during it, a failing notice, no notice when the permission is there) fails with the callback removed. test/unit/main-screen-recording-notice.test.ts (new; it reads main.ts's source as main-privacy-wiring.test.ts does) checks the macOS-only guard, title, button, that no fix is applied in the notice, the button handler, the bubble hold and release, and os. It fails on the earlier hunks. setup-check.test.ts passes again."
+   },
+   {
+    "id": 237,
+    "status": "fixed",
+    "how": "Same change as #96 (a duplicate from another lens): macOS without Screen Recording now says so in the worker's text every time, and the user gets the notice once a run with a way to the setting.",
+    "test": "Same tests as #96."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "f6b25dd",
+    "subject": "Take screenshots when a private window lies to the left of the window looked at",
+    "ids": [
+     0
+    ]
+   },
+   {
+    "sha": "d9eab05",
+    "subject": "Take no picture for a window that can't be found instead of the whole screen",
+    "ids": [
+     5
+    ]
+   },
+   {
+    "sha": "46a795a",
+    "subject": "Say that Screen Recording is missing instead of \"the window is off screen\" on macOS",
+    "ids": [
+     96,
+     237
+    ]
+   },
+   {
+    "sha": "6a8f59d",
+    "subject": "Treat seed phrases, 2FA code prompts and more reveal toggles as secret",
+    "ids": [
+     3
+    ]
+   },
+   {
+    "sha": "74ed8e5",
+    "subject": "Keep the remote desktop helper running when a window closes between two X calls",
+    "ids": [
+     4
+    ]
+   },
+   {
+    "sha": "d3697ce",
+    "subject": "Read what shows of a long Windows page instead of walking what is scrolled away",
+    "ids": [
+     1
+    ]
+   },
+   {
+    "sha": "0293dad",
+    "subject": "Withhold Windows and macOS names that carry a secret field's value the read didn't list",
+    "ids": [
+     2
+    ]
+   },
+   {
+    "sha": "661103a",
+    "subject": "Say a web page is still loading instead of reading it as an empty window",
+    "ids": [
+     6
+    ]
+   },
+   {
+    "sha": "a853bc3",
+    "subject": "Black out secret fields in the app's own popups over the window it pictures",
+    "ids": [
+     7
+    ]
+   },
+   {
+    "sha": "71b60c6",
+    "subject": "Know a remote viewer by either part of Linux's X11 class when blacking it out",
+    "ids": [
+     8
+    ]
+   },
+   {
+    "sha": "f44b830",
+    "subject": "Leave signing-key choosers out of the secret field words",
+    "ids": [
+     3
+    ]
+   },
+   {
+    "sha": "1c6ad92",
+    "subject": "Withhold a name that carries a secret field's value when the read ends on it with only offscreen elements left out",
+    "ids": [
+     2
+    ]
+   },
+   {
+    "sha": "fa28312",
+    "subject": "Judge an unnamed field the read doesn't list by the secret label it lists beside or above it",
+    "ids": [
+     2
+    ]
+   },
+   {
+    "sha": "313f124",
+    "subject": "Treat JWT, webhook, private, GPG and SSH signing keys as secret fields",
+    "ids": [
+     3
+    ]
+   },
+   {
+    "sha": "3cf9761",
+    "subject": "Say only that the window can't be found when a window's picture has no window",
+    "ids": [
+     5
+    ]
+   },
+   {
+    "sha": "bf0de1f",
+    "subject": "Tell the user once a run when macOS refuses Ember screenshots, with a button to System Settings",
+    "ids": [
+     96,
+     237
+    ]
+   },
+   {
+    "sha": "42043b8",
+    "subject": "Log the app's popups that go unscanned, and say in DEVELOPING.md which popups are looked through",
+    "ids": [
+     7
+    ]
+   },
+   {
+    "sha": "085ce29",
+    "subject": "Keep the Screen Recording notice up while a task runs, until it has been read",
+    "ids": [
+     96,
+     237
+    ]
+   },
+   {
+    "sha": "0fe3ebe",
+    "subject": "Say the OS in the log line of a popup that goes unscanned",
+    "ids": [
+     7
+    ]
+   },
+   {
+    "sha": "9f490a7",
+    "subject": "Send the Screen Recording notice's button to the setup check, and have main tell Perception the OS",
+    "ids": [
+     96,
+     237,
+     7
+    ]
+   }
+  ],
+  "checks": "Final state (HEAD 9f490a7), all on this worktree:\n- npx tsc --noEmit: exit 0, no output.\n- npm run lint: exit 0.\n- npm test (full): 245 files, 6015 tests. 1 failed | 6006 passed | 8 skipped. The one failure was test/unit/voice-bzip2.test.ts 'passes on a block that expands past 4 MB in pieces' hitting vitest's 5 s timeout (5078 ms) at load average 10 on 4 CPUs. Re-run alone: 34/34 passed. This branch touches no voice code.\n- An earlier full run on this round, before 9f490a7, had 2 real failures: platform-boundary D1 (process.platform in perception/index.ts) and setup-check 'Nothing else applies a fix' (from bf0de1f's direct sys.fixes.apply). Both were fixed in 9f490a7 and pass now.\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: exit 0 ('ok first instance showed its window', 'ok second launch handed over...').\n- python3 -B sidecar/atspi/test_ember_atspi.py: Ran 132 tests, OK.\n- Failing first: each round-2 test fails with its fix undone (reading.ts offscreen cut: 1 failed; fa28312 source: 1 failed; 3cf9761: 2 failed; bf0de1f callback: 1 failed; 42043b8: 1 failed; signing-key row: 2 TS failed + 1 Python failed; main-screen-recording-notice: 3 failed incl. setup-check without 9f490a7's main.ts).\n- Verifier probes copied into test/unit temporarily: v2-offscreen-cut gives leaked=[] (truncated=false); v2-unnamed leaks only at its 32 px gap, which Linux does too (see #2).\n- Live Xvfb + real AT-SPI for #5: both missing targets give capture=false and the one sentence.\n- Not run: the commands integration suites (nothing under app/main/commands changed) and the voice suites (voice not changed).\n- Merges (git merge-tree against every fix/* branch): all merge cleanly except fix/platform, with one conflict hunk in app/main/perception/index.ts. test/unit/perception-platform.test.ts now merges cleanly. Resolution, checked on a throwaway trial merge (tsc 0; 19 test files, 425 tests passed; worktree removed): `if (!capture) {\\n  return noShot(dialogAfter ? this.platformDialogWords()\\n    : this.noScreenAccess(x11) ? this.screenRefused()\\n    : \\\"the window is off screen, or the screen couldn't be captured safely\\\");\\n}`. The conflict can't be avoided: both branches change that one line, and nothing runs between a null capture and it.",
+  "sharedHunks": [
+   "app/main/main.ts, bubble action handler: `if (id === \"ui:setup-check\") { showHome(); sendToHome(IPC.focusSection, \"checks\"); agent?.releaseBubble(lastState.bubble); return; }` next to the ui:settings line (#96)",
+   "app/main/main.ts, Perception options in start(): `os: platform.os,` after isRemoteSurface, plus the onNoScreenAccess callback (macOS-only guard; claims the bubble; 'I can't take screenshots' with 'Open setup check'; releases after 15 s) (#96/#237, #7)",
+   "app/shared/words.ts: optional PlatformWords.noScreenAccess, set for darwin only (#96/#237, round 1)",
+   "app/main/remote/protocol.ts and app/remote/wire.ts: the truncated/cut enum accepts \"loading\" (#6, round 1)",
+   "app/remote/screen.ts (ignoreXErrors) and app/remote/desktop-child.ts (calls it): the remote desktop helper, which the package owns (#4, round 1)",
+   "docs/DEVELOPING.md: Platform rules list, one bullet saying an app's own popups are scanned only when accessibility lists them as windows, and naming perception.popup_unmatched (app, size and OS) (#7)",
+   "test/fixtures/secret-labels.json: new secret and plain rows, read by both the TS and Python suites (#3)",
+   "test/unit/perception-platform.test.ts: harness gains screenRecording (moved off fix/platform's line), onNoScreenAccess, os and an infos-recording logger; new describe blocks. It merges cleanly with fix/platform"
+  ],
+  "forDocs": [
+   "CHANGELOG: On macOS without the Screen Recording permission, Ember now says so instead of 'the window is off screen', and once a run shows 'I can't take screenshots' with a button to the setup check.",
+   "CHANGELOG: Secret-field words now cover wallet seed and recovery phrases, '6-digit code' style and other 2FA code prompts, security, session, refresh and ID tokens, master and SSH keys, JWT, webhook, private, GPG and SSH signing keys, and show-password toggles in Korean, Danish, Norwegian, Hungarian, Romanian, Greek, Vietnamese, Indonesian, Arabic, Hebrew and Thai.",
+   "CHANGELOG: On Windows, long web pages scrolled down are read by what shows (no more empty reads or refused screenshots on very big pages); names that carry a secret field's value are withheld on Windows and macOS as on Linux.",
+   "CHANGELOG: A window screenshot of a window that can't be found takes no picture, and the text says only that it can't be found.",
+   "README / privacy notes: an app's own popups over its window are checked for secret fields only when accessibility lists them as windows (macOS menus and some Windows popups aren't), as DEVELOPING.md now says."
+  ],
+  "ciOnly": [
+   "Windows: the UIA bridge's offscreen pruning and \"offscreen\" cut on a real long Chrome/Edge page, and test/integration/uia-bridge.test.ts on win_long_list.ps1 (3000-row ListView scrolled to its end). ember_uia.cs compiles here as C# 5/net48 only.",
+   "Windows/macOS: that a real Chromium checkout page scrolled so the card row sits at the bottom edge gives cut 'offscreen' and the cell's name is withheld (unit-tested with FakeProvider only).",
+   "macOS: Screen Recording missing or revoked gives the noScreenAccess text, and the notice shows once a run mid-task with 'Open setup check' opening the settings window at the Setup check (the bubble hold is checked only from main.ts's source).",
+   "macOS/Windows: which of an app's popups accessibility doesn't list as windows; the perception.popup_unmatched lines from CI and the field decide per platform whether to black them out.",
+   "macOS AX provider: unnamed offscreen fields have no values there, so the value-like-word fallback is what withholds a container's name (unit-tested only)."
+  ],
+  "notes": "Yes, I resumed. An earlier run of this round had already committed fixes for all seven problems (1c6ad92 through 42043b8), but hadn't run the full suite. It had left two real failures, now fixed in 9f490a7. First, bf0de1f's bubble button applied the Screen Recording fix directly, which breaks the lead's pinned ruling that only the settings window applies a fix (setup-check.test.ts). The button now opens the settings window at the Setup check. Second, 0fe3ebe (this run) put process.platform in perception/index.ts, which breaks D1. main now passes platform.os. I also made the notice claim the bubble (085ce29), because mid-task the worker's progress would otherwise replace it and its button at once. Verifier problem #2 (unnamed field): the mechanism is in, but the probe's own layout stays listed on purpose, matching Linux. Evidence and the proposal are under finding 2. Verifier's fix/platform conflict: the conflict can't be avoided, so it is left to the lead's merge; the checked resolution is in Checks. Scratch evidence is under /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-r2/ (probe_unnamed.py and the logs). The worktree is clean, and the trial-merge worktree was removed."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/shared/words.ts: optional PlatformWords.noScreenAccess field (doc comment) and its macOS value; Linux and Windows rows unchanged",
+   "app/main/remote/protocol.ts: SeenSchema.truncated enum gains \"loading\"",
+   "app/remote/wire.ts: wireSeen passes truncated \"loading\" through",
+   "sidecar/uia/PROTOCOL.md: snapshot section describes the offscreen walk, on-screen-first order and the \"offscreen\" cut",
+   "test/fixtures/secret-labels.json: new secret rows (seed phrases, N-digit/authenticator/SMS/login/access codes, tokens, master/SSH keys, Romanian/Greek show-password) and plain look-alike rows",
+   "test/fixtures/win_long_list.ps1: new fixture (3000-row ListView scrolled to its end) for the bridge integration test",
+   "test/integration/uia-bridge.test.ts: LONG_LIST constant, module comment line, and one new test 'reads what shows of a long list scrolled to its end...'",
+   "test/unit/remote-perception.test.ts: one new scene 'a page still loading'",
+   "test/unit/remote-surface.test.ts: one new test 'blacks out a remote viewer known by either part of its X11 class'",
+   "test/unit/perception-own-windows.test.ts: the Ember-window case now expects no window-scope picture and checks the whole-screen picture via scope 'screen'"
+  ],
+  "forDocs": [
+   "CHANGELOG: Screenshots no longer fail when a password manager or remote window sits to the left of the window Ember looks at.",
+   "CHANGELOG: A window screenshot is never replaced by a picture of the whole screen when the window has closed or its app isn't answering.",
+   "CHANGELOG (macOS): Without the Screen Recording permission, Ember now says so and names System Settings › Privacy & Security › Screen Recording, instead of saying the window is off screen.",
+   "CHANGELOG: Seed and recovery phrases, '6-digit code', authenticator, SMS, login and access codes, session, refresh and ID tokens, and master and SSH keys are now treated as secret fields. 'Show password' toggles are recognised in Korean, Danish, Norwegian, Hungarian, Romanian, Greek, Vietnamese, Indonesian, Arabic, Hebrew and Thai.",
+   "CHANGELOG (Windows): Long pages scrolled down (Chrome, Edge, Teams, Outlook on the web) now read what is on screen, and screenshots of big pages are no longer refused for their size.",
+   "CHANGELOG (Windows, macOS): Names of cells and sections that would carry a secret field's value (a card number) are withheld even when the field itself is scrolled out of view.",
+   "CHANGELOG: When a browser hasn't handed a page to accessibility yet, Ember says the page is still loading instead of reading an empty window.",
+   "CHANGELOG (SSH): The remote desktop helper no longer stops when a menu or tooltip closes between two of its calls.",
+   "CHANGELOG: Secret fields in an app's own popups (completion or autofill panels) are blacked out of that app's window screenshots; a popup Ember can't check is hidden.",
+   "DEVELOPING.md §10.8 / README: say that on Linux and macOS, VM and remote-desktop viewer windows (virt-manager, virt-viewer, GNOME Boxes, Remmina, VNC Viewer; Screen Sharing, Parallels, VMware Fusion, UTM) are masked as remote surfaces once policy/remote-surface.ts has their rows (policy package, review #118). Until then they are not masked unless they are on the never-look list.",
+   "DEVELOPING.md troubleshooting (macOS): the no-screenshot note 'Ember doesn't have the Screen Recording permission …' means allowing Ember in Privacy & Security › Screen Recording, then quitting and reopening Ember."
+  ],
+  "ciOnly": [
+   "Windows (EMBER_UIA_TEST=1): uia-bridge.test.ts 'reads what shows of a long list scrolled to its end' must list Row 3000 as on screen, have no 'nodes' in cut, list some rows flagged isOffscreen and nothing under an offscreen row. The existing bench cases must still pass: snapshot cut == [] for the 32-bit bench, and the Theme combo box and ListView/TreeView reads. This needs .NET's ListView proxy to report IsOffscreen.",
+   "Windows: whether Chrome, Edge, Teams and Slack report IsOffscreen with real bounds for content above the viewport (the premise of #1), and whether a Chromium Document not yet handed over has zero bounds and no children through UIA/AX (#6). No CI fixture covers either.",
+   "Windows and macOS: whether Chromium names table cells and sections after field values through UIA/AX as on Linux (#2). The macOS AX provider doesn't read values of offscreen elements, so on macOS only the value-like-word rule applies.",
+   "macOS (EMBER_DARWIN_TEST without the Screen Recording grant): perceive returns the Screen Recording note, not 'off screen'. darwin windows.screenRecording() is reached through the Perception x11 object, which wrapWindowsForWsl returns unchanged off Windows.",
+   "Windows and macOS: which app popups (override-redirect) the sidecar host lists as top-level windows and so can scan (#7). Unmatched ones stay visible.",
+   "SSH remote (remote.yml ssh job): the desktop child under plain Node with ignoreXErrors installed, while windows close during stack() and activeWindow().",
+   "EL8 job: sidecar/atspi/test_ember_atspi.py on /usr/libexec/platform-python 3.6 (the new walk check and the SECRET_WORDS entries use only 3.6 features; not run here)."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 2,
+   "severity": "must-fix",
+   "what": "A secret field's value still reaches the read when the UIA bridge drops that field past maxNodes as \"offscreen\". This cut reason was added by the #1 fix. reading.ts sets unreadAfter only for the cuts \"nodes\" and \"time\", or for busy, so the stop-set check never runs for \"offscreen\". Probe (FakeProvider + real Host, Chrome document, /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/perception/probes/v2-offscreen-cut.test.ts): Window + Document + 1596 unnamed groups + DataItem 'Card number 4111 1111 1111 1111' + its Text gives 1600 raw nodes, which is the raw cap. The cell's offscreen Edit is then left out with cut [\"offscreen\"], and read_window lists `table cell \"Card number 4111 1111 1111 1111\"` with truncated=false. The same page with one visible link after the cell gives cut \"nodes\" and the name is withheld. Under the cap, it is withheld too. This is the finding's own case: a checkout page scrolled so that the card row sits at the bottom edge, where everything after it in pre-order is offscreen.",
+   "fix": "In app/sidecar-host/reading.ts readWindow, also count the bridge's \"offscreen\" cut: `const unreadAfter = !!snap.busy || (snap.truncated && snap.cut.some(c => c === \"nodes\" || c === \"time\" || c === \"offscreen\"));`. Past the cap, the bridge leaves out only children of the path to the last element it visited, and that is exactly the chain unreadValueNames walks up from the last listed element. Add the probe as a test in test/unit/sidecar-host-offscreen.test.ts (it fails now)."
+  },
+  {
+   "id": 2,
+   "severity": "should-fix",
+   "what": "An unnamed offscreen field that only the visible text beside it labels still leaks. tree.ts look mode calls isSecret(name=\"\"), which is false, so the field is not put in `unlisted` at all. Probe /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/perception/probes/v2-unnamed.test.ts: DataItem 'Card number 4111 1111 1111 1111' holds Text 'Card number' (on screen) and an unnamed offscreen Edit whose value is 4111 1111 1111 1111. The read lists the cell with the number. Named 'Card number', the same field is withheld. Linux covers this case with name_says_secret -> secret_inside -> secret_by_labels (the read's layout).",
+   "fix": "In buildNodes look mode, keep unnamed TEXT_ROLES fields as candidates, with their bounds and values. In Secrets.redact, run secretByLayout over the listed labels plus these candidates. Treat the ones it flags like named unlisted secrets: push their values into told/secret and remember them. Add the probe as a test."
+  },
+  {
+   "id": 5,
+   "severity": "should-fix",
+   "what": "The text contradicts itself when the window can't be found (live on Xvfb, exp14 on the fix branch): \"The focused window exposes no accessibility information; use the screenshot.\\n(No screenshot: the window can't be found (it may have closed, or its app isn't answering).)\". It also says 'focused window' when a target was named. Today the worker replaces this text unless the app is busy, but the remote child and any other caller pass it on as is.",
+   "fix": "In Perception.perceive, when scope is 'window', no window was read, and the app is neither busy nor Ember's own, return the text \"That window can't be found (it may have closed, or its app isn't answering).\" with capture null. Don't append the note to perceivedText's \"use the screenshot\" line. Alternatively, make perceivedText take a flag so it doesn't say \"use the screenshot\" when no window was found."
+  },
+  {
+   "id": 96,
+   "severity": "should-fix",
+   "what": "Only the wording is fixed. The finding also asks for a bubble or notice with an 'Open settings' action the first time per run, and for the handle to stop saying 'Ready'. The fix agent left both to the onboard and bubble packages, but neither package has a finding for them (I searched every pkg-*.json for Screen Recording: onboard #94 and #99 are different issues). As it stands, nobody will do them.",
+   "fix": "Add a small main.ts hunk. The first time per run that perceive answers with PLATFORM_WORDS.darwin.noScreenAccess (or through an onNoScreenAccess callback added to PerceptionOptions), raise a bubble notice: \"Ember can't take screenshots: it doesn't have the Screen Recording permission.\" Give it an action labelled \"Open System Settings\" that calls the darwin environment's open(PANES.screenRecording) (platform/darwin/system/environment.ts:106), following the existing actions pattern at main.ts:447-450. Otherwise, the lead should assign this explicitly to the onboard package."
+  },
+  {
+   "id": 3,
+   "severity": "should-fix",
+   "what": "The fix drops the reviewer's 'signing keys' row (with evidence: LibreOffice's 'OpenPGP signing key:' chooser broke policy test W11-2). As a result, text fields such as 'JWT signing key', 'Private signing key' and 'GPG signing key', where a private key is pasted, are still plain fields.",
+   "fix": "Add a narrower row to both lists, e.g. \"(jwt|webhook|private|gpg|ssh) signing keys?\". The lookbehind keeps it from matching inside 'OpenPGP', so the LibreOffice chooser stays plain. Add secret rows ('JWT signing key', 'Private signing key') and keep 'OpenPGP signing key:' plain in test/fixtures/secret-labels.json."
+  },
+  {
+   "id": 7,
+   "severity": "should-fix",
+   "what": "Popups that accessibility doesn't list as windows are still drawn without a secret scan: macOS menus, Windows menu shadows, possibly Chromium or Firefox popups. The report says so, but nothing in the code or docs records the gap, and there is no telemetry to show which popups go unmatched (the stated plan is to 'decide per platform after CI').",
+   "fix": "Log perception.popup_unmatched (app, size, platform) in popupMasks when a same-pid popup has no listed AX window, so CI and the field can show which popups go unscanned. Add one line to docs/DEVELOPING.md next to the screenshot-masking section: an app's own popups are scanned only when accessibility lists them as windows."
+  },
+  {
+   "id": null,
+   "severity": "should-fix",
+   "what": "Merge conflict with fix/platform (`git merge-tree fix/perception fix/platform`) in app/main/perception/index.ts and test/unit/perception-platform.test.ts. Platform changes the same `if (!capture) return noShot(dialogAfter ? SYSTEM_DIALOG : ...)` line to `this.platformDialogWords()`, and both branches append test blocks. All other fix/* branches merge cleanly. fix/policy merges cleanly, and the merged remote-surface tests pass.",
+   "fix": "Resolve it as: `if (!capture) { return noShot(dialogAfter ? this.platformDialogWords() : this.noScreenAccess(x11) ? this.words.noScreenAccess ?? NO_SCREEN_ACCESS : \"the window is off screen, or the screen couldn't be captured safely\"); }`. Keep both test blocks."
+  }
+ ]
+}

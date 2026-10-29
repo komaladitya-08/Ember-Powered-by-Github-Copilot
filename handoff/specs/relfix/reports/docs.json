@@ -1,0 +1,331 @@
+{
+ "key": "docs",
+ "final": {
+  "findings": [
+   {
+    "id": 36,
+    "status": "fixed",
+    "how": "Round 2 (verifier must-fix). e145f28: the docs test now matches the offer path without its closing bracket: /targetsNamed\\(words, \\[\\{ id: \"wsl:WSL\", names: \\[\"WSL\"\\] \\}[^\\n]*\\n(?:[^\\n]*\\n){0,5}[^\\n]*offerWsl\\(\\)/. I checked fix/remote's runtime.ts:1326-1331: it matches, and it offers for 'in WSL' or a distro Settings lists, never for 'Linux' alone. §3.1 now says exactly that. eb4da41: §3.1 quotes the offer as fix/bubble words it (\"I can work in WSL\", wslFirstSeen().title). §2.1 also carries fix/prompt's sentences (the card opens whole, Turn on waits for \"Scroll down to read it all first.\"). Both conflicts in COMMANDS-WSL-SSH.md therefore resolve by taking fix/docs's side. From round 1 (unchanged): §2.1 says the card comes from the switch, §1's Wayland row says 'none yet: commands only', and CHANGELOG and README say the same.",
+    "test": "docs.test.ts 'says Ember offers WSL when a request names it…' passes on fix/docs alone and on the trial merge. On a trial merge of fix/docs with remote, ask, voice, bubble, css, cmdwin, overlay, prompt and settings: with the old docs, 'says a request that names a distro Settings lists brings the WSL offer too, with the offer's words' and 'says the commands card's Turn on waits…' fail; with the new docs all 28 docs tests pass. They are release checks (RELEASE list), so they are skipped on fix/docs alone. If fix/docs is merged with fix/remote but not the other eight, 'has every fix the docs describe, or none of them' fails on purpose and names what is missing."
+   },
+   {
+    "id": 58,
+    "status": "fixed",
+    "how": "Round 2 (verifier should-fix). cf438e7 rewrites the README's Accessibility section for the release:\n- Speaking follows Settings › Voice › 'Speak replies, questions and results out loud' (When a screen reader runs is the default; Always; Never), and is never when the organisation turns it off. The 'only the organisation's policy' gap is gone.\n- 'More time to read and answer': fix/bubble now makes it ten times as long, so a question waits 20 minutes (its 8d95111, made today). The 2-minute gap is gone.\n- The desk tells a screen reader how to hand it back; that gap is gone.\n- Also: Shift+Enter in the ask box, the handle menu's Bring Ember to a computer…, Disconnect and Cancel connecting (settings' Computers), and the sign-in and consent cards' keyboard and read-through notes. That last line had been wrong: it said 'the bubble says so', but the card and a notification say it.\n0b50986 adds the 15 seconds to the CHANGELOG. I reverted my edit to DEVELOPING.md's speaking line because fix/voice already rewrites the same line. The docs test reads every route from code once the release is merged: the speak select, its label, section and default (speakChoice(DEFAULT_SETTINGS)); the more-time label; the Ember on screen buttons (p-ask, p-stop…); targetMenu's items; enterAction; desk/a11y.ts HAND_BACK_KEYS and modeNews; ANNOUNCE_SCREEN_READER_MS against ANNOUNCE_MS; termKeyAction (Tab, Ctrl+I, Ctrl+Shift+C); terminalOptions' screenReaderMode; the text-size options and hint; forced-colors in ember.css; app/shared/mic.ts; the bubble's announcement() with a step; panelHint; keyboardRoute; and promptHint. A revert of any of those fixes makes the 'every or none' check fail, so the README can't quietly stay wrong.",
+    "test": "docs.test.ts › \"README.md's Accessibility section, against the release it describes\" (9 cases). On the 9-branch trial merge with the previous README, all 9 fail; with the new one, all pass (28/28 in the file). They are skipped on fix/docs alone (16 passed, 12 skipped)."
+   },
+   {
+    "id": 204,
+    "status": "fixed",
+    "how": "Round 2 (verifier should-fix). f5379a1: TryExec comes from tryExec(command), which adds nothing when command is null, keeps stringValue's escaping, and sits after Icon. So lifecycle's entryLines(null, false) template (entries from 1b39bb3 with no TryExec and no marker) still matches, and emberWrote() still knows them. f7cf12a moves the helpers above launchCommand: they sat right above execArg, whose % doubling fix/packaging changes, and the two conflicted. merge-tree now shows no conflict in autostart.ts with fix/lifecycle or with fix/packaging. With the earlier unconditional TryExec, the merge with fix/lifecycle conflicted in autostart.ts and the test file couldn't load. I put the first-builds case in autostart.test.ts rather than lifecycle's autostart-owned.test.ts: adding that file on fix/docs would be an add/add conflict. It runs once emberWrote exists. From round 1: the README's Linux 'To remove Ember' paragraph.",
+    "test": "autostart.test.ts \"still knows the first builds' entries as its own…\" (runIf emberWrote) and 'differs from the first builds' entry only by TryExec'. On a trial tree of fix/docs + fix/lifecycle + fix/packaging: autostart.test.ts, autostart-owned.test.ts, packaging.test.ts and platform-linux-system.test.ts, 4 files, 117 passed. On fix/docs alone: 3 passed, 1 skipped."
+   },
+   {
+    "id": 102,
+    "status": "fixed",
+    "how": "Round 2 (verifier should-fix). 55f35f2 adds docs/DEVELOPING.md §15 'Publishing a release':\n- run ci with packages and intel, and download ember-packages, ember-windows, ember-macos and ember-macos-x64 (I checked these names against ci.yml);\n- the eight files: both RPMs (fix/packaging's CI now builds ember-voice-models too), the AppImage, the Windows zip, and the mac-arm64 and mac-x64 dmg and zip;\n- `sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS`, which writes the 'hash  name' lines sha256sum -c reads;\n- attach them, with the CHANGELOG notes.\nFrom round 1: the README's Download section, each OS downloading from the Releases page, and the setup check's 'sudo dnf install python3-pyatspi python3-gobject' matching the doctor.",
+    "test": "docs.test.ts 'says how to publish a release…': it derives the file names from layout.mjs and checks that the command's globs cover every file of this version. It failed before (no §15) and passes now. Round 1 tests: 'says where to download every file…' and appimage-guidance.test.ts."
+   },
+   {
+    "id": 206,
+    "status": "fixed",
+    "how": "Round 2 (verifier should-fix). 9a3aaa3: the README's optional AppImage line is now '# Optional, for “Hey Ember”, speaking and Ember's desk: sudo dnf install pulseaudio-utils speech-dispatcher speech-dispatcher-espeak-ng xorg-x11-server-Xvfb xorg-x11-xauth dbus-daemon'. pulseaudio-utils gives parec for speaker rejection (decision V1) and pactl for the doctor. From round 1: the required packages, chmod +x, './Ember-0.1.0-x86_64.AppImage doctor', and the doctor no longer offering the ember-voice-models RPM to an AppImage.",
+    "test": "appimage-guidance.test.ts \"names every package the RPM recommends…\" reads ember.spec's Recommends (minus the models RPM and the tray extension, each with a reason) and compares the README's optional line to it. It failed before (no pulseaudio-utils) and passes now."
+   },
+   {
+    "id": 225,
+    "status": "fixed",
+    "how": "Round 2 (verifier should-fix). c89ba4f: the rule now says typed words count everywhere, and spoken ones only where Ember can tell your voice from what your speakers play. On Windows, macOS and Linux without that, a dangerous command asked for by voice asks with the card (decision V1). 'Where it runs' now says '(Intel Macs and macOS 13: best effort)', as the README does. 0b50986 uses fix/cmdcore's §2.5 words: 'Linux with speaker rejection on and parec installed', '…on Linux without it…'. It also adds '4-second Stop (15 seconds while a screen reader runs)'. eb4da41 names fix/settings' 'Remove helper' and 'Offer to bring Ember along when I connect with SSH'. From round 1: '## 0.1.0 (2026-10-27)', the first-release summary, and no 'Changed' section.",
+    "test": "docs.test.ts › CHANGELOG.md: 'names the same best-effort computers as the README' and 'says spoken words count … only where Ember can tell…' failed before and pass now. 'names the settings switches as Settings › Computers has them' and the CHANGELOG line in the command-window check are release checks: on the trial merge they fail with the old notes and pass now."
+   },
+   {
+    "id": 35,
+    "status": "fixed",
+    "how": "Round 2 (verifier should-fix, copy only). 91f8ffb: both copies of the card (consent.ts sshConsent and prompt/copy.ts consentText) now say 'about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)'. There is no tool name, and 'there' appears once. The numbers are unchanged (pinned archives: linux-x64 xz 31.9 MB, gz 58.1 MB; unpacked 127.6 MB). The conflicts with fix/prompt (it moves this sentence after 'Your voice…') and fix/policy (BYOK in 'Your voice…') remain. Neither can be avoided on fix/docs, because all three branches edit the same lines. The resolution is in notes. From round 1: the bootstrap's tar excludes, and the README, CHANGELOG and §4.3 numbers.",
+    "test": "remote-helper-size.test.ts: SIZES regex updated, plus a new check that each copy of the sentence names no tool and says 'there' once. It failed on the old wording and passes now. ui-copy.test.ts pins are updated."
+   },
+   {
+    "id": 97,
+    "status": "fixed",
+    "how": "Round 1, unchanged. README.md Windows step 3 now covers Smart App Control:\n- what it shows (\"Smart App Control blocked an app that may be unsafe\" or \"…has blocked part of this app\", with no Run anyway);\n- where to turn it off: Windows Security › App & browser control › Smart App Control settings, which needs an administrator;\n- that builds before the April 2026 update need a Windows reset to turn it on again;\n- to ask the administrator on a managed PC, or use another computer until a signed build.\nSigning the Windows build is the owner's step (decision D8).",
+    "test": "docs.test.ts 'gives Windows users blocked by Smart App Control the way forward': failed on the old README, passes now."
+   },
+   {
+    "id": 103,
+    "status": "fixed",
+    "how": "Round 1, unchanged. The README says 'macOS 15 and later' for Open Anyway. macVersionFromDarwin maps Darwin 25 to 26, and 26's flow for an ad-hoc-signed app is the same as 15's.",
+    "test": "docs.test.ts 'covers every macOS from 13 to the newest Ember knows…' (reads macVersionFromDarwin('25.0.0')): it failed at 16 before and passes now."
+   },
+   {
+    "id": 233,
+    "status": "fixed",
+    "how": "Round 1, unchanged. DESIGN.md no longer says a character can be chosen from the handle menu. The menu template in main.ts has no character item.",
+    "test": "docs.test.ts 'names only the places where a character can really be chosen' (reads the handle menu from main.ts): failed before, passes now."
+   },
+   {
+    "id": 210,
+    "status": "fixed",
+    "how": "Round 1 added the step 'remove its helper from the computers you added over SSH first' to each OS's 'To remove Ember' paragraph, plus the uninstall.sh commands. Round 2, eb4da41:\n- The README and CHANGELOG name the button by its release name, **Remove helper** in Settings › Computers (fix/settings renames 'Remove Ember from build-01').\n- In COMMANDS-WSL-SSH.md §4.7, the 'remove the helper first' note moves below the two ways. fix/settings rewrites the first way, and with the note out of the way that merges with no conflict (merge-tree verified).",
+    "test": "docs.test.ts 'tells whoever removes Ember to remove its helper…': its name check reads the uninstall button's label from computers-copy.ts once the release is merged. On the trial merge it fails with the old README ('Remove Ember from build-01') and passes now."
+   },
+   {
+    "id": 212,
+    "status": "fixed",
+    "how": "Round 1, unchanged. DEVELOPING.md §10.5 now lists resources\\remote-parts, sidecar\\atspi\\ember_atspi.py (WSL's Linux-app helper) and ssh\\ember_askpass.cs (the SSH password helper, compiled on first use).",
+    "test": "docs.test.ts '§10.5 says what every file Ember stages beside the Windows app is' (reads layoutFor('win32') and REMOTE_PARTS_DIR): failed before, passes now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "364cc9e81a0305e834110225860f146204052dd4",
+    "subject": "Stop saying a character can be chosen from the handle menu",
+    "ids": [
+     233
+    ]
+   },
+   {
+    "sha": "0044a40d780427bb534faffc563767f472a47af7",
+    "subject": "Say in DEVELOPING.md what the WSL, SSH password and remote helper files in the Windows folder are",
+    "ids": [
+     212
+    ]
+   },
+   {
+    "sha": "1d4ee15194b5af63ebc8eb10f9b01a502243a77d",
+    "subject": "Stop the docs promising a task-raised commands card, a WSL offer on first sight and Wayland remote controls",
+    "ids": [
+     36
+    ]
+   },
+   {
+    "sha": "e3fb880232eb5417a94aec5de64cedf666bb839a",
+    "subject": "Say how big the SSH helper really is, and unpack it without Node's headers and npm",
+    "ids": [
+     35
+    ]
+   },
+   {
+    "sha": "8fcac7351c78a98478e37493e7714dc025fda23d",
+    "subject": "Let the login entry skip a removed Ember, and say how to remove Ember on Linux",
+    "ids": [
+     204
+    ]
+   },
+   {
+    "sha": "7ed8e716c6678d057d4f3e581f0fc35049b41536",
+    "subject": "Tell whoever removes Ember to take its helper off their SSH computers first",
+    "ids": [
+     210
+    ]
+   },
+   {
+    "sha": "dafa80952ad700c57a141f74d637e2fcdbeaa524",
+    "subject": "Tell AppImage users which system packages Ember still needs, and stop offering them the models RPM",
+    "ids": [
+     206,
+     102
+    ]
+   },
+   {
+    "sha": "e70d55b013742c87cad70d53090e44a127e9acac",
+    "subject": "Say where to download Ember and how to check what you downloaded",
+    "ids": [
+     102
+    ]
+   },
+   {
+    "sha": "49f9f6addd1a013723319148c4a1e2f5d57054d7",
+    "subject": "Give Smart App Control's blocked users a way forward, and cover macOS after 15",
+    "ids": [
+     97,
+     103
+    ]
+   },
+   {
+    "sha": "fa74a088080d10742965780fc618bba8ea989135",
+    "subject": "Make the release notes Ember 0.1.0's, with the first release summed up",
+    "ids": [
+     225
+    ]
+   },
+   {
+    "sha": "ceacbb22a78f28b02475ad39799aa7fcad95e50a",
+    "subject": "Add an Accessibility section to the README: screen readers, keyboard routes and known gaps",
+    "ids": [
+     58
+    ]
+   },
+   {
+    "sha": "55f35f2270aa1904c5a4315a9a662cb17ca88bbe",
+    "subject": "Say in DEVELOPING.md how to publish a release with the SHA256SUMS the README checks",
+    "ids": [
+     102
+    ]
+   },
+   {
+    "sha": "9a3aaa3d45bbbab43f78fea59aa43c743e6f0007",
+    "subject": "Name pulseaudio-utils in the AppImage's optional packages",
+    "ids": [
+     206
+    ]
+   },
+   {
+    "sha": "c89ba4fa7c9ac65b30bffb7cb1408d9b9715d75b",
+    "subject": "Say in the release notes that spoken words count only where Ember can tell them from the speakers",
+    "ids": [
+     225
+    ]
+   },
+   {
+    "sha": "91f8ffb40279130a0f1d46139a04ae8cd0ea4215",
+    "subject": "Say on the SSH card why a Mac gets a bigger helper download, without naming a tool",
+    "ids": [
+     35
+    ]
+   },
+   {
+    "sha": "f5379a15bb36135b6828e8ba00a5b783fc0617db",
+    "subject": "Add TryExec only for a program, in lines that merge with the marked autostart entry",
+    "ids": [
+     204
+    ]
+   },
+   {
+    "sha": "e145f28794ba492c94c67cf9a207e7e4d80e8d21",
+    "subject": "Keep the WSL offer's docs check true once fix/remote merges, and say a distro's name offers too",
+    "ids": [
+     36
+    ]
+   },
+   {
+    "sha": "f7cf12a32788097f725b933862fe061fe2a7b44b",
+    "subject": "Put the TryExec helpers above launchCommand, clear of fix/packaging's execArg change",
+    "ids": [
+     204
+    ]
+   },
+   {
+    "sha": "cf438e7f1b55b8fa0a453c9f7212699c9e351ac6",
+    "subject": "Make the README's Accessibility section the release's, and check each route against its code",
+    "ids": [
+     58
+    ]
+   },
+   {
+    "sha": "eb4da4195f0f09386731e42a064269e3c5b670e7",
+    "subject": "Say in the docs what fix/prompt, fix/bubble and fix/settings change, and merge clear of fix/settings",
+    "ids": [
+     36,
+     210
+    ]
+   },
+   {
+    "sha": "0b5098628839cec3dae57d9f8293c2017013e1c2",
+    "subject": "Say the release notes' voice rule in the guide's words, and the 15 seconds with a screen reader",
+    "ids": [
+     225,
+     58
+    ]
+   }
+  ],
+  "checks": "- npx tsc --noEmit: exit 0, no errors.\n- npm run lint: exit 0, no problems.\n- npm test (full): 245 files passed, 1 skipped (246); 5985 tests passed, 21 skipped (6006).\n- npm run build: exit 0.\n- xvfb-run -a npm run test:smoke: exit 0 (2 ok). It ran because #35 changes app/renderer/prompt/copy.ts.\n- The commands integration suites were not needed: nothing under app/main/commands changed.\n- npx vitest run test/unit/docs.test.ts on fix/docs alone: 16 passed, 12 skipped (the release checks).\n- Trial merge, built as dangling commits and extracted to the scratchpad (scripts in scratchpad/docs-58/trial.sh and resolve.sh): fix/docs plus remote, ask, voice, bubble, css, cmdwin, overlay, prompt and settings, with Markdown conflicts resolved to fix/docs's side and code conflicts as a union.\n  - docs.test.ts with the new docs: 28/28 passed.\n  - With the previous README, CHANGELOG and COMMANDS doc: 13 failed, 15 passed.\n  - With only the previous CHANGELOG: 2 failed.\n- Trial of fix/docs + fix/lifecycle + fix/packaging: autostart.test.ts, autostart-owned.test.ts, packaging.test.ts and platform-linux-system.test.ts: 4 files, 117 passed.\n- Pairwise merge-tree of fix/docs against every other fix branch: the only conflicts left are with fix/bubble (COMMANDS §3.1, ui-copy.test.ts), fix/cmdwin (ui-copy.test.ts), fix/policy (consent.ts, prompt/copy.ts) and fix/prompt (consent.ts, prompt/copy.ts, COMMANDS §2.1, ui-copy.test.ts). There are none with remote, lifecycle, packaging or settings.",
+  "sharedHunks": [
+   "app/main/autostart.ts (fix/lifecycle and fix/packaging edit it too): tryExec() and stringValue() helpers above launchCommand, and one '...tryExec(command),' line after 'Icon=ember' in the entry's lines (#204)",
+   "app/main/doctor.ts: the speech-models fix drops 'or install ember-voice-models' when sandbox.appImage, plus the DoctorProbes line copied byte for byte from fix/packaging 8d5bbc4 (#206)",
+   "app/main/environment.ts: the setup check's missing-bindings fix says 'sudo dnf install python3-pyatspi python3-gobject' (#102)",
+   "app/main/platform/types.ts, app/main/platform/linux/doctor-probes.ts, app/main/platform/linux/system.ts, test/unit/platform-linux-system.test.ts: fix/packaging 8d5bbc4's appImage probe hunks, copied byte for byte (#206)",
+   "app/main/remote/scripts/bootstrap.sh and its copy in app/main/remote/bootstrap.ts: --exclude='*/include' --exclude='*/lib/node_modules' on both runtime tar lines (#35)",
+   "test/integration/remote-harness.ts, test/integration/ssh-transport.test.ts: the same excludes in the harness (#35)",
+   "app/main/targets/consent.ts sshConsent and app/renderer/prompt/copy.ts consentText: the helper-size sentence, and copy.ts's '(defaults: 33 MB, 130 MB…)' comment (#35). These conflict with fix/prompt and fix/policy; see notes",
+   "test/unit/ui-copy.test.ts: the SSH card's size-sentence pins, and 'Support\\/Ember' added to the PROPER regex (#35). Conflicts with fix/bubble, fix/cmdwin and fix/prompt; resolve PROPER as the union of the alternatives",
+   "New test files owned by this package's fixes: test/unit/docs.test.ts, test/unit/appimage-guidance.test.ts, test/unit/autostart.test.ts, test/unit/remote-helper-size.test.ts"
+  ],
+  "forDocs": [
+   "This is the docs package. One line left for the merge: docs/COMMANDS-WSL-SSH.md §4.1 still says '**Offer to bring Ember along when I connect with ssh**'. fix/settings renames the switch to '…with SSH', and fix/bubble rewrites that paragraph, so editing it on fix/docs would add a conflict. Change it to 'SSH' when merging those two.",
+   "§4.7's first bullet still says 'Remove Ember from build-01' on fix/docs on purpose: fix/settings's rewrite of that bullet ('build-01's **Remove helper**…') now merges cleanly over it."
+  ],
+  "ciOnly": [
+   "Windows 11 with Smart App Control on: the exact blocked messages and whether turning it off needs a reset on the build in use (#97)",
+   "macOS 26: the Done, then Privacy & Security › Open Anyway flow for the ad-hoc-signed, un-notarised Ember.app (#103)",
+   "RHEL 8 GNOME: the autostart entry with TryExec is skipped quietly after 'dnf remove ember' or once the AppImage is deleted, and is still started while the program is there (#204)",
+   "A real macOS SSH remote: bsdtar's --exclude='*/include' --exclude='*/lib/node_modules' with --strip-components=1 on the pinned .tar.gz leaves bin/node working. Only GNU tar was run here (#35)",
+   "The README's per-OS checksum commands (sha256sum -c, shasum -a 256 -c, PowerShell Get-FileHash) against a real release's SHA256SUMS, once a release is published (#102)",
+   "The accessibility routes with Orca, NVDA, JAWS, Narrator and VoiceOver on real machines (the README says they haven't been tried yet) (#58)"
+  ],
+  "notes": "Merge order: merge fix/docs after fix/remote, fix/ask, fix/voice, fix/bubble, fix/css, fix/cmdwin, fix/overlay, fix/prompt and fix/settings. The docs describe the release, and docs.test.ts lists those fixes by their code (RELEASE). On fix/docs alone, its 12 release checks are skipped. Once any of those fixes is present, 'has every fix the docs describe, or none of them' fails until all are, and names the missing ones. That is also what makes a later revert of any of them fail instead of leaving the README wrong.\n\nConflicts to resolve when merging fix/docs:\n1. app/main/targets/consent.ts sshConsent and app/renderer/prompt/copy.ts consentText, with fix/prompt and fix/policy: \n   - Keep fix/prompt's order: desktop line, then 'Your voice…', then the size line, then the record line.\n   - Keep fix/policy's BYOK 'Your voice and ${f.byok ? …}' sentence.\n   - Use fix/docs's size sentence: 'It copies a helper there: about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected…', and copy.ts's comment '(defaults: 33 MB, 130 MB, …)'.\n   - Pin that sentence in ui-copy.test.ts. remote-helper-size.test.ts then holds.\n2. docs/COMMANDS-WSL-SSH.md §2.1 (fix/prompt) and §3.1 (fix/bubble): take fix/docs's side. It already contains fix/prompt's sentences and fix/bubble's 'I can work in WSL'.\n3. test/unit/ui-copy.test.ts PROPER regex (fix/bubble, fix/cmdwin, fix/prompt): use the union of the alternatives.\n\nOther notes:\n- A full 21-branch trial could not run tests: unresolved conflicts between other packages (for example admin.ts and doctor.ts) break compilation. The 9-branch trial covers every fix the docs depend on.\n- fix/bubble changed 'More time to read and answer' from three to ten times today (8d95111). The README and test follow the label in home/index.html, so a further change there shows up as a test failure, not stale text.\n- Scratch helpers are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/docs-58/ (trial.sh, resolve.sh, union.sh). The trial trees were deleted."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/targets/consent.ts (prompt): the SSH card's size sentence, one line. fix/prompt 032d92e edits the same line (folder wording only); resolve by taking fix/docs' line, which already holds prompt's folder words",
+   "app/renderer/prompt/copy.ts (prompt): the SshConsentFacts size doc comment and the ssh size sentence (defaults 33/130, the without-xz figure, prompt's folder wording); the same lines as fix/prompt's: take fix/docs'",
+   "test/unit/ui-copy.test.ts: the PROPER regex gains Support\\/Ember (byte-identical to fix/prompt's hunk), the SSH card expectation line (same line fix/prompt changed: take fix/docs'), and the bundleMB/unpackedMB case",
+   "app/main/remote/scripts/bootstrap.sh and app/main/remote/bootstrap.ts (BOOTSTRAP_SH copy): the two runtime tar lines gain --exclude='*/include' --exclude='*/lib/node_modules'",
+   "test/integration/remote-harness.ts: installRuntime's tar line gets the same excludes, and its doc comment says so",
+   "test/integration/ssh-transport.test.ts: a comment, 'about 31 MB' changed to 'about 32 MB'",
+   "app/main/autostart.ts (lifecycle; fix/packaging edits execArg just above): TryExec= line plus comment in autostartEntry, and a new private stringValue() helper before syncAutostart",
+   "app/main/environment.ts (platform; fix/onboard edits the next lines): the Linux missing-bindings detail now names python3-pyatspi python3-gobject (one line)",
+   "app/main/doctor.ts (settings; agent, onboard and packaging edit it too): the DoctorProbes.sandbox line, byte-identical to fix/packaging 8d5bbc4; the voice-models fix's condition (linux && !p.sandbox?.appImage) plus a one-line comment",
+   "app/main/platform/types.ts, app/main/platform/linux/doctor-probes.ts, app/main/platform/linux/system.ts, test/unit/platform-linux-system.test.ts (platform): byte-identical copies of fix/packaging 8d5bbc4's hunks (the sandbox.appImage probe), so the merge takes them once"
+  ],
+  "forDocs": [
+   "CHANGELOG.md '## 0.1.0 (2026-10-27)': set the date to the real release date when tagging.",
+   "README.md Download promises a SHA256SUMS file on the Releases page. Whoever publishes the release must attach it (for example 'sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS'); no release workflow exists yet.",
+   "README.md Accessibility describes fixes that are committed on other branches but not merged here: fix/cmdwin (#42 Tab leaves the terminal, Ctrl+I, Ctrl+Shift+C, Copy output; #43 output read to screen readers; #46 the 15 s countdown); fix/bubble (#47 the bubble pointing to Settings > Computers; #52 question keys in the live region); fix/ask 53969aa (#45 Ask Ember... and Stop everything under Comfort & access > Ember on screen); fix/css (#44 contrast themes; #57 Text size Large/Larger; #59 badge shapes). If any of these is dropped at merge, remove its words.",
+   "README.md Accessibility > Known gaps: drop each line when its fix merges. 'A question waits 2 minutes...': #51, bubble. 'While a screen reader runs, Ember speaks... only the organisation's policy turns that off': #55, voice (also reword the Screen readers paragraph to match the new switch). 'The desk's way back (Ctrl+Alt+End) isn't announced...' and the desk half of 'Take over are clicks only': #54, overlay.",
+   "The agent package's '## Sign in to Copilot' paragraph goes before '## Shortcuts'. Accessibility sits after Shortcuts and Download before the RHEL section, so they don't overlap. Check that the sign-in paragraph's wording matches the Download section's Releases-page wording.",
+   "CHANGELOG.md: add the user-visible changes other packages report (their forDocs lines) under 0.1.0's Ember or Commands sections, not under a Changed heading, since it is the first release."
+  ],
+  "ciOnly": [
+   "The bootstrap's --exclude on real remotes: remote.yml's ssh-linux and ssh-el8 jobs (GNU tar) run ssh-transport.test.ts, which downloads the runtime and installs it through Ember's own bootstrap. They should show the runtime installs, node --version answers, and include/ and lib/node_modules are absent. The ssh-macos job (bsdtar, gz archive) has never run; it must prove the same on a Mac.",
+   "TryExec: that GNOME on a real RHEL 8 desktop skips ~/.config/autostart/ember.desktop at login after 'sudo dnf remove ember' (CI has no gnome-session).",
+   "Windows 11 with Smart App Control on: the README's quoted message and the Windows Security > App & browser control > Smart App Control settings path, and turning it back on there after the April 2026 update.",
+   "macOS 26: that Gatekeeper's Done then Open Anyway flow for the ad-hoc-signed Ember matches macOS 15's.",
+   "The Download section's check commands: Get-FileHash ... .Hash.ToLower() in Windows PowerShell 5.1, shasum -a 256 on macOS, sha256sum -c --ignore-missing on RHEL 8.",
+   "Every Accessibility claim with real Orca, NVDA, JAWS, Narrator and VoiceOver (PLAN.md manual item 14); none was run here."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 36,
+   "severity": "must-fix",
+   "what": "test/unit/docs.test.ts 'says Ember offers WSL when a request names it…' pins the exact source `targetsNamed(words, [{ id: \"wsl:WSL\", names: [\"WSL\"] }]`. fix/remote rewrites that line to `[{ id: \"wsl:WSL\", names: [\"WSL\"] }, ...wslListedNames()]`, which also brings up the offer for a distro the user names (\"in Ubuntu\"). I ran a trial merge (git merge-tree fix/docs fix/remote, extracted to the scratchpad): docs.test.ts goes from 12/12 to 1 failed | 11 passed. So the full gate will fail once fix/remote is merged. §3.1 also says only \"in WSL\" brings up the offer.",
+   "fix": "Loosen the regex so it no longer requires the closing bracket, for example /targetsNamed\\(words, \\[\\{ id: \"wsl:WSL\", names: \\[\"WSL\"\\] \\}[^\\n]*\\n(?:[^\\n]*\\n){0,5}[^\\n]*offerWsl\\(\\)/. When fix/remote merges, extend §3.1 to \"When you ask for something in WSL, or in a distro Settings lists (\\\"in Ubuntu\\\"), while WSL is off for Ember…\"."
+  },
+  {
+   "id": 58,
+   "severity": "should-fix",
+   "what": "The README's new Accessibility section is true neither on fix/docs alone nor after the merge. On fix/docs alone these are false: 'Ask Ember…' and 'Stop everything' under Comfort & access › Ember on screen (only fix/ask adds p-ask/p-stop); the command window reading output aloud, the 15 s wait and Ctrl+I (fix/cmdwin: screenReaderMode, ANNOUNCE_SCREEN_READER_MS = 15_000); Text size, contrast themes and badge shapes (fix/css). After the merge, three lines contradict other packages' fixes. (a) fix/voice turns the speaking switch into a choice (When a screen reader runs / Always / Never), so 'even with **Speak replies, questions and results out loud** off (unless your organisation turned speaking off)' and the known gap 'only the organisation's policy turns that off' are wrong. (b) fix/bubble adds 'More time to read and answer: messages stay three times as long, and questions wait 6 minutes', but the gap still says a question waits 2 minutes and an answer goes after a few seconds, with no remedy. (c) fix/overlay's desk/a11y.ts announces 'You have the keyboard on the desk. Press Ctrl+Alt+End to hand back.', so the gap 'The desk's way back (Ctrl+Alt+End) isn't announced by screen readers' is wrong. The test only checks for keywords, so none of this would show.",
+   "fix": "Merge fix/docs after fix/ask, fix/cmdwin, fix/css, fix/voice, fix/bubble and fix/overlay. Then rewrite those lines: speaking follows Settings › Voice › 'Speak replies, questions and results out loud' (When a screen reader runs, the default; Always; Never). Replace the timing gap with the 'More time to read and answer' switch. Drop the desk-announcement gap. Then make docs.test.ts read the routes the table names from the code: home/index.html has p-ask, p-stop, text-size, more-time and the speak select; desk/a11y.ts has HAND_BACK_KEYS; commands has ANNOUNCE_SCREEN_READER_MS. A revert then breaks the test instead of leaving the README wrong."
+  },
+  {
+   "id": 204,
+   "severity": "should-fix",
+   "what": "app/main/autostart.ts conflicts with fix/lifecycle (merge-tree: CONFLICT in autostart.ts). Lifecycle's emberWrote() decides whether a file without the X-Ember-Managed marker is an older Ember's entry: it compares every line of the file with entryLines(null, false), with Exec normalised. If TryExec is put into entryLines without a guard, either stringValue(command[0]) throws when command is null, or the legacy template gains a TryExec line that entries from 1b39bb3 don't have. Those entries then read as foreign, and the switch can never rewrite or remove them.",
+   "fix": "When resolving the conflict, add the line only when there is a command: `...(command ? [`TryExec=${stringValue(command[0])}`] : [])`, keeping the escaping helper. Add a case to autostart-owned.test.ts: an entry written by 1b39bb3's autostartEntry (no TryExec, no marker) is still emberWrote()."
+  },
+  {
+   "id": 102,
+   "severity": "should-fix",
+   "what": "README's Download section says each release has SHA256SUMS and tells users to run `sha256sum -c SHA256SUMS`. Nothing produces that file. There is no release workflow, ci.yml uploads the packages with no checksum file (I checked every fix branch's .github: none writes one), and docs/DEVELOPING.md has no publishing step. Whoever publishes 0.1.0 has no instruction to make it, so the check the README promises won't exist.",
+   "fix": "The docs package owns docs/**: add a short 'Publishing a release' paragraph to DEVELOPING.md. It lists the files to attach (the two RPMs, the AppImage, the Windows zip, and the mac-arm64 and mac-x64 dmg and zip) and the command `sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS`, which writes the 'hash  name' format sha256sum -c reads. Or have packaging add a CI step that writes SHA256SUMS next to the uploaded packages."
+  },
+  {
+   "id": 206,
+   "severity": "should-fix",
+   "what": "The README's optional AppImage packages leave out pulseaudio-utils, which ember.spec Recommends. It provides parec, which Ember's speaker rejection needs (app/voice/speakers.ts); without it, decision V1 means a spoken request never counts as 'you asked for exactly that'. It also provides pactl, which the doctor uses to list microphones (its fix is 'sudo dnf install pulseaudio-utils'). An AppImage user who follows the README gets weaker voice behaviour.",
+   "fix": "Add pulseaudio-utils to the optional line, for example '# Optional, for \"Hey Ember\", speaking and Ember's desk: sudo dnf install pulseaudio-utils speech-dispatcher …'."
+  },
+  {
+   "id": 225,
+   "severity": "should-fix",
+   "what": "In the rewritten 0.1.0 notes, CHANGELOG.md:55-56 still says 'Only your own typed or spoken words count'. Decision V1, which fix/cmdcore's COMMANDS-WSL-SSH.md text implements, counts spoken words only on Linux with speaker rejection and parec. On Windows, macOS and Linux without parec, a dangerous command asked for by voice shows the card. Separately, the 'Where it runs' bullet says '(Intel Macs: best effort)', but README says 'Intel Macs and macOS 13: best effort until they are tried on real machines'.",
+   "fix": "Change the line to say that typed words count, and spoken ones only where Ember can tell your voice from what your speakers play (Linux with parec), with Windows and macOS asking with the card. Make the CHANGELOG platform line match README: 'macOS 13 or later on Apple silicon (Intel Macs and macOS 13: best effort)'."
+  },
+  {
+   "id": 35,
+   "severity": "should-fix",
+   "what": "The SSH consent card (consent.ts and prompt/copy.ts) now says 'up to about 60 MB on a Mac or other computer without xz'. 'xz' is a tool name, which ordinary users clicking Connect won't know, and the sentence also says 'there' twice ('in its own folder there'). This is copy only: the numbers are right. Pinned archives with about 0.8 MB of parts: linux-x64 xz 31.9 MB, gz 58.1 MB, darwin gz 52.9-54.2 MB. Unpacked with the new excludes: 127.6 MB.",
+   "fix": "For example: 'about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as on most Macs), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)'. Update remote-helper-size.test.ts's SIZES regex and the ui-copy pins with it. Do this while resolving the conflict with fix/prompt and fix/policy, which reorder this same paragraph."
+  }
+ ]
+}

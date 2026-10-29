@@ -1,0 +1,11 @@
+{
+ "title": "Handle position: bottom right or bottom left, and 'Move to the other side'",
+ "owns": "app/main/settings.ts (a setting), app/main/handle.ts (HandleWindow.corner and the handle menu), app/renderer/overlay (the task card stack anchor), app/renderer/home (the setting in Comfort & access, and copy that says bottom-right), page-prefs if needed",
+ "items": [
+  {
+   "id": "F-75",
+   "from": "owner decision D-75 (specs/relfix2/decisions.md)",
+   "text": "Review #75. While Ember is shown, the 200x56 handle sits at the primary display's bottom-right, movable:false, where it can cover status bars and scroll corners. Build: (1) a 'Handle position' setting (bottom right / bottom left, default bottom right) in Settings > Comfort & access, persisted in settings.json (schema/version as settings.ts does it; an organisation policy may not need to manage it: follow how other comfort settings are handled); (2) HandleWindow.corner() reads it, and the hidden-state 56x56 tab follows it; the display's work area is respected (taskbar/Dock/panel), on every OS; (3) the handle's menu gets 'Move to the other side', which flips the setting; (4) the overlay's task card stack (anchored bottom-right by the overlay package's #126 in overlay/styles.css) anchors to the same side; (5) copy that says 'bottom-right corner' follows the setting. Tests: corner() per setting and work area (fakes), the menu item, the setting's persistence and migration, the card stack class, copy. Smoke test. forDocs: README line. The ask package's note: Done in round 1 (ddd253c): Hide Ember shrinks the 200x56 pill to a 56x56 tab with the face, and Show Ember brings the pill back. Left open, as the verifier asked, because it needs the owner's yes, which this agent cannot get: while Ember is shown the pill stays at the primary display's bottom-right, it is movable:false, and HandleWindow.corner() has no setting. Proposal for the owner: a \"Handle position\" setting (bottom right / bottom left) in settings.ts, read by HandleWindow.corner(), by the overlay's card stack (the overlay package's #126 anchors it bottom-right in overlay/styles.css) and by the home copy that says \"bottom-right corner\", plus a \"Move to the other side\" item in the handle menu. Please keep #75 open in the lead's table."
+  }
+ ]
+}

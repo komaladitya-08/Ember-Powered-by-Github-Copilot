@@ -1,0 +1,470 @@
+{
+ "key": "onboard",
+ "final": {
+  "findings": [
+   {
+    "id": 94,
+    "status": "fixed",
+    "how": "app/shared/setup-attention.ts needsUser(): a row needs the user if it fails, warns about reading/seeing/using apps (accessibility, screen-recording, input-monitoring), or is not OK and has a fix button. setupView() (home/copy.ts) shows the setup check before Start when a row needs the user and keeps it until Start, so allowing Accessibility no longer hides the Screen Recording and Input Monitoring buttons. Round 2: renderChecks keeps the base failing/warn lines (cd929a7) so settings' focus change merges cleanly. Real render (Electron/Xvfb, real macOS rows, Accessibility allowed + focus re-read): check stays with both buttons.",
+    "test": "test/unit/onboarding.test.ts 'stays on the first-run screen until Start once a row needed the user, so fixing one row never hides the others (review #94)' (failed first: no setupView)"
+   },
+   {
+    "id": 95,
+    "status": "partial",
+    "how": "Done: settingsSection() keeps settings open at the setup check after Start (and for Open settings) when a row holds Ember back. The hello (pure app/main/hello.ts) names the rows, with Open settings and a 15 s hold. The sidebar Setup link has a count badge with words for screen readers, and the ready tagline adds 'The setup check has 1 thing worth a look.' The handle says 'Setup needed' (setupIdle) while Copilot is ready and a row holds Ember back. Round 2: (a) hello() takes cannotWork, so platform's sessionGreeting / policy's modelServiceRefusal merge as one argument (574b393). (b) bd3b079 had made environmentNow a block, which broke base test setup-check.test.ts; 4db7f6d restores the pinned line, and readEnvironment now tells an onSetupRead hook. (c) Driving the real app showed the handle still said 'Ready': start() runs while main.ts loads, and the hook's later `let … = null` wiped it. 5985287 declares the hook before the start() call; the real app now shows Connecting… then Setup needed, through Start and after settings closes. (d) The badge uses --type-caption so it scales with fix/css's text size (cb14b73). Left: an 'Open settings' action on a task's own can't-read/can't-capture reply. Those replies are model-written (agent/host.ts, conductor.ts, presenter.ts), so this belongs with the agent/bubble packages (bubble review #18). Proposal: when a step fails on a permission or screen-reading row that holdsBack(), presenter adds {id:'ui:settings'} to that bubble.",
+    "test": "onboarding.test.ts: 'keeps settings open at the setup check…' (settingsSection); \"Ember's hello once it starts\", 5 tests incl. new 'says first why Ember can't work here at all…' (failed first: no cannotWork); 'says Setup needed instead of Ready…' (setupIdle); \"sets the badge's number in a type style…\" (failed on the 11px literal); call sites 'in main.ts', incl. the declaration-before-start() order check (failed on the old order); setup-check.test.ts (failed since bd3b079, passes again). Real app: scratchpad onboard-r2/idle-trace.mjs and onboard-render/start-flow2.mjs end with 'IDLE Setup needed' (was 'Ready')."
+   },
+   {
+    "id": 98,
+    "status": "fixed",
+    "how": "Linux's Screen reading row keeps 'On. Restart apps that were already open, or log out and in, so Ember can read them.' after Turn on, for that run (fixesApplied / afterFix -> EnvInputs.applied). The setup check and ember doctor share LINUX_A11Y_RESTART. Round 2 (6edf899): the doctor keeps the command apart, as in base: '→ gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then restart apps that were already open, or log out and in)', so copying the command no longer copies 'true,'. LINUX_A11Y_RESTART lost its inner brackets. The README line is for docs (see forDocs).",
+    "test": "onboarding.test.ts 'gives the same advice in the setup check and in ember doctor' pins the exact doctor fix line and checks the text before the gap is exactly the command (failed on 'true, then'); 'keeps saying that apps already open need a restart…'"
+   },
+   {
+    "id": 99,
+    "status": "fixed",
+    "how": "After a permission's Open System Settings was pressed and it is still off, Accessibility, Screen Recording and Input Monitoring get MAC_RESET_NOTE plus a second 'Reset Ember's permissions' button (Check.alt). The microphone gets MAC_REGRANT. A reset clears the three presses it undoes, and ember doctor says the −/+ sentence once. Round 2 (47991a8): MAC_RESET_NOTE now says 'Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists, then switch each on again.' DEVELOPING.md §11.8 'A permission is switched on but doesn't work' names the button, what it clears, then the by-hand way.",
+    "test": "onboarding.test.ts 'macOS permissions that stay off' (5 tests; the pinned MAC_RESET_NOTE failed on the old wording); environment-platforms and darwin-system-environment pins updated"
+   },
+   {
+    "id": 101,
+    "status": "fixed",
+    "how": "Pure app/renderer/mic/speech-watch.ts watches each reply. No onstart within 8 s, or a synthesiser no-voice error, reports false; a start, even a late one, reports true. Wiring: VOICE.speech IPC (sender-checked in VoiceService) -> main speechHeard -> Speaking warn row with each OS's fix, plus the #speak-note under Speak. Round 2 (1790c1e): only synthesis-unavailable, synthesis-failed, language-unavailable and voice-unavailable (and the 8 s wait) report no voice. text-too-long, audio-busy, audio-hardware, not-allowed, invalid-argument, interrupted and canceled report nothing. The #speak-note test finds the note after the element with id=\"speak\" whatever its tag. Verified on a real merge with fix/voice (its <select id=\"speak\">): onboard tests and voice's 12 changed test files (603 tests) pass. The Speaking row is now appended in the dispatch (withSpeech) and Linux's one line lower, off fix/ask's lines (cd929a7).",
+    "test": "onboarding.test.ts 'speaking with no voice on the computer' incl. one case per error code (failed first: text-too-long reported no voice); onboard-speech.test.ts (speaking page against a stand-in speechSynthesis; VoiceService IPC sender check)"
+   },
+   {
+    "id": 104,
+    "status": "fixed",
+    "how": "#start-row is the page's last part and, in first run, a sticky card at the window's foot, with scroll-padding for focus. Terms say 'in settings', not 'below'. WSL is named on Windows only. Round 2: (1) the sentence is now 'App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.' Its first sentence is fix/settings' (#164) word for word, so settings' pin holds (76fcb3a). (2) The band under the card is a ::before shadow 'var(--group-edge), 0 100vmax 0 100vmax var(--bg)' on a box inset 1px, with no clip-path. 8d256e7's band hid the card's edge ring at the sides and foot (in increased contrast its only edge: 17->29 with no ring) and let up to 6 orange pixels show at the rounded corners. Rendered under Xvfb at 760 and 420 px (Windows, macOS and Linux first-run, scrolled, both themes): ring all round (17->25->29; increased contrast 17->88->29), 0 orange pixels beside or below the card, no sideways scroll.",
+    "test": "onboarding.test.ts 'keeps agreeing and Start in view…' (now pins the offset band, --group-edge on the band, not on the card, and inset: 1px; failed on the clipped band) and \"doesn't point to sections that aren't shown before Start\" (sentence + every OS's default list holds common password managers); renders in scratchpad onboard-r2/render/final2"
+   },
+   {
+    "id": 105,
+    "status": "fixed",
+    "how": "On this branch: another Linux reads '<name>. Ember is tested on RHEL 8 and its family (Rocky, Alma and Oracle Linux 8): it may work here, but it isn't supported.' in both surfaces. About lists 'Report a problem' = ISSUES_URL from app/shared/support.ts, now byte-identical to fix/platform's (63146b9), so the add/add merges cleanly. The doctor's own rows are 'Transparent windows' (was Compositor), 'Window sandbox' (Sandbox) and \"Copilot's file watchers\" (File watchers), in every state; ci.yml's Windows doctor step and DEVELOPING.md §10.9/§11.8 follow (ab70a94). Round 2 removed the duplicates (4e80533): helperRow's scaling advice and the one-microphone rule are back to base, owned by platform (MIXED_SCALING_FIX with ISSUES_URL, #223; it also replaces environment.ts's 'Tell the Ember team.') and settings (MIC_ROWS, #229; one label per check). The whole finding is closed once those two branches merge.",
+    "test": "onboarding.test.ts \"names the doctor's own rows in plain words, not Compositor, Sandbox or File watchers\" (failed on 'Compositor'), the other-Linux reason test, and the About ISSUES_URL test; settings' doctor-names.test.ts passes on a real merge"
+   },
+   {
+    "id": 153,
+    "status": "fixed",
+    "how": "#consent is role=group, aria-label 'Before Ember listens', with no aria-describedby (round 2, 0c87777: NVDA/JAWS would read the note twice). #consent-yes has aria-describedby=\"consent-text\", and focus moves to it. On a real merge with fix/voice the consent block conflicts: keep voice's words and put onboard's attributes on them. The test reads attributes by id, so it passes on that merge.",
+    "test": "onboarding.test.ts 'is read once, with the button that agrees to it…' (failed on the old markup with aria-describedby on the group)"
+   },
+   {
+    "id": 160,
+    "status": "fixed",
+    "how": "Before Start the tagline is always the first-run instruction, and the count sits by the setup check's heading. Round 2: wording aligned with fix/bubble, which made the same change. The tagline is now bubble's sentence word for word, 'Ember needs 1 thing fixed before it can work on this computer.' (392d5fd; a real merge failed bubble's ui-copy pin before). Counts are figures from one helper, and non-failing rows say 'worth a look' as ember doctor and bubble's fold note do: '1 thing to fix', '2 things worth a look' (50f2fad).",
+    "test": "onboarding.test.ts 'keeps the first-run instruction while setup rows fail…', 'counts what fails once Ember has started, and says computer' (failed on the old sentence), 'counts the rows in words by the heading'; bubble's ui-copy.test.ts passes on a real merge"
+   },
+   {
+    "id": 161,
+    "status": "fixed",
+    "how": "A warning with a fix button (Linux's accessibility switch) needs the user: the fold opens by itself once, and the check shows before Start (setupView). After Start the badge and tagline mention it.",
+    "test": "onboarding.test.ts 'opens and shows before Start for a warning with a fix, such as Linux's accessibility switch (review #161)' (failed first)"
+   },
+   {
+    "id": 221,
+    "status": "fixed",
+    "how": "The onboarding line is <span id=\"targets-note\"> with Linux's words (no WSL); homePatches writes Windows' WSL wording via onboardingRest(). targetFeatureApplies() keeps WSL out of 'Turned off: …' off Windows. Round 2 (3b3f327): the Computers intro is left to fix/settings 6df0bfa (#198). COMPUTERS_INTRO_WINDOWS, computersIntro, the #computers-intro patch and the index.html intro edit are removed, back to base.",
+    "test": "onboarding.test.ts 'WSL in the onboarding line' (2 tests; the rewritten one failed while homePatches wrote #computers-intro); ui-copy.test.ts onboarding-line pin"
+   },
+   {
+    "id": 249,
+    "status": "fixed",
+    "how": "<body class=\"loading\"> hides .home (visibility) until applySettings lifts it, capped by the existing 1.5 s timer, so the post-setup layout never flashes before first run's.",
+    "test": "onboarding.test.ts 'shows nothing of the page until the first status says which layout it has, for at most 1.5 s (review #249)' (failed first)"
+   }
+  ],
+  "commits": [
+   {
+    "sha": "edba6dc",
+    "subject": "Keep the settings window blank until its first status instead of flashing the full layout",
+    "ids": [
+     249
+    ]
+   },
+   {
+    "sha": "16c617d",
+    "subject": "Read the microphone note with the button that agrees to it",
+    "ids": [
+     153
+    ]
+   },
+   {
+    "sha": "d2d52b9",
+    "subject": "Name WSL only on Windows in the onboarding line, the Computers intro and the policy note",
+    "ids": [
+     221,
+     104
+    ]
+   },
+   {
+    "sha": "76f8157",
+    "subject": "Keep the first-run agreement and Start in view, and stop pointing to hidden sections",
+    "ids": [
+     104,
+     160
+    ]
+   },
+   {
+    "sha": "532f44e",
+    "subject": "Keep the setup check on the first-run screen until Start, and open it for fixable warnings",
+    "ids": [
+     94,
+     160,
+     161
+    ]
+   },
+   {
+    "sha": "dbf781c",
+    "subject": "Keep settings open at the setup check when Start leaves Ember unable to read or use apps",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "f8ece4a",
+    "subject": "Keep the restart-your-apps note on Linux's screen reading row after Turn on",
+    "ids": [
+     98
+    ]
+   },
+   {
+    "sha": "1f04b4a",
+    "subject": "Offer Reset Ember's permissions on a Mac when a permission's button didn't take",
+    "ids": [
+     99
+    ]
+   },
+   {
+    "sha": "bb39667",
+    "subject": "Say in settings when no voice speaks Ember's replies, and how to add one",
+    "ids": [
+     101
+    ]
+   },
+   {
+    "sha": "106da91",
+    "subject": "Explain the other-Linux warning, give a place to report problems, and list the microphone once",
+    "ids": [
+     105
+    ]
+   },
+   {
+    "sha": "f77961c",
+    "subject": "Count the Setup badge as its heading does, and fill the space under the first-run Start",
+    "ids": [
+     95,
+     104
+    ]
+   },
+   {
+    "sha": "4e80533",
+    "subject": "Leave the doctor's scaling advice and microphone row to their packages, and share the issue address",
+    "ids": [
+     105
+    ]
+   },
+   {
+    "sha": "ab70a94",
+    "subject": "Call the doctor's own rows Transparent windows, Window sandbox and Copilot's file watchers",
+    "ids": [
+     105
+    ]
+   },
+   {
+    "sha": "3b3f327",
+    "subject": "Leave the Computers intro to the settings package; keep WSL out of the onboarding line",
+    "ids": [
+     221
+    ]
+   },
+   {
+    "sha": "76fcb3a",
+    "subject": "Promise only what the never-look list covers in the first-run terms",
+    "ids": [
+     104
+    ]
+   },
+   {
+    "sha": "6edf899",
+    "subject": "Keep ember doctor's gsettings command apart from the restart advice",
+    "ids": [
+     98
+    ]
+   },
+   {
+    "sha": "0c87777",
+    "subject": "Read the microphone note once: on the agree button, not on its group too",
+    "ids": [
+     153
+    ]
+   },
+   {
+    "sha": "47991a8",
+    "subject": "Say that Reset Ember's permissions clears all three lists, and offer it in DEVELOPING.md",
+    "ids": [
+     99
+    ]
+   },
+   {
+    "sha": "1790c1e",
+    "subject": "Say \"no voice\" only when the synthesiser has none, not for a long reply or a busy device",
+    "ids": [
+     101
+    ]
+   },
+   {
+    "sha": "725e60c",
+    "subject": "Decide Ember's hello in a pure helper, and test the wiring as behaviour, not source text",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "bd3b079",
+    "subject": "Say \"Setup needed\" on Ember's handle while a setup row holds it back",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "8d256e7",
+    "subject": "Cover the whole window around the first-run Start card, from its top down",
+    "ids": [
+     104
+    ]
+   },
+   {
+    "sha": "574b393",
+    "subject": "Let Ember's hello say first why it can't work here, as main's reason gives it",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "cd929a7",
+    "subject": "Keep the setup check's hunks off the lines other release fixes change",
+    "ids": [
+     94,
+     95,
+     101,
+     221
+    ]
+   },
+   {
+    "sha": "50f2fad",
+    "subject": "Say \"worth a look\" for the setup rows that don't fail, as ember doctor does",
+    "ids": [
+     160
+    ]
+   },
+   {
+    "sha": "368efac",
+    "subject": "Show the first-run Start card's edge all round, and nothing behind it at its corners",
+    "ids": [
+     104
+    ]
+   },
+   {
+    "sha": "392d5fd",
+    "subject": "Say what fails as fix/bubble says it: \"Ember needs 1 thing fixed before it can work on this computer.\"",
+    "ids": [
+     160
+    ]
+   },
+   {
+    "sha": "cb14b73",
+    "subject": "Set the Setup badge's number in the caption type style, so it grows with the text",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "a1284a7",
+    "subject": "Keep main.ts's setup-row helpers off the place fix/ask adds its keyboard route",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "4db7f6d",
+    "subject": "Keep main.ts's environmentNow as the setup check's wiring test pins it; the handle hears every read",
+    "ids": [
+     95
+    ]
+   },
+   {
+    "sha": "5985287",
+    "subject": "Declare the setup-read hook before start() runs, so the handle can say \"Setup needed\"",
+    "ids": [
+     95
+    ]
+   }
+  ],
+  "checks": "Final commit 5985287:\n- `npx tsc --noEmit`: exit 0, no output.\n- `npm run lint`: exit 0.\n- `npm test`: 243 files passed, 1 skipped (244). 5998 tests passed, 8 skipped (6006), 0 failed. The first full run, at a1284a7, failed 1 test: setup-check.test.ts > \"shows the targets runtime's doctor rows…\", a base pin of environmentNow that bd3b079 had changed. 4db7f6d fixed it; the two full runs after it were green with the same counts.\n- `npm run build`: exit 0.\n- `xvfb-run -a npm run test:smoke`: exit 0, 2/2 ok (first instance showed its window; second launch handed over).\n- The commands integration suites don't apply: nothing under app/main/commands changed.\n- Voice: the voice unit tests are in the full run and pass. The real-model suite (test/integration/voice.test.ts) skips here because the models aren't in .cache/voice.\n- Real app: Electron under Xvfb with the mock model, using onboard-render/start-flow2.mjs and onboard-r2/idle-trace.mjs. Results: settings stays at the setup check after Start; the tagline and badge say '1 thing worth a look'; the hello names 'Screen reading'; the handle says 'Setup needed'.\n- Trial merges: `git merge-tree` against all 20 other fix branches. Real merges in a throwaway worktree (now removed) with voice, settings, bubble, platform, policy, lifecycle, packaging, agent, ask, docs and css. Each was resolved as the notes say, and tsc plus the onboard tests plus that branch's changed unit tests pass on every one.",
+  "sharedHunks": [
+   "app/main/main.ts (hot file): new imports after the last import (afterFix/FixId, settingsSection/setupIdle, hello); module-level fixesApplied and speechHeard; readEnvironment passes applied/speech and calls onSetupRead; `let onSetupRead` declared just before the top-level `if (process.argv.includes(\"--doctor\"))`; setupSeen/idleNow/sawSetup/setupRows right after `const setState = guardWhileAsking(...)`; greet() calls hello(); applyFix handler records afterFix; Start handler uses settingsSection(phase, setupRows()); openSettings uses settingsSection; agent onStatus uses idleNow(status); VoiceService gets onSpeech; voice status gets speechMissing. environmentNow and the getStatus line are as the base has them",
+   "app/main/doctor.ts: LINUX_A11Y_RESTART import on its own line; the Linux a11y fix line `gsettings … true   (then ${LINUX_A11Y_RESTART})`; labels Transparent windows / Window sandbox / Copilot's file watchers on the compositor, sandbox and file-watchers rows",
+   "app/main/environment.ts: EnvInputs.applied/speech; Check.alt; NO_VOICE/speechCheck/withSpeech/LINUX_A11Y_RESTART/RESET_UNDOES/afterFix before versionAtLeast; dispatch adds the Speaking row for win32/darwin; the other-Linux OS detail; Linux a11y off/after-Turn-on rows; Linux speech row after the blank line below shortcuts; MAC_REGRANT doc + MAC_RESET_NOTE; inspectMac stillOff for the four permission rows",
+   "app/main/platform/darwin/system/doctor.ts: regrantOnce() (the −/+ sentence once)",
+   "app/main/platform/darwin/system/permissions.ts: two doc comments on REGRANT",
+   "app/main/voice.ts: VoiceOptions.onSpeech; ipcMain.on(VOICE.speech) with a mic/speaker sender check",
+   "app/preload/mic.ts: speech(ok) sends VOICE.speech",
+   "app/renderer/mic/main.ts: speechWatch wiring around speechSynthesis.speak (onstart/onerror/cancel)",
+   "app/shared/ipc.ts: VoiceStatus.speechMissing",
+   "app/shared/voice.ts: VOICE.speech channel and MicApi.speech",
+   "app/shared/support.ts: new, byte-identical to fix/platform's (ISSUES_URL)",
+   "app/renderer/home/computers-copy.ts: ONBOARDING_LINE.rest without WSL + restWindows, onboardingRest(), targetFeatureApplies()",
+   "app/renderer/home/index.html: body.loading; never-look sentence; 'in settings'; #targets-note span; consent group/aria attributes; #speak-note; start-row moved to the end of <main>",
+   "app/renderer/home/main.ts: separate imports after the ipc import; renderChecks (actions span, setupView, badge, before-Start toggle); renderSetupBadge; About 'Report a problem'; policy line targetFeatureApplies; Speak note",
+   "app/renderer/home/copy.ts: imports; tagline (first-run first, bubble's failing sentence, look hint); things(); setupBadge; checksNote; SetupView/setupView; SPEAK_NO_VOICE; homePatches #targets-note",
+   "app/renderer/home/styles.css: body.loading gate; sticky first-run start-row and its ::before band; check-actions; .jump-badge (type token)",
+   ".github/workflows/ci.yml: Windows doctor step expects \"Transparent windows=ok\"",
+   "docs/DEVELOPING.md: §10.9 and §11.8 tables say Transparent windows; §11.8 'A permission is switched on but doesn't work' names Reset Ember's permissions",
+   "test/unit/environment-platforms.test.ts, test/unit/darwin-system-environment.test.ts: pins updated for the press-then-reset macOS rows",
+   "test/unit/home-platform-copy.test.ts: TODAY permissions-note and the onboarding line",
+   "test/unit/ui-copy.test.ts: onboarding-line pin (WSL on Windows only)"
+  ],
+  "forDocs": [
+   "README Linux install: after turning on screen reading (the setup check's Turn on, or `gsettings set org.gnome.desktop.interface toolkit-accessibility true`), restart apps that were already open, or log out and in, so Ember can read them.",
+   "README Linux/Windows/macOS: if Ember's spoken replies are silent, settings shows a Speaking row and a note under Speak. Linux: `sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng`; Windows: Settings › Time & language › Speech; macOS: System Settings › Accessibility › Spoken Content; then restart Ember.",
+   "README macOS permissions: once a row's Open System Settings didn't take, the setup check offers Reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists; switch each on again.",
+   "README/CHANGELOG first run: the setup check stays on the first-run screen until Start when something needs you. After Start, settings stays at the setup check while a row holds Ember back, Ember's hello names it, and the handle says 'Setup needed'.",
+   "README: the settings window's About section lists 'Report a problem' with the issue address (https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues).",
+   "README/any sample `ember doctor` output: rows are now 'Transparent windows' (was Compositor), 'Window sandbox' (Sandbox) and \"Copilot's file watchers\" (File watchers); another Linux's OS row says Ember is tested on the RHEL 8 family and may work but isn't supported.",
+   "CHANGELOG: first-run terms name only what the never-look list covers ('App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already.'); WSL is mentioned only on Windows."
+  ],
+  "ciOnly": [
+   "macOS: Reset Ember's permissions really running tccutil for Accessibility/ScreenCapture/ListenEvent, and the rows re-reading as off afterwards; Open System Settings presses leading to the reset button on a real TCC database",
+   "macOS/Windows: speechSynthesis with no voice — whether onstart never fires or onerror gives synthesis-unavailable/voice-unavailable, and that a working voice reports true (only Linux Chromium behaviour and fakes were checked here)",
+   "Windows CI doctor step: the Windows-runner doctor-rows check now expects 'Transparent windows=ok'",
+   "NVDA/JAWS/VoiceOver reading the consent note once when focus lands on 'I agree, start listening'",
+   "First-run sticky Start card, the band and the edge ring at real Windows/macOS scale factors (checked only in Chromium on Linux Xvfb with Windows/macOS statuses)",
+   "Linux on a real RHEL 8 GNOME: Turn on (gsettings) followed by the 'restart apps that were already open' note, and 'Setup needed' clearing after the row is fixed"
+  ],
+  "notes": "I fixed or answered all 13 verifier problems. Five things go beyond the verifier's list:\n\n1. **Real bug in the \"Setup needed\" handle word.** Driving the real app showed the handle still said \"Ready\". The hook's declaration ran after the top-level `start()` call and reset it to null. Fixed in 5985287, which has an ordering test; the real app now shows \"Setup needed\".\n2. **Broken base test.** The previous run's bd3b079 broke base test setup-check.test.ts. 4db7f6d fixes it.\n3. **Card edge in increased contrast.** The first-run Start card had lost its edge at the sides and foot in increased contrast, and some orange showed through at its corners. Both fixed in 368efac.\n4. **Same wording as other packages.** The failing-rows tagline is now fix/bubble's sentence word for word, and rows that don't fail say \"worth a look\" as bubble and `ember doctor` do.\n5. **Badge scales with text size.** The Setup badge uses the caption type style, so it grows with fix/css's text-size setting.\n\n**Merge resolutions for the lead.** Each was checked on a real merge (tsc plus both sides' tests):\n- **bubble:** in copy.ts (tagline) and home/main.ts (the fold-note line), take fix/onboard's lines.\n- **lifecycle:**\n  - index.html: lifecycle's \"On this computer\" line, plus onboard's microphone and #targets-note lines.\n  - home-platform-copy.test.ts: onboard's \"permissions-note\" entry, plus lifecycle's \"data-dir\" entry and its comment.\n- **policy:**\n  - index.html: policy's \"On this computer\" line, plus onboard's next two lines.\n  - main.ts greet(): onboard's `hello({...})` call, adding `cannotWork: modelServiceRefusal(admin)`.\n- **platform:** main.ts greet(): onboard's `hello({...})` call, adding `cannotWork: sessionGreeting(readEnvironment())`. With both platform and policy merged, use `cannotWork: sessionGreeting(readEnvironment()) ?? modelServiceRefusal(admin)`.\n- **settings:**\n  - index.html and home-platform-copy.test.ts: take onboard's. Its never-look sentence starts with settings' sentence.\n  - DEVELOPING.md macOS table: settings' rows, with \"Transparent windows\" in place of \"Compositor\".\n- **voice:** in index.html's consent block, keep voice's words and add onboard's attributes:\n  - `role=\"group\" aria-label=\"Before Ember listens\"` on #consent\n  - `id=\"consent-text\"` on its paragraph\n  - `aria-describedby=\"consent-text\"` on #consent-yes\n- **packaging:**\n  - doctor.ts: take packaging's three sandbox rows, all labelled \"Window sandbox\".\n  - test/unit/packaging.test.ts line 86: expect \"Window sandbox\".\n- **agent, ask, css, docs and every other branch:** no conflicts.\n\n**Other notes.**\n- home/main.ts now imports twice from ./copy and ./computers-copy. This keeps seven branches' edits to those import lists merging cleanly; they can be folded together after the merge.\n- After merging settings, its focus restore goes to a row's first button. Pressing the second button (Reset Ember's permissions) therefore returns focus to the row's first button. This is minor.\n- The verifier's \"weak tests\" point: the hello is now a pure function (hello.ts) with behaviour tests. The speaking page and VoiceService are tested as behaviour (onboard-speech.test.ts). main.ts and the settings window keep one plain check per call site, plus the hook-ordering check.\n- The renders and trace scripts are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/onboard-r2."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts: import of afterFix/FixId and of holdsBack/setupHello/whereAfterStart (top of file)",
+   "app/main/main.ts: module-level fixesApplied and speechHeard; readEnvironment passes applied and speech to inspectEnvironment (around line 143)",
+   "app/main/main.ts: IPC.applyFix handler records the OS fix with afterFix (one line after log.info fix.applied)",
+   "app/main/main.ts: new setupRows() helper before greet(); greet() adds setupHello, mood, actions and timer for setup gaps",
+   "app/main/main.ts: openSettings() sends focusSection 'checks' when a row holds Ember back (one line)",
+   "app/main/main.ts: voiceStatus() adds speechMissing; new voiceDetail variable",
+   "app/main/main.ts: Start handler (settings.onChange onboarded) uses whereAfterStart instead of only the Copilot phase",
+   "app/main/main.ts: VoiceService options gain onSpeech; onState records voiceDetail",
+   "app/main/voice.ts (voice package): VoiceOptions.onSpeech, and an ipcMain.on(VOICE.speech) handler with the same sender check as VOICE.speaking",
+   "app/shared/voice.ts: VOICE.speech channel and MicApi.speech",
+   "app/preload/mic.ts: speech sender (one line)",
+   "app/shared/ipc.ts: VoiceStatus.speechMissing (optional field)",
+   "app/main/environment.ts (platform package owns): EnvInputs.applied/speech, Check.alt, LINUX_A11Y_RESTART, afterFix, NO_VOICE/speechCheck rows on all three OSes, the Linux accessibility rows, the Linux OS warn reason, the macOS permission rows (stillOff, MAC_RESET_NOTE); the environment.ts:242 display-scaling line is left untouched for #223",
+   "app/main/doctor.ts: LINUX_A11Y_RESTART in the Linux accessibility fix (line ~138, not the label at 141, which #229 changes), helperRow DPI fix with REPORT_URL (line ~98), and skipping the generic microphone row when the platform has its own",
+   "app/main/platform/darwin/system/doctor.ts (platform package): regrantOnce() post-processing at the end of darwinDoctorRows (no row line edited)",
+   "app/main/platform/darwin/system/permissions.ts (platform package): two comment lines about REGRANT",
+   "app/renderer/home/index.html: <body class=\"loading\">; consent panel ARIA; #targets-note span and #computers-intro id; welcome wording ('in settings', never-look sentence); #speak-note after the voice group; #start-row moved from the pick section to the end of <main>. Settings #164 and lifecycle #87 edit nearby welcome lines (31, 34-36)",
+   "app/renderer/home/styles.css: body.loading gate; sticky first-run .start-row and scroll-padding; .jump-badge rules; .checks .check-fix rule replaced by .checks .check-actions",
+   "app/renderer/home/main.ts: renderChecks draws c.fix and c.alt in a .check-actions span and uses setupView/renderSetupBadge (settings #155/#49 edit the same button code); renderTagline passes look; renderAdmin filters with targetFeatureApplies; the About facts gain Report a problem; renderVoice shows #speak-note",
+   "app/renderer/home/copy.ts: tagline (first-run first, counts, look), checksNote, setupView, setupBadge, SPEAK_NO_VOICE, and homePatches entries for #targets-note and #computers-intro",
+   "app/renderer/home/computers-copy.ts (settings package): COMPUTERS_INTRO is now Linux's, plus COMPUTERS_INTRO_WINDOWS, ONBOARDING_LINE.restWindows, computersIntro(), onboardingRest(), targetFeatureApplies()",
+   "test/unit/ui-copy.test.ts, test/unit/home-platform-copy.test.ts, test/unit/environment-platforms.test.ts, test/unit/darwin-system-environment.test.ts: pinned strings updated to the new behaviour"
+  ],
+  "forDocs": [
+   "README (Linux install): after turning on Screen reading (gsettings toolkit-accessibility true, or the setup check's Turn on), restart apps that were already open, or log out and in, so Ember can read them.",
+   "README (Linux install): spoken replies need speech-dispatcher and a voice: sudo dnf install speech-dispatcher speech-dispatcher-espeak-ng. Without one, the setup check shows a Speaking row and settings says so under Speak replies.",
+   "README / docs/DEVELOPING.md (macOS, lines ~784, ~787 and ~948): after an update, if a permission shows switched on but Ember still lists it as off, press the row's Open System Settings button and come back. The row then offers 'Reset Ember's permissions', which resets Accessibility, Screen Recording and Input Monitoring for Ember; then switch Ember on again. ember doctor gives the remove-and-add advice once.",
+   "README: name the place to report problems, https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues (also in Settings › About this build › Report a problem). Note it is reachable only if the repository is public.",
+   "docs/DEVELOPING.md line ~739: Display scaling no longer says 'tell the Ember team'. The doctor says to set every display to the same scale (Settings › System › Display), restart Ember, and otherwise report it at the issues address. The setup check's own text is review #223's.",
+   "docs/DEVELOPING.md line ~76 and the first-run description: if a setup row holds Ember back (a permission, screen reading, the helper), Start leaves settings open at the setup check, and Ember's hello names what is still to set up. Before Start the setup check shows whenever a row needs the user. The sidebar's Setup link carries a count.",
+   "CHANGELOG: first-run window keeps agreeing and Start at the window's foot; WSL is mentioned only on Windows; the microphone consent is read to screen readers; there is no flash of the full settings layout on first launch."
+  ],
+  "ciOnly": [
+   "macOS: the stale-grant flow end to end. A new ad-hoc-signed build shows Ember switched on, the row still fails, and after Open System Settings the row shows 'Reset Ember's permissions'. Pressing it must run tccutil reset for the three services and re-prompt Accessibility, after which allowing Ember turns the row OK. Also that the window's focus re-read keeps the setup check on the first-run screen. Only fakes and Linux renders proved this here.",
+   "macOS and Windows: that Chromium's speechSynthesis on a machine with no voice really never fires onstart (or fires onerror with a non-interruption code), so the 8 s watch reports 'no voice'; and that with a voice the first utterance starts within 8 s on a cold machine, so no false alarm.",
+   "Linux RHEL 8: that speech-dispatcher missing (or present without speech-dispatcher-espeak-ng) leads to the 'Speaking' row. Here Xvfb has no speech-dispatcher, and only the logic was tested.",
+   "Windows: after Start with the helper blocked ('blocked-download'), settings stays at the setup check with 'Unblock it', and the hello names 'Screen reading'. This needs the real helper status on a Windows runner.",
+   "Windows and macOS: scroll-padding-bottom keeps keyboard focus clear of the sticky first-run Start card. I checked it visually in Chromium on Linux only, not with a real screen reader."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 105,
+   "severity": "should-fix",
+   "what": "Scope and merge clash with fix/platform (#223, commit 63146b9). Both branches add a new file app/shared/support.ts with the same URL under different names: platform exports ISSUES_URL, onboard exports REPORT_URL. That is an add/add conflict. Both branches also rewrite the same doctor.ts lines: the import line and helperRow's display-scaling fix. Onboard says 'Set every display to the same scale…'; platform's MIXED_SCALING_FIX says 'Set every monitor…'. Whichever side the merge keeps, the other side's imports stop compiling. The fix report says #223 was left to platform, but the doctor half of #223 was done here as well.",
+   "fix": "Remove onboard's helperRow hunk and its app/shared/support.ts. Make the About section's 'Report a problem' row in app/renderer/home/main.ts import ISSUES_URL from platform's support.ts, so both packages use one constant. Point onboarding.test.ts at ISSUES_URL and at MIXED_SCALING_FIX, or drop its doctor-scaling assertion."
+  },
+  {
+   "id": 105,
+   "severity": "should-fix",
+   "what": "The doctor's duplicate-microphone change (doctor.ts ~line 177, `ownMicRow = extra.some(r => r.id.startsWith(\"microphone-\"))`) repeats fix/settings commit 494dc12 (#229, MIC_ROWS with microphone-permission and microphone-privacy). Both edit the same `out.push(p.microphones === null …` lines, so the merge will conflict, and two copies of the same rule would be left.",
+   "fix": "Remove the ownMicRow hunk and keep the settings package's MIC_ROWS. Keep only the 'lists the Mac's microphone once' test, since it passes on settings' code."
+  },
+  {
+   "id": 105,
+   "severity": "should-fix",
+   "what": "Part of #105 is still open, and no package owns it. The doctor still uses the jargon labels 'Compositor', 'Sandbox' and 'File watchers' (doctor.ts lines 127-134, 207-218). Settings #229 only renamed the rows that match a setup-check row, and fix/settings doesn't touch these labels. The report's claim that #229 covers them is wrong.",
+   "fix": "Give these rows plain labels in doctor.ts, for example 'Beside your cursor' or 'Transparent windows' for Compositor, 'Window sandbox' for Sandbox, and 'Copilot's file watchers' for File watchers. Update DEVELOPING.md §11.8's 'Check-up row' table to match."
+  },
+  {
+   "id": 221,
+   "severity": "should-fix",
+   "what": "The Computers intro duplicates fix/settings commit 6df0bfa (#198). That commit adds the same COMPUTERS_INTRO, COMPUTERS_INTRO_WINDOWS and computersIntro(), but with signature `os: OS | undefined` where onboard uses `os: OS = \"linux\"`. It adds the same id=\"computers-intro\" on the same index.html line, and its computers.ts writes the intro from the status. The merge will conflict in computers-copy.ts, index.html and ui-copy.test.ts, and two writers would set the intro (onboard's homePatches and settings' computers.ts).",
+   "fix": "Keep only the parts that are #221's own: the onboarding line (#targets-note, onboardingRest) and targetFeatureApplies. Remove the #computers-intro patch from homePatches, plus COMPUTERS_INTRO_WINDOWS/computersIntro and the intro edit in index.html, and leave the Computers intro to settings."
+  },
+  {
+   "id": 104,
+   "severity": "should-fix",
+   "what": "The new consent sentence promises too much: 'Password managers, password prompts and any app you add to the never-look list in settings are never read.' Only the password managers on each OS's default list are covered (app/shared/never-look.ts; Proton Pass, for example, is not), and the user can remove defaults. The same index.html line is also rewritten by fix/settings 38729ec (#164: 'App windows on your never-look list…'), so the merge will conflict.",
+   "fix": "Use wording that is true and keeps the #104 intent, for example: 'Password prompts and the apps on the never-look list in settings (common password managers are on it already) are never read.' Agree one sentence with the settings package and update home-platform-copy.test.ts TODAY and onboarding.test.ts."
+  },
+  {
+   "id": 98,
+   "severity": "should-fix",
+   "what": "The `ember doctor` fix line now joins the advice to the command with a comma: '→ gsettings set org.gnome.desktop.interface toolkit-accessibility true, then restart apps that were already open (or log out and in)'. I confirmed this with formatDoctor. Copying the command copies 'true,', which gsettings rejects as an invalid boolean. The base kept the command apart: 'true   (then log out and in)'. The README Linux line the finding asks for is also not on fix/docs; it was handed off only in the report.",
+   "fix": "Keep the command separate: `gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then ${LINUX_A11Y_RESTART})`, or move the restart advice into the detail. Pin the exact line in the test. Have the lead pass the README line to the docs package."
+  },
+  {
+   "id": 153,
+   "severity": "should-fix",
+   "what": "The group and the button are both described by the same paragraph: #consent has role=group and aria-describedby=consent-text, and #consent-yes has aria-describedby=consent-text. When focus moves to #consent-yes inside the group, NVDA and JAWS read the group's name and description, then the button and its description, so the long microphone note is read twice in a row.",
+   "fix": "Keep aria-label 'Before Ember listens' on #consent but remove its aria-describedby. Keep aria-describedby on #consent-yes, and update the onboarding.test.ts assertion."
+  },
+  {
+   "id": 99,
+   "severity": "should-fix",
+   "what": "Every Accessibility, Screen Recording and Input Monitoring row that is still off after a press gets a 'Reset Ember's permissions' button, with the note '…reset Ember's permissions, then switch it on again.' The reset runs tccutil for all three services (RESET_SERVICES). Pressing it on the Screen Recording row therefore also revokes an Accessibility grant that was working, and the note doesn't say so. DEVELOPING.md §11.8 ('A permission is switched on but doesn't work') still describes only the remove-and-add steps.",
+   "fix": "Reword MAC_RESET_NOTE, for example: 'Already switched on? macOS ties the permission to this exact copy of Ember: reset Ember's permissions, which takes Ember off the Accessibility, Screen Recording and Input Monitoring lists, then switch each on again.' Mention the button in DEVELOPING.md §11.8, or hand that line to docs."
+  },
+  {
+   "id": 101,
+   "severity": "should-fix",
+   "what": "speech-watch.ts treats every error that isn't 'interrupted' or 'canceled' as 'no voice', including 'text-too-long', 'audio-busy', 'audio-hardware', 'not-allowed' and 'invalid-argument'. One very long reply, or a busy audio device, would then show 'this computer has no voice it can use' plus a Speaking row with dnf or System Settings steps, which is wrong advice.",
+   "fix": "Report false only for no-voice errors ('synthesis-unavailable', 'language-unavailable', 'voice-unavailable', 'synthesis-failed') and for the 8 s no-start timeout. Treat other errors as unknown (null). Add a test case for each."
+  },
+  {
+   "id": 101,
+   "severity": "should-fix",
+   "what": "Merge hazard with fix/voice. That branch replaces the #speak checkbox with a <select id=\"speak\"> (three-way choice, review #55) and rewrites the consent paragraph. Onboard inserts #speak-note right after that control and adds id/aria to the consent <p>. onboarding.test.ts pins the exact old markup with a regex, `<input type=\"checkbox\" id=\"speak\" role=\"switch\">…</label>\\s*</div>\\s*<p class=\"hint\" id=\"speak-note\"`, so it will fail once the two branches are merged.",
+   "fix": "Make the test check that #speak-note exists in the Voice section after the element with id=\"speak\", whatever its tag. Tell the lead to carry id=\"consent-text\" and the aria attributes onto voice's new paragraph text."
+  },
+  {
+   "id": 95,
+   "severity": "should-fix",
+   "what": "Two parts of #95 are left. (1) The handle still says 'Ready' while a row holds Ember back. The report says this lives in the agent package, but the word is set in main.ts:1542 (`showState({ idle: idleWord(status) })`), which this package may change. (2) Tasks that can't read or capture have no 'Open settings' action. Those are model-written replies (host.ts and conductor.ts), so deferring (2) to the agent and bubble packages is reasonable. Neither part stops the main scenario from being fixed.",
+   "fix": "Optional, in main.ts only: when status.phase is 'ready' and setupRows().some(holdsBack), set idle to a short word such as 'Setup needed' instead of idleWord(status). Re-check it where the environment is read (environmentNow and the fix handler). For (2), raise it with the agent package."
+  },
+  {
+   "id": 104,
+   "severity": "should-fix",
+   "what": "Cosmetic. The background band under the sticky Start card, `box-shadow: … 0 12px 0 12px var(--bg)`, reaches only 12 px beyond the card. In a first-run window scrolled with the setup check shown, the fold's chevron peeks out at x≈33 px below the card's lower-left corner (render: /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/onboard/render/first-win-scrolled.png, crop-artifact.png).",
+   "fix": "Make the band span the whole width, for example `body.first-run .start-row::after { content:\"\"; position:absolute; left:-100vw; right:-100vw; top:100%; height:24px; background:var(--bg); }`, or use a larger shadow spread."
+  },
+  {
+   "id": null,
+   "severity": "should-fix",
+   "what": "Weak tests. Much of onboarding.test.ts checks source text with regexes instead of behaviour: the main.ts Start handler (`const where = whereAfterStart(phase, setupRows()); …`), the greet wiring, openSettings, onSpeech, the mic page's watch wiring, VoiceService's IPC guard, and renderChecks/applySettings in the renderer. Any reformat or merge breaks them, and they would still pass if the wiring regressed in a way that kept the text. The pure parts (setupView, whereAfterStart, setupHello, speechWatch, inspectEnvironment) are tested properly.",
+   "fix": "Move the hello text into a pure helper in setup-attention.ts or copy.ts, for example helloThought({phase, waiting, overlay, keys, rows, settingsOpen}) returning {thought, mood, actions, holdMs}, and test it directly. Then remove the MAIN regexes, or keep one per call site at most."
+  }
+ ]
+}

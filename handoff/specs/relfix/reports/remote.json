@@ -1,0 +1,277 @@
+{
+ "key": "remote",
+ "final": {
+  "findings": [
+   {
+    "id": 179,
+    "status": "fixed",
+    "how": "Round 1 (746795b): registry.ts shortHostName. A host also answers to the first part of its id, its host part and its resolved hostname. That part must have a letter plus a digit or a hyphen, be at least MIN_NAME long, and the name must not be an address. A short name two hosts share goes to both, so it gets TWO_NAMED. offer_connect uses the registry's names. Round 2 fixes the verifier's must-fix on the longest-run rule (2f19d80). In resolve.ts, runsNaming now lets a longer run hide a shorter one only when writtenOnto() holds. That means each of the longer run's extra words is joined to the next one by exactly one '-', '_' or '.', or by spaces when the extra word is a number. The gap is read from folded.slice(ws[k-1].end, ws[k].start). Otherwise both runs stay, so TWO_NAMED asks as it did at 1b39bb3. With db-01 and db-01-backup, 'on db-01, backup…', 'on db-01: …', 'on db-01. Backup…', 'on db-01 backup…' and 'on build-01, test the backup' now give TWO_NAMED. 'on db-01-backup, …', 'on db-01_backup', 'build-01.other.net' and 'in Ubuntu 24.04' / 'Ubuntu 24 04' still pick the longer name. 'on build-01. Other net jobs…' does not read build-01.other.net. bindTarget's check of the model's choice uses the same rule. Docs §1 'Short names' and resolve.ts's header now describe the rule. I re-ran the verifier's db.ts probe on the branch: all three comma, colon and full-stop forms now give TWO_NAMED, and db-01-backup still binds.",
+    "test": "targets-resolve 'lets a longer name win only when it is written as one name, so \"on db-01, backup the database\" still asks which one'. It failed on 746795b (db-01-backup bound across the comma) and passes now. The round-1 tests still pass: targets-registry 'gives a host added by its full name the first part…' and 'gives a short name two hosts share to both…', targets-resolve 'names only the target whose name covers more of the words', 'asks which one…' and 'takes the model's name only for…', and the targets-runtime build-01.example.com tests."
+   },
+   {
+    "id": 180,
+    "status": "fixed",
+    "how": "Round 1 (746795b): each distro answers to its first word, and listed-only distros count for otherTargetsNamed and othersPlaced. A shared short name gets TWO_NAMED. otherVersionNamed asks 'did they mean Ubuntu-22.04 (WSL)?' for a version that isn't installed, and offer_connect('Ubuntu') points at the distro. Round 2 fixes the verifier's must-fix (bc3bf9f). In registry.ts, shortDistroName returns the first word only when it is a distribution family name from `wsl --list --online` or the Store (DISTRO_FAMILY: ubuntu, debian, kali, opensuse, suse, sles, oraclelinux, almalinux, fedoralinux, fedora, pengwin, alpine, arch, archlinux, centos, rockylinux; case ignored). Otherwise it returns null. Distros made with wsl --import, such as build-env, test-box, work-vm, dev-ubuntu, the-box and home-lab, get no short name. The verifier's names.ts probe on the branch now binds 'delete the logs in build', 'save it in test mode', 'clean up old files in work', 'on build: check the disk' and 'work: tidy my folder' to local, and 'in Ubuntu, …' to wsl:Ubuntu-22.04. otherVersionNamed and the WSL-off offer (#195) read the same function, so they narrowed too. Docs §1 says an imported distro answers only to its full name. The longest-run must-fix (2f19d80, see #179) keeps 'in Ubuntu 24.04' choosing Ubuntu-24.04 over a shared 'Ubuntu'.",
+    "test": "New: targets-registry 'gives a first word only to a distribution's own name, so \"in build\" never names a distro called build-env', and targets-runtime 'never takes a distro's own first word as its name: 'in build' stays here with a distro called build-env'. The runtime test covers no model choice and choices build, test and work. Both failed on 746795b (wsl:build-env) and pass now. The round-1 tests still pass: targets-registry 'gives a distro its first word…' and targets-runtime 'binds in Ubuntu to Ubuntu-22.04…'."
+   },
+   {
+    "id": 181,
+    "status": "fixed",
+    "how": "Round 1 (9cdf00b): after ssh -G, addAndConnect reuses the record whose resolved user, hostname (case ignored), port, jump hosts and route all match (sameIdentity). It connects that record with no second card or record and returns 'Already added as build-01.' The noticer's connected() and dismissed() use reaches(), and ActResult's ok case may carry a message. Round 2 (723db71): the bubble's thought now reads \"I'm on build-01 already, so I'll work there.\", in the first person like the bubbles around it. The verifier also found that no test reached this bubble; one does now.",
+    "test": "New: targets-runtime 'says \"Already added\" from offer_connect's Connect when the ssh alias is a computer Ember is on, with no second record, card or connect (review #181)'. Setup: build-01 is connected, and the ssh-config alias build-02 resolves to deploy@build-01.example.com. The test calls offerConnect('build-02'), then clicks offer:1:connect. It expects the bubble with title 'Already added as build-01', the new thought, no actions and mood done. It also expects one host record, no new card, conns.connect called once, no 'Connecting to' bubble, and active ssh:build-01. It failed on the old thought and passes now. The round-1 tests 'keeps one record for one computer…' and 'never offers a computer Ember is connected to…' still pass."
+   },
+   {
+    "id": 189,
+    "status": "fixed",
+    "how": "badge.ts targetBadge: a WSL target in state off reads 'Working on Ubuntu (WSL) (stopped)'. SSH still reads '(not connected)'. The dot stays the existing neutral grey, so there is no CSS change. Unchanged in round 2.",
+    "test": "ui-copy 'calls a stopped WSL distro stopped, never not connected…'. It failed before the fix and passes now."
+   },
+   {
+    "id": 195,
+    "status": "partial",
+    "how": "I took the reviewer's docs option and added no offer the user didn't ask for. Starting discovery at launch would start a new process for every Windows user. In code, while WSL is off, naming a distro that discovery already listed ('in Ubuntu') now offers 'Ember can work in WSL' once a run, as 'in WSL' does. 'Linux' alone never offers. Since round 2 only distribution names count, so 'in build' with build-env listed offers nothing. Left for the docs package: docs/COMMANDS-WSL-SSH.md §3.1, now line 281 ('When Ember first sees WSL it offers…'), needs one sentence. That package rewrites the same line for its #36, so I left it alone to avoid a conflict (see forDocs).",
+    "test": "targets-runtime 'while WSL is off, still binds here for in Ubuntu but counts it for the guard and offers to turn WSL on (review #195)'. It failed before and passes now."
+   },
+   {
+    "id": 196,
+    "status": "fixed",
+    "how": "Round 1 (ff525e5): the §8.7 MESSAGES have no backticks. installSsh(os) gives one OS's install line, and MESSAGES.noClient takes the OS. A reconnect stopped at unknown-host-key says 'build-01 needs you to check its key again' with Reconnect. Round 2 (748e330) fixes the verifier's point that connections.ts still called noClient() with no OS. findClient now passes noClient(os === \"win32\" ? \"linux\" : os) when the WSL route isn't possible, noClient(\"linux\") when there is no wsl.exe, and noClient(wsl ? \"linux\" : os) when `ssh -V` answers nothing. failureOf's spawn failure passes noClient(os). The no-client bubble and settings line now give only this computer's OS line, and the Linux line for SSH through a WSL distro. Docs §4.8's no-client and too-many-keys rows now quote the current words; both still had the old backticked text.",
+    "test": "New: ssh-connections 'says how to install SSH on this computer's OS alone when no SSH client answers (review #196)'. On linux, win32 and darwin with an empty ssh -V, it expects kind no-client with that OS's exact message and nothing spawned. It also expects the Linux line for win32 with via wsl:Ubuntu and no wsl.exe. It failed with connections.ts at 723db71's parent (the all-OS message) and passes now. The round-1 tests still pass: ssh-errors 'are plain text… no Markdown backticks' and targets-runtime 'asks to check the key again, never to sign in…'."
+   },
+   {
+    "id": 197,
+    "status": "fixed",
+    "how": "Round 1 (c238f19): the not-connected and lost reasons point the model at offer_connect's Connect button, not the menu. Round 2 (4553d53), after the verifier's point that the reason reaches the user in a failed task card: registry.ts notConnectedWhy now reads '<host> isn't connected. Ember can show a Connect button for it.' The lost case reads 'The connection to <host> dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers).' Neither names a tool or speaks of 'the user'. The runtime.ts handsFor fallback calls notConnectedWhy, so it changed too. Only resolve.ts's refusal for a computer Ember has no record of still says '(offer_connect)'; only the model sees it. The model already knows offer_connect as the tool that shows a Connect button. Merge note: fix/bubble rewrites the same two lines of registry.ts.",
+    "test": "targets-registry 'follows the link: off, connecting, ready…, lost' pins both texts; the lost one is a new assertion. The targets-runtime stall/loss and the SA-gives-up/sign-in tests pin them through handsFor. All three failed after the test change and before the code change, and pass now."
+   },
+   {
+    "id": 33,
+    "status": "fixed",
+    "how": "I took the reviewer's first option. The ssh noticer's enabled() also needs a host record, and one exists only after the user accepted that computer's SSH card. So for an upgrading user who never added a computer, nothing reads the window title or the process list, and nothing offers 'Bring Ember'. The offerSsh switch still turns it off. computers-copy.ts shows the offer switch only once a computer is listed. Comments in runtime.ts and offer.ts and docs §4.1 say so, so the intro's 'off until you turn them on' holds for the noticer too. offerSsh's default in settings.ts is unchanged; the host-record gate does the job without a settings migration.",
+    "test": "targets-runtime noticer tests: with no host record, no tick, no process read and no bubble; once a host is added, it works as before. Also ui-copy for the switch being hidden. They failed before and pass now."
+   },
+   {
+    "id": 34,
+    "status": "fixed",
+    "how": "notice-ssh.ts sshDestination returns null in three cases: a command follows the destination without -t (git-upload-pack, scp -t, rsync's ssh, a remote bash), -T is given, or the destination is a git hosting service's ssh server (GitHub, GitLab, Bitbucket, Azure DevOps, Google Cloud Source, CodeCommit). An interactive command with -t is still offered. Docs §4.1 lists the ssh runs that are never offered.",
+    "test": "ssh-notice: the cases for git over ssh, scp's and rsync's ssh, -T and the git hosts failed before and pass now, and -t with a command is still offered."
+   },
+   {
+    "id": 157,
+    "status": "fixed",
+    "how": "setup-check.ts joins a detail and its fix with one full stop, only when the detail doesn't already end in one, and drops Markdown backticks from every row's words. doctor.ts changes: the SSH client row's fix names only this OS's install line (noSshFix(os) through installSsh), without the repeated 'Ember can't find SSH'. Windows 8.1 to 8.3 gets 'Update the OpenSSH Client to 8.4 or newer to enter passwords in Ember.' The command window terminal row names util-linux only on Linux. The Mac folders row uses curly quotes and a sentence for its fix. Docs §5 quotes the new words.",
+    "test": "setup-check: the cases for the double full stop, the repeated no-client sentence, both OSes' install lines, the literal backticks and the 8.1 advice for an 8.1 client failed before and pass now."
+   },
+   {
+    "id": 218,
+    "status": "fixed",
+    "how": "Same change as #157 (ff525e5): one full stop between detail and fix, curly quotes in the Mac row and its fix written as a sentence, a shorter no-client row, no backticks, and its own 8.4 text for Windows 8.1 to 8.3.",
+    "test": "The same setup-check tests as #157."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "bffde1c",
+    "subject": "Offer to bring Ember along only for an ssh the user works in",
+    "ids": [
+     34
+    ]
+   },
+   {
+    "sha": "ff525e5",
+    "subject": "Show SSH messages and setup-check rows as plain sentences for this computer's OS",
+    "ids": [
+     157,
+     196,
+     218
+    ]
+   },
+   {
+    "sha": "554739a",
+    "subject": "Call a stopped WSL distro stopped in the handle's badge, not \"not connected\"",
+    "ids": [
+     189
+    ]
+   },
+   {
+    "sha": "c238f19",
+    "subject": "Point the model at offer_connect for a known computer that isn't connected",
+    "ids": [
+     197
+    ]
+   },
+   {
+    "sha": "746795b",
+    "subject": "Let \"on build-01\" and \"in Ubuntu\" name a computer added by its full name",
+    "ids": [
+     179,
+     180,
+     195
+    ]
+   },
+   {
+    "sha": "9cdf00b",
+    "subject": "Keep one record per computer and login, whatever spelling the user types or runs",
+    "ids": [
+     181
+    ]
+   },
+   {
+    "sha": "c2e25e8",
+    "subject": "Look for the user's own ssh only once they have added a computer",
+    "ids": [
+     33
+    ]
+   },
+   {
+    "sha": "871b37c",
+    "subject": "Type the noticer test's settings change as the store expects",
+    "ids": [
+     33
+    ]
+   },
+   {
+    "sha": "4f0572c",
+    "subject": "Rewrap the targets runtime's header comment",
+    "ids": [
+     33
+    ]
+   },
+   {
+    "sha": "9eb3501",
+    "subject": "Say in resolve.ts's header that short names count and the longest name wins",
+    "ids": [
+     179,
+     180
+    ]
+   },
+   {
+    "sha": "bc3bf9f",
+    "subject": "Give a distro a short name only when its first word is a distribution's",
+    "ids": [
+     180
+    ]
+   },
+   {
+    "sha": "2f19d80",
+    "subject": "Let a longer computer name win only when it is written as one name",
+    "ids": [
+     179,
+     180
+    ]
+   },
+   {
+    "sha": "4553d53",
+    "subject": "Word the not-connected and lost reasons for the user as well as the model",
+    "ids": [
+     197
+    ]
+   },
+   {
+    "sha": "748e330",
+    "subject": "Say how to install SSH for this computer's OS when no client answers",
+    "ids": [
+     196
+    ]
+   },
+   {
+    "sha": "723db71",
+    "subject": "Say \"I'm on build-01 already\" when a Connect click finds the same computer",
+    "ids": [
+     181
+    ]
+   }
+  ],
+  "checks": "Round 2, all at 723db71 (the last commit):\n- npx tsc --noEmit: exit 0, no errors.\n- npm run lint (eslint .): exit 0, no problems.\n- npm test (full vitest): 241 files passed, 1 skipped (242); 5987 tests passed, 8 skipped (5995); no failures, so nothing needed a rerun.\n- npm run build: exit 0 (dist/app/main.cjs 2.7mb).\n- xvfb-run -a npm run test:smoke: exit 0. 'ok first instance showed its window' and 'ok second launch handed over and the first instance focused its window'. Run because the package changed badge.ts and computers-copy.ts in round 1.\n- Commands integration suite: not required. No file under app/main/commands/** changed in either round.\n- Voice suites: not required (voice untouched).\nWhile iterating: targets-registry, targets-runtime and targets-resolve passed 173/173 after the two must-fixes; ssh-connections and ssh-errors passed 56/56. I bundled the verifier's probes names.ts and db.ts with esbuild and re-ran them on the branch. Every case the verifier flagged now matches 1b39bb3: local for the imported-distro words, and TWO_NAMED for the comma, colon and full-stop db-01 forms. 'in Ubuntu' still binds Ubuntu-22.04, and db-01-backup still binds when written as one name.",
+  "sharedHunks": [
+   "app/main/targets/resolve.ts (not owned): runsNaming takes `folded` and keeps the longest run only when writtenOnto() holds (new helper, round 2). Round 1: longest-run filtering, bindTarget gives TWO_NAMED for a model choice two computers share, and its said-check uses runsNaming. Header comment rewrapped.",
+   "app/main/remote/connections.ts (not owned, round 2): 4 one-line hunks pass the OS to MESSAGES.noClient, in findClient's two WSL-route throws and its no-version throw, and in failureOf's spawnFailed.",
+   "app/main/remote/ssh-errors.ts (not owned, round 1): installSsh(os) added; noClient(os?) added; backticks removed from authNoAskpass, unknownKeyNoAskpass, keyChangedFix, tooManyKeys and noClient.",
+   "app/main/targets/doctor.ts (not owned, round 1): noSshFix(os) through installSsh, the Windows 8.1 to 8.3 fix text, util-linux only on Linux, and curly quotes and a sentence fix in the Mac folders row.",
+   "app/main/targets/ipc.ts (not owned, round 1): ActResult's ok case may carry a message.",
+   "app/main/targets/runtime.ts (hot file, partly owned). Round 1: addAndConnect sameIdentity dedupe and the 'Already added' bubble; the noticer's enabled() needs a host record; reaches() for connected()/dismissed(); the reconnect wording for unknown-host-key; bind's otherVersionNamed question and WSL-off offer for a listed distro; offerConnect looks up registry names; the handsFor fallback uses notConnectedWhy. Round 2: one line, the 'Already added' thought now says I'm.",
+   "app/renderer/handle/badge.ts (renderer, round 1): '(stopped)' for a WSL target in state off.",
+   "app/renderer/home/computers-copy.ts (renderer, round 1): the offer switch is shown only once a computer is listed.",
+   "docs/COMMANDS-WSL-SSH.md: §1 'Short names' paragraph (rounds 1 and 2: distribution-only first words, the joined-name rule, the db-01 example; rewrapped). §4.1 noticer and Already-added text, and §4.6 (round 1). §4.8 table: the no-client and too-many-keys rows (round 2). §5 setup-check rows (round 1). §3.1 line 281 left to the docs package."
+  ],
+  "forDocs": [
+   "docs/COMMANDS-WSL-SSH.md §3.1 (line 281, 'When Ember first sees WSL it offers…'), owned by the docs package because of its #36: say the offer comes when you ask for WSL while it is off. For example: 'While WSL is off in Ember, asking for it (\"in WSL\", or a distro Ember has listed, such as \"in Ubuntu\") offers \"Ember can work in WSL\" (Open settings, Not now) once a run; \"Linux\" alone never does. Otherwise turn it on in Settings › Computers.'",
+   "CHANGELOG: 'Ember looks for your own ssh sessions, and offers to bring Ember along, only after you have added a computer. ssh runs that carry a command (git over ssh, scp, rsync) or use -T, and git hosting services, are never offered.'",
+   "CHANGELOG: 'A computer added by its full name also answers to its first part (\"on build-01\" for build-01.example.com), and a distribution's WSL distro to its first word (\"in Ubuntu\" for Ubuntu-22.04). A distro you imported, such as build-env, answers only to its full name. A longer name wins only when written as one name (\"on db-01, back up…\" with db-01 and db-01-backup added asks which one).'",
+   "CHANGELOG: 'Adding a computer Ember already has under another spelling connects the one it has and says \"Already added as build-01\".'",
+   "README/install: when SSH is missing, Ember now gives only your OS's install step (Linux: sudo dnf install openssh-clients; Windows: Settings › Apps › Optional features › OpenSSH Client). Any README text that quotes the old combined message should match."
+  ],
+  "ciOnly": [
+   "Windows: the distro names real `wsl --list` reports (Store Ubuntu-22.04, kali-linux, openSUSE-Leap, OracleLinux_9_x, and wsl --import names like build-env), and that 'in Ubuntu' binds while 'in build' stays on Windows, through real WSL discovery. Unit tests use fake WslFacts.",
+   "Windows: with the OpenSSH Client feature removed, the bubble and settings line show only 'Install the OpenSSH Client in Settings › Apps › Optional features, then try again.' On a WSL-routed host without ssh, they show the Linux line.",
+   "macOS: the no-client text ('macOS comes with SSH at /usr/bin/ssh…') reaches the bubble when /usr/bin/ssh can't be run.",
+   "All OSes: the 'Already added as build-01' bubble and the reworded not-connected and lost reasons render in the real bubble and failed task card. A queued task's card when its computer drops comes from host.ts's refusedWorker, which is not in this package.",
+   "Windows: the '(stopped)' handle badge for an idle distro in the real handle window."
+  ],
+  "notes": "The verifier's two unnumbered must-fixes are folded into #180 (distro short names limited to distribution families, bc3bf9f) and #179/#180 (the longest name wins only when written as one name, 2f19d80). Both regressions came from 746795b, and both now behave as at 1b39bb3 for the verifier's probe sentences. The #179 and #180 improvements stay: 'on build-01' for build-01.example.com, 'in Ubuntu' for Ubuntu-22.04, and 'in Ubuntu 24.04' choosing Ubuntu-24.04. The verifier's probes also show one older behaviour that was not flagged and that I left alone: an exact name spoken as words still matches, so 'in the box' names a distro called the-box, as at 1b39bb3. Merge conflict to expect: fix/bubble rewrites the same two registry.ts lines as #197 (notConnectedWhy and the lost reason). The intent here is user-readable text with no tool name. The worktree is clean at 723db71, nothing was pushed, and only my own files were staged by name."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/targets/resolve.ts (cmdcore owns only otherTargetsNamed, which I did not touch): MIN_NAME is now exported; new Run type and runsNaming() (the longest run wins); targetsNamed is built on runsNaming; in bindTarget, a model choice two computers share gets TWO_NAMED, and the 'named anywhere' check ignores a name that only starts another computer's name; header comment.",
+   "app/main/targets/runtime.ts, bubble-writing parts (bubble package): in the reconnect-failed branch of the onProgress handler (~line 1141), unknown-host-key gets its own title and text instead of signInAgain(); addAndConnect has a new 'Already added as <host>' bubble when the record was already connected; header comment.",
+   "app/main/targets/runtime.ts handsFor fallback (~line 1237, the old 1189 that bubble #47 also names): the text is now notConnectedWhy(e.label).",
+   "app/main/targets/runtime.ts offerConnect: the host lookup now reads the registry names, with a WSL-distro branch and a 'more than one computer answers' branch. The return lines below it (bubble #47/#9) are untouched.",
+   "app/renderer/handle/badge.ts (ask package): targetBadge says ' (stopped)' for kind wsl in state off.",
+   "app/renderer/home/computers-copy.ts (settings package): ssh.offer is shown only when rows.length > 0.",
+   "app/main/targets/ipc.ts (no listed owner): ActResult's ok case gains an optional message.",
+   "app/main/targets/doctor.ts (no listed owner; settings owns app/main/doctor.ts, a different file): noSshFix(os), OLD_SSH_WIN_PASSWORDS_FIX, commandTerminalRow(script, os), remoteTccRow wording. NO_SSH_FIX is removed; its only user was sshClientRow.",
+   "app/main/remote/ssh-errors.ts (no listed owner; finding #196 is mine): new installSsh(os); MESSAGES without backticks; noClient(os?).",
+   "docs/COMMANDS-WSL-SSH.md (docs package): §1 new 'Short names' paragraph; §4.1 'Add a computer' sentence ('Already added as build-01'); §4.1 noticer bullet rewrapped (looks only once a computer is added, never for ssh running a command, -T or git hosts, switch shown once a computer is added); §4.1 Disconnect/reconnect bullet ('check its key again'); §4.6 quoted messages without backticks; §5 rows for SSH client, Command window terminal and Folders on build-01. I did not touch line 271 (§3.1) or the §1 table, which the docs package edits for #36."
+  ],
+  "forDocs": [
+   "docs/COMMANDS-WSL-SSH.md:271 (§3.1, the same line as docs #36): 'When you ask for something in WSL, or in a distro by name such as \"in Ubuntu\", while WSL is off in Ember, it offers \"Ember can work in WSL\" (**Open settings**, **Not now**), once a run. \"Linux\" alone never brings it up.' (review #195)",
+   "CHANGELOG (Settings / SSH bullets around line 62-66): Ember looks for your own ssh only once you've added a computer and said yes to its card. The switch **Offer to bring Ember along when I connect with ssh** appears then. Until then nothing new runs. (review #33)",
+   "CHANGELOG: Ember doesn't offer to come along for an ssh that runs a command (git over ssh, scp, rsync, scripts), one started with -T, or one to a git hosting service such as GitHub. (review #34)",
+   "CHANGELOG: Short names: 'on build-01' names a computer added as build-01.example.com (a first part with a digit or a hyphen), and 'in Ubuntu' names Ubuntu-22.04. The longest name you say wins. When two computers share the name, Ember asks which one. (reviews #179, #180)",
+   "CHANGELOG: Adding a computer Ember already has under another spelling (an alias, or user@host) connects that one and says 'Already added as build-01'. Ember no longer makes a second record and card for it. (review #181)",
+   "CHANGELOG line 61: 'When reconnecting needs you to sign in…' could add: 'for a host key to accept, it says \"build-01 needs you to check its key again\", with **Reconnect**'. (review #196)",
+   "README/CHANGELOG, if they quote the SSH install or 8.4 advice: Linux 'Install OpenSSH with: sudo dnf install openssh-clients'; Windows 'Install the OpenSSH Client in Settings › Apps › Optional features, then try again.'; Windows 8.1–8.3 'Update the OpenSSH Client to 8.4 or newer to enter passwords in Ember.' Ember's messages no longer contain backticks. (reviews #157, #196, #218)"
+  ],
+  "ciOnly": [
+   "Windows with real WSL: with distros named as `wsl -l -v` reports them (Ubuntu-22.04, kali-linux), check that 'in Ubuntu, list my home folder' binds to the distro, that 'in Ubuntu 24.04…' asks 'did they mean Ubuntu-22.04 (WSL)?', and that with WSL off 'in Ubuntu' brings up 'Ember can work in WSL'.",
+   "Windows: the handle's tooltip and accessible name read 'Working on Ubuntu (WSL) (stopped)' for a stopped distro (the unit test covers only the pure badge words).",
+   "Windows 10 22H2 with its built-in OpenSSH_for_Windows_8.1p1: the real setup check shows 'Passwords can't be asked here: keys and the ssh-agent only. Update the OpenSSH Client to 8.4 or newer to enter passwords in Ember.' A PC without the OpenSSH Client shows only the Settings › Optional features line.",
+   "Windows CIM noticer: real ssh.exe command lines from Git for Windows or an IDE fetch (`ssh.exe -o SendEnv=GIT_PROTOCOL git@github.com git-upload-pack '…'`) and scp produce no offer, while `ssh -t host tmux attach` is still offered. Parsing is unit-tested through windowsArgv; the real CIM output can only be seen on Windows.",
+   "SSH job (sshd on localhost, remote.yml): adding the same computer under two spellings (an ssh config alias and user@host) reuses one record. Identity comes from real ssh -G output; the unit tests use a fake resolve.",
+   "SSH job: a batch-mode reconnect that stops at an unknown host key (known_hosts entry removed after the first connect) shows 'build-01 needs you to check its key again' / 'Reconnect to check it.'",
+   "macOS: the SSH client and command window terminal rows' macOS wording. In practice these rows never warn there, because /usr/bin/ssh and /usr/bin/script always exist."
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": null,
+   "severity": "must-fix",
+   "what": "Regression from 746795b (#180). shortDistroName gives a distro its first word whatever that word is: build-env becomes \"build\", test-box \"test\", work-vm \"work\", home-lab \"home\", dev-ubuntu \"dev\" and the-box \"the\". Names like these are common for distros made with wsl --import. I ran bindTarget over buildRegistry's names (win32, WSL on, distros Ubuntu-22.04, build-env, test-box, work-vm). \"delete the logs in build\" binds to wsl:build-env, \"save it in test mode\" to wsl:test-box and \"clean up old files in work\" to wsl:work-vm. At 1b39bb3 all three bind to local, because no whole distro name was said. With build-env bound, otherTargetsNamed has nothing to count, so D4.4's wrong-target guard does not make the delete ask. A destructive request about a local folder can now be announced and run inside a WSL distro. Hosts got a safety rule (shortHostName needs a letter plus a digit or a hyphen, so 'in the app' names nothing), but distros got none. Probe: /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/remote/scr/names.ts.",
+   "fix": "registry.ts shortDistroName: return the first word only when it is a known distribution family, the names `wsl --list --online` uses (Ubuntu, Debian, kali, openSUSE, SUSE/SLES, OracleLinux, AlmaLinux, FedoraLinux, Pengwin, Alpine, Arch…). Otherwise return null. A looser alternative is to accept it when everything after it is a version. Add tests to targets-registry and targets-runtime: with a build-env distro, 'delete the logs in build' still binds to local, and 'in Ubuntu' still binds to Ubuntu-22.04."
+  },
+  {
+   "id": null,
+   "severity": "must-fix",
+   "what": "Regression from 746795b (#179/#180) that also changes exact names, which no finding asked for. In resolve.ts, runsNaming lets the longest run win even when that run spans punctuation. wordsOf drops commas, colons and full stops, so the user's words are read as one name. Hosts db-01 and db-01-backup, with no short names involved: on the branch, 'on db-01, backup the database to /srv/backups', 'on db-01: backup the database' and 'on db-01. Backup the database' all bind to ssh:db-01-backup. At 1b39bb3 each returned TWO_NAMED, so Ember asked which one. The same happens with build-01 and build-01-test for 'on build-01, test the backup', and for the voice form without a comma. otherTargetsNamed still counts db-01, so a dangerous command asks, but anything else runs on the wrong computer without a question. Probe: /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix-verify/remote/scr/db.ts, run against the branch and the base.",
+   "fix": "In resolve.ts runsNaming, let a longer run suppress a shorter one only when each extra word is joined to the word before it by '-', '_' or '.' with nothing else between them. Whitespace is also fine when the extra word is a number, so 'in Ubuntu 24.04' still picks Ubuntu-24.04. Read the gap from folded.slice(ws[k-1].end, ws[k].start). In every other case keep both runs, so TWO_NAMED asks as it did before. Add resolve tests: 'on db-01, backup the database' gives TWO_NAMED and 'on db-01-backup, check the disk' gives db-01-backup. Update the 'Short names' paragraph in the docs."
+  },
+  {
+   "id": 197,
+   "severity": "should-fix",
+   "what": "The new not-connected and lost texts reach the user word for word. handsFor's refusal becomes refusedWorker's summary (app/main/agent/host.ts:42 and 894), and that summary is shown in a failed task card when a queued task's computer drops before the task starts. The user then reads 'build-01 isn't connected. Ember can offer a Connect button for it (offer_connect).' or '…(offer_connect), or the user can reconnect it in Ember's settings (Computers).' That shows a tool name, and talks about the user in the third person, on a surface the user reads. The old 'Connect it from Ember's menu first.' read fine to the user. The fix agent noticed this and left it.",
+   "fix": "Word registry.ts notConnectedWhy and the lost text so they read for both the model and the user, without the tool name. For example: 'build-01 isn't connected. Ember can show a Connect button for it.' and 'The connection to build-01 dropped. Ember can show a Connect button for it, or it can be reconnected in Ember's settings (Computers).' The model already knows offer_connect as 'Show the user a button to connect'. Keep the explicit (offer_connect) only in resolve.ts's refusal, which only the model sees. Note that fix/bubble rewrites these same two lines (merge conflict)."
+  },
+  {
+   "id": 196,
+   "severity": "should-fix",
+   "what": "installSsh(os) and MESSAGES.noClient(os) were added, but app/main/remote/connections.ts still calls MESSAGES.noClient() with no OS, at lines 168, 171, 179 and 444. `os` is in scope at each call. So the bubble and the settings line for a missing SSH client still say 'Install OpenSSH (on Linux: sudo dnf install openssh-clients; on Windows: …)' on every OS. That is the mixed-OS advice #157 objected to, and it gives macOS users nothing.",
+   "fix": "Pass the OS: `MESSAGES.noClient(wsl ? \"linux\" : os)` at line 179, `MESSAGES.noClient(\"linux\")` at the two WSL-route throws (168 and 171), and `MESSAGES.noClient(os)` at 444. That is a 4-line hunk in connections.ts. Pin one of them in ssh-connections.test.ts."
+  },
+  {
+   "id": 181,
+   "severity": "should-fix",
+   "what": "No test reaches the new 'Already added as <id>' bubble. It shows when addAndConnect runs from a bubble button for a host that is already connected under another spelling, for example offer_connect's Connect on an ssh-config alias that resolves to an existing record. Its thought also mixes third and first person: 'Ember is on build-01 already, so I'll work there.' The nearby bubbles speak as I, for example line 694's '…so I'll work here.'",
+   "fix": "Change the thought to 'I'm on build-01 already, so I'll work there.' Add a targets-runtime test: a connected record plus an alias offer that resolves to the same identity, then the Connect click. It should show that bubble, create no second record or card, and make no second connect."
+  }
+ ]
+}

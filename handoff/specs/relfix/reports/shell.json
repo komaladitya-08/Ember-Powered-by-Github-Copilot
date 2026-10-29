@@ -1,0 +1,238 @@
+{
+ "key": "shell",
+ "final": {
+  "findings": [
+   {
+    "id": 243,
+    "status": "fixed",
+    "how": "Round 1 (c9a4638): windows.ts appMenuTemplate() returns null on Windows and Linux, and setUpAppChrome() calls Menu.setApplicationMenu(null) there. main.ts calls it on every OS, before any window opens. Real Electron under Xvfb after the fix: getApplicationMenu() is null, Ctrl+Q no longer quits, and Ctrl+Shift+I, Ctrl+R, Ctrl+W, F11 and the Alt bar are gone. Chromium still handles Ctrl+A/X/C/V/Z in fields. Round 2 (4c389cc), for the verifier's accessibility point: I kept the menu null and gave zoom back to the settings window only. createHomeWindow(os) calls zoomByKeys(win.webContents, os), which handles before-input-event on Windows and Linux. The mapping is in a new pure function, zoomLevelFor(os, input, level). On key down with Ctrl held (and no Alt, so no AltGr, and no Meta): Ctrl+= or Ctrl++ (Shift+= on a US keyboard, the + key on other layouts, numpad +) adds 0.5, Ctrl+- (and numpad -) takes 0.5 off, and Ctrl+0 resets. Each step calls preventDefault. The level stays between ZOOM.min -3 and ZOOM.max 5, which is 58% to 249%: WCAG's 200% text is level 3.8. macOS gets no zoom, as on the base (its menu has no View menu). The command and prompt windows don't zoom. A scratch Electron probe (zoomshare.cjs) showed Chromium keeps a file:// page's zoom to its own window: setting window A to 1.5 left window B at 0. main.ts passes platform.os to createHomeWindow. Real app under Xvfb with XTest keys on the focused settings window (scratchpad/shell/r2/zoom-keys.mjs): Ctrl+= 0.5, Ctrl+Shift+= 1, Ctrl+KP_Add 1.5, Ctrl+- 1, Ctrl+KP_Subtract 0.5, Ctrl+0 0, then seven Ctrl+- steps stop at -3, Ctrl+0 0, and Ctrl+A leaves it at 0. The page's keydown listener saw only the modifiers and Ctrl+a, never a zoom key. The handle stayed at 0. The verifier's zoomq-probe.mjs on the fix build now gives zoomAfterCtrlMinus -0.5 and zoomAfterCtrlEqual 0.5, the same as the base (it read 0 and 0 before this round), with menu null and exitedAfterCtrlQ false.",
+    "test": "test/unit/app-chrome.test.ts. Round 1: 'the application menu' (4 cases). Round 2: 'zoom in the settings window on Windows and Linux (review #243)', 5 cases: the key mapping, the -3..5 limits, the keys it leaves alone (no Ctrl, Alt/AltGr, Meta, Shift with - or 0, key up, Ctrl+A/C/V/Z/Q/1, any key on macOS), the wiring (settings only, on win32 and linux, preventDefault only on zoom keys, none on the command and prompt windows or on darwin), and main.ts passing platform.os. All 5 failed before the change (zoomLevelFor is not a function, no before-input-event handler, main.ts called createHomeWindow()) and pass now. Real-Electron evidence: zoom-keys.mjs and the verifier's zoomq-probe.mjs, as above."
+   },
+   {
+    "id": 176,
+    "status": "fixed",
+    "how": "Unchanged from round 1. The menu part is the same change as #243. In a packaged build, setUpAppChrome registers app.on('web-contents-created') with lockDevTools, which closes DevTools on 'devtools-opened'. That covers every page, including those of ask.ts, overlay.ts, handle.ts, voice.ts and desk/view.ts. Development runs keep DevTools. In real Electron 44, devtools-lock-probe.mjs gave {opened:1, stillOpen:false}, and chrome-probe.mjs showed Ctrl+Shift+I opens nothing. I did not add the optional before-quit handler: with no menu, nothing on Windows or Linux calls app.quit() outside quitEmber, and on macOS such a handler would also catch the Dock's Quit and logout, which lifecycle's session-end handling covers and I can't check here.",
+    "test": "test/unit/app-chrome.test.ts 'DevTools in a packaged Ember' (2 cases). They failed on the base and pass now."
+   },
+   {
+    "id": 177,
+    "status": "partial",
+    "how": "Round 1 (a8e1c4d): mac-bundle.mjs signs with --options runtime and --entitlements. ENTITLEMENTS are allow-jit and allow-unsigned-executable-memory (V8), disable-library-validation (an ad hoc signature has no team ID), device.audio-input and automation.apple-events. After signing it reads back the runtime flag and the entitlements, and it fails closed if the flag is missing or if allow-dyld-environment-variables or get-task-allow is present. The fuses.mjs RunAsNode comment now states the TCC caveat. Round 2 (232ecef), for the verifier's CI point: the macOS runner logs say 'System Integrity Protection status: disabled.' (cilogs/ci133, 2 matches). In both packaged checks (macos and macos-x64), the `codesign --display | grep runtime` line stays unconditional. The DYLD_INSERT_LIBRARIES probe now runs only when `[[ \"$(csrutil status 2>&1)\" == *\"status: enabled\"* ]]`. Otherwise the step prints `::notice::SIP is off on this runner: the DYLD_* check can't prove anything here`. I used a [[ ]] string test rather than `csrutil | grep -q`, so GitHub's `bash -eo pipefail` can't turn an early grep exit into a false result. Checked by parsing the YAML, running `bash -n` on both run blocks, and running the SIP block with stub csrutil (on/off) and stub binaries (one honours DYLD, one ignores it). SIP on: the ignoring binary passes and the honouring one fails the step (exit 134). SIP off: the notice prints and the step goes on. So the DYLD behaviour is unproven in CI on the hosted runners: there only the runtime flag is checked. The docs lines the verifier asked for are in forDocs (docs/** belongs to the docs package). Still left, as in round 1: RunAsNode stays on. The AX sidecar host, the Linux desk helper, the commands' job host, SSH askpass and the WSL launcher all run Ember's binary with ELECTRON_RUN_AS_NODE. So on macOS, a program running as the user can start Ember's binary as Node and, when launchd starts it, act with Ember's Accessibility and Screen Recording grants. Proposal: move those helpers to utilityProcess.fork (stdio pipes) or a small separately signed Node helper, then set RunAsNode:false and drop CI's 'node mode kept' checks. That spans the perception, cmdcore/commands, remote and platform packages. Library validation stays off until Ember has a Developer ID team.",
+    "test": "test/unit/packaging.test.ts. Round 1: 'signs under the hardened runtime with only the entitlements Ember needs (review #177)' and 'refuses a signature without the hardened runtime, or with an entitlement that lets code in'. Round 2: 'read the hardened runtime's flag on both Macs, and try DYLD_* only where SIP is on, as on users' Macs (review #177)'. For both jobs it checks that the unconditional flag line comes before the exact csrutil-guarded if/else/fi block, and that DYLD_INSERT_LIBRARIES appears once. It failed before the ci.yml change and passes now. Scratch: scratchpad/shell/r2/{macos,macos-x64}-sip.sh with the stubs in scratchpad/shell/r2/stub."
+   },
+   {
+    "id": 245,
+    "status": "partial",
+    "how": "Round 1 (e149eac): setUpAppChrome sets nativeTheme.themeSource = 'dark' on every OS before any window opens. That makes Windows title bars and Electron menus dark, and macOS title bars, menus and NSAlert dialogs. Round 2 (272fbbe), for the verifier's must-fix: themeSource doesn't reach GTK. I reproduced it on the round-1 build with the verifier's variant-probe.mjs: both Ember windows had variant=None. createHomeWindow, createCommandWindow and createPromptWindow now pass darkTheme: true (one line each; Electron reads it on Linux only). After a rebuild, the same probe shows the settings window ('Ember') with variant=b'dark'. The other window, still None, is the handle (mapped by getNativeWindowHandle in scratchpad/shell/r2/app-variant.mjs). It is frameless and has no title bar. The command and prompt windows aren't opened at start, so I bundled windows.ts on its own with esbuild and made all three windows with its factories in Electron 44 (scratchpad/shell/r2/winmod/factories.cjs). Settings 'Ember', command 'Ember commands' and prompt 'Ember' all read _GTK_THEME_VARIANT=b'dark'. For the should-fix, the setUpAppChrome JSDoc and DESIGN.md's Colour line now say only what is true: title bars are dark on Windows, macOS and GNOME, native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the GTK theme, and Windows' message boxes (the quit question) stay light. The main.ts comment now says 'the dark native theme', not 'dark native chrome'. Marked partial because part of the finding's scenario can't be met by themeSource or darkTheme. The GTK quit question and Menu.popup menu on Linux stay light under a light GTK theme (verifier's dark.png). The Windows quit question is a TaskDialog, which has no dark mode. Proposals, both beyond this package: on Linux, set GTK_THEME=Adwaita:dark in the launchers (/usr/bin/ember, the AppImage's AppRun), since GTK is initialised before main.js runs; on Windows, a dark quit question would need Ember to draw its own dialog, which is a design task.",
+    "test": "test/unit/app-chrome.test.ts 'the native theme (review #245)'. 'is dark on every OS, as every page is' is from round 1. New: 'asks GTK for its dark variant on the settings, command and prompt windows, so GNOME draws their title bars dark', which checks options.darkTheme === true for all three factories on linux, win32 and darwin, through an electron mock that records BrowserWindow options. It failed before the change ('settings on linux: expected undefined to be true') and passes now. Real X11 evidence: variant-probe.mjs (before None, after b'dark') and factories.cjs (all three b'dark')."
+   },
+   {
+    "id": 247,
+    "status": "fixed",
+    "how": "Unchanged from round 1. New assets/ember-small.svg: a full-bleed tile with no baked shadow, lighter graphite and rim, and Cinder simplified. icon.mjs draws 16, 24 and 32 px from it: to the canvas edge in the .ico, and inset by the 12/128 margin in the macOS iconset. 48 px and up are unchanged. build-app.mjs renders dist/app/ember.png (256 px; without sharp it warns and goes on). On Linux, setUpAppChrome gives every new BrowserWindow that icon through browser-window-created/setIcon. windowIconFor returns null on Windows and macOS. Real Electron: _NET_WM_ICON had 0 longs before and 65538 after. The round-2 probes show the same 65538 on both app windows.",
+    "test": "test/unit/app-icon.test.ts (5 cases) and test/unit/app-chrome.test.ts 'the window icon' (3 cases). All failed on the base and pass now."
+   },
+   {
+    "id": 232,
+    "status": "fixed",
+    "how": "Unchanged from round 1. The macOS Ember menu starts with { role: 'about', label: 'About Ember' } and a separator. setUpAppChrome calls app.setAboutPanelOptions(aboutPanel(version)) on macOS: applicationName 'Ember', the version, an empty build version (so macOS doesn't write '0.1.0 (0.1.0)') and 'Copyright © 2026 komaladitya-08. Released under the MIT licence.'. The Hide item is labelled 'Hide Ember' (app.name is 'ember').",
+    "test": "test/unit/app-chrome.test.ts 'on macOS starts with About Ember…' and 'is set on macOS with an About panel…'. Both failed before the change and pass now."
+   },
+   {
+    "id": 226,
+    "status": "fixed",
+    "how": "Unchanged from round 1. quitQuestion's tasks-only branch now says 'stops it where it is' for one task and 'stops them where they are' for several, as the mixed branch does. 'the tasks running are done' now reads 'the tasks that are running finish' in agent/host.ts (NOT_ANSWERING_AFTER_TASKS, AFTER_TASKS) and home/copy.ts's tagline. The home/main.ts button reads 'Reconnect now (stops the tasks that are running)'.",
+    "test": "test/unit/app-chrome.test.ts 'the quit question's words (review #226)'. Updated expectations in sshwsl-hooks.test.ts (line 659), host.test.ts (3 lines) and ui-copy.test.ts (line 48). The new case failed on the base and passes now."
+   }
+  ],
+  "commits": [
+   {
+    "sha": "c9a4638",
+    "subject": "Give Windows and Linux no application menu, so Ctrl+Q always asks and DevTools stay shut",
+    "ids": [
+     243,
+     176
+    ]
+   },
+   {
+    "sha": "95cb375",
+    "subject": "Start the macOS Ember menu with About Ember, naming the version and licence",
+    "ids": [
+     232
+    ]
+   },
+   {
+    "sha": "e149eac",
+    "subject": "Make Ember's native chrome dark on every OS, as its pages are",
+    "ids": [
+     245
+    ]
+   },
+   {
+    "sha": "174fb4c",
+    "subject": "Say \"them\" for several tasks in the quit question, and \"the tasks that are running\"",
+    "ids": [
+     226
+    ]
+   },
+   {
+    "sha": "298044d",
+    "subject": "Draw Ember's 16 to 32 px icons from simplified artwork, and give Linux windows the icon",
+    "ids": [
+     247
+    ]
+   },
+   {
+    "sha": "a8e1c4d",
+    "subject": "Sign Ember.app under the hardened runtime, so DYLD_* and debuggers can't borrow its grants",
+    "ids": [
+     177
+    ]
+   },
+   {
+    "sha": "7bd9b12",
+    "subject": "Say in main.ts and windows.ts everything setUpAppChrome sets",
+    "ids": [
+     243,
+     245,
+     247
+    ]
+   },
+   {
+    "sha": "272fbbe",
+    "subject": "Ask GTK for its dark variant on the settings, command and prompt windows, and say what is dark where",
+    "ids": [
+     245
+    ]
+   },
+   {
+    "sha": "4c389cc",
+    "subject": "Zoom the settings window with Ctrl+=, Ctrl++, Ctrl+- and Ctrl+0 again on Windows and Linux",
+    "ids": [
+     243
+    ]
+   },
+   {
+    "sha": "232ecef",
+    "subject": "Try DYLD_* on the packaged Ember.app only where SIP is on; always read the hardened runtime's flag",
+    "ids": [
+     177
+    ]
+   }
+  ],
+  "checks": "Final state (HEAD 232ecef). `npx tsc --noEmit`: exit 0, 0 errors. `npm run lint` (eslint .): exit 0, 0 problems. `npm test`, run 1: exit 1, 244 files (4 failed, 239 passed, 1 skipped), 5991 tests (5 failed, 5978 passed, 8 skipped). All 5 failures were 'Test timed out in 5000ms', at load average ~33 on this 4-CPU machine with the other packages running: platform-index.test.ts (2), sshwsl-contract.test.ts combineAdmin (1), voice-bzip2.test.ts (1), voice-untar.test.ts (1). This branch changes none of those files or the code they test (empty diff). Those 4 files alone at the same load: 6 failed, 153 passed, all timeouts. Again with --testTimeout=120000: 4 files passed, 159 tests passed. `npm test`, run 2: exit 1, 244 files (2 failed, 241 passed, 1 skipped), 5991 tests (2 failed, 5981 passed, 8 skipped). Only voice-bzip2 'passes on a block that expands past 4 MB…' and voice-untar 'extracts a .tar.bz2 end to end…' failed, both 5000ms timeouts; those 2 files alone: 85 passed. `npm run build`: exit 0. `xvfb-run -a npm run test:smoke`: exit 0 ('ok first instance showed its window', 'ok second launch handed over and the first instance focused its window'). Targeted runs: app-chrome.test.ts 17 passed; packaging.test.ts 66 passed; app-chrome + sshwsl-hooks + main-privacy-wiring 83 passed. Nothing under app/main/commands/** or the voice process changed, so the commands integration and voice suites don't apply. Real Electron under Xvfb on the built app: variant-probe (settings window variant None before, b'dark' after), factories.cjs (all three factory windows b'dark'), zoom-keys.mjs and the verifier's zoomq-probe.mjs (zoom restored, menu null, Ctrl+Q doesn't quit).",
+  "sharedHunks": [
+   "app/main/main.ts line 19: the import from ./windows adds setUpAppChrome (round 1)",
+   "app/main/main.ts line 297: `home = createHomeWindow();` becomes `home = createHomeWindow(platform.os);` (round 2, #243 zoom)",
+   "app/main/main.ts ~1177-1180: the macOS-only `if (sys.lifecycle.appMenu) { Menu.setApplicationMenu(...) }` block is replaced by a 3-line comment and one unconditional `setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });` (round 1; round 2 reworded the comment to 'the dark native theme')",
+   "app/main/windows.ts (hot file): header JSDoc extended; imports add app, Menu, nativeTheme, MenuItemConstructorOptions and node:fs; createHomeWindow takes `os: OS`, gets `darkTheme: true` (with a 2-line comment) and calls `zoomByKeys(win.webContents, os)`; createCommandWindow and createPromptWindow each get one `darkTheme: true` line; new exports after createHomeWindow (ZOOM, KeyInput, zoomLevelFor, ZoomHost, zoomByKeys); new exports after createPromptWindow (AppMenuActions, appMenuTemplate, AboutPanel, aboutPanel, WINDOW_ICON, windowIconFor, DevToolsHost, lockDevTools, ChromeElectron, setUpAppChrome); quitQuestion's tasks-only detail and JSDoc line (#226)",
+   ".github/workflows/ci.yml, macos job, step 'The packaged Ember.app: its fuses…' (~lines 538-547): runtime-flag grep (unconditional) and the DYLD_INSERT_LIBRARIES probe inside a csrutil SIP-enabled if/else with a ::notice:: (rounds 1 and 2, #177)",
+   ".github/workflows/ci.yml, macos-x64 job, step 'The packaged Ember.app on Intel…' (~lines 726-735): the same lines as the macos job (#177)",
+   "app/main/agent/host.ts lines 231 and 242: NOT_ANSWERING_AFTER_TASKS and AFTER_TASKS now say 'the tasks that are running finish' (#226)",
+   "app/renderer/home/copy.ts line 67: the tagline's 'once the tasks that are running finish' (#226)",
+   "app/renderer/home/main.ts line 466: retry button 'Reconnect now (stops the tasks that are running)' (#226)",
+   "scripts/build-app.mjs after line 153: 5 lines rendering dist/app/ember.png from assets/ember.svg via icon.mjs writePng, warning and going on without sharp (#247)",
+   "scripts/package/icon.mjs and icon.d.mts: drawPlan/smallArtFor/writePng; 16-32 px drawn from assets/ember-small.svg in writeIco and writeIconset (#247)",
+   "scripts/package/mac-bundle.mjs and mac-bundle.d.mts: hardened-runtime signing, ENTITLEMENTS, FORBIDDEN_ENTITLEMENTS, entitlementsPlist and the read-back checks (#177; the package spec gives shell the macOS signing/entitlements)",
+   "scripts/package/fuses.mjs: the RunAsNode comment only (#177; owned by shell)",
+   "docs/DESIGN.md: the Colour line (#245, reworded in round 2) and the Icon line (#247)",
+   "test/unit/packaging.test.ts: icon import line; the macOS bundle signing fake and the two #177 signing cases (~396-490); the new CI case 'read the hardened runtime's flag on both Macs…' (~627)",
+   "test/unit/host.test.ts lines 2043, 2047, 2075: expected strings for #226",
+   "test/unit/sshwsl-hooks.test.ts line 659: quitQuestion(2,…) detail now 'Quitting stops them where they are.' (#226)",
+   "test/unit/ui-copy.test.ts line 48: tagline expectation for #226"
+  ],
+  "forDocs": [
+   "DEVELOPING.md §11.5 macOS staging, the 'signs the whole bundle ad hoc last and verifies it' bullet (~line 878): signs the whole bundle ad hoc last, under the hardened runtime (`--options runtime`), with mac-bundle.mjs's ENTITLEMENTS: JIT and unsigned executable memory for V8, library validation off (an ad hoc signature has no team ID, so library validation would refuse Electron Framework, koffi, sharp and the speech runtime), the microphone and Apple events. It then reads back the runtime flag and the entitlements, fails if `allow-dyld-environment-variables` or `get-task-allow` is there, and verifies the bundle (`codesign --verify --deep --strict`). Keep the rest of the bullet (flipping the fuses voids Electron's signature…).",
+   "DEVELOPING.md, a caveat by the macOS fuses bullet (~line 876), with the node-mode wording at ~line 328 (Linux) and ~line 580 (Windows, 'Node mode kept for the accessibility host') naming every helper: RunAsNode stays on because Ember's helpers run its binary as plain Node: the accessibility host, the desk helper on Linux, the commands' job host, SSH's askpass helper and the WSL launcher. So any program running as the user can start Ember's binary as Node with a script of its own. On macOS, if it is started so that macOS holds Ember responsible for it (by launchd, say), it acts with Ember's Accessibility and Screen Recording grants. This stays so until the helpers leave ELECTRON_RUN_AS_NODE (review #177). The hardened runtime closes the DYLD_* and debugger ways in.",
+   "DEVELOPING.md, where CI's macOS packaged checks are described: CI reads the hardened-runtime flag on Ember.app's signature, and tries DYLD_INSERT_LIBRARIES only where SIP is on. The hosted macOS runners report SIP off, so there it leaves a notice, and the DYLD behaviour is unproven in CI.",
+   "DEVELOPING.md ~line 875 ('Ember has a Dock icon and an app menu, whose Quit goes through Ember's own question while a task runs'): the app menu also starts with About Ember, which shows the version and the MIT licence.",
+   "README (keyboard or settings section) and CHANGELOG: on Windows and Linux Ember's windows have no menu bar any more. Ctrl+Q no longer quits from a window (use Quit Ember on the handle's menu, which asks first while something is running), and Ctrl+R, Ctrl+W, F11, Ctrl+Shift+I and the Alt menu bar are gone. The settings window zooms with Ctrl+= or Ctrl++, Ctrl+- and Ctrl+0 (back to 100%), from 58% to 249%.",
+   "CHANGELOG: DevTools can't be opened in a packaged Ember.",
+   "CHANGELOG: Ember's title bars are dark on Windows, macOS and GNOME whatever the system's appearance; menus and dialogs are dark on macOS, and menus on Windows. On Linux, menus and dialogs follow the GTK theme, and Windows' message boxes stay light.",
+   "CHANGELOG: macOS: About Ember in the Ember menu; the app is signed (ad hoc) under the hardened runtime.",
+   "CHANGELOG: a simpler app icon at 16 to 32 px that holds on dark taskbars; on Linux every Ember window carries the icon (AppImage and development runs included).",
+   "CHANGELOG: the quit question says 'Quitting stops them where they are' for several tasks; 'the tasks that are running finish' in the reconnect messages."
+  ],
+  "ciOnly": [
+   "macOS (#177): whether dyld ignores DYLD_INSERT_LIBRARIES for the hardened Ember.app. The CI probe runs only where `csrutil status` says enabled, and the hosted macos-15 runners report SIP disabled, so in CI only the runtime flag on the signature is checked. The DYLD behaviour stays unproven in CI.",
+   "macOS (#177): that Ember.app signed ad hoc under the hardened runtime with these entitlements still starts, runs V8 (JIT), loads Electron Framework, koffi, sharp and the speech runtime, and passes the packaged checks and the smoke launch (macos and macos-x64 jobs).",
+   "macOS (#232): the About Ember panel's look (name, single version, licence line) and the 'Hide Ember' label.",
+   "macOS (#245): dark title bars, menus and NSAlert quit question with themeSource 'dark' while the system is in light mode.",
+   "Windows (#245): dark title bars (DWM immersive dark mode) and dark Electron menus with themeSource 'dark' in light mode; the quit question (TaskDialog) stays light, as the docs now say.",
+   "Windows (#243): the settings window's before-input-event zoom keys (Ctrl+=, Ctrl++, Ctrl+-, Ctrl+0, numpad) and that AltGr characters (reported as Ctrl+Alt) still type and don't zoom; that Ctrl+Q, Ctrl+R, Ctrl+W, F11 and Ctrl+Shift+I do nothing with no menu.",
+   "Linux GNOME on real Xorg (#245): that Mutter draws the dark title bar from _GTK_THEME_VARIANT=dark. Xvfb has no window manager, so only the X property itself is proven here.",
+   "Windows taskbar and Explorer (#247): how the new 16/24/32 px .ico frames look on a real dark and a real light taskbar."
+  ],
+  "notes": "Round 2 addressed all five verifier items (one must-fix, four should-fix). (1) #245 must-fix is done: darkTheme: true on the three factories, proven on X11. (2) #245 wording is done in DESIGN.md, the setUpAppChrome JSDoc and the main.ts comment. I now mark #245 partial, because Linux GTK menus and dialogs and the Windows TaskDialog can't be made dark by themeSource or darkTheme. The proposals are under that finding. (3) #243 zoom is back in the settings window only, so the menu stays null. For the css package (#57): the settings window zooms again, from 58% to 249%, with Ctrl+=/+/-/0 on Windows and Linux; the command and prompt windows don't zoom; and Chromium keeps a file:// page's zoom to its own window, so it doesn't spread to them. (4) #177's CI DYLD line is now guarded by SIP and is unproven on the hosted runners. (5) The #177 docs lines are in forDocs for the docs package. My first report never reached the verifier whole, so forDocs here lists every line for the package. Scratch evidence is in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/shell/r2/: zoom-keys.mjs, zoomshare.cjs, app-variant.mjs, winmod/factories.cjs, the *-sip.sh files with the stub directory, and npmtest.txt, npmtest2.txt, tsc.txt, lint.txt, build.txt, smoke.txt."
+ },
+ "round1": {
+  "sharedHunks": [
+   "app/main/main.ts: import line 19 adds setUpAppChrome from ./windows",
+   "app/main/main.ts (whenReady, ~line 1177): the macOS-only `if (sys.lifecycle.appMenu) { Menu.setApplicationMenu(...) }` block replaced by one setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, actions }) call and its comment (this area is shell's)",
+   "app/main/agent/host.ts lines 231 and 242: NOT_ANSWERING_AFTER_TASKS and AFTER_TASKS strings say 'the tasks that are running finish' (#226)",
+   "app/renderer/home/copy.ts line 67: tagline string 'once the tasks that are running finish' (#226)",
+   "app/renderer/home/main.ts line 466: retry button text 'Reconnect now (stops the tasks that are running)' (#226)",
+   "scripts/build-app.mjs (after the xterm.css copy): dynamic import of ./package/icon.mjs renders dist/app/ember.png, warning instead of failing (#247)",
+   "scripts/package/icon.mjs + icon.d.mts: SMALL_MAX, smallArtFor, drawPlan, renderFor, writePng; writeIco/writeIconset draw 32 px and below from ember-small.svg; the CLI's single-PNG mode uses writePng (#247)",
+   "scripts/package/mac-bundle.mjs + mac-bundle.d.mts: header comment, ENTITLEMENTS, FORBIDDEN_ENTITLEMENTS, entitlementsPlist, step 3 signs with --options runtime --entitlements and reads back flag and entitlements (#177; the signing is shell's)",
+   "scripts/package/fuses.mjs: EMBER_FUSES doc comment about RunAsNode (shell owns this file)",
+   ".github/workflows/ci.yml: macOS packaged-check step (after `codesign --verify`) adds the runtime-flag grep and the DYLD_INSERT_LIBRARIES check, 4 lines + 2 comment lines (#177)",
+   ".github/workflows/ci.yml: macOS-on-Intel packaged-check step, the same 2 checks + 1 comment line (#177)",
+   "docs/DESIGN.md Colour bullet: 'Ember is dark only, native chrome included…' (#245)",
+   "docs/DESIGN.md Icon bullet: two sentences on ember-small.svg and the Linux window icon (#247)",
+   "test/unit/packaging.test.ts: mac-bundle import adds ENTITLEMENTS/FORBIDDEN_ENTITLEMENTS/entitlementsPlist; fakeMac answers codesign --force/--display; the expected trailing calls are now 5; two new cases (#177)",
+   "test/unit/sshwsl-hooks.test.ts line 659: quitQuestion(2 tasks) expects 'Quitting stops them where they are.' (#226)",
+   "test/unit/ui-copy.test.ts line 48: tagline expectation with the new wording (#226)",
+   "test/unit/host.test.ts lines 2043, 2047, 2075: status/bubble expectations with the new wording (#226)"
+  ],
+  "forDocs": [
+   "docs/DEVELOPING.md macOS staging list, the bullet 'signs the whole bundle ad hoc last and verifies it': now 'signs the whole bundle ad hoc last, under the hardened runtime, with only the entitlements Ember needs (V8's JIT, library validation off for an ad hoc signature's frameworks and native modules, the microphone, Apple Events for dark mode), then verifies it and reads the runtime flag and the entitlements back (scripts/package/mac-bundle.mjs). macOS then ignores DYLD_* variables for Ember and lets no debugger attach.'",
+   "docs/DEVELOPING.md (macOS permissions section) or README security notes, TCC caveat: 'Ember's helpers run as Ember's own binary in Node mode (ELECTRON_RUN_AS_NODE), so the RunAsNode fuse stays on. A program running as you can start Ember's binary as Node, and if macOS holds Ember responsible for it (started by launchd, say), it can act with the Accessibility and Screen Recording access you gave Ember. Give Ember those permissions only on a Mac whose other software you trust.'",
+   "CHANGELOG (Fixed): 'On Windows and Linux, Ember's windows no longer carry Electron's default menu: Ctrl+Q no longer quits without asking, and Ctrl+Shift+I, Ctrl+R, Ctrl+W, F11 and the Alt menu bar are gone. A packaged Ember closes DevTools on any page.'",
+   "CHANGELOG (Changed): 'Title bars, native menus and dialogs are dark on every OS, as Ember's windows are.' / 'The macOS Ember menu has About Ember.' / 'Ember's 16-32 px icons use simplified artwork that reads on dark taskbars, and on Linux every Ember window carries Ember's icon (AppImage and development runs included).' / 'The quit question says \"stops them where they are\" for several tasks.'",
+   "CHANGELOG (Security): 'Ember.app is signed under the macOS hardened runtime: DYLD_* injection and debugger attachment no longer work against it.'",
+   "README (Windows/Linux keyboard): if it lists Electron zoom (Ctrl+Plus/Minus) or Ctrl+Q anywhere, drop it: there is no application menu on Windows or Linux now (I found no such line on this branch)"
+  ],
+  "ciOnly": [
+   "macOS (arm64 and Intel): Ember.app signed with --options runtime and the entitlements still launches (smoke launch.mjs --exe), runs its accessibility host in node mode (ember-darwin 'packaged accessibility host… koffi loads'), passes the doctor Attribution before/after steps, and finishMacBundle's read-back (`codesign --display --verbose=2` flags contain 'runtime'; `codesign -d --entitlements - --xml` lists the 5 keys) holds on real codesign output",
+   "macOS: `DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 Ember -e 'process.exit(0)'` exits 0, so the hardened runtime ignores DYLD_*. Not provable here: whether allow-unsigned-executable-memory is needed at all on Electron 44, and that the microphone (audio-input) and System Events dark mode (apple-events) still work under the hardened runtime on a real Mac",
+   "macOS: the Ember menu shows 'About Ember' first and 'Hide Ember'; the About panel reads 'Ember', 'Version 0.1.0' with no '(0.1.0)', and the licence line; Command+Q still goes through the quit question",
+   "macOS and Windows 11: nativeTheme 'dark' gives dark title bars, native menus (the handle's) and the quit dialog in a light system theme. Windows' Win32 message boxes may stay light (no dark mode in TaskDialog)",
+   "Windows: with no application menu, Ctrl+Q, Ctrl+Shift+I, Ctrl+R, Ctrl+W and F11 do nothing in the settings, command, prompt and Ask windows, Alt shows no bar, and Ctrl+C/V/X/A/Z still work in fields (verified on Linux/Xvfb only)",
+   "Windows: the .ico's 16/24/32 px images from ember-small.svg look right in Explorer, the taskbar and Alt-Tab; macOS: the iconset's 16/32 px (on Apple's grid) look right in Finder list view",
+   "Linux on real GNOME/Xorg (not Xvfb): the AppImage without desktop integration and a dev run show Ember's icon in Alt-Tab and the dash (_NET_WM_ICON was verified set under Xvfb)"
+  ]
+ },
+ "verifierProblems": [
+  {
+   "id": 245,
+   "severity": "must-fix",
+   "what": "On Linux, the platform the finding names for GNOME title bars, nativeTheme.themeSource = 'dark' changes nothing you can see. A real-Electron probe on the fix build (relfix-verify/shell/variant-probe.mjs with xprops2.py) shows Ember's windows have no _GTK_THEME_VARIANT, the same as on the base, and that X property is what Mutter reads to draw a dark title bar. A scratch Electron 44 test (relfix-verify/shell/dark/main.cjs) shows a window built with darkTheme: true gets _GTK_THEME_VARIANT=dark, while one with only themeSource 'dark' gets none. A screenshot with themeSource 'dark' (relfix-verify/shell/dark/dark.png) shows the GTK quit question ('Ember is still working on 3 tasks.') and a Menu.popup menu both still light. So on RHEL 8 GNOME with the default light Adwaita theme, the settings, command and prompt windows keep light title bars around a near-black page. The report still marks #245 'fixed … on every OS'.",
+   "fix": "In app/main/windows.ts, add `darkTheme: true` to the BrowserWindow options of createHomeWindow, createCommandWindow and createPromptWindow. Electron documents this option for Linux only and ignores it on Windows and macOS. It is 3 one-line shared hunks. Add a unit test that the three factories pass darkTheme (with an electron mock that records options), and re-run the X11 property check, which should show variant=b'dark' on the 'Ember' and 'Ember commands' windows."
+  },
+  {
+   "id": 245,
+   "severity": "should-fix",
+   "what": "Two texts claim more than the code does. docs/DESIGN.md's new Colour line says 'title bars, native menus and dialogs are dark whatever the system's appearance', and the setUpAppChrome JSDoc says the same. On Linux, themeSource reaches none of these: the GTK message box and the Menu.popup menu stay light (dark.png). On Windows, dialog.showMessageBox is a TaskDialog, which has no dark mode, so the quit question will stay light there too. Only macOS (NSAlert and menus) and the Windows title bars and Chromium-drawn menus follow themeSource.",
+   "fix": "Reword the DESIGN.md line and the JSDoc to what is true. For example: 'Ember is dark only: title bars are dark on every OS, and native menus and dialogs are dark on macOS. On Linux they follow the GTK theme, and Windows message boxes stay light.' Adjust it once darkTheme is in for Linux title bars."
+  },
+  {
+   "id": 243,
+   "severity": "should-fix",
+   "what": "This is an accessibility regression on Linux and Windows that the finding itself warned about ('zoom is a useful accessibility feature the default menu accidentally provides'; its suggested fix offered a menu that keeps Edit and zoom). I ran a real-Electron probe under Xvfb (relfix-verify/shell/zoomq-probe.mjs) with the settings window focused. On the base, Ctrl+- gives zoom level -0.5 and Ctrl+Shift+= gives +0.5. On the fix build, both stay at 0, and Ctrl+0 is gone too. Settings no longer has any way to enlarge text on Linux or Windows. The css package's #57 adds no zoom. The report's reason, that a zoom-only menu would bring back the Alt bar, is true for a menu, but zoom doesn't need one.",
+   "fix": "Keep the menu null. Restore zoom on the settings window only: the command and prompt windows are fixed size and clip when zoomed (#57). In createHomeWindow, or in setUpAppChrome on Windows and Linux, handle `webContents.on('before-input-event')`. Map Ctrl+= and Ctrl++ to +0.5, Ctrl+- to -0.5 and Ctrl+0 to reset, clamp the level (for example to -3..3), and call preventDefault. Put the key-to-zoom mapping in an exported pure function with unit tests. If the lead decides to drop zoom instead, the report must say that Ctrl+-/+/0 zoom is gone on Windows and Linux, and #57 must be told."
+  },
+  {
+   "id": 177,
+   "severity": "should-fix",
+   "what": "The new CI line `DYLD_INSERT_LIBRARIES=/nonexistent/... ELECTRON_RUN_AS_NODE=1 \"$exe\" -e 'process.exit(0)'` assumes macOS drops DYLD_* for a binary under the hardened runtime. The repo's own macos-15 (arm64) runner logs say 'System Integrity Protection status: disabled.' (scratchpad/cilogs/ci133/'2_macOS (...)'.txt and scratchpad/ci/run12x.log). With SIP off, AMFI's dyld policy may honour DYLD_* (dyld's own fallback treats only SIP-on as restricted). In that case dyld aborts on the missing library and the packaged check fails for a reason that has nothing to do with Ember. If dyld does pass the line, it proves nothing about users' Macs either.",
+   "fix": "In both macOS packaged-check steps (ci.yml ~line 541 and ~722), keep the `codesign --display … | grep runtime` line unconditional. Run the DYLD probe only when `csrutil status | grep -q 'status: enabled'` succeeds. Otherwise print `::notice::SIP is off on this runner: the DYLD_* check can't prove anything here`. Say in the report that the DYLD behaviour is unproven in CI."
+  },
+  {
+   "id": 177,
+   "severity": "should-fix",
+   "what": "The reviewer's fix asks to 'state the TCC caveat in the docs' until RunAsNode can go off. Only the fuses.mjs comment was changed. docs/DEVELOPING.md §11.5 (line 878) still says the bundle is 'signed ad hoc last and verified', with no word of the hardened runtime or its entitlements. Lines 328 and 580 still describe node mode as harmless ('Node mode kept for the accessibility host'), with no caveat that any program the user runs can start Ember's binary as Node and use Ember's Accessibility and Screen Recording grants. The fix agent's report is cut off after 'ciOnly', so I can't see whether this went to the docs package.",
+   "fix": "Add to the report's forDocs for the docs package, which owns docs/**: (1) DEVELOPING.md line 878 bullet: 'signs the whole bundle ad hoc under the hardened runtime with mac-bundle.mjs ENTITLEMENTS (JIT, unsigned executable memory, library validation off, microphone, Apple events), then reads back the runtime flag and the entitlements'; (2) a short caveat near the fuses text: RunAsNode stays on for the helpers, so on macOS a program running as the user can start Ember's binary as Node and act with Ember's TCC grants, until the helpers leave ELECTRON_RUN_AS_NODE (review #177)."
+  }
+ ]
+}

