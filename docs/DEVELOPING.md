@@ -200,7 +200,8 @@ enter the code Ember shows on GitHub's page). The app's public client id is chec
 device flow turned off) fails CI. A build without a client id (a fork) signs in through the GitHub CLI:
 
 ```bash
-sudo dnf install -y gh      # or download from cli.github.com
+sudo dnf config-manager --add-repo https://cli.github.com/packages/rpm/gh-cli.repo   # RHEL 8 has no gh of its own
+sudo dnf install gh
 gh auth login
 ```
 

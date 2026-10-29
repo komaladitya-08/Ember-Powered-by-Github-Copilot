@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { announcement, type BubbleView } from "@ember/bubble";
+import { GH_INSTALL } from "../../app/main/agent/github-app";
 import { ANNOUNCE_MS } from "../../app/main/commands/flow";
 import { WINDOWS_MIC_FIX } from "../../app/main/environment";
 import * as commandWindow from "../../app/main/commands/window";
@@ -98,6 +99,15 @@ describe("docs/DEVELOPING.md", () => {
     const named = [...new Set(win.sidecarFiles.map(f => (f.to.startsWith("sidecar/uia/") ? "sidecar/uia/" : f.to)))];
     for (const rel of [...named, `${REMOTE_PARTS_DIR}/`]) expect(table).toContain(`resources\\${rel.replace(/\//g, "\\")}`);
     for (const l of win.launchers ?? []) expect(table).toContain(l.to);
+  });
+
+  it("§5 gives RHEL 8's way to install the GitHub CLI, as sign-in's messages and the README do (cross-review X18)", () => {
+    // RHEL 8 (§1–§9's platform) has no gh package: GitHub's own repository comes first.
+    const steps = GH_INSTALL.linux.split(", then ");
+    expect(steps.length).toBe(2);
+    const copilot = section(read("docs/DEVELOPING.md"), "Connecting Copilot");
+    for (const step of steps) expect(copilot, step).toContain(step);
+    expect(copilot).not.toMatch(/^sudo dnf install -y gh\b/m);
   });
 
   it("§10.9 gives the microphone switch's path on Windows 10 and 11, as the setup check does", () => {
