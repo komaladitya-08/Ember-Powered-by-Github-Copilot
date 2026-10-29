@@ -1,0 +1,28 @@
+{
+ "title": "--ask opens the box once, and the smoke test proves it shows",
+ "owns": "app/main/install-watch.ts and every relaunch (restart, policy restart, update restart), app/main/main.ts argv handling for --ask, test/smoke/launch.mjs",
+ "items": [
+  {
+   "title": "A start by the launcher's Ask Ember keeps --ask in argv, so 'Restart Ember' and the policy restart reopen the ask box unasked",
+   "severity": "minor",
+   "file": "app/main/install-watch.ts",
+   "line": 73,
+   "scenario": "RHEL 8: Ember isn't running and the user clicks Ask Ember in the GNOME dash (packaging/ember.desktop `Exec=ember --ask`), or Ask Ember in the Windows jump list. That first instance's process.argv holds `--ask` for its whole life. Later, an RPM update lands and the user picks 'Restart Ember', or the administrator's policy changes and the user restarts. restartAfterUpdate calls app.relaunch() with no options, which reuses process.argv. The AppImage and policy paths (restartOptions) pass argv.slice(1). Either way the new process starts with --ask. startView returns 'ask', so the box pops open over whatever the user is doing, takes the keyboard, and the greeting after the restart is skipped. The one-off 'open the box now' intent is replayed as if the user had just asked.",
+   "evidence": "Scratch test /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix3-review/platform/test/unit/zz-scratch-relaunch-ask.test.ts (2 passed). With argv ['/opt/ember/ember','--ozone-platform=x11','--ask'], restartAfterUpdate records ['relaunch', undefined] (Electron's default: same argv), and startView({onboarded:true, atLogin:false, ask: wantsAsk(argv)}) gives 'ask'. restartOptions for the AppImage returns args containing '--ask'. The code paths: install-watch.ts:72-76, policy/admin-watch.ts restartOptions (`args: argv.slice(1)`), main.ts:1382 (policy restart) and the startup `startView(... ask: wantsAsk(process.argv))`.",
+   "fix": "Strip the one-shot launcher switch before relaunching. For example, have restartAfterUpdate and the ui:restart path relaunch with `{ args: argv.slice(1).filter(a => a !== ASK_ARG) }` (keeping the AppImage execPath when there is one), and add a unit case that a relaunch never carries --ask.",
+   "id": "P3",
+   "from": "final review (platform)"
+  },
+  {
+   "title": "The smoke test's '--ask opened the ask box' check passes without the box ever showing",
+   "severity": "minor",
+   "file": "test/smoke/launch.mjs",
+   "line": 81,
+   "scenario": "Round 3 made the smoke test require that a third start with --ask has the first instance open its ask box (Windows, macOS and RHEL 8 CI, run on every push). It counts `ask.open` log lines with source 'launcher'. openAsk writes that line on paths where no box opens. With no current consent, main.ts:1002 logs ask.open and shows settings instead. At main.ts:1030 the line is logged after openAskInOrder whatever AskWindow.show() did: when the prepared page isn't loaded yet, show() only sets `wanted` (ask.ts: `if (this.loaded) this.reveal(...)`), and the box is dropped if ready-to-show comes more than LATE_MS (1.5 s) later. So a regression where a launcher's Ask Ember opens settings, or no box at all, still prints 'ok a start with --ask handed over and the first instance opened its ask box'. A consent-version bump that the smoke's hand-written settings.json (version: 1) doesn't follow would be one such regression.",
+   "evidence": "test/smoke/launch.mjs:81 `if (msg === \"ask.open\" && entry.source === \"launcher\") asked.count++;` and :193 waits only for asked.count > 0. app/main/main.ts:1002 `if (!consented()) { log.info(\"ask.open\", { source }); showHome(); return; }`. main.ts:1030 `log.info(\"ask.open\", { source, ms: Date.now() - asked });` runs unconditionally after openAskInOrder. The event that proves the box was shown is `ask.reveal` (main.ts:924, from AskWindow.reveal via onReveal), which carries the same source. CI has not run round 3's smoke yet: the last ci.yml run on the branch is for 9912de5.",
+   "fix": "Count `ask.reveal` with source 'launcher' (written only when the window is actually shown) instead of `ask.open`. Optionally also fail if the first instance logs `ask.open` without a matching `ask.reveal` within a few seconds.",
+   "id": "P2",
+   "from": "final review (platform)"
+  }
+ ]
+}

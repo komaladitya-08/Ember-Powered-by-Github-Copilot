@@ -1,0 +1,55 @@
+{
+ "title": "Copy that names keys and the ask box, the question time for long typed text, and the README's jump list",
+ "owns": "app/main/agent/confirm.ts (question time), app/main/hello.ts, README.md/CHANGELOG.md lines, app/renderer/home/index.html and copy naming the ask box, app/main/doctor.ts hints, scripts/install-desktop-entry.sh, the prompt window consentText",
+ "items": [
+  {
+   "title": "A long typed text can't be read before its question runs out: the 2-minute question time ignores the whole-text block",
+   "severity": "minor",
+   "file": "app/main/agent/confirm.ts",
+   "line": 283,
+   "scenario": "A task types a long text, which type_text and set_value both allow up to 5000 characters (worker.ts:1080, 1093), into the user's app. 'More time to read and answer' is off. The question shows all 4999 characters in the bubble's 7-line block. A keyboard user pages through with the approve key, which moves one page of about 6 lines (about 270 characters at the default size, about 200 at Larger). That takes 18 to 25 presses. Reading that much at 180 to 250 words a minute takes 4 to 5 minutes, and a screen reader takes as long to speak the live region's 'The whole text: \u2026' announcement. After 2 minutes the question expires as 'Not now' while the user is still reading or listening, and the step is refused. The docs promise 'Screen readers hear all of it' and that Allow works once you have read it.",
+   "evidence": "confirm.ts:283 sets the expiry once, when the question shows: `p.timer = setTimeout(() => this.finish(p, null), this.timeout())`. main.ts:1718 sets `timeoutMs: () => 120_000 * readTime()`. answerKey's paging and wholeSeen() call this.show() again but never touch p.timer, and the timeout doesn't depend on detail's length. Scratch test /tmp/claude-0/-home-user-Ember-Powered-by-Github-Copilot/9df81ff3-d6fa-5078-ac02-9c8dbaa6cb03/scratchpad/relfix3-review/ux/test/unit/zz-whole-timeout.test.ts uses a Confirmer with the 120 s timeout and a 4999-character detail, and presses the approve key every 7 s. Output: 'SCRATCH pages pressed: 17' and 'answer after 2 min of reading: null' (expired), and the assertion that it was still waiting fails.",
+   "fix": "While a question's whole text hasn't all been seen, give it reading time: either add time in proportion to detail's length (for example about 1 minute per 1000 characters, times readTime()), or restart the expiry on each page or scroll the page reports until wholeSeen. Say so in the README line on More time.",
+   "id": "U1",
+   "from": "final review (ux)"
+  },
+  {
+   "title": "The greeting drops the ask chord Ember holds whenever Ember holds no stop chord (and the reverse)",
+   "severity": "minor",
+   "file": "app/main/hello.ts",
+   "line": 18,
+   "scenario": "On Linux another app holds Ctrl+Alt+X and its fallback Ctrl+Alt+Shift+X, and Ctrl+Alt+Space is free (or Ember holds Ctrl+Alt+Shift+Space because only the default was taken). The greeting says 'Click my handle in the corner to ask me something or to stop me, or press Ctrl+Alt+E: settings opens at Ask Ember\u2026 and Stop everything.' It never says that Ctrl+Alt+Space (or Ctrl+Alt+Shift+Space) asks. A keyboard user is sent to settings for something one chord does. The reverse also happens: with only the ask shortcut held by neither chord, the stop chord Ember holds isn't named. Round 3's item (2) lists the greeting among the places that must name the chord Ember actually holds.",
+   "evidence": "hello.ts:17-19: `const { ask, stop, settings } = held; if (!ask || !stop) { return `Click my handle in the corner to ask me something or to stop me, or ${settings ? ...}` }`. A missing chord for either one drops both. Scratch run of keysLine(heldShortcuts(sc, fb, taken), sc) for taken = [Control+Alt+X, Control+Alt+Shift+X, Control+Alt+Space] gives: 'Click my handle in the corner to ask me something or to stop me, or press Ctrl+Alt+E: \u2026'. In that state the setup check says 'so Ask Ember is Ctrl+Alt+Shift+Space'. The same holds on win32 and darwin. No test in shortcut-fallback.test.ts covers one held and the other not.",
+   "fix": "Name each one separately: 'Press <ask> to ask me anything' when held, else the handle and settings route for asking; likewise for stop ('<stop> stops me' or 'Stop everything in my handle's menu'). Add the mixed cases to shortcut-fallback.test.ts.",
+   "id": "U2",
+   "from": "final review (ux)"
+  },
+  {
+   "title": "README and release notes send Windows users to an Ember taskbar jump list that usually isn't there",
+   "severity": "minor",
+   "file": "README.md",
+   "line": 214,
+   "scenario": "A Windows user whose ask shortcut and its fallback are both taken reads the README: 'Ask Ember is also in the system's own launcher, whatever another app holds: \u2026 on the taskbar (Windows: its jump list)'. The keyboard routes table says the same ('Ask Ember in the system's launcher (app menu, jump list, Dock menu)'). While Ember runs normally, only its handle and overlay are up, so it has no taskbar button and no jump list to right-click (or open with Win+Alt+number). The entry is reachable only if the user has pinned Ember to the taskbar, or while settings, the command window or a card is open, which neither text says.",
+   "evidence": "Every window Ember keeps up has skipTaskbar: true: overlay.ts:321, handle.ts:58, ask.ts:205 (and the desk view, voice). Only the settings, command and prompt windows (windows.ts) take a taskbar button, and only while open. launcher.ts and main.ts call app.setUserTasks, which Windows shows on a taskbar button or a pinned icon. The claim is at README.md:213-216, in the keyboard table at README.md:251, and in CHANGELOG.md:323 ('the taskbar's jump list on Windows').",
+   "fix": "Say that the jump list is on Ember's taskbar icon once it is pinned (or while its settings window is open), and suggest pinning it. Alternatively, point keyboard users first to the route that always works (start Ember again from the Start menu, which opens settings at Ask Ember\u2026).",
+   "id": "U3",
+   "from": "final review (ux)"
+  },
+  {
+   "title": "The ask box has two names: 'the Ask box' in settings and 'the ask box' in the jump list and most of the README",
+   "severity": "minor",
+   "file": "app/renderer/home/index.html",
+   "line": 185,
+   "scenario": "The Text size hint in Settings \u203a Comfort & access, which round 3 rewrote, says '\u2026handle, the Ask box, the command window\u2026'. The Windows jump list entry Ember adds (launcher.ts, commit d99ba8c 'Call it the ask box in the Windows jump list's Ask Ember') says 'Open the ask box'. The README mixes both: 'wait for the ask box' and 'opens the ask box', next to '\u2026the handle, the Ask box, the desk window's bar\u2026'. The CHANGELOG does the same. That breaks one name per thing. In sentence case it should be lower case, as the jump list has it. The same hint also leaves out the desk window's bar, which the README and CHANGELOG now say Text size reaches.",
+   "evidence": "app/renderer/home/index.html:185 'the Ask box'; app/main/launcher.ts:38 description: \"Open the ask box\"; README.md:215, 218, 228, 251 'the ask box' against README.md:263 'the Ask box'; CHANGELOG.md has 'the Ask box' (Text size bullet) and 'the ask box' (launcher bullet); docs/DESIGN.md:91-93 and docs/DEVELOPING.md:132 'the Ask box'.",
+   "fix": "Use 'the ask box' everywhere (settings hint, README, CHANGELOG, DESIGN, DEVELOPING and the docs tests that pin the wording). Add 'the desk window's bar (Linux)' to the Text size hint, or drop it from the docs.",
+   "id": "U4",
+   "from": "final review (ux)"
+  },
+  {
+   "id": "F-shortcuts-left",
+   "from": "round 3 shortcuts3 left",
+   "text": "Round 3's shortcuts package left: `ember doctor`'s hints name the static settings chord (not the one Ember holds, or its fallback); scripts/install-desktop-entry.sh (dev only) has no Ask action like the packaged .desktop entry; the prompt window's consentText (unused?) uses the static chord. Make each name the chord Ember holds (doctor runs without registering shortcuts: say the default and its fallback, or follow the same rule the setup check uses), add the Ask action to the dev entry, and remove consentText if it is unused or make it follow the held chord. Merge note: None. Still open from the package's own report, not caused by the merge: `ember doctor` hints name the static settings chord; scripts/install-desktop-entry.sh, which is dev-only, has no Ask action; the unused prompt-window consentText uses the static chord. The package's CI-only items still need real Windows and macOS runners: launcher.tasks ok:true, launcher.dock, the --ask smoke on a set-up profile, and whether the Mac fallbacks register under VoiceOver."
+  }
+ ]
+}

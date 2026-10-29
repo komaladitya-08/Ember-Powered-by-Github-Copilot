@@ -1,0 +1,11 @@
+{
+ "title": "An ssh past the process scan's limit is never taken as ended",
+ "owns": "app/main/remote (SA linuxSshProcesses and the other OS readers), app/main/targets/offer.ts noticer",
+ "items": [
+  {
+   "id": "F-scanmax",
+   "from": "round 3 offer3 left",
+   "text": "SA's linuxSshProcesses stops at SCAN_MAX (5000 /proc entries) without saying so. Round 3 now withdraws a seen offer when the noticer's process read no longer lists its ssh, so on a machine with about 5000 processes or more an ssh past that point is taken as ended and its offer withdrawn (or never re-offered). A read that stopped at the limit must count as incomplete: report it as 'couldn't read' (as a failed read does: nothing withdrawn) or read further. Check the Windows and macOS readers for the same. Merge note: Nothing between the two sides. The package itself leaves these open:\n- SA's linuxSshProcesses stops at SCAN_MAX (5000 /proc entries) without saying so. On a machine with about 5000 processes or more, an ssh past that point could be taken as ended.\n- Only CI can confirm the new tests pass on Windows and macOS (the remote.yml unit-matrix job, and npm test in ci.yml's windows and macos jobs).\n- Only a real Windows+WSL run can confirm that runScript(WSL_READER) and wsl.runningNow() behave as the fakes assume."
+  }
+ ]
+}

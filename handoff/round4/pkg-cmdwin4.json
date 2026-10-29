@@ -1,0 +1,17 @@
+{
+ "title": "A crashed command window page counts down and arms nothing while it is blank",
+ "owns": "app/main/commands/window.ts, app/main/windows.ts (createCommandWindow revive)",
+ "items": [
+  {
+   "title": "A crashed command window page keeps R7's approve-key guard \"in view\" and its countdown running while the page is blank (up to a minute per crash)",
+   "severity": "minor",
+   "file": "app/main/commands/window.ts",
+   "line": 651,
+   "scenario": "Commit 71d6b0a changed createCommandWindow from closeWhenGone(win) to revive(win). A crashed page is no longer destroyed: it is reloaded after 500 ms, then after 1 s, 2 s and so on up to 60 s if it keeps crashing. The controller never hears of the crash. Example: a command card (ask) is up, the user has seen it and the page has reported cardSeen {inView: true}. The page then crashes, for example from hostile or huge output in a tab. The window stays visible and on top with a blank page. cardReady(n) still returns true, because view.inView is stale and live(), isVisible() and isAlwaysOnTop() all hold. So the approve key (Ctrl+Alt+Y, or its fallback) allows the command while the window shows nothing, until the reloaded page measures again, which can be up to a minute away with the backoff. This breaks R7's 'only while that window shows all of it'. In the same way, an announcement (D4.4) whose countdown started, or starts during the crash, counts down and runs while the command window is blank. startHead only checks live(), and the doc comment removed in 71d6b0a said a crashed window used to cancel the countdown. Impact is limited: 'seen' was true before the crash, and the bubble still shows the announcement's Stop.",
+   "evidence": "windows.ts createCommandWindow (after 71d6b0a): `revive(win);` replaces `closeWhenGone(win)`. revive.ts reloads after `delay`, which doubles up to 60_000. commands/window.ts cardReady (651-657) returns `w.isVisible() && !w.isMinimized() && (w.isAlwaysOnTop() || w.isFocused())` once `view.inView` is true. view is only changed by cardSeen messages, showCard and hideCard, and window.ts has no render-process-gone or did-start-loading listener (grep finds none). startHead (503-511) starts the timer whenever live() is non-null. The old closeWhenGone doc comment listed 'a countdown is cancelled' among what a crash did, and the new comment drops it.",
+   "fix": "Have the command window controller hear the page going away (pass revive an onGone callback, or listen to render-process-gone and did-start-loading). When it does, set view to {n, seen, inView: false} so cardReady is false until the reloaded page reports again. Also pause an announcement's countdown, or settle it as not run, while the page is down, as the destroyed window used to.",
+   "id": "S2",
+   "from": "final review (safety)"
+  }
+ ]
+}
