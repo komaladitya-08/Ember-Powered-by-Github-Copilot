@@ -1591,8 +1591,9 @@ describe("review round 3: what Ember asks about is what it does", () => {
           plan("Total column B", [perceive, ...[`=WEBSERVICE("http://127.0.0.1:18765/plain")`, "=SUM(B1:B3)"].map(text => ({ tool: { name: "type_text", args: { cell: "C3", text, mode: "replace" } } }))]);
           const asked: { prompt: string; options: string[] }[] = [];
           await makeWorker(sheet.screen, "Total column B", { grants: { testapp: "act" }, confirmer: asking(["deny", "once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
-          // The question shows the formula's double quotes as apostrophes, so typed text can't close its quote (review #116).
-          expect(asked.map(a => a.prompt)[0]).toBe("Borrow your keyboard to type “=WEBSERVICE('http://127.0.0.1:18765/plain')” into cell C3 in Testapp? This formula can fetch from the internet or read other files.");
+          // The question shows the formula as it will be typed, its straight double quotes included, and gives the text's length
+          // after Ember's closing mark, so a quote mark in typed text can't pass for the end of Ember's quote (review #116).
+          expect(asked.map(a => a.prompt)[0]).toBe("Borrow your keyboard to type “=WEBSERVICE(\"http://127.0.0.1:18765/plain\")” (43 characters) into cell C3 in Testapp? This formula can fetch from the internet or read other files.");
           expect(sheet.text("C3")).not.toMatch(/WEBSERVICE/);
         });
       });
