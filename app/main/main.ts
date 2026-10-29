@@ -1075,7 +1075,8 @@ function start(): void {
   const refusedTokens = new Set<string>();
   /**
    * Ember's own sign-in, when its GitHub App's tokens expire (eight hours): renewed from an hour before, once nothing is
-   * under way, and Copilot reconnected with the new token at once (review #138, cross-review X11).
+   * under way (or two minutes before it runs out regardless, and at once when it ran out during sleep), and Copilot
+   * reconnected with the new token at once (review #138, cross-review X11, X12).
    */
   const keeper = new GrantKeeper({
     fetch: (url, init) => net.fetch(url, init), store: () => tokens, inUse: () => currentToken, idle: () => agent?.idle ?? true,

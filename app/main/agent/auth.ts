@@ -447,7 +447,7 @@ export async function renewGrant(fetch: Fetch, grant: Grant, now: () => number =
   throw new RenewalRefused(`GitHub didn't renew the sign-in: ${String(j?.error ?? res.status)}`);
 }
 
-/** How long before an expiring sign-in runs out Ember renews it (once nothing is under way). */
+/** How long before an expiring sign-in runs out Ember renews it (once nothing is under way, or at FORCE_BEFORE_MS). */
 export const RENEW_BEFORE_MS = 60 * 60_000;
 /**
  * A sign-in due for renewal waits for nothing to be under way, checking this often: renewing it revokes the token
