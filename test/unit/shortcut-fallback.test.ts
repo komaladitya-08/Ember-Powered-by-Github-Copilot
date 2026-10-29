@@ -17,6 +17,7 @@ import { inspectEnvironment, keyboardRoute, type EnvInputs } from "../../app/mai
 import { keysLine } from "../../app/main/hello";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "../../app/main/launcher";
 import { commandsConsent, sshConsent, type SshCardFacts } from "../../app/main/targets/consent";
+import { consentText } from "../../app/renderer/prompt/copy";
 
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
@@ -291,6 +292,19 @@ describe("the commands and SSH consent cards name the stop chord Ember holds (D-
     expect(card.body[0]).toContain(" Stop everything, in Ember's handle menu and in settings, stops everything at once; what a command already changed stays changed.");
     expect(card.body.join(" ")).not.toMatch(/Win\+Alt/);
     expect(ssh(null).body.join(" ")).toContain("quit Ember or use Stop everything.");
+  });
+
+  it("the prompt window's own consent words name it the same way (round 3's shortcuts left)", () => {
+    const words = (stopKey?: string | null) => consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer", ...(stopKey !== undefined ? { stopKey } : {}) });
+    const card = (stopKey?: string | null) => commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, ...(stopKey !== undefined ? { stopKey } : {}) });
+    for (const stopKey of [undefined, "Ctrl+Alt+Shift+X", null]) expect(words(stopKey).body, String(stopKey)).toEqual(card(stopKey).body);
+    const remote = (stopKey?: string | null) => consentText({
+      feature: "ssh", os: "linux", target: "ssh:build-01", targetLabel: "build-01", ...(stopKey !== undefined ? { stopKey } : {}),
+      ssh: { login: "deploy", hostname: "build-01", port: 22, jump: [], desktop: "headless" },
+    }).body.join(" ");
+    expect(remote()).toContain("quit Ember or press Ctrl+Alt+X.");
+    expect(remote("Ctrl+Alt+Shift+X")).toContain("quit Ember or press Ctrl+Alt+Shift+X.");
+    expect(remote(null)).toContain("quit Ember or use Stop everything.");
   });
 
   it("gets the chord from main at each card (targets runtime)", () => {
