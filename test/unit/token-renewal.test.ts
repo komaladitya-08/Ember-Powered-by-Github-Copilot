@@ -428,7 +428,7 @@ describe("main's sign-in wiring", () => {
 
   it("keeps the device flow's whole grant, and keeps the sign-in in use alive", () => {
     expect(MAIN).toContain("const grant = await pollDeviceGrant(fetch, clientId, code,");
-    expect(MAIN).toContain("const kept = (await tokens?.saveAsync(grant)) ?? \"no-keyring\";");
+    expect(MAIN).toContain("const saving = tokens?.saveAsync(grant) ?? Promise.resolve<SaveResult>(\"no-keyring\");");
     expect(MAIN).toContain("keeper.use(token, grant);");
     // Every connect says which sign-in is in use; signing out keeps none alive.
     expect(MAIN).toContain("currentToken = f?.token ?? null; keeper.use(currentToken);");
@@ -442,8 +442,20 @@ describe("main's sign-in wiring", () => {
 
   it("seals the saved sign-in off the main thread on macOS, as it reads it (follow-up to review #241)", () => {
     expect(MAIN).toContain(`safeStorage, { version: app.getVersion(), asyncKeyring: platform.os === "darwin" });`);
-    // Signed out while the keyring was asked: nothing connects.
-    expect(MAIN).toMatch(/const kept = \(await tokens\?\.saveAsync\(grant\)\) \?\? "no-keyring"; if \(currentToken !== token\) return;/);
+    // Signed out while the keyring was asked (or Copilot connected): nothing more is said or logged for this sign-in.
+    expect(MAIN).toMatch(/const kept = await saving; if \(currentToken !== token\) return;/);
+  });
+
+  it("switches Copilot to a device-flow sign-in in the same step as it is put in use, the save going on beside the connection", () => {
+    // With no await between them, a refusal of the connection it replaces (still on the old token) is dropped by the
+    // host rather than taken for the new sign-in, and a Cancel during a macOS keychain prompt finds Ember already
+    // connecting, as it always did once the code was approved.
+    expect(MAIN).toContain([
+      "if (ac.signal.aborted) return; currentToken = token; keeper.use(token, grant);",
+      "const saving = tokens?.saveAsync(grant) ?? Promise.resolve<SaveResult>(\"no-keyring\");",
+      "const phase = await agent?.start(token, \"stored\"); const kept = await saving; if (currentToken !== token) return;",
+    ].join(" "));
+    expect(MAIN).toContain("await connected(phase, kept === \"kept\" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);");
   });
 
   it("tells the keeper when the computer wakes or Copilot refuses the sign-in in use (cross-review X12)", () => {

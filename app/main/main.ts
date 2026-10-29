@@ -55,7 +55,7 @@ import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } 
 import { expandedBubble, questionAloud, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
-import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken } from "./agent/auth";
+import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { speaksAloud } from "../shared/speech";
@@ -1183,16 +1183,21 @@ function start(): void {
       const token = grant.token;
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
-      // In use from here, so a renewal of the sign-in it replaces, finishing meanwhile, is neither switched to nor saved.
+      // In use from here, and Copilot switched to it in the same step (no await between): a renewal of the sign-in it
+      // replaces, finishing meanwhile, is neither switched to nor saved, and a refusal of the connection it replaces
+      // (still on the old token) is dropped by the host rather than taken for this one. The save goes on beside the
+      // connection: sealed off the main thread on macOS, so a keychain prompt holds neither the app nor the connection.
       currentToken = token;
       keeper.use(token, grant);
-      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
-      // Sealed off the main thread on macOS (a keychain prompt holds nothing up); signed out meanwhile: nothing connects.
-      const kept = (await tokens?.saveAsync(grant)) ?? "no-keyring";
+      const saving = tokens?.saveAsync(grant) ?? Promise.resolve<SaveResult>("no-keyring");
+      const phase = await agent?.start(token, "stored");
+      const kept = await saving;
+      // Signed out meanwhile: its clear() made the save write nothing, and its start(null) runs after this one.
       if (currentToken !== token) return;
+      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
       if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
       const why = kept === "write-failed" ? "Ember couldn't save the sign-in on this computer" : sys.words.keyringMissing;
-      await connected(await agent?.start(token, "stored"), kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
+      await connected(phase, kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
     } catch (err) {
       if (!ac.signal.aborted) say({ state: "error", message: signInError(err) });
     }
