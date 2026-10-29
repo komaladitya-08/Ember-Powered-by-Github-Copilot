@@ -213,7 +213,7 @@ default.
 **Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
 app grid (Linux), on the taskbar (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Linux and
 Windows it starts Ember with `--ask` (`ember --ask`, `Ember.exe --ask`), which opens the ask box, starting Ember first
-if it isn't running.
+if it isn't running (settings instead until Ember is set up).
 
 On Windows and macOS, wait for the ask box before you type: letters typed before it appears go to the app underneath.
 (On Linux, Ember holds them and puts them in the box.) The ask box reminds you the first five times it opens.

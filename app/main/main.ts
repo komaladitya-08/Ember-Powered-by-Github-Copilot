@@ -415,11 +415,13 @@ function start(): void {
   };
   const homeOpen = () => !!home && !home.isDestroyed() && home.isVisible() && !home.isMinimized();
 
-  // Started again: settings, or the ask box when a launcher's Ask Ember started it with --ask (D-45b).
+  // Started again: settings from the keyboard, or the ask box when a launcher's Ask Ember started it with --ask (D-45b),
+  // on a first start's terms: once Ember is set up, and in a desktop session it can use (else settings and their check).
   app.on("second-instance", (_e, argv) => {
     const ask = wantsAsk(argv);
     log.info("instance.second", ask ? { ask } : {});
-    if (ask) openAsk({ source: "launcher" }); else showHomeFromKeys();
+    const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings";
+    if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.

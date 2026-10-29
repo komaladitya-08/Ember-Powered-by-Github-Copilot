@@ -328,8 +328,18 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     expect(fs.readFileSync(path.resolve("packaging/ember"), "utf8")).toMatch(/exec "\$APP" --ozone-platform=x11 "\$@"\n?$/);
   });
 
+  it("opens the ask box for a second start's --ask on the first start's terms: set up, in a session Ember can use", () => {
+    // main's second-instance asks startView as a start by the user (not at login, no --show-settings): never the greeting.
+    const second = (o: { onboarded: boolean; sessionProblem: boolean }) => startView({ ...o, showSettings: false, atLogin: false, ask: true });
+    expect(second({ onboarded: true, sessionProblem: false })).toBe("ask");
+    expect(second({ onboarded: false, sessionProblem: false })).toBe("settings");
+    expect(second({ onboarded: true, sessionProblem: true })).toBe("settings");
+    // Else settings from the keyboard (at Ask Ember… or Stop everything while the keyboard needs them), not plain settings.
+    expect(MAIN).toMatch(/if \(view === "ask"\) openAsk\(\{ source: "launcher" \}\); else showHomeFromKeys\(\); \}\);/);
+  });
+
   it("main.ts opens the ask box for --ask, sets up the jump list and the Dock menu", () => {
-    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); if (ask) openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
+    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
     expect(MAIN).toContain("ask: wantsAsk(process.argv)");
     expect(MAIN).toContain('if (view === "ask") openAsk({ source: "launcher" });');
     expect(MAIN).toContain("app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged }))");

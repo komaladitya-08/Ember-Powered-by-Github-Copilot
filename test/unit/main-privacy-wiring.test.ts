@@ -153,7 +153,7 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
   it("opens settings from the keyboard at Ask Ember… while another app holds the ask shortcut and its fallback (review #45, D-45b)", () => {
     expect(MAIN).toContain("const showHomeFromKeys = () => { showHome(); const at = keyboardRoute(shortcutsTaken ?? [], sc, fb); if (at) sendToHome(IPC.focusSection, at); };");
     // Ember started again, the Dock, and the settings shortcut; not the handle menu's Settings… (a pointer's way).
-    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); if (ask) openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
+    expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
     expect(MAIN).toContain('app.on("activate", () => showHomeFromKeys());');
     expect(MAIN).toContain("settings: showHomeFromKeys,");
     expect(MAIN).toContain("click: () => { opens = true; showHome(); } },");

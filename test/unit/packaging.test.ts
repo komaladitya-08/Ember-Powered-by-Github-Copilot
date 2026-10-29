@@ -1156,12 +1156,15 @@ else {
   fs.writeFileSync(path.join(dir, "first"), "");
   if (process.env.FAKE_EMBER_LOG) log(process.env.FAKE_EMBER_LOG);
   log("window.home.shown");
+  // Ember opens the ask box for --ask only once it is set up (else settings, without the box).
+  let settings = {};
+  try { settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8")); } catch {}
   setInterval(() => {
     if (!fs.existsSync(path.join(dir, "second"))) return;
     const args = fs.readFileSync(path.join(dir, "second"), "utf8");
     fs.rmSync(path.join(dir, "second"));
     log("instance.second");
-    if (args.includes("--ask") && mode !== "no-ask") log("ask.open", { source: "launcher" });
+    if (args.includes("--ask") && settings.onboarded === true && mode !== "no-ask") log("ask.open", { source: "launcher" });
   }, 50);
 }
 `, { mode: 0o755 });
@@ -1181,6 +1184,7 @@ else {
     expect(r.stdout).toMatch(/ok {3}a start with --ask handed over and the first instance opened its ask box/);
     expect(r.status).toBe(0);
   });
+
 
   it("fails when a start with --ask doesn't open the ask box in the running Ember (D-45b)", () => {
     const r = smoke("no-ask");

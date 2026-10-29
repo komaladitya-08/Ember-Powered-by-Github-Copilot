@@ -87,7 +87,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run test:sidecar` | The accessibility sidecar's own tests (`python3 -B sidecar/atspi/test_ember_atspi.py`; a stand-in pyatspi, no desktop needed). CI also runs them on RHEL 8's `platform-python` 3.6. They share the secret-field labels in `test/fixtures/secret-labels.json` with the TypeScript tests |
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
-| `npm run test:smoke` | Starts Ember, checks the window appears and a second launch hands over. Without a desktop: `xvfb-run -a npm run test:smoke` |
+| `npm run test:smoke` | Starts Ember (set up), checks the window appears, a second launch hands over and a third with `--ask` opens the ask box. Without a desktop: `xvfb-run -a npm run test:smoke` |
 | `node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII) |
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
@@ -124,8 +124,8 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
   that shortcut: routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an
   announced command names only its **Stop**.
 - `--ask` (the Linux app menu's **Ask Ember** action, the Windows jump list's) opens the ask box: in the running Ember,
-  or once a new one has started (settings first while Ember isn't set up). The macOS Dock menu's **Ask Ember** does the
-  same in the running Ember.
+  or once a new one has started. Either way settings open instead while Ember isn't set up or the desktop session is
+  one it can't use (the setup check says why). The macOS Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
   animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the command window and its terminal, and Ember's password and

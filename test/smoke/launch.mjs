@@ -1,5 +1,6 @@
 // Smoke test: the app starts, shows its window, a second launch hands over to the first instance, and a third with
 // --ask (the launchers' Ask Ember: the Windows jump list, the Linux desktop entry's action) has it open its ask box.
+// Its profile is one that is set up (onboarded, as the integration tests' are): Ember opens the box only then.
 // Linux needs an X display (in CI: xvfb-run -a npm run test:smoke). Windows and macOS need a logged-in desktop
 // session (GitHub's hosted runners have one).
 // By default it starts the development build (Electron with dist/app); --exe <path> (or EMBER_SMOKE_EXE) starts a
@@ -14,7 +15,7 @@
 // debugging port: a % in the name made every window blank once (review #200).
 // usage: node test/smoke/launch.mjs [--exe <path> | --folder <name>] [--forbid <event>]...
 import { spawn, spawnSync } from "node:child_process";
-import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync } from "node:fs";
+import { cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,6 +48,8 @@ const [command, appArgs] = exeArg ? [path.resolve(exeArg), []] : [createRequire(
 const flags = (process.platform === "linux" && process.getuid?.() === 0) || process.env.EMBER_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
 const env = { ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1" };
 const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform === "linux" ? 30_000 : 60_000);
+// Set up, as after onboarding (the consent version is shared/consent.ts's): a launcher's --ask opens the box only then.
+writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: new Date().toISOString() } }));
 
 function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];
@@ -164,8 +167,7 @@ try {
     if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);
     console.log(`ok   the first instance logged none of ${forbidden.join(", ")}`);
   }
-  // Ask Ember from a launcher: Ember started again with --ask. Not set up yet (a fresh profile), the box sends the user
-  // to settings, and says where it was asked for all the same.
+  // Ask Ember from a launcher: Ember started again with --ask, in a profile that is set up.
   third = launch("third", ["--ask"]);
   await waitFor(third, () => exited(third), windowMs, "the third instance to exit", { exitOk: true });
   if (third.child.exitCode !== 0) throw new Error(`third instance ${exitText(third)}`);
