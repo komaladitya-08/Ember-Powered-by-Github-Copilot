@@ -17,6 +17,7 @@ import type { SettingsPatch } from "./settings";
 import { placeOnDisplay, type CloseGuarded, type Placeable } from "./commands/window";
 import { rescaledBounds, scaledSize } from "./page-prefs";
 import { pageUrl } from "./page-url";
+import { revive } from "./revive";
 
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
@@ -174,7 +175,9 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
   });
   sizeForText(win, COMMAND_MIN);
   if (os === "win32" || os === "darwin") win.setContentProtection(true);
-  closeWhenGone(win);
+  // A crashed page loads again (it pulls its state and the output kept for each run) rather than the window closing:
+  // a window destroyed that way never asks the close guard, so its commands would run on unseen (review #91, #262).
+  revive(win);
   void win.loadURL(pageUrl(path.join(appDir, "renderer", "command", "index.html")));
   // Its close button asks the controller's guard first, so a command never runs on unseen (review #262). Never while
   // Ember quits or the session ends: then nothing holds the window (a held window would stop the quit).
@@ -193,8 +196,8 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
 
 /**
  * A card window whose page crashed closes rather than staying on screen blank (review #91): its controller then does
- * what it does when the user closes it (an SSH prompt is answered no, a countdown is cancelled, a consent question
- * comes back with the bubble's "Read it"), and the next card gets a new window.
+ * what it does when the user closes it (an SSH prompt is answered no, a consent question comes back with the bubble's
+ * "Read it"), and the next card gets a new window. The command window's page loads again instead (createCommandWindow).
  */
 function closeWhenGone(win: BrowserWindow): void {
   win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); });

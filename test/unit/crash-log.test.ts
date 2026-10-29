@@ -1,8 +1,9 @@
 /**
  * Crashes of Ember's own processes reach ember.log, and a card window whose page crashed doesn't stay on screen blank
  * (review #91): app "child-process-gone" (the GPU process on a VM) and every page's "render-process-gone" are logged
- * with their reason; the command and prompt windows close on a crash (their controllers then answer as if the user had
- * closed them: an SSH prompt no, a countdown cancelled), and the desk view lets go of held keys and reloads.
+ * with their reason; the prompt window closes on a crash (its controller then answers as if the user had closed it: an
+ * SSH prompt no), the command window's page loads again (its running commands stay on screen, review #262), and the
+ * desk view lets go of held keys and reloads.
  */
 
 import { EventEmitter } from "node:events";
@@ -11,12 +12,16 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { pageName, watchCrashes, type CrashSource } from "../../app/main/crash-log";
 
-const made: { destroyed: boolean; emit(e: string, ...a: unknown[]): void }[] = [];
+const made: { destroyed: boolean; reloads: number; emit(e: string, ...a: unknown[]): void }[] = [];
 vi.mock("electron", () => {
   class BrowserWindow {
     destroyed = false;
+    reloads = 0;
     private handlers = new Map<string, ((...a: unknown[]) => void)[]>();
-    webContents = { on: (e: string, fn: (...a: unknown[]) => void) => { this.handlers.set(e, [...(this.handlers.get(e) ?? []), fn]); } };
+    webContents = {
+      on: (e: string, fn: (...a: unknown[]) => void) => { this.handlers.set(e, [...(this.handlers.get(e) ?? []), fn]); },
+      reload: () => { this.reloads++; },
+    };
     constructor() { made.push(this); }
     emit(e: string, ...a: unknown[]): void { for (const fn of this.handlers.get(e) ?? []) fn(...a); }
     setAlwaysOnTop(): void {}
@@ -68,15 +73,30 @@ describe("crashes in ember.log (review #91)", () => {
 });
 
 describe("card windows whose page crashed (review #91)", () => {
-  it("the command and prompt windows close instead of staying on screen blank", async () => {
-    const { createCommandWindow, createPromptWindow } = await import("../../app/main/windows");
-    for (const make of [() => createCommandWindow("linux"), () => createPromptWindow("linux")]) {
+  it("the prompt window closes instead of staying on screen blank", async () => {
+    const { createPromptWindow } = await import("../../app/main/windows");
+    made.length = 0;
+    createPromptWindow("linux");
+    const win = made[0];
+    expect(win.destroyed).toBe(false);
+    win.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+    expect(win.destroyed).toBe(true);
+  });
+
+  it("the command window's page loads again, so commands still running stay on screen (review #262)", async () => {
+    // Destroying it would skip its close guard: a running command would go on with no window to show it.
+    vi.useFakeTimers();
+    try {
+      const { createCommandWindow } = await import("../../app/main/windows");
       made.length = 0;
-      make();
+      createCommandWindow("linux");
       const win = made[0];
-      expect(win.destroyed).toBe(false);
       win.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
-      expect(win.destroyed).toBe(true);
+      expect(win.destroyed).toBe(false);
+      await vi.advanceTimersByTimeAsync(600);
+      expect(win.reloads).toBe(1);
+    } finally {
+      vi.useRealTimers();
     }
   });
 
