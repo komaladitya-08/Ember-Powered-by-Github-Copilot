@@ -61,7 +61,8 @@ export interface CommandFlowContext {
     readFrom: () => ReadSource[];
   };
   service: CommandService;
-  confirmer: Confirmer;
+  /** Asks the user, through the worker: the wait for an answer doesn't count toward the task's time limit. */
+  confirmer: Pick<Confirmer, "ask">;
   presenter: Presenter;
   audit: (e: AuditEntry) => void;
   log: Logger;

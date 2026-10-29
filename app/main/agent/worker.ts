@@ -224,6 +224,53 @@ type WhereQuestion = Question & { where?: string };
 
 /** After Stop, a turn that doesn't wind down within this long is left behind. */
 const STOP_GRACE_MS = 2000;
+
+/**
+ * A task's time limit (limits.maxMs): `onOver` runs once that much of the task has gone by. The time a question waits
+ * for the user's answer doesn't count (with More time to read and answer one waits 20 minutes, and one with a long text
+ * to read longer still): the clock stops while one is up, and goes on with what was left once it is answered.
+ */
+class TaskClock {
+  private left: number;
+  private since = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Questions up (a task asks one at a time). */
+  private asking = 0;
+  /** It ran out, or the task is over: it never runs again. */
+  private over = false;
+
+  constructor(ms: number, private readonly onOver: () => void) {
+    this.left = ms;
+    this.go();
+  }
+
+  private go(): void {
+    this.since = performance.now();
+    this.timer = setTimeout(() => { this.timer = null; this.over = true; this.onOver(); }, Math.max(0, this.left));
+    this.timer.unref?.();
+  }
+
+  /** Waits for the user's answer with the clock stopped. */
+  async waiting<T>(answer: () => Promise<T>): Promise<T> {
+    if (this.asking++ === 0 && this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.left -= performance.now() - this.since;
+    }
+    try {
+      return await answer();
+    } finally {
+      if (--this.asking === 0 && !this.over) this.go();
+    }
+  }
+
+  /** The task is over. */
+  stop(): void {
+    this.over = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+}
 /**
  * How long a pasted text gets to show up in its field before the user's clipboard goes back (Ember's text
  * stays on it until then, so a slow app pastes Ember's text, not the user's). A field whose text can't be
@@ -928,6 +975,8 @@ export class Worker {
   /** Aborts when the task stops or ends: questions, window waits and borrows give up on it. */
   private overSignal = AbortSignal.any([this.halt.signal, this.ended.signal]);
   private get isOver() { return this.halted || this.ended.signal.aborted; }
+  /** The task's time limit while it runs (run()). */
+  private clock: TaskClock | null = null;
   /** Ember flies to controls on the user's screen; desk work shows in the mini-view instead. No box when there is nothing to point at. */
   private fly(b: Bounds | null): void { if (!this.place) this.d.flyTo(usableBounds(b)); }
 
@@ -956,6 +1005,12 @@ export class Worker {
     // Motion stops at once: this task's borrow (and only this task's) lets go through its signal.
     this.halt.abort();
     void this.session?.abort().catch(() => undefined);
+  }
+
+  /** Asks the user a question of this task (its steps' and its commands'): the wait for the answer isn't the task's time. */
+  private ask(question: Question, signal: AbortSignal = this.overSignal): Promise<string | null> {
+    const ask = () => this.d.confirmer.ask(question, signal);
+    return this.clock ? this.clock.waiting(ask) : ask();
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
@@ -1253,7 +1308,7 @@ export class Worker {
         taint: () => { this.tainted = true; },
         readFrom: () => [...this.read.values()],
       },
-      service: this.d.commands!, confirmer: this.d.confirmer, presenter: this.d.presenter,
+      service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
       onDeclined: () => { this.declined = true; },
@@ -1290,8 +1345,8 @@ export class Worker {
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
-    const deadline = setTimeout(() => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`), maxMs);
-    deadline.unref?.();
+    // Its questions' waits for the user's answer don't count (TaskClock).
+    const clock = this.clock = new TaskClock(maxMs, () => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`));
     let lastAnswer = "";
     try {
       fs.mkdirSync(d.workDir, { recursive: true });
@@ -1377,8 +1432,8 @@ export class Worker {
         }
       }
     } finally {
+      clock.stop();
       this.ended.abort();
-      clearTimeout(deadline);
       signal.removeEventListener("abort", onAbort);
       d.flyTo(null);
       if (this.place) d.onDesk?.(null, this.place);
@@ -2568,7 +2623,7 @@ export class Worker {
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
-    const answer = await this.d.confirmer.ask(question, this.overSignal);
+    const answer = await this.ask(question);
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
@@ -3440,7 +3495,7 @@ export class Worker {
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}) };
-    const answer = await this.d.confirmer.ask(question, this.overSignal);
+    const answer = await this.ask(question);
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {
