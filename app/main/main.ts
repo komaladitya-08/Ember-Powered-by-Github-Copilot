@@ -21,7 +21,7 @@ import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from ".
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
-import { UPDATED_QUESTION, createUpdateCheck, updatedDetail } from "./install-watch";
+import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
@@ -609,7 +609,7 @@ function start(): void {
       });
       return response === 0;
     },
-    restart: () => { log.info("app.restart_after_update"); app.relaunch(); app.quit(); },
+    restart: () => { log.info("app.restart_after_update"); restartAfterUpdate(app, process.env, process.argv); },
   }) : null;
   app.on("browser-window-created", () => updateCheck?.beforeWindow());
   /** The handle's menu is open (or opening): a second click doesn't open another one over it. */

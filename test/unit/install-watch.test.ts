@@ -1,10 +1,13 @@
 /**
  * An update that replaces Ember's files under a running Ember (an RPM upgrade, also from GNOME Software or a
  * dnf-automatic timer) is noticed when the next window opens, and Ember offers to restart (install-watch.ts). Review #203.
+ * The restart starts an AppImage again from the AppImage, not from its mount (the release follow-up on relaunching).
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { UPDATED_QUESTION, createUpdateCheck, installStamp, updatedDetail, type StatLike } from "../../app/main/install-watch";
+import fs from "node:fs";
+import path from "node:path";
+import { UPDATED_QUESTION, createUpdateCheck, installStamp, restartAfterUpdate, updatedDetail, type StatLike } from "../../app/main/install-watch";
 
 vi.mock("electron", () => ({ BrowserWindow: class {} }));
 const { quitQuestion } = await import("../../app/main/windows");
@@ -107,5 +110,44 @@ describe("the question's words", () => {
     expect(updatedDetail(null)).toBe("Until it starts again, some of its windows may not work as they should.");
     expect(updatedDetail(quitQuestion(1, { commands: 0, connections: 0 }))).toMatch(/^Ember is still .+\. Restarting stops it where it is\.$/);
     expect(updatedDetail(quitQuestion(0, { commands: 0, connections: 1 }, ["build-01"]))).toBe("Ember is connected to build-01. Restarting disconnects.");
+  });
+});
+
+describe("restarting after an update", () => {
+  /** Electron's app as restartAfterUpdate uses it: what relaunch was given (its argument list), then quit. */
+  function fakeApp() {
+    const calls: unknown[][] = [];
+    return { calls, relaunch: (...a: unknown[]) => { calls.push(["relaunch", ...a]); }, quit: () => { calls.push(["quit"]); } };
+  }
+
+  it("starts the AppImage itself again, not the copy in its mount that goes away once Ember quits", () => {
+    const app = fakeApp();
+    const argv = ["/tmp/.mount_EmberAb12/ember/ember", "--ozone-platform=x11", "--show-settings"];
+    restartAfterUpdate(app, { APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", APPDIR: "/tmp/.mount_EmberAb12" }, argv);
+    expect(app.calls).toEqual([
+      ["relaunch", { execPath: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", args: ["--ozone-platform=x11", "--show-settings"] }],
+      ["quit"],
+    ]);
+  });
+
+  it("leaves the RPM, Windows and macOS restart as Electron's own: the same program and arguments, no options", () => {
+    for (const [env, argv] of [
+      [{}, ["/opt/ember/ember", "--autostart"]],
+      [{ LOCALAPPDATA: "C:\\Users\\ada\\AppData\\Local" }, ["C:\\Users\\ada\\AppData\\Local\\Programs\\Ember\\Ember.exe"]],
+      [{ HOME: "/Users/ada" }, ["/Applications/Ember.app/Contents/MacOS/Ember"]],
+      [{ APPIMAGE: "" }, ["/opt/ember/ember"]],
+    ] as const) {
+      const app = fakeApp();
+      restartAfterUpdate(app, env, argv);
+      expect(app.calls, JSON.stringify(env)).toEqual([["relaunch"], ["quit"]]);
+    }
+  });
+
+  it("is how main.ts restarts once the user says \"Restart Ember\"", () => {
+    const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
+    const check = main.slice(main.indexOf("createUpdateCheck({"), main.indexOf("app.on(\"browser-window-created\""));
+    expect(check).toContain("restartAfterUpdate(app, process.env, process.argv)");
+    // No restart in main.ts starts the program in an AppImage's mount: each passes restartOptions' answer.
+    expect(main).not.toMatch(/app\.relaunch\(\)/);
   });
 });

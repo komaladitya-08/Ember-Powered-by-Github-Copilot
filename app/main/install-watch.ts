@@ -4,10 +4,11 @@
  * window would load the new version's pages and preload scripts beside the old main process. So before a window
  * opens, Ember compares its install's package.json with the one it started with (inode, size and modification time:
  * rpm renames a new file into place, so a rebuild of the same version counts too) and, once per update, offers to
- * restart. Plain Node, no Electron (main.ts asks the question and restarts).
+ * restart. Plain Node, no Electron (main.ts asks the question; restartAfterUpdate gets Electron's app from it).
  */
 
 import fs from "node:fs";
+import { restartOptions } from "./policy/admin-watch";
 
 export type StatLike = (file: string) => { ino: number; size: number; mtimeMs: number };
 
@@ -54,4 +55,23 @@ export function createUpdateCheck(o: { file: string; stat?: StatLike; ask: () =>
       o.ask().then(yes => { if (yes) o.restart(); }, () => undefined).finally(() => { asking = false; });
     },
   };
+}
+
+/** What restarting needs of Electron's app (passed in, so this file stays plain Node). */
+export interface Relauncher {
+  relaunch(options?: { execPath?: string; args?: string[] }): void;
+  quit(): void;
+}
+
+/**
+ * Restarts Ember after "Restart Ember": Electron starts it again once it has quit, then it quits. Inside an AppImage
+ * that is the AppImage itself with the same arguments, as for a policy change (restartOptions): process.execPath is
+ * in the AppImage's mount under /tmp, which is gone once Ember quits. Everywhere else (the RPM, Windows, macOS) it is
+ * Electron's own default, unchanged: app.relaunch() with no options, the same program with the same arguments.
+ */
+export function restartAfterUpdate(app: Relauncher, env: NodeJS.ProcessEnv, argv: readonly string[]): void {
+  const options = restartOptions(env, argv);
+  if (options) app.relaunch(options);
+  else app.relaunch();
+  app.quit();
 }
