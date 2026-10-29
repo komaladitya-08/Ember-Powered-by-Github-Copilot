@@ -1240,10 +1240,11 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   /**
    * The noticer's look found which of the user's ssh run now (seenKey): an offer up or waiting for one that has ended
    * goes, as "You're connected to web-07" no longer holds; one nobody saw may come again if the user goes back there.
+   * Ended only where the look read: a WSL distro it couldn't read (its reader timed out) may still run that ssh.
    */
-  const sshRunning = (keys: ReadonlySet<string>): void => {
+  const sshRunning = (keys: ReadonlySet<string>, read: (via: SshSeen["via"]) => boolean): void => {
     for (const [k, o] of offers) {
-      if (o.kind !== "seen" || keys.has(seenKey(o.seen))) continue;
+      if (o.kind !== "seen" || keys.has(seenKey(o.seen)) || !read(o.seen.via)) continue;
       const unseen = unseenYet(`offer:${k}`);
       offers.delete(k);
       hideBubble(`offer:${k}`);
@@ -1270,7 +1271,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
    * SA's noticing with the WSL part read here: the user's own ssh in each distro that runs NOW, by WA's runner for
    * that distro (runScript without mayBoot: it reads the running set again right before, never starts a stopped
    * distro, and runs under Ember's job host). The registry's running flags are a cached copy that can be minutes
-   * old, and `wsl.exe -d <distro>` boots a stopped distro: Ember never starts one just to look (§2.7).
+   * old, and `wsl.exe -d <distro>` boots a stopped distro: Ember never starts one just to look (§2.7). `o.read` gets
+   * each distro read in full: its reader worked, or it doesn't run (no ssh runs there). One whose reader failed or timed
+   * out, and every one when which of them run can't be told, isn't: its ssh may still run (R-stale-offer).
    */
   const noticeOf = (n: SshNotice): SshNotice => ({
     sshDestination: argv => n.sshDestination(argv),
@@ -1281,12 +1284,15 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       let live: Set<string>;
       try { live = await w.runningNow(); } catch (err) { log.warn("targets.wsl_running_failed", { err }); return local; }
       for (const distro of o.wsl.distros.slice(0, 8)) {
-        if (!DISTRO_NAME.test(distro) || !live.has(distro)) continue;
+        if (!DISTRO_NAME.test(distro)) continue;
+        if (!live.has(distro)) { o.read?.add(`wsl:${distro}`); continue; }
         let runner: Partial<WslRunner>;
         try { runner = w.runner(distro) as Partial<WslRunner>; } catch { continue; }
         if (typeof runner.runScript !== "function") continue; // not WA's runner: nothing is read there
         const r = await runner.runScript(WSL_READER, { timeoutMs: 5_000 }).catch(() => null);
-        if (r && r.code === 0) local.push(...parseWslReader(r.stdout.toString("utf8"), distro));
+        if (!r || r.code !== 0) continue;
+        local.push(...parseWslReader(r.stdout.toString("utf8"), distro));
+        o.read?.add(`wsl:${distro}`);
       }
       return local;
     },
@@ -1324,7 +1330,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       connected: s => settings.get().targets.hosts.some(h => reaches(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
       questionUp,
       offer: s => showSeenOffer(s),
-      running: keys => sshRunning(keys),
+      running: (keys, read) => sshRunning(keys, read),
       now: () => parts.now().getTime(),
     });
     const t = parts.setInterval(() => { try { noticer?.tick(); } catch (err) { log.warn("targets.notice_failed", { err }); } }, NOTICE_TICK_MS);

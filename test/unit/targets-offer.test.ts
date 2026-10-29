@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../app/main/logger";
 import type { SshSeen } from "../../app/main/remote/types";
+import { SSH_MAX } from "../../app/main/remote/notice-ssh";
 import { NOTICE_INTERVAL_MS, createNoticer, seenKey, sshLookingTitle, type NoticerDeps, type SshNotice } from "../../app/main/targets/offer";
 
 const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
@@ -117,7 +118,8 @@ describe("when Ember looks for the user's own ssh", () => {
     none.n.tick();
     await on.flush();
     expect(off.reads[0].o).toBeUndefined();
-    expect(on.reads[0].o).toEqual({ wsl: { exe: "C:\\Program Files\\WSL\\wsl.exe", distros: ["Ubuntu"] } });
+    // `read` comes back naming the distros the read covered (here none).
+    expect(on.reads[0].o).toEqual({ wsl: { exe: "C:\\Program Files\\WSL\\wsl.exe", distros: ["Ubuntu"] }, read: new Set() });
     expect(none.reads[0].o).toBeUndefined();
   });
 });
@@ -197,6 +199,40 @@ describe("what Ember offers", () => {
     await r.n.check();
     expect(running).toEqual([[seenKey({ dest: "old-box", via: "local" }), seenKey({ dest: "db-02", via: "wsl:Ubuntu" })], []]);
     expect(r.offered).toEqual([]);
+  });
+
+  it("says which places each look read in full: this computer's list, and only the WSL distros the read says it covered (R-stale-offer)", async () => {
+    const vias: SshSeen["via"][] = [undefined, "local", "wsl:Ubuntu", "wsl:Debian", "wsl:Arch"];
+    const said: boolean[][] = [];
+    const running: NoticerDeps["running"] = (_keys, read) => { said.push(vias.map(v => read(v))); };
+    const wsl = () => ({ exe: "C:\\Program Files\\WSL\\wsl.exe", distros: ["Ubuntu", "Debian"] });
+    // Ubuntu read (or stopped); Debian's reader failed, so an ssh there may still run.
+    const runtime = rig({
+      wsl, running,
+      notice: { sshDestination: () => null, userSshProcesses: async (_os, opt) => { opt?.read?.add("wsl:Ubuntu"); return []; } },
+    });
+    await runtime.n.check();
+    // A reader that says nothing of WSL (SA's own) covers this computer only.
+    const plain = rig({ wsl, running, notice: { sshDestination: () => null, userSshProcesses: async () => [] } });
+    await plain.n.check();
+    // With WSL off, there is no WSL place to read.
+    const off = rig({ running, notice: { sshDestination: () => null, userSshProcesses: async () => [] } });
+    await off.n.check();
+    expect(said).toEqual([[true, true, true, false, false], [true, true, false, false, false], [true, true, false, false, false]]);
+  });
+
+  it("counts a place whose list came back full (the readers' cap) as not read: more ssh may run there (R-stale-offer)", async () => {
+    const said: boolean[][] = [];
+    const list = (n: number, via: SshSeen["via"]) => Array.from({ length: n }, (_, i) => ({ pid: i + 1, argv: ["ssh", `box-${i}`], via }));
+    let procs = [...list(SSH_MAX, "local"), ...list(SSH_MAX - 1, "wsl:Ubuntu")];
+    const r = rig({
+      wsl: () => ({ exe: "C:\\Program Files\\WSL\\wsl.exe", distros: ["Ubuntu", "Debian"] }), running: (_keys, read) => { said.push([read("local"), read("wsl:Ubuntu"), read("wsl:Debian")]); },
+      notice: { sshDestination: () => null, userSshProcesses: async (_os, opt) => { opt?.read?.add("wsl:Ubuntu"); opt?.read?.add("wsl:Debian"); return procs; } },
+    });
+    await r.n.check();
+    procs = [...list(SSH_MAX - 1, "local"), ...list(SSH_MAX, "wsl:Debian")];
+    await r.n.check();
+    expect(said).toEqual([[false, true, true], [true, true, false]]);
   });
 
   it("keys a destination by user, host and port, the host without case", () => {

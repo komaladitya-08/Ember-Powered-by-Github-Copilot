@@ -1850,6 +1850,67 @@ describe("offers in the bubble (review #14)", () => {
     expect(w.s.screen()).toMatchObject({ visible: true, title: "You're connected to web-07" });
   });
 
+  /**
+   * Windows with WSL on: the user's `ssh deploy@build-02` in Debian, which runs, read by WA's runner there, on a rig
+   * with both boards on the screen's clock. `live` is what runs now and `fail` makes the next look's read go wrong once:
+   * Debian's reader exits 1 (it timed out), rejects, or the running set can't be read.
+   */
+  const wslSeenRig = async () => {
+    const seen = { sshDestination: notice.sshDestination, userSshProcesses: vi.fn(async (_os: OS, _o?: unknown) => [] as { pid: number; argv: string[]; via: "local" }[]) };
+    const s = screenRig();
+    const r = rig({
+      os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu({ name: "Debian" })]), settings: { targets: { ...wslOnSettings.targets, hosts: [hostRecord("web-07")] } },
+      showState: s.setState, bubbles: () => s.notices, offers: () => s.offers, clock: s.clock,
+    });
+    const live = new Set(["Debian"]);
+    const fail = { next: null as "exit" | "reject" | "running" | null };
+    const once = (k: "exit" | "reject" | "running") => { if (fail.next !== k) return false; fail.next = null; return true; };
+    r.wsl.runningNow = async () => { if (once("running")) throw new Error("wsl.exe --list --running failed"); return new Set(live); };
+    const runScript = vi.fn(async (_script: string, _o?: unknown) => {
+      if (once("reject")) throw new Error("the reader went away");
+      return once("exit") ? { code: 1, stdout: Buffer.from(""), stderr: "" } : { code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" };
+    });
+    Object.assign(r.wsl.runner("Debian"), { runScript });
+    await flush();
+    const retitle = async (title: string) => {
+      r.activeWindow.mockReturnValue({ app: "gnome-terminal-server", title });
+      r.ticks[0]();
+      await flush(); await flush(); await flush();
+    };
+    return { s, r, live, fail, runScript, retitle };
+  };
+
+  it("for an ssh in WSL stay when a look couldn't read that distro, and go once it no longer runs (R-stale-offer)", async () => {
+    for (const how of ["exit", "reject", "running"] as const) {
+      const { s, live, fail, runScript, retitle } = await wslSeenRig();
+      await retitle("deploy@build-02: ~");
+      expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+      // Debian's reader times out, fails, or which distros run can't be told: the ssh there may still run.
+      fail.next = how;
+      s.advance(10_000);
+      await retitle("deploy@build-02: ~/src");
+      expect(fail.next).toBeNull();
+      expect(s.screen(), how).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+      // Debian stopped: nothing runs there, so its ssh has ended, and the offer goes without reading it.
+      const reads = runScript.mock.calls.length;
+      live.clear();
+      s.advance(10_000);
+      await retitle("ana@build-02: ~");
+      expect(runScript).toHaveBeenCalledTimes(reads);
+      expect(s.screen(), how).toMatchObject({ visible: false });
+    }
+  });
+
+  it("for an ssh in WSL go at the next look that read its distro and didn't find it (R-stale-offer)", async () => {
+    const { s, runScript, retitle } = await wslSeenRig();
+    await retitle("deploy@build-02: ~");
+    expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+    runScript.mockResolvedValue({ code: 0, stdout: Buffer.from(""), stderr: "" });
+    s.advance(10_000);
+    await retitle("ana@build-02: ~");
+    expect(s.screen().visible).toBe(false);
+  });
+
   it("\"I can work in WSL\" waits at most 25 s too, and comes again at the next request that names WSL (R-stale-offer)", async () => {
     const s = screenRig();
     const r = rig({ os: "win32", wslFacts: wslFacts([ubuntu()]), settings: withHosts([hostRecord("build-01")]), showState: s.setState, bubbles: () => s.notices, offers: () => s.offers, clock: s.clock });
