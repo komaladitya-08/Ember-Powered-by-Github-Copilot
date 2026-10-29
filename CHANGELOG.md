@@ -321,8 +321,9 @@ allows them.
   never Option, which is VoiceOver's (Control+Shift+Command+A asks, +Period stops, +Comma opens settings). The setup
   check ("Ctrl+Alt+Space is taken by another app, so Ask Ember is Ctrl+Alt+Shift+Space"), the greeting, the handle's
   menu, settings, the consent cards and every hint name the chord it holds.
-- **Ask Ember** is in the system's own launcher: the app menu's right-click on Linux, the taskbar's jump list on
-  Windows and the Dock menu on a Mac. `ember --ask` (`Ember.exe --ask`) opens the ask box, starting Ember if needed.
+- **Ask Ember** is in the system's own launcher: the app menu's right-click on Linux, the jump list of Ember's
+  taskbar icon on Windows (once Ember is pinned to the taskbar, or while its settings or command window is open) and
+  the Dock menu on a Mac. `ember --ask` (`Ember.exe --ask`) opens the ask box, starting Ember if needed.
 - While another app holds Ember's stop or settings shortcut and its fallback, the bubble, the command window and task
   results don't name it: they say "in Ember's settings", and an announced command names only its **Stop**.
 - "May I?" questions name controls in plain words: "Click the “Save” button", "Turn on the “Night Light” switch",

@@ -296,7 +296,8 @@ describe("the README's keyboard routes say when settings is the way (D-45b)", ()
     .filter(l => /^\| (Ask Ember|Stop) \|/.test(l)).map(l => [l.split("|")[1].trim(), l]));
 
   it("sends the keyboard to settings only while another app holds the shortcut and its fallback, and names the launcher's Ask Ember", () => {
-    expect(rows["Ask Ember"]).toContain("If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, jump list, Dock menu) |");
+    // Ember's own windows have no taskbar button but settings' (skipTaskbar): its jump list is there once it is pinned.
+    expect(rows["Ask Ember"]).toContain("If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |");
     expect(rows.Stop).toContain("If another app holds it and its fallback: **Stop everything** under **Comfort & access › Ember on screen** |");
   });
 });
