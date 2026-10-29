@@ -18,6 +18,7 @@ import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements"
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
 import { roleWord } from "../../shared/role-words";
+import { visibleText } from "../../shared/visible-text";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
 import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
@@ -1477,16 +1478,39 @@ const quote = (s: string, max = 60) => { const t = [...quotable(s)]; return `“
 const TYPED_SHOWN = 160;
 const TYPED_HEAD = 110;
 const TYPED_TAIL = 40;
-/** Text a task types, quoted: the user approves all of it, so a long one shows both ends and its length ("… (180 characters)"). */
+/** Double quote marks other than the keyboard's straight one: Ember's own “ and ”, and the marks that look like them. */
+const MARKED_QUOTE = /[“”„‟″‶〝〞〟＂«»❝❞]/u;
+/**
+ * Each character of text a task types, as its question shows it (review #116 and its follow-up): the user approves
+ * what will be typed, so it shows as it is, straight double quotes included (a formula's =IF(A1="x";1;0)). A line break
+ * shows as ⏎ and a tab as ⇥, so the text stays on its line. Marked in ⟨ ⟩, as the command card marks them: every other
+ * double quote mark (Ember's own “ and ” among them), so the text can't close Ember's quote and write the rest of its
+ * sentence, and the characters that show nothing or reorder what follows (⟨ZWSP⟩, ⟨RLO⟩), which are typed too.
+ */
+function typedUnits(s: string): string[] {
+  const units: string[] = [];
+  for (const seg of visibleText(s.replace(/\r\n?|[\n\u2028\u2029]/g, "⏎").replace(/\t/g, "⇥"))) {
+    if (seg.kind === "plain" || seg.kind === "mixed") units.push(...[...seg.text].map(c => (MARKED_QUOTE.test(c) ? `⟨${c}⟩` : c)));
+    else units.push(seg.text);
+  }
+  return units;
+}
+/**
+ * Text a task types, quoted: the user approves all of it, so a long one shows both ends and its length ("… (180
+ * characters)"). One that holds quote marks says how long it is too, right after Ember's closing mark: where the text
+ * really ends, whatever a straight quote inside it seems to close.
+ */
 const quoteTyped = (s: string) => {
-  const t = [...quotable(s)];
-  return t.length <= TYPED_SHOWN ? `“${t.join("")}”` : `“${t.slice(0, TYPED_HEAD).join("")}…${t.slice(-TYPED_TAIL).join("")}” (${t.length} characters)`;
+  const t = typedUnits(s), n = [...s].length;
+  const length = `(${n} character${n === 1 ? "" : "s"})`;
+  if (t.length > TYPED_SHOWN) return `“${t.slice(0, TYPED_HEAD).join("")}…${t.slice(-TYPED_TAIL).join("")}” ${length}`;
+  return s.includes("\"") || MARKED_QUOTE.test(s) ? `“${t.join("")}” ${length}` : `“${t.join("")}”`;
 };
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
-/** Text a task types that its question shows only in part (over TYPED_SHOWN characters): all of it, cleaned as quoted. */
+/** Text a task types that its question shows only in part (over TYPED_SHOWN characters): all of it, shown as quoted. */
 const typedInFull = (r: ActionRequest): string | undefined => {
   if (r.kind !== "text" && r.kind !== "cursor_text") return undefined;
-  const t = [...quotable(visible(r.value ?? ""))];
+  const t = typedUnits(r.value ?? "");
   return t.length > TYPED_SHOWN ? t.join("") : undefined;
 };
 /** `d` with the whole of the text its question cut (Decision.detail), when it cut some. */
@@ -1544,7 +1568,7 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";
   const replacing = r.mode === "replace" && current.length > 0;
-  const value = quoteTyped(visible(r.value ?? ""));
+  const value = quoteTyped(r.value ?? "");
   // What typing does: "type “42” into cell B5", "replace “1200” in cell B2 with “84000”", "replace the text in … with …".
   const typing = !replacing ? `type ${value} into ${el}` : cell ? `replace ${quote(visible(current), 30)} in ${el} with ${value}` : `replace ${r.element?.name ? "the text in" : "everything in"} ${el}${where} with ${value}`;
   const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
