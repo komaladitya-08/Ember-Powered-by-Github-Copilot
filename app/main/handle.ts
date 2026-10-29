@@ -1,7 +1,9 @@
 /**
  * Ember's handle: a small always-on-top pill in the corner of the primary
  * display with Ember's face and status. Clicking it opens Ember's menu, so
- * nothing depends on a tray (GNOME 3.32 has none by default).
+ * nothing depends on a tray (GNOME 3.32 has none by default). The corner is
+ * the bottom right or the bottom left (Handle position, review #75), inside
+ * the display's work area.
  *
  * Without a compositor (xrdp, VNC) transparent overlays render black, so the
  * handle becomes an opaque card that also shows what Ember is saying.
@@ -19,6 +21,7 @@ import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { scaledSize, textScale } from "./page-prefs";
 import { pageUrl } from "./page-url";
+import { HANDLE_MARGIN, handleCorner, type HandlePosition } from "../shared/handle-place";
 
 const appDir = __dirname;
 /** At the default text size; it widens with the text (its two lines fit its height at every size). */
@@ -28,7 +31,6 @@ const TAB = { width: 56, height: 56 };
 const CARD = { width: 360, height: 150 };
 /** The card's height follows what it shows (a question with its buttons, a task with Stop), within these limits. */
 const CARD_MIN = 120, CARD_MAX = 360;
-const MARGIN = 12;
 
 export class HandleWindow {
   readonly win: BrowserWindow;
@@ -137,22 +139,27 @@ export class HandleWindow {
   sendSettings(s: Settings): boolean {
     if (this.win.isDestroyed()) return false;
     this.win.webContents.send(OVERLAY.settings, s);
-    if (this.fallback || this.compact || this.pill().width === this.pillWidth) return false;
+    // Handle position changed (settings, or the menu's "Move to the other side"): the pill, the tab or the card moves.
+    const moved = this.settings().handlePosition !== this.placedAt;
+    if (!moved && (this.fallback || this.compact || this.pill().width === this.pillWidth)) return false;
     this.reposition();
     return true;
   }
 
   /** The pill's width as last placed. */
   private pillWidth = PILL.width;
+  /** The corner it was last placed in. */
+  private placedAt: HandlePosition | undefined;
 
   /** The pill at the text size: wider as its words grow ("Microphone problem", the computer's name), as high. */
   private pill(): { width: number; height: number } {
     return { width: scaledSize({ width: PILL.width }, textScale(this.settings().textSize)).width, height: PILL.height };
   }
 
+  /** Where a window of `size` goes: the corner Handle position names, in the primary display's work area (taskbar, Dock and panels outside it). */
   private corner(size: { width: number; height: number }) {
-    const wa = screen.getPrimaryDisplay().workArea;
-    return { x: wa.x + wa.width - size.width - MARGIN, y: wa.y + wa.height - size.height - MARGIN };
+    this.placedAt = this.settings().handlePosition;
+    return handleCorner(this.placedAt, size, screen.getPrimaryDisplay().workArea, HANDLE_MARGIN);
   }
 
   /** Gone for good (Ember switches between the pill and the card when the compositor comes or goes). */
