@@ -40,8 +40,11 @@ describe("ember doctor on Linux", () => {
     expect(doctorChecks(base({ os: "linux", shortcuts: SHORTCUTS.linux, words: PLATFORM_WORDS.linux, policyLocation: "/etc/ember/policy.json", extra: [] }))).toEqual(today);
     expect(byId(today, "policy")?.detail).toBe("None (optional: /etc/ember/policy.json).");
     expect(byId(doctorChecks(base({ runtime: false })), "copilot")?.fix).toBe("Reinstall Ember (sudo dnf reinstall ember).");
-    expect(byId(doctorChecks(base({ auth: null })), "copilot")?.fix).toBe("Open Ember's settings (Ctrl+Alt+E) and choose “Sign in with GitHub”, or run “gh auth login”.");
-    expect(byId(doctorChecks(base({ microphones: [] })), "microphone")?.detail).toBe("No microphone found. Only needed for “Hey Ember”; typing (Ctrl+Alt+Space) always works.");
+    // The doctor registers no shortcut, so it names the default and the fallback Ember takes when another app has that
+    // (D-45b, round 3's shortcuts left).
+    expect(byId(doctorChecks(base({ auth: null })), "copilot")?.fix).toBe("Open Ember's settings (Ctrl+Alt+E, or Ctrl+Alt+Shift+E when another app has that) and choose “Sign in with GitHub”, or run “gh auth login”.");
+    expect(byId(doctorChecks(base({ microphones: [] })), "microphone")?.detail).toBe("No microphone found. Only needed for “Hey Ember”; typing (Ctrl+Alt+Space, or Ctrl+Alt+Shift+Space when another app has that) always works.");
+    expect(byId(doctorChecks(base({ auth: null, signIn: { with: "github-cli", ghInstalled: true } })), "copilot")?.fix).toMatch(/ Then open Ember's settings \(Ctrl\+Alt\+E, or Ctrl\+Alt\+Shift\+E when another app has that\) and press Check again\.$/);
   });
 
   it("keeps Linux's wording on Linux arm64, whose platform check reads 'isn’t supported' (the os field decides, not that text)", () => {
@@ -93,8 +96,8 @@ describe("ember doctor on Windows", () => {
     expect(byId(checks, "copilot")?.fix).toBe("Reinstall Ember.");
     expect(byId(checks, "compositor")).toMatchObject({ status: "fail", fix: "Reinstall Ember." });
     expect(byId(checks, "voice-models")?.fix).not.toMatch(/ember-voice-models/);
-    expect(byId(checks, "microphone")?.detail).toMatch(/typing \(Win\+Alt\+Space\) always works/);
-    expect(byId(doctorChecks(windows({ auth: null })), "copilot")?.fix).toMatch(/\(Win\+Alt\+E\)/);
+    expect(byId(checks, "microphone")?.detail).toMatch(/typing \(Win\+Alt\+Space, or Win\+Alt\+Shift\+Space when another app has that\) always works/);
+    expect(byId(doctorChecks(windows({ auth: null })), "copilot")?.fix).toMatch(/\(Win\+Alt\+E, or Win\+Alt\+Shift\+E when another app has that\)/);
   });
 
   it("doesn't repeat the setup check's helper row: the helper and the platform's rows say it", () => {
@@ -138,7 +141,7 @@ describe("ember doctor on macOS", () => {
     expect(byId(checks, "xtest")).toMatchObject({ status: "warn", fix: "Allow Ember in System Settings › Privacy & Security › Accessibility." });
     expect(byId(checks, "accessibility-helper")).toMatchObject({ status: "fail", fix: expect.stringMatching(/Privacy & Security › Accessibility/) });
     expect(byId(doctorChecks(macos({ runtime: false })), "copilot")?.fix).toBe(PLATFORM_WORDS.darwin.reinstall);
-    expect(byId(doctorChecks(macos({ auth: null })), "copilot")?.fix).toMatch(/\(Control\+Shift\+Command\+E\)/);
+    expect(byId(doctorChecks(macos({ auth: null })), "copilot")?.fix).toMatch(/\(Control\+Shift\+Command\+E, or Control\+Shift\+Command\+Comma when another app has that\)/);
   });
 
   it("keeps the platform's permission rows, in the order given, before the Copilot row", () => {
