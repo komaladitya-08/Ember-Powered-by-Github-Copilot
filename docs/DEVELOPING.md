@@ -120,11 +120,12 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
   routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an announced command
   names only its **Stop**.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
-  animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the
-  text in settings, Ember's bubble, task cards and handle, the command window and its terminal, and Ember's password
-  and consent cards; the Ask box keeps its size. **More time to read and answer** keeps every bubble ten times as long (Ember's own
-  notices, and a bubble that waited behind another or was covered for a while, included), a question waits 20 minutes
-  instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead of 25.
+  animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
+  in settings, Ember's bubble, task cards and handle, the command window and its terminal, and Ember's password and
+  consent cards; the Ask box keeps its size. **More time to read and answer** keeps every bubble ten times as long
+  (Ember's own notices, and a bubble that waited behind another or was covered for a while, included), a question waits
+  20 minutes instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead
+  of 25.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead; it grows to show a whole question.
 

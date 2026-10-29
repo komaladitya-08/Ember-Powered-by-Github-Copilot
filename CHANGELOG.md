@@ -41,13 +41,13 @@ the work in your real apps where you can watch, without taking over your mouse. 
   can watch and take over.
 - **Accessibility**: Ember works from the keyboard and with screen readers (README.md has every route). Settings ›
   **Comfort & access** has **Text size** (Default, Large, Larger: settings, the bubble, task cards, the handle, the
-  command window and the password and consent cards; the Ask box keeps its size), **Calm mode** and **More time to
-  read and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change
-  it; a running command keeps its columns and rows) and the height of buttons, pop-up buttons and text fields, so
-  larger words keep their room. Windows' contrast themes are supported: switches, the slider, the chosen character,
-  button edges, tabs, state symbols and keyboard focus stay visible, and first run's **Start Ember** row stays opaque
-  at the window's foot, so the terms scrolling under it don't show through. Keyboard focus on filled buttons, checked switches and
-  the chosen character shows as a ring with a gap, also under Increase Contrast.
+  command window and the password and consent cards; the Ask box keeps its size), **Calm mode** and **More time to read
+  and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change it; a
+  running command keeps its columns and rows) and the height of buttons, pop-up buttons and text fields, so larger words
+  keep their room. Windows' contrast themes are supported: switches, the slider, the chosen character, button edges,
+  tabs, state symbols and keyboard focus stay visible, and first run's **Start Ember** row stays opaque at the window's
+  foot, so the terms scrolling under it don't show through. Keyboard focus on filled buttons, checked switches and the
+  chosen character shows as a ring with a gap, also under Increase Contrast.
 - **For organisations**: a policy (`/etc/ember/policy.json` on Linux, `/Library/Application Support/Ember/policy.json`
   on a Mac, `HKLM\SOFTWARE\Policies\Ember` on Windows) turns features off, and an audit log records every decision
   and action.
@@ -364,9 +364,10 @@ allows them.
 
 #### Settings, first run and the setup check
 
-- In first run, whatever you move to with Tab scrolls clear of the **Start Ember** row at every text size, window
-  width and zoom. The setup check stays on the first-run screen until **Start** while something needs you. After **Start**, settings
-  stays at the setup check while a row holds Ember back, Ember's hello names it, and the handle says "Setup needed".
+- In first run, whatever you move to with Tab scrolls clear of the **Start Ember** row at every text size, window width
+  and zoom. The setup check stays on the first-run screen until **Start** while something needs you. After **Start**,
+  settings stays at the setup check while a row holds Ember back, Ember's hello names it, and the handle says "Setup
+  needed".
 - A settings change that can't be saved (a full disk, a folder that can't be written) is explained in the settings
   window, and the control goes back to the setting in use; a size-slider change that couldn't be saved is saved with
   the next change.
