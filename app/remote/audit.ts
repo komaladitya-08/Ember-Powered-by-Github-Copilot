@@ -24,9 +24,9 @@ export interface AuditSource { from: string; pcId: string }
 
 /**
  * Opens the audit log in `dir` and prunes entries older than `retentionDays` (null: prunes nothing, as while the remote's
- * policy can't be read, so its retention isn't known: admin.ts auditRetentionDays). A prune that fails (an old month's
- * file it can't delete or rewrite, such as one another agent holds open on Windows) keeps what it couldn't remove and
- * says so; the log itself stays open, so steps and commands are still written.
+ * policy can't be read, so its retention isn't known: admin.ts auditRetentionDays). An old month's file the prune can't
+ * delete or rewrite (such as one another agent holds open on Windows) is left as it is, the other months are pruned all
+ * the same, and the failure is logged; the log itself stays open, so steps and commands are still written.
  */
 export function createRemoteAudit(o: { dir: string; retentionDays: number | null; source: () => AuditSource; log: Logger; sink?: (line: string) => void; now?: () => Date }): RemoteAudit {
   let audit: AuditLog | null = null;

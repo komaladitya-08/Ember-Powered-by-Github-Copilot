@@ -107,21 +107,36 @@ export class AuditLog {
 
   /**
    * Deletes entries older than `days`, by each entry's own time (review #86): a month whose end is older goes whole, a
-   * month that straddles the cutoff is trimmed in place (see trim), and a newer one isn't read at all.
+   * month that straddles the cutoff is trimmed in place (see trim), and a newer one isn't read at all. A month it can't
+   * remove or trim (such as one another process holds open on Windows) is left as it is, and the others are pruned all
+   * the same; it then throws, naming each one it couldn't prune.
    */
   prune(days = 30): void {
     const now = this.now().getTime();
     const cutoff = now - days * 86_400_000;
-    for (const f of fs.readdirSync(this.dir)) {
-      const m = MONTH_FILE.exec(f);
-      if (!m) continue;
-      const file = path.join(this.dir, f);
-      const start = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1);
-      const end = Date.UTC(Number(m[1]), Number(m[2]), 1); // first day of the following month
-      if (end <= cutoff) fs.rmSync(file);
-      else if (start < cutoff) this.trim(file, cutoff, end <= now);
+    const failed: { name: string; err: unknown }[] = [];
+    try {
+      for (const f of fs.readdirSync(this.dir)) {
+        const m = MONTH_FILE.exec(f);
+        if (!m) continue;
+        const file = path.join(this.dir, f);
+        const start = Date.UTC(Number(m[1]), Number(m[2]) - 1, 1);
+        const end = Date.UTC(Number(m[1]), Number(m[2]), 1); // first day of the following month
+        try {
+          if (end <= cutoff) fs.rmSync(file);
+          else if (start < cutoff) this.trim(file, cutoff, end <= now);
+        } catch (err) {
+          failed.push({ name: f, err });
+        }
+      }
+    } finally {
+      // What recent() shows is read again, whatever was removed.
+      this.latest = null;
     }
-    this.latest = null;
+    if (failed.length) {
+      const why = (err: unknown) => (err as NodeJS.ErrnoException)?.code ?? (err instanceof Error ? err.message : String(err));
+      throw new Error(`Couldn't prune ${failed.map(f => `${f.name} (${why(f.err)})`).join(", ")}`, { cause: failed.length === 1 ? failed[0].err : failed.map(f => f.err) });
+    }
   }
 
   /**
