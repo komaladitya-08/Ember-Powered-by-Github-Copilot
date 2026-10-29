@@ -116,7 +116,9 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
   animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the
   text in settings, Ember's bubble, task cards and handle, the command window and Ember's password and consent cards;
-  the Ask box keeps its size.
+  the Ask box keeps its size. **More time to read and answer** keeps every bubble ten times as long (Ember's own
+  notices, and a bubble that waited behind another or was covered for a while, included), a question waits 20 minutes
+  instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead of 25.
 - Without a compositor (xrdp, VNC), transparent windows can't work, so Ember lives in an opaque
   card in the corner instead; it grows to show a whole question.
 
@@ -131,7 +133,7 @@ take an app's own shortcut and grant for good by accident. A hidden Ember shows 
 **Speak replies, questions and results out loud** set to **Always**, or a screen reader running and it set to **When a
 screen reader runs** (the default), it says the question out loud; **Never** keeps it quiet even for a screen reader.
 Buttons that send, delete, pay and the like, risky shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button
-are always confirmed, and “Always” is never offered for them. Each task card has **Stop**; a failed card stays until you close it. If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
+are always confirmed, and “Always” is never offered for them. Each task card has **Stop**; a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong). If an app can't be operated through accessibility, Ember asks to **borrow your mouse**:
 it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse,
 turn the wheel or press any key to take over instantly. Ember never types into password, payment or terminal
 fields and never acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember
@@ -1131,23 +1133,34 @@ add one with every fix.
 
 **Integration suites** that need a real `script`, sshd, WSL or desktop are in `test/integration/`, skip without their
 variable, and fail when it is 1 and what they need is missing. `.github/workflows/remote.yml` runs them; `ci.yml` is
-unchanged. Pushes to `ember-improve/20261022-sshwsl-*` branches run every group but macOS; **Actions › remote › Run
-workflow** (or `gh workflow run remote.yml --ref <branch> -f only=ssh`) takes `ref` and `only` (`all`, `unit`,
-`commands`, `wsl`, `ssh`, `macos`, `wayland`); the macOS job runs only when dispatched and on Mondays, its minutes
-costing ten times Linux's. A suite named in a job that doesn't exist yet is skipped (`run-integration.mjs
+unchanged. remote.yml runs on pull requests and on pushes to `main` and the `ember-improve/20261022-sshwsl-*` branches
+that change a file its suites load, run or read (its two `paths` lists, which must stay equal;
+`test/unit/remote-workflow.test.ts` fails and names the file when one is left out, so add a pattern to both lists),
+and on every `v*` tag, where paths don't apply. Its macOS job runs on each of those pushes (release tags included),
+when dispatched and on Mondays, but not on pull requests: the repository is public, so its runners cost nothing. The
+Linux arm64 job runs only on release tags, when dispatched and on Mondays, on `vars.EMBER_ARM64_RUNNER` (default
+`ubuntu-24.04-arm`; set it to `none` where the repository has no such runner). **Actions › remote › Run workflow** (or
+`gh workflow run remote.yml --ref <branch> -f only=ssh`) takes `ref` and `only` (`all`, `unit`, `commands`, `wsl`,
+`ssh`, `macos`, `wayland`, `arm64`). A suite named in a job that doesn't exist yet is skipped (`run-integration.mjs
 --allow-missing`). Each job's set-up belongs to the package named above it in the workflow.
 
 | Job | Runner | Suites (`test/integration/…`) | Variables |
 |---|---|---|---|
-| `unit-matrix` | `ubuntu-24.04`, `windows-2022`, and `macos-15` when dispatched | the SSH/WSL unit files | — |
+| `unit-matrix` | `ubuntu-24.04`, `windows-2022`, and `macos-15` when dispatched and on release tags | the SSH/WSL unit files | — |
 | `commands-linux`, `commands-linux-el8` | `ubuntu-24.04`; a `rockylinux:8` container (util-linux 2.32), as a normal user | `commands-local`, `commands-flow-local` | `EMBER_COMMANDS_TEST` |
-| `ssh-linux` | `ubuntu-24.04`, sshd on 127.0.0.1:2222 and a jump host on 2223 | `ssh-transport`, `remote-ssh`, `remote-e2e`, `remote-desktop` (under Xvfb) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_SUDO` (the runner's sudo writes the remote's policy file), `EMBER_REMOTE_DEV` (desktop) |
+| `ssh-linux` | `ubuntu-24.04`, sshd on 127.0.0.1:2222, a jump host on 2223, and a third sshd on 2224 that takes only passwords (and keyboard-interactive), for a user with a password made for the run | `ssh-transport`, `remote-ssh`, `remote-e2e`, `remote-desktop` (under Xvfb) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_SUDO` (the runner's sudo writes the remote's policy file), `EMBER_SSH_TEST_PASSWORD_PORT`, `EMBER_SSH_TEST_PASSWORD_USER`, `EMBER_SSH_TEST_PASSWORD`, `EMBER_REMOTE_DEV` (desktop) |
 | `ssh-el8` | a `rockylinux:8` container as the remote | `remote-el8` | `EMBER_SSH_TEST` |
+| `ssh-el8-client` | a `rockylinux:8` container as the client (OpenSSH 8.0, as on RHEL 8), as a normal user, against sshds in the container on 2222, 2223 (jump host) and 2224 (passwords only) | `ssh-transport` | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_PASSWORD_PORT`, `EMBER_SSH_TEST_PASSWORD_USER`, `EMBER_SSH_TEST_PASSWORD` |
 | `wayland-remote` | `ubuntu-24.04`, headless mutter | `remote-wayland` | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH` |
-| `wsl-windows` | `windows-2022`, Ubuntu 22.04 as WSL 1 with sshd | `wsl`, `commands-local` and `commands-flow-local` (PowerShell), `ssh-windows` | `EMBER_WSL_TEST`, `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST` |
-| `wsl2-windows` | `windows-2025`, WSL 2 with a non-root default user | `wsl` | `EMBER_WSL_TEST` |
+| `wsl-windows` | `windows-2022`, Ubuntu 22.04 as WSL 1 with sshd | `wsl`, `commands-local` and `commands-flow-local` (PowerShell), `ssh-windows` (WSL 1's 4.4 kernel, which Ember refuses: "Linux 4.18") | `EMBER_WSL_TEST`, `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_EXPECT_HELLO=0` |
+| `wsl2-windows` | `windows-2025`, WSL 2 with a non-root default user; after its WSL tests, sshd in the distro on 127.0.0.1:2222 for `ember`, with the runner's new Windows key | `wsl`, then `ssh-windows` (Win32-OpenSSH to a real Linux kernel: the remote agent installs, serves and says hello) | `EMBER_WSL_TEST`; `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_SSH_TEST_EXPECT_HELLO=1` |
 | `wslg-probe` | `windows-2025` | `wslg-probe`: records what WSLg looks like as artefacts, never passes or fails | `EMBER_WSL_TEST` |
-| `ssh-macos` | `macos-15` | `commands-local`, `commands-flow-local`, `remote-ssh` (commands only) | `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST_MACOS` (set only once the runner's sshd starts), `EMBER_TEST_ALLOW_LOOPBACK_SSH` |
+| `ssh-macos` | `macos-15`; every push, dispatch and Mondays | `commands-local`, `commands-flow-local`, `remote-ssh` (commands only) | `EMBER_COMMANDS_TEST`, `EMBER_SSH_TEST_MACOS` (set only once the runner's sshd starts), `EMBER_TEST_ALLOW_LOOPBACK_SSH` |
+| `ssh-linux-arm64` | `vars.EMBER_ARM64_RUNNER` (default `ubuntu-24.04-arm`), sshd on 127.0.0.1:2222; release tags, dispatch and Mondays | `remote-ssh`, `remote-e2e`, `remote-desktop` (under Xvfb, koffi's arm64 build) | `EMBER_SSH_TEST`, `EMBER_TEST_ALLOW_LOOPBACK_SSH`, `EMBER_REMOTE_DEV` (desktop) |
+
+`EMBER_SSH_TEST_EXPECT_HELLO` makes `ssh-windows` strict: `1` requires the hello, `0` requires the refusal of a kernel
+older than 4.18. When it is set, missing remote parts (`node scripts/package/remote-parts.mjs`) or an unreadable kernel
+version fail the test instead of skipping it.
 
 Hosted runners can't show another user's desktop session, real logind sessions (desktop discovery is tested with
 captured real `loginctl` and `busctl` output), macOS TCC, Windows remotes, NFS homes, real network loss, fapolicyd, or

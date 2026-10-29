@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { announcement, type BubbleView } from "@ember/bubble";
 import { GH_INSTALL } from "../../app/main/agent/github-app";
+import { readTimeOf } from "../../app/main/agent/presenter";
 import { ANNOUNCE_MS } from "../../app/main/commands/flow";
 import { WINDOWS_MIC_FIX } from "../../app/main/environment";
 import * as commandWindow from "../../app/main/commands/window";
@@ -115,6 +116,34 @@ describe("docs/DEVELOPING.md", () => {
     expect(paths.length).toBe(2);
     const row = flat(section(read("docs/DEVELOPING.md"), "10.9 Troubleshooting").split("\n").find(l => l.startsWith("| Microphone |")) ?? "");
     for (const p of paths) expect(row, p).toContain(p);
+  });
+
+  it("says a failed task card goes on its own after about a minute, as the task list times it (review #147)", () => {
+    const ms = Number(/status === "failed" \? this\.d\.failureCardMs \?\? ([\d_]+)/.exec(read("app/main/agent/tasks.ts"))?.[1].replace(/_/g, ""));
+    expect(ms).toBe(60_000);
+    const asking = flat(section(read("docs/DEVELOPING.md"), "Asking Ember to do things"));
+    expect(asking).not.toMatch(/a failed card stays until you close it/);
+    expect(asking).toContain("a failed card goes on its own after about a minute (the settings window's Conversation section keeps what went wrong)");
+  });
+
+  it("says what More time to read and answer scales, as the presenter and the question's wait do", () => {
+    // presenter.ts: every bubble's time times readTimeOf; main.ts: a question's wait, 2 minutes times the same.
+    expect(readTimeOf(true)).toBe(10);
+    expect(read("app/main/main.ts")).toMatch(/timeoutMs: \(\) => 120_000 \* readTime\(\)/);
+    const using = flat(section(read("docs/DEVELOPING.md"), "Using Ember"));
+    expect(using).toMatch(/\*\*More time to read and answer\*\* keeps every bubble ten times as long[^.]*, a question waits 20 minutes instead of 2[^.]*an offer to bring Ember to a computer 250 seconds instead of 25/);
+  });
+
+  it("§14.4 says when remote.yml runs, and that its macOS job runs on every push", () => {
+    const wf = read(".github/workflows/remote.yml");
+    const macIf = /\n  ssh-macos:\n(?:.*\n)*?    if: (.*)\n/.exec(wf)?.[1] ?? "";
+    expect(macIf).toMatch(/github\.event_name == 'push'/);
+    expect(macIf).not.toMatch(/pull_request/);
+    const s144 = flat(section(read("docs/DEVELOPING.md"), "14.4 Tests and CI"));
+    expect(s144).not.toMatch(/the macOS job runs only when dispatched and on Mondays/);
+    expect(s144).toMatch(/Its macOS job runs on each of those pushes \(release tags included\), when dispatched and on Mondays, but not on pull requests/);
+    const row = s144.split("| `ssh-macos` |")[1] ?? "";
+    expect(row).toMatch(/^ `macos-15`; every push, dispatch and Mondays \|/);
   });
 
   it("says how to publish a release: every file the README downloads, and the SHA256SUMS users check them with", () => {
