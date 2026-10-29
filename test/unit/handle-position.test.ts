@@ -118,3 +118,70 @@ describe("the Handle position setting", () => {
     for (const comfort of ["textSize", "reduceMotion", "moreTime"]) expect(admin).not.toMatch(new RegExp(`\\b${comfort}\\b`));
   });
 });
+
+describe("the handle menu's Move to the other side", () => {
+  const main = fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+  const menuStart = main.indexOf("const menu = Menu.buildFromTemplate([");
+  const menu = main.slice(menuStart, main.indexOf("]);", menuStart));
+
+  it("is in the handle's menu, with Hide Ember and Stay put, whether or not Ember can follow the cursor", () => {
+    const item = /\{ label: "Move to the other side", click: moveHandle \}/.exec(menu);
+    expect(item).not.toBeNull();
+    // After Hide Ember (the things that change where Ember is on screen), before the separator above Quit Ember.
+    expect(menu.indexOf("\"Move to the other side\"")).toBeGreaterThan(menu.indexOf("\"Hide Ember\""));
+    expect(menu.indexOf("\"Move to the other side\"")).toBeLessThan(menu.indexOf("\"Quit Ember\""));
+  });
+
+  it("flips Handle position, keeping a failed save to the log (the handle stays where it is then)", () => {
+    expect(main).toContain(
+      "const moveHandle = () => {\n    try { settings.update({ handlePosition: otherSide(settings.get().handlePosition) }); } catch (err) { log.warn(\"handle.move_not_saved\", { err }); }\n  };",
+    );
+  });
+
+  it("moves the handle before the overlays hear the change, so its task cards follow it at once", () => {
+    const at = main.indexOf("settings.onChange((s) => {");
+    const body = main.slice(at, main.indexOf("});", at));
+    expect(body.indexOf("if (handle?.sendSettings(s)) deskViewRef?.handleMoved();")).toBeGreaterThan(-1);
+    expect(body.indexOf("if (handle?.sendSettings(s)) deskViewRef?.handleMoved();")).toBeLessThan(body.indexOf("overlay?.broadcastSettings(s);"));
+  });
+
+  it("moves the handle through the settings, so a restart keeps the side and Settings shows it", () => {
+    const s = new SettingsStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-handle-move-")), "settings.json"));
+    s.load();
+    const seen: string[] = [];
+    s.onChange(v => seen.push(v.handlePosition));
+    s.update({ handlePosition: otherSide(s.get().handlePosition) });
+    s.update({ handlePosition: otherSide(s.get().handlePosition) });
+    expect(seen).toEqual(["bottom-left", "bottom-right"]);
+  });
+});
+
+describe("the task card stack on the handle's side", () => {
+  const css = fs.readFileSync(new URL("../../app/renderer/overlay/styles.css", import.meta.url), "utf8");
+  const page = fs.readFileSync(new URL("../../app/renderer/overlay/main.ts", import.meta.url), "utf8");
+
+  it("is anchored bottom right, or bottom left with the .left class", () => {
+    expect(css).toMatch(/\n\.tasks \{\n {2}position: absolute; right: 12px; bottom: 80px;/);
+    expect(css).toContain("\n.tasks.left { right: auto; left: 12px; }\n");
+  });
+
+  it("takes the side and its distance in from the handle, and the class with it", () => {
+    const place = page.slice(page.indexOf("function placeTasks(): void {"), page.indexOf("\n}\n", page.indexOf("function placeTasks(): void {")));
+    expect(place).toContain("const { inset, bottom } = stackPlace(handleRect, viewport, PILL_INSET, CARD_GAP);");
+    expect(place).toContain("tasksEl.classList.toggle(\"left\", side === \"left\");");
+    expect(place).toContain("tasksEl.style.right = side === \"left\" ? \"auto\" : `${inset}px`;");
+    expect(place).toContain("tasksEl.style.left = side === \"left\" ? `${inset}px` : \"auto\";");
+    // Where the handle is now (its pill on this display), else Handle position.
+    expect(page).toContain("const homeSide = (): HandleSide => handleSide(handleRect, viewport.width, settings?.handlePosition);");
+  });
+
+  it("makes way for the ring round a control to the other bottom corner, whichever side is the handle's", () => {
+    const corner = page.slice(page.indexOf("function cornerTasks(): boolean {"), page.indexOf("\n}\n", page.indexOf("function cornerTasks(): boolean {")));
+    expect(corner).toContain("viewport.width, home) !== home;");
+  });
+
+  it("comes back to the handle's side when the setting changes while the handle is on another display", () => {
+    const apply = page.slice(page.indexOf("function applySettings(s: Settings): void {"), page.indexOf("\n}\n", page.indexOf("function applySettings(s: Settings): void {")));
+    expect(apply).toContain("if (homeSide() !== placedSide) placeTasks();");
+  });
+});

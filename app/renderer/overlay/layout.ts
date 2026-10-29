@@ -1,9 +1,10 @@
 /**
- * Where the overlay's own parts go so they never hide the control Ember works on: the task cards' corner and the
- * status pill's place. Pure, so it is unit-tested.
+ * Where the overlay's own parts go so they never hide the control Ember works on: the task cards' corner (the
+ * handle's, bottom right or bottom left) and the status pill's place. Pure, so it is unit-tested.
  */
 
 import type { Rect } from "../../shared/overlay";
+import { sideOf, type HandlePosition, type HandleSide } from "../../shared/handle-place";
 
 /** How far the ring round a control reaches beyond the control (its 4 px inset, keylines and glow). */
 export const RING_REACH = 8;
@@ -16,17 +17,39 @@ export const ringOf = (focus: Rect): Rect =>
   ({ x: focus.x - RING_REACH, y: focus.y - RING_REACH, width: focus.width + RING_REACH * 2, height: focus.height + RING_REACH * 2 });
 
 /**
- * The corner the task cards go in: their own, bottom right (`stack`, where they are there), unless the ring round
- * `focus` (a fixed chat button, a wizard's Next, in this overlay's coordinates) is under them; then the bottom left,
- * the same distance in, when the ring is clear of that (or less under it).
+ * The corner the task cards go in: their own, the handle's (`home`: bottom right, or bottom left with Handle position;
+ * `stack`, where they are there), unless the ring round `focus` (a fixed chat button, a wizard's Next, in this
+ * overlay's coordinates) is under them; then the other bottom corner, the same distance in, when the ring is clear of
+ * that (or less under it).
  */
-export function cardsCorner(focus: Rect | null, stack: Rect, viewportWidth: number): "right" | "left" {
-  if (!focus) return "right";
+export function cardsCorner(focus: Rect | null, stack: Rect, viewportWidth: number, home: HandleSide = "right"): HandleSide {
+  if (!focus) return home;
   const ring = ringOf(focus);
   const here = overlap(ring, stack);
-  if (here === 0) return "right";
-  const left = { ...stack, x: viewportWidth - stack.x - stack.width };
-  return overlap(ring, left) < here ? "left" : "right";
+  if (here === 0) return home;
+  const mirrored = { ...stack, x: viewportWidth - stack.x - stack.width };
+  return overlap(ring, mirrored) < here ? (home === "left" ? "right" : "left") : home;
+}
+
+/**
+ * The side the task cards belong on: the handle's, from where its pill is in this overlay (`handle`, this overlay's
+ * coordinates), else (the handle is on another display) from Handle position. The pill's place wins: it is where the
+ * handle is now, and the setting can arrive before the handle has moved.
+ */
+export function handleSide(handle: Rect | null, viewportWidth: number, position: HandlePosition | undefined): HandleSide {
+  if (handle) return handle.x + handle.width / 2 < viewportWidth / 2 ? "left" : "right";
+  return sideOf(position);
+}
+
+/**
+ * Where the task cards' stack sits on its side: `inset` px in from that edge, lined up with the handle's pill as it
+ * shows (its outer edge, `pillInset` inside its window; the other corner takes the same distance in), and `bottom` px
+ * up, `gap` above the pill. Without the handle on this display: 12 px in and 80 up.
+ */
+export function stackPlace(handle: Rect | null, viewport: { width: number; height: number }, pillInset = 4, gap = 8): { inset: number; bottom: number } {
+  if (!handle) return { inset: 12, bottom: 80 };
+  const inset = handleSide(handle, viewport.width, undefined) === "left" ? handle.x + pillInset : viewport.width - (handle.x + handle.width - pillInset);
+  return { inset: Math.max(8, inset), bottom: Math.max(8, viewport.height - (handle.y + pillInset) + gap) };
 }
 
 /** The status pill's distance from the top of the screen (.status's top in styles.css). */
