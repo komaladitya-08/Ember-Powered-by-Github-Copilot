@@ -278,9 +278,7 @@ allows them.
   windows on your never-look list and password prompts are never read. The list is in settings, and common password
   managers are on it already."), and say that the audit record includes what you asked each task to do and how it
   went.
-- A screenshot of a window Ember can't find takes no picture, and says only that the window can't be found. On
-  Windows and macOS, the first screenshot with Ember's marks on a new computer doesn't wait seconds for the font
-  cache: Ember builds it once in the background shortly after it starts.
+- A screenshot of a window Ember can't find takes no picture, and says only that the window can't be found.
 - DevTools can't be opened in an installed Ember.
 
 #### Ember on screen
@@ -355,6 +353,8 @@ allows them.
   Systemeinstellungen in German) and recognises their windows. It reads its saved sign-in without freezing while the
   Keychain asks after an update, says when the Keychain refused, and shows "Reading your saved sign-in from the
   keychain…" only on the first start after an update.
+- On Windows and macOS, the first screenshot with Ember's marks on a new computer doesn't wait seconds for the font
+  cache: Ember builds it once in the background shortly after it starts.
 - On Windows, Ember reads long lists and pages that are scrolled down: it reads what shows in full and leaves most of
   what is scrolled away out, so a list of thousands of rows or a very big page no longer reads as empty, and its
   screenshot isn't refused.
