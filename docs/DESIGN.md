@@ -74,9 +74,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid; hierarchy
   comes from size, weight and label colour, never italics. Sentence case; no tracked capitals or
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
-  scales the type tokens and each page's own px sizes (`html[data-text-size]`, set by main's
-  `page-prefs.ts`) in Settings, the bubble, task cards, the handle and the command and prompt
-  windows. The handle's pill and the command and prompt windows grow by the same scale (the pill
+  scales the type tokens, each page's own px sizes and its buttons' heights (`html[data-text-size]`,
+  set by main's `page-prefs.ts`) in Settings, the bubble, task cards, the handle and the command and
+  prompt windows. The handle's pill and the command and prompt windows grow by the same scale (the pill
   wider; the windows as they open, and at once when they are already open; inside the work area);
   the Ask box, the desk's bar and the terminal's type keep their size (their windows or cells can't
   grow with it).
@@ -99,7 +99,7 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   menus, headers above each group and footnotes below it. What floats over other apps (bubble, task
   cards, handle, Ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
-  left and layered shadows, and capsule buttons in two sizes (28 and 24 px).
+  left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
 - **State:** one symbol family (working, waiting its turn, waiting for you, done, failed, stopped)
   beside the words on every surface, with the state in words for screen readers; never colour alone.
 - **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.
