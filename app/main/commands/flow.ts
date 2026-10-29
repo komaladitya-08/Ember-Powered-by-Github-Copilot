@@ -236,6 +236,20 @@ function announceTime(w: CommandService["window"]): number {
     return ANNOUNCE_MS; // a window that can't say: the usual time
   }
 }
+
+/**
+ * Whether announcement `runId` ended because the command window couldn't show it to the end (UI's announceGone: its page
+ * crashed, it closed; cross-review S2) rather than by the user's Stop; false when the window doesn't say.
+ */
+function announceGone(w: CommandService["window"], runId: string): boolean {
+  const ask = (w as CommandService["window"] & { announceGone?: (runId: string) => unknown }).announceGone;
+  if (typeof ask !== "function") return false;
+  try {
+    return ask.call(w, runId) === true;
+  } catch {
+    return false; // a window that can't say: the user's Stop, as before
+  }
+}
 /** Runs one target runs at once; a fourth waits for a slot, honouring its task's stop (§3.8.3). */
 export const MAX_RUNS_PER_TARGET = 3;
 /** A run_command call's default time limit (§3.13), and its longest. */
@@ -261,6 +275,7 @@ const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, re
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 const SAID_NO = "The user said no (or didn't answer). Don't run it again or work around it; finish the task saying what wasn't done.";
 const STOPPED_BEFORE = "The user stopped it before it ran. Don't run it again; finish the task saying so.";
+const UNSHOWN_BEFORE = "Ember's command window couldn't show the countdown to the end, so the command didn't run (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 const UNSEEN = "Ember couldn't show the command in its command window, so it stopped it at once (commands only run where the user can watch them). Don't run it again; finish the task saying so.";
 
 /** The card's lines for the reasons the flow itself holds (§3.8.4). */
@@ -801,8 +816,10 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       }
       if (ctx.isOver()) return STOPPED();
       if (!go) {
-        audit({ phase: "answered", answer: "deny", q: "announce" });
-        return denied(STOPPED_BEFORE);
+        // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
+        const unshown = announceGone(svc.window, runId);
+        audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
+        return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
       }
     }
 

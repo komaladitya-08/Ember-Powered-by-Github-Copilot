@@ -93,12 +93,21 @@ describe("card windows whose page crashed (review #91)", () => {
     try {
       const { createCommandWindow } = await import("../../app/main/windows");
       made.length = 0;
-      createCommandWindow("linux");
+      const cmd = createCommandWindow("linux");
       const win = made[0];
+      // Its controller hears the page went (cross-review S2): nothing on the blank page counts as seen meanwhile.
+      const gone = vi.fn();
+      cmd.onPageGone(gone);
       win.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+      expect(gone).toHaveBeenCalledTimes(1);
       expect(win.destroyed).toBe(false);
       await vi.advanceTimersByTimeAsync(600);
       expect(win.reloads).toBe(1);
+      // A controller that fails never stops the page loading again.
+      cmd.onPageGone(() => { throw new Error("broken"); });
+      win.emit("render-process-gone", {}, { reason: "crashed", exitCode: 1 });
+      await vi.advanceTimersByTimeAsync(1100);
+      expect(win.reloads).toBe(2);
     } finally {
       vi.useRealTimers();
     }

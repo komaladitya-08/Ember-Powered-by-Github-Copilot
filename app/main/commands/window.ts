@@ -61,6 +61,12 @@ export interface CommandWindowExtras {
   /** How long an announcement should count down, given the flow's usual `base`: longer while a screen reader runs. */
   announceMs(base: number): number;
   /**
+   * Whether run `runId`'s announcement ended as "don't run" because the window couldn't show it to the end (cross-review
+   * S2): its page crashed, the window closed or none could be made, or Ember closed it. False after the user's Stop (the
+   * page's, the bubble's, the stop chord), the task's stop, or a countdown that ran out. Asked once: then forgotten.
+   */
+  announceGone(runId: string): boolean;
+  /**
    * Calls `fn` when a run starts or stops waiting at a prompt for the user to type (review #263): the flow says so in
    * the task's bubble. Returns the unsubscribe.
    */
@@ -83,6 +89,12 @@ export interface CommandWindowExtras {
  * keeps the window when it returns true. Ember quitting or the session ending never asks it.
  */
 export interface CloseGuarded { setCloseGuard(fn: () => boolean): void }
+
+/**
+ * What windows.ts's createCommandWindow also adds (cross-review S2): `fn` is called when its page crashes. The window
+ * stays and the page loads again (revive), blank meanwhile, so the controller counts nothing on it as seen until then.
+ */
+export interface PageWatched { onPageGone(fn: () => void): void }
 
 /**
  * What windows.ts adds to the command and prompt windows (review #272): moving the window to the display the user is on
@@ -126,6 +138,9 @@ export function awaitsTyping(text: string): boolean {
 
 /** At most this many pending lines are kept (one per task; a task past it isn't shown). */
 export const MAX_PENDING = 8;
+
+/** At most this many countdowns the window couldn't show to the end are kept for announceGone (the newest). */
+const MAX_GONE = 32;
 
 /** The port, what the targets runtime needs of the window, and the extras. */
 export type CommandWindowController = CommandWindowPort & CommandWindowExtras & { show(): void; owns(sender: WebContentsLike): boolean; dispose(): void };
@@ -250,6 +265,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   let card: { n: number; card: CommandCard; shownAt: number; retry: number } | null = null;
   let view: SeenMsg | null = null;
   const queue: Announcement[] = [];
+  /** The runs whose countdown ended because the window couldn't show it to the end, until the flow asks (announceGone). */
+  const goneRuns = new Set<string>();
   /** Tasks whose command has no tab yet, and the line each shows (insertion order). */
   const pendings = new Map<string, string>();
   const answerFns = new Set<(a: AnswerMsg) => boolean | void>();
@@ -258,6 +275,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   let closeAsk = false;
   /** The window is closing because the user said so (or Ember closes it): the guard lets it go. */
   let closing = false;
+  /** The window's page crashed and hasn't pulled the state again yet: the window shows nothing (cross-review S2). */
+  let pageDown = false;
   let size: { cols: number; rows: number } | null = null;
 
   const live = (): BrowserWindowLike | null => (win && !win.isDestroyed() ? win : null);
@@ -282,9 +301,11 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     win = w;
     closing = false;
     closeAsk = false;
+    pageDown = false;
     try { wire(); } catch (err) { note("error", "commands.ipc_failed", { err }); }
     // Closing the window while a command runs never leaves it running unseen (R1): the page asks first (review #262).
     safe("close-guard", () => (w as BrowserWindowLike & Partial<CloseGuarded>).setCloseGuard?.(() => keepOnClose(w)));
+    safe("page-gone", () => (w as BrowserWindowLike & Partial<PageWatched>).onPageGone?.(() => pageGone(w)));
     w.on("closed", () => {
       if (win !== w) return;
       win = null;
@@ -292,7 +313,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
       closeAsk = false;
       // Closed during a countdown: the user didn't get to see it to the end, so no command waiting there runs (fail
       // closed), and the window doesn't come back for the next one.
-      cancelAnnouncements();
+      cancelAnnouncements(true);
     });
     return w;
   }
@@ -321,7 +342,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
   function stopAll(): void {
     closeAsk = false;
     for (const t of runningTabs()) safe("stop", () => t.run.stop("user"));
-    cancelAnnouncements();
+    cancelAnnouncements(false);
   }
 
   /** Stops every running command and countdown, then closes the window (the page's Stop and close). */
@@ -331,6 +352,20 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     if (!w) return;
     closing = true;
     safe("close", () => w.close());
+  }
+
+  /**
+   * The window's page crashed (cross-review S2): the window stays, blank, until the page loads again (windows.ts's
+   * revive, up to a minute away if it keeps crashing). Until it pulls the state again, the card isn't in view (the
+   * approve chord's guard fails), and every countdown ends as not run, as when the window closes (the user didn't see it
+   * to the end); one that comes meanwhile waits for the page.
+   */
+  function pageGone(w: BrowserWindowLike): void {
+    if (disposed || w !== live()) return;
+    pageDown = true;
+    if (view) view = { ...view, inView: false };
+    note("warn", "commands.page_gone", { card: !!card, countdowns: queue.length });
+    cancelAnnouncements(true);
   }
 
   function keyHint(): string | null {
@@ -505,27 +540,40 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     if (!a || a.endsAt !== null || disposed) return;
     reveal();
     // No window to count down in (it couldn't be made): the command doesn't run (R1: it runs only where it's seen).
-    if (!live()) { settleAnnouncement(a, false); return; }
+    if (!live()) { settleAnnouncement(a, false, true); return; }
+    // Its page crashed and is loading again: the countdown starts when the page pulls the state (cross-review S2).
+    if (pageDown) return;
     a.endsAt = Date.now() + a.ms;
     a.timer = setTimeout(() => settleAnnouncement(a, true), a.ms);
     push();
   }
 
-  /** Every announcement, shown or waiting, ends as "don't run" at once. */
-  function cancelAnnouncements(): void {
+  /** Run `runId`'s countdown ended because the window couldn't show it to the end (kept for announceGone). */
+  function markGone(runId: string): void {
+    goneRuns.add(runId);
+    for (const old of goneRuns) { if (goneRuns.size <= MAX_GONE) break; goneRuns.delete(old); }
+  }
+
+  /**
+   * Every announcement, shown or waiting, ends as "don't run" at once; `unshown`: because the window or its page went,
+   * not the user's Stop.
+   */
+  function cancelAnnouncements(unshown: boolean): void {
     for (const a of queue.splice(0)) {
       if (a.timer) clearTimeout(a.timer);
+      if (unshown) markGone(a.card.runId);
       a.settle(false);
     }
     push();
     settle();
   }
 
-  function settleAnnouncement(a: Announcement, ok: boolean): void {
+  function settleAnnouncement(a: Announcement, ok: boolean, unshown = false): void {
     const at = queue.indexOf(a);
     if (at < 0) return;
     queue.splice(at, 1);
     if (a.timer) clearTimeout(a.timer);
+    if (unshown) markGone(a.card.runId);
     a.settle(ok && !disposed);
     if (at === 0) startHead();
     push();
@@ -542,6 +590,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
     o.ipc.handle(COMMANDS_IPC.state, e => {
       if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.state); return null; }
+      // A crashed page loaded again (its first message is this pull): a countdown that waited for it starts now.
+      if (pageDown) { pageDown = false; startHead(); }
       return snapshot();
     });
 
@@ -567,6 +617,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     o.ipc.on(COMMANDS_IPC.cardSeen, (e, raw) => {
       if (disposed || !owns(e?.sender)) { refused(COMMANDS_IPC.cardSeen); return; }
       if (!isObj(raw) || !isN(raw.n) || typeof raw.inView !== "boolean" || typeof raw.seen !== "boolean") return;
+      // From a page that crashed (sent before it went): only the page loaded again says what is in view.
+      if (pageDown) return;
       if (!card || card.n !== raw.n) return;
       // "Seen" sticks for a card (the page can't take it back), and "in view" needs it.
       const seen = raw.seen || (view?.n === raw.n && view.seen);
@@ -764,6 +816,8 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
     announceMs: base => (screenReader() ? Math.max(base, ANNOUNCE_SCREEN_READER_MS) : base),
 
+    announceGone: runId => goneRuns.delete(runId),
+
     reaskEnded(runId, why) {
       const t = tabs.find(x => x.card.runId === runId && x.reask === true);
       if (disposed || !t) return;
@@ -811,7 +865,7 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     dispose() {
       if (disposed) return;
       disposed = true;
-      cancelAnnouncements();
+      cancelAnnouncements(true);
       for (const t of tabs) dropTab(t);
       tabs = [];
       card = null;

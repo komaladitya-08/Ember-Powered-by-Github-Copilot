@@ -123,7 +123,7 @@ function harness(o: {
   binding?: TargetBinding; cap?: () => CommandCapability; answers?: (string | null)[]; words?: string; facts?: Partial<RunnerFacts>;
   paths?: (p: string) => PathFact; git?: GitFacts | null; run?: (spec: RunSpec, n: number) => Parameters<typeof scriptedRun>[1];
   announce?: boolean; consent?: ConsentPanel | null; mode?: CommandMode; askEvery?: boolean; tainted?: () => boolean; readFrom?: ReadSource[];
-  announceMs?: (base: number) => number;
+  announceMs?: (base: number) => number; announceGone?: (runId: string) => unknown;
   state?: CommandFlowContext["state"]; abort?: AbortController; inspect?: (paths: string[]) => Promise<PathFact[]>;
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
@@ -164,6 +164,7 @@ function harness(o: {
       cancelAnnounce: () => undefined,
       attach: (card, run) => { attached.push({ card, run }); },
       ...(o.announceMs ? { announceMs: o.announceMs } : {}),
+      ...(o.announceGone ? { announceGone: o.announceGone } : {}),
     } as CommandService["window"],
     consented: () => { consented++; },
     userAskEvery: () => o.askEvery ?? false,
@@ -1269,6 +1270,29 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "The user stopped it before it ran. Don't run it again; finish the task saying so." });
     expect(h.starts).toEqual([]);
     expect(h.ended).toHaveLength(1);
+  });
+
+  it("the command window couldn't show the countdown to the end: nothing runs, and the model doesn't hear the user stopped it (cross-review S2)", async () => {
+    makeJudge({ decide: () => decision({ verdict: "announce", says: ["Pushes."], requested: { intent: "git.push", announce: "Pushing, as you asked." } }) });
+    const asked: string[] = [];
+    const h = harness({ words: "push it", announce: false, announceGone: runId => { asked.push(runId); return true; } });
+    const r = await call(h);
+    expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "Ember's command window couldn't show the countdown to the end, so the command didn't run (commands only run where the user can watch them). Don't run it again; finish the task saying so." });
+    expect(asked).toEqual([h.windowAnnounce[0].card.runId]);
+    expect(h.starts).toEqual([]);
+    expect(h.audit.find(e => e.phase === "answered")).toMatchObject({ answer: "unseen", q: "announce" });
+    // The user's Stop, or a window that can't say (says something else, or throws): the user stopped it, as before.
+    for (const announceGone of [() => false, () => "yes", () => { throw new Error("x"); }]) {
+      const g = harness({ words: "push it", announce: false, announceGone });
+      expect((await call(g)).textResultForLlm).toBe("The user stopped it before it ran. Don't run it again; finish the task saying so.");
+      expect(g.audit.find(e => e.phase === "answered")).toMatchObject({ answer: "deny", q: "announce" });
+    }
+    // A countdown that ran out runs the command, and nothing asks why it ended.
+    const ran: string[] = [];
+    const ok = harness({ words: "push it", announceGone: runId => { ran.push(runId); return true; } });
+    await call(ok);
+    expect(ok.starts).toHaveLength(1);
+    expect(ran).toEqual([]);
   });
 });
 
