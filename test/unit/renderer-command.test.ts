@@ -68,6 +68,16 @@ describe("the terminal's options (\u00a73.10)", () => {
     expect(terminalOptions({ interactive: false, cols: 100, rows: 30 }).fontSize).toBe(13);
   });
 
+  it("draw each row's last column whole: the window's tracking doesn't reach xterm's cells or the cell measured for new runs", () => {
+    // The page's body tightens its letters (letter-spacing: -0.006em). Inherited into the terminal, xterm measured its
+    // cells that much narrower than it drew them, so every full row ran past its box and lost its last character.
+    const css = read("styles.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(css).toMatch(/body \{[^}]*letter-spacing: -0\.006em/);
+    expect(css).toMatch(/(^|\n)\.term \{[^}]*letter-spacing: normal;/);
+    // The cell new runs are sized by is measured in a .term too.
+    expect(readFileSync(new URL("../../app/renderer/command/index.html", import.meta.url), "utf8")).toMatch(/<div id="measure" class="term measure"/);
+  });
+
   it("follow a text size changed while the window is open, and fit new runs to the window at it", () => {
     const term = read("terminal.ts"), main = read("main.ts");
     // Main sets html[data-text-size] on the page as it loads and when the setting changes: the page watches it.
