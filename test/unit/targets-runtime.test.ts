@@ -100,7 +100,8 @@ interface RigOptions {
   wslFacts?: WslFacts | null;
   elevated?: () => boolean;
   /** How the prompt window answers a consent card: yes (with its hash), no, or yes with a wrong hash. */
-  consent?: "yes" | "no" | "forged";
+  /** How the prompt window answers a consent card: yes, the user's Not now, another text's hash, or refused (nobody saw it). */
+  consent?: "yes" | "no" | "forged" | "unshown";
   resolved?: HostRecord["resolved"];
   welcome?: Welcome;
   notice?: TargetsParts["notice"];
@@ -149,6 +150,7 @@ function rig(o: RigOptions = {}) {
       if (card.consent) cards.push(card.consent);
       const mode = o.consent ?? "yes";
       if (mode === "no") return { id: card.id, ok: false };
+      if (mode === "unshown") return { id: card.id, ok: false, refused: true };
       return { id: card.id, ok: true, sha256: mode === "forged" ? "0".repeat(64) : card.consent?.sha256 };
     }),
     dismiss: vi.fn(), showConsent: vi.fn(), hideConsent: vi.fn(), consentReady: vi.fn(() => false), dispose: vi.fn(), show: vi.fn(),
@@ -514,6 +516,35 @@ describe("consent cards (§8.4) and their records (§7.4)", () => {
       expect(res).toEqual({ ok: false, message: "Not now." });
       expect(r.settings.get().commands.local).toBeUndefined();
     }
+  });
+
+  it("says Ember couldn't show a card nobody saw (no window to show it in), never Not now as if the user had said no", async () => {
+    const UNSHOWN = "Ember couldn't show the card that asks you first, so nothing changed.";
+    // The commands switch, the WSL switch and adding a computer: the settings window says why nothing changed.
+    const r = rig({ consent: "unshown" });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "commands", id: "local", on: true })).resolves.toEqual({ ok: false, message: UNSHOWN });
+    expect(r.settings.get().commands.local).toBeUndefined();
+    const w = rig({ consent: "unshown", os: "win32", wslFacts: wslFacts([ubuntu()]) });
+    await expect(w.invoke(TARGETS_IPC.act, w.home, { kind: "wsl", on: true })).resolves.toEqual({ ok: false, message: UNSHOWN });
+    expect(w.settings.get().targets.wsl.on).toBe(false);
+    const a = rig({ consent: "unshown" });
+    await expect(a.invoke(TARGETS_IPC.act, a.home, { kind: "add", dest: "deploy@build-03" })).resolves.toEqual({ ok: false, message: UNSHOWN });
+    expect(a.settings.get().targets.hosts).toEqual([]);
+  });
+
+  it("says so in the bubble, with Try again, when connecting needs a card nobody saw", async () => {
+    const UNSHOWN = "Ember couldn't show the card that asks you first, so nothing changed.";
+    const s = screenRig();
+    const r = rig({ consent: "unshown", settings: withHosts([hostRecord("build-01", { consent: { version: 0, at: null } })]), showState: s.setState, bubbles: () => s.notices });
+    await expect(r.invoke(TARGETS_IPC.act, r.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: false, message: UNSHOWN });
+    expect(r.conns.connect).not.toHaveBeenCalled();
+    // The bubble says it in the first person, as it says every connection's failure.
+    expect(s.screen()).toMatchObject({ visible: true, title: "Can't connect to build-01", thought: "I couldn't show the card that asks you first, so nothing changed.", actions: [{ label: "Try again" }, { label: "Close" }] });
+    // Asked again because the machine changed, after the link came up: the link goes too.
+    const m = rig({ consent: "unshown", settings: withHosts([hostRecord("build-01", { machineIdHash: "b".repeat(64) })]) });
+    await expect(m.invoke(TARGETS_IPC.act, m.home, { kind: "connect", hostId: "build-01" })).resolves.toEqual({ ok: false, message: UNSHOWN });
+    expect(m.conns.disconnect).toHaveBeenCalledWith("build-01");
+    expect(m.t.agent.handsFor("ssh:build-01").ok).toBe(false);
   });
 
   it("never shows the card when the administrator turned commands off", async () => {
