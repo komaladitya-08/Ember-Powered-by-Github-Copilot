@@ -123,7 +123,7 @@ describe("TokenStore.load on macOS, off the main thread (review #241)", () => {
     const f = file();
     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
     const seen: string[] = [];
-    const store = new TokenStore(f, asyncBox(async b => { seen.push(b.toString()); return { result: b.toString().replace(/^sealed:/, ""), shouldReEncrypt: false }; }), { asyncDecrypt: true, version: "1.0.0" });
+    const store = new TokenStore(f, asyncBox(async b => { seen.push(b.toString()); return { result: b.toString().replace(/^sealed:/, ""), shouldReEncrypt: false }; }), { asyncKeyring: true, version: "1.0.0" });
     expect(await store.load()).toBe("gho_abc");
     expect(seen).toEqual(["sealed:gho_abc"]);
     expect(store.unreadable).toBe(false);
@@ -134,7 +134,7 @@ describe("TokenStore.load on macOS, off the main thread (review #241)", () => {
   it("tells a refusal (the keychain prompt answered Deny) apart, and keeps the file", async () => {
     const f = file();
     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
-    const refused = new TokenStore(f, asyncBox(async () => { throw new Error("Error while decrypting the ciphertext provided to safeStorage.decryptStringAsync."); }), { asyncDecrypt: true });
+    const refused = new TokenStore(f, asyncBox(async () => { throw new Error("Error while decrypting the ciphertext provided to safeStorage.decryptStringAsync."); }), { asyncKeyring: true });
     expect(await refused.load()).toBeNull();
     expect(refused.unreadable).toBe(true);
     expect(fs.existsSync(f)).toBe(true);
@@ -145,7 +145,78 @@ describe("TokenStore.load on macOS, off the main thread (review #241)", () => {
     expect(new TokenStore(f, box()).save("gho_abc")).toBe(true);
     const neverAsync = box({ decryptStringAsync: async () => { throw new Error("asked the asynchronous read"); } });
     expect(await new TokenStore(f, neverAsync).load()).toBe("gho_abc");
-    expect(await new TokenStore(f, box(), { asyncDecrypt: true }).load()).toBe("gho_abc");
+    expect(await new TokenStore(f, box(), { asyncKeyring: true }).load()).toBe("gho_abc");
+  });
+});
+
+describe("TokenStore.saveAsync on macOS, off the main thread (follow-up to review #241)", () => {
+  /** The keyring's synchronous encryptString may not be asked: it would hold Ember while macOS's keychain prompt is open. */
+  const asyncBox = (encryptStringAsync: SecretBox["encryptStringAsync"]) => box({ encryptString: () => { throw new Error("encryptString held the main process"); }, encryptStringAsync });
+  const sealing = async (s: string) => Buffer.from(`sealed:${s}`);
+  /** An encryptStringAsync that answers only when told to (the keychain prompt still open). */
+  function slowKeyring() {
+    const waiting: { text: string; answer: () => void }[] = [];
+    const encryptStringAsync = (text: string) => new Promise<Buffer>(r => waiting.push({ text, answer: () => r(Buffer.from(`sealed:${text}`)) }));
+    return { encryptStringAsync, waiting };
+  }
+
+  it("seals the sign-in with encryptStringAsync when asked to (main does on macOS), and it reads back either way", async () => {
+    const f = file();
+    const store = new TokenStore(f, asyncBox(sealing), { asyncKeyring: true });
+    expect(await store.saveAsync("gho_abc")).toBe("kept");
+    expect(await new TokenStore(f, box()).load()).toBe("gho_abc");
+    const grant = { token: "ghu_abc", refreshToken: "ghr_abc", expiresAt: 5, clientId: "Iv23liTEST" };
+    expect(await store.saveAsync(grant)).toBe("kept");
+    expect(await new TokenStore(f, box()).loadGrant()).toEqual(grant);
+  });
+
+  it("gives the sign-in being saved to every read meanwhile, and saves in the order asked", async () => {
+    const f = file();
+    const slow = slowKeyring();
+    const store = new TokenStore(f, box({ encryptString: () => { throw new Error("encryptString held the main process"); }, encryptStringAsync: slow.encryptStringAsync }), { asyncKeyring: true });
+    const first = store.saveAsync("gho_first");
+    const second = store.saveAsync("gho_second");
+    expect(await store.load()).toBe("gho_second");
+    await new Promise(r => setTimeout(r, 0));
+    // One at a time: the second is sealed once the first is written.
+    expect(slow.waiting.map(w => w.text)).toEqual(["gho_first"]);
+    slow.waiting[0].answer();
+    expect(await first).toBe("kept");
+    expect(await store.load()).toBe("gho_second");
+    await new Promise(r => setTimeout(r, 0));
+    slow.waiting[1].answer();
+    expect(await second).toBe("kept");
+    expect(await new TokenStore(f, box()).load()).toBe("gho_second");
+  });
+
+  it("writes nothing when the user signs out while the keyring is asked", async () => {
+    const f = file();
+    const slow = slowKeyring();
+    const store = new TokenStore(f, box({ encryptStringAsync: slow.encryptStringAsync }), { asyncKeyring: true });
+    const saving = store.saveAsync("gho_abc");
+    await new Promise(r => setTimeout(r, 0));
+    store.clear();
+    slow.waiting[0].answer();
+    expect(await saving).toBe("write-failed");
+    expect(fs.existsSync(f)).toBe(false);
+    expect(await store.load()).toBeNull();
+  });
+
+  it("keeps the sign-in for this run when the keyring refuses (the keychain prompt answered Deny)", async () => {
+    const f = file();
+    const store = new TokenStore(f, asyncBox(async () => { throw new Error("Error while encrypting the text provided to safeStorage.encryptStringAsync."); }), { asyncKeyring: true });
+    expect(await store.saveAsync("gho_abc")).toBe("no-keyring");
+    expect(fs.existsSync(f)).toBe(false);
+    expect(await store.load()).toBe("gho_abc");
+  });
+
+  it("saves as before where it isn't asked to (Linux, Windows) or the keyring has no asynchronous write", async () => {
+    const f = file();
+    const neverAsync = box({ encryptStringAsync: async () => { throw new Error("asked the asynchronous write"); } });
+    expect(await new TokenStore(f, neverAsync).saveAsync("gho_abc")).toBe("kept");
+    expect(await new TokenStore(f, box()).load()).toBe("gho_abc");
+    expect(await new TokenStore(f, box(), { asyncKeyring: true }).saveAsync("gho_def")).toBe("kept");
+    expect(await new TokenStore(f, box()).load()).toBe("gho_def");
   });
 });
 

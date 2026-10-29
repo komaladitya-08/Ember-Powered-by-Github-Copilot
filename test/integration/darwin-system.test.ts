@@ -101,7 +101,8 @@ app.whenReady().then(async () => {
 /**
  * The keychain child (review #241): seals a sign-in with safeStorage.encryptString, as TokenStore.save does, and opens
  * it with decryptStringAsync, as TokenStore.load does on macOS (so the keychain prompt after an update holds no main
- * thread), directly and through TokenStore itself. It prints "EMBER_RESULT <json>" and quits. It adds an
+ * thread), directly and through TokenStore itself; then seals one with encryptStringAsync, as TokenStore.saveAsync does
+ * on macOS, and opens it both ways. It prints "EMBER_RESULT <json>" and quits. It adds an
  * "ember-darwin-system-keychain Safe Storage" item to the login keychain.
  */
 const KEYCHAIN_CHILD = `
@@ -121,10 +122,19 @@ app.whenReady().then(async () => {
     out.shouldReEncrypt = opened.shouldReEncrypt;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-keychain-"));
     try {
-      const store = new TokenStore(path.join(dir, "github-token.bin"), safeStorage, { version: "0.0.0-test", asyncDecrypt: true });
+      const file = path.join(dir, "github-token.bin");
+      const store = new TokenStore(file, safeStorage, { version: "0.0.0-test", asyncKeyring: true });
       out.saved = store.save("gho_EmberKeychainCheck2");
       out.loaded = await store.load();
       out.unreadable = store.unreadable;
+      // Sealed off the main thread (encryptStringAsync), as TokenStore.saveAsync does on macOS: it opens both ways (the
+      // doctor and an earlier Ember read with decryptString), from the file itself (a new store holds nothing in memory).
+      const sealedAsync = await safeStorage.encryptStringAsync("gho_EmberKeychainCheck3");
+      out.asyncSealedSync = safeStorage.decryptString(sealedAsync);
+      out.asyncSealedAsync = (await safeStorage.decryptStringAsync(sealedAsync)).result;
+      out.savedAsync = await store.saveAsync("gho_EmberKeychainCheck4");
+      out.loadedAsync = await new TokenStore(file, safeStorage, { version: "0.0.0-test", asyncKeyring: true }).load();
+      out.loadedSync = await new TokenStore(file, safeStorage).load();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -140,6 +150,7 @@ app.whenReady().then(async () => {
 interface KeychainReport {
   available?: boolean; asyncAvailable?: boolean; result?: string; shouldReEncrypt?: boolean;
   saved?: boolean; loaded?: string | null; unreadable?: boolean; error?: string;
+  asyncSealedSync?: string; asyncSealedAsync?: string; savedAsync?: string; loadedAsync?: string | null; loadedSync?: string | null;
 }
 
 /** The Electron binary the electron package installed (its main export is the path). */
@@ -330,7 +341,7 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
   }, 40_000);
 
   // Writes an item to the login keychain: only where asked for, as CI does.
-  it.runIf(required)("opens a sign-in sealed with encryptString through decryptStringAsync, as TokenStore does on macOS (review #241)", async () => {
+  it.runIf(required)("opens a sign-in sealed with encryptString through decryptStringAsync, and one sealed with encryptStringAsync both ways, as TokenStore does on macOS (review #241)", async () => {
     const r = await runChild<KeychainReport>(KEYCHAIN_CHILD, "darwin-system-keychain", "ember-darwin-system-keychain");
     console.log(`keychain child: ${JSON.stringify(r)}`);
     expect(r.error).toBeUndefined();
@@ -338,6 +349,9 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
     // The same key either way: a token TokenStore.save sealed opens, and needn't be sealed again.
     expect({ result: r.result, shouldReEncrypt: r.shouldReEncrypt }).toEqual({ result: "gho_EmberKeychainCheck1", shouldReEncrypt: false });
     expect({ saved: r.saved, loaded: r.loaded, unreadable: r.unreadable }).toEqual({ saved: true, loaded: "gho_EmberKeychainCheck2", unreadable: false });
+    // Sealed with encryptStringAsync (saveAsync, the follow-up to review #241): the same key, so either read opens it.
+    expect({ sync: r.asyncSealedSync, async: r.asyncSealedAsync }).toEqual({ sync: "gho_EmberKeychainCheck3", async: "gho_EmberKeychainCheck3" });
+    expect({ saved: r.savedAsync, loaded: r.loadedAsync, sync: r.loadedSync }).toEqual({ saved: "kept", loaded: "gho_EmberKeychainCheck4", sync: "gho_EmberKeychainCheck4" });
   }, 90_000);
 
   describe("inside Electron", () => {

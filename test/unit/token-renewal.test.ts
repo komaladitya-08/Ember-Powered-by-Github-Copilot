@@ -378,14 +378,18 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("reads the stored sign-in as the store does (macOS: asynchronously, so the keychain prompt holds no main process)", async () => {
+  it("reads and saves the stored sign-in as the store does (macOS: asynchronously, so the keychain prompt holds no main process)", async () => {
     vi.useFakeTimers({ now: T0 });
     const { fetch, calls } = github(renewed(), renewed(NEW, REFRESH2));
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin");
     const syncReads = vi.fn((b: Buffer) => box.decryptString(b));
-    const mac: SecretBox = { ...box, decryptString: syncReads, decryptStringAsync: async b => ({ result: box.decryptString(b), shouldReEncrypt: false }) };
-    const store = new TokenStore(file, mac, { asyncDecrypt: true });
-    store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const syncSeals = vi.fn((s: string) => box.encryptString(s));
+    const mac: SecretBox = {
+      ...box, decryptString: syncReads, encryptString: syncSeals,
+      decryptStringAsync: async b => ({ result: box.decryptString(b), shouldReEncrypt: false }), encryptStringAsync: async s => box.encryptString(s),
+    };
+    new TokenStore(file, box).saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const store = new TokenStore(file, mac, { asyncKeyring: true });
     let inUse: string | null = OLD;
     const keeper = new GrantKeeper({ fetch, store: () => store, inUse: () => inUse, idle: () => true, reconnect: async t => { inUse = t; } });
     // A stored sign-in that ran out while Ember was off is renewed before use, read without decryptString.
@@ -399,6 +403,9 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(calls).toHaveLength(2);
     expect(inUse).toBe(NEW);
     expect(syncReads).not.toHaveBeenCalled();
+    // Both renewals were saved, sealed off the main thread too (follow-up to review #241).
+    expect(syncSeals).not.toHaveBeenCalled();
+    expect(await new TokenStore(file, box).load()).toBe(NEW);
     keeper.stop();
   });
 
@@ -418,7 +425,7 @@ describe("main's sign-in wiring", () => {
 
   it("keeps the device flow's whole grant, and keeps the sign-in in use alive", () => {
     expect(MAIN).toContain("const grant = await pollDeviceGrant(fetch, clientId, code,");
-    expect(MAIN).toContain("tokens?.saveResult(grant)");
+    expect(MAIN).toContain("const kept = (await tokens?.saveAsync(grant)) ?? \"no-keyring\";");
     expect(MAIN).toContain("keeper.use(token, grant);");
     // Every connect says which sign-in is in use; signing out keeps none alive.
     expect(MAIN).toContain("currentToken = f?.token ?? null; keeper.use(currentToken);");
@@ -428,6 +435,12 @@ describe("main's sign-in wiring", () => {
     expect(MAIN).toContain("if (!provider) await keeper.freshen();");
     // Copilot is reconnected only when nothing is under way.
     expect(MAIN).toContain("idle: () => agent?.idle ?? true,");
+  });
+
+  it("seals the saved sign-in off the main thread on macOS, as it reads it (follow-up to review #241)", () => {
+    expect(MAIN).toContain(`safeStorage, { version: app.getVersion(), asyncKeyring: platform.os === "darwin" });`);
+    // Signed out while the keyring was asked: nothing connects.
+    expect(MAIN).toMatch(/const kept = \(await tokens\?\.saveAsync\(grant\)\) \?\? "no-keyring"; if \(currentToken !== token\) return;/);
   });
 
   it("tells the keeper when the computer wakes or Copilot refuses the sign-in in use (cross-review X12)", () => {

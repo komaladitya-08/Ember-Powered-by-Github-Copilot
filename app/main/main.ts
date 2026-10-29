@@ -1183,11 +1183,14 @@ function start(): void {
       const token = grant.token;
       // Cancelled at the last moment: the code was approved, but the user said no here.
       if (ac.signal.aborted) return;
-      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
-      const kept = tokens?.saveResult(grant) ?? "no-keyring";
-      if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
+      // In use from here, so a renewal of the sign-in it replaces, finishing meanwhile, is neither switched to nor saved.
       currentToken = token;
       keeper.use(token, grant);
+      // Not kept (no keyring, or the file couldn't be written: a full or read-only disk): connected anyway, for this run.
+      // Sealed off the main thread on macOS (a keychain prompt holds nothing up); signed out meanwhile: nothing connects.
+      const kept = (await tokens?.saveAsync(grant)) ?? "no-keyring";
+      if (currentToken !== token) return;
+      if (kept !== "kept") log.warn("auth.not_persisted", { reason: kept === "write-failed" ? "the token file couldn't be written" : "no keyring available", note: "sign-in lasts until Ember quits" });
       const why = kept === "write-failed" ? "Ember couldn't save the sign-in on this computer" : sys.words.keyringMissing;
       await connected(await agent?.start(token, "stored"), kept === "kept" ? undefined : `Signed in. ${why}, so you'll need to sign in again next time.`);
     } catch (err) {
@@ -1494,8 +1497,8 @@ function start(): void {
     }
 
     // Connect the brain. EMBER_TEST_PROVIDER_URL points it at an offline OpenAI-compatible server (tests, demos).
-    // On macOS the saved sign-in is opened asynchronously: the keychain prompt after an update holds no main thread.
-    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncDecrypt: platform.os === "darwin" });
+    // On macOS the saved sign-in is opened and sealed asynchronously: the keychain prompt after an update holds no main thread.
+    tokens = new TokenStore(path.join(userData, "github-token.bin"), safeStorage, { version: app.getVersion(), asyncKeyring: platform.os === "darwin" });
     // The administrator can point Ember at the organisation's own endpoint (BYOK) instead of Copilot sign-in.
     let adminKey: string | undefined;
     try { adminKey = policy.provider ? sys.adminPolicy.providerApiKey(policy.provider) : undefined; } catch (err) { log.error("admin_policy.api_key_unreadable", { err }); }

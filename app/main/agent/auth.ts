@@ -23,6 +23,8 @@ export interface SecretBox {
   decryptString(b: Buffer): string;
   /** Electron's asynchronous read: the keyring's key is fetched off the main process's thread (macOS's keychain prompt). */
   decryptStringAsync?(b: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
+  /** Electron's asynchronous write, the same way (Electron 44 has both). */
+  encryptStringAsync?(s: string): Promise<Buffer>;
   /** "basic_text" means no keyring: nothing secret should be written to disk. */
   getSelectedStorageBackend?(): string;
 }
@@ -48,13 +50,17 @@ export class TokenStore {
    * run" whoever reads it next (cross-review X13). A renewal revokes the token and refresh token the file still holds.
    */
   private held: Grant | null = null;
+  /** Counts clear() and saveResult(): a saveAsync begun before either is out of date, and writes nothing. */
+  private epoch = 0;
+  /** saveAsync's writes, one after another in the order they were asked for. */
+  private saving: Promise<unknown> = Promise.resolve();
 
   /**
    * `version`: this Ember's, kept beside the saved sign-in once it has read it (see firstReadSinceUpdate).
-   * `asyncDecrypt` (macOS): every read (load, loadGrant) opens it with decryptStringAsync, so the keychain prompt holds
-   * no main thread.
+   * `asyncKeyring` (macOS): the keyring is asked off the main process's thread, so the keychain prompt holds none: every
+   * read (load, loadGrant) opens the sign-in with decryptStringAsync, and saveAsync seals it with encryptStringAsync.
    */
-  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncDecrypt?: boolean } = {}) {}
+  constructor(private file: string, private box: SecretBox, private opts: { version?: string; asyncKeyring?: boolean } = {}) {}
 
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
@@ -100,7 +106,7 @@ export class TokenStore {
   /**
    * The stored sign-in with what renews it (an expiring token from Ember's GitHub App), or a token alone (a file an
    * earlier Ember wrote, or an app whose tokens don't expire); null when there is none usable. Every read goes through
-   * here, so on macOS none holds the main process while the keychain asks (asyncDecrypt).
+   * here, so on macOS none holds the main process while the keychain asks (asyncKeyring).
    */
   async loadGrant(): Promise<Grant | null> {
     if (this.held) {
@@ -118,7 +124,7 @@ export class TokenStore {
     try {
       // Sealed by encryptString, opened by decryptStringAsync on macOS: the same keychain key, so shouldReEncrypt is
       // false and the file is left as it is (darwin-system checks both on a real Mac).
-      t = this.opts.asyncDecrypt && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
+      t = this.opts.asyncKeyring && this.box.decryptStringAsync ? (await this.box.decryptStringAsync(raw)).result : this.box.decryptString(raw);
     } catch {
       this.unreadable = true;
       return null;
@@ -148,21 +154,48 @@ export class TokenStore {
    * kept is still read back for the rest of this run (held).
    */
   saveResult(token: string | Grant): SaveResult {
-    const kept = this.seal(token);
-    this.held = kept === "kept" ? null : typeof token === "string" ? { token } : token;
+    this.epoch++;
+    let kept: SaveResult = "no-keyring";
+    if (this.canPersist()) {
+      try {
+        kept = this.write(this.box.encryptString(sealedText(token)));
+      } catch { /* the keyring refused: "no-keyring" */ }
+    }
+    this.held = kept === "kept" ? null : grantOf(token);
     return kept;
   }
 
-  private seal(token: string | Grant): SaveResult {
-    if (!this.canPersist()) return "no-keyring";
-    // A token alone is written as it always was (an earlier Ember reads it); one that expires, with what renews it.
-    const text = typeof token === "string" ? token : token.expiresAt === undefined ? token.token : JSON.stringify(token);
-    let sealed: Buffer;
-    try {
-      sealed = this.box.encryptString(text);
-    } catch {
-      return "no-keyring";
-    }
+  /**
+   * saveResult, sealed off the main process's thread where the keyring is asked that way (asyncKeyring, macOS:
+   * encryptStringAsync, so a keychain prompt holds nothing up; the follow-up to review #241); elsewhere saveResult
+   * itself. Every read meanwhile gives this sign-in. Saves are written in the order asked; a sign-out (clear) while the
+   * keyring is asked wins, and nothing is written ("write-failed"). Never rejects.
+   */
+  saveAsync(token: string | Grant): Promise<SaveResult> {
+    const encrypt = this.box.encryptStringAsync?.bind(this.box);
+    if (!this.opts.asyncKeyring || !encrypt) return Promise.resolve(this.saveResult(token));
+    const grant = grantOf(token);
+    const epoch = this.epoch;
+    this.held = grant;
+    const run = this.saving.then(async (): Promise<SaveResult> => {
+      let sealed: Buffer | null = null;
+      if (this.canPersist()) {
+        try {
+          sealed = await encrypt(sealedText(token));
+        } catch { /* the keyring refused: "no-keyring" */ }
+      }
+      if (epoch !== this.epoch) return "write-failed";
+      const kept = sealed ? this.write(sealed) : "no-keyring";
+      // Read from the file from now on, unless a newer sign-in is being saved meanwhile.
+      if (kept === "kept" && this.held === grant) this.held = null;
+      return kept;
+    });
+    this.saving = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Writes a sealed sign-in whole or not at all (a temporary file renamed over it), owner-only. */
+  private write(sealed: Buffer): SaveResult {
     const tmp = `${this.file}.${process.pid}.tmp`;
     try {
       fs.writeFileSync(tmp, sealed, { mode: 0o600 });
@@ -177,6 +210,7 @@ export class TokenStore {
   }
 
   clear(): void {
+    this.epoch++;
     this.unreadable = false;
     this.held = null;
     try { fs.rmSync(this.file); } catch { /* already gone */ }
@@ -267,6 +301,13 @@ export interface Grant {
   /** The client id that issued it, the only one that may renew it (EMBER_GITHUB_CLIENT_ID may differ from the built-in one). */
   clientId?: string;
 }
+
+/** A token alone is written as it always was (an earlier Ember reads it); one that expires, with what renews it. */
+function sealedText(token: string | Grant): string {
+  return typeof token === "string" ? token : token.expiresAt === undefined ? token.token : JSON.stringify(token);
+}
+
+const grantOf = (token: string | Grant): Grant => typeof token === "string" ? { token } : token;
 
 /** A stored grant's fields, checked (a damaged file gives none). */
 function parseGrant(j: unknown): Grant | null {
@@ -481,8 +522,8 @@ export class GrantKeeper {
     try {
       const next = await this.renewed(g);
       // The stored one stopped working with the renewal: the store gives the new one from now on, from the file or, not
-      // kept (a full or read-only disk), for this run (cross-review X13).
-      const kept = store.saveResult(next);
+      // kept (a full or read-only disk), for this run (cross-review X13). Sealed off the main thread on macOS.
+      const kept = await store.saveAsync(next);
       this.d.log?.("auth.renewed", { when: "before use", kept });
     } catch (err) {
       this.d.log?.("auth.renew_failed", { err, refused: err instanceof RenewalRefused });
@@ -552,10 +593,11 @@ export class GrantKeeper {
     if (this.grant !== grant || this.d.inUse() !== grant.token) return;
     // The old token stopped working with the renewal: Copilot is reconnected with the new one at once (with no await
     // between, so the reconnects Copilot makes on its own use it too), and only then is it saved, so a slow keyring
-    // doesn't hold the switch. Kept for the next start; not kept (no keyring, a full disk): for this run.
+    // doesn't hold the switch (on macOS it is sealed off the main thread). Kept for the next start; not kept (no keyring,
+    // a full disk): for this run.
     this.track(next);
     void this.d.reconnect(next.token).catch(err => this.d.log?.("auth.renew_reconnect_failed", { err }));
-    const kept = this.d.store()?.saveResult(next) ?? "no-keyring";
+    const kept = (await this.d.store()?.saveAsync(next)) ?? "no-keyring";
     this.d.log?.("auth.renewed", { kept });
   }
 
