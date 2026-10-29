@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent } from "./presenter";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
@@ -32,7 +32,7 @@ import type { AuditLog } from "../policy/audit";
 import { PLATFORM_WORDS } from "../../shared/words";
 import type { TargetBinding, PromptCaps } from "../targets/types";
 import type { TargetId } from "../../shared/targets";
-import { placeName, whereWords } from "../commands/flow";
+import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
@@ -199,6 +199,13 @@ export interface HostOptions {
    * voice from the user's, review #251). Default: the stop shortcut, as said aloud.
    */
   cancelWords?: () => string;
+  /**
+   * The settings shortcut as Ember holds it now (main: hasKey), or null while another app holds it: the bubbles name it
+   * only then (Read all's route, the errors that send the user to settings; cross-review X5). Default: the OS's table.
+   */
+  settingsKey?: () => string | null;
+  /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
+  stopKey?: () => string | null;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -615,6 +622,18 @@ export class AgentHost {
   /** The signed-out line for how this build signs in. */
   private get signedOut(): string { return this.o.signInWith === "github-cli" ? SIGNED_OUT_CLI : SIGNED_OUT; }
 
+  /**
+   * What every presenter's bubbles follow: this OS's shortcuts, those Ember holds now (a bubble names a shortcut only
+   * while it works, cross-review X0, X5), and the user's More time to read and answer.
+   */
+  private get bubbleOptions(): PresenterOptions {
+    const o = this.o;
+    return {
+      shortcuts: this.sys.shortcuts, ...(o.readTime ? { readTime: o.readTime } : {}),
+      ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}), ...(o.stopKey ? { stopKey: o.stopKey } : {}),
+    };
+  }
+
   constructor(private o: HostOptions) {
     this.status = {
       phase: "signed-out", detail: this.signedOut, models: [], conductorModel: null, workerModel: null,
@@ -624,10 +643,9 @@ export class AgentHost {
     // A question with buttons holds the bubble; what it held off shows once it's answered.
     const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
-    const readTime = o.readTime ? { readTime: o.readTime } : {};
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), shortcuts: this.sys.shortcuts, ...readTime });
-    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, { shortcuts: this.sys.shortcuts, ...readTime });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
   }
 
   /**
@@ -709,8 +727,7 @@ export class AgentHost {
     if (!caps?.commandsOffered || caps.commands) return;
     // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short), and
     // stays as long as the user's More time to read and answer says, as every bubble does.
-    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider,
-      { shortcuts: this.sys.shortcuts, ...(this.o.readTime ? { readTime: this.o.readTime } : {}) });
+    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, this.bubbleOptions);
     p.outcome({
       title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
       emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
@@ -1039,7 +1056,7 @@ export class AgentHost {
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
         audit: hands?.audit ?? this.o.taskBase?.audit,
-        settingsKey: this.sys.shortcuts?.settings.label,
+        settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
@@ -1140,6 +1157,7 @@ export class AgentHost {
         turnSilentMs: this.o.turnSilentMs,
         words: this.sys.words,
         shortcuts: this.sys.shortcuts,
+        ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
         // A turn under way that went silent (a model request that never answers) is ended, and Ember says Copilot
         // didn't answer; the requests waiting behind it go with it. Only the conversation's request is given up on:
         // the tasks go on (each one's own watch decides its fate).
@@ -1424,12 +1442,14 @@ export class AgentHost {
   private taskPresenter(id: string, goal: string, binding?: TargetBinding, othersNamed = false): Presenter {
     const title = titleOf(goal);
     // Its bubbles say where it acts when that isn't this computer (§2.4), and on this computer too when the user's words
-    // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are.
+    // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are, naming the
+    // place as its bubble's badge does ("In Ubuntu (WSL): …", follow-up F-wording).
     const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
+    const place = where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ` : "";
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
-      task: id, shortcuts: this.sys.shortcuts, ...(where ? { where } : {}), ...(this.o.readTime ? { readTime: this.o.readTime } : {}),
-      ...(announce ? { onAnnounce: (text: string) => announce(`${binding?.kind === "ssh" ? `On ${placeName(binding)}: ` : ""}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
+      task: id, ...this.bubbleOptions, ...(where ? { where } : {}),
+      ...(announce ? { onAnnounce: (text: string) => announce(`${place}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
     });
     this.taskPresenters.set(id, p);
     return p;

@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 import { COMMANDS_IPC } from "../../shared/commands";
-import type { OS } from "../../shared/shortcuts";
+import { SHORTCUTS, type OS } from "../../shared/shortcuts";
 import { parseTargetId } from "../../shared/targets";
 import type { Logger } from "../logger";
 import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../targets/types";
@@ -214,8 +214,10 @@ export function createCommandWindowPort(o: CommandWindowOptions): CommandWindowP
 }
 
 /**
- * What the controller is made from: the window's factory, ipcMain, the log, the OS, the card's key hint, and whether a
- * screen reader runs (main's sys.a11y.screenReaderOn: each run's terminal then mirrors its output for it, review #43).
+ * What the controller is made from: the window's factory, ipcMain, the log, the OS, the card's key hint, whether a
+ * screen reader runs (main's sys.a11y.screenReaderOn: each run's terminal then mirrors its output for it, review #43),
+ * and the stop chord as Ember holds it now (null while another app holds it: the announcement names none then, as the
+ * bubble and the spoken words don't, cross-review X0; absent: the OS's own).
  */
 export interface CommandWindowOptions {
   create: () => BrowserWindowLike;
@@ -224,6 +226,7 @@ export interface CommandWindowOptions {
   os: OS;
   keyHint: () => string | null;
   screenReader?: () => boolean;
+  stopKey?: () => string | null;
 }
 
 /** createCommandWindowPort with its extras typed: the same object (the targets runtime may call this name instead). */
@@ -332,6 +335,13 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
     } catch { return null; } // a hint that can't be built shows none
   }
 
+  /** Under an announcement's countdown: the stop chord Ember holds now, or "" (taken, or the check failed). */
+  function announceKeys(): string {
+    let key: string | null = null;
+    try { key = o.stopKey ? o.stopKey() : SHORTCUTS[o.os].stop.label; } catch { /* named none: it may be taken */ }
+    return announceKeyText(o.os, typeof key === "string" && key ? key : null);
+  }
+
   /** A screen reader runs (main asks the OS each time); false when it isn't told or asking fails. */
   function screenReader(): boolean {
     try { return o.screenReader?.() === true; } catch { return false; } // not known: the terminals stay as they are
@@ -352,12 +362,13 @@ export function createCommandWindowController(o: CommandWindowOptions): CommandW
 
   function stateNow(): WindowView {
     const head = queue[0];
+    const keys = head && head.endsAt !== null ? announceKeys() : "";
     return {
       rev: ++rev,
       tabs: tabs.map(tabView),
       card: card ? { ...card.card, n: card.n, ...(card.retry ? { retry: card.retry } : {}) } : null,
       announce: head && head.endsAt !== null ? { card: head.card, endsAt: head.endsAt } : null,
-      ...(head && head.endsAt !== null ? { announceKeys: announceKeyText(o.os) } : {}),
+      ...(keys ? { announceKeys: keys } : {}),
       keyHint: card ? keyHint() : null,
       pending: [...pendings].map(([taskId, text]) => ({ taskId, text })),
       os: o.os,

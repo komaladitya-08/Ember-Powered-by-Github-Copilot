@@ -138,11 +138,12 @@ export const backHere = (host: string): BubbleWords => ({ title: "Back on this c
  * An announcement (D4.4): `announce` is the flow's words ("Pushing to GitHub, as you asked."), `where` the task's place
  * as its badge says it ("on build-01"; absent: this computer). The badge (and a screen reader) says where, so only this
  * computer, which has none, is said. Then the time it is given (`seconds`, longer while a screen reader runs) and the
- * computer's stop chord (`stopKey`), which the live region reads too.
+ * computer's stop chord (`stopKey`), which the live region reads too, while Ember holds it: null (another app took it)
+ * names none, and Stop is the way, as the spoken "Press Stop to cancel." says (cross-review X0).
  */
-export const announcement = (announce: string, where: string | undefined, seconds: number, stopKey: string): BubbleWords => ({
+export const announcement = (announce: string, where: string | undefined, seconds: number, stopKey: string | null): BubbleWords => ({
   title: announce.trim().replace(/[.!]+$/, ""),
-  text: `${where ? "" : "On this computer. "}It starts in ${seconds} seconds. ${stopKey} stops everything at once.`,
+  text: `${where ? "" : "On this computer. "}It starts in ${seconds} seconds.${stopKey ? ` ${stopKey} stops everything at once.` : ""}`,
   actions: [{ label: "Stop" }],
 });
 

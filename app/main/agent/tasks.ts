@@ -56,8 +56,11 @@ export interface TaskManagerDeps {
   onRemoved?: (task: Task, byUser: boolean) => void;
   /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
   provider?: boolean;
-  /** How this OS's settings shortcut is written ("Ctrl+Alt+E" on Linux), for a task's error that points to settings. */
-  settingsKey?: string;
+  /**
+   * How this OS's settings shortcut is written ("Ctrl+Alt+E" on Linux), for a task's error that points to settings: or
+   * the one Ember holds when the task fails, null while another app holds it (none is named then, cross-review X5).
+   */
+  settingsKey?: string | (() => string | null);
   /** The audit log gets each task's request and outcome. */
   audit?: AuditLog;
   /** How many tasks that act run at once (default 2); guides don't count towards it (they have the same limit of their own). */
@@ -280,7 +283,10 @@ export class TaskManager {
     } catch (err) {
       this.d.log.error("task.error", { id: task.id, err });
       // One plain sentence for the card, the bubble, speech and the conversation (the log keeps the raw error).
-      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider, settingsKey: this.d.settingsKey }) };
+      const key = this.d.settingsKey;
+      let settingsKey: string | null | undefined = null;
+      try { settingsKey = typeof key === "function" ? key() : key; } catch { /* named none: it may be taken */ }
+      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider, settingsKey }) };
     }
     this.running.delete(task.id);
     try {

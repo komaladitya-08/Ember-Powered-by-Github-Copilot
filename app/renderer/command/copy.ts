@@ -196,9 +196,13 @@ export const stalledText = (label: string, seconds: number) => {
   return `${label} isn't answering. This command stops in ${n} second${n === 1 ? "" : "s"} unless it answers again.`;
 };
 
-/** Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269). */
-export function announceKeyText(os: OS): string {
-  return `Or press ${SHORTCUTS[os].stop.label} to stop everything.`;
+/**
+ * Under the announcement's countdown: the PC's stop chord, which stops it with everything else (reviews #46, #269), as
+ * the label Ember holds (`key`, default the OS's own); "" while another app holds it, and Stop is the way, as in the
+ * bubble and the spoken words (cross-review X0).
+ */
+export function announceKeyText(os: OS, key: string | null = SHORTCUTS[os].stop.label): string {
+  return key ? `Or press ${key} to stop everything.` : "";
 }
 
 /** The announcement's countdown: "Starts in 4 s." */

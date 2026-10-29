@@ -712,6 +712,12 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
     // is given and the stop chord (review #46).
     expect(all(bubbleCopy.announcement("Pushing to GitHub, as you asked.", "on build-01", 4, "Ctrl+Alt+X"))).toEqual(["Pushing to GitHub, as you asked", "It starts in 4 seconds. Ctrl+Alt+X stops everything at once.", "Stop"]);
     expect(bubbleCopy.announcement("Pushing to GitHub, as you asked", undefined, 15, "Win+Alt+X").text).toBe("On this computer. It starts in 15 seconds. Win+Alt+X stops everything at once.");
+    // Another app holds the stop chord: none is named, in the bubble or the command window; Stop is the way, as the
+    // spoken "Press Stop to cancel." says (cross-review X0).
+    expect(all(bubbleCopy.announcement("Deleting build, as you asked.", undefined, 4, null))).toEqual(["Deleting build, as you asked", "On this computer. It starts in 4 seconds.", "Stop"]);
+    expect(bubbleCopy.announcement("Deleting build, as you asked.", "on build-01", 15, null).text).toBe("It starts in 15 seconds.");
+    for (const os of ["linux", "win32", "darwin"] as const) expect(commandCopy.announceKeyText(os, null), os).toBe("");
+    expect(commandCopy.announceKeyText("linux", "Ctrl+Alt+X")).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(all(bubbleCopy.wslFirstSeen())).toEqual(["I can work in WSL", "I can read and use your Linux apps and run commands there. Turn this on in settings?", "Open settings", "Not now"]);
     expect(keep(bubbleCopy.commandSpoken("ssh", "build-01"))).toBe("Ember wants to run a command on build-01.");
     // One voice in the bubble (review #22): a connection's or the settings window's "Ember can't…" is said as Ember.

@@ -362,6 +362,48 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await heard.host.stop();
   });
 
+  it("an announcement said aloud names where it runs as its bubble's badge does: WSL, and this computer when the words named another (follow-up F-wording)", async () => {
+    const { t } = fakeTargets({ bindings: [LOCAL, BUILD, UBUNTU] });
+    t.othersNamed = (id, words) => (id === "local" && /build-01/.test(words) ? ["build-01"] : []);
+    const said: string[] = [];
+    const shown: any[] = [];
+    const h = await started({ hands: hands(), targets: t, onAnnounce: s => said.push(s), setState: (p: any) => { if (p.bubble) shown.push(p.bubble); } });
+    const announce = (spec: Record<string, unknown>, n: number) => (h.real({ id: `9-${n}`, goal: "x", target: {}, ...spec } as never, () => undefined) as any).d.presenter.announce("Deleting build, as you asked.", `ui:cmdstop:${n}`);
+    announce({ targetId: "wsl:Ubuntu" }, 1);
+    expect(shown.at(-1)).toMatchObject({ where: "in Ubuntu (WSL)", thought: "It starts in 4 seconds. Ctrl+Alt+X stops everything at once." });
+    expect(said.at(-1)).toBe("In Ubuntu (WSL): Deleting build, as you asked. Press Control Alt X to cancel.");
+    announce({ userWords: "build-01 delete build/" }, 2);
+    expect(shown.at(-1)).toMatchObject({ where: "on this computer" });
+    expect(said.at(-1)).toBe("On this computer: Deleting build, as you asked. Press Control Alt X to cancel.");
+    announce({ userWords: "delete build/" }, 3);
+    expect(shown.at(-1).thought).toMatch(/^On this computer\. /);
+    expect(said.at(-1)).toBe("Deleting build, as you asked. Press Control Alt X to cancel.");
+    await h.host.stop();
+  });
+
+  it("names Ember's stop and settings shortcuts in its bubbles only while it holds them, as main says (cross-review X0, X5)", async () => {
+    const { t } = fakeTargets();
+    const shown: any[] = [];
+    let held = false;
+    const h = await started({
+      hands: hands(), targets: t, setState: (p: any) => { if (p.bubble) shown.push(p.bubble); },
+      stopKey: () => (held ? "Ctrl+Alt+X" : null), settingsKey: () => (held ? "Ctrl+Alt+E" : null),
+    });
+    const task = (n: number) => (h.real({ id: `9-k${n}`, goal: "x", target: {} } as never, () => undefined) as any).d.presenter;
+    task(1).announce("Deleting build, as you asked.", "ui:cmdstop:1");
+    expect(shown.at(-1).thought).toBe("On this computer. It starts in 4 seconds.");
+    held = true;
+    task(2).announce("Deleting build, as you asked.", "ui:cmdstop:2");
+    expect(shown.at(-1).thought).toBe("On this computer. It starts in 4 seconds. Ctrl+Alt+X stops everything at once.");
+    // The conversation's Read all route.
+    held = false;
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    await h.host.ask("what can I do?");
+    h.session.emit("assistant.message", { content: options });
+    expect(shown.at(-1).step).toBe("Or open Ember's settings and go to Conversation.");
+    await h.host.stop();
+  });
+
   it("a target that can't take the task when it runs ends it at once with why, and no session is made", async () => {
     const { t } = fakeTargets({ refuse: { "ssh:build-01": "build-01 isn't connected. Connect it from Ember's menu first." } });
     const { host, real } = await started({ hands: hands(), targets: t });

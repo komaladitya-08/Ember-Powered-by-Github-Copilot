@@ -107,13 +107,14 @@ class FakeRun implements RunningCommand {
   finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
 }
 
-function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean } = {}) {
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null } = {}) {
   const ipc = new FakeIpc();
   const windows: FakeWindow[] = [];
   const ctl = createCommandWindowController({
     create: () => { const w = new FakeWindow(); windows.push(w); return w; },
     ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
     ...(o.screenReader ? { screenReader: o.screenReader } : {}),
+    ...(o.stopKey ? { stopKey: o.stopKey } : {}),
   });
   const win = () => windows[windows.length - 1];
   const page = () => win().webContents;
@@ -783,6 +784,22 @@ describe("the announcement's time and keys (reviews #46, #269)", () => {
     void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
     expect(page().last().announce).not.toBeNull();
     expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+  });
+
+  it("names the stop chord only while Ember holds it, as the bubble and the spoken words do (cross-review X0)", async () => {
+    let key: string | null = null;
+    const { ctl, page } = setup({ stopKey: () => key });
+    void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).not.toBeNull();
+    expect(page().last().announceKeys).toBeUndefined();
+    // Held again (the 60 s retry got it back): named at the next state.
+    key = "Ctrl+Alt+X";
+    void ctl.announce(card({ mode: "announce", runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+    // A check that fails names none.
+    const failing = setup({ stopKey: () => { throw new Error("x"); } });
+    void failing.ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(failing.page().last().announceKeys).toBeUndefined();
   });
 });
 

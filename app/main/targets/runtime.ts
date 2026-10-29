@@ -383,6 +383,11 @@ export interface TargetsDepsExtra {
   bubbles?(): NoticeBoard | null;
   /** The settings shortcut as this OS writes it while Ember holds it ("Ctrl+Alt+E"), else null: bubbles name it only then. */
   settingsKey?(): string | null;
+  /**
+   * The stop chord as this OS writes it while Ember holds it ("Ctrl+Alt+X"), else null: the command window's
+   * announcement names it only then, as the bubble and the spoken words (cross-review X0). Absent: the OS's own.
+   */
+  stopKey?(): string | null;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -495,7 +500,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const keyHint = (): string | null => { try { return deps.keyHint?.() ?? null; } catch { return null; } };
   // Whether a screen reader runs: each run's terminal then mirrors its output for it (review #43).
   const screenReader = (): boolean => deps.sys.a11y.screenReaderOn();
-  const commandWindow = parts.commandWindow({ create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint, screenReader });
+  const commandWindow = parts.commandWindow({
+    create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint, screenReader,
+    ...(deps.stopKey ? { stopKey: () => deps.stopKey!() } : {}),
+  });
   // `notify`: a card that takes typing whose window didn't get the keyboard says so (review #235).
   const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os, notify: deps.notify });
 

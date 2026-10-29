@@ -453,6 +453,16 @@ describe("review round 4: how tasks end", () => {
     const b = linux.tm.start("Turn on Night Light");
     await vi.waitFor(() => expect(b.status).toBe("failed"));
     expect(b.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // While another app holds it (main asks when the task fails), none is named (cross-review X5).
+    let held: string | null = null;
+    const taken = manager(fails, { settingsKey: () => held });
+    const c = taken.tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(c.status).toBe("failed"));
+    expect(c.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in Ember's settings.");
+    held = "Win+Alt+E";
+    const d = taken.tm.start("Turn on Dark Mode");
+    await vi.waitFor(() => expect(d.status).toBe("failed"));
+    expect(d.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (Win+Alt+E).");
   });
 
   it("says when a finished card goes, and whether the user closed it", async () => {

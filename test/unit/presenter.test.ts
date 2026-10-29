@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
+import { SHORTCUTS } from "../../app/shared/shortcuts";
 
 // A test that fakes the clock (or sets its time) leaves the next one on the real clock.
 afterEach(() => { vi.useRealTimers(); });
@@ -767,6 +768,49 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
     expect(finished("It's half past three.").step).toBeNull();
     // Opened in full, it needs no route.
     expect(expandedBubble(finished(options), options).step).toBeNull();
+  });
+
+  it("names the settings shortcut under Read all only while Ember holds it, asked at each answer (cross-review X5)", () => {
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    let key: string | null = "Win+Alt+E";
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { shortcuts: SHORTCUTS.win32, settingsKey: () => key });
+    const options = "You have three options:\n\n1. Move the files…\n\n2. Delete the duplicates\n\n3. Leave everything as it is\n\nWhich would you like?";
+    const answer = () => {
+      p.userPrompt("what can I do?");
+      p.event({ type: "assistant.message_delta", data: { deltaContent: options } });
+      p.event({ type: "assistant.message", data: { content: options } });
+      return states.at(-1)!.bubble!;
+    };
+    expect(answer().step).toBe("Or press Win+Alt+E and go to Conversation.");
+    // Another app took it since: the way there without it.
+    key = null;
+    expect(answer().step).toBe("Or open Ember's settings and go to Conversation.");
+    // An error names it only while held too.
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data: { message: "model_not_supported" } });
+    expect(states.at(-1)!.bubble!.thought).toBe("The model I'm set to use isn't available. Pick another one in Ember's settings.");
+    key = "Win+Alt+E";
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data: { message: "model_not_supported" } });
+    expect(states.at(-1)!.bubble!.thought).toBe("The model I'm set to use isn't available. Pick another one in settings (Win+Alt+E).");
+    // A check that fails names none (it may be taken).
+    const q = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { settingsKey: () => { throw new Error("x"); } });
+    q.userPrompt("what can I do?");
+    q.event({ type: "assistant.message", data: { content: options } });
+    expect(states.at(-1)!.bubble!.step).toBe("Or open Ember's settings and go to Conversation.");
+  });
+
+  it("names the stop chord in an announcement only while Ember holds it (cross-review X0, X5)", () => {
+    const states: Partial<EmberState>[] = [];
+    let key: string | null = "Ctrl+Alt+X";
+    const p = new Presenter(s => states.push(s), undefined, () => "Delete build", new BubbleOwner(), undefined, false, { task: "t1", stopKey: () => key });
+    p.announce("Deleting build, as you asked.", "ui:cmdstop:1", 4000);
+    expect(states.at(-1)!.bubble).toMatchObject({ thought: "On this computer. It starts in 4 seconds. Ctrl+Alt+X stops everything at once.", actions: [{ id: "ui:cmdstop:1", label: "Stop" }] });
+    p.endAnnouncement("ui:cmdstop:1");
+    key = null;
+    p.announce("Deleting build, as you asked.", "ui:cmdstop:2", 15_000);
+    expect(states.at(-1)!.bubble).toMatchObject({ thought: "On this computer. It starts in 15 seconds.", actions: [{ id: "ui:cmdstop:2", label: "Stop" }] });
   });
 
   it("leaves no task's step on a turn stopped mid-step", () => {

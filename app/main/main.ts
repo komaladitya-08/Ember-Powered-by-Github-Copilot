@@ -1750,8 +1750,10 @@ function start(): void {
       stopTasksOn: (target, only, why) => { agent?.cancelTasksOn(target, only, why); },
       // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
       bubbles: () => agent?.notices ?? null,
-      // Its bubbles' keyboard route names the settings shortcut only while Ember holds it.
+      // Its bubbles' keyboard route names the settings shortcut only while Ember holds it, and its command window's
+      // announcement the stop chord (cross-review X0).
       settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
+      stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null),
     });
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
@@ -1802,6 +1804,9 @@ function start(): void {
       onAnnounce: text => { if (maySpeak()) voice?.speak(spokenText(text)); },
       // Its cancel words: the kill phrase only where Ember can tell its own voice from the user's (owner decision V1).
       cancelWords: () => cancelWords({ killPhrase: voice?.rejectsSpeakers ?? false, stopKey: hasKey(sc.stop.accel) ? sc.stop.say : null }),
+      // Its bubbles name the settings shortcut and the stop chord only while Ember holds them (cross-review X0, X5).
+      settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
+      stopKey: () => (hasKey(sc.stop.accel) ? sc.stop.label : null),
     });
     // The network came back (or the computer woke): a connection waiting to retry tries now. (Electron's
     // main process has no online/offline event; a VPN coming up is covered by asking, which retries too.)
