@@ -8,6 +8,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { handleCornerText } from "./copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
@@ -127,6 +128,11 @@ function applySettings(s: Settings): void {
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
   ($("text-size") as HTMLSelectElement).value = s.textSize;
+  ($("handle-position") as HTMLSelectElement).value = s.handlePosition;
+  // The copy that names the handle's corner follows Handle position (review #75).
+  const corner = handleCornerText(s.handlePosition);
+  if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
+  if (presence) renderPresence(presence);
   // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
   // everything else waits until Ember has started.
   const consented = s.consent.version >= CONSENT_VERSION;
@@ -163,6 +169,8 @@ $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
 $("text-size").addEventListener("change", e => { void save({ textSize: (e.target as HTMLSelectElement).value as Settings["textSize"] }); });
+// The handle (and its task cards) moves as main hears the change (handle.ts, overlay/main.ts).
+$("handle-position").addEventListener("change", e => { void save({ handlePosition: (e.target as HTMLSelectElement).value as Settings["handlePosition"] }); });
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
@@ -203,7 +211,7 @@ let toLook = 0;
 function renderTagline(): void {
   const text = tagline({
     failing, look: toLook, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
-    hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true,
+    hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
 }
@@ -902,11 +910,12 @@ function renderPresence(p: Presence): void {
   $("p-follow").hidden = !p.overlay;
   $("p-hide").textContent = p.hidden ? "Show Ember" : "Hide Ember";
   $("p-follow").textContent = p.paused ? "Follow my cursor" : "Stay put";
-  $("presence-text").textContent = !p.overlay
-    ? "This desktop session can't show Ember beside your cursor, so it lives in the card in the bottom-right corner."
+  const line = !p.overlay
+    ? `This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`
     : p.hidden
       ? "Ember is hidden. It shows itself again when it needs to ask you something."
       : p.paused ? "Ember stays where it is instead of following your cursor." : "Ember follows your cursor.";
+  if ($("presence-text").textContent !== line) $("presence-text").textContent = line;
   renderTagline();
 }
 $("p-hide").addEventListener("click", () => { void window.ember.setPresence({ hidden: !(presence?.hidden ?? false) }).then(renderPresence); });

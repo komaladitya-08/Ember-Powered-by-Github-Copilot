@@ -49,7 +49,7 @@
         <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
       </div>
       <p class="hint after-setup" id="autostart-note" hidden></p>
-      <p class="hint after-setup">Press <span class="chord" data-shortcut="settings"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
+      <p class="hint after-setup">Press <span class="chord" data-shortcut="settings"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the <span id="handle-corner">bottom-right corner</span>.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="copilot-h">
@@ -166,7 +166,12 @@
             <button type="button" id="p-follow" class="btn quiet">Stay put</button>
             <button type="button" id="p-quit" class="btn quiet">Quit Ember</button>
           </div>
+          <label class="switch-row"><span>Handle position</span><select id="handle-position">
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+          </select></label>
         </div>
+        <p class="hint">Ember's handle and its task cards sit in this corner of your main screen. Move to the other side in the handle's menu switches it too.</p>
         <h3 class="sub">Text</h3>
         <div class="group">
           <label class="switch-row"><span>Text size</span><select id="text-size">

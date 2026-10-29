@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { HANDLE_MARGIN, HANDLE_POSITIONS, handleCorner, otherSide, sideOf } from "../../app/shared/handle-place";
 import { DEFAULT_SETTINGS, SettingsStore, repairSettings } from "../../app/main/settings";
+import { handleCornerText, tagline } from "../../app/renderer/home/copy";
 
 const PILL = { width: 200, height: 56 };
 const TAB = { width: 56, height: 56 };
@@ -183,5 +184,60 @@ describe("the task card stack on the handle's side", () => {
   it("comes back to the handle's side when the setting changes while the handle is on another display", () => {
     const apply = page.slice(page.indexOf("function applySettings(s: Settings): void {"), page.indexOf("\n}\n", page.indexOf("function applySettings(s: Settings): void {")));
     expect(apply).toContain("if (homeSide() !== placedSide) placeTasks();");
+  });
+});
+
+describe("Settings › Comfort & access › Handle position", () => {
+  const page = fs.readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+  const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+  const access = page.slice(page.indexOf('<h2 id="access-h"'), page.indexOf("</section>", page.indexOf('<h2 id="access-h"')));
+
+  it("is a pop-up button under Ember on screen: Bottom right or Bottom left, named by its label", () => {
+    const onScreen = access.slice(access.indexOf("Ember on screen"), access.indexOf('<h3 class="sub">Text</h3>'));
+    expect(onScreen).toContain([
+      '<label class="switch-row"><span>Handle position</span><select id="handle-position">',
+      '            <option value="bottom-right">Bottom right</option>',
+      '            <option value="bottom-left">Bottom left</option>',
+      "          </select></label>",
+    ].join("\n"));
+    expect(onScreen).toContain('<p class="hint">Ember\'s handle and its task cards sit in this corner of your main screen. Move to the other side in the handle\'s menu switches it too.</p>');
+  });
+
+  it("shows the setting in use and saves a change at once", () => {
+    expect(home).toContain('($("handle-position") as HTMLSelectElement).value = s.handlePosition;');
+    expect(home).toContain('$("handle-position").addEventListener("change", e => { void save({ handlePosition: (e.target as HTMLSelectElement).value as Settings["handlePosition"] }); });');
+  });
+});
+
+describe("copy that says where the handle is", () => {
+  const page = fs.readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
+  const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+  const base = { failing: 0, onboarded: true, phase: "ready", hidden: false, overlay: true } as const;
+
+  it("names the corner Handle position puts it in", () => {
+    expect(handleCornerText("bottom-right")).toBe("bottom-right corner");
+    expect(handleCornerText("bottom-left")).toBe("bottom-left corner");
+    expect(handleCornerText(undefined)).toBe("bottom-right corner");
+  });
+
+  it("in the line at the top of settings, while Ember lives in the corner card", () => {
+    expect(tagline({ ...base, overlay: false })).toMatch(/^Ember is in the bottom-right corner\./);
+    expect(tagline({ ...base, overlay: false, corner: "bottom-left" })).toMatch(/^Ember is in the bottom-left corner\./);
+    expect(tagline({ ...base, overlay: false, corner: "bottom-right" })).toMatch(/^Ember is in the bottom-right corner\./);
+    // Beside the cursor, the corner isn't named.
+    expect(tagline({ ...base, corner: "bottom-left" })).toMatch(/^Ember is beside your cursor\./);
+    expect(home).toContain("hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,");
+  });
+
+  it("in the way back to settings under Your Ember, and in Ember on screen without a compositor", () => {
+    expect(page).toContain("or click Ember's handle in the <span id=\"handle-corner\">bottom-right corner</span>.</p>");
+    expect(home).toContain('if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;');
+    expect(home).toContain("const corner = handleCornerText(s.handlePosition);");
+    // Ember on screen's line follows a change too (said again only when its words change: it is a live region).
+    expect(home).toContain("if (presence) renderPresence(presence);");
+    expect(home).toContain('if ($("presence-text").textContent !== line) $("presence-text").textContent = line;');
+    expect(home).toContain("`This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`");
+    // Neither says bottom-right on its own any more.
+    expect(home).not.toMatch(/bottom-right corner/);
   });
 });
