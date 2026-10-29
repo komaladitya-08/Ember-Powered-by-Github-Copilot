@@ -10,9 +10,11 @@
  * the Settings app matched by pid to the window system's frame (only with UAC on: EMBER_CI_LUA); and the packaged
  * accessibility host answers a ping when run as Ember.exe in node mode (EMBER_PACKAGED_APP, after staging). Last, Ember
  * itself (the development build, npm run build) started as at login: the real ask chord (Win+Alt+Space through
- * SendInput) opens the box, and what it holds of letters typed straight after is printed (review #78: Windows has no
- * typed-ahead hold; typeahead-probe.ts); then its right-click menu dismissed by a click on the bench leaves the bench
- * the keyboard (review #77).
+ * SendInput), pressed while the user types in the bench's Name field, opens the box, and what it holds of letters typed
+ * straight after is printed (review #78: Windows has no typed-ahead hold; typeahead-probe.ts), with when Ember heard
+ * the chord, showed the box and had the keyboard (its log), how many letters the bench got, and the box's tip to wait
+ * for it (its first openings); then its right-click menu dismissed by a click on the bench leaves the bench the
+ * keyboard (review #77).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -38,7 +40,7 @@ import { Perception } from "../../app/main/perception";
 import { matchFrame } from "../../app/main/perception/windows";
 import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
-import { PROBE_PACE_MS, PROBE_TEXT, probeVerdict } from "./typeahead-probe";
+import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -77,6 +79,20 @@ function benchReady(log: string): BenchReady | null {
     }
   }
   return null;
+}
+
+/** How long the bench's Name field is now, by its log's last "text" line for it (0 before any). */
+function benchNameLength(log: string): number {
+  let length = 0;
+  for (const line of fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n") : []) {
+    try {
+      const e = JSON.parse(line) as { event?: string; control?: string; length?: number };
+      if (e.event === "text" && e.control === "Name" && typeof e.length === "number") length = e.length;
+    } catch {
+      // a line still being written: read whole next time
+    }
+  }
+  return length;
 }
 
 /** Builds EmberBench.exe (cached in %TEMP% per version) and gives its path. */
@@ -136,6 +152,8 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
   let started: SidecarStatus;
   let bench: ChildProcess | undefined;
   let ready: BenchReady;
+  /** The bench's JSON-lines log (its Name field's length after each change, among the rest). */
+  let benchLog = "";
   let overlay: OverlayChild | null = null;
   /** Perception's hideOverlay: the stand-in when one is up (as main hides its overlay and handle), else nothing to hide. */
   let hideOverlay: () => Promise<() => void> = async () => () => undefined;
@@ -179,7 +197,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       return st?.toolkitAccessibility === true ? st : null;
     }, 120_000);
     const exe = buildBench();
-    const benchLog = path.join(dir, "bench.jsonl");
+    benchLog = path.join(dir, "bench.jsonl");
     // Not windowsHide: that would hide the bench's window.
     bench = spawn(exe, ["-Log", benchLog, "-Seconds", "900"], { stdio: "ignore" });
     ready = await waitFor("the bench's ready line", () => benchReady(benchLog), 60_000);
@@ -355,15 +373,26 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
         return;
       }
       await front();
-      // Win+Alt+Space with SendInput (what a person's keyboard gives), let go, then the letters at once.
       const x = input!;
+      // The user is typing in the bench's Name field: letters that go there instead of the box are in the bench's log.
+      const name = ready.controls.Name;
+      x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+      await sleep(150);
+      x.button(1, true);
+      x.button(1, false);
+      await sleep(300);
+      const nameBefore = benchNameLength(benchLog);
+      // Win+Alt+Space with SendInput (what a person's keyboard gives), let go, then the letters at once.
       const mods = ["Super_L", "Alt_L"].map(n => x.keysymOf(n));
       const space = x.keysymOf("space");
       for (const k of mods) expect(x.keysym(k, true)).toBe(true);
+      const pressedAt = Date.now();
       x.keysym(space, true);
       x.keysym(space, false);
       for (const k of [...mods].reverse()) x.keysym(k, false);
+      const typedAt: number[] = [];
       for (const ch of PROBE_TEXT) {
+        typedAt.push(Date.now());
         x.textKey!(ch, true);
         x.textKey!(ch, false);
         await sleep(PROBE_PACE_MS);
@@ -371,13 +400,19 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       await waitFor("the ask box from the real chord", async () => (await askWindow())?.visible, 5_000)
         .catch(async (e: unknown) => { throw new Error(`${(e as Error).message} (the ask window: ${JSON.stringify(await askWindow())})`); });
       await sleep(800);
-      const held = await ember.evaluate(async ({ BrowserWindow }) => {
+      const { held, tip } = await ember.evaluate(async ({ BrowserWindow }) => {
         const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
-        return w ? String(await w.webContents.executeJavaScript(`document.querySelector("#q")?.value ?? ""`)) : "";
+        return w ? await w.webContents.executeJavaScript(`({ held: document.querySelector("#q")?.value ?? "", tip: document.getElementById("tip")?.hidden === false ? document.getElementById("tip").textContent : null })`) as { held: string; tip: string | null } : { held: "", tip: null };
       });
       const verdict = probeVerdict("Windows", PROBE_TEXT, held);
       console.log(verdict.line);
+      // When Ember heard the chord, showed the box and had the keyboard (its own log), and where the lost letters went.
+      const emberLog = path.join(userData, "logs", "ember.log");
+      console.log(probeTimeline("Windows", fs.existsSync(emberLog) ? fs.readFileSync(emberLog, "utf8") : "", pressedAt, typedAt, verdict.lost).line);
+      console.log(`typed-ahead probe (Windows): the bench's Name field got ${benchNameLength(benchLog) - nameBefore} of the letters; the box's tip: ${tip === null ? "not shown" : JSON.stringify(tip)}`);
       expect(verdict.inOrder, verdict.line).toBe(true);
+      // A fresh profile: this is the box's first opening, where Ember can't hold the letters typed meanwhile.
+      expect(tip, "the box's tip to wait for it on its first openings").toBe("Wait for this box before you type: letters typed sooner go to the app underneath.");
 
       // Review #77: right-click in the box's field (its Cut, Copy, Paste menu comes up), then click the bench's Name
       // field. If that click activates the bench, the box goes away and leaves it the keyboard; if the menu's loop
@@ -389,7 +424,6 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       x.button(3, true);
       x.button(3, false);
       await sleep(800);
-      const name = ready.controls.Name;
       x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
       await sleep(150);
       x.button(1, true);
