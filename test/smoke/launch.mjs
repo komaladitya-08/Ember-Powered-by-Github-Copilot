@@ -59,7 +59,10 @@ function launch(name, extra = []) {
   const debug = copied && name === "first" ? ["--remote-debugging-port=0"] : [];
   const child = spawn(command, [...appArgs, ...flags, ...debug, ...extra], { env, stdio: ["ignore", "pipe", "pipe"] });
   const events = [];
-  /** Ask boxes opened for a launcher's --ask (ask.open from "launcher"). */
+  /**
+   * Ask boxes shown for a launcher's --ask: ask.reveal from "launcher", written once the box is on screen. Not ask.open,
+   * which is written whether or not a box came up (settings instead without consent, a page too late to show).
+   */
   const asked = { count: 0 };
   /** Ask Ember in the OS's launcher: the jump list (launcher.tasks: whether Windows took it), the Dock menu. */
   const launcher = { tasks: undefined, dock: false };
@@ -78,7 +81,7 @@ function launch(name, extra = []) {
         const entry = JSON.parse(line);
         const msg = entry.msg;
         events.push(msg);
-        if (msg === "ask.open" && entry.source === "launcher") asked.count++;
+        if (msg === "ask.reveal" && entry.source === "launcher") asked.count++;
         if (msg === "launcher.tasks") launcher.tasks = entry.ok;
         if (msg === "launcher.dock") launcher.dock = true;
         if (msg === "app.start_failed") failed ??= line.trim();

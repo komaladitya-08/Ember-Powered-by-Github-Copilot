@@ -181,6 +181,14 @@ describe("restartOptions", () => {
     expect(restartOptions({ APPIMAGE: "", APPDIR: MOUNT }, [`${MOUNT}/ember/ember`], `${MOUNT}/ember/ember`)).toBeUndefined();
     expect(restartOptions({ APPIMAGE, APPDIR: "" }, [`${MOUNT}/ember/ember`], `${MOUNT}/ember/ember`)).toBeUndefined();
   });
+
+  it("leaves out a launcher's --ask, which asked for the ask box once, when the start had it", () => {
+    // The policy restart and "Restart Ember" after an update alike: the restarted Ember doesn't open the box unasked.
+    expect(restartOptions({}, ["/opt/ember/ember", "--ozone-platform=x11", "--ask"], "/opt/ember/ember")).toEqual({ args: ["--ozone-platform=x11"] });
+    expect(restartOptions({}, ["C:\\Program Files\\Ember\\Ember.exe", "--ask"], "C:\\Program Files\\Ember\\Ember.exe")).toEqual({ args: [] });
+    expect(restartOptions({ APPIMAGE, APPDIR: MOUNT }, [`${MOUNT}/ember/ember`, "--ask", "--ozone-platform=x11"], `${MOUNT}/ember/ember`))
+      .toEqual({ execPath: APPIMAGE, args: ["--ozone-platform=x11"] });
+  });
 });
 
 describe("runningAppImage", () => {

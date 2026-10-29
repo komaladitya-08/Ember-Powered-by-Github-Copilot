@@ -1,13 +1,15 @@
 /**
  * An update that replaces Ember's files under a running Ember (an RPM upgrade, also from GNOME Software or a
  * dnf-automatic timer) is noticed when the next window opens, and Ember offers to restart (install-watch.ts). Review #203.
- * The restart starts an AppImage again from the AppImage, not from its mount (the release follow-up on relaunching).
+ * The restart starts an AppImage again from the AppImage, not from its mount (the release follow-up on relaunching),
+ * and never with a launcher's --ask, which opened the ask box once (final review P3).
  */
 
 import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { UPDATED_QUESTION, createUpdateCheck, installStamp, restartAfterUpdate, updatedDetail, type StatLike } from "../../app/main/install-watch";
+import { wantsAsk } from "../../app/main/launcher";
 
 vi.mock("electron", () => ({ BrowserWindow: class {} }));
 const { quitQuestion } = await import("../../app/main/windows");
@@ -145,6 +147,24 @@ describe("restarting after an update", () => {
       const app = fakeApp();
       restartAfterUpdate(app, env, argv, argv[0]);
       expect(app.calls, JSON.stringify(env)).toEqual([["relaunch"], ["quit"]]);
+    }
+  });
+
+  it("never starts Ember again with a launcher's --ask: the ask box was asked for once, by the start that had it", () => {
+    // Ember was started by Ask Ember (the Linux desktop entry's action, the Windows jump list) while it wasn't running,
+    // so --ask stays in its arguments for as long as it runs.
+    const appImage = { APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", APPDIR: "/tmp/.mount_EmberAb12" };
+    for (const [env, argv, relaunched] of [
+      [{}, ["/opt/ember/ember", "--ozone-platform=x11", "--ask"], { args: ["--ozone-platform=x11"] }],
+      [{}, ["C:\\Users\\ada\\AppData\\Local\\Programs\\Ember\\Ember.exe", "--ask"], { args: [] }],
+      // A development run: Electron is given the app's folder first.
+      [{}, ["/home/ada/ember/node_modules/electron/dist/electron", "/home/ada/ember", "--ask"], { args: ["/home/ada/ember"] }],
+      [appImage, ["/tmp/.mount_EmberAb12/ember/ember", "--ozone-platform=x11", "--ask"], { execPath: appImage.APPIMAGE, args: ["--ozone-platform=x11"] }],
+    ] as const) {
+      const app = fakeApp();
+      restartAfterUpdate(app, env, argv, argv[0]);
+      expect(app.calls, argv.join(" ")).toEqual([["relaunch", relaunched], ["quit"]]);
+      expect(wantsAsk([argv[0], ...relaunched.args])).toBe(false);
     }
   });
 

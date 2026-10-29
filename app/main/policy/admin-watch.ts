@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { lockedDown, samePolicy, type LoadedAdminPolicy } from "../admin";
+import { ASK_ARG } from "../launcher";
 
 /** How often the policy is read again (the remote's helper's interval too). */
 export const ADMIN_WATCH_MS = 10_000;
@@ -82,9 +83,13 @@ export function runningAppImage(env: NodeJS.ProcessEnv, execPath: string, realpa
  * How Electron's app.relaunch starts Ember again (once its policy changed, or after "Restart Ember" when it was
  * updated): when Ember runs from an AppImage (runningAppImage), the AppImage itself with the same arguments, since the
  * program Ember runs is in the AppImage's mount under /tmp, which is gone once Ember quits; elsewhere undefined, the
- * same program with the same arguments (Electron's default).
+ * same program with the same arguments (Electron's default). Either way without a launcher's --ask (ASK_ARG): that
+ * start asked for the ask box once, and a restart must not open it again unasked (so a start that had it is given the
+ * rest of its arguments, as `args`).
  */
-export function restartOptions(env: NodeJS.ProcessEnv, argv: readonly string[], execPath: string): { execPath: string; args: string[] } | undefined {
+export function restartOptions(env: NodeJS.ProcessEnv, argv: readonly string[], execPath: string): { execPath?: string; args: string[] } | undefined {
   const appImage = runningAppImage(env, execPath);
-  return appImage ? { execPath: appImage, args: argv.slice(1) } : undefined;
+  const args = argv.slice(1).filter(a => a !== ASK_ARG);
+  if (appImage) return { execPath: appImage, args };
+  return args.length < argv.length - 1 ? { args } : undefined;
 }

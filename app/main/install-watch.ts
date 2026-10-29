@@ -68,7 +68,8 @@ export interface Relauncher {
  * an AppImage, that is the AppImage itself with the same arguments, as for a policy change (restartOptions):
  * `execPath` (process.execPath) is in the AppImage's mount under /tmp, which is gone once Ember quits. Everywhere else
  * (the RPM, Windows, macOS, and an RPM Ember that merely inherited another AppImage app's APPIMAGE and APPDIR) it is
- * Electron's own default, unchanged: app.relaunch() with no options, the same program with the same arguments.
+ * Electron's own default, unchanged: app.relaunch() with no options, the same program with the same arguments. A start
+ * that had a launcher's --ask is started again without it (restartOptions): it opened the ask box once, for that start.
  */
 export function restartAfterUpdate(app: Relauncher, env: NodeJS.ProcessEnv, argv: readonly string[], execPath: string): void {
   const options = restartOptions(env, argv, execPath);

@@ -1166,7 +1166,10 @@ else {
     const args = fs.readFileSync(path.join(dir, "second"), "utf8");
     fs.rmSync(path.join(dir, "second"));
     log("instance.second");
-    if (args.includes("--ask") && settings.onboarded === true && mode !== "no-ask") log("ask.open", { source: "launcher" });
+    if (!args.includes("--ask") || settings.onboarded !== true || mode === "no-ask") return;
+    log("ask.open", { source: "launcher" });
+    // Once the box is on screen (AskWindow's reveal); "no-reveal": asked for, but it never showed.
+    if (mode !== "no-reveal") log("ask.reveal", { source: "launcher" });
   }, 50);
 }
 `, { mode: 0o755 });
@@ -1205,6 +1208,13 @@ else {
 
   it("fails when a start with --ask doesn't open the ask box in the running Ember (D-45b)", () => {
     const r = smoke("no-ask");
+    expect(r.stdout).toMatch(/ok {3}second launch handed over/);
+    expect(r.stderr).toMatch(/FAIL timed out after 10 s waiting for the first instance to open the ask box for a start with --ask/);
+    expect(r.status).toBe(1);
+  }, 30_000);
+
+  it("fails when the running Ember asked for the ask box but it never showed (ask.open without ask.reveal)", () => {
+    const r = smoke("no-reveal");
     expect(r.stdout).toMatch(/ok {3}second launch handed over/);
     expect(r.stderr).toMatch(/FAIL timed out after 10 s waiting for the first instance to open the ask box for a start with --ask/);
     expect(r.status).toBe(1);
