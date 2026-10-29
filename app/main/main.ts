@@ -33,6 +33,8 @@ import { useAppNames } from "../shared/apps";
 import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
+import { warmText } from "./perception/capture";
+import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow } from "./ask";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
@@ -1524,6 +1526,12 @@ function start(): void {
     if (launch) {
       setTimeout(() => sidecar.status().then(st => { helper = toHelperStatus(st); }, () => { helper = null; }), atLogin ? 60_000 : 10_000).unref();
     }
+    // The first screenshot with Ember's marks on a fresh Windows or macOS machine doesn't pay fontconfig's cache build:
+    // sharp's text is drawn once in the background, later at login (text-warm.ts).
+    scheduleTextWarm({
+      os: platform.os, argv: process.argv, marker: path.join(userData, "text-warmed"), key: app.getVersion(),
+      delayMs: atLogin ? 60_000 : TEXT_WARM_DELAY_MS, draw: warmText, log: log.child("perception"),
+    });
     perception = new Perception({
       sidecar: seenBy, x11: wsSeen, log: log.child("perception"),
       neverLook: () => settings.get().privacy.neverLook,

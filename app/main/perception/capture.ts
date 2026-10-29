@@ -11,6 +11,7 @@
 import { createRequire } from "node:module";
 import type Sharp from "sharp";
 import type { PerceptionWindows, X11Image } from "../platform/types";
+import { MARK_FONT } from "./marks";
 import type { Bounds } from "./sidecar";
 
 export interface Capture {
@@ -52,6 +53,16 @@ const sharp: typeof Sharp = ((...args: Parameters<typeof Sharp>) => {
   sharpModule ??= requireCjs("sharp") as typeof Sharp;
   return sharpModule(...args);
 }) as typeof Sharp;
+
+/**
+ * Draws one mark's text (marks.ts's font, size and weight) on a small picture and drops it: the first text sharp draws
+ * builds fontconfig's cache, which text-warm.ts has paid before the first screenshot with marks. sharp draws on
+ * libuv's threads.
+ */
+export async function warmText(): Promise<void> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><text x="2" y="12" font-family="${MARK_FONT}" font-size="11" font-weight="700">1</text></svg>`;
+  await sharp({ create: { width: 24, height: 16, channels: 3, background: "#ffffff" } }).composite([{ input: Buffer.from(svg) }]).png().toBuffer();
+}
 
 export function bgraToRgba(bgra: Buffer): Buffer {
   const out = Buffer.allocUnsafe(bgra.length);
