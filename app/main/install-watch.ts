@@ -64,13 +64,14 @@ export interface Relauncher {
 }
 
 /**
- * Restarts Ember after "Restart Ember": Electron starts it again once it has quit, then it quits. Inside an AppImage
- * that is the AppImage itself with the same arguments, as for a policy change (restartOptions): process.execPath is
- * in the AppImage's mount under /tmp, which is gone once Ember quits. Everywhere else (the RPM, Windows, macOS) it is
+ * Restarts Ember after "Restart Ember": Electron starts it again once it has quit, then it quits. When Ember runs from
+ * an AppImage, that is the AppImage itself with the same arguments, as for a policy change (restartOptions):
+ * `execPath` (process.execPath) is in the AppImage's mount under /tmp, which is gone once Ember quits. Everywhere else
+ * (the RPM, Windows, macOS, and an RPM Ember that merely inherited another AppImage app's APPIMAGE and APPDIR) it is
  * Electron's own default, unchanged: app.relaunch() with no options, the same program with the same arguments.
  */
-export function restartAfterUpdate(app: Relauncher, env: NodeJS.ProcessEnv, argv: readonly string[]): void {
-  const options = restartOptions(env, argv);
+export function restartAfterUpdate(app: Relauncher, env: NodeJS.ProcessEnv, argv: readonly string[], execPath: string): void {
+  const options = restartOptions(env, argv, execPath);
   if (options) app.relaunch(options);
   else app.relaunch();
   app.quit();

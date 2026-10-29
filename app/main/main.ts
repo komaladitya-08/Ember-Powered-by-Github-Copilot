@@ -609,7 +609,7 @@ function start(): void {
       });
       return response === 0;
     },
-    restart: () => { log.info("app.restart_after_update"); restartAfterUpdate(app, process.env, process.argv); },
+    restart: () => { log.info("app.restart_after_update"); restartAfterUpdate(app, process.env, process.argv, process.execPath); },
   }) : null;
   app.on("browser-window-created", () => updateCheck?.beforeWindow());
   /** The handle's menu is open (or opening): a second click doesn't open another one over it. */
@@ -1256,8 +1256,8 @@ function start(): void {
     if (id === "ui:more") { expandAnswer(); return; }
     if (id === "ui:conversation") { readLastAnswer(); return; }
     if (id === "ui:close") { closeExpanded(); return; }
-    // The administrator's policy changed while Ember ran: a restart reads it whole (inside an AppImage, the AppImage).
-    if (id === "ui:restart" && admin.held) { app.relaunch(restartOptions(process.env, process.argv)); app.quit(); return; }
+    // The administrator's policy changed while Ember ran: a restart reads it whole (run from an AppImage, the AppImage).
+    if (id === "ui:restart" && admin.held) { app.relaunch(restartOptions(process.env, process.argv, process.execPath)); app.quit(); return; }
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {

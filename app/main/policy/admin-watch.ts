@@ -9,6 +9,8 @@
  * policy that can't be used. Plain Node: the reader is the platform's policy source, passed in.
  */
 
+import fs from "node:fs";
+import path from "node:path";
 import { lockedDown, samePolicy, type LoadedAdminPolicy } from "../admin";
 
 /** How often the policy is read again (the remote's helper's interval too). */
@@ -54,11 +56,35 @@ export function watchAdminPolicy(o: AdminWatchOptions): () => void {
   return () => clearInterval(timer);
 }
 
+/** A path with its symbolic links resolved; as it is when it can't be (gone, or no permission). */
+function resolved(p: string, realpath: (p: string) => string): string {
+  try {
+    return realpath(p);
+  } catch {
+    return p;
+  }
+}
+
 /**
- * How Electron's app.relaunch starts Ember again once its policy changed: inside an AppImage, the AppImage itself (the
- * program Ember runs is in the AppImage's mount under /tmp, which is gone once Ember quits); elsewhere undefined, the
- * same program with the same arguments.
+ * The AppImage Ember runs from, or null. An AppImage's runtime sets APPIMAGE (the AppImage) and APPDIR (where it is
+ * mounted or extracted) for the program inside it, but every process that program starts inherits them too: an RPM
+ * Ember started from a shell in another AppImage app's terminal sees that app's. So APPIMAGE counts only when Ember's
+ * own program (`execPath`, process.execPath) is inside APPDIR, symbolic links resolved on both.
  */
-export function restartOptions(env: NodeJS.ProcessEnv, argv: readonly string[]): { execPath: string; args: string[] } | undefined {
-  return env.APPIMAGE ? { execPath: env.APPIMAGE, args: argv.slice(1) } : undefined;
+export function runningAppImage(env: NodeJS.ProcessEnv, execPath: string, realpath: (p: string) => string = fs.realpathSync): string | null {
+  if (!env.APPIMAGE || !env.APPDIR) return null;
+  const rel = path.relative(resolved(env.APPDIR, realpath), resolved(execPath, realpath));
+  const inside = rel !== "" && rel !== ".." && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
+  return inside ? env.APPIMAGE : null;
+}
+
+/**
+ * How Electron's app.relaunch starts Ember again (once its policy changed, or after "Restart Ember" when it was
+ * updated): when Ember runs from an AppImage (runningAppImage), the AppImage itself with the same arguments, since the
+ * program Ember runs is in the AppImage's mount under /tmp, which is gone once Ember quits; elsewhere undefined, the
+ * same program with the same arguments (Electron's default).
+ */
+export function restartOptions(env: NodeJS.ProcessEnv, argv: readonly string[], execPath: string): { execPath: string; args: string[] } | undefined {
+  const appImage = runningAppImage(env, execPath);
+  return appImage ? { execPath: appImage, args: argv.slice(1) } : undefined;
 }

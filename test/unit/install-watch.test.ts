@@ -123,7 +123,7 @@ describe("restarting after an update", () => {
   it("starts the AppImage itself again, not the copy in its mount that goes away once Ember quits", () => {
     const app = fakeApp();
     const argv = ["/tmp/.mount_EmberAb12/ember/ember", "--ozone-platform=x11", "--show-settings"];
-    restartAfterUpdate(app, { APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", APPDIR: "/tmp/.mount_EmberAb12" }, argv);
+    restartAfterUpdate(app, { APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", APPDIR: "/tmp/.mount_EmberAb12" }, argv, "/tmp/.mount_EmberAb12/ember/ember");
     expect(app.calls).toEqual([
       ["relaunch", { execPath: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", args: ["--ozone-platform=x11", "--show-settings"] }],
       ["quit"],
@@ -136,18 +136,27 @@ describe("restarting after an update", () => {
       [{ LOCALAPPDATA: "C:\\Users\\ada\\AppData\\Local" }, ["C:\\Users\\ada\\AppData\\Local\\Programs\\Ember\\Ember.exe"]],
       [{ HOME: "/Users/ada" }, ["/Applications/Ember.app/Contents/MacOS/Ember"]],
       [{ APPIMAGE: "" }, ["/opt/ember/ember"]],
+      // An RPM Ember started from a shell in another AppImage app's terminal, which passes on its APPIMAGE and APPDIR:
+      // restarting it must start Ember again, not that app.
+      [{ APPIMAGE: "/home/ada/Apps/SomeTerminal-x86_64.AppImage", APPDIR: "/tmp/.mount_SomeTeXy12" }, ["/opt/ember/ember", "--autostart"]],
+      // APPIMAGE without APPDIR: nothing says Ember runs from it.
+      [{ APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage" }, ["/opt/ember/ember"]],
     ] as const) {
       const app = fakeApp();
-      restartAfterUpdate(app, env, argv);
+      restartAfterUpdate(app, env, argv, argv[0]);
       expect(app.calls, JSON.stringify(env)).toEqual([["relaunch"], ["quit"]]);
     }
   });
 
-  it("is how main.ts restarts once the user says \"Restart Ember\"", () => {
+  it("is how main.ts restarts once the user says \"Restart Ember\", and both restarts tell restartOptions which program runs", () => {
     const main = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
     const check = main.slice(main.indexOf("createUpdateCheck({"), main.indexOf("app.on(\"browser-window-created\""));
-    expect(check).toContain("restartAfterUpdate(app, process.env, process.argv)");
-    // No restart in main.ts starts the program in an AppImage's mount: each passes restartOptions' answer.
+    expect(check).toContain("restartAfterUpdate(app, process.env, process.argv, process.execPath)");
+    // No restart in main.ts starts the program in an AppImage's mount, or an AppImage Ember doesn't run from: each
+    // passes restartOptions' answer for this program.
     expect(main).not.toMatch(/app\.relaunch\(\)/);
+    const policyRestarts = main.match(/restartOptions\([^)]*\)/g) ?? [];
+    expect(policyRestarts.length).toBeGreaterThan(0);
+    for (const call of policyRestarts) expect(call).toBe("restartOptions(process.env, process.argv, process.execPath)");
   });
 });
