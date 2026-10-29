@@ -300,7 +300,9 @@ describe("the command window's words (§8.5)", () => {
     expect(say({ ms: 3200 })).toBe("Finished in 3.2\u00a0s.");
     expect(say({ code: 2, ms: 1100 })).toBe("Ended with exit code 2 after 1.1\u00a0s.");
     expect(say({ ended: "stopped-user", code: null, ms: 12_000 })).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
-    expect(say({ ended: "killswitch", code: null, ms: 2000 })).toBe("Stopped by Ctrl+Alt+X after 2\u00a0s. What it already changed stays.");
+    // The kill switch has more ways than its chord (the handle, settings, "Ember, stop", a policy change), and the chord
+    // may be another app's: the line names none (cross-review X5).
+    expect(say({ ended: "killswitch", code: null, ms: 2000 })).toBe("Stopped with everything else after 2\u00a0s. What it already changed stays.");
     expect(say({ ended: "timeout", code: null, ms: 120_000 })).toBe("Stopped after 2\u00a0min: it took too long.");
     expect(say({ ended: "lost", code: null })).toBe("The connection to build-01 dropped; the command was stopped there.");
     expect(say({ ended: "failed-to-start", code: null, error: "bash isn't installed on build-01." })).toBe("Couldn't start: bash isn't installed on build-01.");
