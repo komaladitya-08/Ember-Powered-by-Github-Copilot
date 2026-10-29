@@ -1525,7 +1525,8 @@ function start(): void {
     const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
     if (!runtime.exists) log.error("agent.runtime_missing", { path: runtime.path });
     // Perception: the accessibility sidecar (text) and the window system's capture (images). Linux starts the Python
-    // AT-SPI sidecar (no launch); Windows and macOS the shared host, run as Ember's own binary.
+    // AT-SPI sidecar (no launch); Windows and macOS the shared host (Windows: Ember's own binary in node mode; macOS: a
+    // utility process, review #177).
     const launch = platform.sidecarLaunch(sidecarContext());
     const sidecar = sidecarRef = new AtspiSidecar(sidecarScript(), log.child("atspi"), undefined, undefined, launch);
     app.on("will-quit", () => sidecar.stop());
