@@ -8,7 +8,9 @@ import { EventEmitter } from "node:events";
 import type { DeskPlace } from "../../app/main/desk/place";
 import type { Logger } from "../../app/main/logger";
 
-const h = vi.hoisted(() => ({ ipc: null as unknown as import("node:events").EventEmitter, windows: [] as unknown[] }));
+type Area = { x: number; y: number; width: number; height: number };
+/** `displays`: the work areas of the displays, the primary first (one 1920 × 1080 display unless a test says otherwise). */
+const h = vi.hoisted(() => ({ ipc: null as unknown as import("node:events").EventEmitter, windows: [] as unknown[], displays: [] as Area[] }));
 
 vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
@@ -35,18 +37,21 @@ vi.mock("electron", async () => {
     setBounds(b: typeof this.bounds) { this.bounds = b; }
     close() { this.destroyed = true; this.visible = false; this.emit("closed"); }
   }
-  const area = { x: 0, y: 0, width: 1920, height: 1080 };
+  // As Electron's: the display the rectangle overlaps most, the primary when it overlaps none.
+  const overlap = (a: Area, b: Area) =>
+    Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  const matching = (b: Area) => h.displays.reduce((best, d) => (overlap(b, d) > overlap(b, best) ? d : best), h.displays[0]!);
   return {
     BrowserWindow,
     ipcMain: { on: (ch: string, fn: (...a: unknown[]) => void) => h.ipc.on(ch, fn) },
-    screen: { getPrimaryDisplay: () => ({ workArea: area }), getDisplayMatching: () => ({ workArea: area }) },
+    screen: { getPrimaryDisplay: () => ({ workArea: h.displays[0] }), getDisplayMatching: (b: Area) => ({ workArea: matching(b) }) },
   };
 });
 
 const { DeskView } = await import("../../app/main/desk/view");
 const { DESK } = await import("../../app/shared/desk");
 
-type Win = EventEmitter & { visible: boolean; sent: [string, unknown][]; webContents: object; close(): void; bounds: { x: number; width: number }; ignoreMouse: boolean };
+type Win = EventEmitter & { visible: boolean; sent: [string, unknown][]; webContents: object; close(): void; bounds: Area; ignoreMouse: boolean };
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 
 /** The fake keyboard's keycode for a keysym. */
@@ -96,6 +101,7 @@ describe("desk view", () => {
     vi.useFakeTimers();
     h.ipc.removeAllListeners();
     h.windows.length = 0;
+    h.displays = [{ x: 0, y: 0, width: 1920, height: 1080 }];
     control = [];
     view = new DeskView(quiet, on => control.push(on), { lingerMs: 1000 });
   });
@@ -158,6 +164,34 @@ describe("desk view", () => {
     // Something else about the handle changed (the card grew): it stays on its side.
     view.handleMoved();
     expect(win.bounds).toEqual({ x: 16, y: 418, width: 980, height: 646 });
+  });
+
+  it("stays where the user put it on another display when the handle changes (review #75)", () => {
+    // The handle is in the primary display's bottom-left corner; a second display is to its right.
+    h.displays = [{ x: 0, y: 0, width: 1920, height: 1080 }, { x: 1920, y: 0, width: 1920, height: 1080 }];
+    const pill = { x: 12, y: 1080 - 68, width: 200, height: 56 };
+    let handle = pill;
+    view = new DeskView(quiet, on => control.push(on), { lingerMs: 1000, handleBounds: () => handle });
+    open();
+    expect(win.bounds).toEqual({ x: 1920 - 16 - 340, y: 826, width: 340, height: 238 });
+    // The user drags the view to the middle of the second display.
+    const dragged = { x: 1920 + 800, y: 600, width: 340, height: 238 };
+    win.bounds = { ...dragged };
+    // The handle changes on the primary: the card grows for a question, Hide Ember makes it the tab.
+    for (const changed of [{ x: 12, y: 1080 - 12 - 220, width: 360, height: 220 }, { x: 12, y: 1080 - 68, width: 56, height: 56 }, pill]) {
+      handle = changed;
+      view.handleMoved();
+      expect(win.bounds).toEqual(dragged);
+    }
+    // "Move to the other side" while the view is on the second display: it stays there too.
+    handle = { x: 1920 - 212, y: 1080 - 68, width: 200, height: 56 };
+    view.handleMoved();
+    expect(win.bounds).toEqual(dragged);
+    // Dragged back to the primary display, it stays where it is put: the handle is on the side it was last seen on.
+    win.bounds = { x: 800, y: 826, width: 340, height: 238 };
+    handle = { ...handle, x: 1920 - 372, y: 1080 - 132, width: 360, height: 120 };
+    view.handleMoved();
+    expect(win.bounds).toEqual({ x: 800, y: 826, width: 340, height: 238 });
   });
 
   it("opens bottom-right while the handle is in the bottom left", () => {

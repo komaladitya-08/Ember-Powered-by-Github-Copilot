@@ -156,7 +156,7 @@ export class DeskView {
     if (!this.win || this.win.isDestroyed()) {
       const wa = screen.getPrimaryDisplay().workArea;
       const handle = this.handle();
-      this.handleWasLeft = handleLeft(wa, handle);
+      this.handleWasLeft = this.handleIsLeft(handle);
       const win = new BrowserWindow({
         // Bottom-left: the bottom-right corner is Ember's handle and its task cards (the other way round when Handle
         // position puts them in the bottom left).
@@ -211,7 +211,8 @@ export class DeskView {
 
   /**
    * Ember's handle changed (the pill became the card or back): the view keeps clear of it at its size now. When the
-   * handle went to the other side (Handle position), the view goes to the side it left, keeping its bottom edge.
+   * handle went to the other side (Handle position) on the display the view is on, the view goes to the side it left,
+   * keeping its bottom edge; on another display (the user dragged it there) it stays where it is.
    */
   handleMoved(): void {
     const win = this.win && !this.win.isDestroyed() ? this.win : null;
@@ -219,8 +220,9 @@ export class DeskView {
     const b = win.getBounds();
     const wa = screen.getDisplayMatching(b).workArea;
     const handle = this.handle();
-    const left = handleLeft(wa, handle);
-    const from = left === this.handleWasLeft ? b : { ...deskViewStart(wa, handle), y: b.y, height: b.height };
+    const left = this.handleIsLeft(handle);
+    const across = left !== this.handleWasLeft && handleOn(wa, handle) === handle;
+    const from = across ? { ...deskViewStart(wa, handle), y: b.y, height: b.height } : b;
     this.handleWasLeft = left;
     const next = deskViewBounds(from, this.control, wa, handle);
     if (next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height) win.setBounds(next);
@@ -228,6 +230,12 @@ export class DeskView {
 
   private handle(): Box | null {
     try { return this.o.handleBounds?.() ?? null; } catch { return null; }
+  }
+
+  /** The handle is in the bottom-left corner of its own display's work area (false when not known). */
+  private handleIsLeft(handle: Box | null): boolean {
+    if (!handle) return false;
+    try { return handleLeft(screen.getDisplayMatching(handle).workArea, handle); } catch { return false; }
   }
 
   /** Gives the desk back to Ember (the kill switch calls this too). */
