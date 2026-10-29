@@ -221,8 +221,8 @@ export function createCommandWindowPort(o: CommandWindowOptions): CommandWindowP
 /**
  * What the controller is made from: the window's factory, ipcMain, the log, the OS, the card's key hint, whether a
  * screen reader runs (main's sys.a11y.screenReaderOn: each run's terminal then mirrors its output for it, review #43),
- * and the stop chord as Ember holds it now (null while another app holds it: the announcement names none then, as the
- * bubble and the spoken words don't, cross-review X0; absent: the OS's own).
+ * and the stop chord as Ember holds it now (null while another app holds it: the announcement names none then, as
+ * neither the bubble nor the spoken words do, cross-review X0; absent: the OS's own).
  */
 export interface CommandWindowOptions {
   create: () => BrowserWindowLike;
