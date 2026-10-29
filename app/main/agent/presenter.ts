@@ -20,22 +20,29 @@ const quoted = (text: string) => `“${text.length > 120 ? `${text.slice(0, 119)
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
-/** About as many characters as one of the bubble's lines holds (300 px wide, 14 px Ember Sans), a little on the short side. */
+/**
+ * About as many characters as one of the bubble's lines holds (300 px wide, 14 px Ember Sans), a little on the short side;
+ * fewer at a larger text size (answerLines' scale).
+ */
 const LINE_CHARS = 36;
 /** The lines a finished answer shows before it is cut off (BUBBLE_CSS's .eb-thought). */
 const ANSWER_LINES = 6;
 
 /**
  * How many of the bubble's lines `text` takes: each of its lines (the bubble keeps line breaks, so an empty one is a
- * line too) wraps onto as many as its length needs.
+ * line too) wraps onto as many as its length needs. `scale`: the user's text size (page-prefs' textScale: 1.15 at
+ * Large, 1.3 at Larger): the bubble keeps its width while its type grows, so a line holds that many times fewer
+ * characters (cross-review X2). A scale that makes no sense counts as 1.
  */
-export function answerLines(text: string): number {
-  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.trim().length / LINE_CHARS)), 0);
+export function answerLines(text: string, scale = 1): number {
+  const s = Number.isFinite(scale) && scale > 1 ? Math.min(scale, 3) : 1;
+  const chars = Math.max(1, Math.floor(LINE_CHARS / s));
+  return text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(line.trim().length / chars)), 0);
 }
 
-/** A finished answer the bubble shows only the start of: it offers "Read all". */
-export function cutShort(text: string): boolean {
-  return text.length > LONG_ANSWER || answerLines(text) > ANSWER_LINES;
+/** A finished answer the bubble shows only the start of (at the user's text size, `scale`): it offers "Read all". */
+export function cutShort(text: string, scale = 1): boolean {
+  return text.length > LONG_ANSWER || answerLines(text, scale) > ANSWER_LINES;
 }
 
 /**
@@ -343,6 +350,11 @@ export interface PresenterOptions {
   now?: () => number;
   /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
   readTime?: () => number;
+  /**
+   * How much the bubble's type is scaled (the user's text size, page-prefs' textScale; default 1): a finished answer
+   * that needs more than the bubble's six lines at that size offers Read all (cross-review X2). Asked at each answer.
+   */
+  textScale?: () => number;
 }
 
 /**
@@ -520,6 +532,7 @@ export class Presenter {
   private since: number | null = null;
   private readonly now: () => number;
   private readonly readTime: () => number;
+  private readonly textScale: () => number;
 
   constructor(
     private push: (patch: Partial<EmberState>) => void,
@@ -545,6 +558,7 @@ export class Presenter {
     this.onAnnounce = opts.onAnnounce;
     this.now = opts.now ?? Date.now;
     this.readTime = opts.readTime ?? (() => 1);
+    this.textScale = opts.textScale ?? (() => 1);
   }
 
   /** The settings shortcut Ember holds now, or null (taken, or the check failed: naming one that may not work is worse). */
@@ -1008,7 +1022,9 @@ export class Presenter {
           // By the lines it takes, not its characters: a short list or a few paragraphs fill the bubble's six lines too.
           // "Read all" takes only the mouse (the overlay never takes the keyboard): under it, where the keyboard finds
           // the whole answer.
-          const more = cutShort(full);
+          let scale = 1;
+          try { scale = Number(this.textScale()); } catch { /* the usual size */ }
+          const more = cutShort(full, scale);
           this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
             step: more ? keyboardRoute(this.settingsKey, "Conversation") : null,
             actions: more ? [{ id: "ui:more", label: "Read all" }] : [] } });

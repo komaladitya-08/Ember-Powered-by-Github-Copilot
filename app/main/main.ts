@@ -1761,6 +1761,8 @@ function start(): void {
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       readTime,
+      // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
+      textScale: () => textScale(settings.get().textSize),
       userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,

@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -826,6 +826,36 @@ describe("Read all: by the lines an answer takes, not its characters (review #12
     expect(finished("It's half past three.\nYour next meeting is at four.").actions).toEqual([]);
     expect(answerLines("x".repeat(80))).toBe(3);
     expect(answerLines("a\n\nb")).toBe(3);
+  });
+
+  it("counts the lines at the user's text size: the bubble keeps its width while the type grows (cross-review X2)", () => {
+    const vpn = "Your Wi-Fi is connected to HomeNet-5G with a strong signal, but the VPN called Work-WireGuard dropped two minutes ago. Would you like me to reconnect the VPN now, or leave it off until you are back at work tomorrow?";
+    const windows = "Here are the windows you have open:\n- Firefox: GitHub pull request\n- Terminal: ~/src/ember build\n- Files: Downloads folder view\n- Text Editor: notes for today\n- Settings: Displays and screens";
+    expect(vpn.length).toBe(215);
+    expect(answerLines(vpn)).toBe(6);
+    // At Larger (1.3) a line holds 27 characters: 8 lines, more than the bubble's six.
+    expect(answerLines(vpn, 1.3)).toBe(8);
+    expect(cutShort(vpn)).toBe(false);
+    expect(cutShort(vpn, 1.3)).toBe(true);
+    expect(cutShort(windows)).toBe(false);
+    expect(cutShort(windows, 1.3)).toBe(true);
+    // A short answer still fits at every size, and a scale that makes no sense counts as the usual one.
+    for (const s of [1, 1.15, 1.3, Number.NaN, 0, -2]) expect(cutShort("It's half past three.", s), String(s)).toBe(false);
+    expect(answerLines(vpn, Number.NaN)).toBe(6);
+    // The presenter asks at each answer.
+    vi.useFakeTimers();
+    const states: Partial<EmberState>[] = [];
+    let scale = 1.3;
+    const p = new Presenter(s => states.push(s), undefined, () => "Ember", new BubbleOwner(), undefined, false, { textScale: () => scale });
+    const answer = (text: string) => {
+      p.userPrompt("how's the network?");
+      p.event({ type: "assistant.message_delta", data: { deltaContent: text } });
+      p.event({ type: "assistant.message", data: { content: text } });
+      return states.at(-1)!.bubble!;
+    };
+    expect(answer(vpn)).toMatchObject({ actions: [{ id: "ui:more", label: "Read all" }], step: "Or press Ctrl+Alt+E and go to Conversation." });
+    scale = 1;
+    expect(answer(vpn)).toMatchObject({ actions: [], step: null });
   });
 });
 

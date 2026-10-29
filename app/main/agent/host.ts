@@ -206,6 +206,11 @@ export interface HostOptions {
   settingsKey?: () => string | null;
   /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
   stopKey?: () => string | null;
+  /**
+   * How much the bubble's type is scaled now (the user's text size: page-prefs' textScale): an answer that needs more
+   * than the bubble's six lines at that size offers Read all (cross-review X2). Default 1.
+   */
+  textScale?: () => number;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -626,12 +631,12 @@ export class AgentHost {
 
   /**
    * What every presenter's bubbles follow: this OS's shortcuts, those Ember holds now (a bubble names a shortcut only
-   * while it works, cross-review X0, X5), and the user's More time to read and answer.
+   * while it works, cross-review X0, X5), the user's More time to read and answer, and their text size.
    */
   private get bubbleOptions(): PresenterOptions {
     const o = this.o;
     return {
-      shortcuts: this.sys.shortcuts, ...(o.readTime ? { readTime: o.readTime } : {}),
+      shortcuts: this.sys.shortcuts, ...(o.readTime ? { readTime: o.readTime } : {}), ...(o.textScale ? { textScale: o.textScale } : {}),
       ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}), ...(o.stopKey ? { stopKey: o.stopKey } : {}),
     };
   }

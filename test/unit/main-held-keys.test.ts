@@ -3,9 +3,9 @@
  * its shortcuts only while it holds them (cross-review X0, X5): main tells the agent's presenters and the targets
  * runtime (its command window, its bubbles' keyboard route) which labels work now, the way the spoken cancel words
  * already ask hasKey; what each does with null is pinned in presenter.test.ts, command-window.test.ts and
- * ui-copy.test.ts. And the runtime's offers get a board of their own (cross-review X3; targets-runtime.test.ts "offers
- * in the bubble"). main.ts can't be loaded in a unit test (it is Electron's entry point), so the wiring is read from its
- * source, as main-privacy-wiring.test.ts does.
+ * ui-copy.test.ts. The runtime's offers get a board of their own (cross-review X3; targets-runtime.test.ts "offers in
+ * the bubble"), and the agent hears the text size (cross-review X2). main.ts can't be loaded in a unit test (it is
+ * Electron's entry point), so the wiring is read from its source, as main-privacy-wiring.test.ts does.
  */
 
 import { describe, expect, it } from "vitest";
@@ -49,5 +49,11 @@ describe("main.ts gives the targets runtime's offers a board of their own (cross
     const targets = between("targets = createTargets({", "agent = new AgentHost({");
     expect(targets).toContain("bubbles: () => agent?.notices ?? null,");
     expect(targets).toContain("offers: () => agent?.offers ?? null,");
+  });
+});
+
+describe("main.ts tells the agent the text size, for Read all (cross-review X2)", () => {
+  it("passes the bubble's text scale as the overlay page gets it", () => {
+    expect(between("agent = new AgentHost({", "let wasOnline = ")).toContain("textScale: () => textScale(settings.get().textSize),");
   });
 });

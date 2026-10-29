@@ -404,6 +404,22 @@ describe("each worker gets its target's hands (§2.6)", () => {
     await h.host.stop();
   });
 
+  it("counts an answer's lines at the user's text size, as main says it now (cross-review X2)", async () => {
+    const { t } = fakeTargets();
+    const shown: any[] = [];
+    let scale = 1.3;
+    const h = await started({ hands: hands(), targets: t, setState: (p: any) => { if (p.bubble) shown.push(p.bubble); }, textScale: () => scale });
+    const vpn = "Your Wi-Fi is connected to HomeNet-5G with a strong signal, but the VPN called Work-WireGuard dropped two minutes ago. Would you like me to reconnect the VPN now, or leave it off until you are back at work tomorrow?";
+    await h.host.ask("how's the network?");
+    h.session.emit("assistant.message", { content: vpn });
+    expect(shown.at(-1).actions).toEqual([{ id: "ui:more", label: "Read all" }]);
+    scale = 1;
+    await h.host.ask("and now?");
+    h.session.emit("assistant.message", { content: vpn });
+    expect(shown.at(-1).actions).toEqual([]);
+    await h.host.stop();
+  });
+
   it("a target that can't take the task when it runs ends it at once with why, and no session is made", async () => {
     const { t } = fakeTargets({ refuse: { "ssh:build-01": "build-01 isn't connected. Connect it from Ember's menu first." } });
     const { host, real } = await started({ hands: hands(), targets: t });
