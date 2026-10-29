@@ -112,6 +112,45 @@ describe("the Confirmer's question with a whole text to read", () => {
     const { c } = confirmer();
     expect(c.wholeSeen(1)).toBe(false);
   });
+
+  it("arms Allow afresh once all of it has been in view: a key press that pages on never also allows", async () => {
+    let t = 10_000;
+    const c = new Confirmer(() => undefined, { armMs: 500, gapMs: 0, now: () => t });
+    const q = c.ask(typing());
+    t += 2_000;
+    // Paging through: the third press brings the end into view, and the page says so at once.
+    for (let i = 0; i < 3; i++) { expect(c.answerKey("primary")).toBe(false); t += 30; }
+    expect(c.wholeSeen(1)).toBe(true);
+    // The very next press (one too many, or a key held down and repeating) doesn't allow, nor does a click this soon.
+    t += 30;
+    expect(c.answerKey("primary")).toBe(false);
+    expect(c.answer("q1:once")).toBe(false);
+    // A key held down keeps repeating: never taken while it does.
+    for (let i = 0; i < 40; i++) { t += 30; expect(c.answerKey("primary")).toBe(false); }
+    // Let go, then a press of its own once Allow has been armed again: taken.
+    t += 500;
+    expect(c.answerKey("primary")).toBe(true);
+    await expect(q).resolves.toBe("once");
+  });
+
+  it("takes a click on Allow once it has been armed after all of it was in view, and Not now at any time", async () => {
+    let t = 10_000;
+    const c = new Confirmer(() => undefined, { armMs: 500, gapMs: 0, now: () => t });
+    const q = c.ask(typing());
+    t += 2_000;
+    expect(c.wholeSeen(1)).toBe(true);
+    t += 100;
+    expect(c.answer("q1:once")).toBe(false);
+    t += 400;
+    expect(c.answer("q1:once")).toBe(true);
+    await expect(q).resolves.toBe("once");
+    const r = c.ask(typing());
+    await new Promise(res => setTimeout(res, 0));
+    t += 2_000;
+    c.wholeSeen(2);
+    expect(c.answerKey("deny")).toBe(true);
+    await expect(r).resolves.toBe("deny");
+  });
 });
 
 describe("the pages' word that a whole text was read", () => {

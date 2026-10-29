@@ -19,8 +19,9 @@
  *
  * A question whose sentence shows a typed text only in part (`detail`: its two ends and its length) shows all of it in a
  * block that scrolls under the sentence (review #116). Allow, from its button or the approve key, works only once the
- * page showing it has said all of it was in view (`wholeSeen`), as the command card's and the consent cards' do; before
- * then the approve key shows the next part instead. Not now works at once.
+ * page showing it has said all of it was in view (`wholeSeen`), as the command card's and the consent cards' do, and it
+ * has been armed again since; before then the approve key shows the next part instead, and a key pressed again too soon
+ * (held down, or once more than needed) never allows. Not now works at once.
  */
 
 import type { BubbleState, EmberState } from "../../shared/overlay";
@@ -63,8 +64,12 @@ const panelSha256 = (panel: QuestionPanel): string => (panel.kind === "command" 
 /** A SHA-256 as sha256Hex writes it: a card whose hash isn't one (empty, cut short) can't be allowed (fail closed). */
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-/** `whole`: a question with a whole text to read (Question.detail): whether all of it has been in view, and how many times the key asked for more. */
-interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: { seen: boolean; page: number } }
+/**
+ * A question with a whole text to read (Question.detail): whether all of it has been in view and since when (`seenAt`),
+ * how many times the approve key asked for more, and when that key was last pressed (`keyAt`).
+ */
+interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number }
+interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead }
 
 export interface ConfirmerTiming {
   /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
@@ -126,7 +131,7 @@ export class Confirmer {
   ask(q: Question, signal?: AbortSignal): Promise<string | null> {
     if (signal?.aborted) return Promise.resolve(null);
     return new Promise(resolve => {
-      const p: Pending = { n: ++this.n, q, resolve, timer: null, shownAt: 0, ...(q.detail ? { whole: { seen: false, page: 0 } } : {}) };
+      const p: Pending = { n: ++this.n, q, resolve, timer: null, shownAt: 0, ...(q.detail ? { whole: { seen: false, page: 0, seenAt: 0, keyAt: 0 } } : {}) };
       if (signal) {
         const onAbort = () => this.finish(p, null);
         signal.addEventListener("abort", onAbort, { once: true });
@@ -178,8 +183,9 @@ export class Confirmer {
    */
   private allowedFrom(p: Pending, option: string, via: AnswerVia, proof: { sha256: string } | undefined): boolean {
     if (option === "deny") return true;
-    // Its whole text not yet all in view: nothing but Not now (review #116).
-    if (p.whole && !p.whole.seen) return false;
+    // Its whole text not yet all in view: nothing but Not now (review #116). Once it has been, Allow is armed afresh, so
+    // the press or scroll that brought its end into view can't also allow it.
+    if (p.whole && (!p.whole.seen || this.now() - p.whole.seenAt < this.armOf(p.q))) return false;
     if (via === "key" && p.q.clickOnly) return false;
     const panel = p.q.panel;
     if (!panel) return via !== "panel";
@@ -217,17 +223,24 @@ export class Confirmer {
   /**
    * A keyboard answer: the primary option ("Allow"), "deny" ("Not now") or "always". Before all of a question's whole text
    * has been in view, a yes by key shows the next part of it instead (the keyboard's way through it: the bubble takes no
-   * keyboard focus), and answers nothing.
+   * keyboard focus), and answers nothing. After that, a yes by key is taken only once the key has rested for the arm time
+   * since its last press: a press too soon is refused and starts the wait again, so a key held down (the system repeating
+   * it) or pressed once more than needed pages through to the end but never allows.
    */
   answerKey(which: "primary" | "deny" | "always"): boolean {
     const c = this.current;
     if (!c) return false;
-    if (which !== "deny" && c.whole && !c.whole.seen) {
-      if (!this.blocked()) {
-        c.whole.page += 1;
-        this.show({ bubble: this.bubbleOf(c) });
+    if (which !== "deny" && c.whole) {
+      const now = this.now();
+      if (!c.whole.seen) {
+        if (!this.blocked()) {
+          c.whole.page += 1;
+          c.whole.keyAt = now;
+          this.show({ bubble: this.bubbleOf(c) });
+        }
+        return false;
       }
-      return false;
+      if (now - c.whole.keyAt < this.armOf(c.q)) { c.whole.keyAt = now; return false; }
     }
     const opt = which === "primary" ? c.q.options.find(o => o.primary) ?? c.q.options[0] : c.q.options.find(o => o.id === which);
     return opt ? this.answer(`q${c.n}:${opt.id}`, "key") : false;
@@ -241,6 +254,7 @@ export class Confirmer {
     const c = this.current;
     if (!c || c.n !== n || !c.whole || c.whole.seen) return false;
     c.whole.seen = true;
+    c.whole.seenAt = this.now();
     this.show({ bubble: this.bubbleOf(c) });
     return true;
   }
