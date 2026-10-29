@@ -549,8 +549,16 @@ export class AgentHost {
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
   private carried: string[] = [];
-  /** "Commands are off" with Open settings was offered this run (review #40: once per run). */
-  private commandsHinted = false;
+  /**
+   * "Commands are off" with Open settings (review #40: once per run): its presenter, once offered. It counts as offered
+   * once it has reached the screen, or while it waits to.
+   */
+  private commandsHint: Presenter | null = null;
+  /**
+   * A request asked for a terminal or a command while commands are off by the user's switch: the hint is offered when
+   * its turn ends, behind the answer (asked before the request, it would be covered by "Thinking…" and run out unseen).
+   */
+  private hintOwed = false;
   /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
   private checkingSignIn = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
@@ -694,13 +702,15 @@ export class AgentHost {
    * settings (review #40). Never where the administrator turned commands off, or once they're on.
    */
   private hintCommands(): void {
-    if (this.commandsHinted) return;
+    const h = this.commandsHint;
+    if (h && (h.shownAt !== null || h.visible)) return;
     let caps: PromptCaps | undefined;
     try { caps = this.o.targets?.caps(); } catch { return; }
     if (!caps?.commandsOffered || caps.commands) return;
-    this.commandsHinted = true;
-    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short).
-    const p = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, { shortcuts: this.sys.shortcuts });
+    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short), and
+    // stays as long as the user's More time to read and answer says, as every bubble does.
+    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider,
+      { shortcuts: this.sys.shortcuts, ...(this.o.readTime ? { readTime: this.o.readTime } : {}) });
     p.outcome({
       title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
       emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
@@ -716,9 +726,11 @@ export class AgentHost {
    * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
    * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
    * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
-   * covers doesn't run out of time underneath (main may put it back: a wake that was another word).
+   * covers doesn't run out of time underneath (main may put it back: a wake that was another word). `ms`: main's own
+   * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
+   * held that long, and the 30 seconds count from then (cross-review X4).
    */
-  claimBubble(o: { pin?: boolean } = {}): void {
+  claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();
     if (this.mainHold) clearTimeout(this.mainHold);
@@ -727,7 +739,7 @@ export class AgentHost {
     // answer goes another way (releasePin).
     this.pinned = !!o.pin;
     if (o.pin) return;
-    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS);
+    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS + Math.max(0, o.ms ?? 0));
     this.mainHold.unref?.();
   }
 
@@ -1118,7 +1130,11 @@ export class AgentHost {
         onUsage: (i, o) => this.recordUsage(i, o),
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
         onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
-        onTurnEnd: this.o.onTurnEnd,
+        onTurnEnd: aborted => {
+          // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
+          if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
+          this.o.onTurnEnd?.(aborted);
+        },
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
         turnSilentMs: this.o.turnSilentMs,
@@ -1576,15 +1592,17 @@ export class AgentHost {
     };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
-    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once).
+    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once),
+    // when this request's turn ends (hintCommands checks then whether commands are off by the user's switch).
     const terminal = terminalRequest(this.sys.os, this.wslOn());
-    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintCommands();
+    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintOwed = true;
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
       await this.conductor.ask(text, context?.text, this.trustedLine());
     } catch (err) {
-      // Never sent: no turn of its own will come.
+      // Never sent: no turn of its own will come (nor its hint).
+      this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
       if (err instanceof ConnectionLost) this.lost(gen, "send failed");
       else throw err;
@@ -1603,6 +1621,9 @@ export class AgentHost {
     this.presenter.quiet();
     // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
     this.noticeBoard.quiet();
+    // (And the "Commands are off" hint waiting behind the answer: offered again later if it never showed.)
+    this.hintOwed = false;
+    this.commandsHint?.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();

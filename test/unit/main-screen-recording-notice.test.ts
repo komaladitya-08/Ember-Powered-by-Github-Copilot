@@ -35,7 +35,8 @@ describe("main.ts's Screen Recording notice (review #96)", () => {
 
   it("holds the bubble while it shows, then lets the task's progress back or hides", () => {
     const body = notice();
-    expect(body).toMatch(/agent\?\.claimBubble\(\); setState\(\{ bubble \}\);/);
+    // (Held as long as it shows: ten times as long with More time to read and answer, main-more-time.test.ts.)
+    expect(body).toMatch(/agent\?\.claimBubble\(\{ ms: time \}\); setState\(\{ bubble \}\);/);
     expect(body).toContain("if (lastState.bubble === bubble && !(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: \"neutral\", bubble: IDLE_BUBBLE });");
   });
 

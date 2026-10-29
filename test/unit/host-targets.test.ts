@@ -546,6 +546,66 @@ describe("commands off, but the user could turn them on (review #40)", () => {
     }
   });
 
+  /** Each bubble put on screen, with when (fake clock), and for how long the "Commands are off" one stayed. */
+  function timeline() {
+    const shown: { at: number; title: string; visible: boolean }[] = [];
+    const setState = (p: any) => { if (p.bubble) shown.push({ at: Date.now(), title: p.bubble.title, visible: p.bubble.visible }); };
+    /** When the hint first reached the screen, and how long it stayed before something else replaced it (null: never shown). */
+    const hint = () => {
+      const i = shown.findIndex(s => s.visible && s.title === "Commands are off");
+      if (i < 0) return null;
+      const next = shown.slice(i + 1).find(s => s.title !== "Commands are off" || !s.visible);
+      return { at: shown[i].at, stayed: next ? next.at - shown[i].at : Infinity };
+    };
+    return { setState, hint };
+  }
+  const ANSWER = "Commands are off, so I can't run df -h for you. You can turn commands on in Ember's settings (Commands), or I can guide you through checking the disk space yourself.";
+
+  it("a typed request whose answer stays a while still gets the hint, after the answer and for its whole time (cross-review X14)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t } = fakeTargets({ caps: offered });
+      const screen = timeline();
+      const { host, session } = await started({ hands: hands(), targets: t, setState: screen.setState });
+      const t0 = Date.now();
+      await host.ask("run df -h in the terminal");
+      // Copilot thinks for 3 s, then answers in about 170 characters, which stay about 14.6 s.
+      await vi.advanceTimersByTimeAsync(3000);
+      session.emit("assistant.message_delta", { deltaContent: ANSWER });
+      session.emit("assistant.message", { content: ANSWER });
+      session.emit("session.idle", {});
+      await vi.advanceTimersByTimeAsync(60_000);
+      const h = screen.hint();
+      expect(h, "the hint reached the screen").not.toBeNull();
+      // Only once the answer has gone, and for its own reading time (6 s + 50 ms a character).
+      expect(h!.at - t0).toBeGreaterThanOrEqual(3000 + 6000 + ANSWER.length * 50);
+      expect(h!.stayed).toBeGreaterThanOrEqual(6000 + 106 * 50 - 100);
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("with More time to read and answer, the hint shows after the answer and stays ten times as long (cross-review X4, X14)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t } = fakeTargets({ caps: offered });
+      const screen = timeline();
+      const { host, session } = await started({ hands: hands(), targets: t, setState: screen.setState, readTime: () => 10 });
+      await host.ask("run df -h in the terminal");
+      session.emit("assistant.message", { content: "Commands are off. You can turn commands on in Ember's settings (Commands), or I can guide you." });
+      session.emit("session.idle", {});
+      await vi.advanceTimersByTimeAsync(300_000);
+      const h = screen.hint();
+      expect(h, "the hint reached the screen").not.toBeNull();
+      expect(h!.stayed).toBeGreaterThanOrEqual((6000 + 106 * 50) * 10 - 100);
+      expect(h!.stayed).toBeLessThan((6000 + 106 * 50) * 10 + 1000);
+      await host.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("nothing is offered where the administrator turned commands off, or they are on", async () => {
     vi.useFakeTimers();
     try {

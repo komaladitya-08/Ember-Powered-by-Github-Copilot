@@ -883,13 +883,16 @@ function start(): void {
     callContext = Promise.all([perception.quickContext(), selected]).then(([c, sel]) => Perception.withSelection(c, sel)).catch(() => null);
   };
   /**
-   * Main's own notice in the bubble for `ms`: held, so a task's hide doesn't wipe it, and given back after, so a task still
-   * at work shows its progress again (review #81).
+   * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
+   * hide doesn't wipe it, and given back after, so a task still at work shows its progress again (review #81).
    */
-  const showNotice = (n: { title: string; thought: string }, ms: number) => holdNotice<EmberState["bubble"]>({
-    claim: () => agent?.claimBubble(), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
-    release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
-  }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, ms);
+  const showNotice = (n: { title: string; thought: string }, ms: number) => {
+    const time = ms * readTime();
+    return holdNotice<EmberState["bubble"]>({
+      claim: () => agent?.claimBubble({ ms: time }), show: bubble => setState({ emotion: "neutral", bubble }), current: () => lastState.bubble,
+      release: bubble => agent?.releaseBubble(bubble) ?? false, hide: () => setState({ emotion: "neutral", bubble: IDLE_BUBBLE }),
+    }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
+  };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
@@ -1541,13 +1544,14 @@ function start(): void {
         const bubble = { ...IDLE_BUBBLE, visible: true, mood: "attention" as const, title: "I can't take screenshots",
           thought: "I don't have macOS's Screen Recording permission. Open the setup check to allow it, then quit and reopen me.",
           actions: [{ id: "ui:setup-check", label: "Open setup check" }] };
-        // It comes mid-task: main holds the bubble so the task's progress doesn't replace it before it is read, then
-        // lets go (the task's progress comes back, or it hides).
-        agent?.claimBubble();
+        // It comes mid-task: main holds the bubble so the task's progress doesn't replace it before it is read (15 s,
+        // ten times that with More time to read and answer), then lets go (the task's progress comes back, or it hides).
+        const time = 15000 * readTime();
+        agent?.claimBubble({ ms: time });
         setState({ bubble });
         setTimeout(() => {
           if (lastState.bubble === bubble && !(agent?.releaseBubble(bubble) ?? false)) setState({ emotion: "neutral", bubble: IDLE_BUBBLE });
-        }, 15000);
+        }, time);
       },
       // Ember steps out of its own screenshots: overlay and handle go transparent for the capture.
       hideOverlay: async () => {
