@@ -589,7 +589,10 @@ describe("round 2's docs lines (perception2)", () => {
     const tail = Number(/const TYPED_TAIL = (\d+);/.exec(policy)?.[1]);
     const notes = flat(read("CHANGELOG.md"));
     expect(notes).toContain(`Text over ${shown} characters shows its first ${head} and last ${tail} characters and its length`);
-    expect(notes).toContain(`A question about typing more than ${shown} characters shows only the start and end of the text and its length`);
+    // The whole of it shows under the question before Allow works (confirm3, review #116): no longer a limit.
+    expect(notes).not.toContain(`A question about typing more than ${shown} characters shows only the start and end of the text and its length`);
+    expect(notes).toContain(`its length, and all of it in a box under the question`);
+    expect(notes).toContain(`**Allow** works once you have scrolled to its end, or it fits ("${read("packages/bubble/src/whole.ts").match(/WHOLE_READ_HINT = "([^"]+)"/)?.[1]}")`);
     const stopped = /what: "(Everything stopped: your organisation changed Ember's policy)"/.exec(read("app/renderer/home/copy.ts"))?.[1] ?? "";
     expect(stopped).not.toBe("");
     expect(notes).toContain(`**What Ember did** records "${stopped}"`);

@@ -160,8 +160,8 @@ export interface Decision {
   stepPrompt?: string;
   /**
    * The whole of the text a task types, when the question shows only its two ends (over 160 characters): the user
-   * approves all of it, so a card can show it on request. Shown as the question shows typed text (typedUnits). No card
-   * shows it yet: the worker's question doesn't carry it, so the bubble shows the two ends and the length only.
+   * approves all of it, so the worker's question carries it (Question.detail) and the bubble shows it whole in a block
+   * that scrolls, taking Allow only once all of it has been in view. Shown as the question shows typed text (typedUnits).
    */
   detail?: string;
 }
@@ -1590,6 +1590,11 @@ const quoteTyped = (s: string) => {
   return HOLDS_QUOTES.test(s) ? `“${t.join("")}” ${length}` : `“${t.join("")}”`;
 };
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
+/**
+ * Text a task types, all of it, as its question shows typed text (typedUnits, without Ember's quote marks): for a
+ * question that lists typed text cut short in its own words (fill_cells' cells), whose card shows each one whole.
+ */
+export const typedShown = (s: string): string => typedUnits(s).join("");
 /** Text a task types that its question shows only in part (over TYPED_SHOWN characters): all of it, shown as quoted. */
 const typedInFull = (r: ActionRequest): string | undefined => {
   if (r.kind !== "text" && r.kind !== "cursor_text") return undefined;

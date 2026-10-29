@@ -23,7 +23,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -55,7 +55,7 @@ import { freshAskPress } from "./hotkey";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
-import { expandedBubble, questionAloud, readTimeOf } from "./agent/presenter";
+import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
@@ -842,7 +842,8 @@ function start(): void {
     // on screen shows it, and the keys work only there.
     const words = targets?.questionWords(q.question) ?? null;
     // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
-    const aloud = questionAloud(q.question, { keys: heldKeys().map(k => k.say), spoken: spokenText });
+    // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
+    const aloud = questionAloud(q.question, { keys: (q.question.detail ? readKeyWords(heldKeys()) : heldKeys()).map(k => k.say), spoken: spokenText });
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
@@ -1324,6 +1325,10 @@ function start(): void {
     const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
     const task = /^task:(.+):(stop|dismiss)$/.exec(id);
+    // A question's whole text has all been in view on that page (review #116): its Allow works from now on. It says what
+    // the user saw, not a click, so it counts while Ember drives the mouse too (the page takes no pointer then).
+    const seen = wholeSeenOf(id);
+    if (seen !== null) { confirmer?.wholeSeen(seen); return; }
     // Stopping a task is always honoured (also while Ember waits for the mouse), and so is an announced command's Stop
     // (critique integration-24). Anything else that arrives while Ember really drives the pointer was Ember's own
     // click, not the user's: ignored.
@@ -1663,6 +1668,8 @@ function start(): void {
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
       onChange: questionChanged,
       keyHint: questionKeyHint,
+      // Until a question's whole text has all been shown, the approve key shows its next part (review #116).
+      readKeyHint: () => { holdQuestionKeys(); return readKeyWords(heldKeys()).map(k => k.hint).join(" · ") || undefined; },
       // A question shown in a window of Ember's own (a command, a consent card): the keys allow it only while that window
       // shows all of it (R7).
       panelReady: n => targets?.panelReady(n) ?? false,

@@ -60,7 +60,35 @@ export interface BubbleState {
   expanded?: boolean;
   /** Where the task this bubble belongs to acts, when not on this computer ("on build-01", "in Ubuntu (WSL)"). */
   where?: string;
+  /** A question's whole text, which its sentence shows only in part (a long typed text): shown in a block that scrolls. */
+  whole?: WholeText;
 }
+
+/**
+ * The whole of what a question shows only in part (Question.detail: a typed text cut to its two ends), shown in a block
+ * that scrolls under its sentence (review #116). Its Allow works once all of it has been in view: the page that showed
+ * it says so with wholeSeenAction(n), and main sends it back with `seen` set.
+ */
+export interface WholeText {
+  /** The question's number (its buttons' "q<n>:" ids). */
+  n: number;
+  text: string;
+  /** All of it has been in view (main was told): Allow works. */
+  seen: boolean;
+  /** How many times the approve key asked for more before then: each time, the block scrolls on by a page. */
+  page: number;
+}
+
+/** What a page sends (as a bubble action) once all of question `n`'s whole text has been in view. */
+export const wholeSeenAction = (n: number): string => `ui:seen:${n}`;
+/** The question whose whole text a bubble action says has been in view (wholeSeenAction), or null for any other action. */
+export function wholeSeenOf(id: string): number | null {
+  const m = /^ui:seen:([1-9]\d{0,8})$/.exec(id);
+  return m ? Number(m[1]) : null;
+}
+/** A button that works only once the question's whole text has been in view: every answer but Not now ("q<n>:deny"). */
+export const waitsForWhole = (actionId: string, whole: WholeText | undefined): boolean =>
+  !!whole && !whole.seen && actionId.startsWith(`q${whole.n}:`) && actionId !== `q${whole.n}:deny`;
 
 export interface TaskCard {
   id: string;

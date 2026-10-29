@@ -111,6 +111,37 @@ describe("the handle window", () => {
     expect((pill.win as unknown as FakeWin).bounds).toEqual({ x: 1168, y: 782, width: 200, height: 56 });
   });
 
+  it("lets the card grow taller while a question shows a whole text, within the work area, and back once it goes (review #116)", () => {
+    const card = new HandleWindow(() => settings, true);
+    const cardWin = card.win as unknown as FakeWin;
+    const asking = (whole: boolean) => ({
+      emotion: "curious", talking: false, status: null, tasks: [],
+      bubble: { visible: true, mood: "attention", title: "May I?", thought: "Type …?", step: null, streaming: false, actions: [], ...(whole ? { whole: { n: 1, text: "Dear team, …", seen: false, page: 0 } } : {}) },
+    }) as never;
+    card.sendState(asking(true));
+    card.fit(514);
+    expect(cardWin.bounds).toEqual({ x: 1008, y: 324, width: 360, height: 514 });
+    // 640 at most (it holds the sentence, the block and the rest at the largest text size).
+    card.fit(999);
+    expect(cardWin.bounds).toEqual({ x: 1008, y: 198, width: 360, height: 640 });
+    // The question gone: back within the usual limit at once, whatever the page asks next.
+    card.sendState(asking(false));
+    expect(cardWin.bounds).toEqual({ x: 1008, y: 478, width: 360, height: 360 });
+    card.fit(514);
+    expect(cardWin.bounds.height).toBe(360);
+    // A work area too short for 640 (less 12 px above and below), and never under the usual limit.
+    const usual = { ...workArea };
+    workArea.height = 500;
+    try {
+      card.sendState(asking(true));
+      card.fit(999);
+      expect(cardWin.bounds.height).toBe(476);
+      workArea.height = 300;
+      card.fit(998);
+      expect(cardWin.bounds.height).toBe(360);
+    } finally { Object.assign(workArea, usual); }
+  });
+
   it("shrinks the pill to a tab with Ember's face while Ember is hidden, in the same corner, and never the card (review #75)", () => {
     const pill = new HandleWindow(() => settings, false);
     const win = pill.win as unknown as FakeWin;

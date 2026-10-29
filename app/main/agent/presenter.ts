@@ -8,7 +8,7 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
-import { plainMarkdown } from "@ember/bubble";
+import { WHOLE_KEY_HINT, WHOLE_KEY_SAY, WHOLE_UNREAD_SAID, plainMarkdown } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../commands/flow";
 import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
 
@@ -98,15 +98,30 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
 }
 
 /**
+ * The question keys' words while a question's whole text waits to be read (review #116): the approve key's "allow"
+ * becomes what it does then ("Ctrl+Alt+Y shows the next part", "Control Alt Y to show the next part"), named by the chord
+ * Ember holds; the others as they are. An approve key whose words don't end so is left out: never said to allow.
+ */
+export function readKeyWords(keys: readonly { which: "primary" | "deny"; hint: string; say: string }[]): { hint: string; say: string }[] {
+  return keys.flatMap(k => {
+    if (k.which !== "primary") return [{ hint: k.hint, say: k.say }];
+    const hint = /^(.+) allow$/.exec(k.hint)?.[1];
+    const say = /^(.+) to allow$/.exec(k.say)?.[1];
+    return hint && say ? [{ hint: `${hint} ${WHOLE_KEY_HINT}`, say: `${say} ${WHOLE_KEY_SAY}` }] : [];
+  });
+}
+
+/**
  * A question as Ember says it aloud and puts it in a notification, naming where it comes from when that isn't this
  * computer (§2.4): "Ember asks, on build-01: Click Save in gedit? Press …". `spoken` makes the prompt fit for speech;
- * `keys` are the held keys that answer it, as they are said.
+ * `keys` are the held keys that answer it, as they are said. A question with a whole text to read (`detail`, review #116)
+ * says that Allow waits for all of it to have been shown (its keys then say the approve key shows the next part).
  */
-export function questionAloud(q: { prompt: string; where?: string }, o: { keys?: readonly string[]; spoken?: (s: string) => string } = {}): { say: string; notify: string } {
+export function questionAloud(q: { prompt: string; where?: string; detail?: string }, o: { keys?: readonly string[]; spoken?: (s: string) => string } = {}): { say: string; notify: string } {
   const where = q.where?.replace(/\s+/g, " ").trim();
   const keys = o.keys ?? [];
   return {
-    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`,
+    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${q.detail ? ` ${WHOLE_UNREAD_SAID}` : ""}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`,
     notify: where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ${q.prompt}` : q.prompt,
   };
 }
