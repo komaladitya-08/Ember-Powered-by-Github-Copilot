@@ -133,8 +133,9 @@ export class HandleWindow {
   }
 
   /**
-   * Sends the settings to the page; true when the text size changed the pill's width, which then moves (main tells the
-   * desk view). The tab (Ember hidden) keeps its size; the pill takes the new width when Ember is shown again.
+   * Sends the settings to the page; true when the handle moved: Handle position changed (the pill, the tab or the card
+   * goes to the other corner), or the text size changed the pill's width (the tab keeps its size; the pill takes the
+   * new width when Ember is shown again). Main then tells the desk view.
    */
   sendSettings(s: Settings): boolean {
     if (this.win.isDestroyed()) return false;
