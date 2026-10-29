@@ -24,7 +24,8 @@ vi.mock("electron", async () => {
   const { EventEmitter } = await import("node:events");
   h.ipc = new EventEmitter();
   class BrowserWindow extends EventEmitter {
-    webContents = { send: () => undefined };
+    // revive() listens for a crashed page (did-finish-load, render-process-gone). The test never crashes one.
+    webContents = { send: () => undefined, on: () => undefined };
     constructor() { super(); h.windows.push(this); }
     isDestroyed() { return false; }
     isVisible() { return false; }
