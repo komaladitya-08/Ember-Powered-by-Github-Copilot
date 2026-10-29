@@ -23,6 +23,11 @@ export interface ElSpec {
   value?: string | number | boolean;
   /** AXSelectedText, when it differs from "nothing selected" (a field editor's selection). */
   selection?: string;
+  /**
+   * AXSelectedTextRange, when it is not the span of `selection` (a field editor that gives a range and no selected
+   * text). Absent: derived from `selection`, or a caret after the value.
+   */
+  selectedRange?: { location: number; length: number };
   enabled?: boolean;
   focused?: boolean;
   selected?: boolean;
@@ -142,6 +147,7 @@ function attributeOf(e: El, name: string, ref: (e: El) => AxRef, fake: FakeAx): 
     case "AXNumberOfCharacters": return typeof s.value === "string" ? s.value.length : NO_VALUE;
     case "AXSelectedText": return s.selection !== undefined ? s.selection : typeof s.value === "string" ? "" : NO_VALUE;
     case "AXSelectedTextRange": {
+      if (s.selectedRange) return { type: "range", location: s.selectedRange.location, length: s.selectedRange.length };
       if (s.selection && typeof s.value === "string") {
         const at = s.value.indexOf(s.selection);
         return { type: "range", location: at < 0 ? 0 : at, length: s.selection.length };

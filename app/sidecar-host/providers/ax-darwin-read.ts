@@ -846,16 +846,22 @@ export function textOf(s: AxSession, el: AxRef, maxChars: number): TextInfo {
     } else releaseValue(s.api, v);
   }
   if (text !== undefined) out.text = text;
+  const ownRange = rangeStruct(range);
+  // The field's own selected text, when it names some. AppKit often leaves AXSelectedText empty and keeps the
+  // selection on the field editor.
   if (typeof selected === "string" && selected) out.selection = selected.slice(0, TEXT_MAX);
-  let caret = range;
-  // A text field's own AXSelectedText is often empty while AppKit's field editor (not in the walk: a text field is a
-  // leaf) holds the selection. The editor's words are this field's.
+  let caret = ownRange;
   if (!out.selection) {
     const edited = selectionInEditor(s, el);
     if (edited.selection) out.selection = edited.selection.slice(0, TEXT_MAX);
     if (edited.range) caret = edited.range;
   }
-  if (typeof caret === "object" && !Array.isArray(caret) && !isAxError(caret) && caret.type === "range") {
+  // No editor (or it named no words): the field's own range, when it covers some. A caret is a range of no length.
+  if (!out.selection && ownRange && ownRange.length > 0) {
+    const words = s.textRange(el, Math.max(0, ownRange.location), Math.min(ownRange.length, TEXT_MAX));
+    if (words) out.selection = words.slice(0, TEXT_MAX);
+  }
+  if (caret) {
     out.caret = Math.max(0, caret.location);
     const count = chars ?? (text !== undefined && !out.truncated ? text.length : undefined);
     if (count !== undefined) out.caretAtEnd = caret.location >= count;
@@ -908,8 +914,26 @@ export function keyboardControl(s: AxSession, el: AxRef): AxRef {
   return cur;
 }
 
+/** A CFRange attribute, when `v` is one. */
+function rangeStruct(v: AxValue | AxError | undefined): Extract<AxStruct, { type: "range" }> | undefined {
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && !isAxError(v) && v.type === "range") return v;
+  return undefined;
+}
+
+/**
+ * The selected words of `el`: AXSelectedText when the element gives it, else the text of AXSelectedTextRange when
+ * that range covers some characters (read with AXStringForRange, from the element that holds the range). A caret is
+ * a range of no length and selects nothing. undefined when neither says.
+ */
+function selectedWords(s: AxSession, el: AxRef, selected: AxValue | AxError | undefined, range: AxValue | AxError | undefined): string | undefined {
+  if (typeof selected === "string" && selected) return selected;
+  const span = rangeStruct(range);
+  if (!span || span.length <= 0) return undefined;
+  return s.textRange(el, Math.max(0, span.location), Math.min(span.length, TEXT_MAX));
+}
+
 /** The field editor's selection and caret, when `el` is the text field that editor belongs to and `el`'s own is empty. */
-function selectionInEditor(s: AxSession, el: AxRef): { selection?: string; range?: AxStruct } {
+function selectionInEditor(s: AxSession, el: AxRef): { selection?: string; range?: Extract<AxStruct, { type: "range" }> } {
   const app = s.api.app(s.pid);
   if (!app) return {};
   const focused = s.attr(app, "AXFocusedUIElement");
@@ -922,9 +946,11 @@ function selectionInEditor(s: AxSession, el: AxRef): { selection?: string; range
     const selected = m.get("AXSelectedText");
     const range = m.get("AXSelectedTextRange");
     for (const v of m.values()) releaseValue(s.api, v);
-    const out: { selection?: string; range?: AxStruct } = {};
-    if (typeof selected === "string" && selected) out.selection = selected;
-    if (typeof range === "object" && !Array.isArray(range) && !isAxError(range) && range.type === "range") out.range = range;
+    const out: { selection?: string; range?: Extract<AxStruct, { type: "range" }> } = {};
+    const words = selectedWords(s, focused, selected, range);
+    if (words) out.selection = words;
+    const span = rangeStruct(range);
+    if (span) out.range = span;
     return out;
   } catch {
     return {}; // the editor can't be read: the field keeps what it said itself

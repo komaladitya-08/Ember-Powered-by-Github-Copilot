@@ -25,7 +25,7 @@ import path from "node:path";
 import { AtspiSidecar, type AxNode, type AxWindow, type ReadWindowResult, type SidecarLaunch, type SidecarStatus } from "../../app/main/perception/sidecar";
 import { hostLaunch } from "../../app/sidecar-host/launch";
 import { AxDarwinProvider } from "../../app/sidecar-host/providers/ax-darwin";
-import { axApiError, openAxApi } from "../../app/sidecar-host/providers/ax-darwin-api";
+import { axApiError, openAxApi, type AxApi, type AxRef } from "../../app/sidecar-host/providers/ax-darwin-api";
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import type { Logger } from "../../app/main/logger";
 import { windowsNow } from "./darwin-support";
@@ -69,6 +69,25 @@ function benchEvents(log: string): Record<string, unknown>[] {
   });
 }
 const logged = (log: string, match: Record<string, unknown>) => benchEvents(log).find(e => Object.entries(match).every(([k, v]) => e[k] === v));
+
+/**
+ * Selects every character of the element that has the keyboard. That element is AppKit's field editor once a text
+ * field is editing, and the selection lives on the editor (AXSelectedTextRange), not on a keystroke sent at the
+ * process. System Events' Command-A never arrived there (CI 40921989434, 40926685957, 40933628312).
+ */
+function selectFocusedText(api: AxApi, app: AxRef): void {
+  const focused = api.attr(app, "AXFocusedUIElement");
+  if (typeof focused !== "bigint") throw new Error("the bench has no element with the keyboard");
+  try {
+    const chars = api.attr(focused, "AXNumberOfCharacters");
+    const length = typeof chars === "number" ? chars : 0;
+    if (length <= 0) throw new Error("the element with the keyboard has no text to select");
+    const err = api.set(focused, "AXSelectedTextRange", { type: "range", location: 0, length });
+    if (err) throw new Error(`AXSelectedTextRange was not set (AX error ${err.axError})`);
+  } finally {
+    api.release(focused);
+  }
+}
 
 /** This process and its ancestors (the TCC "responsible process" is one of them), for the grant message. */
 function ancestry(): string {
@@ -362,13 +381,12 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     await reread();
     await s.request("focus", { id: node("Name", "entry").id });
     // Focusing the field does not select its words. AppKit gives the keyboard to a field editor the walk doesn't
-    // list, and two CI runs (40921989434, 40926685957) timed out waiting for a selection that focus never made.
-    // Select the line, as the Windows test does.
+    // list. Select the editor's whole range; a Command-A from System Events never landed in it.
     await waitFor("the Name field with the keyboard", async () => {
       await reread();
       return node("Name", "entry").states.includes("focused");
     }, 5_000);
-    spawnSync("/usr/bin/osascript", ["-e", 'tell application "System Events" to keystroke "a" using command down'], { timeout: 10_000 });
+    selectFocusedText(api!, app!);
     const had = await waitFor("the Name field's text selected", async () => {
       await reread();
       const n = node("Name", "entry");

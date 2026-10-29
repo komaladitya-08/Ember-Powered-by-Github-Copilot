@@ -378,7 +378,9 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
       const e = list.find(w => w.id === window);
       // Ember's own windows are focused by main through Electron: AX on Ember's process would block its main thread.
       if (!e || e.pid === ownPid) return;
-      if (resolveFocus(focus, list)?.id === window) return;
+      // Already the front window and the one with the keyboard: nothing to raise. The keyboard alone is not enough —
+      // another window of the same app can sit in front of the one that has it, and that one is not active until raised.
+      if (resolveFocus(focus, list)?.id === window && resolveActive(focus, list)?.id === window) return;
       desktop.raise(e.pid, window, e.bounds);
     },
 

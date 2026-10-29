@@ -486,6 +486,19 @@ describe("text an element holds", () => {
     expect(fake.outstanding).toBe(0);
   });
 
+  it("reads a field's selection from its range when it gives no selected text", () => {
+    const fake = new FakeAx([benchApp()]);
+    const name = fake.el("name");
+    name.spec.value = "Ember 1";
+    name.spec.selection = "";
+    name.spec.selectedRange = { location: 0, length: 7 };
+    const s = new AxSession(fake, PID, new BusyApps(fake.now));
+    const el = fake.ref(name);
+    expect(textOf(s, el, 100)).toMatchObject({ text: "Ember 1", selection: "Ember 1", caret: 0 });
+    fake.release(el);
+    expect(fake.outstanding).toBe(0);
+  });
+
   it("reads the selection from the field editor when the text field's own is empty", () => {
     const fake = new FakeAx([benchApp()]);
     const name = fake.el("name");
@@ -504,6 +517,24 @@ describe("text an element holds", () => {
     expect(textOf(s, notes, 100).selection).toBeUndefined();
     fake.release(el);
     fake.release(notes);
+    expect(fake.outstanding).toBe(0);
+  });
+
+  it("reads the field editor's selection from its range when the editor gives no selected text", () => {
+    const fake = new FakeAx([benchApp()]);
+    const name = fake.el("name");
+    name.spec.value = "Ember 1";
+    name.spec.focused = false;
+    name.spec.selection = "";
+    name.children.push(new El(
+      { role: "AXTextArea", id: "editor", value: "Ember 1", selection: "", selectedRange: { location: 0, length: 7 }, focused: true },
+      name, PID, () => 900_000,
+    ));
+    fake.apps.find(a => a.pid === PID)!.focusedId = "editor";
+    const s = new AxSession(fake, PID, new BusyApps(fake.now));
+    const el = fake.ref(name);
+    expect(textOf(s, el, 100)).toMatchObject({ text: "Ember 1", selection: "Ember 1", caret: 0 });
+    fake.release(el);
     expect(fake.outstanding).toBe(0);
   });
 

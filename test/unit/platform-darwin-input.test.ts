@@ -376,6 +376,18 @@ describe("macOS windows for input", () => {
     expect(s.calls).toEqual(["raise 500 103"]);
   });
 
+  it("raises a window that has the keyboard when another of its app is in front", () => {
+    const { s, input } = setup();
+    s.focused.set(500, { id: 103, title: "Other", frame: null });
+    input.activate(103);
+    expect(s.calls).toEqual(["raise 500 103"]);
+    s.calls.length = 0;
+    s.windows.unshift(...s.windows.splice(s.windows.findIndex(w => w.id === 103), 1));
+    s.focused.set(500, { id: 103, title: "Other", frame: null });
+    input.activate(103);
+    expect(s.calls).toEqual([]);
+  });
+
   it("knows whether a click at the pointer lands in the window", () => {
     const { s, input } = setup();
     expect(input.pointerOn(101)).toBe(true);
