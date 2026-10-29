@@ -153,3 +153,57 @@ describe("remote.yml's paths filter (cross-review X16)", () => {
     expect(missing, "add these to both paths lists in .github/workflows/remote.yml").toEqual([]);
   }, 60_000);
 });
+
+describe("Windows SSH to a real Linux kernel, in remote.yml's WSL2 job (release follow-up)", () => {
+  /** A job's text, from its key to the next job's. */
+  const job = (name: string) => {
+    const start = wf.indexOf(`\n  ${name}:\n`);
+    expect(start, name).toBeGreaterThan(0);
+    const next = wf.slice(start + 1).search(/\n {2}[\w-]+:\n/);
+    return next < 0 ? wf.slice(start) : wf.slice(start, start + 1 + next);
+  };
+  const steps = (text: string) => text.split(/\n {6}- /).slice(1);
+  const wsl2 = job("wsl2-windows");
+  const all = steps(wsl2);
+  const at = (has: string) => { const i = all.findIndex(s => s.includes(has)); expect(i, has).toBeGreaterThanOrEqual(0); return i; };
+
+  it("keeps the WSL tests as they were: first, on a stopped distro with nothing of the test's own installed", () => {
+    const wslTests = at("test/integration/wsl.test.ts");
+    expect(all[wslTests]).toContain('EMBER_WSL_TEST: "1"');
+    expect(wsl2).toContain('"EMBER_WSL_EXPECT_STOPPED=1"');
+    // setup-wsl installs no sshd: it would start with the distro's systemd before the WSL tests.
+    expect(all[at("Vampire/setup-wsl@")]).toMatch(/\n {10}additional-packages: util-linux python3 git$/);
+    for (const later of ["ssh-keygen.exe", "openssh-server", "sleep', 'infinity'", "StrictHostKeyChecking=accept-new", "remote-parts.mjs", "ssh-windows.test.ts"]) {
+      expect(at(later), later).toBeGreaterThan(wslTests);
+    }
+  });
+
+  it("sets up sshd in the distro on port 2222 for its non-root user, with the runner's new Windows key", () => {
+    const key = all[at("ssh-keygen.exe")];
+    expect(key).toContain("shell: pwsh");
+    expect(key).toContain(`& "$ssh\\ssh-keygen.exe" -q -t ed25519 -N '' -f "$dir\\id_ed25519"`);
+    expect(key).toContain('Add-Content -Path "$dir\\config" -Value "Host 127.0.0.1", "  User ember"');
+    const sshd = all[at("openssh-server")];
+    expect(sshd).toContain("wsl.exe -d Ubuntu-22.04 -u root --exec /bin/bash -euo pipefail -s");
+    expect(sshd).toContain("printf '%s\\n' 'Port 2222' > /etc/ssh/sshd_config.d/ember-ci.conf");
+    expect(sshd).toContain("/home/ember/.ssh/authorized_keys");
+    expect(sshd).toContain("systemctl is-active ssh");
+    // WSL stops an idle distro (no wsl.exe attached) after 15 s, sshd with it: one stays attached for the job.
+    const alive = all[at("sleep', 'infinity'")];
+    expect(alive).toContain("Start-Process -FilePath wsl.exe -ArgumentList '-d', 'Ubuntu-22.04', '--exec', 'sleep', 'infinity' -WindowStyle Hidden");
+    expect(alive).not.toMatch(/-NoNewWindow|-Redirect/);
+    expect(all[at("StrictHostKeyChecking=accept-new")]).toContain("-p 2222 127.0.0.1");
+  });
+
+  it("runs the Windows SSH suite there with the remote parts built, and requires the hello", () => {
+    expect(at("node scripts/package/remote-parts.mjs")).toBeLessThan(at("ssh-windows.test.ts"));
+    const suite = all[at("ssh-windows.test.ts")];
+    expect(suite).toContain("run: node scripts/run-integration.mjs test/integration/ssh-windows.test.ts\n");
+    for (const v of ['EMBER_SSH_TEST: "1"', 'EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"', 'EMBER_SSH_TEST_EXPECT_HELLO: "1"']) expect(suite).toContain(v);
+    // WSL1's emulated 4.4 kernel must be refused there, before anything is installed.
+    const wsl1 = steps(job("wsl-windows")).find(s => s.includes("ssh-windows.test.ts"));
+    expect(wsl1).toContain('EMBER_SSH_TEST_EXPECT_HELLO: "0"');
+    const test = fs.readFileSync(path.join(root, "test/integration/ssh-windows.test.ts"), "utf8");
+    expect(test).toContain("process.env.EMBER_SSH_TEST_EXPECT_HELLO");
+  });
+});

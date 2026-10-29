@@ -580,13 +580,16 @@ jobs:
           EMBER_COMMANDS_TEST: "1"
       - name: The remote agent's parts (dist/remote-parts), so the connect-and-hello test runs too
         run: node scripts/package/remote-parts.mjs
-      - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA)
+      - name: Win32-OpenSSH to the WSL1 sshd through the mux (SA); WSL1's 4.4 kernel refused before anything is installed
         run: node scripts/run-integration.mjs --allow-missing test/integration/ssh-windows.test.ts
         env:
           EMBER_SSH_TEST: "1"
           EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+          EMBER_SSH_TEST_EXPECT_HELLO: "0"
 
-  # Owner: WA. The Store WSL as WSL2 with a non-root default user (critique wsl-12).
+  # Owner: WA. The Store WSL as WSL2 with a non-root default user (critique wsl-12). After the WSL tests (packaging):
+  # sshd in the distro for Win32-OpenSSH, so Windows reaches a real Linux kernel that installs, serves and says hello
+  # (WSL1's emulated 4.4 is refused, rightly).
   wsl2-windows:
     name: WSL2 (windows-2025)
     if: github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.only == 'all' || inputs.only == 'wsl'))
@@ -642,6 +645,69 @@ jobs:
         run: node scripts/run-integration.mjs --allow-missing test/integration/wsl.test.ts
         env:
           EMBER_WSL_TEST: "1"
+      # Windows SSH to this distro from here on, set up only now: the WSL tests above want it stopped at start and
+      # running nothing of the test's own (sshd would start with its systemd).
+      - name: The runner's new Windows key (Win32-OpenSSH's own ssh-keygen sets its ACL), used as ember on 127.0.0.1
+        shell: pwsh
+        run: |
+          $ssh = "$env:SystemRoot\System32\OpenSSH"
+          $dir = "$env:USERPROFILE\.ssh"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          & "$ssh\ssh-keygen.exe" -q -t ed25519 -N '' -f "$dir\id_ed25519"
+          if (-not (Test-Path "$dir\id_ed25519.pub")) { throw "ssh-keygen made no key" }
+          # The distro's default user (not root, unlike the WSL1 job); without this ssh would log in as the Windows user.
+          Add-Content -Path "$dir\config" -Value "Host 127.0.0.1", "  User ember"
+      - name: sshd in the distro (openssh-server, under its systemd) on port 2222, with that key authorised for ember
+        run: |
+          set -euo pipefail
+          # The script on stdin, the Windows profile folder as $1 (wslpath finds the key there).
+          MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 -u root --exec /bin/bash -euo pipefail -s "$USERPROFILE" <<'SH'
+          export DEBIAN_FRONTEND=noninteractive
+          mkdir -p /etc/ssh/sshd_config.d
+          printf '%s\n' 'Port 2222' > /etc/ssh/sshd_config.d/ember-ci.conf
+          apt-get update -q
+          apt-get install -y -q --no-install-recommends openssh-server
+          install -d -m 700 -o ember -g ember /home/ember/.ssh
+          tr -d '\r' < "$(wslpath "$1")/.ssh/id_ed25519.pub" >> /home/ember/.ssh/authorized_keys
+          chown ember:ember /home/ember/.ssh/authorized_keys && chmod 600 /home/ember/.ssh/authorized_keys
+          systemctl restart ssh
+          systemctl is-active ssh
+          SH
+      # WSL stops a distro 15 s after the last wsl.exe attached to it ends (instanceIdleTimeout), sshd and all: one
+      # stays attached for the rest of the job (the runner ends it with the job). Start-Process without -NoNewWindow or
+      # redirection starts it apart from this step's output, so the step doesn't wait for it.
+      - name: The distro kept running, and sshd on 127.0.0.1:2222 reachable from Windows
+        shell: pwsh
+        run: |
+          Start-Process -FilePath wsl.exe -ArgumentList '-d', 'Ubuntu-22.04', '--exec', 'sleep', 'infinity' -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 60 -and -not $ok; $i++) {
+            $c = [Net.Sockets.TcpClient]::new()
+            try { $c.Connect('127.0.0.1', 2222); $ok = $true } catch { Start-Sleep -Milliseconds 500 } finally { $c.Dispose() }
+          }
+          # wsl.exe writes UTF-16: read it as such. Its exit status is only for the log.
+          [Console]::OutputEncoding = [Text.Encoding]::Unicode
+          wsl.exe --list --running --quiet; "exit $LASTEXITCODE"
+          if (-not $ok) { throw "sshd in the distro isn't reachable on 127.0.0.1:2222" }
+          exit 0
+      - name: The distro's host key known to Win32-OpenSSH, and a batch connect as ember with the runner's key
+        shell: pwsh
+        run: |
+          # As in the WSL1 job: the first connect records the host key; every later one, Ember's included, checks it.
+          $ssh = "$env:SystemRoot\System32\OpenSSH"
+          & "$ssh\ssh.exe" -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -p 2222 127.0.0.1 'echo connected as $(id -un) to Linux $(uname -r)'
+          if ($LASTEXITCODE -ne 0) { throw "ssh to the distro failed ($LASTEXITCODE)" }
+      - name: The remote agent's parts (dist/remote-parts), as the connect-and-hello test installs them
+        run: node scripts/package/remote-parts.mjs
+      - name: Win32-OpenSSH to the WSL2 sshd, a real Linux kernel (the agent installs, serves and says hello)
+        run: node scripts/run-integration.mjs test/integration/ssh-windows.test.ts
+        env:
+          EMBER_SSH_TEST: "1"
+          EMBER_TEST_ALLOW_LOOPBACK_SSH: "1"
+          EMBER_SSH_TEST_EXPECT_HELLO: "1"
+      - name: The distro's sshd log, when a step above failed
+        if: failure()
+        run: MSYS_NO_PATHCONV=1 wsl.exe -d Ubuntu-22.04 -u root --exec journalctl -u ssh --no-pager -n 200 || true
 
   # Owner: WB. Records what WSLg looks like on the runner (artefacts only: never pass or fail until it is stable).
   wslg-probe:

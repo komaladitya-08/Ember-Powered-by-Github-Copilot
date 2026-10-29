@@ -1,14 +1,17 @@
 /**
- * Ember's SSH transport from a Windows PC (the `wsl-windows` job of remote.yml: Ubuntu 22.04 as WSL1 with sshd on
- * port 2222 and the runner's Windows key authorised there). Win32-OpenSSH runs with Ember's hardened argv under no
- * terminal: a batch connect (probe → "Remove Ember") through the real link worker, which also shows Win32-OpenSSH
- * accepts `ControlMaster=no` and `ControlPath=none`; 4 MiB of random bytes both ways through ssh's pipes (and through
- * the mux too, once MX's createMux is merged); the same-machine refusal of this PC's own WSL on loopback; the askpass
- * helper compiled from resources/ssh/ember_askpass.cs by Windows PowerShell 5.1 and answering over Ember's named pipe
- * (when the client is 8.4 or newer, L15); and, with the remote parts built, a connect that says hello.
+ * Ember's SSH transport from a Windows PC (remote.yml's `wsl-windows` job: Ubuntu 22.04 as WSL1 with sshd on port 2222
+ * and the runner's Windows key authorised for root; and its `wsl2-windows` job: the same as WSL2, a real Linux kernel,
+ * for the distro's own user). Win32-OpenSSH runs with Ember's hardened argv under no terminal: a batch connect (probe →
+ * "Remove Ember") through the real link worker, which also shows Win32-OpenSSH accepts `ControlMaster=no` and
+ * `ControlPath=none`; 4 MiB of random bytes both ways through ssh's pipes (and through the mux too, once MX's createMux
+ * is merged); the same-machine refusal of this PC's own WSL on loopback; the askpass helper compiled from
+ * resources/ssh/ember_askpass.cs by Windows PowerShell 5.1 and answering over Ember's named pipe (when the client is 8.4
+ * or newer, L15); and, with the remote parts built, a connect that installs the agent and says hello on a real kernel
+ * (WSL2), or is refused before anything is installed on WSL1's emulated 4.4.
  *
  * Needs EMBER_SSH_TEST=1 (and EMBER_TEST_ALLOW_LOOPBACK_SSH=1): skipped without it, FAILS with it when Win32-OpenSSH,
- * the sshd in WSL or the build is missing.
+ * the sshd in WSL or the build is missing. EMBER_SSH_TEST_EXPECT_HELLO says which way the connect must go ("1": hello,
+ * "0": refused); set, missing remote parts fail the test instead of skipping it.
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -52,10 +55,13 @@ function missing(): string | null {
   return null;
 }
 
+/** The connect-and-hello test's expected outcome: true a hello (a real kernel), false WSL1's refusal, null either. */
+const EXPECT_HELLO = process.env.EMBER_SSH_TEST_EXPECT_HELLO === "1" ? true : process.env.EMBER_SSH_TEST_EXPECT_HELLO === "0" ? false : null;
+
 const run = WANTED && ON_WINDOWS;
 const why = run ? missing() : "EMBER_SSH_TEST isn't 1 (or not Windows)";
 
-describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
+describe.skipIf(!run)("SSH transport from Windows (wsl-windows, wsl2-windows)", () => {
   let tmp = "";
   beforeAll(() => {
     if (why) throw new Error(`EMBER_SSH_TEST=1 but the SSH test facility is missing: ${why}`);
@@ -190,7 +196,8 @@ describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
   }, 120_000);
 
   const partsBuilt = existsSync(join(ROOT, "dist", "remote-parts", "remote-parts.json"));
-  it.skipIf(!partsBuilt)("connects with the test switch and says hello, or refuses a kernel older than 4.18 before installing (needs the remote parts)", async () => {
+  it.skipIf(!partsBuilt && EXPECT_HELLO === null)("connects with the test switch and says hello, or refuses a kernel older than 4.18 before installing (needs the remote parts)", async () => {
+    if (!partsBuilt) throw new Error("EMBER_SSH_TEST_EXPECT_HELLO is set but the remote parts aren't built (node scripts/package/remote-parts.mjs)");
     const c = connections(true);
     const resolved = await c.resolve("127.0.0.1", { port: PORT });
     const record = { ...host(), resolved: { user: resolved.user, hostname: resolved.hostname, port: resolved.port, jump: resolved.jump } };
@@ -199,7 +206,10 @@ describe.skipIf(!run)("SSH transport from Windows (wsl-windows)", () => {
     const kernel = spawnSync(SSH, ["-o", "BatchMode=yes", "-p", String(PORT), "127.0.0.1", "uname -r"], { encoding: "utf8", windowsHide: true, timeout: 30_000 }).stdout.trim();
     console.log(`remote kernel: ${kernel}`);
     const [major, minor] = kernel.split(".").map(Number);
-    if (major < 4 || (major === 4 && minor < 18)) {
+    if (!Number.isInteger(major) || !Number.isInteger(minor)) throw new Error(`the remote's kernel version didn't read: "${kernel}"`);
+    const old = major < 4 || (major === 4 && minor < 18);
+    if (EXPECT_HELLO !== null && EXPECT_HELLO === old) throw new Error(`EMBER_SSH_TEST_EXPECT_HELLO=${EXPECT_HELLO ? 1 : 0} but the remote's kernel is ${kernel}`);
+    if (old) {
       await expect(c.connect(record, { interactive: false })).rejects.toMatchObject({ kind: "unsupported", message: expect.stringContaining("Linux 4.18") });
       const installed = spawnSync(SSH, ["-o", "BatchMode=yes", "-p", String(PORT), "127.0.0.1", "{ test -e ~/.local/share/ember-remote/runtime || test -e ~/.local/share/ember-remote/versions; } && echo yes || echo no"], { encoding: "utf8", windowsHide: true, timeout: 30_000 }).stdout.trim();
       expect(installed).toBe("no");
