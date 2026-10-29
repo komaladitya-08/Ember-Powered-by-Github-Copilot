@@ -43,6 +43,15 @@ const GAP = 8;
 /** A box asked for that is still loading after this long isn't shown (the user has moved on: their keys went elsewhere). */
 const LATE_MS = 1500;
 /**
+ * After the box is shown, how long a blur is the keyboard still being handed over, not the user clicking away.
+ * The handle and the overlay finish loading and call showInactive in this window, and Windows takes a tool window's
+ * keyboard back in the same moment it was given; either one closes the box if a blur hides it at once (the size
+ * check on CI saw the box, then visible false). A few tries take it back. After this, a blur closes the box.
+ */
+const OPENING_MS = 1500;
+/** How many times, during that handover, a blur makes the box take the keyboard again before it gives up and closes. */
+const OPENING_TRIES = 4;
+/**
  * After the field's right-click menu closes, how long the OS has to say where the keyboard went (a click on another app
  * that dismissed the menu activates that app) before the box takes it back or goes away.
  */
@@ -160,6 +169,12 @@ export class AskWindow {
   private menuBlur = false;
   /** Shown, and not yet told by Electron that it has the keyboard (onKeyboard says when it is). */
   private awaitingKeyboard = false;
+  /** Until when a blur is the keyboard still being handed over (reveal, OPENING_MS). */
+  private openingUntil = 0;
+  /** Blurs during that handover that have already made the box take the keyboard again. */
+  private openingTries = 0;
+  /** The field's menu has just closed and the OS hasn't yet said where the keyboard went. */
+  private menuSettle = false;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -215,8 +230,20 @@ export class AskWindow {
     try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
     win.on("blur", () => {
       if (this.win !== win) return;
-      if (this.menuUp) this.menuBlur = true;
-      else this.hide();
+      if (this.menuUp) { this.menuBlur = true; return; }
+      // The click that dismissed the menu: it closes the box, including during the handover below.
+      if (this.menuSettle) { this.hide(); return; }
+      if (Date.now() < this.openingUntil && this.openingTries < OPENING_TRIES) {
+        this.openingTries++;
+        setTimeout(() => {
+          if (this.win !== win || win.isDestroyed() || !win.isVisible() || this.menuUp || this.menuSettle) return;
+          if (win.isFocused()) return;
+          try { win.focus(); } catch { /* the window manager decides */ }
+          try { this.o.takeFocus?.(this.idOf(win)); } catch { /* the keyboard stays where it is */ }
+        }, 0);
+        return;
+      }
+      this.hide();
     });
     win.on("focus", () => {
       if (this.win !== win) return;
@@ -251,6 +278,8 @@ export class AskWindow {
     try { win.setIgnoreMouseEvents(false); } catch { /* test double */ }
     // Before show(): Windows activates the window, and says so ("focus"), inside it.
     this.awaitingKeyboard = true;
+    this.openingUntil = Date.now() + OPENING_MS;
+    this.openingTries = 0;
     win.show();
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
@@ -304,7 +333,9 @@ export class AskWindow {
       callback: () => {
         // A blur from here on closes the box as usual; one that came while the menu was up is decided below.
         this.menuUp = false;
+        this.menuSettle = true;
         setTimeout(() => {
+          this.menuSettle = false;
           if (this.win !== win || win.isDestroyed() || !win.isVisible() || win.isFocused()) return;
           if (this.menuBlur) this.hide();
           else win.focus();
@@ -349,6 +380,8 @@ export class AskWindow {
   hide(): void {
     this.wanted = false;
     this.awaitingKeyboard = false;
+    this.openingUntil = 0;
+    this.menuSettle = false;
     if (!this.win || this.win.isDestroyed()) return;
     this.win.hide();
     // A hidden always-on-top box on X11 can stay mapped and steal a click into the app beneath (that click then

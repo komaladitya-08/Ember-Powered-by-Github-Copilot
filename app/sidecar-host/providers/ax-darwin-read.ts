@@ -17,7 +17,7 @@
 import { ProviderError, type PerformOp, type ProviderErrorCode, type RawNode, type Rect, type TextInfo } from "../provider";
 import { INTERACTIVE_ROLES, LAZY_ACTION_ROLES, TEXT_ROLES, axRole, childContext, type RoleContext } from "../roles";
 import { AX_ERROR, axErrorName } from "../../main/platform/darwin/ax";
-import { isAxError, type AxApi, type AxError, type AxRef, type AxValue } from "./ax-darwin-api";
+import { isAxError, type AxApi, type AxError, type AxRef, type AxStruct, type AxValue } from "./ax-darwin-api";
 
 /**
  * The attributes read for every element, in one AXUIElementCopyMultipleAttributeValues round trip: never AXValue, nor
@@ -847,12 +847,91 @@ export function textOf(s: AxSession, el: AxRef, maxChars: number): TextInfo {
   }
   if (text !== undefined) out.text = text;
   if (typeof selected === "string" && selected) out.selection = selected.slice(0, TEXT_MAX);
-  if (typeof range === "object" && !Array.isArray(range) && !isAxError(range) && range.type === "range") {
-    out.caret = Math.max(0, range.location);
+  let caret = range;
+  // A text field's own AXSelectedText is often empty while AppKit's field editor (not in the walk: a text field is a
+  // leaf) holds the selection. The editor's words are this field's.
+  if (!out.selection) {
+    const edited = selectionInEditor(s, el);
+    if (edited.selection) out.selection = edited.selection.slice(0, TEXT_MAX);
+    if (edited.range) caret = edited.range;
+  }
+  if (typeof caret === "object" && !Array.isArray(caret) && !isAxError(caret) && caret.type === "range") {
+    out.caret = Math.max(0, caret.location);
     const count = chars ?? (text !== undefined && !out.truncated ? text.length : undefined);
-    if (count !== undefined) out.caretAtEnd = range.location >= count;
+    if (count !== undefined) out.caretAtEnd = caret.location >= count;
   }
   return out;
+}
+
+/** A text field AppKit inserts a field editor into (the element a walk lists; the editor is not among its children). */
+const FIELD_ROLES: ReadonlySet<string> = new Set(["AXTextField", "AXSearchField", "AXComboBox", "AXSecureTextField"]);
+/** What sits inside that field on the way to the editor (the editor itself, or the scroll area around it). */
+const EDITOR_ROLES: ReadonlySet<string> = new Set(["AXTextArea", "AXTextField", "AXScrollArea", "AXGroup"]);
+
+/**
+ * The element a walk lists for whatever has the keyboard. AppKit's field editor is an AXTextArea it inserts into a
+ * text field and does not list among the field's children (a text field is a leaf), and the field's own AXFocused is
+ * often false while the editor has the keyboard. The editor's parent, through one scroll area, is that field.
+ * Returns `el` when it already is the element a walk lists. The caller still owns `el`; a different return is another
+ * reference, also the caller's to release.
+ */
+export function keyboardControl(s: AxSession, el: AxRef): AxRef {
+  let cur = el;
+  let climbed = false;
+  for (let hop = 0; hop < 4; hop++) {
+    const parent = s.attr(cur, "AXParent");
+    if (typeof parent !== "bigint") break;
+    const parentRole = str(s.attr(parent, "AXRole"));
+    const role = str(s.attr(cur, "AXRole"));
+    if (FIELD_ROLES.has(parentRole) && EDITOR_ROLES.has(role)) {
+      if (climbed) s.api.release(cur);
+      cur = parent;
+      climbed = true;
+      continue;
+    }
+    // The editor can sit in a scroll area that sits in the field. A text area whose scroll area is not inside a
+    // field (the bench's Notes) is itself the element a walk lists.
+    if ((parentRole === "AXScrollArea" || parentRole === "AXGroup") && (role === "AXTextArea" || role === "AXTextField")) {
+      const above = s.attr(parent, "AXParent");
+      if (typeof above === "bigint" && FIELD_ROLES.has(str(s.attr(above, "AXRole")))) {
+        s.api.release(parent);
+        if (climbed) s.api.release(cur);
+        cur = above;
+        climbed = true;
+        continue;
+      }
+      if (typeof above === "bigint") s.api.release(above);
+    }
+    s.api.release(parent);
+    break;
+  }
+  return cur;
+}
+
+/** The field editor's selection and caret, when `el` is the text field that editor belongs to and `el`'s own is empty. */
+function selectionInEditor(s: AxSession, el: AxRef): { selection?: string; range?: AxStruct } {
+  const app = s.api.app(s.pid);
+  if (!app) return {};
+  const focused = s.attr(app, "AXFocusedUIElement");
+  if (typeof focused !== "bigint") return {};
+  let control = focused;
+  try {
+    control = keyboardControl(s, focused);
+    if (control === focused || !s.api.same(control, el)) return {};
+    const m = s.batch(focused, ["AXSelectedText", "AXSelectedTextRange"]);
+    const selected = m.get("AXSelectedText");
+    const range = m.get("AXSelectedTextRange");
+    for (const v of m.values()) releaseValue(s.api, v);
+    const out: { selection?: string; range?: AxStruct } = {};
+    if (typeof selected === "string" && selected) out.selection = selected;
+    if (typeof range === "object" && !Array.isArray(range) && !isAxError(range) && range.type === "range") out.range = range;
+    return out;
+  } catch {
+    return {}; // the editor can't be read: the field keeps what it said itself
+  } finally {
+    if (control !== focused) s.api.release(control);
+    s.api.release(focused);
+  }
 }
 
 /**

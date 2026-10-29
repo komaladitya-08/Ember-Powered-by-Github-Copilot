@@ -335,8 +335,11 @@ describe.skipIf(!onWindows && !required)("the Windows backends on a real desktop
     await fromTimer(other.hwnd);
     await waitFor(() => x.activeWindow() === other.hwnd, 1_000, "the second bench to take the foreground");
     await fromTimer(hwnd);
-    await waitFor(() => x.activeWindow() === hwnd, 1_000, "the first bench to take the foreground back");
-    expect(x.focusedWindow()).toBe(hwnd);
+    // The foreground and the keyboard, both, within the same second. One sample of the keyboard just after the
+    // foreground landed can see none: GetForegroundWindow is 0 for a moment while the hand-off finishes, and
+    // focusedWindow is 0 only then (ci 40926685957, expected 721068, got 0). The next sample, still inside the
+    // second, is the one that counts.
+    await waitFor(() => x.activeWindow() === hwnd && x.focusedWindow() === hwnd, 1_000, "the first bench to take the foreground and the keyboard back");
     expect(x.findWindow(TITLE, ready.pid)).toBe(hwnd);
     expect(x.findWindow(TITLE, other.ready.pid)).toBe(other.hwnd);
     expect(x.findWindow(TITLE)).toBe(0); // two windows with that title: input to a guess could go anywhere

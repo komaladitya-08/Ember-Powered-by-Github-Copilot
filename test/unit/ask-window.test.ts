@@ -185,6 +185,28 @@ describe("the ask box", () => {
     vi.advanceTimersByTime(500);
     expect(win.focused).toBe(focused);
     expect(win.visible).toBe(true);
+    // Past the handover after the box was shown: a blur now is the user clicking away.
+    vi.advanceTimersByTime(1500);
+    win.emit("blur");
+    expect(win.visible).toBe(false);
+  });
+
+  it("stays open when the keyboard is taken back while the box is still being handed it", () => {
+    vi.useFakeTimers();
+    const taken: number[] = [];
+    const ask = new AskWindow({ takeFocus: id => taken.push(id) });
+    ask.show({ x: 400, y: 300 });
+    const [win] = made;
+    win.emit("ready-to-show");
+    const focused = win.focused;
+    win.isFocused = () => false;
+    win.emit("blur");
+    expect(win.visible).toBe(true);
+    vi.advanceTimersByTime(0);
+    expect(win.focused).toBe(focused + 1);
+    expect(taken).toEqual([0x3a00007, 0x3a00007]);
+    expect(win.visible).toBe(true);
+    vi.advanceTimersByTime(1500);
     win.emit("blur");
     expect(win.visible).toBe(false);
   });

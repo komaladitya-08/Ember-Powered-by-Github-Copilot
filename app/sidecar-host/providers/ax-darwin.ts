@@ -32,7 +32,7 @@ import { AX_ERROR } from "../../main/platform/darwin/ax";
 import { isAxError, type AxApi, type AxRef, type AxWindowEntry } from "./ax-darwin-api";
 import {
   AxSession, BusyApps, CELL_PARENTS, CHAIN_ATTRS, CHAIN_MAX, NEEDS_PERMISSION, WINDOW_ATTRS, busyError, clipInside, clippedOut, doPerform,
-  glance, lookAt, releaseFacts, releaseValue, textOf, walk, type Facts, type NodeBody, type Note,
+  glance, keyboardControl, lookAt, releaseFacts, releaseValue, textOf, walk, type Facts, type NodeBody, type Note,
 } from "./ax-darwin-read";
 
 /**
@@ -353,6 +353,8 @@ export class AxDarwinProvider implements AxProvider {
     const s = this.session(api, held.pid);
     await this.manualAccessibility(api, held.pid);
     const r = walk(s, held.ref, { maxDepth: o.maxDepth, maxNodes: o.maxNodes, deadlineMs: o.deadlineMs, now: this.o.now });
+    // The field editor's keyboard belongs to the text field the walk lists (the editor itself is not in the walk).
+    this.noteFieldEditor(api, s, r.nodes);
     const keys = this.keysFor(api, r.nodes.map(n => ({ ref: n.ref, pid: held.pid, path: n.path, windowId: held.windowId, role: n.node.platformRole })));
     const nodes = r.nodes.map((n, i): RawNode => {
       const key = keys[i]!;
@@ -511,9 +513,40 @@ export class AxDarwinProvider implements AxProvider {
       releaseValue(api, el);
       return null;
     }
+    // The field editor's key would match nothing in the snapshot: the text field's key is the one the read looks up.
+    let control = el;
     try {
-      return this.keysFor(api, [{ ref: el, pid, path: null, windowId: 0, role: "" }])[0] ?? null;
+      control = keyboardControl(s, el);
+      return this.keysFor(api, [{ ref: control, pid, path: null, windowId: 0, role: "" }])[0] ?? null;
     } finally {
+      if (control !== el) api.release(control);
+      api.release(el);
+    }
+  }
+
+  /**
+   * Marks the text field a walk lists when AppKit's field editor, which the walk doesn't read, has the keyboard.
+   * A failure leaves each element's own AXFocused as the walk read it.
+   */
+  private noteFieldEditor(api: AxApi, s: AxSession, nodes: { ref: AxRef; node: NodeBody }[]): void {
+    const app = api.app(s.pid);
+    if (!app) return;
+    let el: ReturnType<AxSession["attr"]>;
+    try {
+      el = s.attr(app, "AXFocusedUIElement");
+    } catch {
+      return;
+    }
+    if (typeof el !== "bigint") return;
+    let control = el;
+    try {
+      control = keyboardControl(s, el);
+      const hit = nodes.find(n => n.node.platformRole !== "AXWindow" && api.same(n.ref, control));
+      if (hit) hit.node.focused = true;
+    } catch {
+      // The editor can't be read: the walk's own AXFocused stands.
+    } finally {
+      if (control !== el) api.release(control);
       api.release(el);
     }
   }

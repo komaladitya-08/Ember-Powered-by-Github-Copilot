@@ -351,8 +351,8 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
   it("tells the ask box's read which field had the keyboard once another app has it, and reads its selection (cross-review P1)", async () => {
     // The ask box shows before the screen is read, and its panel takes the keyboard: the read of the user's window is
     // told that something had it there (focusBefore {}), and the host asks the app which element (its
-    // AXFocusedUIElement). Here the Name field has the keyboard with its text selected, and Finder takes it, as the box
-    // would.
+    // AXFocusedUIElement; a field editor counts as the text field it belongs to). Here the Name field has the keyboard
+    // with its text selected, and Finder takes it, as the box would.
     const api = openAxApi();
     const app = api?.app(benchPid) ?? null;
     expect(app, `the bench's app element (${String(axApiError)})`).toBeTruthy();
@@ -361,11 +361,18 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     await waitFor("the bench in front", frontmost, 5_000);
     await reread();
     await s.request("focus", { id: node("Name", "entry").id });
-    // A text field that takes the keyboard selects all of its text.
-    const had = await waitFor("the Name field with the keyboard and its text selected", async () => {
+    // Focusing the field does not select its words. AppKit gives the keyboard to a field editor the walk doesn't
+    // list, and two CI runs (40921989434, 40926685957) timed out waiting for a selection that focus never made.
+    // Select the line, as the Windows test does.
+    await waitFor("the Name field with the keyboard", async () => {
+      await reread();
+      return node("Name", "entry").states.includes("focused");
+    }, 5_000);
+    spawnSync("/usr/bin/osascript", ["-e", 'tell application "System Events" to keystroke "a" using command down'], { timeout: 10_000 });
+    const had = await waitFor("the Name field's text selected", async () => {
       await reread();
       const n = node("Name", "entry");
-      return n.states.includes("focused") && n.selection ? n : null;
+      return n.states.includes("focused") && n.selection === "Ember 1" ? n : null;
     }, 5_000);
     console.log(`ax-sidecar-darwin: the Name field has the keyboard, with ${JSON.stringify(had.selection)} selected`);
     spawnSync("/usr/bin/open", ["-a", "Finder"]);

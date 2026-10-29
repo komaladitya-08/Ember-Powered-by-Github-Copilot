@@ -21,6 +21,8 @@ export interface ElSpec {
   placeholder?: string;
   /** AXValue. */
   value?: string | number | boolean;
+  /** AXSelectedText, when it differs from "nothing selected" (a field editor's selection). */
+  selection?: string;
   enabled?: boolean;
   focused?: boolean;
   selected?: boolean;
@@ -138,8 +140,14 @@ function attributeOf(e: El, name: string, ref: (e: El) => AxRef, fake: FakeAx): 
     case "AXPosition": return s.frame ? { type: "point", x: s.frame.x, y: s.frame.y } : NO_VALUE;
     case "AXSize": return s.frame ? { type: "size", width: s.frame.width, height: s.frame.height } : NO_VALUE;
     case "AXNumberOfCharacters": return typeof s.value === "string" ? s.value.length : NO_VALUE;
-    case "AXSelectedText": return typeof s.value === "string" ? "" : NO_VALUE;
-    case "AXSelectedTextRange": return typeof s.value === "string" ? { type: "range", location: s.value.length, length: 0 } : NO_VALUE;
+    case "AXSelectedText": return s.selection !== undefined ? s.selection : typeof s.value === "string" ? "" : NO_VALUE;
+    case "AXSelectedTextRange": {
+      if (s.selection && typeof s.value === "string") {
+        const at = s.value.indexOf(s.selection);
+        return { type: "range", location: at < 0 ? 0 : at, length: s.selection.length };
+      }
+      return typeof s.value === "string" ? { type: "range", location: s.value.length, length: 0 } : NO_VALUE;
+    }
     case "AXTitleUIElement": {
       const t = s.titleElement ? fake.byId(s.titleElement) : undefined;
       return t ? ref(t) : NO_VALUE;

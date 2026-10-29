@@ -7,7 +7,7 @@ import { NEEDS_PERMISSION } from "../../app/sidecar-host/providers/ax-darwin-rea
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import { windowRole } from "../../app/sidecar-host/windows";
 import type { AxNode, AxWindow, ElementInfo, ReadWindowResult as ClientRead } from "../../app/main/perception/sidecar";
-import { FakeAx, benchApp, type AppSpec } from "./sidecar-host-ax-darwin-fake";
+import { El, FakeAx, benchApp, type AppSpec } from "./sidecar-host-ax-darwin-fake";
 
 const at = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
 /** A read_window answer as the host gives it (the client keeps the secret keys to itself). */
@@ -338,6 +338,28 @@ describe("the macOS AX provider's hit tests, looks and actions", () => {
     // Never Ember's own.
     await expect(p.focusedKey(EMBER)).rejects.toMatchObject({ code: "gone" });
     expect(fake.pidsAsked.has(EMBER)).toBe(false);
+  });
+
+  it("attributes a text field's field editor to the field the walk lists, with the editor's selection", async () => {
+    // AppKit inserts an AXTextArea into the field and does not list it among the field's children (a text field is a
+    // leaf). The field's own AXFocused is false; the editor has the keyboard and the selection.
+    const { fake, p, windows } = await started();
+    const name = fake.el("name");
+    name.spec.focused = false;
+    name.spec.value = "Ember 1";
+    name.children.push(new El(
+      { role: "AXTextArea", id: "editor", value: "Ember 1", selection: "Ember 1", focused: true, frame: name.spec.frame ?? undefined },
+      name, BENCH, () => 900_000,
+    ));
+    fake.apps.find(a => a.pid === BENCH)!.focusedId = "editor";
+    const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
+    const field = snap.nodes.find(n => n.platformRole === "AXTextField" && n.name === "Name")!;
+    expect(field.focused).toBe(true);
+    expect(snap.nodes.some(n => n.platformRole === "AXTextArea" && n.value === "Ember 1")).toBe(false);
+    expect(await p.focusedKey(BENCH)).toBe(field.key);
+    expect(await p.textInfo(field.handle, 100)).toMatchObject({ text: "Ember 1", selection: "Ember 1" });
+    p.stop();
+    expect(fake.outstanding).toBe(0);
   });
 
   it("reads nothing of a secure field's text", async () => {
