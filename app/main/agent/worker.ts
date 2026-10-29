@@ -28,7 +28,7 @@ import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elem
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
-import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
+import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
 import { DIALOG_ROLES, deskWindowAt, type DeskPlace } from "../desk/place";
 import { focusedElement, isSheetCell } from "../perception/elements";
 import { SLIVER_PX } from "../perception/marks";
@@ -2112,16 +2112,21 @@ export class Worker {
     let result: ToolResultObject;
     /** What the app said shows where the mouse clicked, as it clicked. */
     let landedOn: PointElement | undefined;
+    // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected. So are
+    // keys the keyboard can't press now (Typing Assist; an input method, for keys that type): before the click, and
+    // before Ember's text goes on the user's clipboard. On the user's screen, what doesn't depend on which window is in
+    // front (plain ASCII text, Typing Assist) is also refused before their window is brought to the front (the
+    // borrow's preflight), so it doesn't jump for nothing.
+    const checkFirst = (hand: Pick<Hand, "checkKeys" | "checkTyping">) => {
+      if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
+      if (kind === "cursor_text" && typeof hand.checkKeys === "function") {
+        const edit = this.kc.edit;
+        for (const k of [...(mode === "replace" ? [edit.selectAll, "Delete"] : mode === "append" ? [edit.textEnd] : []), ...(paste ? [edit.paste] : [])]) hand.checkKeys(k);
+      }
+    };
     try {
       result = await this.withCursor(kind, element, async hand => {
-        // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected.
-        if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
-        // So are keys the keyboard can't press now (Typing Assist; an input method, for keys that type): before the
-        // click, and before Ember's text goes on the user's clipboard.
-        if (kind === "cursor_text" && typeof hand.checkKeys === "function") {
-          const edit = this.kc.edit;
-          for (const k of [...(mode === "replace" ? [edit.selectAll, "Delete"] : mode === "append" ? [edit.textEnd] : []), ...(paste ? [edit.paste] : [])]) hand.checkKeys(k);
-        }
+        checkFirst(hand);
         // The user may have copied something new while Ember waited for its turn (a picture always counts as new): that
         // is what goes back afterwards, so if it can't be saved, nothing is touched.
         if (paste && !(await this.clipboard!.unchanged(saved!).catch(() => false))) {
@@ -2172,7 +2177,7 @@ export class Worker {
         if (!pasting.pressed) return;
         const ok = await landed();
         if (ok === false) throw new Error(`The pasted text didn't show up in the field within ${Math.round(this.pasteWaitMs / 1000)} seconds (the app may be busy), so it's unknown whether it went in. Call perceive_window to check before trying again.`);
-      });
+      }, undefined, kind === "cursor_text" ? checkFirst : undefined);
     } finally {
       if (pasting.written) {
         // Stopped or taken over right after Ctrl+V: the app still reads the clipboard when it gets to it.
@@ -2405,7 +2410,8 @@ export class Worker {
       ...(expected !== undefined ? { currentText: expected, ...this.ownText(this.fieldOf(element), expected) } : {}) });
     if (verdict) return verdict;
     let filled: { did: string; shows: string | undefined; says?: string } | undefined;
-    const result = await this.withCursor("cursor_text", element, async hand => { filled = await this.fillCell(hand, job, this.cursorHints(cell)); }, undefined, undefined, true);
+    // Text the keyboard can't type in any window is refused before the window is brought to the front, as fillCell refuses it first.
+    const result = await this.withCursor("cursor_text", element, async hand => { filled = await this.fillCell(hand, job, this.cursorHints(cell)); }, undefined, undefined, true, hand => hand.checkTyping(text));
     if (result.resultType !== "success" || !filled) return result;
     if (filled.shows === undefined) return done(`Done: ${filled.did} (the cell cursor moved on), but Ember couldn't read ${cell} back. Call perceive_window to see what it shows now.`);
     return done(`Done: ${filled.did} (the cell cursor moved on).${text && filled.says ? ` It ${filled.says}.` : ""}`);
@@ -2451,7 +2457,9 @@ export class Worker {
           throw new Error(`${err instanceof Error ? err.message : String(err)}${rest.length ? ` The cells after it (${rest.join(", ")}) weren't typed.` : ""}`, { cause: err });
         }
       }
-    }, undefined, undefined, true);
+      // The first cell's text the keyboard can't type in any window is refused before the window is brought to the
+      // front, as fillCell refuses it first (each cell after it is checked as it comes, as before).
+    }, undefined, undefined, true, hand => { if (jobs[0]) hand.checkTyping(jobs[0].text); });
     const told = filled.map(f => f.shows === undefined ? `${f.job.cell} couldn't be read back` : `${f.job.cell} ${f.says ?? `shows ${q(f.shows, 80)}`}`).join(", ");
     if (result.resultType !== "success") return filled.length ? { ...result, textResultForLlm: `Filled ${filled.length} cell${filled.length > 1 ? "s" : ""} first (${told}). ${result.textResultForLlm}` } : result;
     const unread = filled.some(f => f.shows === undefined) ? " Call perceive_window to see what the others show." : "";
@@ -2905,6 +2913,8 @@ export class Worker {
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
+      // Keys the keyboard can't press in any window (Typing Assist) are refused before the window is brought to the
+      // front (preflight): it would jump for nothing.
       const result = await this.withCursor("keys", approved, async hand => {
         // LibreOffice moves the focus about as its window comes to the front: what the user said yes to gets a moment to come back.
         const look = await this.steadyFocus(approved !== undefined || activating, { want: approved });
@@ -2920,7 +2930,7 @@ export class Worker {
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
         turn.into = now;
         await hand.keys(keys);
-      }).finally(() => { this.inputValue = {}; });
+      }, undefined, undefined, undefined, hand => hand.checkKeys(keys)).finally(() => { this.inputValue = {}; });
       if (!turn.moved) {
         if (result.resultType === "success") {
           const into = this.fieldOf(turn.into ?? approved);
@@ -3105,7 +3115,8 @@ export class Worker {
   /** What the action lines of the input under way record beyond its kind (the keys pressed: "What Ember did" names them). */
   private inputValue: Record<string, unknown> = {};
 
-  private async withCursor(kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>, keysOnly = kind === "keys"): Promise<ToolResultObject> {
+  /** `preflight`: the borrow's checks of its keys and typing, asked before the user's window is brought to the front. */
+  private async withCursor(kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>, keysOnly = kind === "keys", preflight?: (hand: HandChecks) => void): Promise<ToolResultObject> {
     if (this.isOver) return STOPPED();
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId, afterBorrow);
     if (!this.d.cursor) return fail(`This needs the mouse or keyboard, which isn't available here. ${this.deskHint}`);
@@ -3148,6 +3159,7 @@ export class Worker {
       onStart: () => c.setBorrowing("active"),
       // Keys alone (press_keys, a spreadsheet's cells): the status says "your keyboard", not "your mouse".
       ...(keysOnly ? { keysOnly: true } : {}),
+      ...(preflight ? { preflight } : {}),
     });
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor

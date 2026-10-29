@@ -53,6 +53,15 @@ export interface BorrowOptions {
   onStart?: () => void;
   /** Only the keyboard is used (keys pressed, a spreadsheet's cells typed into): the status says so (see usesMouse). */
   keysOnly?: boolean;
+  /**
+   * The borrow's checks of the keys it will press and the text it will type, asked before anything is touched: before
+   * Ember waits for the user to be still, and again just before `window` is brought to the front. They press and type
+   * nothing, and ask only what is the same whichever window has the focus: the key's name, plain ASCII text, and on X11
+   * Typing Assist. Keys and text that fail them are then refused without the user's window jumping to the front for
+   * nothing. The layout in use (it can be per window on GNOME) and macOS's input source (it can be per document) are
+   * checked by the hand's own checkTyping and checkKeys, once the window is in front.
+   */
+  preflight?: (hand: HandChecks) => void;
   /** This borrow only: stops it while it waits its turn or runs (the kill switch uses stop() for all). */
   signal?: AbortSignal;
   now?: () => number;
@@ -75,6 +84,9 @@ export interface Hand {
   checkKeys?(combo: string): void;
   scroll(direction: "up" | "down" | "left" | "right", steps: number): Promise<void>;
 }
+
+/** The checks a borrow's preflight gets (see BorrowOptions.preflight): they throw, pressing and typing nothing. */
+export type HandChecks = Required<Pick<Hand, "checkKeys" | "checkTyping">>;
 
 const MODIFIERS: Record<string, string> = {
   ctrl: "Control_L", control: "Control_L", shift: "Shift_L", alt: "Alt_L", super: "Super_L", meta: "Super_L",
@@ -364,6 +376,36 @@ export class CursorBorrow {
       });
       return { strokes, shift: x.keycodeOf(SHIFT_L), byCode: false };
     };
+    // The hand's checks (they press and type nothing).
+    const checks: HandChecks = {
+      checkKeys: combo => {
+        const { sym, mods } = comboKeys(combo);
+        keyboardUsable({ modifiers: mods, sym });
+      },
+      checkTyping: text => {
+        keyboardUsable();
+        // With the backend's own typing any ASCII text goes (see type); otherwise the layout in use must type it all.
+        if (x.textKey) { if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard"); return; }
+        planText(text);
+      },
+    };
+    // The same checks as the preflight asks them, before `window` is in front (o.preflight): only what doesn't depend on
+    // which window has the focus. The layout in use isn't planned here: with a layout per window (GNOME's "Switch input
+    // sources individually for each window") it would be the user's window's, not the target's, so the hand's
+    // checkTyping plans it once the window is in front. Nor is the input source asked on macOS, where it can follow the
+    // document ("Automatically switch to a document's input source"): the hand's checks ask it inside the borrow. What
+    // is left is the same in every window: the key's name, plain ASCII text, and X11's Typing Assist (server-wide).
+    const everyWindow = this.keys.os !== "darwin";
+    const before: HandChecks = {
+      checkKeys: combo => {
+        const { sym, mods } = comboKeys(combo);
+        if (everyWindow) keyboardUsable({ modifiers: mods, sym });
+      },
+      checkTyping: text => {
+        if (everyWindow) keyboardUsable();
+        if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard");
+      },
+    };
 
     // Wait for the user to be still: no movement, no wheel, no button held, no key down.
     const idleMs = o.idleMs ?? 1500;
@@ -373,6 +415,8 @@ export class CursorBorrow {
       // no Accessibility permission, or secure input on) is refused before anything is touched, saying why.
       const why = x.blockedReason?.(o.window ?? 0) ?? null;
       if (why) throw new Error(why);
+      // So are keys and typing the keyboard can't do now, before the user is asked to be still for nothing.
+      o.preflight?.(before);
       watching = x.watchUser?.(true) ?? false;
       let last = x.pointer();
       for (;;) {
@@ -388,6 +432,8 @@ export class CursorBorrow {
       // Nothing is touched on a locked or blank screen, or while something else holds the keyboard.
       if (x.screenLocked?.()) throw new Error("The screen is locked or blank, so Ember didn't borrow the mouse.");
       if (x.keyboardGrabbed?.(o.window)) throw new Error(GRABBED("didn't borrow the mouse"));
+      // Asked again, as the user may have turned Typing Assist on while Ember waited: before the window comes to the front.
+      o.preflight?.(before);
     } catch (err) {
       unwatch();
       this.busy = false;
@@ -514,16 +560,7 @@ export class CursorBorrow {
         }
         check();
       },
-      checkKeys: combo => {
-        const { sym, mods } = comboKeys(combo);
-        keyboardUsable({ modifiers: mods, sym });
-      },
-      checkTyping: text => {
-        keyboardUsable();
-        // With the backend's own typing any ASCII text goes (see type); otherwise the layout in use must type it all.
-        if (x.textKey) { if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard"); return; }
-        planText(text);
-      },
+      ...checks,
       scroll: async (direction, steps) => {
         const button = { up: 4, down: 5, left: 6, right: 7 }[direction];
         check();

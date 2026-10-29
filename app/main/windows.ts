@@ -195,12 +195,18 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
 }
 
 /**
- * A card window whose page crashed closes rather than staying on screen blank (review #91): its controller then does
- * what it does when the user closes it (an SSH prompt is answered no, a consent question comes back with the bubble's
- * "Read it"), and the next card gets a new window. The command window's page loads again instead (createCommandWindow).
+ * A card window whose page crashed closes rather than staying on screen blank (review #91), marked `pageGone` first:
+ * its controller then answers the card as one nobody could answer (an SSH prompt refused, so the connection says Ember
+ * couldn't show its question, with Try again, instead of ending quietly as at the user's Cancel: cross-review X8; a
+ * consent question comes back with the bubble's "Read it"), and the next card gets a new window. The command window's
+ * page loads again instead (createCommandWindow).
  */
 function closeWhenGone(win: BrowserWindow): void {
-  win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); });
+  win.webContents.on("render-process-gone", () => {
+    if (win.isDestroyed()) return;
+    Object.assign(win, { pageGone: true });
+    win.destroy();
+  });
 }
 
 /**

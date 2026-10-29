@@ -473,6 +473,28 @@ describe("connecting (§5.1.3-§5.1.5)", () => {
     expect(err).toMatchObject({ kind: "auth", message: "Ember couldn't show build-01's sign-in question.", retry: true });
   });
 
+  it("never counts a host key card nobody could answer (its page crashed) as the user's cancel (cross-review X8)", async () => {
+    // ssh asks once, gets no answer and quits: "Host key verification failed." That is a question Ember couldn't show,
+    // with Try again (a new window asks it), not a quiet end and not the advice to connect in a terminal.
+    type Rig = ReturnType<typeof rig>;
+    const ref: { r?: Rig } = {};
+    const r = ref.r = track(rig({
+      remotes: [
+        { fail: () => ({ stderr: "No ED25519 host key is known for build-01.example.com and you have requested strict checking.\r\nHost key verification failed.\r\n", code: 255 }) },
+        { fail: async (run): Promise<{ stderr: string; code: number } | null> => {
+          const yes = await (ref.r as Rig).askpass(run, "The authenticity of host 'build-01.example.com (203.0.113.7)' can't be established.\nED25519 key fingerprint is SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU.\nAre you sure you want to continue connecting (yes/no/[fingerprint])? ", "confirm");
+          return yes === "yes" ? null : { stderr: "Host key verification failed.\n", code: 255 };
+        } },
+      ],
+      answer: card => ({ id: card.id, ok: false, refused: true }),
+    }));
+    const err = await r.conns.connect(record(), { interactive: true }).catch(e => e);
+    expect(r.cards).toEqual([expect.objectContaining({ kind: "host-key" })]);
+    expect(err).toBeInstanceOf(ConnectError);
+    expect(err).toMatchObject({ message: "Ember couldn't show build-01's sign-in question.", retry: true });
+    expect(err.kind).not.toBe("cancelled");
+  });
+
   it("on RHEL 8's ssh (8.0) a server asking in ssh's words gets the host's quoted question, never \"Unlock your SSH key\"", async () => {
     const auth = { stderr: "alice@build-01.example.com: Permission denied (publickey,keyboard-interactive).\n", code: 255 };
     const spoof = "Enter passphrase for key '/home/alice/.ssh/id_ed25519': ";

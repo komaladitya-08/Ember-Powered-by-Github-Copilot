@@ -198,6 +198,12 @@ function say(w: words.BubbleWords, ids: readonly string[], look: Look, step?: st
 /** The Close button of a bubble that stays until the user has read it (a failure). */
 const CLOSE_ID = "conn:close";
 
+/**
+ * A consent card asked directly that nobody saw (no window to show it in, or its page crashed): said instead of "Not
+ * now.", which is the user's own no (as a sign-in question Ember couldn't show is, review #193).
+ */
+const CARD_UNSHOWN = "Ember couldn't show the card that asks you first, so nothing changed.";
+
 /** Ember's own paths on this computer (§3.6.2): its data, its install, the administrator's policy folder. */
 export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv }): string[] {
   const p = o.os === "win32" ? pathWin32 : pathPosix;
@@ -685,22 +691,30 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
 
   // ── Consent cards asked directly (settings' switches, connecting) ──
   let cardSeq = 0;
-  /** `signal`: the connection the card belongs to; cancelled, forgotten or stopped, the card leaves the screen as a no. */
-  const askCard = async (card: ConsentPanel, signal?: AbortSignal): Promise<boolean> => {
+  /**
+   * The card's answer: "yes" (with its own text's hash), "no" (Not now, closed, or the card taken away), or "unshown"
+   * when nobody saw it (no window to show it in, its page crashed: the prompt window refused it), which is said as
+   * CARD_UNSHOWN, never as the user's Not now. `signal`: the connection the card belongs to; cancelled, forgotten or
+   * stopped, the card leaves the screen as a no.
+   */
+  const askCard = async (card: ConsentPanel, signal?: AbortSignal): Promise<"yes" | "no" | "unshown"> => {
     const id = `consent-${++cardSeq}`;
-    if (signal?.aborted) return false;
+    if (signal?.aborted) return "no";
     const drop = () => { try { promptWindow.dismiss(id); } catch (err) { log.warn("targets.consent_dismiss_failed", { err }); } };
     signal?.addEventListener("abort", drop, { once: true });
     try {
       const a = await promptWindow.ask({ id, kind: "consent-direct", consent: card });
-      return consentYes(card, a);
+      if (!a.ok && a.refused) return "unshown";
+      return consentYes(card, a) ? "yes" : "no";
     } catch (err) {
       log.warn("targets.consent_failed", { feature: card.feature, err });
-      return false;
+      return "unshown";
     } finally {
       signal?.removeEventListener("abort", drop);
     }
   };
+  /** What a consent card that didn't come back yes ends with in the settings window: the user's no, or why nobody was asked. */
+  const cardNo = (said: "no" | "unshown"): string => (said === "unshown" ? CARD_UNSHOWN : "Not now.");
 
   // ── Connecting ──
   /** What each host's connecting bubble says now (its progress rewrites it only when this changes). */
@@ -841,6 +855,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       bubble(`fail:${hostId}`, say(words.cantConnect(label, said, retry), retry ? [`conn:${hostId}:reconnect`, CLOSE_ID] : [CLOSE_ID], "failed", retry ? keyboard() : undefined));
       return { ok: false, message };
     };
+    /** A consent card that didn't come back yes: cancelled meanwhile or Not now end quietly; one nobody saw is said, with Try again. */
+    const notYes = (said: "no" | "unshown"): ActResult => (abort.signal.aborted ? stopped("Cancelled.") : said === "unshown" ? fail(CARD_UNSHOWN, true) : stopped("Not now."));
     try {
       // What ssh -G makes of it now: a changed user, hostname or port (or a card never accepted) asks again (§7.4).
       const now = await conn.resolve(host.dest, { ...(host.port ? { port: host.port } : {}), ...(host.extra ? { extra: host.extra } : {}), ...(host.via ? { via: host.via } : {}) });
@@ -849,7 +865,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (sshNeedsConsent(host, resolved)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
         // Cancelled, forgotten or stopped by the kill switch while the card was up: the card goes; nothing is saved.
-        if (!(await askCard(card, abort.signal))) return stopped(abort.signal.aborted ? "Cancelled." : "Not now.");
+        const said = await askCard(card, abort.signal);
+        if (said !== "yes") return notYes(said);
         if (abort.signal.aborted) return stopped("Cancelled.");
         host = { ...host, resolved, consent: consentGiven("ssh", parts.now()) };
         saveHost(host);
@@ -862,7 +879,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // Another computer under the same name than the one the user said yes to: asked again (§7.4).
       if (machineChanged(host, link.welcome.machineIdHash)) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card, abort.signal))) return letGo(abort.signal.aborted ? "Cancelled." : "Not now.");
+        const said = await askCard(card, abort.signal);
+        if (said !== "yes") { await conn.disconnect(hostId).catch(() => undefined); return notYes(said); }
         if (abort.signal.aborted) return letGo("Cancelled.");
         host = { ...host, consent: consentGiven("ssh", parts.now()) };
       }
@@ -889,7 +907,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // (once), and on a yes the old machine is forgotten and Ember connects afresh (SA then remembers the new one).
       if (err instanceof ConnectError && err.kind === "machine-changed" && !o.again) {
         const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
-        if (!(await askCard(card, abort.signal))) return stopped(abort.signal.aborted ? "Cancelled." : "Not now.");
+        const said = await askCard(card, abort.signal);
+        if (said !== "yes") return notYes(said);
         const now = hostOf(hostId);
         if (abort.signal.aborted || !now) return stopped("Cancelled.");
         const { machineIdHash: _was, ...rest } = now;
@@ -972,7 +991,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       resolved, consent: { version: 0, at: null },
     };
     const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", id), facts: sshFacts(host, resolved) });
-    if (!(await askCard(card))) return { ok: false, message: "Not now." };
+    const said = await askCard(card);
+    if (said !== "yes") return said === "unshown" ? refused(CARD_UNSHOWN) : { ok: false, message: "Not now." };
     try { saveHost({ ...host, consent: consentGiven("ssh", parts.now()) }); } catch (err) {
       log.warn("targets.host_save_failed", { err });
       return refused("Ember couldn't save that computer.");
@@ -1042,7 +1062,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       await refreshWsl();
       const d = defaultDistro(wslFacts);
       const card = wslConsent({ ...(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" }), byok: admin().policy.provider !== undefined });
-      if (!(await askCard(card))) return { ok: false, message: "Not now." };
+      const said = await askCard(card);
+      if (said !== "yes") return { ok: false, message: cardNo(said) };
       settings.update({ targets: { ...settings.own().targets, wsl: { on: true, consent: consentGiven("wsl", parts.now()) } } });
     } else {
       settings.update({ targets: { ...own, wsl: { ...own.wsl, on: true } } });
@@ -1063,7 +1084,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       const was = settings.get().commands[id];
       if (!consentCurrent("commands", was?.consent)) {
         const card = commandsConsent({ os: deps.os, target: id, targetLabel: e.label, facts: cardFacts(e) });
-        if (!(await askCard(card))) return { ok: false, message: "Not now." };
+        const said = await askCard(card);
+        if (said !== "yes") return { ok: false, message: cardNo(said) };
         const own = settings.own().commands;
         settings.update({ commands: { ...own, [id]: { on: true, askEvery: askEvery ?? own[id]?.askEvery ?? false, consent: consentGiven("commands", parts.now()) } } });
         refresh();
