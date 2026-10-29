@@ -1275,8 +1275,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
    * that distro (runScript without mayBoot: it reads the running set again right before, never starts a stopped
    * distro, and runs under Ember's job host). The registry's running flags are a cached copy that can be minutes
    * old, and `wsl.exe -d <distro>` boots a stopped distro: Ember never starts one just to look (§2.7). `o.read` gets
-   * each distro read in full: its reader worked, or it doesn't run (no ssh runs there). One whose reader failed or timed
-   * out, and every one when which of them run can't be told, isn't: its ssh may still run (R-stale-offer).
+   * each distro read in full: its reader worked to its end line, or it doesn't run (no ssh runs there). One whose reader
+   * failed, timed out or was cut short, and every one when which of them run can't be told, isn't: its ssh may still
+   * run (R-stale-offer).
    */
   const noticeOf = (n: SshNotice): SshNotice => ({
     sshDestination: argv => n.sshDestination(argv),
@@ -1294,7 +1295,10 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
         if (typeof runner.runScript !== "function") continue; // not WA's runner: nothing is read there
         const r = await runner.runScript(WSL_READER, { timeoutMs: 5_000 }).catch(() => null);
         if (!r || r.code !== 0) continue;
-        local.push(...parseWslReader(r.stdout.toString("utf8"), distro));
+        // Without the reader's end line its output was cut short (the runner keeps about 1 MiB): not read (F-scanmax).
+        const text = r.stdout.toString("utf8");
+        if (!/(?:^|\n)end\n$/.test(text)) continue;
+        local.push(...parseWslReader(text, distro));
         o.read?.add(`wsl:${distro}`);
       }
       return local;

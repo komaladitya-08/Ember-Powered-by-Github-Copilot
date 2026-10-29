@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Logger } from "../../app/main/logger";
 import type { SshSeen } from "../../app/main/remote/types";
-import { SSH_MAX } from "../../app/main/remote/notice-ssh";
+import { SCAN_MAX, SSH_MAX, sshDestination, userSshProcessesWith, type NoticeDeps } from "../../app/main/remote/notice-ssh";
 import { NOTICE_INTERVAL_MS, createNoticer, seenKey, sshLookingTitle, type NoticerDeps, type SshNotice } from "../../app/main/targets/offer";
 
 const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
@@ -233,6 +233,22 @@ describe("what Ember offers", () => {
     procs = [...list(SSH_MAX - 1, "local"), ...list(SSH_MAX, "wsl:Debian")];
     await r.n.check();
     expect(said).toEqual([[false, true, true], [true, true, false]]);
+  });
+
+  it("takes no ssh as ended on a Linux computer with more processes than the read looks at (F-scanmax)", async () => {
+    // SA's own reader over a /proc where the user's ssh to build-01 (pid 9000) comes after SCAN_MAX other processes.
+    const pids = [...Array.from({ length: SCAN_MAX }, (_, i) => String(1000 + i)), "9000"];
+    const proc: NoticeDeps = {
+      readdir: () => ["self", ...pids],
+      readFile: p => (p === "/proc/9000/comm" ? Buffer.from("ssh\n") : p === "/proc/9000/cmdline" ? Buffer.from("ssh\0build-01\0") : null),
+      ownerUid: () => 1000, uid: 1000, run: async () => ({ code: 1, stdout: "" }),
+    };
+    const running: string[][] = [];
+    const r = rig({ notice: { sshDestination, userSshProcesses: os => userSshProcessesWith(os, proc) }, running: keys => running.push([...keys]) });
+    await r.n.check();
+    // Not read whole: nothing is said to have ended (an offer for build-01 stays), and nothing is offered.
+    expect(running).toEqual([]);
+    expect(r.offered).toEqual([]);
   });
 
   it("keys a destination by user, host and port, the host without case", () => {

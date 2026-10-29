@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CIM_SCRIPT, linuxSshProcesses, parseCim, parsePs, parseWslReader, sshDestination, userSshProcessesWith, windowsArgv, WSL_READER, type NoticeDeps } from "../../app/main/remote/notice-ssh";
+import { CIM_SCRIPT, linuxSshProcesses, parseCim, parsePs, parseWslReader, SCAN_MAX, sshDestination, userSshProcessesWith, windowsArgv, WSL_READER, type NoticeDeps } from "../../app/main/remote/notice-ssh";
 
 const ssh = (...a: string[]) => sshDestination(["ssh", ...a]);
 
@@ -109,6 +109,15 @@ describe("the user's own ssh processes (R4)", () => {
     expect(linuxSshProcesses(deps({ readdir: () => { throw new Error("EACCES"); } }))).toBeNull();
   });
 
+  it("can't read Linux's list when /proc holds more processes than it looks at: an ssh past them would look ended (F-scanmax)", () => {
+    // Node lists /proc sorted as text, so which processes fell past the old cut depended on their numbers: here the
+    // user's ssh (100) comes after all the others.
+    const procOf = (others: number) => ["self", "cpuinfo", ...Array.from({ length: others }, (_, i) => String(1000 + i)), "100"];
+    expect(linuxSshProcesses(deps({ readdir: () => procOf(SCAN_MAX) }))).toBeNull();
+    // Up to the limit, every process is looked at, whatever else /proc lists.
+    expect(linuxSshProcesses(deps({ readdir: () => procOf(SCAN_MAX - 1) }))).toEqual([{ pid: 100, argv: ["ssh", "-J", "bastion", "deploy@build-01"], via: "local" }]);
+  });
+
   it("reads macOS's ps for this user", async () => {
     const runs: (readonly string[])[] = [];
     const r = await userSshProcessesWith("darwin", deps({ run: async argv => { runs.push(argv); return { code: 0, stdout: "  501 ssh -p 2222 deploy@build-01\n  502 /bin/zsh\n  503 /usr/bin/ssh build-02\n" }; } }));
@@ -162,5 +171,8 @@ describe("the user's own ssh processes (R4)", () => {
   it("keeps the WSL reader's processes apart by distro", () => {
     expect(parseWslReader("12\tssh\u0001build\u0001\nnoise\n", "Debian")).toEqual([{ pid: 12, argv: ["ssh", "build"], via: "wsl:Debian" }]);
     expect(WSL_READER).not.toMatch(/[`]|eval/);
+    // Its last line says it got to the end (the runtime reads a distro in full only with it, F-scanmax); not a process.
+    expect(WSL_READER.trimEnd().split("\n").slice(-2)).toEqual(["done", "printf 'end\\n'"]);
+    expect(parseWslReader("12\tssh\u0001build\u0001\nend\n", "Debian")).toEqual([{ pid: 12, argv: ["ssh", "build"], via: "wsl:Debian" }]);
   });
 });

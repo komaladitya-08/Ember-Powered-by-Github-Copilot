@@ -170,8 +170,8 @@ export interface NoticeDeps {
   env?: Readonly<Record<string, string | undefined>>;
 }
 
-/** The most processes looked at. */
-const SCAN_MAX = 5000;
+/** The most processes looked at: a computer running more isn't read (an ssh among the rest would look ended). */
+export const SCAN_MAX = 5000;
 /** The most ssh processes reported per place (this computer, each distro): a list this long may have been cut short. */
 export const SSH_MAX = 64;
 
@@ -180,7 +180,10 @@ function isEmbers(argv: readonly string[]): boolean {
   return argv.includes("EscapeChar=none") && argv.includes("PermitLocalCommand=no") && argv.at(-2) === "sh" && argv.at(-1) === "-s";
 }
 
-/** Linux: this user's processes whose comm is "ssh", from /proc. Null when /proc can't be read. */
+/**
+ * Linux: this user's processes whose comm is "ssh", from /proc. Null when /proc can't be read, or lists more processes
+ * than SCAN_MAX: the list is read whole or not at all, so an ssh past the limit is never taken as ended (R-stale-offer).
+ */
 export function linuxSshProcesses(d: NoticeDeps): SshProcess[] | null {
   let entries: string[];
   try {
@@ -188,9 +191,10 @@ export function linuxSshProcesses(d: NoticeDeps): SshProcess[] | null {
   } catch {
     return null;
   }
+  const pids = entries.filter(e => /^\d{1,10}$/.test(e));
+  if (pids.length > SCAN_MAX) return null;
   const out: SshProcess[] = [];
-  for (const e of entries.slice(0, SCAN_MAX)) {
-    if (!/^\d{1,10}$/.test(e)) continue;
+  for (const e of pids) {
     const comm = d.readFile(`/proc/${e}/comm`)?.toString("utf8").trim();
     if (comm !== "ssh") continue;
     if (d.uid === null || d.ownerUid(`/proc/${e}`) !== d.uid) continue;
@@ -286,7 +290,8 @@ export function parseCim(text: string): SshProcess[] {
 
 /**
  * The fixed reader a running distro runs (`wsl.exe -d <d> --exec /bin/sh -s`, this text on stdin): this user's ssh
- * processes there, one per line, `<pid><TAB><cmdline with NUL as \x01>`.
+ * processes there, one per line, `<pid><TAB><cmdline with NUL as \x01>`, then `end`: output without that last line
+ * was cut short (WA's runner keeps about 1 MiB), so it isn't the whole list.
  */
 export const WSL_READER = [
   "u=$(id -u)",
@@ -297,6 +302,7 @@ export const WSL_READER = [
   "  tr '\\000\\n' '\\001 ' < \"$d/cmdline\" 2>/dev/null",
   "  printf '\\n'",
   "done",
+  "printf 'end\\n'",
   "",
 ].join("\n");
 
