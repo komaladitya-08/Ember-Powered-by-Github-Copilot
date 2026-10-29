@@ -1,6 +1,8 @@
 // Smoke test: the app starts, shows its window, a second launch hands over to the first instance, and a third with
 // --ask (the launchers' Ask Ember: the Windows jump list, the Linux desktop entry's action) has it open its ask box.
-// Its profile is one that is set up (onboarded, as the integration tests' are): Ember opens the box only then.
+// Its profile is one that is set up (onboarded, as the integration tests' are): Ember opens the box only then. It also
+// requires Ask Ember in the OS's launcher: the jump list on Windows (launcher.tasks, ok), the Dock menu on a Mac
+// (launcher.dock); EMBER_SMOKE_PLATFORM names another OS for that check (packaging.test.ts's stand-in).
 // Linux needs an X display (in CI: xvfb-run -a npm run test:smoke). Windows and macOS need a logged-in desktop
 // session (GitHub's hosted runners have one).
 // By default it starts the development build (Electron with dist/app); --exe <path> (or EMBER_SMOKE_EXE) starts a
@@ -48,6 +50,8 @@ const [command, appArgs] = exeArg ? [path.resolve(exeArg), []] : [createRequire(
 const flags = (process.platform === "linux" && process.getuid?.() === 0) || process.env.EMBER_SMOKE_NO_SANDBOX === "1" ? ["--no-sandbox"] : [];
 const env = { ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1" };
 const windowMs = Number(process.env.EMBER_SMOKE_TIMEOUT_MS) || (process.platform === "linux" ? 30_000 : 60_000);
+/** The OS whose launcher entry the run requires (its own; the unit test's stand-in names another). */
+const os = process.env.EMBER_SMOKE_PLATFORM || process.platform;
 // Set up, as after onboarding (the consent version is shared/consent.ts's): a launcher's --ask opens the box only then.
 writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: new Date().toISOString() } }));
 
@@ -57,6 +61,8 @@ function launch(name, extra = []) {
   const events = [];
   /** Ask boxes opened for a launcher's --ask (ask.open from "launcher"). */
   const asked = { count: 0 };
+  /** Ask Ember in the OS's launcher: the jump list (launcher.tasks: whether Windows took it), the Dock menu. */
+  const launcher = { tasks: undefined, dock: false };
   /** The log lines of forbidden events, as the app wrote them. */
   const forbiddenLines = [];
   const said = { stdout: "", stderr: "" };
@@ -73,6 +79,8 @@ function launch(name, extra = []) {
         const msg = entry.msg;
         events.push(msg);
         if (msg === "ask.open" && entry.source === "launcher") asked.count++;
+        if (msg === "launcher.tasks") launcher.tasks = entry.ok;
+        if (msg === "launcher.dock") launcher.dock = true;
         if (msg === "app.start_failed") failed ??= line.trim();
         if (forbidden.includes(msg)) forbiddenLines.push(line.trim());
       } catch { /* not a log line */ }
@@ -83,7 +91,7 @@ function launch(name, extra = []) {
     if (process.env.EMBER_SMOKE_VERBOSE) process.stderr.write(`[${name}] ${d}`);
   });
   child.on("error", err => { failed ??= `couldn't start ${command}: ${err.message}`; });
-  return { name, child, events, asked, forbiddenLines, said, failed: () => failed };
+  return { name, child, events, asked, launcher, forbiddenLines, said, failed: () => failed };
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -166,6 +174,17 @@ try {
   if (forbidden.length) {
     if (first.forbiddenLines.length) throw new Error(`the first instance logged ${first.forbiddenLines.join("\n")}`);
     console.log(`ok   the first instance logged none of ${forbidden.join(", ")}`);
+  }
+  // Ask Ember in the OS's own launcher (D-45b), set up as Ember starts: Linux's is the desktop entry's action, which the
+  // package job checks.
+  if (os === "win32") {
+    await waitFor(first, () => first.launcher.tasks !== undefined, 5_000, "the first instance to put Ask Ember in its jump list");
+    if (first.launcher.tasks !== true) throw new Error(`Windows refused the jump list (launcher.tasks ok: ${JSON.stringify(first.launcher.tasks)})`);
+    console.log("ok   the first instance put Ask Ember in its jump list");
+  }
+  if (os === "darwin") {
+    await waitFor(first, () => first.launcher.dock, 5_000, "the first instance to put Ask Ember in its Dock menu");
+    console.log("ok   the first instance put Ask Ember in its Dock menu");
   }
   // Ask Ember from a launcher: Ember started again with --ask, in a profile that is set up.
   third = launch("third", ["--ask"]);

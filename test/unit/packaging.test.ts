@@ -1155,6 +1155,8 @@ else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(di
 else {
   fs.writeFileSync(path.join(dir, "first"), "");
   if (process.env.FAKE_EMBER_LOG) log(process.env.FAKE_EMBER_LOG);
+  // As Ember does once it has started: the jump list on Windows (whether setUserTasks took it), the Dock menu on a Mac.
+  if (mode !== "no-launcher") { log("launcher.tasks", { ok: mode !== "tasks-refused" }); log("launcher.dock"); }
   log("window.home.shown");
   // Ember opens the ask box for --ask only once it is set up (else settings, without the box).
   let settings = {};
@@ -1170,10 +1172,11 @@ else {
 `, { mode: 0o755 });
     return file;
   })();
-  const smoke = (mode: string, o: { args?: string[]; log?: string } = {}) => {
+  const smoke = (mode: string, o: { args?: string[]; log?: string; os?: NodeJS.Platform } = {}) => {
     const t0 = Date.now();
     const r = spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--exe", fake, ...(o.args ?? [])], {
-      encoding: "utf8", timeout: 60_000, env: { ...process.env, FAKE_EMBER_MODE: mode, FAKE_EMBER_LOG: o.log ?? "", EMBER_SMOKE_TIMEOUT_MS: "20000", EMBER_SMOKE_VERBOSE: "" },
+      encoding: "utf8", timeout: 60_000,
+      env: { ...process.env, FAKE_EMBER_MODE: mode, FAKE_EMBER_LOG: o.log ?? "", EMBER_SMOKE_TIMEOUT_MS: "20000", EMBER_SMOKE_VERBOSE: "", EMBER_SMOKE_PLATFORM: o.os ?? "linux" },
     });
     return { ...r, ms: Date.now() - t0 };
   };
@@ -1182,9 +1185,23 @@ else {
     const r = smoke("ok");
     expect(r.stdout).toMatch(/ok {3}first instance showed its window\nok {3}second launch handed over/);
     expect(r.stdout).toMatch(/ok {3}a start with --ask handed over and the first instance opened its ask box/);
+    // Linux's Ask Ember is its desktop entry's action, which the package job checks.
+    expect(r.stdout).not.toMatch(/jump list|Dock menu/);
     expect(r.status).toBe(0);
   });
 
+  it("requires Ask Ember in the jump list on Windows and in the Dock menu on a Mac (D-45b)", () => {
+    expect(smoke("ok", { os: "win32" })).toMatchObject({ status: 0, stdout: expect.stringMatching(/ok {3}the first instance put Ask Ember in its jump list\n/) });
+    expect(smoke("ok", { os: "darwin" })).toMatchObject({ status: 0, stdout: expect.stringMatching(/ok {3}the first instance put Ask Ember in its Dock menu\n/) });
+    const refused = smoke("tasks-refused", { os: "win32" });
+    expect(refused.stderr).toMatch(/FAIL Windows refused the jump list \(launcher\.tasks ok: false\)/);
+    expect(refused.status).toBe(1);
+    for (const os of ["win32", "darwin"] as const) {
+      const none = smoke("no-launcher", { os });
+      expect(none.stderr, os).toMatch(/FAIL timed out after 5 s waiting for the first instance to put Ask Ember in its (jump list|Dock menu)/);
+      expect(none.status, os).toBe(1);
+    }
+  }, 60_000);
 
   it("fails when a start with --ask doesn't open the ask box in the running Ember (D-45b)", () => {
     const r = smoke("no-ask");

@@ -342,7 +342,8 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     expect(MAIN).toContain('app.on("second-instance", (_e, argv) => { const ask = wantsAsk(argv); log.info("instance.second", ask ? { ask } : {}); const view = ask ? startView({ onboarded: settings.get().onboarded, showSettings: false, atLogin: false, sessionProblem: !!sessionGreeting(readEnvironment()), ask }) : "settings"; if (view === "ask") openAsk({ source: "launcher" }); else showHomeFromKeys(); });');
     expect(MAIN).toContain("ask: wantsAsk(process.argv)");
     expect(MAIN).toContain('if (view === "ask") openAsk({ source: "launcher" });');
-    expect(MAIN).toContain("app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged }))");
-    expect(MAIN).toContain("app.dock?.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: \"launcher\" }))));");
+    expect(MAIN).toContain('log.info("launcher.tasks", { ok: app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged })) });');
+    // Each says it is set (the smoke test requires the line on its OS): whether Windows took the jump list, and the Dock menu.
+    expect(MAIN).toContain('if (platform.os === "darwin" && app.dock) { app.dock.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: "launcher" })))); log.info("launcher.dock", {}); }');
   });
 });

@@ -1604,10 +1604,11 @@ function start(): void {
       retry.unref?.();
     }
     // Ask Ember in the OS's launcher, whatever another app holds (D-45b): the jump list (Windows) starts Ember with --ask,
-    // the Dock menu (macOS) opens the box here; Linux's is its desktop entry's action (packaging/ember.desktop).
+    // the Dock menu (macOS) opens the box here; Linux's is its desktop entry's action (packaging/ember.desktop). Each is
+    // logged once set (the smoke test requires it on its OS).
     try {
       if (platform.os === "win32") log.info("launcher.tasks", { ok: app.setUserTasks(jumpListTasks({ execPath: process.execPath, appPath: app.getAppPath(), packaged: app.isPackaged })) });
-      if (platform.os === "darwin") app.dock?.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: "launcher" }))));
+      if (platform.os === "darwin" && app.dock) { app.dock.setMenu(Menu.buildFromTemplate(dockMenuItems(() => openAsk({ source: "launcher" })))); log.info("launcher.dock", {}); }
     } catch (err) {
       log.warn("launcher.tasks_failed", { err });
     }
