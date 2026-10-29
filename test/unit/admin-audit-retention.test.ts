@@ -56,4 +56,19 @@ describe("auditRetentionDays", () => {
     createRemoteAudit({ dir: pruned, retentionDays: 30, source: () => ({ from: "", pcId: "" }), log: quiet, now: () => NOW });
     expect(fs.readdirSync(pruned)).toEqual(["audit-2026-10.jsonl"]);
   });
+
+  it("keeps the remote's log working when pruning old months fails, and logs that the prune failed", () => {
+    const dir = auditDir();
+    // A month that can't be deleted (as a file another process holds open on Windows): a folder by that name.
+    fs.mkdirSync(path.join(dir, "audit-2025-12.jsonl"));
+    const said: string[] = [];
+    const log = { ...quiet, warn: (m: string) => said.push(`warn ${m}`), error: (m: string) => said.push(`error ${m}`), child: () => log } as unknown as Logger;
+    const audit = createRemoteAudit({ dir, retentionDays: 30, source: () => ({ from: "ana-laptop", pcId: "pc-1" }), log, now: () => NOW });
+    expect(said).toEqual(["warn remote.audit_prune_failed"]);
+    // Steps and commands are still written, so they aren't all refused for the rest of the session.
+    expect(audit.write({ event: "remote", step: "connected" })).toBe(true);
+    const lines = fs.readFileSync(path.join(dir, "audit-2026-10.jsonl"), "utf8").trim().split("\n");
+    expect(JSON.parse(lines.at(-1)!)).toMatchObject({ event: "remote", step: "connected", from: "ana-laptop", fromUnverified: true, pcId: "pc-1" });
+    expect(said).toEqual(["warn remote.audit_prune_failed"]);
+  });
 });
