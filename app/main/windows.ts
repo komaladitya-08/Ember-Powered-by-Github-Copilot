@@ -3,10 +3,13 @@
  * message comes from one of Ember's own bundled pages, what the settings page may change, and the quit question's
  * words. Every BrowserWindow keeps contextIsolation, the sandbox and a preload of its own. The command and prompt
  * windows are made here with their options per OS (L13: no other new module imports Electron); their controllers
- * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them.
+ * (commands/window.ts, remote/prompt-window.ts) are plain Node and show, raise and hide them. Also the app-wide
+ * chrome main sets once Electron is ready: the application menu, the About panel, the native theme, the windows' icon
+ * on Linux and DevTools in a packaged build.
  */
 
-import { app, BrowserWindow, screen } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, screen, type MenuItemConstructorOptions } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import type { OS } from "../shared/shortcuts";
 import { PROMPT_SIZE, fitBounds } from "./remote/prompt-window";
@@ -17,7 +20,8 @@ import { rescaledBounds, scaledSize } from "./page-prefs";
 /** Root of the built app (dist/app), where main.cjs lives. */
 const appDir = __dirname;
 
-export function createHomeWindow(): BrowserWindow {
+/** The settings window, which zooms by keys on Windows and Linux (zoomByKeys). */
+export function createHomeWindow(os: OS): BrowserWindow {
   const win = new BrowserWindow({
     width: 760,
     height: 640,
@@ -26,6 +30,9 @@ export function createHomeWindow(): BrowserWindow {
     title: "Ember",
     show: false,
     backgroundColor: "#121011",
+    // Linux: GTK's dark variant, so GNOME draws the title bar dark, as the page is (review #245). nativeTheme
+    // (setUpAppChrome) doesn't reach GTK; Windows and macOS ignore this and follow nativeTheme.
+    darkTheme: true,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(appDir, "preload", "home.cjs"),
@@ -36,8 +43,50 @@ export function createHomeWindow(): BrowserWindow {
     },
   });
   win.once("ready-to-show", () => win.show());
+  zoomByKeys(win.webContents, os);
   void win.loadFile(path.join(appDir, "renderer", "home", "index.html"));
   return win;
+}
+
+/** The settings window's zoom: Electron's own step, from 58% (1.2^-3) to 249% (1.2^5), past WCAG's 200% text. */
+export const ZOOM = { step: 0.5, min: -3, max: 5 } as const;
+
+/** A key as before-input-event reports it, as far as zoomLevelFor reads it. */
+export interface KeyInput { type: string; key: string; control: boolean; shift: boolean; alt: boolean; meta: boolean }
+
+/**
+ * The settings window's zoom level after this key, or null when it isn't a zoom key (review #243). Electron's default
+ * menu was what zoomed on Windows and Linux, and they have no menu now: Ctrl+= or Ctrl++ (Shift+= on a US keyboard,
+ * the + key on others, the numpad's) zooms in, Ctrl+- out, Ctrl+0 back to 100%. Not with Alt (AltGr is Ctrl+Alt on
+ * Windows) or the Windows key. macOS: no zoom, as before (its menu has no View menu).
+ */
+export function zoomLevelFor(os: OS, input: KeyInput, level: number): number | null {
+  if (os === "darwin" || input.type !== "keyDown" || !input.control || input.alt || input.meta) return null;
+  if (input.key === "0" && !input.shift) return 0;
+  const step = input.key === "=" || input.key === "+" ? ZOOM.step : input.key === "-" && !input.shift ? -ZOOM.step : 0;
+  return step ? Math.min(ZOOM.max, Math.max(ZOOM.min, level + step)) : null;
+}
+
+/** A page's webContents, as far as zoomByKeys needs it. */
+export interface ZoomHost {
+  on(event: "before-input-event", listener: (event: { preventDefault(): void }, input: KeyInput) => void): unknown;
+  getZoomLevel(): number;
+  setZoomLevel(level: number): void;
+}
+
+/**
+ * The page zooms by keys on Windows and Linux (zoomLevelFor), and never sees a zoom key. Only the settings window: the
+ * command and prompt windows are fixed in size, and their cards would be cut off. Chromium keeps a file:// page's zoom
+ * to its own window.
+ */
+export function zoomByKeys(contents: ZoomHost, os: OS): void {
+  if (os === "darwin") return;
+  contents.on("before-input-event", (event, input) => {
+    const level = zoomLevelFor(os, input, contents.getZoomLevel());
+    if (level === null) return;
+    event.preventDefault();
+    contents.setZoomLevel(level);
+  });
 }
 
 /** What every Ember page gets: its own preload, contextIsolation, the sandbox, no Node and no spellchecker downloads. */
@@ -117,6 +166,7 @@ export function createCommandWindow(os: OS): BrowserWindow & CloseGuarded & Plac
     title: "Ember commands",
     show: false,
     backgroundColor: "#121011",
+    darkTheme: true,
     autoHideMenuBar: true,
     ...(os === "darwin" ? { type: "panel", acceptFirstMouse: true } : {}),
     webPreferences: webPreferences("command"),
@@ -172,6 +222,7 @@ export function createPromptWindow(os: OS, hooks: { takeKeyboard?: (win: Browser
     alwaysOnTop: true,
     skipTaskbar: false,
     backgroundColor: "#121011",
+    darkTheme: true,
     autoHideMenuBar: true,
     // A click on Allow or Connect while another app is active counts, rather than only activating Ember.
     ...(os === "darwin" ? { acceptFirstMouse: true } : {}),
@@ -220,6 +271,113 @@ export function keepClearOf(o: { home: ShownWindow | null; prompt: ShownWindow |
   return { aside: approvals[0] ?? home, avoid: [...approvals, ...(home ? [home] : [])] };
 }
 
+/** What the application menu's own items do: main's closures. */
+export interface AppMenuActions {
+  /** Settings… (Command+,). */
+  showSettings(): void;
+  /** Quit Ember (Command+Q): main's quitEmber, which asks first when quitting would stop something. */
+  quit(): void;
+}
+
+/**
+ * The application menu (review #243, #176, #232). macOS (`appMenu`, from the platform's lifecycle): About Ember,
+ * Settings…, the hide items and a Quit that asks as the handle's Quit does, with the Edit menu that makes
+ * Command+C/V/X/A/Z work in fields and the Window menu. Windows and Linux: none. Electron's default menu stayed there
+ * otherwise, with Ctrl+Q quitting at once (no "still working" question), Ctrl+R reloading a card, Ctrl+Shift+I opening
+ * DevTools on the password card, Ctrl+W closing the ask box, F11, and the bar Alt showed. Chromium itself still cuts,
+ * copies, pastes and undoes in fields there, and the settings window zooms by its own keys (zoomByKeys).
+ */
+export function appMenuTemplate(appMenu: boolean, actions: AppMenuActions): MenuItemConstructorOptions[] | null {
+  if (!appMenu) return null;
+  return [
+    { label: "Ember", submenu: [
+      // app.name is "ember" (the data folder's name): the roles' own labels would say "About ember", "Hide ember".
+      { role: "about", label: "About Ember" },
+      { type: "separator" },
+      { label: "Settings…", accelerator: "Command+,", click: () => actions.showSettings() },
+      { type: "separator" }, { role: "hide", label: "Hide Ember" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" },
+      { label: "Quit Ember", accelerator: "Command+Q", click: () => actions.quit() },
+    ] },
+    { role: "editMenu" },
+    { role: "windowMenu" },
+  ];
+}
+
+/** What macOS's About Ember panel says. */
+export interface AboutPanel { applicationName: string; applicationVersion: string; version: string; copyright: string }
+
+/**
+ * What macOS's About Ember panel says (review #232): the name, this build's version once (an empty build number, or
+ * macOS writes "Version 0.1.0 (0.1.0)": Info.plist has both) and the licence.
+ */
+export function aboutPanel(version: string): AboutPanel {
+  return { applicationName: "Ember", applicationVersion: version, version: "", copyright: "Copyright © 2026 komaladitya-08. Released under the MIT licence." };
+}
+
+/** The windows' icon on Linux: build-app.mjs renders it from assets/ember.svg beside main.cjs. */
+export const WINDOW_ICON = path.join(appDir, "ember.png");
+
+/**
+ * The icon Ember's windows carry, or null (review #247). Linux window managers take a window's icon from its
+ * _NET_WM_ICON, else from a .desktop entry matching its WM_CLASS: the RPM installs one, but an AppImage without desktop
+ * integration and a development run have none, and GNOME showed a generic icon in Alt-Tab and the dash. Windows takes
+ * the icon from Ember.exe and macOS from the bundle, so they are given none, as before; nor is Linux when the build
+ * couldn't render it.
+ */
+export function windowIconFor(os: OS, exists: (file: string) => boolean = fs.existsSync): string | null {
+  return os === "linux" && exists(WINDOW_ICON) ? WINDOW_ICON : null;
+}
+
+/** A page's webContents, as far as lockDevTools needs it. */
+export interface DevToolsHost {
+  on(event: "devtools-opened", listener: () => void): unknown;
+  closeDevTools(): void;
+}
+
+/**
+ * DevTools close as soon as anything opens them on this page (review #176): from their console a page's preload
+ * bridges could be called, and they show what is typed in the password card. Nothing in Ember opens them and no menu
+ * offers them any more; this is for a packaged build, whatever still might (a development run keeps them).
+ */
+export function lockDevTools(contents: DevToolsHost): void {
+  contents.on("devtools-opened", () => contents.closeDevTools());
+}
+
+/** The parts of Electron setUpAppChrome uses (tests pass fakes). */
+export interface ChromeElectron {
+  Menu: { buildFromTemplate(template: MenuItemConstructorOptions[]): Menu; setApplicationMenu(menu: Menu | null): void };
+  nativeTheme: { themeSource: "system" | "light" | "dark" };
+  app: {
+    readonly isPackaged: boolean;
+    getVersion(): string;
+    setAboutPanelOptions(options: AboutPanel): void;
+    on(event: "web-contents-created", listener: (event: unknown, contents: DevToolsHost) => void): unknown;
+    on(event: "browser-window-created", listener: (event: unknown, window: { setIcon(icon: string): void }) => void): unknown;
+  };
+  /** fs.existsSync, for the window icon. */
+  exists?: (file: string) => boolean;
+}
+
+/**
+ * Ember's app-wide chrome, set once Electron is ready and before any window opens: the application menu (none on
+ * Windows and Linux, so Electron's default one goes, with its bar) with its About panel on macOS, the dark native
+ * theme, and from then on Ember's icon on every window on Linux and, in a packaged build, DevTools locked on every
+ * page. Every page is dark-only (ember.css says color-scheme: dark), so the native theme is too, whatever the system's
+ * appearance (review #245): on Windows it makes the title bars and Electron's menus dark, and on macOS the title bars,
+ * menus and dialogs. Windows' message boxes (the quit question) have no dark mode and stay light. On Linux it reaches
+ * nothing GTK draws: the windows ask GTK for its dark variant themselves (darkTheme in their factories), so GNOME's
+ * title bars are dark, and menus and dialogs follow the GTK theme. A light appearance would be a design of its own.
+ */
+export function setUpAppChrome(o: { os: OS; appMenu: boolean; actions: AppMenuActions }, e: ChromeElectron = { Menu, nativeTheme, app }): void {
+  e.nativeTheme.themeSource = "dark";
+  if (o.appMenu) e.app.setAboutPanelOptions(aboutPanel(e.app.getVersion()));
+  const template = appMenuTemplate(o.appMenu, o.actions);
+  e.Menu.setApplicationMenu(template ? e.Menu.buildFromTemplate(template) : null);
+  if (e.app.isPackaged) e.app.on("web-contents-created", (_event, contents) => lockDevTools(contents));
+  const icon = windowIconFor(o.os, e.exists);
+  if (icon) e.app.on("browser-window-created", (_event, window) => window.setIcon(icon));
+}
+
 /**
  * What the settings page may change through IPC.updateSettings: anything but where Ember works (`targets`) and what
  * commands may do (`commands`). Those change only through the targets runtime's own channel, behind their consent
@@ -236,12 +394,12 @@ export function settingsFromHome(patch: SettingsPatch): { patch: SettingsPatch; 
 /**
  * The quit question's words (§8.9) when quitting would stop something: tasks under way, commands running, computers
  * connected over SSH (`connected`: their names, when known). null when nothing would: Ember quits at once. With tasks
- * only, today's words.
+ * only, today's words; several tasks are "them", as in the mixed case (review #226).
  */
 export function quitQuestion(tasks: number, busy: { commands: number; connections: number }, connected: string[] = []): { message: string; detail: string } | null {
   const { commands, connections } = busy;
   if (tasks <= 0 && commands <= 0 && connections <= 0) return null;
-  if (commands <= 0 && connections <= 0) return { message: `Ember is still working on ${tasks === 1 ? "a task" : `${tasks} tasks`}.`, detail: "Quitting stops it where it is." };
+  if (commands <= 0 && connections <= 0) return { message: `Ember is still working on ${tasks === 1 ? "a task" : `${tasks} tasks`}.`, detail: `Quitting ${tasks === 1 ? "stops it where it is" : "stops them where they are"}.` };
   const work = [
     ...(tasks > 0 ? [`working on ${tasks === 1 ? "a task" : `${tasks} tasks`}`] : []),
     ...(commands > 0 ? [`running ${commands === 1 ? "1 command" : `${commands} commands`}`] : []),

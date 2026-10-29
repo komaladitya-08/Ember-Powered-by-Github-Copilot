@@ -558,7 +558,7 @@ function renderAgent(a: AgentStatus | null): void {
   // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
   $("sign-in").textContent = signInLabel(a.signInWith);
   $("retry").hidden = !notConnected || signingIn;
-  $("retry").textContent = waiting ? "Reconnect now (stops the tasks running)" : "Check again";
+  $("retry").textContent = waiting ? "Reconnect now (stops the tasks that are running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
   $("models").hidden = a.phase !== "ready" || a.models.length === 0;

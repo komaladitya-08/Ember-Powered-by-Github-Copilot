@@ -859,7 +859,7 @@ describe("the bubble's header says something the chip doesn't (review #21)", () 
     expect(failTitle(friendlyError("strange", undefined, { provider: true }), true).title).toBe("The model service had a problem");
     expect(failTitle(friendlyError("ECONNREFUSED"), false).title).toBe("I can't reach Copilot");
     expect(problemTitle("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.")).toBe("Copilot stopped");
-    expect(problemTitle("Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.")).toBe("Copilot isn't answering");
+    expect(problemTitle("Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.")).toBe("Copilot isn't answering");
     expect(problemTitle("Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.")).toBe("Copilot can't work right now");
   });
 });

@@ -82,7 +82,10 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   grow with it).
 - **Colour:** Apple's dark system palette (2025) with its increased-contrast variants. The accent is
   system orange (#FF9230), kept for the one prominent action and for status; text on filled buttons
-  is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %.
+  is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %. Ember is
+  dark only, whatever the system's appearance: title bars are dark on Windows, macOS and GNOME,
+  native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the
+  GTK theme, and Windows' message boxes (the quit question) stay light.
   `test/unit/design-system.test.ts` checks the token pairs: labels and system colours on every
   surface, dark text on filled buttons, control edges.
 - **Contrast themes** (Windows' forced colours, where the system paints with its own few colours and
@@ -106,7 +109,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   Ember's pages as it loads and when the setting changes (`app/main/page-prefs.ts`).
 - **Icon** (`assets/ember.svg`): Apple's icon grid (a 104 px continuous-corner tile on a 128 px
   canvas, with its shadow) in the app's warm graphite, lit from above, Cinder silhouetted against its
-  own glow.
+  own glow. At 32 px and below (`assets/ember-small.svg`) the tile fills the canvas (on Apple's grid in
+  the macOS icon), with a lighter graphite and rim that hold on a dark taskbar, and Cinder keeps only
+  the flame tufts, the coal's lit rim and the eyes. On Linux every window carries the icon too.
 
 ## Code
 

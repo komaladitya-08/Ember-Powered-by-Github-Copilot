@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
-import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome } from "./windows";
+import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
@@ -347,7 +347,7 @@ function start(): void {
       bringToFront(home);
       return;
     }
-    home = createHomeWindow();
+    home = createHomeWindow(platform.os);
     home.once("ready-to-show", () => log.info("window.home.shown"));
     // A crashed settings page comes back (it may be the consent page on first run).
     revive(home, reason => log.warn("window.home.renderer_gone", { reason }));
@@ -1360,19 +1360,10 @@ function start(): void {
     session.defaultSession.setSpellCheckerEnabled(false);
     session.defaultSession.setSpellCheckerLanguages([]);
     session.defaultSession.on("spellcheck-dictionary-download-begin", (_e, lang) => log.warn("spellcheck.download", { lang }));
-    // macOS: an application menu whose Quit (Command+Q) asks as the handle's Quit does; its Edit menu is what makes
-    // Command+C/V/X/A/Z work in the settings window's fields.
-    if (sys.lifecycle.appMenu) {
-      Menu.setApplicationMenu(Menu.buildFromTemplate([
-        { label: "Ember", submenu: [
-          { label: "Settings…", accelerator: "Command+,", click: () => showHome() },
-          { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" },
-          { label: "Quit Ember", accelerator: "Command+Q", click: () => void quitEmber() },
-        ] },
-        { role: "editMenu" },
-        { role: "windowMenu" },
-      ]));
-    }
+    // The application menu (macOS: its Quit, Command+Q, asks as the handle's Quit does, and its Edit menu makes
+    // Command+C/V/X/A/Z work in fields; Windows and Linux: none, so no Ctrl+Q that skips the question and no
+    // DevTools), the dark native theme, the windows' icon on Linux and DevTools locked in a packaged build (windows.ts).
+    setUpAppChrome({ os: platform.os, appMenu: sys.lifecycle.appMenu, actions: { showSettings: () => showHome(), quit: () => void quitEmber() } });
     // Windows: the Start Menu shortcut toasts need (made once, for the zip build).
     sys.lifecycle.ensureShortcut();
     // Linux: X11 only with $DISPLAY, as always (the platform reads it).

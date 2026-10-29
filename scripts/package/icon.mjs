@@ -1,6 +1,7 @@
-// Renders Ember's SVG icon with sharp: one PNG (the RPM, the AppImage), a Windows .ico (PNG-compressed entries,
-// written here because sharp can't write ICO), or a macOS .iconset folder for iconutil. The container format is a
-// pure function so it can be tested on any OS; sharp is loaded only to render.
+// Renders Ember's SVG icon with sharp: one PNG (the RPM, the AppImage, the Linux windows' icon the build writes), a
+// Windows .ico (PNG-compressed entries, written here because sharp can't write ICO), or a macOS .iconset folder for
+// iconutil. 32 px and below come from the small artwork beside the SVG (ember-small.svg). The container format and
+// which artwork each size uses are pure functions so they can be tested on any OS; sharp is loaded only to render.
 // usage: node scripts/package/icon.mjs <in.svg> <out.png> <size>
 //        node scripts/package/icon.mjs --ico <in.svg> <out.ico>
 //        node scripts/package/icon.mjs --iconset <in.svg> <out.iconset>
@@ -48,25 +49,68 @@ export function icoFromPngs(images) {
   return Buffer.concat([header, ...entries, ...images.map(i => i.png)]);
 }
 
+/** Images this size and smaller are drawn from the small artwork: the full icon's detail turns to mud there (review #247). */
+export const SMALL_MAX = 32;
+
+/**
+ * The small artwork beside an icon's SVG (ember.svg: ember-small.svg), or null when there is none.
+ * @param {string} svg
+ * @param {(file: string) => boolean} [exists]
+ */
+export function smallArtFor(svg, exists = fs.existsSync) {
+  const small = svg.replace(/\.svg$/i, "-small.svg");
+  return small !== svg && exists(small) ? small : null;
+}
+
+/**
+ * How one image of an icon set is drawn: from the full icon, or (SMALL_MAX and below) from the small artwork. Windows
+ * draws small icons to the canvas's edge; macOS keeps every size on Apple's grid, so in an iconset the small tile is
+ * inset by the full icon's own margin (12 of 128) and lines up with the large sizes.
+ * @param {number} size
+ * @param {"ico" | "iconset"} kind
+ * @returns {{ art: "full" | "small"; inset: number }}
+ */
+export function drawPlan(size, kind) {
+  if (size > SMALL_MAX) return { art: "full", inset: 0 };
+  return { art: "small", inset: kind === "iconset" ? Math.floor((size * 12) / 128) : 0 };
+}
+
 /** sharp, loaded on first use (importing this module for its pure functions needs no native code). */
 const sharp = () => createRequire(import.meta.url)("sharp");
 
 /** The SVG as a square PNG of `size` pixels (density 384, so the larger sizes stay sharp). */
 const render = (svg, size) => sharp()(svg, { density: 384 }).resize(size, size).png();
 
-/** Writes Ember's .ico, rendered from the SVG. */
+/** One image of an icon set as a PNG, drawn as drawPlan says (the full icon when there is no small artwork). */
+async function renderFor(svg, size, kind) {
+  const plan = drawPlan(size, kind);
+  const small = plan.art === "small" ? smallArtFor(svg) : null;
+  if (!small) return render(svg, size).toBuffer();
+  const d = plan.inset;
+  const tile = await render(small, size - 2 * d).toBuffer();
+  if (!d) return tile;
+  return sharp()(tile).extend({ top: d, bottom: d, left: d, right: d, background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+}
+
+/** Writes Ember's .ico, rendered from the SVG (and its small artwork). */
 export async function writeIco(svg, out) {
   const images = [];
-  for (const size of ICO_SIZES) images.push({ size, png: await render(svg, size).toBuffer() });
+  for (const size of ICO_SIZES) images.push({ size, png: await renderFor(svg, size, "ico") });
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, icoFromPngs(images));
 }
 
-/** Writes an .iconset folder (for `iconutil -c icns`), rendered from the SVG. */
+/** Writes an .iconset folder (for `iconutil -c icns`), rendered from the SVG (and its small artwork). */
 export async function writeIconset(svg, dir) {
   if (!dir.endsWith(".iconset")) throw new Error(`iconutil needs the folder's name to end in .iconset: ${dir}`);
   fs.mkdirSync(dir, { recursive: true });
-  for (const { name, size } of ICONSET) await render(svg, size).toFile(path.join(dir, name));
+  for (const { name, size } of ICONSET) fs.writeFileSync(path.join(dir, name), await renderFor(svg, size, "iconset"));
+}
+
+/** Writes the SVG as one square PNG of `size` pixels (the RPM's and AppImage's icon, the Linux windows' icon). */
+export async function writePng(svg, out, size) {
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  await render(svg, size).toFile(out);
 }
 
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))) {
@@ -75,7 +119,7 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(file
   else if (mode === "--iconset" && rest.length === 2) await writeIconset(rest[0], rest[1]);
   else if (mode && !mode.startsWith("--") && rest.length >= 1) {
     const [output, size = "256"] = rest;
-    await render(mode, Number(size)).toFile(output);
+    await writePng(mode, output, Number(size));
   } else {
     console.error("usage: node scripts/package/icon.mjs <in.svg> <out.png> <size> | --ico <in.svg> <out.ico> | --iconset <in.svg> <out.iconset>");
     process.exit(2);

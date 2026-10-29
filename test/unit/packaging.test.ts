@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { TARGETS, layoutFor, selectPackages } from "../../scripts/package/layout.mjs";
 import { ICONSET, ICO_SIZES, icoFromPngs } from "../../scripts/package/icon.mjs";
-import { BUNDLE_ID, EXECUTABLE, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
+import { BUNDLE_ID, ENTITLEMENTS, EXECUTABLE, FORBIDDEN_ENTITLEMENTS, entitlementsPlist, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
 import { certificateTable, exeResourceMismatches, exeVersionStrings, numericVersion, readExeResources, rewriteExeResources } from "../../scripts/package/exe-resources.mjs";
 import { EMBER_FUSES, SENTINEL, flipFuses, fuseMismatches, readFuses } from "../../scripts/package/fuses.mjs";
 import * as ResEdit from "resedit";
@@ -393,11 +393,15 @@ describe("the macOS app bundle", () => {
     expect(layoutFor("darwin", "arm64").exe).toBe(`Contents/MacOS/${EXECUTABLE}`);
   });
 
-  /** A stand-in for plutil, iconutil, xattr and codesign that keeps Info.plist as a map. */
-  const fakeMac = (o: { ignore?: string; verifyFails?: boolean; noExecutable?: boolean } = {}) => {
+  /**
+   * A stand-in for plutil, iconutil, xattr and codesign that keeps Info.plist as a map. codesign --display reports the
+   * flags and entitlements the signing call asked for, unless `runtime` is false or `extra` adds an entitlement.
+   */
+  const fakeMac = (o: { ignore?: string; verifyFails?: boolean; noExecutable?: boolean; runtime?: boolean; extra?: string } = {}) => {
     const plist: Record<string, string> = { CFBundleName: "Electron", CFBundleIdentifier: "com.github.Electron", CFBundleExecutable: "Electron", ElectronAsarIntegrity: "<dict/>" };
     const calls: string[][] = [];
     const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
+    let signed = { runtime: false, entitlements: "" };
     const run = (file: string, args: string[]): RunResult => {
       calls.push([file, ...args]);
       if (file === "plutil" && args[0] === "-replace") {
@@ -413,6 +417,17 @@ describe("the macOS app bundle", () => {
       if (file === "plutil" && args[0] === "-remove") { delete plist[args[1]]; return ok(); }
       if (file === "iconutil") { fs.writeFileSync(args[args.indexOf("-o") + 1], "icns"); return ok(); }
       if (file === "codesign" && args[0] === "--verify" && o.verifyFails) return { status: 1, stdout: "", stderr: "a sealed resource is missing or invalid" };
+      if (file === "codesign" && args[0] === "--force") {
+        const at = args.indexOf("--entitlements");
+        signed = { runtime: args[args.indexOf("--options") + 1] === "runtime" && o.runtime !== false, entitlements: at > 0 ? fs.readFileSync(args[at + 1], "utf8") : "" };
+        return ok();
+      }
+      if (file === "codesign" && args.join(" ") === `--display --verbose=2 ${args.at(-1)}`) {
+        return { status: 0, stdout: "", stderr: `Executable=${args.at(-1)}/Contents/MacOS/Ember\nCodeDirectory v=20500 size=1234 flags=${signed.runtime ? "0x10002(adhoc,runtime)" : "0x2(adhoc)"} hashes=30+7 location=embedded\n` };
+      }
+      if (file === "codesign" && args.join(" ") === `--display --entitlements - --xml ${args.at(-1)}`) {
+        return ok(signed.entitlements.replace("</dict>", o.extra ? `<key>${o.extra}</key><true/></dict>` : "</dict>").replace(/\n\s*/g, ""));
+      }
       return ok();
     };
     const app = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-bundle-")), "Ember.app");
@@ -440,12 +455,38 @@ describe("the macOS app bundle", () => {
     expect(mac.iconsets).toEqual([path.join(path.dirname(mac.app), "ember.iconset")]);
     expect(fs.existsSync(path.join(mac.app, "Contents", "Resources", "ember.icns"))).toBe(true);
     expect(fs.existsSync(path.join(mac.app, "Contents", "Resources", "electron.icns"))).toBe(false);
-    // The signature covers every change: nothing touches the bundle after it.
-    expect(mac.calls.slice(-3).map(line)).toEqual([
+    // The signature covers every change: nothing touches the bundle after it (it is only read back).
+    const entitlements = path.join(path.dirname(mac.app), "ember.entitlements");
+    expect(mac.calls.slice(-5).map(line)).toEqual([
       `xattr -cr ${mac.app}`,
-      `codesign --force --deep --sign - --timestamp=none ${mac.app}`,
+      `codesign --force --deep --options runtime --entitlements ${entitlements} --sign - --timestamp=none ${mac.app}`,
       `codesign --verify --deep --strict --verbose=2 ${mac.app}`,
+      `codesign --display --verbose=2 ${mac.app}`,
+      `codesign --display --entitlements - --xml ${mac.app}`,
     ]);
+  });
+
+  it("signs under the hardened runtime with only the entitlements Ember needs (review #177)", async () => {
+    const mac = fakeMac();
+    await mac.finish();
+    expect(fs.readFileSync(path.join(path.dirname(mac.app), "ember.entitlements"), "utf8")).toBe(entitlementsPlist());
+    // V8's JIT, an ad hoc signature's frameworks and native modules, the microphone, dark mode through System Events.
+    expect(ENTITLEMENTS).toEqual([
+      "com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory", "com.apple.security.cs.disable-library-validation",
+      "com.apple.security.device.audio-input", "com.apple.security.automation.apple-events",
+    ]);
+    // Either would let another process's code into Ember again (DYLD_INSERT_LIBRARIES, a debugger).
+    expect(FORBIDDEN_ENTITLEMENTS).toEqual(["com.apple.security.cs.allow-dyld-environment-variables", "com.apple.security.get-task-allow"]);
+    const xml = entitlementsPlist();
+    expect(xml).toMatch(/^<\?xml version="1\.0" encoding="UTF-8"\?>\n<!DOCTYPE plist [^\n]+>\n<plist version="1\.0">\n<dict>\n/);
+    expect([...xml.matchAll(/<key>([^<]+)<\/key>\n {2}<true\/>/g)].map(m => m[1])).toEqual(ENTITLEMENTS);
+    for (const k of FORBIDDEN_ENTITLEMENTS) expect(xml).not.toContain(k);
+  });
+
+  it("refuses a signature without the hardened runtime, or with an entitlement that lets code in", async () => {
+    await expect(fakeMac({ runtime: false }).finish()).rejects.toThrow(/isn't signed with the hardened runtime.*flags=0x2\(adhoc\)/s);
+    await expect(fakeMac({ extra: "com.apple.security.cs.allow-dyld-environment-variables" }).finish())
+      .rejects.toThrow(/Ember\.app's entitlements are wrong: com\.apple\.security\.cs\.allow-dyld-environment-variables must not be there/);
   });
 
   it("stops before signing when a value doesn't read back, or when the signature doesn't verify", async () => {
@@ -581,6 +622,24 @@ describe("the Windows and macOS CI jobs", () => {
     for (const s of ["test \"$(uname -m)\" = x86_64", "node scripts/package/stage.mjs", "node scripts/package/archive.mjs", "lipo -archs", "test \"$machos\" -gt 0", "fuses.mjs --check",
       "codesign --verify --deep --strict", "test/integration/darwin-desktop.test.ts", "node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember"]) {
       expect(x64, s).toContain(s);
+    }
+  });
+
+  it("read the hardened runtime's flag on both Macs, and try DYLD_* only where SIP is on, as on users' Macs (review #177)", () => {
+    for (const name of ["macos", "macos-x64"]) {
+      const s = step(job(name), "fuses.mjs --check");
+      const at = (line: string) => { const i = s.indexOf(line); expect(i, `${name}: ${line}`).toBeGreaterThan(0); return i; };
+      // The flag, whatever SIP says.
+      const flag = at(`\n          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\\([^)]*runtime'\n`);
+      // The runners report SIP off, and with it off dyld may honour DYLD_* for any binary: there the line would fail
+      // for a reason that has nothing to do with Ember, or prove nothing.
+      const sip = at(`\n          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then\n`
+        + `            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'\n`
+        + `          else\n`
+        + `            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"\n`
+        + `          fi\n`);
+      expect(flag).toBeLessThan(sip);
+      expect(s.match(/DYLD_INSERT_LIBRARIES/g), name).toHaveLength(1);
     }
   });
 

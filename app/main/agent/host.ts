@@ -260,7 +260,7 @@ const RUNTIME_WAIT_MS = 5000;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
-const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.";
+const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.";
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
@@ -271,7 +271,7 @@ const NO_WATCHERS_DETAIL = `${NO_WATCHERS_WHY} Reconnecting…`;
  */
 const NO_ANSWER_DETAIL = "Copilot didn't answer in time. Reconnecting…";
 /** A reconnect put off while tasks are at work (the runtime still works for them): what settings show meanwhile. */
-const AFTER_TASKS = "Reconnecting when the tasks running are done…";
+const AFTER_TASKS = "Reconnecting when the tasks that are running finish…";
 
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app

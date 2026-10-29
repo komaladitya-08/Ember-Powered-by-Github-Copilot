@@ -535,6 +535,16 @@ jobs:
           export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The hardened runtime (review #177): its flag on Ember's signature, whatever SIP says.
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\([^)]*runtime'
+          # With it, macOS ignores DYLD_* for Ember, so a library named there isn't loaded (dyld would stop Ember
+          # otherwise: the library doesn't exist). Only where SIP is on, as on users' Macs: these runners report it off,
+          # and with it off dyld may honour DYLD_* for any binary, so the line would prove nothing here.
+          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then
+            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
+          else
+            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"
+          fi
           # The accessibility host runs as Ember's binary in node mode; NODE_OPTIONS is ignored there too.
           ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
@@ -713,6 +723,16 @@ jobs:
           test "$machos" -gt 0
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
+          # The hardened runtime (review #177): its flag on Ember's signature, whatever SIP says.
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\([^)]*runtime'
+          # With it, macOS ignores DYLD_* for Ember, so a library named there isn't loaded (dyld would stop Ember
+          # otherwise: the library doesn't exist). Only where SIP is on, as on users' Macs: these runners report it off,
+          # and with it off dyld may honour DYLD_* for any binary, so the line would prove nothing here.
+          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then
+            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
+          else
+            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"
+          fi
           ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
           ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
           node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log

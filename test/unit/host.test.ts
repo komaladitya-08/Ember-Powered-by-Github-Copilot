@@ -2086,11 +2086,11 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     expect(sim.clients).toHaveLength(1);
     expect(host.tasks!.get(t.id)).toMatchObject({ status: "running" });
     // (Settings offers no sign-in then, and says reconnecting now stops the tasks: UI10-2.)
-    expect(host.getStatus()).toMatchObject({ phase: "error", detail: "Copilot isn't answering. Reconnecting when the tasks running are done…", waitingForTasks: true });
+    expect(host.getStatus()).toMatchObject({ phase: "error", detail: "Copilot isn't answering. Reconnecting when the tasks that are running finish…", waitingForTasks: true });
     // Asked meanwhile, Ember says so (the conversation can't answer now).
     await host.ask("are you there?");
     // (Copilot is reachable: the title names what is wrong, not "I can't reach Copilot".)
-    expect(screen().bubble).toMatchObject({ title: "Copilot isn't answering", thought: "Copilot isn't answering. Reconnecting when the tasks running are done…" });
+    expect(screen().bubble).toMatchObject({ title: "Copilot isn't answering", thought: "Copilot isn't answering. Reconnecting when the tasks that are running finish…" });
     // Settings can't help while it reconnects by itself: no Open settings (review #18).
     expect(screen().bubble?.actions).toEqual([]);
     expect(conductorSession().sent.at(-1)).toMatch(/Tokyo$/);
@@ -2120,7 +2120,7 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     await host.ask("what time is it in Tokyo");
     work.emit("assistant.reasoning_delta", { deltaContent: "looking " });
     await vi.advanceTimersByTimeAsync(20_500);
-    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then." });
+    expect(screen().bubble).toMatchObject({ mood: "error", thought: "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then." });
     expect(sim.clients).toHaveLength(1);
     expect(host.tasks!.get(t.id)?.status).toBe("running");
     // The task's model goes quiet as well: its own watch ends it, and then Copilot is reconnected.
