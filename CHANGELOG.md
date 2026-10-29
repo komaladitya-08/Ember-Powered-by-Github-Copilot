@@ -295,6 +295,10 @@ allows them.
   and the task cards move to the bottom-left. With more than one display, Ember keeps clear only of the task cards on
   its own display, and shows its bubble only on the display it is on. Ember and its bubble also step clear of the
   command window and of the sign-in and consent cards while they ask.
+- **Handle position** in Settings › **Comfort & access** puts Ember's handle in the bottom-right corner (as before)
+  or the bottom-left one, clear of the taskbar, Dock or panel, so it no longer has to cover a status bar or scroll
+  corner there; **Move to the other side** in the handle's menu switches it. The small tab while Ember is hidden, the
+  card without a compositor, the task cards and, on Linux, the desk view follow it.
 - **Hide Ember** shrinks the handle to a small tab showing Ember's face, and a question or an answer that brings a
   hidden Ember back makes the handle the full pill again. In the desk window, once you take over, a screen reader is
   told that your keys go to the desk and that Ctrl+Alt+End hands it back.

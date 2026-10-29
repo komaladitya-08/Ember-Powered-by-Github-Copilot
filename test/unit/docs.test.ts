@@ -296,10 +296,13 @@ describe("README.md", () => {
     const main = read("app/main/main.ts");
     const start = main.indexOf("const menu = Menu.buildFromTemplate([");
     const menu = main.slice(start, main.indexOf("]);", start));
-    for (const item of ["Ask Ember…", "Stop everything", "Read the last answer", "Stay put", "Hide Ember", "Quit Ember", "Mute microphone"]) {
+    for (const item of ["Ask Ember…", "Stop everything", "Read the last answer", "Stay put", "Hide Ember", "Quit Ember", "Mute microphone", "Move to the other side"]) {
       expect(menu, item).toContain(`"${item}"`);
       expect(a11y, item).toContain(item === "Mute microphone" ? "microphone" : item);
     }
+    // Move to the other side's keyboard route is the setting it flips (review #75).
+    expect(a11y).toContain("**Handle position** for **Move to the other side**");
+    expect(read("app/renderer/home/index.html")).toContain('<label class="switch-row"><span>Handle position</span><select id="handle-position">');
     expect(a11y).toContain("**Work on**");
     // The desk's way back from a take-over, as the desk view handles it.
     expect(read("app/renderer/desk/main.ts")).toMatch(/e\.key === "End"[^\n]*e\.ctrlKey && e\.altKey/);

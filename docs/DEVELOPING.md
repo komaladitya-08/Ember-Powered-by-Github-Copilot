@@ -106,10 +106,11 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 
 ### Using Ember
 
-- Ember appears beside your cursor; its handle sits in the bottom-right corner. Click the handle for
-  **Ask Ember…**, **Stop everything**, **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer**
-  (once Ember has answered), **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember** and **Quit Ember**
-  (Quit asks first while a task is running).
+- Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
+  **Handle position** in settings' **Comfort & access**. Click the handle for **Ask Ember…**, **Stop everything**,
+  **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
+  **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember**, **Move to the other side** (the handle and its
+  task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running).
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.
 - **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions.
@@ -132,7 +133,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 ### Asking Ember to do things
 
 Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember starts a task in the
-background, with a card just above Ember's handle (bottom-right). It works through the app's accessibility interface, so
+background, with a card just above Ember's handle (in its corner). It works through the app's accessibility interface, so
 your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;
 answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now), so you never need the mouse (the
 question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
@@ -163,8 +164,9 @@ agree.
 Say "on your desk" (or ask for a long typing job) and Ember opens the app on its own private,
 invisible display instead of yours. There it can use a full mouse and keyboard without
 borrowing yours, so you keep working undisturbed. A small **Ember's desk** window in the
-bottom-left corner shows what it is doing. Click **Take over** to enlarge it and use the desk
-yourself (Ember pauses), then **Hand back** (or press **Ctrl+Alt+End**). Files Ember makes there go to `~/Ember`.
+bottom-left corner (bottom-right when Ember's handle is in the bottom left) shows what it is
+doing. Click **Take over** to enlarge it and use the desk yourself (Ember pauses), then
+**Hand back** (or press **Ctrl+Alt+End**). Files Ember makes there go to `~/Ember`.
 The desk has its own clipboard, its own app settings (`~/.config/ember/desk-profiles`), only the environment its
 apps need (no tokens or keys), and is closed when Ember quits. It needs `Xvfb`, `xauth` and `dbus-daemon`
 (§2). Ember never opens terminals there (or anywhere: commands, when turned on, run only in its own command window).

@@ -198,7 +198,7 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
 | Not now, while Ember asks | Ctrl+Alt+N | Win+Alt+N | Control+Shift+Command+N |
 
 If another app already holds one, the setup check says which, and Ember keeps trying to get it. Meanwhile click
-Ember's handle in the bottom-right corner, or from the keyboard start Ember again (from your apps, the Start menu or
+Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the Start menu or
 Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, under
 **Comfort & access**. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by
 default.
@@ -239,7 +239,7 @@ and VoiceOver on a Mac. While one runs:
 | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good |
 | Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds the shortcut: **Stop everything** under **Comfort & access › Ember on screen** |
 | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
-| What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
+| What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**, and **Handle position** for **Move to the other side**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command |
 | The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
 | Bubble buttons for other computers (**Bring Ember**, **Reconnect**, **Try again**) | Settings › **Computers** has the same; the bubble says so |
@@ -254,6 +254,11 @@ while, and Ember's own notices; a question waits 20 minutes instead of 2 before 
 Larger, an answer that needs more than six lines at that size offers **Read all**. Windows' contrast themes keep
 switches, edges, focus and state visible, and the handle's microphone and computer badges change shape as well as
 colour.
+
+**Where the handle sits.** Ember's handle sits in the bottom-right corner of your main screen, with its task cards
+just above it, clear of the taskbar, Dock or panel. If it covers something you need there, such as a status bar or a
+scroll corner, choose **Bottom left** in Settings › **Comfort & access** › **Handle position**, or click **Move to the
+other side** in the handle's menu. The task cards go with it, and on Linux Ember's desk view takes the other corner.
 
 **Known gaps.**
 - A task card's own **Stop** and the desk's **Take over** are clicks only: the stop shortcut stops every task.
