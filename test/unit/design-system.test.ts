@@ -263,4 +263,29 @@ describe("Windows contrast themes (forced colours)", () => {
       expect(forced(css(page), sel), `${page}: ${sel}`).toContain("forced-color-adjust: none");
     }
   });
+
+  it("keeps first run's Start row opaque at the window's foot, so the terms scrolling under it don't show round it", () => {
+    // What covers the window round a sticky part is a shadow spread across it (a shadow, so the window never scrolls
+    // sideways), and the system drops every shadow: each such cover is drawn as it is there, in the window's colour.
+    const covers: [string, string][] = [];
+    for (const page of PAGES) {
+      const plain = css(page).replace(/\/\*[\s\S]*?\*\//g, "");
+      const inForced = new Set(forcedRules(plain).map(([s, d]) => `${s.join(", ")}{${d}`));
+      for (const m of plain.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const sel = m[1].trim().replace(/^@media \(forced-colors: active\) \{\s*/, "");
+        if (inForced.has(`${selectors(sel).join(", ")}{${m[2]}`) || !/box-shadow:[^;]*\d+vmax/.test(m[2])) continue;
+        covers.push(...selectors(sel).map(s => [page, s] as [string, string]));
+      }
+    }
+    expect(covers).toContainEqual(["home", "body.first-run .start-row::before"]);
+    for (const [page, sel] of covers) {
+      const d = forced(css(page), sel);
+      expect(d, `${page}: ${sel}`).toContain("forced-color-adjust: none");
+      expect(d, `${page}: ${sel}`).toMatch(/box-shadow: [^;]*\d+vmax Canvas[;,]/);
+    }
+    // The row itself in the window's colour, with an edge in the text colour.
+    expect(forced(css("home"), "body.first-run .start-row")).toContain("background: Canvas;");
+    expect(forced(css("home"), ".start-row")).toMatch(/outline: 1px solid CanvasText/);
+    expect(forced(css("home"), "body.first-run .start-row::before")).toMatch(/box-shadow: 0 0 0 1px CanvasText,/);
+  });
 });

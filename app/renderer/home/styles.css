@@ -403,6 +403,11 @@ html { scroll-padding-top: 16px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
+  /* First run's Start row stays opaque at the window's foot: what covers the window round it is a shadow, which the
+     system drops, so the terms scrolling under it showed beside and below it. The cover is drawn as it is, in the
+     window's colour, with the row's edge in the text colour over it (and the outline above over that). */
+  body.first-run .start-row { background: Canvas; }
+  body.first-run .start-row::before { forced-color-adjust: none; box-shadow: 0 0 0 1px CanvasText, 0 100vmax 0 100vmax Canvas; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
   .models select, .choice select, #text-size { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
