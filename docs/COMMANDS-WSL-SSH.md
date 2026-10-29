@@ -452,7 +452,8 @@ starts it just to read one). A command in WSL may start Windows programs and rea
   connection; it never uses or types into yours. If it can't connect there (your organisation doesn't allow that
   computer, its settings throw host keys away, it is this same computer…), the bubble says so: "Can't connect to
   build-01" with the reason. Ember looks at your `ssh` in WSL only in distros that are running at that moment, and never
-  starts one to look.
+  starts one to look. On a Linux computer running more than 5,000 processes it doesn't look at all (reading them all
+  would take too long), so it neither offers nor takes an offer away there.
 - **The card.** The first time (and again when the user, host name or port your SSH settings give changes, or the
   computer behind the name changes), Ember shows "Bring Ember to build-01?" (**Connect**, **Not now**): who it
   connects as and through which jump hosts, the keys and settings file it carries over from your own `ssh` command,

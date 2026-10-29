@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CIM_SCRIPT, linuxSshProcesses, parseCim, parsePs, parseWslReader, sshDestination, userSshProcessesWith, windowsArgv, WSL_READER, type NoticeDeps } from "../../app/main/remote/notice-ssh";
+import { CIM_SCRIPT, linuxSshProcesses, parseCim, parsePs, parseWslReader, SCAN_MAX, sshDestination, userSshProcessesWith, windowsArgv, WSL_READER, type NoticeDeps } from "../../app/main/remote/notice-ssh";
 
 const ssh = (...a: string[]) => sshDestination(["ssh", ...a]);
 
@@ -107,6 +107,15 @@ describe("the user's own ssh processes (R4)", () => {
   it("reads Linux's /proc for this user's ssh, never another user's and never Ember's own", () => {
     expect(linuxSshProcesses(deps())).toEqual([{ pid: 100, argv: ["ssh", "-J", "bastion", "deploy@build-01"], via: "local" }]);
     expect(linuxSshProcesses(deps({ readdir: () => { throw new Error("EACCES"); } }))).toBeNull();
+  });
+
+  it("can't read Linux's list when /proc holds more processes than it looks at: an ssh past them would look ended (F-scanmax)", () => {
+    // Node lists /proc sorted as text, so which processes fell past the old cut depended on their numbers: here the
+    // user's ssh (100) comes after all the others.
+    const procOf = (others: number) => ["self", "cpuinfo", ...Array.from({ length: others }, (_, i) => String(1000 + i)), "100"];
+    expect(linuxSshProcesses(deps({ readdir: () => procOf(SCAN_MAX) }))).toBeNull();
+    // Up to the limit, every process is looked at, whatever else /proc lists.
+    expect(linuxSshProcesses(deps({ readdir: () => procOf(SCAN_MAX - 1) }))).toEqual([{ pid: 100, argv: ["ssh", "-J", "bastion", "deploy@build-01"], via: "local" }]);
   });
 
   it("reads macOS's ps for this user", async () => {
