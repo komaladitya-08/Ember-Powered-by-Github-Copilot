@@ -13,10 +13,15 @@
     <div class="field">
       <!-- Ember's flame, where Spotlight has its magnifier: the box is where you ask Ember. -->
       <svg class="glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5c.7 3.3 3 4.6 4.5 6.8 1.4 2 2 4.1 1.5 6.3-.8 3.3-3.4 5.4-6 5.4s-5.3-2-6-5.2c-.5-2.2.3-4.3 1.6-5.9.3 1.5 1 2.5 2.2 3-.4-3.9 1.1-7.5 2.2-10.4z"/></svg>
-      <input id="q" type="text" placeholder="Ask or tell Ember… e.g. “turn on Night Light”" maxlength="2000" autofocus aria-describedby="where hint sees">
+      <!-- One line that grows to four: Shift+Enter adds a line, and a pasted traceback keeps its lines. -->
+      <textarea id="q" rows="1" placeholder="Ask or tell Ember… e.g. “turn on dark mode”" maxlength="2000" autofocus aria-describedby="where cut hint sees"></textarea>
     </div>
-    <p class="meta"><span id="where" class="where" hidden></span><span id="sees" class="sees" hidden></span><span id="hint" class="hint"><span class="key"><kbd>Enter</kbd> to send</span><span class="key" id="hint-history" hidden><kbd>↑</kbd> earlier</span><span class="key"><kbd>Esc</kbd> to close</span></span></p>
+    <p class="meta"><span id="where" class="where" hidden><span id="where-name" class="where-name"></span><span id="where-state" class="where-state"></span></span><span id="sees" class="sees" hidden><svg class="eye" viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 5C6.5 5 2.7 9.2 1.5 12c1.2 2.8 5 7 10.5 7s9.3-4.2 10.5-7C21.3 9.2 17.5 5 12 5zm0 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-2.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg><span id="sees-full" class="sr"></span><span id="sees-text" class="sees-text" aria-hidden="true"></span><span id="sees-extra" class="sees-extra" aria-hidden="true"></span></span><span id="hint" class="hint"><span class="key"><kbd id="key-send">Enter</kbd> to send</span><span class="key" id="hint-history" hidden><kbd>↑</kbd> earlier</span><span class="key"><kbd>Esc</kbd> to close</span></span></p>
+    <!-- A paste longer than what is sent was cut: said on its own line, so the line above keeps the window's name. -->
+    <p id="cut" class="cut" role="status" hidden></p>
   </form>
+  <!-- What Ember will see comes a moment after the field has the keyboard: said here once it does. -->
+  <div id="sees-live" class="sr" role="status" aria-live="polite"></div>
   <script src="main.js"></script>
 </body>
 </html>

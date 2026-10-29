@@ -8,7 +8,11 @@
  * stand-in in overlay-child.ts: the overlay's own window options in a real Electron) shows in a plain capture and is
  * gone from Perception's, which hides it as main does, and shows again afterwards; C15, the window the bridge lists for
  * the Settings app matched by pid to the window system's frame (only with UAC on: EMBER_CI_LUA); and the packaged
- * accessibility host answers a ping when run as Ember.exe in node mode (EMBER_PACKAGED_APP, after staging).
+ * accessibility host answers a ping when run as Ember.exe in node mode (EMBER_PACKAGED_APP, after staging). Last, Ember
+ * itself (the development build, npm run build) started as at login: the real ask chord (Win+Alt+Space through
+ * SendInput) opens the box, and what it holds of letters typed straight after is printed (review #78: Windows has no
+ * typed-ahead hold; typeahead-probe.ts); then its right-click menu dismissed by a click on the bench leaves the bench
+ * the keyboard (review #77).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -22,7 +26,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { _electron as electron, type ElectronApplication } from "playwright-core";
 import sharp from "sharp";
 import type { ElectronParts, Input, Platform, PlatformDeps, Rect, ScreenLike, SidecarLaunch, WindowSystem } from "../../app/main/platform/types";
 import type { Logger } from "../../app/main/logger";
@@ -32,6 +38,7 @@ import { Perception } from "../../app/main/perception";
 import { matchFrame } from "../../app/main/perception/windows";
 import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
+import { PROBE_PACE_MS, PROBE_TEXT, probeVerdict } from "./typeahead-probe";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
@@ -319,6 +326,83 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     } finally {
       child.stdin.end();
       setTimeout(() => { if (child.exitCode === null) child.kill(); }, 3_000).unref();
+    }
+  });
+
+  it("opens the ask box from the real ask chord, says what it holds of letters typed straight after (review #78 probe), and leaves the bench the keyboard when a click there dismisses its right-click menu (review #77)", async () => {
+    const main = path.join(root, "dist", "app", "main.cjs");
+    if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
+    const userData = path.join(dir, "ember-userData");
+    fs.mkdirSync(userData, { recursive: true });
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
+    // As at login: Ember only greets, so no settings window takes the keyboard.
+    const ember: ElectronApplication = await electron.launch({
+      executablePath: createRequire(import.meta.url)("electron") as unknown as string, args: [root, "--autostart"], timeout: 90_000,
+      env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData },
+    });
+    const askWindow = () => ember.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      return w ? { visible: w.isVisible(), focused: w.isFocused() } : null;
+    });
+    try {
+      await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
+      const accel = "Super+Alt+Space";
+      if (!(await ember.evaluate(({ globalShortcut }, a) => globalShortcut.isRegistered(a), accel))) {
+        notTestable("letters typed straight after the ask chord", `another app holds ${accel}`);
+        return;
+      }
+      await front();
+      // Win+Alt+Space with SendInput (what a person's keyboard gives), let go, then the letters at once.
+      const x = input!;
+      const mods = ["Super_L", "Alt_L"].map(n => x.keysymOf(n));
+      const space = x.keysymOf("space");
+      for (const k of mods) expect(x.keysym(k, true)).toBe(true);
+      x.keysym(space, true);
+      x.keysym(space, false);
+      for (const k of [...mods].reverse()) x.keysym(k, false);
+      for (const ch of PROBE_TEXT) {
+        x.textKey!(ch, true);
+        x.textKey!(ch, false);
+        await sleep(PROBE_PACE_MS);
+      }
+      await waitFor("the ask box from the real chord", async () => (await askWindow())?.visible, 5_000)
+        .catch(async (e: unknown) => { throw new Error(`${(e as Error).message} (the ask window: ${JSON.stringify(await askWindow())})`); });
+      await sleep(800);
+      const held = await ember.evaluate(async ({ BrowserWindow }) => {
+        const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
+        return w ? String(await w.webContents.executeJavaScript(`document.querySelector("#q")?.value ?? ""`)) : "";
+      });
+      const verdict = probeVerdict("Windows", PROBE_TEXT, held);
+      console.log(verdict.line);
+      expect(verdict.inOrder, verdict.line).toBe(true);
+
+      // Review #77: right-click in the box's field (its Cut, Copy, Paste menu comes up), then click the bench's Name
+      // field. If that click activates the bench, the box goes away and leaves it the keyboard; if the menu's loop
+      // swallowed the click, the box keeps the keyboard. Never: the box shown while the bench is active, or the box
+      // taking the keyboard back from it.
+      const box = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getBounds());
+      x.move(box.x + 200, box.y + 33);
+      await sleep(150);
+      x.button(3, true);
+      x.button(3, false);
+      await sleep(800);
+      const name = ready.controls.Name;
+      x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+      await sleep(150);
+      x.button(1, true);
+      x.button(1, false);
+      await sleep(1500);
+      const after = await askWindow();
+      const benchActive = ws.activeWindow()?.id === ready.hwnd;
+      console.log(`right-click menu dismissed by a click on the bench (review #77): bench active ${benchActive}, ask box ${JSON.stringify(after)}`);
+      if (benchActive) expect(after?.visible, "the box after the click activated the bench").toBe(false);
+      else expect(after?.visible && after.focused, "the box kept the keyboard (the menu swallowed the click)").toBe(true);
+    } finally {
+      const proc = ember.process();
+      await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
+      if (proc.exitCode === null) proc.kill();
     }
   });
 });

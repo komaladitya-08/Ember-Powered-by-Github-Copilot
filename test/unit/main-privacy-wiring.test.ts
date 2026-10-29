@@ -119,7 +119,7 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     ["5: the kill switch's part", ['{ name: "targets", stop: () => targets?.stopAll() },']],
     ["6: panel questions", ["panelReady: n => targets?.panelReady(n) ?? false,", "targets?.questionChanged(q);", "targets?.questionWords(q.question)"]],
     ["7: bubble actions", ['!id.startsWith("ui:cmdstop:")', "if (targets?.bubbleAction(id)) return;", 'confirmer?.answer(id, "bubble")']],
-    ["8: the menu", ["...toMenu(targets?.menuItems() ?? []),"]],
+    ["8: the menu", ["...menuOptions(targets?.menuItems() ?? [], () => { opens = true; }),"]],
     ["9: a remote's quick context first", ["const remote = targets?.quickContext();"]],
     ["10: the quit words", ["quitQuestion(busyTasks(), targets?.busy() ?? { commands: 0, connections: 0 },"]],
     ["11: dispose at quit", ['app.on("will-quit", () => { void targets?.dispose(); });']],
@@ -143,5 +143,19 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
 
   it("lets the kill switch stop commands right after the agent", () => {
     expect(MAIN).toMatch(/\{ name: "agent", stop: \(\) => agent\?\.abortAll\(\) \}, \{ name: "targets", stop: \(\) => targets\?\.stopAll\(\) \},/);
+  });
+
+  it("records settings' Stop everything as coming from settings, the handle's as from its menu", () => {
+    expect(MAIN).toContain('ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));');
+    expect(MAIN).toContain('click: () => stopEverything("menu") }');
+  });
+
+  it("opens settings from the keyboard at Ask Ember… while another app holds the ask shortcut (review #45)", () => {
+    expect(MAIN).toContain("const showHomeFromKeys = () => { showHome(); const at = keyboardRoute(shortcutsTaken ?? [], sc); if (at) sendToHome(IPC.focusSection, at); };");
+    // Ember started again, the Dock, and the settings shortcut; not the handle menu's Settings… (a pointer's way).
+    expect(MAIN).toContain('app.on("second-instance", () => { log.info("instance.second", {}); showHomeFromKeys(); });');
+    expect(MAIN).toContain('app.on("activate", () => showHomeFromKeys());');
+    expect(MAIN).toContain("[sc.settings.accel]: showHomeFromKeys,");
+    expect(MAIN).toContain("click: () => { opens = true; showHome(); } },");
   });
 });

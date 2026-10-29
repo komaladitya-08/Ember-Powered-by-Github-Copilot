@@ -502,7 +502,7 @@ EMBER_WIN32_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember node scripts/run-integr
 | `ax-sidecar` | `EMBER_UIA_TEST` | The accessibility host end to end through Ember's own client, against the bench |
 | `win32-system` | `EMBER_WINSYS_TEST` | System integration: the app list, Notepad opened through `explorer.exe` without Ember's environment, dark mode switched and put back, no HKLM policy, the login item on and off |
 | `win32-vocabulary` | `EMBER_WINSYS_TEST` | The vocabularies against real windows: a console, the stored-credentials dialog, File Explorer's address box, the Run dialog, the clipboard's password markers |
-| `ember-win32` | `EMBER_WIN32_TEST`, `EMBER_PACKAGED_APP` | Ember's own composition and Perception against the bench: no system dialog at rest, the password field blacked out, the overlay out of screenshots, the Settings window matched by process id, the packaged host's ping |
+| `ember-win32` | `EMBER_WIN32_TEST`, `EMBER_PACKAGED_APP` | Ember's own composition and Perception against the bench: no system dialog at rest, the password field blacked out, the overlay out of screenshots, the Settings window matched by process id, the packaged host's ping; then Ember itself (`npm run build` first) opened with the real Win+Alt+Space, printing what the ask box holds of letters typed straight after (the typed-ahead probe: Windows has no keyboard hold) |
 
 CI's first step exports what the runner is (`EMBER_CI_ELEVATED`, `EMBER_CI_LUA`, `EMBER_CI_SERVER`): Windows Server
 2022, run as an administrator (its shell too), one 1024×768 screen at 100 % and no Store apps. A check that runner
@@ -825,7 +825,7 @@ EMBER_DARWIN_TEST=1 EMBER_PACKAGED_APP=dist/package/Ember.app node scripts/run-i
 | `ax-sidecar-darwin` | `EMBER_AX_TEST` | The accessibility host with the AX provider, through Ember's own client, against the bench; the same keys from a second host process |
 | `darwin-system` | `EMBER_MACSYS_TEST` | System integration: the app list, TextEdit opened through LaunchServices, the VoiceOver probe, no admin policy, Dark Mode switched through System Events and back, a red window captured at one pixel per point |
 | `darwin-vocabulary` | `EMBER_MACSYS_TEST` | The vocabularies against real windows: Terminal, Console and Calculator, System Settings' privacy pages, an administrator prompt's owner, the clipboard's password markers |
-| `ember-darwin` | `EMBER_DARWIN_TEST`, `EMBER_PACKAGED_APP` | Ember itself, built and started as a login start: it shows beside the user's app without taking its place, the ask box takes keys while TextEdit stays the active app, screenshots with the password field blacked out and the overlay left out, polling under 2 ms, the packaged host's answer |
+| `ember-darwin` | `EMBER_DARWIN_TEST`, `EMBER_PACKAGED_APP` | Ember itself, built and started as a login start: it shows beside the user's app without taking its place, the ask box takes keys while TextEdit stays the active app, screenshots with the password field blacked out and the overlay left out, polling under 2 ms, the ask box opened with the real ⌃⇧⌘Space, printing what it holds of letters typed straight after (the typed-ahead probe: macOS has no keyboard hold), the packaged host's answer |
 
 On your own Mac, run them from a terminal that has Accessibility, Screen Recording and Input Monitoring (the terminal
 is the responsible app). With `EMBER_MACSYS_TEST=1`, `darwin-system` switches Dark Mode and back (macOS first asks to

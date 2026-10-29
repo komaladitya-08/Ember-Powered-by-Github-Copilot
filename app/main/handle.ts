@@ -22,6 +22,8 @@ import { scaledSize, textScale } from "./page-prefs";
 const appDir = __dirname;
 /** At the default text size; it widens with the text (its two lines fit its height at every size). */
 const PILL = { width: 200, height: 56 };
+/** While Ember is hidden: the pill shrinks to a tab with just Ember's face (still the way back to Show Ember). */
+const TAB = { width: 56, height: 56 };
 const CARD = { width: 360, height: 150 };
 /** The card's height follows what it shows (a question with its buttons, a task with Stop), within these limits. */
 const CARD_MIN = 120, CARD_MAX = 360;
@@ -83,6 +85,21 @@ export class HandleWindow {
 
   private last: EmberState | null = null;
 
+  /** Ember is hidden: the pill is a tab with only its face (the page drops its words at that width). */
+  private compact = false;
+
+  /**
+   * Ember was hidden (true) or shown again (false): the pill shrinks to its face in the same corner, or grows back, so
+   * "Hide Ember" leaves only what is needed to show it again. The card (no compositor) never shrinks. Returns whether the
+   * handle's place changed.
+   */
+  setCompact(on: boolean): boolean {
+    if (this.fallback || on === this.compact || this.win.isDestroyed()) return false;
+    this.compact = on;
+    this.reposition();
+    return true;
+  }
+
   private cardHeight = CARD.height;
 
   sendState(state: EmberState): void {
@@ -112,11 +129,14 @@ export class HandleWindow {
     else this.win.setIgnoreMouseEvents(on);
   }
 
-  /** Sends the settings to the page; true when the text size changed the pill's width, which then moves (main tells the desk view). */
+  /**
+   * Sends the settings to the page; true when the text size changed the pill's width, which then moves (main tells the
+   * desk view). The tab (Ember hidden) keeps its size; the pill takes the new width when Ember is shown again.
+   */
   sendSettings(s: Settings): boolean {
     if (this.win.isDestroyed()) return false;
     this.win.webContents.send(OVERLAY.settings, s);
-    if (this.fallback || this.pill().width === this.pillWidth) return false;
+    if (this.fallback || this.compact || this.pill().width === this.pillWidth) return false;
     this.reposition();
     return true;
   }
@@ -143,8 +163,8 @@ export class HandleWindow {
 
   private reposition = (): void => {
     if (this.win.isDestroyed()) return;
-    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : this.pill();
-    if (!this.fallback) this.pillWidth = size.width;
+    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : this.compact ? TAB : this.pill();
+    if (!this.fallback && !this.compact) this.pillWidth = size.width;
     this.win.setBounds({ ...size, ...this.corner(size) });
   };
 }

@@ -398,8 +398,10 @@ starts it just to read one). A command in WSL may start Windows programs and rea
 
 - **Add a computer** in Settings › **Computers**: type an alias from your `~/.ssh/config`, `user@host`,
   `user@host:port` or `ssh://user@host:port` and press **Connect**. The handle menu's **Bring Ember to a computer…**
-  opens that section. The same computer and login typed another way (an alias, or user@host with its full name) is the
-  one Ember already has: it connects that one and says "Already added as build-01".
+  (there unless your organisation has turned SSH off) opens that section, ready to type in. While a computer is
+  connecting, the handle menu has **Cancel connecting to build-01**. The same computer and login typed another way (an
+  alias, or user@host with its full name) is the one Ember already has: it connects that one and says "Already added as
+  build-01".
 - **Or let Ember notice your own `ssh`.** Once you've added a computer (and said yes to its card), when the window
   you're in is a terminal and its title changes, Ember may look (at most every 10 seconds) at your own `ssh` processes:
   their command lines (the host and a few options), never your terminal's contents. Until then it doesn't look at all.

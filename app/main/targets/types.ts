@@ -153,6 +153,11 @@ export interface MenuItemLike {
   enabled?: boolean;
   submenu?: MenuItemLike[];
   click?: () => void;
+  /**
+   * The click opens one of Ember's windows (settings): the handle keeps the keyboard off the user's app meanwhile, so
+   * the window that opens isn't left behind it (not an Electron field; main reads it).
+   */
+  opens?: boolean;
 }
 
 /** Everything main hands the targets runtime (createTargets): plain data, functions and Electron-free shapes. */
@@ -175,7 +180,8 @@ export interface TargetsDeps {
   localHands: Hands | null;
   showState: (patch: Partial<EmberState>) => void;
   notify: (title: string, body: string) => void;
-  openSettings: (section?: "computers" | "commands") => void;
+  /** Opens settings at `section`, with `focus` there: "host" (the field to add a computer) or "wsl" (the WSL switch). */
+  openSettings: (section?: "computers" | "commands", focus?: "host" | "wsl") => void;
   ipc: IpcLike;
   /** The settings (home) window's page: the only sender TARGETS_IPC accepts (critique integration-5). */
   isHome: (sender: WebContentsLike) => boolean;

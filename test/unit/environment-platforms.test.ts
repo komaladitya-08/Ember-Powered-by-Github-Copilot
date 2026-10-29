@@ -1,7 +1,7 @@
 /** The setup checks on Windows and macOS (environment.ts, design §4.13, §9.8), and Linux's kept exactly as they were. */
 
 import { describe, expect, it } from "vitest";
-import { MAC_REGRANT, inspectEnvironment, type EnvInputs, type MacEnvInputs, type WindowsEnvInputs } from "../../app/main/environment";
+import { MAC_REGRANT, inspectEnvironment, keyboardRoute, type EnvInputs, type MacEnvInputs, type WindowsEnvInputs } from "../../app/main/environment";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import { ISSUES_URL } from "../../app/shared/support";
 
@@ -89,7 +89,29 @@ describe("Windows setup checks", () => {
   it("name Windows' own shortcuts, and the ones another app took by their Windows labels", () => {
     expect(check(win({}, { shortcuts: SHORTCUTS.win32 }), "shortcuts")?.detail).toBe("Win+Alt+Space ask · Win+Alt+X stop · Win+Alt+E settings · Win+Alt+M microphone");
     expect(check(win({}, { shortcutsTaken: ["Super+Alt+Space", "Super+Alt+M"] }), "shortcuts"))
-      .toMatchObject({ status: "warn", detail: expect.stringMatching(/^Another app already uses Win\+Alt\+Space, Win\+Alt\+M\. Use Ember's handle/) });
+      .toMatchObject({ status: "warn", detail: expect.stringMatching(/^Another app already uses Win\+Alt\+Space, Win\+Alt\+M\. /) });
+  });
+
+  it("give keyboard users a way to ask when the shortcuts are taken, not only the mouse-only handle, and say where it is (review #45)", () => {
+    expect(check(win({}, { shortcutsTaken: ["Super+Alt+Space"] }), "shortcuts")?.detail).toBe(
+      "Another app already uses Win+Alt+Space. Ember keeps trying to get it; meanwhile, click Ember's handle in the corner "
+      + "(it has Ask, Stop everything and Settings), or, from the keyboard, open Ember again from the Start menu: its settings open "
+      + "at Ask Ember… and Stop everything, under Comfort & access.",
+    );
+    expect(check(mac({}, { shortcutsTaken: ["Control+Shift+Command+Space", "Control+Shift+Command+X"] }), "shortcuts")?.detail)
+      .toMatch(/^Another app already uses Control\+Shift\+Command\+Space, Control\+Shift\+Command\+X\. Ember keeps trying to get them; .* open Ember again from Applications: its settings open at Ask Ember… and Stop everything, under Comfort & access\.$/);
+    // Only the microphone's (Xbox Game Bar's Win+Alt+M): settings opens where it was, and the words don't promise more.
+    expect(check(win({}, { shortcutsTaken: ["Super+Alt+M"] }), "shortcuts")?.detail).toMatch(/, or, from the keyboard, open Ember again from the Start menu for its settings\.$/);
+  });
+
+  it("open settings from the keyboard at Ask Ember… or Stop everything while another app holds that shortcut (review #45)", () => {
+    const sc = SHORTCUTS.win32;
+    expect(keyboardRoute(["Super+Alt+Space"], sc)).toBe("access:ask");
+    expect(keyboardRoute(["Super+Alt+X", "Super+Alt+Space"], sc)).toBe("access:ask");
+    expect(keyboardRoute(["Super+Alt+X"], sc)).toBe("access:stop");
+    expect(keyboardRoute(["Super+Alt+M", "Super+Alt+E"], sc)).toBeNull();
+    expect(keyboardRoute([], SHORTCUTS.linux)).toBeNull();
+    expect(keyboardRoute(["Control+Alt+Space"], SHORTCUTS.linux)).toBe("access:ask");
   });
 
   it("say only what they know without the Windows facts", () => {
@@ -104,7 +126,7 @@ describe("macOS setup checks", () => {
     expect(ids(mac())).toEqual(["platform", "os", "accessibility", "screen-recording", "input-monitoring", "location", "shortcuts"]);
     expect(r.os).toBe("macOS 14.6.1");
     expect(check(mac(), "platform")?.detail).toBe("macOS on Apple silicon");
-    expect(check(mac({}, { arch: "x64" }), "platform")?.detail).toBe("macOS on Intel");
+    expect(check(mac({}, { arch: "x64" }), "platform")?.detail).toBe("macOS on Intel (best effort)");
   });
 
   it("on macOS 14 without Screen Recording or Input Monitoring, warn about both with their fixes (the re-grant advice once a button was pressed)", () => {
@@ -170,6 +192,8 @@ describe("Linux setup checks", () => {
     expect(inspectEnvironment({ ...linux, shortcuts: SHORTCUTS.linux })).toEqual(inspectEnvironment(linux));
     expect(check(linux, "shortcuts")?.detail).toBe("Ctrl+Alt+Space ask · Ctrl+Alt+X stop · Ctrl+Alt+E settings · Ctrl+Alt+M microphone");
     expect(check({ ...linux, shortcutsTaken: ["Control+Alt+X", "Control+Alt+Space"] }, "shortcuts")?.detail).toMatch(/^Another app already uses Ctrl\+Alt\+X, Ctrl\+Alt\+Space\. /);
+    // The keyboard's way to ask meanwhile (review #45).
+    expect(check({ ...linux, shortcutsTaken: ["Control+Alt+Space"] }, "shortcuts")?.detail).toMatch(/open Ember again from your apps: its settings open at Ask Ember… and Stop everything, under Comfort & access\.$/);
     expect(ids(linux)).toEqual(["platform", "os", "session", "desktop", "glibc", "accessibility", "shortcuts"]);
   });
 

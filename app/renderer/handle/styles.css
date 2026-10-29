@@ -31,6 +31,11 @@ body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label);
 .text b { font: var(--type-headline); font-size: 13px; line-height: 17px; letter-spacing: -0.003em; }
 #line { color: var(--label-2); font: var(--type-footnote); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .thought, .step, .task { display: none; }
+/* Ember hidden: main shrinks the window to a tab with just the face (the menu still opens from it). */
+@media (max-width: 80px) {
+  .handle { padding: 0; gap: 0; justify-content: center; }
+  .text { display: none; }
+}
 .actions[hidden] { display: none; }
 
 /* ── No compositor: the card is Ember's only surface (what it says, its questions, the running task) ── */

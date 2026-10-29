@@ -15,10 +15,10 @@ export interface StopPart {
 }
 
 /**
- * Who pulled it: Ember's shortcut, "Ember, stop", the menu, Stop on a remote's notice by someone at that screen, or the
- * administrator's policy changing while Ember ran.
+ * Who pulled it: Ember's shortcut, "Ember, stop", the handle's menu, settings' Stop everything, Stop on a remote's
+ * notice by someone at that screen, or the administrator's policy changing while Ember ran.
  */
-export type StopSource = "hotkey" | "voice" | "menu" | "remote-console" | "policy";
+export type StopSource = "hotkey" | "voice" | "menu" | "settings" | "remote-console" | "policy";
 
 export class KillSwitch {
   constructor(private parts: () => StopPart[], private log: Logger, private audit?: () => AuditLog | null) {}

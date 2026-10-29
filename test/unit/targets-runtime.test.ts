@@ -291,7 +291,7 @@ async function connected(r: ReturnType<typeof rig>, hostId = "build-01") {
 }
 
 describe("with nothing set up", () => {
-  it("behaves as today: this computer only, no commands, no caps, no line, no menu, no badge, no window, nothing started", async () => {
+  it("behaves as today: this computer only, no commands, no caps, no line, no badge, no window, nothing started; the menu offers Bring Ember…", async () => {
     const r = rig();
     const got = r.t.agent.handsFor("local");
     if (!got.ok) throw new Error(got.why);
@@ -303,7 +303,8 @@ describe("with nothing set up", () => {
     // Commands are off only by the user's switch: the conversation may say where to turn them on (review #40).
     expect(r.t.agent.caps()).toEqual({ commands: false, targets: false, commandsOffered: true });
     expect(r.t.agent.activeLine()).toBe("");
-    expect(r.t.menuItems()).toEqual([]);
+    // The way to SSH from the handle, whenever SSH is allowed (§8.1, review #76).
+    expect(r.t.menuItems().map(i => i.label ?? i.type)).toEqual(["separator", "Bring Ember to a computer…"]);
     expect(r.t.summaries()).toEqual([{ id: "local", kind: "local", label: "This computer", state: "ready", can: "apps", active: true }]);
     expect(r.t.wsl).toBeNull();
     expect(r.t.quickContext()).toBeNull();
@@ -1024,7 +1025,7 @@ describe("WSL targets", () => {
     await flush();
     expect(r.showState).not.toHaveBeenCalledWith({ bubble: expect.objectContaining({ title: "I can work in WSL" }) });
     expect(r.t.bubbleAction("offer:wsl:settings")).toBe(true);
-    expect(r.openSettings).toHaveBeenCalledWith("computers");
+    expect(r.openSettings).toHaveBeenCalledWith("computers", "wsl");
   });
 
   it("takes 'on Linux', 'in WSL' and a distro's name as words of the request while WSL is off, not installed or not allowed", async () => {
@@ -1253,7 +1254,7 @@ describe("the handle menu (§8.1)", () => {
     expect(items.map(i => i.label ?? i.type)).toEqual(["Work on", "separator", "Bring Ember to a computer…"]);
     expect(items[0].submenu!.map(i => [i.label, i.type, i.checked, i.enabled])).toEqual([["This computer", "radio", true, true], ["build-01", "radio", false, true]]);
     items[2].click!();
-    expect(r.openSettings).toHaveBeenCalledWith("computers");
+    expect(r.openSettings).toHaveBeenCalledWith("computers", "host");
     items[0].submenu![1].click!();
     await flush();
     await flush();

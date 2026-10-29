@@ -8,11 +8,21 @@
 import { describe, expect, it } from "vitest";
 import { KEYS, SHORTCUTS, type OS, type ShortcutId } from "../../app/shared/shortcuts";
 import { canonicalKeys, isSystemKey, keyTables } from "../../app/main/policy/policy";
+import { PLATFORM_WORDS } from "../../app/shared/words";
 
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
 /** An Electron accelerator as a combination the policy reads ("Control+Shift+Command+Y" → "ctrl+shift+cmd+y"). */
 const asCombo = (accel: string) => accel.split("+").map(p => ({ Control: "ctrl", Command: "cmd", Super: "super", Alt: "alt", Shift: "shift" } as Record<string, string>)[p] ?? p.toLowerCase()).join("+");
+
+describe("macOS key names (review #230)", () => {
+  it("names Command one way everywhere users read it: the shortcuts, key presses and the file-dialog hint", () => {
+    expect(SHORTCUTS.darwin.ask.label).toBe("Control+Shift+Command+Space");
+    expect(KEYS.darwin.labels.cmd).toBe("Command");
+    expect(PLATFORM_WORDS.darwin.fileDialogPathHint).toBe("in a file dialog press Command+Shift+G, type the folder's path, then choose the file");
+    for (const w of [...Object.values(KEYS.darwin.labels), ...Object.values(PLATFORM_WORDS.darwin).filter(v => typeof v === "string")]) expect(w).not.toMatch(/\bCmd\b/);
+  });
+});
 
 describe("the shortcut table", () => {
   it("names each chord as the policy spells its accelerator, and every chord is a key only the user presses (§2.4)", () => {

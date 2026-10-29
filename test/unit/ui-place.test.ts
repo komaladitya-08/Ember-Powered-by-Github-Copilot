@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {}, ipcMain: { on() {} } }));
 
-const { askBounds } = await import("../../app/main/ask");
+const { askBounds, grownBounds } = await import("../../app/main/ask");
 const { deskViewBounds } = await import("../../app/main/desk/view");
 const { foldCount, foldedLine, stackOrder } = await import("../../app/renderer/overlay/stack");
 
@@ -64,6 +64,36 @@ describe("askBounds", () => {
       expect(overlaps(b, pill), JSON.stringify(c)).toBe(false);
       expect(overlaps(hintRow(b), ember(c, 60)), JSON.stringify(c)).toBe(false);
     }
+  });
+});
+
+describe("grownBounds (review #70: the field grows to four lines, and a row for the note that a paste was cut)", () => {
+  const wa = { x: 0, y: 0, width: 1024, height: 600 };
+
+  it("grows upward above Ember, so the hint row stays where it was, and back down to one line", () => {
+    const b = askBounds({ x: 500, y: 300 }, wa);
+    const tall = grownBounds(b, 4, wa, true);
+    expect(tall).toEqual({ ...b, height: 92 + 3 * 24, y: b.y + b.height - (92 + 3 * 24) });
+    expect(grownBounds(tall, 1, wa, true)).toEqual(b);
+    // Never more than four lines and the note's row (a paste cut at the limit), never less than one.
+    expect(grownBounds(b, 5, wa, true)).toEqual({ ...b, height: 92 + 4 * 24, y: b.y + b.height - (92 + 4 * 24) });
+    expect(grownBounds(b, 9, wa, true).height).toBe(188);
+    expect(grownBounds(b, 0, wa, true).height).toBe(92);
+  });
+
+  it("grows downward below Ember (near the top of the screen), and stays inside the work area", () => {
+    const b = askBounds({ x: 500, y: 20 }, wa);
+    expect(grownBounds(b, 3, wa, false)).toEqual({ ...b, height: 140 });
+    const low = { x: 200, y: 500, width: 560, height: 92 };
+    expect(inside(grownBounds(low, 4, wa, false), wa)).toBe(true);
+    const high = { x: 200, y: 10, width: 560, height: 92 };
+    expect(inside(grownBounds(high, 4, wa, true), wa)).toBe(true);
+  });
+
+  it("keeps clear of the pill as it grows", () => {
+    const pill = { x: 812, y: 532, width: 200, height: 56 };
+    const b = askBounds({ x: 900, y: 540, size: 60 }, wa, pill);
+    expect(overlaps(grownBounds(b, 4, wa, false, pill), pill)).toBe(false);
   });
 });
 

@@ -480,9 +480,10 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out; since
     // the release review a choice in GNOME Settings is asked about every time (review #111), the remote-window reason
     // names virtual machines (review #118), the terminal refusals are reworded (review #216; with the old three reasons
-    // put back the hash is c71a3e7d2180151d) and the questions use plain role words (review #220: "the “Save” button",
-    // not "“Save” push button"): the only decisions that differ from 89657f8's.
-    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("1fb121aca52c9b51");
+    // put back the hash is c71a3e7d2180151d), the questions use plain role words (review #220: "the “Save” button",
+    // not "“Save” push button") and a Mac names ⌘ "Command" (review #230: "press Cmd+V" → "press Command+V"; with Cmd+V
+    // the hash is 1fb121aca52c9b51): the only decisions that differ from 89657f8's.
+    expect(sha(JSON.stringify(today)).slice(0, 16)).toBe("e0e36047c0dd2a84");
     expect(seam.calls).toHaveLength(3 * CORPUS.length);
     expect(seam.calls.slice(0, 3).map(([, o]) => o)).toEqual(["linux", "linux", "linux"]);
     expect(seam.calls.at(-1)?.[1]).toBe("darwin");

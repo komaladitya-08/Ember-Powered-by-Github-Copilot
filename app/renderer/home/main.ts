@@ -22,6 +22,7 @@ import {
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { TARGET_FEATURE_TEXT } from "./computers-copy";
 import { keptWords, lockdownNotice, lockdownSendLine } from "./admin-copy";
+import { PendingSection, sectionRequest } from "./section-request";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -712,22 +713,51 @@ window.ember.onConversation(renderConversation);
 
 // ───── Section links ─────
 // A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.
-/** Shows a section (opening it if folded) and moves focus there. */
-function showSection(section: string): void {
+/** A section main asked for while it was still hidden (Computers shows once its list has come): shown once it shows. */
+const pendingSection = new PendingSection();
+/**
+ * Shows a section (opening it if folded) and moves focus there: to the control main named ("computers:host", the
+ * field to add a computer), else to the heading. A hidden section is shown once it appears, unless the user moves on.
+ */
+function showSection(value: string): void {
+  const { section, control } = sectionRequest(value);
   const h = document.getElementById(`${section}-h`);
-  if (!h || isHidden(h)) return;
+  if (!h) return;
+  if (isHidden(h)) { pendingSection.hold(value); return; }
+  pendingSection.drop();
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
-  target.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
-  target.focus({ preventScroll: true });
+  const field = control ? document.getElementById(control) : null;
+  const to = field && !isHidden(field) ? field : target;
+  const block = to === field ? "center" : "start";
+  to.scrollIntoView({ block, behavior: calm ? "auto" : "smooth" });
+  to.focus({ preventScroll: true });
+  keptInView = { el: to, block, until: performance.now() + 3000 };
   markCurrent(section);
   // The scroll this starts (and a page too short to bring the section to the top) doesn't move the mark.
   pinnedUntil = performance.now() + 900;
 }
 let pinnedUntil = 0;
+/**
+ * What showSection just focused, brought back into view while sections above it are still appearing (Computers,
+ * Commands come after the page has loaded and push it down) for a few seconds, until the user moves on.
+ */
+let keptInView: { el: HTMLElement; block: ScrollLogicalPosition; until: number } | null = null;
+new ResizeObserver(() => {
+  if (!keptInView || performance.now() > keptInView.until) { keptInView = null; return; }
+  const r = keptInView.el.getBoundingClientRect();
+  if (r.top < 0 || r.bottom > innerHeight) keptInView.el.scrollIntoView({ block: keptInView.block, behavior: "auto" });
+}).observe(document.body);
 // Main asks for a section ("Read all" on a long answer, connecting after setup).
 window.ember.onFocusSection(showSection);
+// A section that was hidden when main asked for it shows itself once it appears; a click, key or scroll first drops it.
+new MutationObserver(() => {
+  if (!pendingSection.waiting) return;
+  const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !isHidden(h); });
+  if (value) showSection(value);
+}).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
+for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; }, { capture: true, passive: true });
 const jumpLinks = [...document.querySelectorAll<HTMLAnchorElement>("#jump a")];
 const sectionOf = (a: HTMLAnchorElement) => (a.getAttribute("href") ?? "").replace(/^#/, "").replace(/-h$/, "");
 $("jump").addEventListener("click", e => {
@@ -862,7 +892,7 @@ $("never-look-defaults").addEventListener("click", () => {
   $("never-look-add").focus();
 });
 
-// ───── Ember on screen (the handle menu's Hide / Stay put / Quit, reachable by keyboard) ─────
+// ───── Ember on screen (the handle menu's Ask / Stop everything / Hide / Stay put / Quit, reachable by keyboard) ─────
 let presence: Presence | null = null;
 function renderPresence(p: Presence): void {
   presence = p;
@@ -880,6 +910,8 @@ function renderPresence(p: Presence): void {
 $("p-hide").addEventListener("click", () => { void window.ember.setPresence({ hidden: !(presence?.hidden ?? false) }).then(renderPresence); });
 $("p-follow").addEventListener("click", () => { void window.ember.setPresence({ paused: !(presence?.paused ?? false) }).then(renderPresence); });
 $("p-quit").addEventListener("click", () => { void window.ember.quit(); });
+$("p-ask").addEventListener("click", () => { void window.ember.openAsk(); });
+$("p-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
 void window.ember.presence().then(renderPresence);
 window.ember.onPresence(renderPresence);
 

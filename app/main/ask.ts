@@ -3,21 +3,32 @@
  * Without a compositor (xrdp, VNC) a transparent window paints black, so the box is then an opaque panel.
  */
 
-import { BrowserWindow, screen } from "electron";
+import { BrowserWindow, Menu, screen } from "electron";
 import path from "node:path";
 import { IPC, type AskContext } from "../shared/ipc";
+import type { OS } from "../shared/shortcuts";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
 import { x11WindowId } from "./platform/linux/window-system";
 
 const appDir = __dirname;
 const SIZE = { width: 560, height: 92 };
+/**
+ * The field grows a line at a time (its line height), up to MAX_LINES, as the user types or pastes several lines; the
+ * note that a paste was cut takes one more row of the same height (MAX_ROWS).
+ */
+const LINE = 24, MAX_LINES = 4, MAX_ROWS = MAX_LINES + 1;
 /** Ember's size when the caller doesn't say (the default setting). */
 const EMBER_SIZE = 60;
 /** Gap to the work area's edges and to Ember's handle. */
 const GAP = 8;
 /** A box asked for that is still loading after this long isn't shown (the user has moved on: their keys went elsewhere). */
 const LATE_MS = 1500;
+/**
+ * After the field's right-click menu closes, how long the OS has to say where the keyboard went (a click on another app
+ * that dismissed the menu activates that app) before the box takes it back or goes away.
+ */
+const MENU_SETTLE_MS = 120;
 
 type Box = { x: number; y: number; width: number; height: number };
 const overlap = (a: Box, b: Box) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
@@ -46,10 +57,41 @@ export function askBounds(near: { x: number; y: number; size?: number } | null, 
 /** `b` moved off `keepOff` when over it: up above it (Ember is under the box, so this keeps clear of it too), else to its left. */
 function clearOf(b: Box, wa: Box, keepOff?: Box | null): Box {
   if (!keepOff || !overlap(b, keepOff)) return b;
-  const up = Math.round(keepOff.y - SIZE.height - GAP);
+  const up = Math.round(keepOff.y - b.height - GAP);
   if (up >= wa.y + GAP) return { ...b, y: up };
-  const aside = Math.round(keepOff.x - SIZE.width - GAP);
+  const aside = Math.round(keepOff.x - b.width - GAP);
   return aside >= wa.x + GAP ? { ...b, x: aside } : b;
+}
+
+/**
+ * `b` (the box now) as tall as `rows` rows (1 to MAX_ROWS: the field's lines, and the note's when a paste was cut):
+ * growing upward when the box is above Ember (`up`, its hint row stays put beside Ember's head), else downward; always
+ * inside the work area and clear of `keepOff`.
+ */
+export function grownBounds(b: Box, rows: number, wa: Box, up: boolean, keepOff?: Box | null): Box {
+  const height = SIZE.height + (Math.min(MAX_ROWS, Math.max(1, Math.round(rows))) - 1) * LINE;
+  const top = wa.y + GAP, bottom = wa.y + wa.height - height - GAP;
+  const y = up ? b.y + b.height - height : b.y;
+  return clearOf({ ...b, height, y: Math.round(Math.max(top, Math.min(y, bottom))) }, wa, keepOff);
+}
+
+/** What the field's right-click menu may do now (Electron's context-menu editFlags). */
+export interface EditFlags {
+  canCut: boolean;
+  canCopy: boolean;
+  canPaste: boolean;
+  canSelectAll: boolean;
+}
+
+/** The field's right-click menu: Cut, Copy, Paste and Select all, each only when it can act. */
+export function editMenuItems(f: EditFlags): Electron.MenuItemConstructorOptions[] {
+  return [
+    { role: "cut", label: "Cut", enabled: f.canCut },
+    { role: "copy", label: "Copy", enabled: f.canCopy },
+    { role: "paste", label: "Paste", enabled: f.canPaste },
+    { type: "separator" },
+    { role: "selectAll", label: "Select all", enabled: f.canSelectAll },
+  ];
 }
 
 export class AskWindow {
@@ -70,6 +112,12 @@ export class AskWindow {
   private wantedAt = 0;
   /** Who asked for the box (hotkey, menu, test): logged when it is actually shown. */
   private source = "unknown";
+  /** The box sits above Ember (or low in the middle of the screen): a taller field grows it upward. */
+  private up = true;
+  /** The field's right-click menu is open: the box keeps its place while the menu has the keyboard. */
+  private menuUp = false;
+  /** The box lost the keyboard while that menu was up and hasn't had it back since. */
+  private menuBlur = false;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -79,11 +127,12 @@ export class AskWindow {
    * now (Electron can report focus before the window manager has moved it). `onReveal`: every time the box is
    * actually shown (the only path that maps it): live unprompted opens that bypassed `openAsk` show up here.
    * `windowId`: the box's id in the window system's id space (default: its X id), 0 when it can't be told.
-   * `floating`: the platform's window options and workspace rule (default: today's Linux window).
+   * `floating`: the platform's window options and workspace rule (default: today's Linux window). `os`: the page names
+   * its keys as this OS does (Return on a Mac).
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
-    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow;
+    windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS;
   } = {}) {}
 
   /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
@@ -115,13 +164,24 @@ export class AskWindow {
     win.setAlwaysOnTop(true, "screen-saver");
     if (this.o.floating) applyAllWorkspaces(win, this.o.floating.allWorkspaces);
     try { win.setIgnoreMouseEvents(true); } catch { /* test double */ }
-    win.on("blur", () => { if (this.win === win) this.hide(); });
+    win.on("blur", () => {
+      if (this.win !== win) return;
+      if (this.menuUp) this.menuBlur = true;
+      else this.hide();
+    });
+    win.on("focus", () => { if (this.win === win) this.menuBlur = false; });
+    // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
+    win.webContents.on("context-menu", (_e, p) => this.editMenu(win, p.editFlags));
+    // The page asks for the rows its field and note need (Shift+Enter, a pasted traceback, a paste cut at the limit):
+    // only this box's page is heard here.
+    win.webContents.ipc.on(IPC.askFit, (_e, rows: unknown) => { if (this.win === win && typeof rows === "number" && Number.isFinite(rows)) this.fit(rows); });
     // A crashed ask box is rebuilt on the next Ctrl+Alt+Space.
     win.webContents.on("render-process-gone", () => { if (!win.isDestroyed()) win.destroy(); if (this.win === win) this.win = null; });
     // Once it has loaded (isLoading() is still true during "did-finish-load", so the context waited for the next
     // update and the first box opened from the menu never showed "Ember will see: …").
     win.webContents.on("did-stop-loading", () => { if (this.win === win) this.sendContext(); });
-    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), opaque ? { query: { opaque: "1" } } : {});
+    const query: Record<string, string> = { ...(opaque ? { opaque: "1" } : {}), ...(this.o.os ? { os: this.o.os } : {}) };
+    void win.loadFile(path.join(appDir, "renderer", "ask", "index.html"), Object.keys(query).length ? { query } : {});
     win.once("ready-to-show", () => {
       if (this.win !== win) return;
       this.loaded = true;
@@ -160,11 +220,46 @@ export class AskWindow {
     this.wantedAt = Date.now();
     const display = screen.getDisplayNearestPoint(near ?? screen.getCursorScreenPoint());
     const bounds = askBounds(near, display.workArea, this.keepOff());
+    this.up = !near || bounds.y + bounds.height <= near.y;
     // The compositor came or went since the box was made: it is made again, opaque or not.
     if (this.win && !this.win.isDestroyed() && this.builtOpaque !== this.opaque) { this.win.destroy(); this.win = null; }
     if (!this.win || this.win.isDestroyed()) { this.build(bounds); return; }
     this.win.setBounds(bounds);
     if (this.loaded) this.reveal(this.win);
+  }
+
+  /**
+   * The field's right-click menu; the box stays open while it is up. Once it has closed (and the OS has said where the
+   * keyboard went): the box keeps or takes back the keyboard, or, when the user dismissed the menu by clicking another
+   * app, goes away as on any click away, instead of taking the keyboard back from that app.
+   */
+  private editMenu(win: BrowserWindow, flags: EditFlags): void {
+    if (this.win !== win || win.isDestroyed() || !win.isVisible()) return;
+    this.menuUp = true;
+    this.menuBlur = false;
+    Menu.buildFromTemplate(editMenuItems(flags)).popup({
+      window: win,
+      callback: () => {
+        // A blur from here on closes the box as usual; one that came while the menu was up is decided below.
+        this.menuUp = false;
+        setTimeout(() => {
+          if (this.win !== win || win.isDestroyed() || !win.isVisible() || win.isFocused()) return;
+          if (this.menuBlur) this.hide();
+          else win.focus();
+        }, MENU_SETTLE_MS);
+      },
+    });
+  }
+
+  /**
+   * The page needs `rows` rows (1 to 5: the field's lines, and the note's when a paste was cut): the box grows or
+   * shrinks to fit, away from Ember.
+   */
+  fit(rows: number): void {
+    if (!this.win || this.win.isDestroyed()) return;
+    const b = this.win.getBounds();
+    const next = grownBounds(b, rows, screen.getDisplayMatching(b).workArea, this.up, this.keepOff());
+    if (next.height !== b.height || next.y !== b.y || next.x !== b.x) this.win.setBounds(next);
   }
 
   /** Ember's handle changed (the compositor came or went): a box open over the new one moves off it. */

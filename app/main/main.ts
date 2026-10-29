@@ -19,7 +19,7 @@ import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
-import { inspectEnvironment, sessionGreeting, type EnvReport } from "./environment";
+import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome } from "./windows";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
@@ -28,11 +28,13 @@ import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { revive } from "./revive";
-import { friendlyApp, useAppNames } from "../shared/apps";
+import { useAppNames } from "../shared/apps";
 import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow } from "./ask";
+import { notificationBody } from "./notification";
+import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
@@ -65,7 +67,8 @@ import { extraBinDirs } from "./platform/darwin/system";
 import { deskProcesses } from "./desk/desk";
 import { createTargets, targetDoctorRows, wslSwitchOn, type TargetsRuntimeExtra } from "./targets/runtime";
 import { afterTargetFix, applySetupFix, targetChecksSource, withTargetChecks } from "./targets/setup-check";
-import type { IpcLike, MenuItemLike, TargetsRuntime } from "./targets/types";
+import type { IpcLike, TargetsRuntime } from "./targets/types";
+import { menuOptions } from "./targets/menu";
 import { wrapForWsl } from "./wsl/routed-sidecar";
 import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
@@ -386,7 +389,7 @@ function start(): void {
 
   app.on("second-instance", () => {
     log.info("instance.second", {});
-    showHome();
+    showHomeFromKeys();
   });
 
   // No page may open windows or navigate away from our bundled files.
@@ -498,7 +501,10 @@ function start(): void {
     if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
     handle?.sendState(lastState);
+    syncHandle();
   };
+  /** Hidden, Ember's handle shrinks to its face in the corner (the way back to Show Ember); shown, it is the pill again. */
+  const syncHandle = () => { if (handle?.setCompact(overlay?.isHidden() ?? false)) deskViewRef?.handleMoved(); };
   // While Ember is asking the user something, nothing else may replace the question
   // (a worker's reasoning would otherwise wipe the buttons before they're clicked).
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
@@ -532,14 +538,24 @@ function start(): void {
   const sc = sys.shortcuts;
   /** Whether one of Ember's own shortcuts works (another app may hold it). */
   const hasKey = (accel: string) => !(shortcutsTaken ?? []).includes(accel);
+  /**
+   * Settings opened from the keyboard (Ember started again, its settings shortcut, the Dock): while another app holds
+   * the ask or stop shortcut, at Ask Ember… or Stop everything, the keyboard's way to them then (review #45).
+   */
+  const showHomeFromKeys = () => {
+    showHome();
+    const at = keyboardRoute(shortcutsTaken ?? [], sc);
+    if (at) sendToHome(IPC.focusSection, at);
+  };
   const greet = () => {
     const phase = agent?.getStatus().phase;
     const connected = phase !== "signed-out" && phase !== "error";
     // Offline at start (a retry waits for the network): Ember connects by itself, there is nothing to set up.
     const waiting = phase === "error" && (agent?.waitingForNetwork ?? false);
+    // Shortcuts another app holds: the handle for a pointer, and settings' Ask Ember… for the keyboard.
     const keys = hasKey(sc.ask.accel) && hasKey(sc.stop.accel)
       ? `Press ${sc.ask.label} to ask me anything; ${sc.stop.label} stops me.`
-      : "Click my handle in the corner to ask me something or to stop me.";
+      : `Click my handle in the corner to ask me something or to stop me, or ${hasKey(sc.settings.accel) ? `press ${sc.settings.label}: settings opens` : "open Ember again: its settings open"} at Ask Ember… and Stop everything.`;
     const settingsOpen = homeOpen();
     // Why Ember can't work here at all, said in place of everything else: the organisation's lockdown first (#107; no
     // session helps until the policy is fixed), then a session Ember can't use (Wayland, no X display, #240). Else what
@@ -618,32 +634,34 @@ function start(): void {
     const paused = followPaused;
     const hidden = overlay?.isHidden() ?? false;
     // The shortcut is part of the label (Chromium would print it "Alt+Ctrl+…"), and left out when another app holds it.
-    const label = (text: string, def: { accel: string; label: string }) => hasKey(def.accel) ? `${text}   ${def.label}` : text;
+    // A Mac's own menus show it as the system does (⌃⇧⌘Space), from the accelerator, which is shown but never registered.
+    const keyed = (text: string, def: { accel: string; label: string }): Pick<Electron.MenuItemConstructorOptions, "label" | "accelerator"> =>
+      !hasKey(def.accel) ? { label: text } : platform.os === "darwin" ? { label: text, accelerator: def.accel } : { label: `${text}   ${def.label}` };
     // An item that opens one of Ember's windows (the ask box, settings, the quit question) keeps the focus it
     // takes: the user's app doesn't get it back over the window (settings shows only once it has loaded).
     let opens = false;
-    // Linux: Esc (or releasing the click that opened the menu) can fire the first item. Ignore clicks after the menu
-    // has started closing; a real pick runs before menu-will-close.
-    let menuClosing = false;
+    // No guard on menu-will-close: Electron sends it just before the picked item's click, so such a guard swallowed
+    // every real pick. What keeps a pick nobody made away is the released() gate below: the menu opens only once the
+    // button that opened it is up, so its release can't choose "Ask Ember…". (The check once the menu has closed,
+    // ask.spurious_after_menu, only puts away an ask box that opened with no item's click at all: a click on "Ask
+    // Ember…", whatever caused it, counts as a pick.)
     const menu = Menu.buildFromTemplate([
       // What the user was in was read before the handle took focus: looking again would find the handle.
-      { label: label("Ask Ember…", sc.ask), registerAccelerator: false, click: () => {
-        if (menuClosing) { log.info("ask.menu_ignored", { reason: "menu-closing" }); return; }
-        opens = true; openAsk({ look: false, over: back, source: "menu" });
-      } },
-      { label: label("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
+      { ...keyed("Ask Ember…", sc.ask), registerAccelerator: false, click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); } },
+      { ...keyed("Stop everything", sc.stop), registerAccelerator: false, click: () => stopEverything("menu") },
       // "Work on" (which computer requests go to), when there is more than this one.
-      ...toMenu(targets?.menuItems() ?? []),
+      // An item that opens settings ("Bring Ember to a computer…") marks it before its click (targets/menu.ts).
+      ...menuOptions(targets?.menuItems() ?? [], () => { opens = true; }),
       ...(voice && settings.get().wakeWord && settings.get().voice.consent
-        ? [{ label: label(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
+        ? [{ ...keyed(voice.isMuted ? "Unmute microphone" : "Mute microphone", sc.mute), registerAccelerator: false, click: toggleMute }]
         : []),
       // A microphone that can't hear "Hey Ember": the way to fix it (Settings, at Voice, says why and how).
       ...(voice?.micState === "error" ? [{ label: MIC_PROBLEM_MENU, click: () => { opens = true; showHome(); sendToHome(IPC.focusSection, "voice"); } }] : []),
       ...(agent?.lastAnswer() ? [{ label: "Read the last answer", click: () => { opens = true; readLastAnswer(); } }] : []),
       { type: "separator" },
-      { label: label("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
+      { ...keyed("Settings…", sc.settings), registerAccelerator: false, click: () => { opens = true; showHome(); } },
       { label: paused ? "Follow my cursor" : "Stay put", enabled: !!overlay, click: () => { followPaused = !paused; overlay?.setPaused(followPaused); presenceChanged(); } },
-      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); presenceChanged(); } },
+      { label: hidden ? "Show Ember" : "Hide Ember", enabled: !!overlay, click: () => { shownForAnswer = false; keptHidden = !hidden; overlay?.setHidden(!hidden); syncHandle(); presenceChanged(); } },
       { type: "separator" },
       { label: "Quit Ember", click: () => { opens = quitWords() !== null; void quitEmber(); } },
     ]);
@@ -663,10 +681,9 @@ function start(): void {
     const back = fromAskBox ? askOver : had.id;
     menuOpen = true;
     const askWasVisible = askWindow.visible;
-    menu.on("menu-will-close", () => { menuClosing = true; });
     const open = () => menu.popup({ window: win, callback: () => setTimeout(() => {
       menuOpen = false;
-      // Esc dismissed the menu but the first item still opened Ask: put it away (it never went through a pick).
+      // The ask box opened while the menu was up, but no item's click opened it: put it away (nobody picked it).
       if (!opens && askWindow.visible && !askWasVisible) {
         log.warn("ask.spurious_after_menu");
         askWindow.hide();
@@ -705,12 +722,6 @@ function start(): void {
     win.focus();
     if (inputRef?.focusInput) inputRef.focusInput(xid);
   };
-  /** The targets runtime's menu items as Electron's (the same fields; submenus too). */
-  const toMenu = (items: MenuItemLike[]): Electron.MenuItemConstructorOptions[] => items.map(i => ({
-    ...(i.label !== undefined ? { label: i.label } : {}), ...(i.type ? { type: i.type } : {}),
-    ...(i.checked !== undefined ? { checked: i.checked } : {}), ...(i.enabled !== undefined ? { enabled: i.enabled } : {}),
-    ...(i.submenu ? { submenu: toMenu(i.submenu) } : {}), ...(i.click ? { click: i.click } : {}),
-  }));
   let followPaused = false;
   let presenceChanged = () => { /* set once the IPC is ready */ };
   /** The whole answer in settings; the bubble goes, so Ember doesn't sit over it holding the old one. */
@@ -799,7 +810,7 @@ function start(): void {
   /** The user isn't looking at Ember right now (idle, or Ember hidden). */
   const userAway = () => (overlay?.isHidden() ?? false) || powerMonitor.getSystemIdleTime() >= 30;
   const notify = (title: string, body: string) => {
-    try { if (Notification.isSupported()) new Notification({ title, body: body.slice(0, 240), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
+    try { if (Notification.isSupported()) new Notification({ title, body: notificationBody(body), silent: false }).show(); } catch (err) { log.warn("notify.failed", { err }); }
   };
   let askHistory: string[] = [];
   /**
@@ -812,6 +823,7 @@ function start(): void {
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
   let askXid = 0;
   const askWindow = new AskWindow({
+    os: platform.os,
     keepOff: () => handle?.bounds ?? null,
     windowId: w => ownId(w),
     floating: platform.overlay.floating("ask"),
@@ -880,7 +892,7 @@ function start(): void {
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
    * `over` is the window it had the keyboard.
    */
-  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "test" } = {}) => {
+  const openAsk = ({ look = true, over = 0, source = "hotkey" }: { look?: boolean; over?: number; source?: "hotkey" | "menu" | "settings" | "test" } = {}) => {
     // Every opening says where it came from (an ask box that opened by itself would show up here).
     log.info("ask.open", { source });
     if (!consented()) { showHome(); return; }
@@ -897,11 +909,9 @@ function start(): void {
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
     askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, { sees: null, history: askHistory, target: askTarget() }, source);
     if (held) void askWindow.hasKeyboard().then(() => askWindow.typed(held.stop()), () => held.stop());
-    // What Ember will read, shown as a chip once the quick look is done.
+    // What Ember will read, shown as a chip once the quick look is done: the window, and what else goes with a request.
     void callContext.then(c => {
-      const t = c?.target;
-      const sees = t ? [t.app && friendlyApp(t.app), t.title].filter(Boolean).join(" · ") || null : null;
-      const ctx: AskContext = { sees: sees && sees.length > 80 ? sees.slice(0, 79) + "…" : sees, history: askHistory, target: askTarget() };
+      const ctx: AskContext = { ...askSees(c), history: askHistory, target: askTarget() };
       askWindow.setContext(ctx);
     });
   };
@@ -920,8 +930,8 @@ function start(): void {
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
   ], log.child("killswitch"), () => audit);
-  /** Ctrl+Alt+X, "Ember, stop", or Stop in the menu: everything stops at once. */
-  const stopEverything = (source: "hotkey" | "voice" | "menu") => {
+  /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
+  const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
     const pulled = killSwitch.pull(source);
     // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
     // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
@@ -1173,12 +1183,15 @@ function start(): void {
   ipcMain.handle(IPC.presence, guard(presence));
   ipcMain.handle(IPC.setPresence, guard((p: unknown) => {
     const want = (p && typeof p === "object" ? p : {}) as { hidden?: unknown; paused?: unknown };
-    if (typeof want.hidden === "boolean") { shownForAnswer = false; keptHidden = want.hidden; overlay?.setHidden(want.hidden); }
+    if (typeof want.hidden === "boolean") { shownForAnswer = false; keptHidden = want.hidden; overlay?.setHidden(want.hidden); syncHandle(); }
     if (typeof want.paused === "boolean") { followPaused = want.paused; overlay?.setPaused(followPaused); }
     broadcast(IPC.presenceChanged, presence());
     return presence();
   }));
   ipcMain.handle(IPC.quit, guard(() => quitEmber()));
+  // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
+  ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
+  ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -1404,6 +1417,7 @@ function start(): void {
       const old = handle;
       handle = new HandleWindow(() => settings.get(), !overlay, { floating: platform.overlay.floating("handle"), forward: platform.overlay.forward });
       handle.sendState(lastState);
+      handle.setCompact(overlay?.isHidden() ?? false);
       old?.destroy();
       deskViewRef?.handleMoved();
     };
@@ -1437,7 +1451,7 @@ function start(): void {
     // Ember's shortcuts. One another app already holds is reported (setup check, greeting) and tried again every minute.
     let lastAskPress = 0;
     const shortcuts: Record<string, () => void> = {
-      [sc.settings.accel]: showHome,
+      [sc.settings.accel]: showHomeFromKeys,
       // A callback is not a press: X11 reports the shortcut again when its grab ends, after the keyboard buffer lets
       // go (the box then opened on a Backspace or a click). Only a real, fresh chord opens it. Elsewhere a callback is
       // one press (trusted, debounced).
@@ -1675,7 +1689,8 @@ function start(): void {
       log: log.child("targets"), os: platform.os, sys, userData, appDir: __dirname, resourcesPath: process.resourcesPath,
       execPath: process.execPath, packaged: app.isPackaged, settings, admin: () => admin, audit: () => audit, confirmer: () => confirmer,
       localHands: hands ?? null, showState: setState, notify,
-      openSettings: section => { showHome(); if (section) sendToHome(IPC.focusSection, section); },
+      // "computers:host": the section, then the control there to focus (the settings page reads it).
+      openSettings: (section, focus) => { showHome(); if (section) sendToHome(IPC.focusSection, focus ? `${section}:${focus}` : section); },
       ipc,
       // As the settings channels' guard: the settings window's own page only (critique integration-5).
       isHome: sender => !!home && !home.isDestroyed() && sender.id === home.webContents.id && isTrustedSender(home.webContents.getURL()),
@@ -1911,7 +1926,7 @@ function start(): void {
     // macOS: opening Ember.app again (Dock, Finder) reactivates this one instead of starting a second, so settings
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.
-    if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHome());
+    if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHomeFromKeys());
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {

@@ -8,6 +8,8 @@
  *   Quit on Command+Q;
  * - M2: the ask box takes the keys typed while the user's app stays the active one (AX's focused application may be
  *   Ember's while its panel has the keyboard: logged), and hides when the user clicks back into their app (blur);
+ * - the real ask chord (⌃⇧⌘Space as CGEvents) opens the box, and what it holds of letters typed straight after is
+ *   printed (review #78: no typed-ahead hold on macOS; typeahead-probe.ts);
  * - no system dialog is open at rest, as the window system and as Perception see it;
  * - a window-scope screenshot of the bench through Ember's Perception (its accessibility host started as Ember starts
  *   it) has the bench's pixels and its password field blacked out;
@@ -35,6 +37,7 @@ import { openDarwinInput, openDarwinWindows, type DarwinInput, type DarwinWindow
 import {
   BENCH_TITLE, ROOT, activePid, alertReport, appWindow, frontmostPid, pidsOf, sleep, startBench, waitFor, warn, whyNoWindow, type Bench,
 } from "./darwin-support";
+import { PROBE_PACE_MS, PROBE_TEXT, probeVerdict } from "./typeahead-probe";
 
 const required = process.env.EMBER_DARWIN_TEST === "1";
 const onMac = process.platform === "darwin";
@@ -218,6 +221,47 @@ describe.skipIf(!onMac && !required)("Ember on a real Mac", { timeout: 180_000 }
     await waitFor(async () => `the ask box to hide after a click at ${at.x},${at.y} (${JSON.stringify(await emberWindows())})`, async () => !(await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), 5_000);
     expect(activePid()).toBe(user.pid);
     expect(frontmostPid()).toBe(user.pid);
+  });
+
+  it("opens the ask box from the real ask chord, and says what it holds of letters typed straight after (review #78 probe)", async () => {
+    const accel = "Control+Shift+Command+Space";
+    if (!(await inEmber(({ globalShortcut }, a) => globalShortcut.isRegistered(a), accel))) {
+      notTestable("letters typed straight after the ask chord", `another app holds ${accel}`);
+      return;
+    }
+    // The box empty (M2 left its words in it; M2 also put it away), the user's app in front.
+    await inEmber(async ({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      if (w) await w.webContents.executeJavaScript(`document.querySelector("#q").value = ""`);
+    }, null);
+    expect((await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), "the ask box is away before the chord").toBe(false);
+    await waitFor(() => `${user.name} in front (active: ${activePid()})`, () => activePid() === user.pid, 5_000);
+    // ⌃⇧⌘Space with CGEvents (what a person's keyboard posts), let go, then the letters at once.
+    const x = input!;
+    const mods = ["Control_L", "Shift_L", "Super_L"].map(n => x.keysymOf(n));
+    const space = x.keysymOf("space");
+    for (const k of mods) expect(x.keysym(k, true)).toBe(true);
+    x.keysym(space, true);
+    x.keysym(space, false);
+    for (const k of [...mods].reverse()) x.keysym(k, false);
+    for (const ch of PROBE_TEXT) {
+      x.textKey(ch, true);
+      x.textKey(ch, false);
+      await sleep(PROBE_PACE_MS);
+    }
+    await waitFor(async () => `the ask box from the real chord (${JSON.stringify(await emberWindows())})`, async () => (await emberWindows()).some(w => w.title === "Ask Ember" && w.visible), 5_000);
+    await sleep(800);
+    const held = await inEmber(async ({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
+      return w ? String(await w.webContents.executeJavaScript(`document.querySelector("#q")?.value ?? ""`)) : "";
+    }, null);
+    const verdict = probeVerdict("macOS", PROBE_TEXT, held);
+    console.log(verdict.line);
+    expect(verdict.inOrder, verdict.line).toBe(true);
+    // Put away as Esc does (the page's own close).
+    await inEmber(async ({ BrowserWindow }) => {
+      await BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")?.webContents.executeJavaScript("window.emberAsk.close()");
+    }, null);
   });
 
   it("says no system dialog is open at rest, from the window system and through Perception", async () => {
