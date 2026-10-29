@@ -297,6 +297,31 @@ describe("README.md", () => {
     expect(download).toMatch(/with \*\*packages\*\* ticked also keeps them for 3 days as artifacts \(`ember-packages`, `ember-windows`, `ember-macos`, and `ember-macos-x64` when \*\*intel\*\* is ticked too\)/);
   });
 
+  it("gives each OS's way to a voice, the update's restart and macOS's permissions as the code words them", () => {
+    // NO_VOICE in environment.ts: the Speaking row's fix on each OS.
+    const env = read("app/main/environment.ts");
+    const fixes = {
+      "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)": /linux: "[^"]*Install one with sudo (dnf install [^,]+), then restart Ember\."/.exec(env)?.[1],
+      "Install on Windows": /win32: "[^"]*Add one in ([^,]+), then restart Ember\."/.exec(env)?.[1],
+      "Install on macOS": /darwin: "[^"]*Choose one in ([^,]+), then restart Ember\."/.exec(env)?.[1],
+    };
+    for (const [os, fix] of Object.entries(fixes)) {
+      expect(fix, os).toBeTruthy();
+      expect(flat(section(readme, os)), os).toContain(fix!);
+      expect(flat(section(readme, os)), os).toMatch(/a \*\*Speaking\*\* row and a note under \*\*Speak\*\*/);
+    }
+    // An RPM update while Ember runs: the question's button (install-watch.ts).
+    const restart = /buttons: \["([^"]+)", "Not now"\]/.exec(read("app/main/install-watch.ts"))?.[1] ?? "";
+    expect(restart).toBe("Restart Ember");
+    expect(flat(section(readme, "Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)"))).toContain(`choose **${restart}** to finish the update`);
+    // macOS: without Input Monitoring Ember uses neither the mouse nor the keyboard (INPUT_MONITORING_REASON).
+    expect(read("app/main/platform/darwin/input.ts")).toMatch(/INPUT_MONITORING_REASON =\s*"[^"]*won't use the mouse or keyboard without it\."/);
+    const mac = section(readme, "Install on macOS");
+    expect(mac.split("\n").find(l => l.startsWith("| Input Monitoring |"))).toMatch(/Ember uses neither the mouse nor the keyboard for you/);
+    expect(read("app/main/platform/darwin/system/environment.ts")).toMatch(/Reset Ember's permissions/);
+    expect(flat(mac)).toContain("the setup check offers **Reset Ember's permissions**");
+  });
+
   it("gives Windows users blocked by Smart App Control the way forward", () => {
     const win = flat(section(readme, "Install on Windows"));
     // What the user sees, where the switch is, what turning it off costs, and who to ask on a managed PC.
