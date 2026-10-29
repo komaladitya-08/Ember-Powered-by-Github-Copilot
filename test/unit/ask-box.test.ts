@@ -11,7 +11,7 @@ import { SETTINGS } from "../../app/main/hands/system";
 import { DARWIN_SETTINGS } from "../../app/main/platform/darwin/system/settings";
 import { win32Settings } from "../../app/main/platform/win32/system/settings";
 import { notificationBody } from "../../app/main/notification";
-import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey } from "../../app/renderer/ask/field";
+import { CUT_NOTE, atLimit, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "../../app/renderer/ask/field";
 import { liveWords, seesView } from "../../app/renderer/ask/chips";
 import { targetChip, targetChipParts } from "../../app/renderer/handle/badge";
 import { askSees } from "../../app/main/ask-sees";
@@ -40,8 +40,24 @@ describe("the ask box's field", () => {
   });
 
   it("grows a line at a time to four, then scrolls", () => {
-    expect([46, 70, 94, 118, 142, 400, 0].map(fieldLines)).toEqual([1, 2, 3, 4, 4, 4, 1]);
-    expect([1, 2, 4].map(fieldHeight)).toEqual([46, 70, 118]);
+    expect([46, 70, 94, 118, 142, 400, 0].map(h => fieldLines(h))).toEqual([1, 2, 3, 4, 4, 4, 1]);
+    expect([1, 2, 4].map(n => fieldHeight(n))).toEqual([46, 70, 118]);
+  });
+
+  it("grows by lines of the text size, measured at it (review #57)", () => {
+    // Larger (1.3): a 59.8 px field and 31.2 px lines; the page's scrollHeight is whole px.
+    expect([60, 91, 122, 153, 184, 400].map(h => fieldLines(h, 1.3))).toEqual([1, 2, 3, 4, 4, 4]);
+    expect([1, 2, 4].map(n => fieldHeight(n, 1.3))).toEqual([59.8, 91, 153.4].map(v => expect.closeTo(v, 5)));
+    // Large (1.15): 52.9 px, then 27.6 px a line.
+    expect([53, 81, 108, 136].map(h => fieldLines(h, 1.15))).toEqual([1, 2, 3, 4]);
+    // The rows main grows the window by are the same lines (ask.ts grownBounds: 24 px a row times the scale).
+    expect(fieldHeight(4, 1.3) - fieldHeight(1, 1.3)).toBeCloseTo(3 * 24 * 1.3, 5);
+  });
+
+  it("reads the text size from the page's --text-scale, and the default's 1 from anything else", () => {
+    expect(textScaleOf("1.3")).toBe(1.3);
+    expect(textScaleOf(" 1.15")).toBe(1.15);
+    for (const bad of ["", "  ", "large", "-1", "0", "NaN"]) expect(textScaleOf(bad), bad).toBe(1);
   });
 
   it("sends with Enter, adds a line with Shift+Enter, and leaves an input method's Enter alone", () => {

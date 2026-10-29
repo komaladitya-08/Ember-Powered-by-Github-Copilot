@@ -176,6 +176,40 @@ describe("the ask box's rows", () => {
   });
 });
 
+describe("the ask box at the text size (review #57)", () => {
+  it("is made, opened and grown as large as its words at the size now, and still opens as it did for typing ahead", () => {
+    let scale = 1.3;
+    const { ask, win } = ready({ textScale: () => scale, takeFocus: () => events.push("takeFocus") });
+    // Made ahead of time at the size then.
+    expect(win.bounds).toMatchObject({ width: 728, height: 111 });
+    ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
+    expect(win.bounds).toMatchObject({ width: 728, height: 111 });
+    // What it shows first, then shown and given the keyboard, exactly as at the default size (review #78).
+    expect(events).toEqual(["send agent:ask-context", "show", "focus", "takeFocus"]);
+    // Four lines, the note and the tip: five rows of 31.2 px more.
+    win.heard.get("agent:ask-fit")!({}, 6);
+    expect(win.bounds.height).toBe(111 + 156);
+    ask.hide();
+    // Changed in Settings while the box was hidden (it closes when Settings takes the keyboard): its next opening is
+    // the new size, the tip's row included, growing upward away from Ember.
+    scale = 1.15;
+    ask.show({ x: 400, y: 500 }, { sees: null, history: [], tip: true }, "hotkey");
+    expect(win.bounds).toMatchObject({ width: 644, height: 101 + 28 });
+    const tall = { ...win.bounds };
+    ask.hide();
+    ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
+    expect(win.bounds).toEqual({ ...tall, height: 101, y: tall.y + 28 });
+    ask.hide();
+    // Back at the default size, the usual box; and a scale that can't be read is the default's.
+    scale = 1;
+    ask.show({ x: 400, y: 500 }, { sees: null, history: [] }, "hotkey");
+    expect(win.bounds).toMatchObject({ width: 560, height: 92 });
+    ask.hide();
+    const broken = ready({ textScale: () => { throw new Error("settings gone"); } });
+    expect(broken.win.bounds).toMatchObject({ width: 560, height: 92 });
+  });
+});
+
 describe("the count of openings that showed the tip", () => {
   it("is a setting that starts at 0 and a bad value of which is put back to 0", async () => {
     const { DEFAULT_SETTINGS, repairSettings } = await import("../../app/main/settings");

@@ -894,6 +894,8 @@ function start(): void {
     },
     // How long the box took to have the keyboard, by Electron's word: what was typed before went elsewhere (review #78).
     onKeyboard: () => log.info("ask.keyboard", { ms: Date.now() - askAsked }),
+    // As large as its words at the text size (review #57).
+    textScale: () => textScale(settings.get().textSize),
   });
   let agent: AgentHost | null = null;
   /** Where tasks act besides this screen (WSL, SSH) and the commands on each (§2); made once the hands are. */

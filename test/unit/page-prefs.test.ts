@@ -39,15 +39,15 @@ describe("Ember's display settings in every window", () => {
     }
   });
 
-  it("sets the text size where the window can grow with it, and leaves the Ask box and the desk's bar at theirs (review #57)", async () => {
-    for (const p of ["home", "command", "prompt", "overlay", "handle"]) {
+  it("sets the text size where the window can grow with it, the Ask box's included, and leaves the desk's bar at its own (review #57)", async () => {
+    for (const p of ["home", "command", "prompt", "overlay", "handle", "ask"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "larger" }));
       expect(f.dataset.textSize, p).toBe("larger");
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default" }));
       expect(f.dataset.textSize, p).toBeUndefined();
     }
-    for (const p of ["ask", "desk"]) {
+    for (const p of ["desk", "mic"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "large" }));
       expect(f.dataset.textSize, p).toBeUndefined();
@@ -160,7 +160,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
       ["shared", shared], ["bubble", BUBBLE_CSS],
-      ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+      ...["home", "command", "prompt", "overlay", "handle", "ask"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);
   });
@@ -169,7 +169,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string, string[]][] = [
       ["shared", shared, []], ["bubble", BUBBLE_CSS, []],
-      ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
+      ...["home", "command", "prompt", "overlay", "handle", "ask"].map(p => [p, read(`app/renderer/${p}/styles.css`), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
     ];
     for (const [name, css, ids] of sheets) expect(fixedControlHeights(css, ids), name).toEqual([]);
     // The usual heights are kept at the default size (--text-scale 1): 28 px buttons, 24 px small ones, a 36 px Start,
@@ -201,7 +201,7 @@ describe("the text size", () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
       ["shared", shared], ["bubble", BUBBLE_CSS],
-      ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+      ...["home", "command", "prompt", "overlay", "handle", "ask"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(fixedClearances(css), name).toEqual([]);
     // The guard sees a fixed length wherever it is, and leaves a focus ring's few px, a scaled length and a measured one.
@@ -270,8 +270,9 @@ describe("the text size", () => {
     const html = read("app/renderer/home/index.html");
     expect(html).toMatch(/<select id="text-size">\s*<option value="default">Default<\/option>\s*<option value="large">Large<\/option>\s*<option value="larger">Larger<\/option>\s*<\/select>/);
     expect(read("app/main/settings.ts")).toMatch(/textSize: z\.enum\(\["default", "large", "larger"\]\)\.default\("default"\)/);
-    // Its hint says, in a sentence, where the size reaches: the one command window, and the prompt window's cards too.
+    // Its hint says, in a sentence, where the size reaches: the Ask box, the one command window, and the prompt window's
+    // cards too.
     const hint = /<\/select><\/label>\s*<\/div>\s*<p class="hint">([^<]*)<\/p>/.exec(html.slice(html.indexOf('id="text-size"')))![1];
-    expect(hint).toBe("Changes the text in this window, Ember's bubble, task cards and handle, the command window, and Ember's password and consent cards. The Ask box keeps its size.");
+    expect(hint).toBe("Changes the text in this window, Ember's bubble, task cards and handle, the Ask box, the command window, and Ember's password and consent cards.");
   });
 });
