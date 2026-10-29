@@ -37,7 +37,7 @@ import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
 import { AskWindow, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
-import { openAskInOrder, userWindowsNow } from "./ask-open";
+import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
@@ -735,10 +735,12 @@ function start(): void {
     // under an open menu closes it.
     // The window with the keyboard, and what "Ask Ember…" will read there, taken now: once the handle has focus
     // they're gone. From settings (or another of Ember's windows) Ember reads nothing; from the ask box, what the
-    // box was opened over still stands. The ask box hides when it loses focus, so focus goes back past it.
+    // box was opened over still stands. The ask box hides when it loses focus, so focus goes back past it. The read
+    // runs once the handle has the keyboard, so where Ember can't hold it (Windows, macOS) it is told what had it
+    // (cross-review P1).
     const had = focusNow();
     const fromAskBox = had.ember && askWindow.isWindow(had.id);
-    if (!fromAskBox) captureContext();
+    if (!fromAskBox) captureContext(undefined, focusBeforeNow(wsSeenRef ?? wsRef, !!platform.keyboardHold));
     // From the ask box (it hides when it loses focus), focus goes back to what the box was opened over.
     const fromDesk = had.ember && !!deskViewRef?.isWindow(had.id);
     const back = fromAskBox ? askOver : had.id;

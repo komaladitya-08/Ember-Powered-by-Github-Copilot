@@ -21,8 +21,8 @@ export interface AskOpening<W> {
   /** The native element with the keyboard in it, taken with activeWindow (0: none, or the window system can't tell). */
   keyboard?(): number;
   /**
-   * Starts reading the screen: of `active` when given (taken before the box took the keyboard), with what had the
-   * keyboard in it then (`before`), else of the window active now.
+   * Starts reading the screen: of `active` when given (taken before the box took the keyboard), else of the window
+   * active now; `before`: what had the keyboard there then, where the box may have it by the time the read runs.
    */
   read(active?: W, before?: FocusBefore): void;
   /** Shows the box, which takes the keyboard. */
@@ -31,19 +31,26 @@ export interface AskOpening<W> {
 
 /**
  * Opens the box in the order that loses the fewest letters: read, then show, where the keyboard is held or the user's
- * window can't be named (as before); else show, then read the window named just before.
+ * window can't be named (as before); else show, then read the window named just before. Where the keyboard isn't held,
+ * the read runs once the box has it in either order, so it is told what had it.
  */
 export function openAskInOrder<W>(o: AskOpening<W>): void {
   if (!o.look) { o.show(); return; }
-  const active = o.holding ? null : o.activeWindow();
-  if (!active) {
+  if (o.holding) {
     o.read();
     o.show();
     return;
   }
+  const active = o.activeWindow();
   const keyboard = o.keyboard?.() ?? 0;
+  const before: FocusBefore = keyboard ? { native: keyboard } : {};
+  if (!active) {
+    o.read(undefined, before);
+    o.show();
+    return;
+  }
   o.show();
-  o.read(active, keyboard ? { native: keyboard } : {});
+  o.read(active, before);
 }
 
 /** Where the user is, as a window system tells it (WindowSystem's members, structurally). `W`: its window. */
@@ -65,11 +72,26 @@ export interface UserWindows<W> {
 export function userWindowsNow<W>(ws: UserWindows<W> | null): { focus: W | null; active: W | null; keyboard: number } {
   if (!ws) return { focus: null, active: null, keyboard: 0 };
   const both = ws.focusAndActive ? ws.focusAndActive() : { focus: ws.focusWindow(), active: ws.activeWindow() };
-  let keyboard = 0;
+  return { ...both, keyboard: keyboardIn(ws) };
+}
+
+/**
+ * What a read that runs once one of Ember's windows has the keyboard is told had it in the user's window, taken before
+ * Ember's window takes it (the handle's menu: its "Ask Ember…" opens the box without reading again): the native element
+ * with it where the window system can tell (Windows), else {}, and the app is asked (macOS). Nothing where Ember holds
+ * the keyboard (Linux): reads there aren't told (cross-review P1).
+ */
+export function focusBeforeNow(ws: Pick<UserWindows<unknown>, "keyboardFocus"> | null, holding: boolean): FocusBefore | undefined {
+  if (holding) return undefined;
+  const native = keyboardIn(ws);
+  return native ? { native } : {};
+}
+
+/** The native element with the keyboard in the foreground window (WindowSystem.keyboardFocus), 0 when none or unknown. */
+function keyboardIn(ws: Pick<UserWindows<unknown>, "keyboardFocus"> | null): number {
   try {
-    keyboard = ws.keyboardFocus?.() ?? 0;
+    return ws?.keyboardFocus?.() ?? 0;
   } catch {
-    // Can't be told: the read finds what it can.
+    return 0; // Can't be told: the read finds what it can.
   }
-  return { ...both, keyboard };
 }

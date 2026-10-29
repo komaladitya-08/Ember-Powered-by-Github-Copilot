@@ -9,7 +9,7 @@
 
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { openAskInOrder, userWindowsNow } from "../../app/main/ask-open";
+import { focusBeforeNow, openAskInOrder, userWindowsNow } from "../../app/main/ask-open";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, X11Window } from "../../app/main/platform/types";
@@ -28,7 +28,7 @@ function open(o: { holding: boolean; look?: boolean; active: W | null; keyboard?
     holding: o.holding, look: o.look ?? true,
     activeWindow: () => { steps.push("active window"); return o.active; },
     ...(o.keyboard !== undefined ? { keyboard: () => o.keyboard! } : {}),
-    read: (active, before) => steps.push(active ? `read ${active.title}${before ? ` (had the keyboard: ${before.native ?? "ask the app"})` : ""}` : before ? "read (told)" : "read"),
+    read: (active, before) => steps.push(`read${active ? ` ${active.title}` : ""}${before ? ` (had the keyboard: ${before.native ?? "ask the app"})` : ""}`),
     show: () => steps.push("show"),
   });
   return steps;
@@ -47,13 +47,14 @@ describe("the ask box's opening from the keyboard (review #78)", () => {
     // Windows: the focused child window (an edit box), taken with the windows; macOS: none, so the app is asked.
     expect(open({ holding: false, active: NOTES, keyboard: 0x41 })).toEqual(["active window", "show", "read notes.txt (had the keyboard: 65)"]);
     expect(open({ holding: false, active: NOTES, keyboard: 0 })).toEqual(["active window", "show", "read notes.txt (had the keyboard: ask the app)"]);
-    // Read first (Linux, or no window named): what has the keyboard says so itself, as always.
+    // Read first where Ember holds the keyboard (Linux): what has the keyboard says so itself, as always.
     expect(open({ holding: true, active: NOTES, keyboard: 0x41 })).toEqual(["read", "show"]);
-    expect(open({ holding: false, active: null, keyboard: 0x41 })).toEqual(["active window", "read", "show"]);
+    // Read first where no window is named, but the read runs once the box has the keyboard all the same: told too.
+    expect(open({ holding: false, active: null, keyboard: 0x41 })).toEqual(["active window", "read (had the keyboard: 65)", "show"]);
   });
 
-  it("reads first, as before, when the window system can't name the user's window", () => {
-    expect(open({ holding: false, active: null })).toEqual(["active window", "read", "show"]);
+  it("reads first, as before, when the window system can't name the user's window, told what had the keyboard", () => {
+    expect(open({ holding: false, active: null })).toEqual(["active window", "read (had the keyboard: ask the app)", "show"]);
   });
 
   it("only shows the box when what the user is in was read already (the handle's menu)", () => {
@@ -71,6 +72,31 @@ describe("the ask box's opening from the keyboard (review #78)", () => {
     expect(openAsk.match(/captureContext\(/g)).toHaveLength(1);
     // The quick look reads the window taken before the box opened, when there is one.
     expect(MAIN).toContain("Promise.all([perception.quickContext(taken, before), selected])");
+  });
+});
+
+describe("the handle menu's read for \"Ask Ember…\" (cross-review P1)", () => {
+  it("is told what had the keyboard where Ember can't hold it: the native element (Windows), else the app is asked (macOS)", () => {
+    expect(focusBeforeNow({ keyboardFocus: () => 0x41 }, false)).toEqual({ native: 0x41 });
+    expect(focusBeforeNow({ keyboardFocus: () => 0 }, false)).toEqual({});
+    expect(focusBeforeNow({ keyboardFocus: () => { throw new Error("gone"); } }, false)).toEqual({});
+    expect(focusBeforeNow({}, false)).toEqual({});
+    expect(focusBeforeNow(null, false)).toEqual({});
+  });
+
+  it("isn't told anything where Ember holds the keyboard (Linux), whose reads take no such word", () => {
+    let asked = false;
+    expect(focusBeforeNow({ keyboardFocus: () => { asked = true; return 0x41; } }, true)).toBeUndefined();
+    expect(asked).toBe(false);
+  });
+
+  it("is how main reads from the handle's menu, before the handle takes the keyboard", () => {
+    const MAIN = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    // From what the user had, to the handle taking the keyboard (the menu then opens the box with look: false).
+    const menu = /const had = focusNow\(\);[\s\S]*?\n {4}win\.focus\(\);\n/.exec(MAIN)?.[0] ?? "";
+    expect(menu).toContain("if (!fromAskBox) captureContext(undefined, focusBeforeNow(wsSeenRef ?? wsRef, !!platform.keyboardHold));");
+    expect(menu.match(/captureContext\(/g)).toHaveLength(1);
+    expect(MAIN).toContain('click: () => { opens = true; openAsk({ look: false, over: back, source: "menu" }); }');
   });
 });
 
