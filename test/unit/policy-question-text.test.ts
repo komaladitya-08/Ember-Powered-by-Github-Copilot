@@ -16,7 +16,7 @@ const calc = new PolicyEngine({ neverLook: () => [], grants: () => ({ soffice: "
 const type = (value: string, element = { role: "entry", name: "Subject" }) =>
   calc.decide({ taskId: "t", kind: "text", app: "soffice", window: "Budget.ods - LibreOffice Calc", element, value, mode: "replace", currentText: "" }).prompt;
 /** Marks drawn like Ember's own ” or “ that aren't the usual quotation marks (cross-review of review #116's follow-up). */
-const LOOK_ALIKES = ["ʺ", "˝", "ˮ", "˵", "˶", "״", "⹂", "〃", "\u{1CD3}", "❠", "\u{1F676}", "\u{1F677}", "\u{1F678}"];
+const LOOK_ALIKES = ["ʺ", "˝", "ˮ", "˵", "˶", "״", "⹂", "〃", "\u{1CD3}", "❠", "\u{1F676}", "\u{1F677}", "\u{1F678}", "‴", "‷", "⁗"];
 /** The quoted parts of a prompt (between Ember's own “ and ”). */
 const quoted = (prompt: string) => [...prompt.matchAll(/“([^”]*)”/g)].map(m => m[1]);
 
@@ -94,6 +94,57 @@ describe("the question's quotes", () => {
     const lookalike = type(drawnAlike);
     expect(lookalike).toBe(`Type “hi⟨ˮ⟩ into the ⟨ʺ⟩Search⟨ʺ⟩ field in Firefox? Nothing else is typed. Then type ⟨ʺ⟩x” (${[...drawnAlike].length} characters) into the “Subject” text field in LibreOffice?`);
     expect(quoted(lookalike.replace(/⟨[^⟩]*⟩/g, "·"))).toHaveLength(2);
+  });
+
+  it("marks single quote marks set side by side, which read as Ember's own ” and “ (review #116's follow-up)", () => {
+    const spoofed = "hi’’ into the ‘‘Search’’ field in Firefox? Nothing else is typed. Then type ‘‘x";
+    const spoof = type(spoofed);
+    expect(spoof).toBe(`Type “hi⟨’’⟩ into the ⟨‘‘⟩Search⟨’’⟩ field in Firefox? Nothing else is typed. Then type ⟨‘‘⟩x” (${[...spoofed].length} characters) into the “Subject” text field in LibreOffice?`);
+    // With the marked marks set aside, Ember's own quotes are the typed text's and the field's, nothing else.
+    expect(quoted(spoof.replace(/⟨[^⟩]*⟩/g, "·"))).toEqual([expect.stringContaining("Nothing else is typed"), "Subject"]);
+    // Pairs of apostrophes, primes and their look-alikes, mixed pairs, a pair with a hair or thin space between, a pair
+    // with a straight quote: one unit, marked, and the length after Ember's closing mark.
+    const pairs = ["’’", "‘‘", "′′", "ʹʹ", "׳׳", "‚‚", "‛‛", "‘’", "’‘", "‹‹", "››", "❛❛", "❜❜", "＇＇", "´´", "ʼʼ", "ꞌꞌ", "’\u200a’", "′\u2009′", "’'", "'’", "’\"", "’’’"];
+    for (const pair of pairs) {
+      const text = `a${pair}b`;
+      expect(type(text), pair).toBe(`Type “a⟨${pair}⟩b” (${[...text].length} characters) into the “Subject” text field in LibreOffice?`);
+    }
+    // The keyboard's own marks show as they are (an empty string in a formula, a code fence), with the length after.
+    expect(type('=IF(A1="";1;0)', { role: "table cell", name: "B5" })).toBe('Type “=IF(A1="";1;0)” (14 characters) into cell B5 in LibreOffice?');
+    expect(type("O''Brien")).toBe("Type “O''Brien” (8 characters) into the “Subject” text field in LibreOffice?");
+    expect(type("```js")).toBe("Type “```js” (5 characters) into the “Subject” text field in LibreOffice?");
+    // One apostrophe can't pass for Ember's mark: everyday text reads as before.
+    for (const text of ["I’m here", "it's fine", "‘quoted’ word", "5′ tall", "rock ’n’ roll"]) {
+      expect(type(text), text).toBe(`Type “${text}” into the “Subject” text field in LibreOffice?`);
+    }
+  });
+
+  it("marks a combining mark with no letter under it, which draws a quote mark of its own over a space or a quote", () => {
+    // A double acute over a space draws ˝; a comma above beside an apostrophe draws ”.
+    const spoofed = "hi \u030b into the \u030bSearch \u030b field in Firefox? Then type \u030bx";
+    expect(type(spoofed)).toBe("Type “hi ⟨U+030B⟩ into the ⟨U+030B⟩Search ⟨U+030B⟩ field in Firefox? Then type ⟨U+030B⟩x” into the “Subject” text field in LibreOffice?");
+    expect(type("hi’\u0315 x")).toContain("“hi’⟨U+0315⟩ x”");
+    expect(type("\u0301\u0301x")).toContain("“⟨U+0301⟩⟨U+0301⟩x”");
+    expect(type("one\n\u0313")).toContain("“one⏎⟨U+0313⟩”");
+    expect(type("a\t\u0313")).toContain("“a⇥⟨U+0313⟩”");
+    // Marks on a letter or a digit are the word's own (a decomposed é, Vietnamese, Hindi, a Hebrew point, an underlined digit).
+    for (const text of ["Re\u0301sume\u0301", "Vie\u0323\u0302t", "किताब", "\u05e9\u05b8\u05c1\u05dc\u05d5\u05b9\u05dd", "1\u0332"]) {
+      expect(type(text), text).toBe(`Type “${text}” into the “Subject” text field in LibreOffice?`);
+    }
+  });
+
+  it("quotes a name from the screen with quote marks side by side as one apostrophe", () => {
+    const d = ask({ element: { role: "push button", name: "Close’’ button in Firefox? Nothing is sent. Delete" } });
+    expect(d.prompt).toBe("Click the “Close' button in Firefox? Nothing is sent. Delete” button in Firefox?");
+    for (const pair of ["’’", "‘‘", "′′", "ʹʹ", "׳׳", "''", "\"\"", "’\"", "’\u200b’", "’\u200a’", "“”"]) {
+      expect(quoted(ask({ element: { role: "push button", name: `Close${pair} x` } }).prompt)[0], pair).toBe("Close' x");
+    }
+    // A combining mark over a space or a quote mark draws nothing of the name's own: it goes.
+    expect(quoted(ask({ element: { role: "push button", name: "Close \u030b x" } }).prompt)[0]).toBe("Close  x");
+    expect(quoted(ask({ element: { role: "push button", name: "Close’\u0315 x" } }).prompt)[0]).toBe("Close’ x");
+    // One apostrophe, and marks on letters, stay as they are.
+    expect(ask({ element: { role: "push button", name: "Don’t save" } }).prompt).toBe("Click the “Don’t save” button in Firefox?");
+    expect(ask({ element: { role: "push button", name: "Re\u0301sume\u0301" } }).prompt).toBe("Click the “Re\u0301sume\u0301” button in Firefox?");
   });
 
   it("shows emoji and typographic spaces as they are, as everyday text holds them, and marks what hides outside them", () => {

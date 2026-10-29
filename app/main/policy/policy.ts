@@ -160,7 +160,8 @@ export interface Decision {
   stepPrompt?: string;
   /**
    * The whole of the text a task types, when the question shows only its two ends (over 160 characters): the user
-   * approves all of it, so the card can show it on request. Cleaned as the question's quotes are.
+   * approves all of it, so a card can show it on request. Shown as the question shows typed text (typedUnits). No card
+   * shows it yet: the worker's question doesn't carry it, so the bubble shows the two ends and the length only.
    */
   detail?: string;
 }
@@ -1469,16 +1470,36 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
  * marks drawn like them (Unicode's look-alikes of " in other scripts and widths: primes, the modifier letters ʺ and ˮ,
  * the double acute accents, the Hebrew gershayim, the ditto mark; and the quotation mark ornaments).
  */
-const OTHER_QUOTES = "“”„‟″‶〝〞〟＂«»❝❞❠ʺ˝ˮ˵˶״⹂〃\u{1CD3}\u{1F676}-\u{1F678}";
-/** Marks that read as a double quote mark (Ember's own “ and ”, and their look-alikes in other scripts and widths). */
-const QUOTE_LIKE = new RegExp(`["${OTHER_QUOTES}]`, "gu");
+const OTHER_QUOTES = "“”„‟″‴‶‷⁗〝〞〟＂«»❝❞❠ʺ˝ˮ˵˶״⹂〃\u{1CD3}\u{1F676}-\u{1F678}";
 /**
- * What may stand between Ember's own quote marks: a quote mark of any kind becomes an apostrophe, so a name can't close
- * Ember's quote and write the rest of its sentence ("Close” button in Firefox? Nothing is sent. Delete"); line breaks
- * become spaces, and format characters (direction overrides, zero-width marks) go, since they reorder or hide what
- * follows them.
+ * Single quote marks and the marks drawn like them (the keyboard's ' and `, apostrophes, primes, the modifier letters,
+ * the acute and grave accents and Greek's, the Armenian, Hebrew and N'Ko apostrophes, the single guillemets, the
+ * ornaments, the saltillo, the full-width forms). One reads as no quote of Ember's; two side by side read as its ” or
+ * “ (’’, ‘‘, ′′), and ‹‹ as «.
  */
-const quotable = (s: string) => s.replace(QUOTE_LIKE, "'").replace(/[\r\n\u{2028}\u{2029}]+/gu, " ").replace(/\p{Cf}/gu, "");
+const SINGLE_QUOTES = "'`\u00b4\u02b9\u02bb\u02bc\u02bd\u02c8\u02ca\u02cb\u0374\u0384\u055a\u055b\u055d\u05f3\u07f4\u07f5\u1fbd\u1fbf\u1fef\u1ffd\u1ffe\u2018\u2019\u201a\u201b\u2032\u2035\u2039\u203a\u275b\u275c\u275f\ua78b\ua78c\uff07\uff40";
+/** Spaces narrower than the plain one, which leave two quote marks reading as one (’ ’ as ”). */
+const NARROW_SPACES = "\u2006\u2008\u2009\u200a\u202f\u205f";
+/** Every quote mark, single or double, straight or not. */
+const ANY_QUOTE = `"${OTHER_QUOTES}${SINGLE_QUOTES}`;
+/**
+ * A combining mark with no letter or digit under it (after a space, a quote mark, a line break or nothing): drawn on
+ * its own, it is a quote mark of its own (a double acute over a space is ˝, a comma above beside ’ makes ”).
+ */
+const ORPHAN_MARKS = new RegExp(`(?<=^|[\\s⏎⇥${ANY_QUOTE}])\\p{M}+`, "gu");
+/**
+ * Quote marks in a name read from the screen: a double one, or single ones side by side (a narrow space may stand
+ * between), each become one apostrophe. One single mark alone (Don’t) is left as it is.
+ */
+const NAME_QUOTES = new RegExp(`["${OTHER_QUOTES}](?:[${NARROW_SPACES}]?[${ANY_QUOTE}])*|[${SINGLE_QUOTES}](?:[${NARROW_SPACES}]?[${ANY_QUOTE}])+`, "gu");
+/**
+ * What may stand between Ember's own quote marks: a quote mark of any kind, or single ones side by side, become one
+ * apostrophe, so a name can't close Ember's quote and write the rest of its sentence ("Close” button in Firefox?
+ * Nothing is sent. Delete", "Close’’ button…"); line breaks become spaces, and format characters (direction overrides,
+ * zero-width marks) go, since they reorder or hide what follows them, and so do combining marks with no letter under
+ * them, which draw a quote mark of their own (ORPHAN_MARKS).
+ */
+const quotable = (s: string) => s.replace(/\p{Cf}/gu, "").replace(/[\r\n\u{2028}\u{2029}]+/gu, " ").replace(ORPHAN_MARKS, "").replace(NAME_QUOTES, "'");
 const quote = (s: string, max = 60) => { const t = [...quotable(s)]; return `“${t.length > max ? t.slice(0, max - 1).join("") + "…" : t.join("")}”`; };
 /** How much typed text a question shows whole; longer text shows its start and its end, and how long it is. */
 const TYPED_SHOWN = 160;
@@ -1486,6 +1507,15 @@ const TYPED_HEAD = 110;
 const TYPED_TAIL = 40;
 /** A double quote mark other than the keyboard's straight one (OTHER_QUOTES). */
 const MARKED_QUOTE = new RegExp(`[${OTHER_QUOTES}]`, "u");
+/**
+ * Single quote marks side by side in typed text, a narrow space or a straight double quote among them (’’, ‘ ‘, ’"):
+ * read together as Ember's ” or “. Shown as one unit, marked, unless they are all the keyboard's own (KEYBOARD_QUOTES).
+ */
+const QUOTE_PAIR = `[${SINGLE_QUOTES}"](?:[${NARROW_SPACES}]?[${SINGLE_QUOTES}"])+`;
+/** Quote marks side by side that are all the keyboard's own (' ` "): shown as they are, as a straight " is. */
+const KEYBOARD_QUOTES = new RegExp(`^[${NARROW_SPACES}'\`"]+$`, "u");
+/** Typed text holds quote marks that can read as Ember's own: a double one, or single ones side by side. */
+const HOLDS_QUOTES = new RegExp(`["${OTHER_QUOTES}]|${QUOTE_PAIR}`, "u");
 /** A pictograph with the presentation selector (❤️, ☺︎) or the skin tone (👍🏽) written after it. */
 const PICTOGRAPH = String.raw`\p{Extended_Pictographic}(?:\u{FE0E}|\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?`;
 /**
@@ -1497,26 +1527,39 @@ const EMOJI = new RegExp(String.raw`\u{1F3F4}\u{E0067}\u{E0062}(?:\u{E0065}\u{E0
 /** A letter or mark of the scripts that write ZWJ and ZWNJ inside their words (Persian and Arabic, the Indian scripts). */
 const JOINED_SCRIPT = /(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Devanagari}\p{scx=Bengali}\p{scx=Gurmukhi}\p{scx=Gujarati}\p{scx=Oriya}\p{scx=Tamil}\p{scx=Telugu}\p{scx=Kannada}\p{scx=Malayalam}\p{scx=Sinhala}]/u;
 /**
+ * What typed text shows as one unit: an emoji written as several characters, quote marks side by side (QUOTE_PAIR), a
+ * combining mark with no letter under it (ORPHAN_MARKS).
+ */
+const TYPED_UNIT = new RegExp(`(${EMOJI.source})|(${QUOTE_PAIR})|${ORPHAN_MARKS.source}`, "gu");
+/**
  * Each character of text a task types, as its question shows it (review #116 and its follow-up): the user approves
  * what will be typed, so it shows as it is, straight double quotes included (a formula's =IF(A1="x";1;0)), and so do
  * emoji (an emoji written as several characters is one unit), spaces of every width, and the joiners Persian and the
  * Indian scripts write inside their words. A line break shows as ⏎ and a tab as ⇥, so the text stays on its line.
- * Marked in ⟨ ⟩, as the command card marks them: every other double quote mark (Ember's own “ and ” among them), so the
- * text can't close Ember's quote and write the rest of its sentence, and, outside those emoji and words, the characters
- * that show nothing or reorder what follows (⟨ZWSP⟩, ⟨ZWJ⟩, ⟨RLO⟩), which are typed too.
+ * Marked in ⟨ ⟩, as the command card marks them, so the text can't close Ember's quote and write the rest of its
+ * sentence: every other double quote mark (Ember's own “ and ” among them), single quote marks side by side as one unit
+ * (⟨’’⟩, unless they are all the keyboard's own: O''Brien), a combining mark with no letter under it (⟨U+030B⟩), and,
+ * outside those emoji and words, the characters that show nothing or reorder what follows (⟨ZWSP⟩, ⟨ZWJ⟩, ⟨RLO⟩), which
+ * are typed too.
  */
 function typedUnits(s: string): string[] {
   const text = s.replace(/\r\n?|[\n\u2028\u2029]/g, "⏎").replace(/\t/g, "⇥");
   const units: string[] = [];
   let from = 0;
-  for (const m of text.matchAll(EMOJI)) {
-    units.push(...markedUnits(text.slice(from, m.index)), m[0]);
-    from = m.index + m[0].length;
+  for (const m of text.matchAll(TYPED_UNIT)) {
+    const [unit, emoji, pair] = m;
+    if (pair !== undefined && KEYBOARD_QUOTES.test(pair)) continue;
+    units.push(...markedUnits(text.slice(from, m.index)));
+    if (emoji !== undefined) units.push(emoji);
+    else if (pair !== undefined) units.push(`⟨${pair}⟩`);
+    // A combining mark with no letter under it, each one marked (by name where the command card has one).
+    else for (const c of unit) units.push(visibleText(c).find(v => v.kind !== "plain" && v.kind !== "mixed")?.text ?? `⟨U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`);
+    from = m.index + unit.length;
   }
   units.push(...markedUnits(text.slice(from)));
   return units;
 }
-/** typedUnits for text holding no emoji written as several characters. */
+/** typedUnits for text holding none of TYPED_UNIT's units. */
 function markedUnits(s: string): string[] {
   const chars = [...s];
   const units: string[] = [];
@@ -1536,14 +1579,15 @@ function markedUnits(s: string): string[] {
 }
 /**
  * Text a task types, quoted: the user approves all of it, so a long one shows both ends and its length ("… (180
- * characters)"). One that holds quote marks says how long it is too, right after Ember's closing mark: where the text
- * really ends, whatever a straight quote inside it seems to close.
+ * characters)"). One that holds quote marks that can read as Ember's own (a double one, single ones side by side) says
+ * how long it is too, right after Ember's closing mark: where the text really ends, whatever a straight quote inside it
+ * seems to close. One apostrophe alone (I’m, it's) can't, and adds nothing.
  */
 const quoteTyped = (s: string) => {
   const t = typedUnits(s), n = [...s].length;
   const length = `(${n} character${n === 1 ? "" : "s"})`;
   if (t.length > TYPED_SHOWN) return `“${t.slice(0, TYPED_HEAD).join("")}…${t.slice(-TYPED_TAIL).join("")}” ${length}`;
-  return s.includes("\"") || MARKED_QUOTE.test(s) ? `“${t.join("")}” ${length}` : `“${t.join("")}”`;
+  return HOLDS_QUOTES.test(s) ? `“${t.join("")}” ${length}` : `“${t.join("")}”`;
 };
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
 /** Text a task types that its question shows only in part (over TYPED_SHOWN characters): all of it, shown as quoted. */
