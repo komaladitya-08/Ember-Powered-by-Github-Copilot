@@ -1501,7 +1501,7 @@ describe("noticing the user's own ssh and offering to come along (§2.7)", () =>
       // Ubuntu ran when Ember last looked (its cached flag says running); WSL reports what runs now.
       const r = rig({ os: "win32", notice: seen, cursor: true, wslFacts: wslFacts([ubuntu(), ubuntu({ name: "Debian", isDefault: false })]), settings: { targets: { ...wslOnSettings.targets, hosts: [hostRecord("web-07")] } } });
       r.wsl.runningNow = async () => new Set(live);
-      const runScript = vi.fn(async (_script: string, _o?: unknown) => ({ code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" }));
+      const runScript = vi.fn(async (_script: string, _o?: unknown) => ({ code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\nend\n"), stderr: "" }));
       for (const d of ["Ubuntu", "Debian"]) Object.assign(r.wsl.runner(d), { runScript });
       return { r, runScript };
     };
@@ -1868,7 +1868,7 @@ describe("offers in the bubble (review #14)", () => {
     r.wsl.runningNow = async () => { if (once("running")) throw new Error("wsl.exe --list --running failed"); return new Set(live); };
     const runScript = vi.fn(async (_script: string, _o?: unknown) => {
       if (once("reject")) throw new Error("the reader went away");
-      return once("exit") ? { code: 1, stdout: Buffer.from(""), stderr: "" } : { code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\n"), stderr: "" };
+      return once("exit") ? { code: 1, stdout: Buffer.from(""), stderr: "" } : { code: 0, stdout: Buffer.from("812\tssh\u0001deploy@build-02\u0001\nend\n"), stderr: "" };
     });
     Object.assign(r.wsl.runner("Debian"), { runScript });
     await flush();
@@ -1905,10 +1905,27 @@ describe("offers in the bubble (review #14)", () => {
     const { s, runScript, retitle } = await wslSeenRig();
     await retitle("deploy@build-02: ~");
     expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
-    runScript.mockResolvedValue({ code: 0, stdout: Buffer.from(""), stderr: "" });
+    runScript.mockResolvedValue({ code: 0, stdout: Buffer.from("end\n"), stderr: "" });
     s.advance(10_000);
     await retitle("ana@build-02: ~");
     expect(s.screen().visible).toBe(false);
+  });
+
+  it("for an ssh in WSL stay, and nothing is offered from its distro, when the reader's output there was cut short (F-scanmax)", async () => {
+    // WA's runner keeps about 1 MiB of a script's output and still says it worked: here it was cut inside a line or after
+    // one, before build-02's, so the reader's end line never came.
+    for (const cut of ["701\tssh\u0001deploy@stag", "701\tssh\u0001deploy@staging-01\u0001\n"]) {
+      const { s, runScript, retitle } = await wslSeenRig();
+      await retitle("deploy@build-02: ~");
+      expect(s.screen()).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+      const reads = runScript.mock.calls.length;
+      runScript.mockResolvedValue({ code: 0, stdout: Buffer.from(cut), stderr: "" });
+      s.advance(10_000);
+      await retitle("deploy@build-02: ~/src");
+      expect(runScript).toHaveBeenCalledTimes(reads + 1);
+      expect(s.screen(), cut).toMatchObject({ visible: true, title: "You're connected to build-02 from Debian" });
+      expect(s.seen.join("\n"), cut).not.toMatch(/stag/);
+    }
   });
 
   it("\"I can work in WSL\" waits at most 25 s too, and comes again at the next request that names WSL (R-stale-offer)", async () => {

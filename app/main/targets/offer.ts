@@ -72,8 +72,8 @@ export interface NoticerDeps {
    * After each look that read the process list: the destinations (seenKey) of every ssh of the user's running now,
    * offered or not, and whether the look read a place (an ssh's via) in full, so an offer up or waiting for one that
    * has ended goes ("You're connected to web-07" no longer holds; R-stale-offer). Ended means missing from a place that
-   * was read: this computer's list is read whole or not at all, but a WSL distro whose reader failed or timed out, or
-   * every distro when which of them run couldn't be told, is not read, nor is a list cut short at the readers' cap,
+   * was read: this computer's list is read whole or not at all, but a WSL distro whose reader failed, timed out or was
+   * cut short, or every distro when which of them run couldn't be told, is not read, nor is a list at the readers' cap,
    * and what runs there is unknown, not ended. Not called when this computer's list couldn't be read.
    */
   running?(keys: ReadonlySet<string>, read: (via: SshSeen["via"]) => boolean): void;

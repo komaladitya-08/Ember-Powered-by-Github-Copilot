@@ -171,5 +171,8 @@ describe("the user's own ssh processes (R4)", () => {
   it("keeps the WSL reader's processes apart by distro", () => {
     expect(parseWslReader("12\tssh\u0001build\u0001\nnoise\n", "Debian")).toEqual([{ pid: 12, argv: ["ssh", "build"], via: "wsl:Debian" }]);
     expect(WSL_READER).not.toMatch(/[`]|eval/);
+    // Its last line says it got to the end (the runtime reads a distro in full only with it, F-scanmax); not a process.
+    expect(WSL_READER.trimEnd().split("\n").slice(-2)).toEqual(["done", "printf 'end\\n'"]);
+    expect(parseWslReader("12\tssh\u0001build\u0001\nend\n", "Debian")).toEqual([{ pid: 12, argv: ["ssh", "build"], via: "wsl:Debian" }]);
   });
 });

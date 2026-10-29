@@ -290,7 +290,8 @@ export function parseCim(text: string): SshProcess[] {
 
 /**
  * The fixed reader a running distro runs (`wsl.exe -d <d> --exec /bin/sh -s`, this text on stdin): this user's ssh
- * processes there, one per line, `<pid><TAB><cmdline with NUL as \x01>`.
+ * processes there, one per line, `<pid><TAB><cmdline with NUL as \x01>`, then `end`: output without that last line
+ * was cut short (WA's runner keeps about 1 MiB), so it isn't the whole list.
  */
 export const WSL_READER = [
   "u=$(id -u)",
@@ -301,6 +302,7 @@ export const WSL_READER = [
   "  tr '\\000\\n' '\\001 ' < \"$d/cmdline\" 2>/dev/null",
   "  printf '\\n'",
   "done",
+  "printf 'end\\n'",
   "",
 ].join("\n");
 
