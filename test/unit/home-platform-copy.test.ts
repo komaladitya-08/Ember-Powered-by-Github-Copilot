@@ -181,6 +181,14 @@ describe("the settings window before a status names an OS", () => {
     expect(describeEntry({ t, event: "stop", source: "menu" })?.what).toBe("Everything stopped (menu)");
     expect(describeEntry({ t, event: "stop", source: "settings" })?.what).toBe("Everything stopped (settings)");
   });
+
+  it("says the organisation's policy change stopped everything, and names no control for a source it doesn't know (cross-review X10)", () => {
+    const policy = describeEntry({ t, event: "stop", source: "policy" });
+    expect(policy).toEqual({ tag: "Stopped", cls: "no", what: "Everything stopped: your organisation changed Ember's policy" });
+    expect(policy?.what).not.toContain("menu");
+    // A stop whose source this page doesn't know (a later Ember's, or none) isn't put on a control the user didn't press.
+    for (const source of ["remote-console", "something-new", undefined]) expect(describeEntry({ t, event: "stop", source })?.what, String(source)).toBe("Everything stopped");
+  });
 });
 
 describe("the settings window with Linux's status", () => {
