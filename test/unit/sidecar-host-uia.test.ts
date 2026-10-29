@@ -101,6 +101,18 @@ describe("starting the bridge", () => {
     expect(hostLaunch({ execPath: "e", host: "h", env: { EMBER_AX_PROVIDER: "fake" }, platform: "darwin", packaged: false }).env.EMBER_AX_PROVIDER).toBe("fake");
   });
 
+  it("starts the macOS host as a utility process of Ember's, never Ember's binary in node mode (review #177)", () => {
+    const fork = () => { throw new Error("not called here"); };
+    const host = "/Applications/Ember.app/Contents/Resources/app/dist/app/ax-sidecar.cjs";
+    const l = hostLaunch({ execPath: "/Applications/Ember.app/Contents/MacOS/Ember", host, env: { PATH: "p", ELECTRON_RUN_AS_NODE: "1", Electron_Run_As_Node: "1", EMBER_AX_PROVIDER: "fake" }, platform: "darwin", packaged: true, fork });
+    expect(l).toEqual({ command: "/Applications/Ember.app/Contents/MacOS/Ember", args: [host], env: { PATH: "p" }, firstRequestMs: 10_000, utility: { fork, serviceName: "Ember accessibility" } });
+    // A packaged Ember on macOS has no other way to start it: without the fork, no launch at all (fail closed).
+    expect(() => hostLaunch({ execPath: "e", host, env: {}, platform: "darwin", packaged: true })).toThrow(/utility process/);
+    // Only the tests start it otherwise, with a real Node as execPath: spawned, still without node mode's variable.
+    expect(hostLaunch({ execPath: "/usr/local/bin/node", host, env: { ELECTRON_RUN_AS_NODE: "1" }, platform: "darwin", packaged: false }))
+      .toEqual({ command: "/usr/local/bin/node", args: [host], env: {}, firstRequestMs: 10_000, windowsHide: true });
+  });
+
   it("names the test-only switches it drops from a packaged host, whatever their case", () => {
     expect(TEST_SWITCHES).toEqual(["EMBER_AX_PROVIDER", "EMBER_AX_FAKE_DESKTOP", "EMBER_AX_FAKE_LOG"]);
     const env = { Ember_AX_Provider: "fake", EMBER_AX_FAKE_DESKTOP: "d.json", ember_ax_fake_log: "l", EMBER_LOG_LEVEL: "debug" };

@@ -9,6 +9,7 @@ import { AtspiSidecar, ID_BLOCK, type ActionResult, type AxNode } from "../../ap
 import { hostLaunch } from "../../app/sidecar-host/launch";
 import { benchDesktop, type FakeLogLine } from "../../app/sidecar-host/providers/fake";
 import type { Logger } from "../../app/main/logger";
+import { fakeFork } from "./utility-fork-fake";
 
 /**
  * The built host, run as its own process by node, driven through Ember's real client (AtspiSidecar) against the fake
@@ -175,5 +176,40 @@ describe("the built sidecar host through Ember's client", () => {
     const answers = out.trim().split("\n").map(l => JSON.parse(l));
     expect(answers[0]).toMatchObject({ id: null, error: { message: expect.any(String) } });
     expect(answers[1]).toEqual({ jsonrpc: "2.0", id: 7, result: { version: 3 } });
+  });
+});
+
+describe("the built sidecar host as a utility process (macOS: no node mode, review #177)", () => {
+  /** The client over the host forked as Electron forks it on macOS (played by Node: utility-fork-fake.ts). */
+  function utilityClient(logFile = path.join(dir, `utility-${running.length}.log`)) {
+    const f = fakeFork();
+    const env = { ...process.env, EMBER_AX_PROVIDER: "fake", EMBER_AX_FAKE_DESKTOP: desktop, EMBER_AX_FAKE_LOG: logFile, EMBER_OWNER_PID: String(process.pid) };
+    const s = new AtspiSidecar("unused.py", log, "unused-python", process.env, { command: "ember", args: [script], env, utility: { fork: f.fork, serviceName: "Ember accessibility" } });
+    running.push(s);
+    return { s, f };
+  }
+
+  it("takes its requests as messages and answers on stdout, as it does on stdin", async () => {
+    const { s, f } = utilityClient();
+    expect(await s.status()).toMatchObject({ version: 3, toolkitAccessibility: true, apps: 2 });
+    const { windows } = await s.listWindows({ ownPid: process.pid });
+    const r = await s.readWindow({ pid: windows[0].pid!, path: windows[0].path, ownPid: process.pid });
+    expect(byName(r.nodes, "Password")).toMatchObject({ role: "password text", secret: true });
+    expect(await failure(s.setText(byName(r.nodes, "Password").id, "hunter2"))).toBe("password fields are off limits to Ember; the user must fill them in");
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it("answers a bad message with an error and carries on, and several lines in one message in order", async () => {
+    const f = fakeFork();
+    const child = f.fork(script, [], { env: { ...process.env, EMBER_AX_PROVIDER: "fake", EMBER_AX_FAKE_DESKTOP: desktop }, stdio: "pipe", serviceName: "Ember accessibility" });
+    let out = "";
+    child.stdout!.on("data", d => { out += d; });
+    child.postMessage("{not json\n");
+    child.postMessage('{"jsonrpc":"2.0","id":7,"method":"ping","params":{}}\n{"jsonrpc":"2.0","id":8,"method":"ping","params":{}}\n');
+    for (let i = 0; i < 100 && out.trim().split("\n").length < 3; i++) await new Promise(res => setTimeout(res, 50));
+    child.kill();
+    const answers = out.trim().split("\n").map(l => JSON.parse(l));
+    expect(answers[0]).toMatchObject({ id: null, error: { message: expect.any(String) } });
+    expect(answers.slice(1)).toEqual([{ jsonrpc: "2.0", id: 7, result: { version: 3 } }, { jsonrpc: "2.0", id: 8, result: { version: 3 } }]);
   });
 });

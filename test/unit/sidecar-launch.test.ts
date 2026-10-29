@@ -5,6 +5,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { AtspiSidecar, ID_BLOCK, type SidecarLaunch } from "../../app/main/perception/sidecar";
 import type { Logger } from "../../app/main/logger";
+import { fakeFork } from "./utility-fork-fake";
 
 // The real spawn, watched: which command, arguments and options each helper is started with.
 vi.mock("node:child_process", async importOriginal => {
@@ -40,9 +41,26 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
 });
 `;
 
+/**
+ * The same stand-in as a utility process (macOS, review #177): no stdin; each request comes as a message on Electron's
+ * parent port, and answers go to stdout as before.
+ */
+const FAKE_UTILITY = `
+const send = m => process.stdout.write(JSON.stringify(m) + "\\n");
+process.parentPort.on("message", e => {
+  for (const line of String(e.data).split("\\n").filter(Boolean)) {
+    const req = JSON.parse(line);
+    if (req.method === "whoami") send({ jsonrpc: "2.0", id: req.id, result: { argv: process.argv.slice(2), base: process.env.EMBER_ATSPI_ID_BASE, mine: process.env.EMBER_FAKE_MINE ?? null, pid: process.pid } });
+    if (req.method === "slow") setTimeout(() => send({ jsonrpc: "2.0", id: req.id, result: "slow" }), req.params.ms);
+  }
+});
+`;
+
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-launch-test-"));
 const fake = path.join(dir, "fake_host.cjs");
 fs.writeFileSync(fake, FAKE);
+const fakeUtility = path.join(dir, "fake_utility_host.cjs");
+fs.writeFileSync(fakeUtility, FAKE_UTILITY);
 
 const log = { debug() {}, info() {}, warn() {}, error() {}, child: () => log } as unknown as Logger;
 const running: AtspiSidecar[] = [];
@@ -119,5 +137,56 @@ describe("AtspiSidecar's launch", () => {
   it("names the longer time in the error when a cold start runs out of it", async () => {
     const s = sidecar({ command: process.execPath, args: [fake], env: { ...process.env, EMBER_FAKE_COLD_MS: "2000" }, firstRequestMs: 400 });
     expect(await failure(s.request("whoami", {}, 100))).toMatch(/did not answer whoami in 400 ms/);
+  });
+});
+
+describe("AtspiSidecar's launch as a utility process (macOS: no node mode, review #177)", () => {
+  /** Waits until `ok` holds (at most 5 s). */
+  const until = async (ok: () => boolean) => { for (let i = 0; i < 250 && !ok(); i++) await new Promise(r => setTimeout(r, 20)); return ok(); };
+  type UtilityWho = { argv: string[]; base: string; mine: string | null; pid: number };
+
+  it("forks the host script with its environment and the id block, piped output and its name, and talks to it by message", async () => {
+    const f = fakeFork();
+    const s = sidecar({ command: "/Applications/Ember.app/Contents/MacOS/Ember", args: [fakeUtility], env: { ...process.env, EMBER_FAKE_MINE: "utility" }, utility: { fork: f.fork, serviceName: "Ember accessibility" } });
+    const who = await s.request<UtilityWho>("whoami");
+    expect(who.mine).toBe("utility");
+    expect(who.argv).toEqual([]);
+    expect(Number(who.base) % ID_BLOCK).toBe(0);
+    // Nothing is spawned: Ember's binary never runs the host as plain Node.
+    expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+    expect(f.calls).toHaveLength(1);
+    const [{ modulePath, args, options }] = f.calls;
+    expect([modulePath, args]).toEqual([fakeUtility, []]);
+    expect(options).toEqual({ env: { ...process.env, EMBER_FAKE_MINE: "utility", EMBER_ATSPI_ID_BASE: who.base }, stdio: "pipe", serviceName: "Ember accessibility" });
+    expect(s.pid).toBe(who.pid);
+  });
+
+  it("ends one that doesn't answer in time and forks a fresh one for the next request", async () => {
+    const f = fakeFork();
+    const s = sidecar({ command: "ember", args: [fakeUtility], env: process.env, utility: { fork: f.fork, serviceName: "Ember accessibility" } });
+    const first = await s.request<UtilityWho>("whoami");
+    expect(await failure(s.request("slow", { ms: 5000 }, 200))).toMatch(/did not answer slow in 200 ms/);
+    expect(await until(() => f.calls[0].child.exitCode !== null || f.calls[0].child.signalCode !== null)).toBe(true);
+    const second = await s.request<UtilityWho>("whoami");
+    expect(second.pid).not.toBe(first.pid);
+    expect(second.base).not.toBe(first.base);
+  });
+
+  it("ends one stopped before it had started (its kill comes once it has)", async () => {
+    const f = fakeFork();
+    const s = sidecar({ command: "ember", args: [fakeUtility], env: process.env, utility: { fork: f.fork, serviceName: "Ember accessibility" } });
+    const asked = failure(s.request("whoami"));
+    s.stop();
+    expect(await asked).toMatch(/accessibility helper stopped/);
+    expect(await until(() => f.calls[0].child.exitCode !== null || f.calls[0].child.signalCode !== null)).toBe(true);
+  });
+
+  it("fails the request, saying why, when the utility process can't be started", async () => {
+    const f = fakeFork();
+    f.fail("utilityProcess.fork can only be called after app is ready");
+    const s = sidecar({ command: "ember", args: [fakeUtility], env: process.env, utility: { fork: f.fork, serviceName: "Ember accessibility" } });
+    expect(await failure(s.request("whoami"))).toBe("accessibility helper could not run (utilityProcess.fork can only be called after app is ready)");
+    // The next request tries again.
+    expect((await s.request<UtilityWho>("whoami")).argv).toEqual([]);
   });
 });

@@ -9,7 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
@@ -99,7 +99,7 @@ if (app.isPackaged && debugSwitch) {
  * (PlatformDeps' rule); its window system and input open after ready.
  */
 const platform = loadPlatform({
-  electron: { app, screen, desktopCapturer, systemPreferences, shell, powerMonitor, browserWindow: BrowserWindow },
+  electron: { app, screen, desktopCapturer, systemPreferences, shell, powerMonitor, browserWindow: BrowserWindow, utilityProcess },
   packaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: process.env,
 });
 const sys = platform.system;

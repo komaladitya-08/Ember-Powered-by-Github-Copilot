@@ -143,17 +143,24 @@ describe("darwinPlatform", () => {
     expect(p.overlay.setInputRegion({ getNativeWindowHandle: () => Buffer.alloc(8), getMediaSourceId: () => "" }, [], 2)).toBe(false);
   });
 
-  it("starts the shared host as Ember's own binary in node mode, without Ember's tokens", () => {
+  it("starts the shared host as a utility process of Ember's (Electron's fork), not in node mode, without Ember's tokens (review #177)", () => {
     const env = { PATH: "/usr/bin:/bin", HOME: "/Users/ada", GH_TOKEN: "t", COPILOT_GITHUB_TOKEN: "c", EMBER_USER_DATA: "/x", EMBER_LOG_LEVEL: "debug",
-      EMBER_AX_PROVIDER: "fake", NODE_OPTIONS: "--inspect" };
-    const deps = fakeDeps(fakeElectron().electron, env);
+      EMBER_AX_PROVIDER: "fake", NODE_OPTIONS: "--inspect", ELECTRON_RUN_AS_NODE: "1" };
+    const fake = fakeElectron();
+    const deps = fakeDeps(fake.electron, env);
     const ctx = { appDir: "/Applications/Ember.app/Contents/Resources/app/dist/app", appPath: deps.appPath, resourcesPath: deps.resourcesPath,
       packaged: true, userData: "/Users/ada/Library/Application Support/ember", execPath: deps.execPath };
     const launch = darwinPlatform(deps, quiet).sidecarLaunch(ctx)!;
     expect(launch.command).toBe("/Applications/Ember.app/Contents/MacOS/Ember");
     expect(launch.args).toEqual([path.join(ctx.appDir, "ax-sidecar.cjs")]);
     expect(launch.firstRequestMs).toBe(10_000);
-    expect(launch.env.ELECTRON_RUN_AS_NODE).toBe("1");
+    expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(launch.utility?.serviceName).toBe("Ember accessibility");
+    // The fork is Electron's utilityProcess.fork, called as Electron's own (nothing touched it while the platform was built).
+    expect(fake.utilityProcess.fork).not.toHaveBeenCalled();
+    const child = launch.utility!.fork(launch.args[0], [], { env: launch.env, stdio: "pipe", serviceName: "Ember accessibility" });
+    expect(fake.utilityProcess.fork).toHaveBeenCalledWith(launch.args[0], [], { env: launch.env, stdio: "pipe", serviceName: "Ember accessibility" });
+    expect(child).toBe(fake.utilityChild);
     expect(launch.env.EMBER_OWNER_PID).toBe(String(process.pid));
     expect(launch.env.EMBER_LOG_LEVEL).toBe("debug");
     expect(launch.env.PATH).toBe("/usr/bin:/bin");

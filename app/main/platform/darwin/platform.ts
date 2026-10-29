@@ -2,7 +2,8 @@
  * Ember's Platform on macOS (design §8.1): port/darwin's window system and input, with pixels from Electron's
  * desktopCapturer (electron-capture.ts) and Screen Recording read from Electron; click-through by hover polling and
  * non-activating panels for the overlay, handle and ask box (compose.ts hoverShaper); the shared accessibility host
- * run by Ember's own binary (port/host's hostLaunch); no desk, no X keyboard hold and no X clipboard; and the macOS
+ * as an Electron utility process of Ember's (port/host's hostLaunch with Electron's fork: the macOS build refuses node
+ * mode, review #177); no desk, no X keyboard hold and no X clipboard; and the macOS
  * SystemPlatform (system/). Building it touches nothing of `screen`, desktopCapturer, powerMonitor or BrowserWindow
  * and loads no native library: main builds it before app ready, and koffi loads only when openWindows/openInput run.
  * There is no second secure-input or dialog check here: port/darwin's systemDialogOpen() is the one (§8.4).
@@ -56,12 +57,17 @@ export function darwinPlatform(deps: PlatformDeps, seams: DarwinPlatformSeams = 
     keyboardHold: null,
     clipboard: null,
     desk: null,
-    sidecarLaunch: ctx => hostLaunch({
-      execPath: ctx.execPath,
-      host: path.join(ctx.appDir, "ax-sidecar.cjs"),
-      env: hostEnv(deps.env, { os: "darwin", packaged: ctx.packaged, ownerPid: process.pid }),
-      platform: "darwin",
-      packaged: ctx.packaged,
-    }),
+    sidecarLaunch: ctx => {
+      const utility = deps.electron.utilityProcess;
+      return hostLaunch({
+        execPath: ctx.execPath,
+        host: path.join(ctx.appDir, "ax-sidecar.cjs"),
+        env: hostEnv(deps.env, { os: "darwin", packaged: ctx.packaged, ownerPid: process.pid }),
+        platform: "darwin",
+        packaged: ctx.packaged,
+        // Called as Electron's own method (it needs its object), and only when a host starts (after ready).
+        ...(utility ? { fork: (modulePath, args, options) => utility.fork(modulePath, args, options) } : {}),
+      });
+    },
   };
 }

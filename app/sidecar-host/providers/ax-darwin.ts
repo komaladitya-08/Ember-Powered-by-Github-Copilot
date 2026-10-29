@@ -1,7 +1,7 @@
 /**
- * The macOS accessibility provider of Ember's sidecar host (design §5.3): AX through koffi, in this node-mode child of
- * Ember (its own binary with ELECTRON_RUN_AS_NODE=1, so TCC holds Ember.app responsible when LaunchServices started
- * it), behind the host's AxProvider. It reports raw facts in points and does raw actions; the host maps roles
+ * The macOS accessibility provider of Ember's sidecar host (design §5.3): AX through koffi, in this child of Ember (an
+ * Electron utility process since the macOS build refuses node mode, review #177; Ember's own child, so TCC holds
+ * Ember.app responsible when LaunchServices started it), behind the host's AxProvider. It reports raw facts in points and does raw actions; the host maps roles
  * (roles.ts's axRole), keeps ids, secrets and wording. What it adds to AX is what makes it safe and fast enough:
  *
  * - Ember's own process (EMBER_OWNER_PID, else this process's parent) is never asked anything: no AX element is ever
