@@ -418,6 +418,45 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(await store.loadGrant()).toBeNull();
   });
 
+  it("gives back the sign-in saved while the keychain was still opening the previous one (macOS) (final review S1)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    let opened: () => void = () => undefined;
+    const mac: SecretBox = {
+      ...box, isAsyncEncryptionAvailable: async () => true, encryptStringAsync: async s => box.encryptString(s),
+      decryptStringAsync: b => new Promise(r => { opened = () => r({ result: box.decryptString(b), shouldReEncrypt: false }); }),
+    };
+    const store = new TokenStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin"), mac, { asyncKeyring: true });
+    const previous: Grant = { token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    store.saveResult(previous);
+    const reading = store.loadGrant();
+    // The device flow lands while the keychain is still opening the account the file held.
+    const other: Grant = { token: "ghu_" + "c".repeat(36), refreshToken: "ghr_" + "t".repeat(76), expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT };
+    const saving = store.saveAsync(other);
+    opened();
+    await expect(reading).resolves.toEqual(other);
+    await saving;
+    // Written: the next open is the new sign-in, not the account the first open decrypted.
+    const again = store.loadGrant();
+    opened();
+    await expect(again).resolves.toEqual(other);
+  });
+
+  it("gives back nothing when the user signs out while the keychain is still opening the stored sign-in (macOS) (final review S1)", async () => {
+    vi.useFakeTimers({ now: T0 });
+    let opened: () => void = () => undefined;
+    const mac: SecretBox = {
+      ...box, isAsyncEncryptionAvailable: async () => true, encryptStringAsync: async s => box.encryptString(s),
+      decryptStringAsync: b => new Promise(r => { opened = () => r({ result: box.decryptString(b), shouldReEncrypt: false }); }),
+    };
+    const store = new TokenStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin"), mac, { asyncKeyring: true });
+    store.saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
+    const reading = store.loadGrant();
+    store.clear();
+    opened();
+    await expect(reading).resolves.toBeNull();
+    expect(store.hasSaved()).toBe(false);
+  });
+
   it("doesn't save a renewal before use over another account's sign-in made meanwhile (final review S1)", async () => {
     const { keeper, store, answer } = slowRenewal();
     const starting = keeper.freshen();

@@ -134,10 +134,20 @@ export class TokenStore {
    * here, so on macOS none holds the main process while the keychain asks (asyncKeyring).
    */
   async loadGrant(): Promise<Grant | null> {
+    return this.openGrant(0);
+  }
+
+  /**
+   * The stored sign-in. On macOS the keychain is asked off this turn (`decryptStringAsync`). A sign-in saved or cleared
+   * while that ask is open is the one given back: the plaintext just opened is the account that was, and connecting it
+   * would undo the sign-in that landed meanwhile (final review S1).
+   */
+  private async openGrant(depth: number): Promise<Grant | null> {
     if (this.held) {
       this.unreadable = false;
       return this.held;
     }
+    const read = this.changes;
     let raw: Buffer;
     try {
       raw = fs.readFileSync(this.file);
@@ -153,6 +163,12 @@ export class TokenStore {
     } catch {
       this.unreadable = true;
       return null;
+    }
+    if (this.changes !== read) {
+      if (this.held) { this.unreadable = false; return this.held; }
+      // Written or cleared while the keychain was asked. One more read; then give up rather than return the old account.
+      if (depth >= 2) return null;
+      return this.openGrant(depth + 1);
     }
     this.unreadable = false;
     this.stamp();
