@@ -226,8 +226,8 @@ and VoiceOver on a Mac. While one runs:
   replies, questions and results out loud**: **When a screen reader runs** (the default), **Always** or **Never**.
   When your organisation turns speaking off, Ember never speaks.
 - The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
-  Ctrl+Alt+N not now"), and for a question shown in another of Ember's windows, how to get there ("press Alt+Tab to
-  go there").
+  Ctrl+Alt+N not now") and all of a long text it would type, and for a question shown in another of Ember's windows,
+  how to get there ("press Alt+Tab to go there").
 - The command window reads out what a command prints, and its lines can be read again one by one. A dangerous command
   you asked for waits 15 seconds instead of 4 before it runs.
 
@@ -236,7 +236,7 @@ and VoiceOver on a Mac. While one runs:
 | To | From the keyboard |
 |---|---|
 | Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds the shortcut: **Ask Ember…** in settings, under **Comfort & access › Ember on screen** |
-| Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good |
+| Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good. A question about typing a long text shows all of it in a box under it and allows only once all of it has been in view: until then Ctrl+Alt+Y shows the next part |
 | Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds the shortcut: **Stop everything** under **Comfort & access › Ember on screen** |
 | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
 | What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |

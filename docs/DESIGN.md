@@ -47,7 +47,11 @@ They share one emotion rig, so switching never changes behaviour.
 
 - **Reasoning bubble** (`packages/bubble`): dark glass, always dark so it reads over any
   app; state (a dot and a word), one-line intent, streaming thought (last three lines),
-  current step with its reason, and buttons when Ember needs a decision. Ember speaks in
+  current step with its reason, and buttons when Ember needs a decision. A question about
+  typing more than 160 characters (or a cell value cut short) shows all of the text under its
+  sentence, every character as it will be typed, in a flat panel that scrolls (seven lines);
+  **Allow** stays dimmed, with "Scroll down to read it all first." above it, until every line
+  has been in view, and the allow key shows the next part meanwhile. Ember speaks in
   the first person there ("I'm on build-01"), and a number's unit never wraps away from it
   ("15 seconds" in a sentence). While Ember thinks or listens, an ember-coloured glow
   breathes round its edge. The state says

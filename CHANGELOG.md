@@ -22,7 +22,10 @@ the work in your real apps where you can watch, without taking over your mouse. 
   (a formula's `=IF(A1="x";1;0)`), emoji and spaces included, with a line break shown as ⏎ and a tab as ⇥. Other
   quote marks, quote marks set side by side (’’), and characters that show nothing or reorder text are marked in ⟨ ⟩
   (⟨”⟩, ⟨’’⟩, ⟨ZWSP⟩). Text that holds quote marks says how long it is right after the quote, so typed text can't
-  pass for Ember's own words. Text over 160 characters shows its first 110 and last 40 characters and its length.
+  pass for Ember's own words. Text over 160 characters shows its first 110 and last 40 characters and its length, and
+  all of it in a box under the question (so does each cell's whole value when Ember fills several cells at once):
+  **Allow** works once you have scrolled to its end, or it fits ("Scroll down to read it all first."), and until then
+  Ember's allow shortcut shows the next part of it. Screen readers hear all of it.
 - **Your Mac's permissions stay Ember's**: Ember.app never runs as a plain Node.js program, so another program can't
   start it that way to borrow its Accessibility and Screen Recording permissions.
 - **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`
@@ -431,8 +434,6 @@ allows them.
   again.
 - On Linux, Ember needs GNOME on Xorg. In a Wayland session it says so, takes no screenshots and doesn't borrow the
   mouse or keyboard; reading apps still works.
-- A question about typing more than 160 characters shows only the start and end of the text and its length: you
-  can't see the middle before you allow it yet.
 - A granted browser has no confirmation for new domains or downloads, and the policy has no domain rules.
 - An app's own popups over its window (menus, lists, autofill panels) are checked for secret fields only when the
   system's accessibility lists them as windows; macOS menus and some Windows popups aren't, and are pictured as they
