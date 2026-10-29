@@ -534,7 +534,8 @@ describe("README.md's Accessibility section, against the release it describes", 
 
 /**
  * Round 2's packages, each known here by its code: a package's lines are checked once it is merged, and skipped
- * before (on fix2/docs2 alone), so each can be merged, or reverted with its docs commit, on its own.
+ * before (on fix2/docs2 alone). Once any is here, all must be, as for round 1's RELEASE: so a mark that stops finding
+ * its code after the merge (a rename, a reformat) fails here instead of quietly skipping that package's lines.
  */
 const ROUND2 = {
   auth2: /\n {2}wake\(\): void \{/.test(read("app/main/agent/auth.ts")),
@@ -546,6 +547,13 @@ const ROUND2 = {
 };
 
 describe("round 2's docs lines, against the packages' code", () => {
+  it("has every round 2 package the docs describe, or none of them (fix2/docs2 on its own)", () => {
+    const marks = Object.entries(ROUND2);
+    if (!marks.some(([, here]) => here)) return;
+    const missing = marks.filter(([, here]) => !here).map(([pkg]) => `fix2/${pkg}`);
+    expect(missing, "merge fix2/docs2 after these packages; if they are merged, ROUND2's mark no longer finds their code: point it at the code again").toEqual([]);
+  });
+
   it.runIf(ROUND2.auth2)("auth2: says Ember renews its sign-in by itself, waiting for a quiet moment and on waking", () => {
     // auth.ts renews from an hour before when nothing is under way (idle), forced near the end, and on wake().
     expect(read("app/main/agent/auth.ts")).toMatch(/!this\.d\.idle\(\)/);
