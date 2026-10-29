@@ -36,3 +36,22 @@ export function openAskInOrder<W>(o: AskOpening<W>): void {
   o.show();
   o.read(active);
 }
+
+/** Where the user is, as a window system tells it (WindowSystem's members, structurally). `W`: its window. */
+export interface UserWindows<W> {
+  focusWindow(): W | null;
+  activeWindow(): W | null;
+  focusAndActive?(): { focus: W | null; active: W | null };
+}
+
+/**
+ * The window with the keyboard (what the box opens over) and the active window (what is read once the box is up), taken
+ * together just before the box shows: in one look where the window system can take both at once (macOS: one window list
+ * and one AX round trip, not two of each before the box can have the keyboard), else one after the other. Both null
+ * without a window system.
+ */
+export function userWindowsNow<W>(ws: UserWindows<W> | null): { focus: W | null; active: W | null } {
+  if (!ws) return { focus: null, active: null };
+  if (ws.focusAndActive) return ws.focusAndActive();
+  return { focus: ws.focusWindow(), active: ws.activeWindow() };
+}

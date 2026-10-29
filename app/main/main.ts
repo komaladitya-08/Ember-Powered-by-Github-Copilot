@@ -34,7 +34,7 @@ import { AtspiSidecar } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { AskWindow, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
-import { openAskInOrder } from "./ask-open";
+import { openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
@@ -625,8 +625,9 @@ function start(): void {
    * The window with the keyboard now (an X client window on Linux, 0 if none), noted as the user's when it isn't
    * Ember's. `ember`: it is one of Ember's own (settings, the desk view, the quit question, the ask box).
    */
-  const focusNow = (): { id: number; ember: boolean } => {
-    const f = wsRef?.focusWindow();
+  const focusNow = (): { id: number; ember: boolean } => noteFocus(wsRef?.focusWindow() ?? null);
+  /** focusNow() for a window with the keyboard taken already (the ask box takes it with the active window: ask-open.ts). */
+  const noteFocus = (f: { id: number; pid: number | null } | null): { id: number; ember: boolean } => {
     if (!f) return { id: 0, ember: false };
     if (f.pid !== process.pid) userWindow = f.id;
     return { id: f.id, ember: f.pid === process.pid };
@@ -848,7 +849,9 @@ function start(): void {
     windowId: w => ownId(w),
     floating: platform.overlay.floating("ask"),
     // As the handle's menu takes the keyboard: the window manager is asked, and X is told too. On macOS the box is a
-    // panel that takes the keyboard on show() without activating Ember (the user's app stays the active one).
+    // panel that takes the keyboard on show() without activating Ember (the user's app stays the active one). That route
+    // is kept for the box's speed too (review #78): app.focus({ steal: true }), the settings window's, would make Ember
+    // the active app, which the box must not (M2 checks the user's app stays active); the probe's ask.keyboard line times it.
     takeFocus: id => {
       askXid = id;
       if (!sys.lifecycle.activateForAsk) return;
@@ -939,8 +942,12 @@ function start(): void {
     // keyboard meanwhile and hands what was typed to the box. Take it before reading focus/context: those X11 and
     // accessibility round trips can outlast the hotkey's own grab, and by then the first letter has gone.
     const held = look && platform.keyboardHold ? platform.keyboardHold({ log: (event, fields) => log.info(event, fields) }) : null;
+    // Where Ember can't hold the keyboard, the window with it and the window the user is in (read once the box is up) are
+    // taken together now, from the window system Perception reads (on Windows a WSLg app's window by its Linux app's name,
+    // which the read's checks need), in one look where it can (macOS): ask-open.ts.
+    const where = look && !platform.keyboardHold ? userWindowsNow(wsSeenRef ?? wsRef) : null;
     // The window it opens over (Ember's settings included): the handle's menu gives focus back there.
-    askOver = look ? focusNow().id : over;
+    askOver = !look ? over : where ? noteFocus(where.focus).id : focusNow().id;
     // Where a request goes when it names no computer: the picker's choice, as a chip (§8.1).
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
     askAsked = asked;
@@ -948,8 +955,7 @@ function start(): void {
     // and the screen is read after it, of the window the user was in (ask-open.ts).
     openAskInOrder({
       holding: !!platform.keyboardHold, look,
-      // Named as Perception names it: on Windows a WSLg app's window by its Linux app's name, which the read's checks need.
-      activeWindow: () => (wsSeenRef ?? wsRef)?.activeWindow() ?? null,
+      activeWindow: () => where?.active ?? null,
       read: active => captureContext(active),
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {

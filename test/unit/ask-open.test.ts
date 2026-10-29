@@ -8,7 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { openAskInOrder } from "../../app/main/ask-open";
+import { openAskInOrder, userWindowsNow } from "../../app/main/ask-open";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, X11Window } from "../../app/main/platform/types";
@@ -59,6 +59,20 @@ describe("the ask box's opening from the keyboard (review #78)", () => {
     expect(openAsk.match(/captureContext\(/g)).toHaveLength(1);
     // The quick look reads the window taken before the box opened, when there is one.
     expect(MAIN).toContain("Promise.all([perception.quickContext(taken), selected])");
+  });
+});
+
+describe("the windows taken just before the box shows (review #78)", () => {
+  it("are taken in one look where the window system can (macOS), else one after the other, and are none without one", () => {
+    const calls: string[] = [];
+    const TERM: W = { id: 3, title: "Terminal" };
+    const pair = { focusWindow: () => (calls.push("focus"), TERM), activeWindow: () => (calls.push("active"), NOTES) };
+    expect(userWindowsNow<W>(pair)).toEqual({ focus: TERM, active: NOTES });
+    expect(calls).toEqual(["focus", "active"]);
+    calls.length = 0;
+    expect(userWindowsNow<W>({ ...pair, focusAndActive: () => (calls.push("both"), { focus: TERM, active: NOTES }) })).toEqual({ focus: TERM, active: NOTES });
+    expect(calls).toEqual(["both"]);
+    expect(userWindowsNow<W>(null)).toEqual({ focus: null, active: null });
   });
 });
 
@@ -148,6 +162,10 @@ describe("the user's window on Windows with WSLg, as Perception names it (review
     expect(MAIN).toContain("const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);\n    wsSeenRef = wsSeen;\n");
     expect(MAIN).toMatch(/sidecar: seenBy, x11: wsSeen,/);
     const openAsk = /const openAsk = [\s\S]*?\n {2}};\n/.exec(MAIN)?.[0] ?? "";
-    expect(openAsk).toContain("activeWindow: () => (wsSeenRef ?? wsRef)?.activeWindow() ?? null,");
+    // Where Ember can't hold the keyboard, both windows are taken from it before the box shows, in one look where it can.
+    expect(openAsk).toContain("const where = look && !platform.keyboardHold ? userWindowsNow(wsSeenRef ?? wsRef) : null;");
+    expect(openAsk).toContain("askOver = !look ? over : where ? noteFocus(where.focus).id : focusNow().id;");
+    expect(openAsk).toContain("activeWindow: () => where?.active ?? null,");
+    expect(openAsk).not.toMatch(/wsRef\?\.activeWindow\(\)/);
   });
 });

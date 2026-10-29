@@ -96,6 +96,13 @@ export interface WindowSystem extends Omit<X11, "capture"> {
    * alone decides.
    */
   systemDialogReason?(): string | null;
+  /**
+   * (Added by the release fixes; optional.) focusWindow() and activeWindow() together, from one look at the windows:
+   * macOS copies CGWindowList once and asks the frontmost app's AX once, where the two calls do each twice. What the ask
+   * box takes just before it shows, where every millisecond before it has the keyboard can lose a letter (review #78).
+   * Absent (Linux, Windows): callers make the two calls. A wrapper that renames windows renames both.
+   */
+  focusAndActive?(): { focus: ReturnType<X11["focusWindow"]>; active: ReturnType<X11["activeWindow"]> };
 }
 
 /**

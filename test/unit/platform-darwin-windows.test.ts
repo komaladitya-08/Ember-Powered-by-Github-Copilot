@@ -217,6 +217,63 @@ describe("the active and focused windows on macOS", () => {
   });
 });
 
+describe("the focused and active windows together on macOS (review #78)", () => {
+  /** setup() with CGWindowList's copies counted ("list") among the calls. */
+  function counted(deps: Partial<DarwinWindowsDeps> = {}) {
+    const { s, desktop } = fakeDesktop();
+    const ws = createDarwinWindows({ ...desktop, windows: () => (s.calls.push("list"), s.windows) }, { screen, ...deps }, { ownPid: OWN });
+    return { s, ws };
+  }
+
+  it("answers both from one window list and one AX round trip, as the two calls answer them with two each", () => {
+    const { s, ws } = counted();
+    const both = ws.focusAndActive();
+    expect(s.calls).toEqual(["list", "frontmost", "focused 500"]);
+    s.calls.length = 0;
+    expect(both).toEqual({ focus: ws.focusWindow(), active: ws.activeWindow() });
+    expect(s.calls).toEqual(["list", "frontmost", "focused 500", "list", "frontmost", "focused 500"]);
+    expect(both.focus).toMatchObject({ id: 103, title: "Other" });
+    expect(both.active).toMatchObject({ id: 101, wmClass: "TextEdit" });
+  });
+
+  it("names the active window's title from that one AX answer when it is the focused one", () => {
+    const { s, ws } = counted();
+    s.focused.set(500, { id: 101, title: "notes.txt", frame: null });
+    expect(ws.focusAndActive()).toEqual({ focus: ws.focusWindow(), active: ws.activeWindow() });
+    expect(ws.focusAndActive().active).toMatchObject({ id: 101, title: "notes.txt" });
+  });
+
+  it("asks AX nothing for Ember's own focused panel, and only the frontmost app's for the active window's missing title", () => {
+    const { s, ws } = counted({ focusedOwnWindow: () => ownWindow("window:950:0") });
+    const both = ws.focusAndActive();
+    expect(both.focus).toMatchObject({ id: 950, pid: OWN });
+    expect(both.active?.id).toBe(101);
+    expect(s.calls).toEqual(["list", "frontmost", "focused 500"]);
+  });
+
+  it("needs no AX at all when CGWindowList has the active window's title, nor when Ember is frontmost", () => {
+    const { s, ws } = counted({ focusedOwnWindow: () => ownWindow("window:950:0") });
+    s.frontmost = 600;
+    expect(ws.focusAndActive().active).toMatchObject({ id: 104, title: "Downloads" });
+    expect(s.calls).toEqual(["list", "frontmost"]);
+    s.calls.length = 0;
+    s.frontmost = OWN;
+    const ember = ws.focusAndActive();
+    expect([ember.focus?.id, ember.active?.id]).toEqual([950, 950]);
+    expect(s.calls).toEqual(["list", "frontmost"]);
+  });
+
+  it("matches the two calls when AX can't tell, when the app shows no window, and gives nothing after close()", () => {
+    const { s, ws } = counted();
+    for (const frontmost of [null, 999]) {
+      s.frontmost = frontmost;
+      expect(ws.focusAndActive()).toEqual({ focus: ws.focusWindow(), active: ws.activeWindow() });
+    }
+    ws.close();
+    expect(ws.focusAndActive()).toEqual({ focus: null, active: null });
+  });
+});
+
 describe("the apps' open windows on macOS", () => {
   it("lists normal app windows with AX titles where CGWindowList has none, one AX read per app", () => {
     const { s, ws } = setup();
