@@ -6,7 +6,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, KEYS, SHORTCUTS, heldShortcuts, type OS, type ShortcutId } from "../../app/shared/shortcuts";
 import { canonicalKeys, isSystemKey } from "../../app/main/policy/policy";
@@ -239,6 +241,14 @@ describe("the greeting names the chords Ember holds (D-45b)", () => {
   });
 });
 
+/** A desktop entry's groups ("[Desktop Entry]", "[Desktop Action Ask]"), each its keys and values. */
+function desktopGroups(entry: string): Record<string, Record<string, string>> {
+  return Object.fromEntries(entry.split(/^(?=\[)/m).filter(g => g.trim()).map(g => {
+    const [head, ...lines] = g.trim().split("\n");
+    return [head, Object.fromEntries(lines.filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))];
+  }));
+}
+
 /** main.ts without its comments, every run of white space made one space (it can't be loaded in a unit test). */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
   .replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1").replace(/\s+/g, " ");
@@ -340,11 +350,7 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
   });
 
   it("gives the Linux desktop entry an Ask Ember action that starts Ember with --ask (RPM and AppImage)", () => {
-    const entry = fs.readFileSync(path.resolve("packaging/ember.desktop"), "utf8");
-    const groups = Object.fromEntries(entry.split(/^(?=\[)/m).map(g => {
-      const [head, ...lines] = g.trim().split("\n");
-      return [head, Object.fromEntries(lines.filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))];
-    }));
+    const groups = desktopGroups(fs.readFileSync(path.resolve("packaging/ember.desktop"), "utf8"));
     expect(Object.keys(groups)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
     expect(groups["[Desktop Entry]"]).toMatchObject({ Exec: "ember --show-settings", Actions: "Ask;" });
     expect(groups["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: "ember --ask" });
@@ -356,6 +362,23 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     // The RPM installs the same file, and its launcher passes the argument on.
     expect(fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8")).toContain("install -Dm644 ember.desktop %{buildroot}%{_datadir}/applications/ember.desktop");
     expect(fs.readFileSync(path.resolve("packaging/ember"), "utf8")).toMatch(/exec "\$APP" --ozone-platform=x11 "\$@"\n?$/);
+  });
+
+  it.skipIf(process.platform === "win32")("gives the development entry the same Ask Ember action, and leaves it out of the login entry (round 3's shortcuts left)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ember-dev-entry-"));
+    const r = spawnSync("bash", [path.resolve("scripts/install-desktop-entry.sh"), "--autostart"], { encoding: "utf8", env: { ...process.env, HOME: home } });
+    expect(r.status, r.stderr).toBe(0);
+    const ember = `"${path.resolve("node_modules/.bin/electron")}" "${path.resolve(".")}"`;
+    const apps = desktopGroups(fs.readFileSync(path.join(home, ".local/share/applications/ember-dev.desktop"), "utf8"));
+    expect(Object.keys(apps)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
+    expect(apps["[Desktop Entry]"]).toMatchObject({ Name: "Ember (dev)", Exec: `${ember} --show-settings`, Actions: "Ask;" });
+    expect(apps["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: `${ember} --ask` });
+    // Started at login: the entry alone, with the autostart switch in its own group.
+    const login = desktopGroups(fs.readFileSync(path.join(home, ".config/autostart/ember-dev.desktop"), "utf8"));
+    expect(Object.keys(login)).toEqual(["[Desktop Entry]"]);
+    expect(login["[Desktop Entry]"]).toMatchObject({ Exec: `${ember} --autostart`, "X-GNOME-Autostart-enabled": "true" });
+    expect(login["[Desktop Entry]"]).not.toHaveProperty("Actions");
+    fs.rmSync(home, { recursive: true, force: true });
   });
 
   it("opens the ask box for a second start's --ask on the first start's terms: set up, in a session Ember can use", () => {
