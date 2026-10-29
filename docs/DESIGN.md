@@ -74,10 +74,11 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid; hierarchy
   comes from size, weight and label colour, never italics. Sentence case; no tracked capitals or
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
-  scales the type tokens, each page's own px sizes and its buttons' heights (`html[data-text-size]`,
-  set by main's `page-prefs.ts`) in Settings, the bubble, task cards, the handle and the command and
-  prompt windows. The handle's pill and the command and prompt windows grow by the same scale (the pill
-  wider; the windows as they open, and at once when they are already open; inside the work area).
+  scales the type tokens, each page's own px sizes and the heights of its buttons, pop-up buttons and
+  text fields (`html[data-text-size]`, set by main's `page-prefs.ts`) in Settings, the bubble, task
+  cards, the handle and the command and prompt windows. The handle's pill and the command and prompt
+  windows grow by the same scale (the pill wider; the windows as they open, and at once when they
+  are already open; inside the work area).
   The command window's terminal draws its type at 13, 15 or 17 px, at once when it changes: a run
   keeps its columns and rows, its cells grow, and new runs start at what fits the window. The Ask
   box and the desk's bar keep their size (their windows can't grow with it).

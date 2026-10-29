@@ -108,16 +108,26 @@ function unscaled(css: string): string[] {
 }
 
 /**
- * The selectors in `css` of the buttons (and tabs) whose min-height is a px length the text size doesn't scale, the
- * rules inside its media queries included: a button that keeps its height while its words grow is cramped round them.
+ * The selectors in `css` of the controls that hold words (buttons, tabs, pop-up buttons and text fields) whose height or
+ * min-height is a px length the text size doesn't scale, the rules inside its media queries included: a control that
+ * keeps its height while its words grow is cramped round them, or cuts them. `ids`: the page's own controls by id
+ * (controlIds). Switches, check boxes, sliders and pseudo-elements hold no words.
  */
-function fixedButtonHeights(css: string): string[] {
+function fixedControlHeights(css: string, ids: string[] = []): string[] {
   const plain = css.replace(/\/\*[\s\S]*?\*\//g, "").replace(/@(media|supports)[^{]*\{/g, "");
-  const button = /(^|[\s>+~(])button\b|\.(btn|tab|start)(?![\w-])/;
+  const byId = ids.map(id => `|#${id}(?![\\w-])`).join("");
+  const control = new RegExp(`(^|[\\s>+~(])(button|select|textarea)(?![\\w-])|(^|[\\s>+~(])input(?![\\w-])(?!\\[type="(checkbox|radio|range|hidden)"\\])|\\.(btn|tab|start)(?![\\w-])${byId}`);
   return [...plain.matchAll(/([^{}]+)\{([^}]*)\}/g)]
-    .filter(([, , d]) => /(^|[;\s])min-height: \d+(\.\d+)?px/.test(d))
+    .filter(([, , d]) => /(^|[;\s])(min-)?height: \d+(\.\d+)?px/.test(d))
     .flatMap(([, sel]) => sel.trim().split(/,(?![^(]*\))/).map(x => x.trim()))
-    .filter(sel => button.test(sel));
+    .filter(sel => !sel.includes("::") && control.test(sel));
+}
+
+/** The ids of a page's controls that hold words, from its index.html: buttons, pop-ups, text areas and text fields. */
+function controlIds(html: string): string[] {
+  return [...html.matchAll(/<(button|select|textarea|input)\b([^>]*)>/g)]
+    .filter(([, tag, attrs]) => tag !== "input" || !/\btype="(checkbox|radio|range|hidden)"/.test(attrs))
+    .flatMap(([, , attrs]) => /\bid="([\w-]+)"/.exec(attrs)?.[1] ?? []);
 }
 
 describe("the text size", () => {
@@ -141,24 +151,36 @@ describe("the text size", () => {
     for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);
   });
 
-  it("grows the card buttons' height with their words, the bubble's and the task cards' too, the same px at the default size", async () => {
+  it("grows the height of every control with words with them: card buttons, the bubble's and the task cards', Settings' pop-ups and fields; the same px at the default size", async () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
-    const sheets: [string, string][] = [
-      ["shared", shared], ["bubble", BUBBLE_CSS],
-      ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
+    const sheets: [string, string, string[]][] = [
+      ["shared", shared, []], ["bubble", BUBBLE_CSS, []],
+      ...["home", "command", "prompt", "overlay", "handle"].map(p => [p, read(`app/renderer/${p}/styles.css`), controlIds(read(`app/renderer/${p}/index.html`))] as [string, string, string[]]),
     ];
-    for (const [name, css] of sheets) expect(fixedButtonHeights(css), name).toEqual([]);
-    // The usual heights are kept at the default size (--text-scale 1): 28 px buttons, 24 px small ones, a 36 px Start.
-    const minHeight = (css: string, sel: string) => new RegExp(`(?:^|\\})\\s*${sel.replace(/[.()[\]]/g, "\\$&")} \\{[^}]*min-height: ([^;]+);`, "m").exec(css)?.[1];
+    for (const [name, css, ids] of sheets) expect(fixedControlHeights(css, ids), name).toEqual([]);
+    // The usual heights are kept at the default size (--text-scale 1): 28 px buttons, 24 px small ones, a 36 px Start,
+    // 28 px pop-up buttons and fields in Settings, the password card's 30 px field.
+    const rule = (prop: string) => (css: string, sel: string) => new RegExp(`(?:^|\\})\\s*${sel.replace(/[.()[\]]/g, "\\$&")} \\{[^}]*(?:^|[;\\s])${prop}: ([^;]+);`, "m").exec(css)?.[1];
+    const minHeight = rule("min-height"), height = rule("height");
+    const home = read("app/renderer/home/styles.css");
     expect(minHeight(shared, ".btn")).toBe("calc(28px * var(--text-scale))");
     expect(minHeight(shared, ".btn.small")).toBe("calc(24px * var(--text-scale))");
     expect(minHeight(BUBBLE_CSS, ".eb-actions button")).toBe("calc(28px * var(--text-scale, 1))");
     expect(minHeight(read("app/renderer/overlay/styles.css"), ".task-actions button")).toBe("calc(24px * var(--text-scale))");
     expect(minHeight(read("app/renderer/overlay/styles.css"), ".task-actions button.stop")).toBe("calc(28px * var(--text-scale))");
-    expect(minHeight(read("app/renderer/home/styles.css"), ".start")).toBe("calc(36px * var(--text-scale))");
-    // The guard sees them wherever they are.
-    expect(fixedButtonHeights(".btn { min-height: 28px; } @media (hover: hover) { .x button { min-height: 20px; } } .tab-where { min-height: 9px; }")).toEqual([".btn", ".x button"]);
-    expect(fixedButtonHeights(".row { min-height: 48px; } .btn { min-height: calc(28px * var(--text-scale)); }")).toEqual([]);
+    expect(minHeight(home, ".start")).toBe("calc(36px * var(--text-scale))");
+    expect(height(home, ".models select, .choice select, #text-size")).toBe("calc(28px * var(--text-scale))");
+    expect(height(home, ".add-row input")).toBe("calc(28px * var(--text-scale))");
+    expect(minHeight(read("app/renderer/prompt/styles.css"), ".form input")).toBe("calc(30px * var(--text-scale))");
+    // The guard sees them wherever they are, by element, class or the page's ids, and leaves what holds no words.
+    expect(fixedControlHeights(".btn { min-height: 28px; } @media (hover: hover) { .x button { min-height: 20px; } } .tab-where { min-height: 9px; }")).toEqual([".btn", ".x button"]);
+    expect(fixedControlHeights(".row { min-height: 48px; } .btn { min-height: calc(28px * var(--text-scale)); }")).toEqual([]);
+    expect(fixedControlHeights(".m select, #size { height: 28px; } .add input { height: 28px; } .f textarea { min-height: 40px; }", ["size"]))
+      .toEqual([".m select", "#size", ".add input", ".f textarea"]);
+    expect(fixedControlHeights('input[type="checkbox"] { height: 20px; } .p input[type="range"] { height: 22px; } .p input[type="range"]::-webkit-slider-thumb { height: 22px; } .tab::before { height: 12px; } #face { height: 46px; } .r { line-height: 20px; max-height: 9px; }', ["size"]))
+      .toEqual([]);
+    expect(controlIds('<select id="text-size"></select><input id="host-add" type="text"><input type="checkbox" id="agree"><button id="go">Go</button><div id="buddy"></div>'))
+      .toEqual(["text-size", "host-add", "go"]);
   });
 
   it("keeps as many lines in the bubble at every size: its heights are counted in lines, not px (review #57)", async () => {
