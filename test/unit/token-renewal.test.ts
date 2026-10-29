@@ -384,8 +384,10 @@ describe("keeping Ember's own sign-in alive", () => {
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-grant-")), "github-token.bin");
     const syncReads = vi.fn((b: Buffer) => box.decryptString(b));
     const syncSeals = vi.fn((s: string) => box.encryptString(s));
+    // Whether the keyring is there, asked on the main thread: on macOS that fetches the keychain's key, and can prompt.
+    const syncCheck = vi.fn(() => true);
     const mac: SecretBox = {
-      ...box, decryptString: syncReads, encryptString: syncSeals,
+      ...box, decryptString: syncReads, encryptString: syncSeals, isEncryptionAvailable: syncCheck, isAsyncEncryptionAvailable: async () => true,
       decryptStringAsync: async b => ({ result: box.decryptString(b), shouldReEncrypt: false }), encryptStringAsync: async s => box.encryptString(s),
     };
     new TokenStore(file, box).saveResult({ token: OLD, refreshToken: REFRESH, expiresAt: T0 + 8 * HOUR, refreshExpiresAt: T0 + 4000 * HOUR, clientId: CLIENT });
@@ -405,6 +407,7 @@ describe("keeping Ember's own sign-in alive", () => {
     expect(syncReads).not.toHaveBeenCalled();
     // Both renewals were saved, sealed off the main thread too (follow-up to review #241).
     expect(syncSeals).not.toHaveBeenCalled();
+    expect(syncCheck).not.toHaveBeenCalled();
     expect(await new TokenStore(file, box).load()).toBe(NEW);
     keeper.stop();
   });

@@ -210,6 +210,34 @@ describe("TokenStore.saveAsync on macOS, off the main thread (follow-up to revie
     expect(await store.load()).toBe("gho_abc");
   });
 
+  it("asks the keyring nothing on the main thread, not even whether it is there (isEncryptionAvailable fetches the keychain's key)", async () => {
+    const f = file();
+    const onMainThread = vi.fn((): never => { throw new Error("asked the keyring on the main thread"); });
+    const mac = box({
+      isEncryptionAvailable: onMainThread, encryptString: onMainThread, decryptString: onMainThread,
+      isAsyncEncryptionAvailable: async () => true, encryptStringAsync: sealing,
+      decryptStringAsync: async b => ({ result: b.toString().replace(/^sealed:/, ""), shouldReEncrypt: false }),
+    });
+    expect(await new TokenStore(f, mac, { asyncKeyring: true }).saveAsync("gho_abc")).toBe("kept");
+    // Read back from the file itself (a new store holds nothing in memory).
+    expect(await new TokenStore(f, mac, { asyncKeyring: true }).load()).toBe("gho_abc");
+    expect(onMainThread).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing, and keeps the sign-in for this run, when the keyring can't seal off the main thread or there is none (basic_text)", async () => {
+    const encryptStringAsync = vi.fn(sealing);
+    const f = file();
+    const store = new TokenStore(f, box({ isAsyncEncryptionAvailable: async () => false, encryptStringAsync }), { asyncKeyring: true });
+    expect(await store.saveAsync("gho_abc")).toBe("no-keyring");
+    expect(fs.existsSync(f)).toBe(false);
+    expect(await store.load()).toBe("gho_abc");
+    const asked = new TokenStore(file(), box({ isAsyncEncryptionAvailable: async () => { throw new Error("no keychain"); }, encryptStringAsync }), { asyncKeyring: true });
+    expect(await asked.saveAsync("gho_abc")).toBe("no-keyring");
+    const plain = new TokenStore(file(), box({ getSelectedStorageBackend: () => "basic_text", isAsyncEncryptionAvailable: async () => true, encryptStringAsync }), { asyncKeyring: true });
+    expect(await plain.saveAsync("gho_abc")).toBe("no-keyring");
+    expect(encryptStringAsync).not.toHaveBeenCalled();
+  });
+
   it("saves as before where it isn't asked to (Linux, Windows) or the keyring has no asynchronous write", async () => {
     const f = file();
     const neverAsync = box({ encryptStringAsync: async () => { throw new Error("asked the asynchronous write"); } });

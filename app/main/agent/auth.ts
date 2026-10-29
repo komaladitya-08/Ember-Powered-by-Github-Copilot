@@ -25,6 +25,11 @@ export interface SecretBox {
   decryptStringAsync?(b: Buffer): Promise<{ result: string; shouldReEncrypt: boolean }>;
   /** Electron's asynchronous write, the same way (Electron 44 has both). */
   encryptStringAsync?(s: string): Promise<Buffer>;
+  /**
+   * Whether the asynchronous write and read work, asked off the main process's thread too: on macOS the synchronous
+   * isEncryptionAvailable fetches the keychain's key on it, which can prompt.
+   */
+  isAsyncEncryptionAvailable?(): Promise<boolean>;
   /** "basic_text" means no keyring: nothing secret should be written to disk. */
   getSelectedStorageBackend?(): string;
 }
@@ -65,6 +70,16 @@ export class TokenStore {
   /** Whether a token can be kept across restarts on this machine. */
   canPersist(): boolean {
     return this.box.isEncryptionAvailable() && this.box.getSelectedStorageBackend?.() !== "basic_text";
+  }
+
+  /**
+   * canPersist, asking the keyring only off the main process's thread (saveAsync): isAsyncEncryptionAvailable, never
+   * isEncryptionAvailable (macOS: it fetches the keychain's key on the main thread, so a keychain prompt would hold Ember).
+   * A keyring without the question is tried: a refused encryptStringAsync means none.
+   */
+  private async canPersistAsync(): Promise<boolean> {
+    if (this.box.getSelectedStorageBackend?.() === "basic_text") return false;
+    return (await this.box.isAsyncEncryptionAvailable?.()) ?? true;
   }
 
   /** Is a sign-in saved (whether or not the keyring will open it)? Reads no secret. */
@@ -167,9 +182,9 @@ export class TokenStore {
 
   /**
    * saveResult, sealed off the main process's thread where the keyring is asked that way (asyncKeyring, macOS:
-   * encryptStringAsync, so a keychain prompt holds nothing up; the follow-up to review #241); elsewhere saveResult
-   * itself. Every read meanwhile gives this sign-in. Saves are written in the order asked; a sign-out (clear) while the
-   * keyring is asked wins, and nothing is written ("write-failed"). Never rejects.
+   * isAsyncEncryptionAvailable and encryptStringAsync, so a keychain prompt holds nothing up; the follow-up to review
+   * #241); elsewhere saveResult itself. Every read meanwhile gives this sign-in. Saves are written in the order asked; a
+   * sign-out (clear) while the keyring is asked wins, and nothing is written ("write-failed"). Never rejects.
    */
   saveAsync(token: string | Grant): Promise<SaveResult> {
     const encrypt = this.box.encryptStringAsync?.bind(this.box);
@@ -179,11 +194,9 @@ export class TokenStore {
     this.held = grant;
     const run = this.saving.then(async (): Promise<SaveResult> => {
       let sealed: Buffer | null = null;
-      if (this.canPersist()) {
-        try {
-          sealed = await encrypt(sealedText(token));
-        } catch { /* the keyring refused: "no-keyring" */ }
-      }
+      try {
+        if (await this.canPersistAsync()) sealed = await encrypt(sealedText(token));
+      } catch { /* no keyring, or it refused: "no-keyring" */ }
       if (epoch !== this.epoch) return "write-failed";
       const kept = sealed ? this.write(sealed) : "no-keyring";
       // Read from the file from now on, unless a newer sign-in is being saved meanwhile.
