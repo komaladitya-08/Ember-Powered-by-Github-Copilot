@@ -137,6 +137,10 @@ export interface FakeOptions {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const inside = (b: Rect | null | undefined, x: number, y: number) => !!b && b.x <= x && x < b.x + b.width && b.y <= y && y < b.y + b.height;
 const empty = (b: Rect | null | undefined) => !b || b.width <= 0 || b.height <= 0;
+/** The UI Automation bridge's long level (PROTOCOL.md, snapshot): past this many children with theirs... */
+const LONG_LEVEL = 400;
+/** ...only this many of the offscreen children are listed, the rest cut "offscreen". */
+const LISTED_OFFSCREEN = 50;
 
 /** The fake desktop as an AxProvider. */
 export class FakeProvider implements AxProvider {
@@ -245,7 +249,8 @@ export class FakeProvider implements AxProvider {
     let busy = false;
     const cutShort = (why: string) => { if (!cut.includes(why)) cut.push(why); };
     // As the bridge walks (PROTOCOL.md, snapshot): what shows first, nothing inside an offscreen element (but a combo
-    // box's closed drop-down), and an offscreen element left out past maxNodes is cut "offscreen", not "nodes".
+    // box's closed drop-down), and an offscreen element left out past maxNodes, or past a long level's first 50 (UI
+    // Automation's only), is cut "offscreen", not "nodes".
     const visit = async (el: FakeElement, parent: number, depth: number, inCombo: boolean): Promise<boolean> => {
       if (el.spec.offscreen && empty(el.spec.bounds)) return true; // the bridge leaves these out, with what they hold
       const offscreen = depth > 0 && !!el.spec.offscreen;
@@ -264,7 +269,12 @@ export class FakeProvider implements AxProvider {
       nodes.push(this.raw(el, parent, depth));
       const combo = inCombo || el.spec.role === "ComboBox" || el.spec.role === "AXComboBox";
       if (offscreen && !combo) return true;
-      const kids = [...el.children.filter(c => !c.spec.offscreen), ...el.children.filter(c => c.spec.offscreen)];
+      let hidden = el.children.filter(c => c.spec.offscreen);
+      if (this.vocabulary === "uia" && !combo && el.children.reduce((n, c) => n + 1 + c.children.length, 0) > LONG_LEVEL) {
+        const listed = hidden.filter(c => !empty(c.spec.bounds));
+        if (listed.length > LISTED_OFFSCREEN) { hidden = listed.slice(0, LISTED_OFFSCREEN); cutShort("offscreen"); }
+      }
+      const kids = [...el.children.filter(c => !c.spec.offscreen), ...hidden];
       for (const c of kids) if (!await visit(c, index, depth + 1, combo)) return false;
       return true;
     };

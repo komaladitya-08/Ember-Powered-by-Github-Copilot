@@ -42,6 +42,20 @@ describe("a long page scrolled down (review #1)", () => {
     });
   }
 
+  it("is handed only the first 50 of a long level's offscreen children, as the bridge reads one, with the rest cut \"offscreen\"", async () => {
+    // A Win32 list's rows answer each property with a message to the app: the bridge reads a long level's offscreen
+    // rows slim and lists 50 of them (PROTOCOL.md, snapshot).
+    const { fake } = harness([page([...above(3000), ...visible(25)])]);
+    const snap = await fake.snapshot((await fake.topWindows())[0]!.handle, { maxDepth: 64, maxNodes: 1600, deadlineMs: 2000 });
+    expect(snap.nodes.filter(n => n.name?.startsWith("Visible link"))).toHaveLength(25);
+    expect(snap.nodes.filter(n => n.name?.startsWith("Old link"))).toHaveLength(50);
+    expect(snap.cut).toEqual(["offscreen"]);
+    // AX has no such limit.
+    const ax = harness([page([...above(3000), ...visible(25)])], {}, "ax").fake;
+    const all = await ax.snapshot((await ax.topWindows())[0]!.handle, { maxDepth: 64, maxNodes: 4000, deadlineMs: 2000 });
+    expect(all.nodes.filter(n => n.name?.startsWith("Old link"))).toHaveLength(3000);
+  });
+
   it("reads nothing inside an offscreen section, so a page's sections above the viewport cost one element each", async () => {
     const sections = Array.from({ length: 40 }, (_, s): FakeElementSpec => ({
       role: "Group", name: `Section ${s}`, offscreen: true, bounds: at(0, -5000 + s * 100, 800, 90),
