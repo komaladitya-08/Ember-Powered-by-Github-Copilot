@@ -7,12 +7,15 @@
  */
 
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { openAskInOrder } from "../../app/main/ask-open";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, X11Window } from "../../app/main/platform/types";
 import type { Logger } from "../../app/main/logger";
+import { wrapWindowsWith } from "../../app/main/wsl/routed-windows";
+import { dropRouter, routerFor } from "../../app/main/wsl/router";
+import { geditScene, harness, quiet, stacked } from "./wsl-fakes";
 
 type W = { id: number; title: string };
 const NOTES: W = { id: 7, title: "notes.txt" };
@@ -89,5 +92,62 @@ describe("Perception's quick look (review #78)", () => {
     // Ember's own window is never read.
     expect(await perception.quickContext()).toBeNull();
     expect(reads).toEqual([]);
+  });
+});
+
+describe("the user's window on Windows with WSLg, as Perception names it (review #78)", () => {
+  const made: ReturnType<typeof harness>[] = [];
+  afterEach(() => { for (const h of made.splice(0)) dropRouter(routerFor(h.options)); });
+  const OWN = 999;
+
+  /**
+   * gedit in Ubuntu (RAIL HWND 11 of msrdc 4242, its title naming only the file), identified by the router, and Ember's
+   * box (HWND 50) in front of it once it is up. The user has just put gedit on the never-look list: Perception has it, the
+   * router's last look (up to 2 s old) was before, so it still names the window (an app on the list at its look stays
+   * "msrdc"). `seen`: the window system main hands Perception (WSLg windows renamed); `raw`: the backend's own.
+   */
+  async function geditUnderTheBox() {
+    const h = harness();
+    made.push(h);
+    h.wsl.add("Ubuntu");
+    const s = geditScene(h, { title: "notes.txt (Ubuntu)" });
+    h.setups.set("Ubuntu", x => { x.frames = [{ ...s.frame, name: "notes.txt" }]; });
+    h.windows.stack.push(stacked(50, OWN, "Ask Ember", "ember", { x: 600, y: 900, width: 560, height: 92 }));
+    const seen = wrapWindowsWith(h.windows.ws, h.options, h.deps);
+    await routerFor(h.options).refresh();
+    // A sidecar that names no window: only the window system's name for it can tell it is on the never-look list.
+    const sidecar = { readWindow: async () => ({ window: null, nodes: [], ms: 1 }) } as unknown as AtspiSidecar;
+    const perception = new Perception({ sidecar, x11: seen, log: quiet, neverLook: () => ["gedit"], screenBounds: () => ({ x: 0, y: 0, width: 1920, height: 1080 }), ownPid: OWN });
+    return { h, seen, raw: h.windows.ws, perception };
+  }
+  const PRIVATE = /private window/;
+
+  it("is private by its Linux app's name when taken from the window system Perception reads, as the read before the box was", async () => {
+    const { h, seen, perception } = await geditUnderTheBox();
+    h.windows.foreground = 11;
+    // The base's order: read before the box, of the window active then.
+    expect((await perception.quickContext())?.text).toMatch(PRIVATE);
+    // The box's order: the window taken just before the box, read once it is up (Windows' active window is the box then).
+    const taken = seen.activeWindow();
+    expect(taken?.wmClass).toBe("wsl:Ubuntu:gedit");
+    h.windows.foreground = 50;
+    expect((await perception.quickContext(taken))?.text).toMatch(PRIVATE);
+  });
+
+  it("would not be from the backend's own window system: every WSLg window is msrdc there", async () => {
+    const { h, raw, perception } = await geditUnderTheBox();
+    h.windows.foreground = 11;
+    const taken = raw.activeWindow();
+    expect(taken?.wmClass).toBe("msrdc");
+    h.windows.foreground = 50;
+    expect((await perception.quickContext(taken))?.text).not.toMatch(PRIVATE);
+  });
+
+  it("is taken by main from that window system (Perception's x11), not the backend's", () => {
+    const MAIN = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(MAIN).toContain("const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);\n    wsSeenRef = wsSeen;\n");
+    expect(MAIN).toMatch(/sidecar: seenBy, x11: wsSeen,/);
+    const openAsk = /const openAsk = [\s\S]*?\n {2}};\n/.exec(MAIN)?.[0] ?? "";
+    expect(openAsk).toContain("activeWindow: () => (wsSeenRef ?? wsRef)?.activeWindow() ?? null,");
   });
 });

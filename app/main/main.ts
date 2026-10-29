@@ -948,7 +948,8 @@ function start(): void {
     // and the screen is read after it, of the window the user was in (ask-open.ts).
     openAskInOrder({
       holding: !!platform.keyboardHold, look,
-      activeWindow: () => wsRef?.activeWindow() ?? null,
+      // Named as Perception names it: on Windows a WSLg app's window by its Linux app's name, which the read's checks need.
+      activeWindow: () => (wsSeenRef ?? wsRef)?.activeWindow() ?? null,
       read: active => captureContext(active),
       // The first few openings where Ember can't hold the letters typed meanwhile say to wait for the box (review #78).
       show: () => askWindow.show(overlay ? { ...overlay.position, size: settings.get().size } : null, {
@@ -1018,6 +1019,12 @@ function start(): void {
   /** The window system and input, once opened after ready (null: none on this desktop). */
   let inputRef: Input | null = null;
   let wsRef: WindowSystem | null = null;
+  /**
+   * The window system as Perception reads it (on Windows, identified WSLg windows renamed "wsl:<distro>:<app>"; elsewhere
+   * wsRef itself), once Perception is made: the window the ask box reads after it is up is named from it, so the read's
+   * never-look and security checks see the Linux app's name, as the read before the box did (review #78).
+   */
+  let wsSeenRef: WindowSystem | null = null;
   /** The accessibility helper's client, once made after ready. */
   let sidecarRef: AtspiSidecar | null = null;
   /** Shows the borrow's state (status line, click-through); set once the hands are ready. */
@@ -1553,6 +1560,7 @@ function start(): void {
     const wslOptions = { os: platform.os, log: log.child("wsl"), ws: () => wsRef, wsl: () => targets?.wsl ?? null, settings };
     const seenBy = wrapForWsl(sidecar, wslOptions);
     const wsSeen = ws && wrapWindowsForWsl(ws, wslOptions);
+    wsSeenRef = wsSeen;
     // The host's status for the setup checks (why it couldn't start, PowerShell's language mode), asked once, after
     // the cold start (and later still at login, so the probe stays out of the way of everything else starting).
     if (launch) {
