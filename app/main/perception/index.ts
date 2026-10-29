@@ -15,7 +15,7 @@ import { isSecurityWindow as linuxSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
-import { scaleBounds, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
+import { scaleBounds, type AxNode, type AxWindow, type Bounds, type FocusBefore, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
 import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
 import type { OS, PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
@@ -143,14 +143,14 @@ export class Perception {
 
   /**
    * The focused window's accessibility tree (empty when blocked or unreadable). `active`: the window the user is in, as
-   * the caller took it (undefined: asked now).
+   * the caller took it (undefined: asked now); `before`: what had the keyboard in it then (FocusBefore).
    */
-  async focused(stack?: StackedWindow[] | null, active?: ReturnType<PerceptionWindows["activeWindow"]>): Promise<Seen> {
+  async focused(stack?: StackedWindow[] | null, active?: ReturnType<PerceptionWindows["activeWindow"]>, before?: FocusBefore): Promise<Seen> {
     const x11Window = active !== undefined ? active : this.o.x11?.activeWindow() ?? null;
     if (x11Window && x11Window.pid === this.ownPid) {
       return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, ember: true };
     }
-    return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window, stack);
+    return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window, stack, before ? { focusBefore: before } : {});
   }
 
   /** Ember's own process: its windows (the ask box, settings, the overlay) are never read or listed. */
@@ -168,8 +168,9 @@ export class Perception {
    * X11 windows when the caller has them (undefined: looked up when needed). `keep: false`: a quick
    * look whose ids aren't acted on, which keeps the ids of the reads that are (AtspiSidecar.readWindow). `cells`: the
    * spreadsheet cells ("C62") the cell with the keyboard is expected in, asked first when a read doesn't come to it.
+   * `focusBefore`: the ask box's quick look, where the box has the keyboard by now (FocusBefore).
    */
-  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean; cells?: string[] } = {}): Promise<Seen> {
+  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean; cells?: string[]; focusBefore?: FocusBefore } = {}): Promise<Seen> {
     const t0 = Date.now();
     const params = target.pid != null && target.path ? { pid: target.pid, path: target.path }
       : target.pid != null || target.title ? { ...(target.pid != null ? { pid: target.pid } : {}), ...(target.title ? { title: target.title } : {}) }
@@ -180,7 +181,7 @@ export class Perception {
     // "electron"): those processes aren't read at all.
     if (list.length && stack === undefined) stack = this.stackNow();
     const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
-    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}), ...(o.cells?.length ? { cells: o.cells } : {}) })
+    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}), ...(o.cells?.length ? { cells: o.cells } : {}), ...(o.focusBefore ? { focusBefore: o.focusBefore } : {}) })
       : Promise.resolve<ReadWindowResult>({ window: null, nodes: [], ms: 0 });
     let res = await ask();
     if (res.busy) {
@@ -328,12 +329,13 @@ export class Perception {
    * takes focus): which window they're in, what has focus, and any selected
    * text, so "make this bold" knows what "this" is. Short; untrusted.
    * `active`: the window the user was in, taken before the ask box took the keyboard where it opens before the screen
-   * is read (Windows, macOS: review #78); undefined: the window active now.
+   * is read (Windows, macOS: review #78); undefined: the window active now. `before`: what had the keyboard in it then,
+   * which nothing there says by now (FocusBefore, cross-review P1).
    */
-  async quickContext(active?: ReturnType<PerceptionWindows["activeWindow"]>): Promise<QuickContext | null> {
+  async quickContext(active?: ReturnType<PerceptionWindows["activeWindow"]>, before?: FocusBefore): Promise<QuickContext | null> {
     let seen: Seen;
     try {
-      seen = await this.focused(undefined, active);
+      seen = await this.focused(undefined, active, before);
     } catch {
       return null;
     }

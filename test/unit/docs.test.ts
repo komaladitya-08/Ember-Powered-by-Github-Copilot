@@ -711,7 +711,7 @@ describe("round 2's docs lines (typeahead2)", () => {
     expect(ask).toContain("export const WAIT_TIP_OPENINGS = 5;");
     expect(ask).toContain("return !holds && opened < WAIT_TIP_OPENINGS;");
     expect(read("app/renderer/ask/field.ts")).toContain('export const WAIT_TIP = "Wait for this box before you type: letters typed sooner go to the app underneath.";');
-    expect(read("app/main/ask-open.ts")).toMatch(/o\.show\(\);\n {2}o\.read\(active\);/);
+    expect(read("app/main/ask-open.ts")).toMatch(/o\.show\(\);\n {2}o\.read\(active, /);
     expect(read("app/renderer/ask/main.ts")).toContain("window.emberAsk.onHidden(() => input.select());");
     const main = read("app/main/main.ts");
     expect(main).toContain('log.info("ask.keyboard", { ms: Date.now() - askAsked })');

@@ -10,7 +10,7 @@ import type { OwnWindowHandle, ScreenLike, StackedWindow, WindowSystem, X11Image
 import { captureScreen } from "./capture";
 import { loadWin32, SM, type Win32Api } from "./ffi";
 import {
-  activateWindow, describe, factsOf, focusedTopLevel, namesOf, topLevels, virtualScreen, visibleFrame,
+  activateWindow, describe, factsOf, focusedChild, focusedTopLevel, namesOf, topLevels, virtualScreen, visibleFrame,
   type DescribedWindow, type ProgramMemo, type WindowNames,
 } from "./hwnd";
 import { buttonMask, VK } from "./keys";
@@ -32,6 +32,7 @@ export interface Win32WindowSystem extends WindowSystem {
   readonly kind: "win32";
   activeWindow(): Win32Window | null;
   focusWindow(): Win32Window | null;
+  keyboardFocus(): number;
   clientWindows(): Win32Window[];
   stack(): Win32StackedWindow[];
   /** GDI capture answers synchronously. */
@@ -97,6 +98,10 @@ export function openWin32Windows(deps: Win32WindowsDeps): Win32WindowSystem | nu
 
     focusWindow() {
       return open ? describe(api, focusedTopLevel(api), ownPid) : null;
+    },
+
+    keyboardFocus() {
+      return open ? focusedChild(api) : 0;
     },
 
     clientWindows() {
