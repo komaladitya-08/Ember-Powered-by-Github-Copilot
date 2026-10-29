@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {}, ipcMain: { on() {} } }));
 
 const { askBounds, grownBounds } = await import("../../app/main/ask");
-const { deskViewBounds } = await import("../../app/main/desk/view");
+const { deskViewBounds, deskViewStart } = await import("../../app/main/desk/view");
 const { foldCount, foldedLine, stackOrder } = await import("../../app/renderer/overlay/stack");
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -145,6 +145,43 @@ describe("deskViewBounds", () => {
     // A handle on another screen: the same.
     expect(deskViewBounds(small, true, wa, { x: 3000, y: 0, width: 360, height: 150 })).toEqual(deskViewBounds(small, true, wa));
     expect(overlaps(deskViewBounds(small, true, wa, null), handle(wa))).toBe(false);
+  });
+
+  it("starts where it always has with the handle in the bottom right (or not known)", () => {
+    const wa = { x: 0, y: 27, width: 1280, height: 773 };
+    expect(deskViewStart(wa, handle(wa))).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+    expect(deskViewStart(wa, null)).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+    expect(deskViewStart(wa)).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+  });
+
+  it("with the handle in the bottom left (Handle position), is bottom-right, growing up and to the left (review #75)", () => {
+    const wa = { x: 0, y: 0, width: 1920, height: 1080 };
+    const left = { x: 12, y: 1012, width: 200, height: 56 };
+    const small = deskViewBounds(deskViewStart(wa, left), false, wa, left);
+    expect(small).toEqual({ x: 1920 - 16 - 340, y: 826, width: 340, height: 238 });
+    const large = deskViewBounds(small, true, wa, left);
+    expect(large).toEqual({ x: 1920 - 16 - 980, y: 418, width: 980, height: 646 });
+    expect(deskViewBounds(large, false, wa, left)).toEqual(small);
+  });
+
+  it("with the handle or its card in the bottom left, keeps clear of it on small screens and a left taskbar too", () => {
+    for (const wa of [{ x: 0, y: 0, width: 1024, height: 600 }, { x: 0, y: 27, width: 1280, height: 773 }, { x: 48, y: 0, width: 1232, height: 800 }]) {
+      for (const h of [56, 120, 360]) {
+        const width = h === 56 ? 200 : 360;
+        const card = { x: wa.x + 12, y: wa.y + wa.height - 12 - h, width, height: h };
+        const small = deskViewBounds(deskViewStart(wa, card), false, wa, card);
+        const large = deskViewBounds(small, true, wa, card);
+        for (const b of [small, large]) {
+          expect(inside(b, wa), `${wa.width} ${h}`).toBe(true);
+          expect(overlaps(b, card), `${wa.width} ${h}`).toBe(false);
+          expect(b.width, `${wa.width} ${h}`).toBeGreaterThan(100);
+        }
+        expect(large.width / large.height).toBeCloseTo(980 / 646, 2);
+        expect(deskViewBounds(large, false, wa, card)).toEqual(small);
+        // Dragged towards the handle first: it still grows clear of it.
+        expect(overlaps(deskViewBounds({ ...small, x: wa.x + 100 }, true, wa, card), card)).toBe(false);
+      }
+    }
   });
 
   it("keeps its bottom edge on screen wherever it was dragged", () => {

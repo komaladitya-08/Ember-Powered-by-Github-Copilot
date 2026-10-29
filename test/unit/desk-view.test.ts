@@ -137,6 +137,36 @@ describe("desk view", () => {
     expect(win.bounds.width).toBe(980);
   });
 
+  it("opens on the side away from the handle, and goes to the other side when the handle does (review #75)", () => {
+    const right = { x: 1920 - 212, y: 1080 - 68, width: 200, height: 56 };
+    const left = { x: 12, y: 1080 - 68, width: 200, height: 56 };
+    let handle = right;
+    view = new DeskView(quiet, on => control.push(on), { lingerMs: 1000, handleBounds: () => handle });
+    open();
+    expect(win.bounds).toEqual({ x: 16, y: 826, width: 340, height: 238 });
+    // "Move to the other side": the view goes where the handle was, at the size it has.
+    handle = left;
+    view.handleMoved();
+    expect(win.bounds).toEqual({ x: 1920 - 16 - 340, y: 826, width: 340, height: 238 });
+    // Taken over, it grows up and to the left from there, clear of the handle.
+    send(DESK.takeOver);
+    expect(win.bounds).toEqual({ x: 1920 - 16 - 980, y: 418, width: 980, height: 646 });
+    // Moved again (the handle back to the right), it keeps its size and its bottom edge.
+    handle = right;
+    view.handleMoved();
+    expect(win.bounds).toEqual({ x: 16, y: 418, width: 980, height: 646 });
+    // Something else about the handle changed (the card grew): it stays on its side.
+    view.handleMoved();
+    expect(win.bounds).toEqual({ x: 16, y: 418, width: 980, height: 646 });
+  });
+
+  it("opens bottom-right while the handle is in the bottom left", () => {
+    const left = { x: 12, y: 1080 - 68, width: 200, height: 56 };
+    view = new DeskView(quiet, on => control.push(on), { lingerMs: 1000, handleBounds: () => left });
+    open();
+    expect(win.bounds).toEqual({ x: 1920 - 16 - 340, y: 826, width: 340, height: 238 });
+  });
+
   it("always tells the page which mode it is in", () => {
     open();
     send(DESK.handBack);
