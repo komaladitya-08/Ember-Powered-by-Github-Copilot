@@ -109,7 +109,7 @@ describe("the doctor's Copilot row without Ember's own GitHub App", () => {
   });
 
   it("with the app built in, offers its button as before", () => {
-    expect(copilot({ signIn: { with: "github", ghInstalled: false } })?.fix).toBe("Open Ember's settings (Win+Alt+E) and choose “Sign in with GitHub”, or run “gh auth login”.");
+    expect(copilot({ signIn: { with: "github", ghInstalled: false } })?.fix).toBe("Open Ember's settings (Win+Alt+E, or Win+Alt+Shift+E when another app has that) and choose “Sign in with GitHub”, or run “gh auth login”.");
   });
 });
 

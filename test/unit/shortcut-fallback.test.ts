@@ -6,7 +6,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, KEYS, SHORTCUTS, heldShortcuts, type OS, type ShortcutId } from "../../app/shared/shortcuts";
 import { canonicalKeys, isSystemKey } from "../../app/main/policy/policy";
@@ -15,6 +17,7 @@ import { inspectEnvironment, keyboardRoute, type EnvInputs } from "../../app/mai
 import { keysLine } from "../../app/main/hello";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "../../app/main/launcher";
 import { commandsConsent, sshConsent, type SshCardFacts } from "../../app/main/targets/consent";
+import { consentText } from "../../app/renderer/prompt/copy";
 
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
@@ -212,13 +215,40 @@ describe("the greeting names the chords Ember holds (D-45b)", () => {
     expect(line(["Control+Alt+Space", "Control+Alt+X"])).toBe("Press Ctrl+Alt+Shift+Space to ask me anything; Ctrl+Alt+Shift+X stops me. Another app has Ctrl+Alt+Space and Ctrl+Alt+X.");
   });
 
-  it("keeps today's route when Ember holds neither chord, naming the settings chord it holds", () => {
-    expect(line(["Control+Alt+Space", "Control+Alt+Shift+Space", "Control+Alt+E"])).toBe(
+  it("keeps today's route when Ember holds neither chord of either, naming the settings chord it holds", () => {
+    const both = ["Control+Alt+Space", "Control+Alt+Shift+Space", "Control+Alt+X", "Control+Alt+Shift+X"];
+    expect(line([...both, "Control+Alt+E"])).toBe(
       "Click my handle in the corner to ask me something or to stop me, or press Ctrl+Alt+Shift+E: settings opens at Ask Ember… and Stop everything.");
-    expect(line(["Control+Alt+X", "Control+Alt+Shift+X", "Control+Alt+E", "Control+Alt+Shift+E"])).toBe(
+    expect(line([...both, "Control+Alt+E", "Control+Alt+Shift+E"])).toBe(
       "Click my handle in the corner to ask me something or to stop me, or open Ember again: its settings open at Ask Ember… and Stop everything.");
   });
+
+  it("names the chord Ember holds for one when it holds neither for the other, and the route for that one (final review U2)", () => {
+    // Ask by its fallback or default; stop by neither: settings opens at Stop everything (keyboardRoute's "access:stop").
+    expect(line(["Control+Alt+X", "Control+Alt+Shift+X", "Control+Alt+Space"])).toBe(
+      "Press Ctrl+Alt+Shift+Space to ask me anything. To stop me, click my handle in the corner, or press Ctrl+Alt+E: settings opens at Stop everything. Another app has Ctrl+Alt+Space.");
+    expect(line(["Control+Alt+X", "Control+Alt+Shift+X", "Control+Alt+E", "Control+Alt+Shift+E"])).toBe(
+      "Press Ctrl+Alt+Space to ask me anything. To stop me, click my handle in the corner, or open Ember again: its settings open at Stop everything.");
+    // Stop by its default; ask by neither: settings opens at Ask Ember… ("access:ask").
+    expect(line(["Control+Alt+Space", "Control+Alt+Shift+Space", "Control+Alt+E"])).toBe(
+      "Ctrl+Alt+X stops me. To ask me something, click my handle in the corner, or press Ctrl+Alt+Shift+E: settings opens at Ask Ember…");
+    expect(keyboardRoute(["Control+Alt+Space", "Control+Alt+Shift+Space"], sc, fb)).toBe("access:ask");
+    // The same on Windows and a Mac, with their own chords.
+    const on = (os: OS, taken: string[]) => keysLine(heldShortcuts(SHORTCUTS[os], FALLBACK_SHORTCUTS[os], taken), SHORTCUTS[os]);
+    expect(on("win32", ["Super+Alt+X", "Super+Alt+Shift+X"])).toBe(
+      "Press Win+Alt+Space to ask me anything. To stop me, click my handle in the corner, or press Win+Alt+E: settings opens at Stop everything.");
+    expect(on("darwin", ["Control+Shift+Command+Space", "Control+Shift+Command+A", "Control+Shift+Command+X"])).toBe(
+      "Control+Shift+Command+Period stops me. To ask me something, click my handle in the corner, or press Control+Shift+Command+E: settings opens at Ask Ember… Another app has Control+Shift+Command+X.");
+  });
 });
+
+/** A desktop entry's groups ("[Desktop Entry]", "[Desktop Action Ask]"), each its keys and values. */
+function desktopGroups(entry: string): Record<string, Record<string, string>> {
+  return Object.fromEntries(entry.split(/^(?=\[)/m).filter(g => g.trim()).map(g => {
+    const [head, ...lines] = g.trim().split("\n");
+    return [head, Object.fromEntries(lines.filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))];
+  }));
+}
 
 /** main.ts without its comments, every run of white space made one space (it can't be loaded in a unit test). */
 const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")
@@ -264,6 +294,19 @@ describe("the commands and SSH consent cards name the stop chord Ember holds (D-
     expect(ssh(null).body.join(" ")).toContain("quit Ember or use Stop everything.");
   });
 
+  it("the prompt window's own consent words name it the same way (round 3's shortcuts left)", () => {
+    const words = (stopKey?: string | null) => consentText({ feature: "commands", os: "linux", target: "local", targetLabel: "This computer", ...(stopKey !== undefined ? { stopKey } : {}) });
+    const card = (stopKey?: string | null) => commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, ...(stopKey !== undefined ? { stopKey } : {}) });
+    for (const stopKey of [undefined, "Ctrl+Alt+Shift+X", null]) expect(words(stopKey).body, String(stopKey)).toEqual(card(stopKey).body);
+    const remote = (stopKey?: string | null) => consentText({
+      feature: "ssh", os: "linux", target: "ssh:build-01", targetLabel: "build-01", ...(stopKey !== undefined ? { stopKey } : {}),
+      ssh: { login: "deploy", hostname: "build-01", port: 22, jump: [], desktop: "headless" },
+    }).body.join(" ");
+    expect(remote()).toContain("quit Ember or press Ctrl+Alt+X.");
+    expect(remote("Ctrl+Alt+Shift+X")).toContain("quit Ember or press Ctrl+Alt+Shift+X.");
+    expect(remote(null)).toContain("quit Ember or use Stop everything.");
+  });
+
   it("gets the chord from main at each card (targets runtime)", () => {
     const RUNTIME = fs.readFileSync(path.resolve("app/main/targets/runtime.ts"), "utf8");
     const calls = RUNTIME.match(/\b(sshConsent|commandsConsent)\(\{[^}]*/g) ?? [];
@@ -277,7 +320,8 @@ describe("the README's keyboard routes say when settings is the way (D-45b)", ()
     .filter(l => /^\| (Ask Ember|Stop) \|/.test(l)).map(l => [l.split("|")[1].trim(), l]));
 
   it("sends the keyboard to settings only while another app holds the shortcut and its fallback, and names the launcher's Ask Ember", () => {
-    expect(rows["Ask Ember"]).toContain("If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, jump list, Dock menu) |");
+    // Ember's own windows have no taskbar button but settings' (skipTaskbar): its jump list is there once it is pinned.
+    expect(rows["Ask Ember"]).toContain("If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |");
     expect(rows.Stop).toContain("If another app holds it and its fallback: **Stop everything** under **Comfort & access › Ember on screen** |");
   });
 });
@@ -320,11 +364,7 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
   });
 
   it("gives the Linux desktop entry an Ask Ember action that starts Ember with --ask (RPM and AppImage)", () => {
-    const entry = fs.readFileSync(path.resolve("packaging/ember.desktop"), "utf8");
-    const groups = Object.fromEntries(entry.split(/^(?=\[)/m).map(g => {
-      const [head, ...lines] = g.trim().split("\n");
-      return [head, Object.fromEntries(lines.filter(l => l.includes("=")).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]))];
-    }));
+    const groups = desktopGroups(fs.readFileSync(path.resolve("packaging/ember.desktop"), "utf8"));
     expect(Object.keys(groups)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
     expect(groups["[Desktop Entry]"]).toMatchObject({ Exec: "ember --show-settings", Actions: "Ask;" });
     expect(groups["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: "ember --ask" });
@@ -336,6 +376,23 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     // The RPM installs the same file, and its launcher passes the argument on.
     expect(fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8")).toContain("install -Dm644 ember.desktop %{buildroot}%{_datadir}/applications/ember.desktop");
     expect(fs.readFileSync(path.resolve("packaging/ember"), "utf8")).toMatch(/exec "\$APP" --ozone-platform=x11 "\$@"\n?$/);
+  });
+
+  it.skipIf(process.platform === "win32")("gives the development entry the same Ask Ember action, and leaves it out of the login entry (round 3's shortcuts left)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "ember-dev-entry-"));
+    const r = spawnSync("bash", [path.resolve("scripts/install-desktop-entry.sh"), "--autostart"], { encoding: "utf8", env: { ...process.env, HOME: home } });
+    expect(r.status, r.stderr).toBe(0);
+    const ember = `"${path.resolve("node_modules/.bin/electron")}" "${path.resolve(".")}"`;
+    const apps = desktopGroups(fs.readFileSync(path.join(home, ".local/share/applications/ember-dev.desktop"), "utf8"));
+    expect(Object.keys(apps)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
+    expect(apps["[Desktop Entry]"]).toMatchObject({ Name: "Ember (dev)", Exec: `${ember} --show-settings`, Actions: "Ask;" });
+    expect(apps["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: `${ember} --ask` });
+    // Started at login: the entry alone, with the autostart switch in its own group.
+    const login = desktopGroups(fs.readFileSync(path.join(home, ".config/autostart/ember-dev.desktop"), "utf8"));
+    expect(Object.keys(login)).toEqual(["[Desktop Entry]"]);
+    expect(login["[Desktop Entry]"]).toMatchObject({ Exec: `${ember} --autostart`, "X-GNOME-Autostart-enabled": "true" });
+    expect(login["[Desktop Entry]"]).not.toHaveProperty("Actions");
+    fs.rmSync(home, { recursive: true, force: true });
   });
 
   it("opens the ask box for a second start's --ask on the first start's terms: set up, in a session Ember can use", () => {

@@ -26,7 +26,8 @@ the work in your real apps where you can watch, without taking over your mouse. 
   all of it in a box under the question (so does each cell's whole value when Ember fills several cells at once):
   **Allow** works once you have scrolled to its end, or it fits ("Scroll down to read it all first."), and until then
   Ember's allow shortcut shows the next part of it (a press within half a second of the last one, or a held key, never
-  allows). Screen readers hear all of it, and when **Allow** works.
+  allows). Screen readers hear all of it, and when **Allow** works. Such a question waits a minute longer for every
+  1000 characters of its text (ten with **More time to read and answer**), so there is time to read all of it.
 - **Your Mac's permissions stay Ember's**: Ember.app never runs as a plain Node.js program, so another program can't
   start it that way to borrow its Accessibility and Screen Recording permissions.
 - **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`
@@ -46,7 +47,7 @@ the work in your real apps where you can watch, without taking over your mouse. 
 - **Ember's desk** (Linux): a private display where Ember uses a full mouse and keyboard out of your way, which you
   can watch and take over.
 - **Accessibility**: Ember works from the keyboard and with screen readers (README.md has every route). Settings ›
-  **Comfort & access** has **Text size** (Default, Large, Larger: settings, the bubble, task cards, the handle, the Ask
+  **Comfort & access** has **Text size** (Default, Large, Larger: settings, the bubble, task cards, the handle, the ask
   box, the desk window's bar on Linux, the command window and the password and consent cards), **Calm mode** and
   **More time to read and answer**. Text size also reaches the command window's terminal (13, 15 or 17 px, at once when you change it; a
   running command keeps its columns and rows) and the height of buttons, pop-up buttons and text fields, so larger words
@@ -321,8 +322,9 @@ allows them.
   never Option, which is VoiceOver's (Control+Shift+Command+A asks, +Period stops, +Comma opens settings). The setup
   check ("Ctrl+Alt+Space is taken by another app, so Ask Ember is Ctrl+Alt+Shift+Space"), the greeting, the handle's
   menu, settings, the consent cards and every hint name the chord it holds.
-- **Ask Ember** is in the system's own launcher: the app menu's right-click on Linux, the taskbar's jump list on
-  Windows and the Dock menu on a Mac. `ember --ask` (`Ember.exe --ask`) opens the ask box, starting Ember if needed.
+- **Ask Ember** is in the system's own launcher: the app menu's right-click on Linux, the jump list of Ember's
+  taskbar icon on Windows (once Ember is pinned to the taskbar, or while its settings or command window is open) and
+  the Dock menu on a Mac. `ember --ask` (`Ember.exe --ask`) opens the ask box, starting Ember if needed.
 - While another app holds Ember's stop or settings shortcut and its fallback, the bubble, the command window and task
   results don't name it: they say "in Ember's settings", and an announced command names only its **Stop**.
 - "May I?" questions name controls in plain words: "Click the “Save” button", "Turn on the “Night Light” switch",

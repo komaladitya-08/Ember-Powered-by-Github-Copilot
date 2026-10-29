@@ -92,7 +92,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
 | `npm run check:symvers` | Only the binary check |
-| `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu (and to login) |
+| `scripts/install-desktop-entry.sh [--autostart]` | Adds "Ember (dev)" to the GNOME app menu, with its **Ask Ember** action as the RPM's entry has (and to login) |
 | `scripts/demo/desktop.sh start` then `DISPLAY=:55 node test/demo/m1-tour.mjs out/` | Records a video tour on a throw-away desktop (needs Xvfb, openbox, xcompmgr, feh, mousepad, xdotool, ffmpeg) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m3-tour.mjs out/` | Screen-reading tour. Runs as the desktop's user so the accessibility bus is reachable (`EMBER_DEMO_USER`, default `demo`) |
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/action-link.test.ts` | Reads and operates GTK3 test windows through the sidecar: a worker on the test bench, on Ember's desk, and on hostile windows (prompt injection, a password prompt); and a click that runs a modal dialog, which the user can still type in (PR10-1). Needs a desktop session with pyatspi; on a bare X server, `dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" …` as in CI |
@@ -124,12 +124,13 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
   them every minute, and the handle menu does the same things. Meanwhile the bubble and the command window don't name
   that shortcut: routes say "Or open Ember's settings…", errors and task results say "in Ember's settings", and an
   announced command names only its **Stop**.
-- `--ask` (the Linux app menu's **Ask Ember** action, the Windows jump list's) opens the ask box: in the running Ember,
-  or once a new one has started. Either way settings open instead while Ember isn't set up or the desktop session is
-  one it can't use (the setup check says why). The macOS Dock menu's **Ask Ember** does the same in the running Ember.
+- `--ask` (the Linux app menu's **Ask Ember** action, the one in the jump list of Ember's taskbar icon on Windows once
+  Ember is pinned there) opens the ask box: in the running Ember, or once a new one has started. Either way settings
+  open instead while Ember isn't set up or the desktop session is one it can't use (the setup check says why). The macOS
+  Dock menu's **Ask Ember** does the same in the running Ember.
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
   animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
-  in settings, Ember's bubble, task cards and handle, the Ask box, the desk window's bar, the command window and its
+  in settings, Ember's bubble, task cards and handle, the ask box, the desk window's bar, the command window and its
   terminal, and Ember's password and consent cards. **More time to read and answer** keeps every bubble ten times as long
   (Ember's own notices, and a bubble that waited behind another or was covered for a while, included), a question waits
   20 minutes instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead

@@ -88,9 +88,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
   scales the type tokens, each page's own px sizes and the heights of its buttons, pop-up buttons and
   text fields (`html[data-text-size]`, set by main's `page-prefs.ts`) in Settings, the bubble, task
-  cards, the handle, the Ask box, the desk view's bar and the command and prompt windows. The
-  handle's pill, the Ask box, the desk view and the command and prompt windows grow by the same scale
-  (the pill wider; the Ask box as it opens, its field and the line under it, not its insets: 560 × 92,
+  cards, the handle, the ask box, the desk view's bar and the command and prompt windows. The
+  handle's pill, the ask box, the desk view and the command and prompt windows grow by the same scale
+  (the pill wider; the ask box as it opens, its field and the line under it, not its insets: 560 × 92,
   644 × 101 or 728 × 111 px, then a line of 24 px times the scale for each further row; the desk view
   by its bar, 30, 35 or 39 px, at once, its picture keeping its size; the windows as they open, and at
   once when they are already open; inside the work area).
@@ -113,7 +113,7 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
 - **Layers:** the settings window and the desk are the content layer: opaque grouped sections, a
   sidebar with coloured symbol tiles (as System Settings), rounded-rectangle buttons, switches, pop-up
   menus, headers above each group and footnotes below it. What floats over other apps (bubble, task
-  cards, handle, Ask box, status line) is glass: an opaque frost (no backdrop blur: with software
+  cards, handle, ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
   left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
 - **State:** one symbol family (working, waiting its turn, waiting for you, done, failed, stopped)

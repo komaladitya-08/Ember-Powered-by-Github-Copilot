@@ -1,5 +1,5 @@
 /**
- * The Ask box at a text size (review #57), shared by the live suites: handle-menu-live on Xvfb (RHEL 8 CI) and
+ * The ask box at a text size (review #57), shared by the live suites: handle-menu-live on Xvfb (RHEL 8 CI) and
  * ember-win32 and ember-darwin on real Windows and macOS runners, so the steps those runners take are the ones the X
  * server's run proves. Text size is set through Ember's own settings (its test hooks, EMBER_TEST_HOOKS), the box is
  * opened as the handle's menu opens it, and its window and its page are read: the window's size (ask.ts askSize: 560 × 92
@@ -67,7 +67,7 @@ export async function openAskAt(inEmber: InEmber, size: TextSize, text = ""): Pr
   await sleep(300);
   await inEmber(() => (globalThis as unknown as { __ember: { showAsk(): void } }).__ember.showAsk(), null);
   for (let t = 0; !(await askVisible(inEmber)); t++) {
-    if (t >= 50) throw new Error(`the Ask box didn't show within 5 s at text size ${size}`);
+    if (t >= 50) throw new Error(`the ask box didn't show within 5 s at text size ${size}`);
     await sleep(100);
   }
   await sleep(800);

@@ -9,7 +9,7 @@
 import { LINUX_A11Y_RESTART, MIXED_SCALING_FIX, type EnvReport } from "./environment";
 import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
-import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
+import { FALLBACK_SHORTCUTS, SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
 import { VOICE_MODELS_BYTES } from "../voice/models";
 import { cliSteps, type SignInWith } from "./agent/github-app";
@@ -121,6 +121,9 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const linux = os === "linux";
   const off = linux ? null : OFF_LINUX[os];
   const sc = p.shortcuts ?? SHORTCUTS.linux;
+  // The doctor registers no shortcut, so it can't tell which chord Ember holds (D-45b): the default, and the fallback
+  // Ember takes while another app has that, as the setup check names it then.
+  const chord = (id: "ask" | "settings") => `${sc[id].label}, or ${FALLBACK_SHORTCUTS[os][id].label} when another app has that`;
   const reinstall = p.words?.reinstall ?? PLATFORM_WORDS.linux.reinstall;
   const out: DoctorCheck[] = [];
   const env = (id: string) => p.env.checks.find(c => c.id === id);
@@ -186,8 +189,8 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
         : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"
-          ? `${cliSteps(os, p.signIn.ghInstalled)} Then open Ember's settings (${sc.settings.label}) and press Check again.`
-          : `Open Ember's settings (${sc.settings.label}) and choose “Sign in with GitHub”, or run “gh auth login”.` };
+          ? `${cliSteps(os, p.signIn.ghInstalled)} Then open Ember's settings (${chord("settings")}) and press Check again.`
+          : `Open Ember's settings (${chord("settings")}) and choose “Sign in with GitHub”, or run “gh auth login”.` };
   out.push(copilot);
 
   if (p.admin.error) out.push({ id: "policy", status: "fail", label: "Organisation policy", detail: `Ember is locked down: ${p.admin.error}`, fix: `Ask your administrator to fix ${p.admin.source}.` });
@@ -203,7 +206,7 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
       : { id: "microphone", status: "warn", label: "Microphone", detail: "Can't list microphones (pactl is missing). Only needed for “Hey Ember”.", fix: "sudo dnf install pulseaudio-utils" }
     : micOk
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
-      : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${sc.ask.label}) always works.` });
+      : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${chord("ask")}) always works.` });
   // The speech models RPM needs Ember's own RPM, so an AppImage is only told to download them.
   out.push(p.voiceModels === "missing"
     ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux && !p.sandbox?.appImage ? ", or install ember-voice-models" : ""}.` }

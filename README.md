@@ -211,9 +211,11 @@ Applications) or press the settings shortcut: settings then opens at **Ask Ember
 default.
 
 **Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
-app grid (Linux), on the taskbar (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Linux and
-Windows it starts Ember with `--ask` (`ember --ask`, `Ember.exe --ask`), which opens the ask box, starting Ember first
-if it isn't running (settings instead until Ember is set up).
+app grid (Linux), Ember's taskbar icon (Windows: its jump list), or Ember's Dock icon while it runs (macOS). On Windows,
+Ember has a taskbar icon only while its settings or command window is open, or once you pin it there: right-click
+Ember in the Start menu and pin it to the taskbar. On Linux and Windows it starts Ember with `--ask` (`ember --ask`,
+`Ember.exe --ask`), which opens the ask box, starting Ember first if it isn't running (settings instead until Ember is
+set up).
 
 On Windows and macOS, wait for the ask box before you type: letters typed before it appears go to the app underneath.
 (On Linux, Ember holds them and puts them in the box.) The ask box reminds you the first five times it opens.
@@ -248,7 +250,7 @@ and VoiceOver on a Mac. While one runs:
 
 | To | From the keyboard |
 |---|---|
-| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, jump list, Dock menu) |
+| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |
 | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good. A question about typing a long text shows all of it in a box under it and allows only once all of it has been in view: until then Ctrl+Alt+Y shows the next part, and once it has, a moment later, Ctrl+Alt+Y pressed again allows |
 | Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds it and its fallback: **Stop everything** under **Comfort & access › Ember on screen** |
 | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
@@ -260,10 +262,11 @@ and VoiceOver on a Mac. While one runs:
 | Ember's desk (Linux) | **Take over** is a click; while you have the desk, every key goes to it, Tab included, until Ctrl+Alt+End hands it back. A screen reader is told so when you take over |
 
 **Seeing, motion and time.** Settings › **Comfort & access** has **Text size** (Large or Larger, for settings, the
-bubble, task cards, the handle, the Ask box, the desk window's bar on Linux, the command window and its terminal,
+bubble, task cards, the handle, the ask box, the desk window's bar on Linux, the command window and its terminal,
 and the password and consent cards), **Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion) and **More
 time to read and answer** (messages stay ten times as long, also ones that waited behind another or were covered for a
-while, and Ember's own notices; a question waits 20 minutes instead of 2 before it counts as **Not now**). At Large and
+while, and Ember's own notices; a question waits 20 minutes instead of 2 before it counts as **Not now**, and one with a
+long text to read 10 minutes more instead of 1 for every 1000 characters of it). At Large and
 Larger, an answer that needs more than six lines at that size offers **Read all**. Windows' contrast themes keep
 switches, edges, focus and state visible, and the handle's microphone and computer badges change shape as well as
 colour.

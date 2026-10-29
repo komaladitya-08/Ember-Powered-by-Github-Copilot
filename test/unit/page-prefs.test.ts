@@ -1,6 +1,6 @@
 /**
  * Calm mode and the text size in every window of Ember's: main applies both to each of its pages as it loads and when
- * the settings change, since the Ask box, the command and prompt windows and the desk view are sent no settings
+ * the settings change, since the ask box, the command and prompt windows and the desk view are sent no settings
  * (review #248, #57).
  */
 import { describe, expect, it } from "vitest";
@@ -29,7 +29,7 @@ function fakePage(u: string, opts: { destroyed?: boolean; fails?: boolean } = {}
 }
 
 describe("Ember's display settings in every window", () => {
-  it("puts Calm mode on the Ask box, the command and prompt windows and the desk view too (review #248)", async () => {
+  it("puts Calm mode on the ask box, the command and prompt windows and the desk view too (review #248)", async () => {
     for (const p of ["ask", "command", "prompt", "desk", "overlay", "handle", "home"]) {
       const f = fakePage(url(p));
       expect(await applyPagePrefs(f.page, pagePrefs({ reduceMotion: true, textSize: "default" })), p).toBe(true);
@@ -39,7 +39,7 @@ describe("Ember's display settings in every window", () => {
     }
   });
 
-  it("sets the text size in every page with words, the Ask box and the desk's bar included (review #57)", async () => {
+  it("sets the text size in every page with words, the ask box and the desk's bar included (review #57)", async () => {
     for (const p of ["home", "command", "prompt", "overlay", "handle", "ask", "desk"]) {
       const f = fakePage(url(p));
       await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "larger" }));
@@ -272,9 +272,9 @@ describe("the text size", () => {
     const html = read("app/renderer/home/index.html");
     expect(html).toMatch(/<select id="text-size">\s*<option value="default">Default<\/option>\s*<option value="large">Large<\/option>\s*<option value="larger">Larger<\/option>\s*<\/select>/);
     expect(read("app/main/settings.ts")).toMatch(/textSize: z\.enum\(\["default", "large", "larger"\]\)\.default\("default"\)/);
-    // Its hint says, in a sentence, where the size reaches: the Ask box, the one command window, and the prompt window's
-    // cards too.
+    // Its hint says, in a sentence, where the size reaches: the ask box, the desk's bar, the one command window, and the
+    // prompt window's cards too.
     const hint = /<\/select><\/label>\s*<\/div>\s*<p class="hint">([^<]*)<\/p>/.exec(html.slice(html.indexOf('id="text-size"')))![1];
-    expect(hint).toBe("Changes the text in this window, Ember's bubble, task cards and handle, the Ask box, the command window, and Ember's password and consent cards.");
+    expect(hint).toBe("Changes the text in this window, Ember's bubble, task cards and handle, the ask box, the desk window's bar on Linux, the command window, and Ember's password and consent cards.");
   });
 });

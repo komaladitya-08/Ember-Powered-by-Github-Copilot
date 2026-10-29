@@ -205,11 +205,15 @@ export interface SshConsentFacts {
   byok?: boolean;
 }
 
-/** Everything a consent card's text depends on. `os` is this PC's OS (its stop chord). */
-export type ConsentInput =
+/**
+ * Everything a consent card's text depends on. `os` is this PC's OS (its stop chord). `stopKey`: the stop chord Ember
+ * holds now, as targets/consent.ts takes it (its fallback while another app has the default, D-45b; null while it holds
+ * neither, when the card names Stop everything); absent, the OS's default.
+ */
+export type ConsentInput = { stopKey?: string | null } & (
   | { feature: "wsl"; os: OS; target: TargetId; targetLabel: string; byok?: boolean }
   | { feature: "ssh"; os: OS; target: TargetId; targetLabel: string; ssh: SshConsentFacts }
-  | { feature: "commands"; os: OS; target: TargetId; targetLabel: string; commands?: { wsl?: boolean; privileged?: boolean; windows?: boolean; podman?: boolean; byok?: boolean } };
+  | { feature: "commands"; os: OS; target: TargetId; targetLabel: string; commands?: { wsl?: boolean; privileged?: boolean; windows?: boolean; podman?: boolean; byok?: boolean } });
 
 /** Where what Ember reads goes: GitHub Copilot, or the organisation's own model service (`byok`), as targets/consent.ts says. */
 const serviceName = (byok: boolean | undefined) => (byok ? "your organisation's model service" : "GitHub Copilot");
@@ -220,9 +224,9 @@ export interface ConsentText { title: string; body: string[]; yes: string; no: s
 /** "a", "a and b", "a, b and c". */
 export const listWords = (xs: readonly string[]): string => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
 
-/** A consent card's exact text (§8.4), with the PC's own stop chord in it. */
+/** A consent card's exact text (§8.4), with the stop chord Ember holds on the PC in it. */
 export function consentText(i: ConsentInput): ConsentText {
-  const stop = SHORTCUTS[i.os].stop.label;
+  const stop = i.stopKey === undefined ? SHORTCUTS[i.os].stop.label : i.stopKey;
   const label = i.targetLabel;
   if (i.feature === "wsl") {
     return {
@@ -259,7 +263,7 @@ export function consentText(i: ConsentInput): ConsentText {
         first,
         desktop,
         `Your voice and ${s.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(s.byok)} from this computer when you ask something.`,
-        `It copies a helper there: about ${s.bundleMB ?? 33} MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about ${s.unpackedMB ?? 130} MB in ${s.installDir ?? "its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or press ${stop}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
+        `It copies a helper there: about ${s.bundleMB ?? 33} MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about ${s.unpackedMB ?? 130} MB in ${s.installDir ?? "its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac)"}. It runs only while Ember is connected and stops when you disconnect, quit Ember or ${stop ? `press ${stop}` : "use Stop everything"}. If the connection drops, a command running there stops within ${s.graceSeconds ?? 20} seconds.`,
         `${label} keeps its own record of what Ember does there.`,
       ],
       yes: "Connect",
@@ -271,7 +275,7 @@ export function consentText(i: ConsentInput): ConsentText {
     title: i.target === "local" ? "Let Ember run commands on this computer?" : `Let Ember run commands on ${label}?`,
     // How to stop it and what it can reach come first (review #270).
     body: [
-      `Ember runs commands in its own command window, where you can watch them and stop them. ${stop} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
+      `Ember runs commands in its own command window, where you can watch them and stop them. ${stop ?? "Stop everything, in Ember's handle menu and in settings,"} stops everything at once; what a command already changed stays changed. It never types into your own terminal windows.`,
       ...(c.wsl ? ["Commands in WSL can also reach your Windows files and programs."] : []),
       ...(c.privileged ? ["Commands here run as the administrator, so Ember asks before every one."] : []),
       ...(c.windows ? ["Commands here run in Windows PowerShell and can't ask you for answers or passwords."] : []),

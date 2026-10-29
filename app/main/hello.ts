@@ -10,16 +10,21 @@ import type { HeldShortcuts, ShortcutTable } from "../shared/shortcuts";
 
 /**
  * How to ask Ember and stop it, by the chords it holds (`held`: default or fallback, D-45b), saying which defaults
- * another app has; while it holds neither chord of one, its handle, and settings' Ask Ember… and Stop everything (by the
- * settings chord it holds, else by opening Ember again: review #45). `sc`: this OS's defaults.
+ * another app has; for one it holds neither chord of, its handle, and settings' Ask Ember… or Stop everything (by the
+ * settings chord it holds, else by opening Ember again: review #45), each named on its own (final review U2). `sc`: this
+ * OS's defaults.
  */
 export function keysLine(held: HeldShortcuts, sc: ShortcutTable): string {
   const { ask, stop, settings } = held;
-  if (!ask || !stop) {
-    return `Click my handle in the corner to ask me something or to stop me, or ${settings ? `press ${settings.label}: settings opens` : "open Ember again: its settings open"} at Ask Ember… and Stop everything.`;
-  }
-  const others = (["ask", "stop"] as const).filter(id => held[id] !== sc[id]).map(id => sc[id].label);
-  return `Press ${ask.label} to ask me anything; ${stop.label} stops me.${others.length ? ` Another app has ${others.join(" and ")}.` : ""}`;
+  // Settings opens from the keyboard at the one Ember holds no chord for, or at both (environment.ts keyboardRoute).
+  const opens = settings ? `press ${settings.label}: settings opens` : "open Ember again: its settings open";
+  const said = ask && stop ? `Press ${ask.label} to ask me anything; ${stop.label} stops me.`
+    : ask ? `Press ${ask.label} to ask me anything. To stop me, click my handle in the corner, or ${opens} at Stop everything.`
+      : stop ? `${stop.label} stops me. To ask me something, click my handle in the corner, or ${opens} at Ask Ember…`
+        : `Click my handle in the corner to ask me something or to stop me, or ${opens} at Ask Ember… and Stop everything.`;
+  // The defaults another app has, where Ember names its fallback instead.
+  const others = (["ask", "stop"] as const).filter(id => held[id] && held[id] !== sc[id]).map(id => sc[id].label);
+  return `${said}${others.length ? ` Another app has ${others.join(" and ")}.` : ""}`;
 }
 
 export interface HelloInputs {
