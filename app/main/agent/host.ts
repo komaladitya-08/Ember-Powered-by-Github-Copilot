@@ -590,6 +590,8 @@ export class AgentHost {
   private readonly presenter: Presenter;
   /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
   private readonly noticeBoard: Presenter;
+  /** The targets runtime's offers, on a board of their own (cross-review X3: see offers). */
+  private readonly offerBoard: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
@@ -646,6 +648,7 @@ export class AgentHost {
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
+    this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
   }
 
   /**
@@ -654,6 +657,16 @@ export class AgentHost {
    */
   get notices(): NoticeBoard {
     return this.noticeBoard;
+  }
+
+  /**
+   * Where the targets runtime's offers go ("You're connected to web-07", "I can work in WSL", offer_connect's Connect):
+   * the shared bubble too, but not the notices' writer, which keeps one bubble at a time. An offer nobody asked for
+   * then waits behind a held notice ("Lost build-01", "Can't connect") instead of replacing it for good, and one the
+   * user asked for covers it, which comes back after (cross-review X3).
+   */
+  get offers(): NoticeBoard {
+    return this.offerBoard;
   }
 
   /**
@@ -1641,6 +1654,7 @@ export class AgentHost {
     this.presenter.quiet();
     // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
     this.noticeBoard.quiet();
+    this.offerBoard.quiet();
     // (And the "Commands are off" hint waiting behind the answer: offered again later if it never showed.)
     this.hintOwed = false;
     this.commandsHint?.quiet();

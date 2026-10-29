@@ -2548,6 +2548,22 @@ describe("the runtime's bubbles (AgentHost.notices, review #9, #10)", () => {
     expect(host.releaseBubble(null)).toBe(false);
     await host.stop();
   });
+
+  it("offers go on a board of their own: one nobody asked for waits behind a held notice, which stays (cross-review X3)", async () => {
+    vi.useFakeTimers();
+    const { host, screen } = makeHost();
+    expect(host.offers).not.toBe(host.notices);
+    host.notices.post({ title: "Lost build-01", thought: "The connection dropped.", actions: [{ id: "conn:build-01:reconnect", label: "Reconnect" }], mood: "error" });
+    host.offers.post({ title: "You're connected to web-07", thought: "Bring me there too?", actions: [{ id: "offer:1:bring", label: "Bring Ember" }], mood: "attention" }, { claim: "reply", ms: 25_000 });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(screen().bubble).toMatchObject({ visible: true, title: "Lost build-01" });
+    host.notices.clear();
+    expect(screen().bubble).toMatchObject({ visible: true, title: "You're connected to web-07" });
+    // The kill switch takes the offers away too.
+    await host.abortAll();
+    expect(host.offers.visible).toBe(false);
+    await host.stop();
+  });
 });
 
 describe("a notice saying why Ember couldn't answer goes once that no longer holds", () => {

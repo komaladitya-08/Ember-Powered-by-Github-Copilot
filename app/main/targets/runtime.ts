@@ -381,6 +381,13 @@ export interface TargetsDepsExtra {
    * yet): main's guarded setter, as before.
    */
   bubbles?(): NoticeBoard | null;
+  /**
+   * The board for its offers ("You're connected to web-07", "I can work in WSL", offer_connect's Connect;
+   * AgentHost.offers): a second writer on the same shared bubble, so an offer nobody asked for waits behind a held bubble
+   * of `bubbles` (Lost, "Can't connect") instead of replacing it, and one the user asked for covers it, which comes back
+   * after (cross-review X3). Absent, or null: offers go through `bubbles`, as before.
+   */
+  offers?(): NoticeBoard | null;
   /** The settings shortcut as this OS writes it while Ember holds it ("Ctrl+Alt+E"), else null: bubbles name it only then. */
   settingsKey?(): string | null;
   /**
@@ -654,11 +661,15 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   };
 
   // ── Bubbles: through the shared bubble's notice board (deps.bubbles), else main's guarded setter ──
-  // One runtime bubble at a time, by key ("connecting:build-01", "offer:3"): a newer one replaces it, and a hide by key
-  // only hides the one with that key. The board decides when it reaches the screen and keeps anything else from
-  // replacing or hiding it meanwhile (a question still holds it off, and it shows once that is answered).
+  // One runtime bubble at a time, by key ("connecting:build-01", "lost:build-01"): a newer one replaces it, and a hide by
+  // key only hides the one with that key. The board decides when it reaches the screen and keeps anything else from
+  // replacing or hiding it meanwhile (a question still holds it off, and it shows once that is answered). Offers
+  // ("offer:3", "offer:wsl") go on a board of their own when main gives one (deps.offers), one at a time the same way:
+  // a held Lost or "Can't connect" isn't replaced by an offer, and comes back after one that covered it.
   let bubbleSeq = 0;
   let shown: { key: string; seq: number } | null = null;
+  /** The offer on the offers' board (deps.offers), by key ("offer:3", "offer:wsl"), while it has one. */
+  let offerShown: { key: string; seq: number } | null = null;
   /**
    * The keyboard's way to what a bubble's buttons do (they take only the mouse: the overlay never takes the keyboard):
    * the same buttons in settings, Computers.
@@ -669,10 +680,19 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     return words.keyboardRoute(key, section);
   };
   const board = (): NoticeBoard | null => { try { return deps.bubbles?.() ?? null; } catch { return null; } };
+  const offerBoard = (): NoticeBoard | null => { try { return deps.offers?.() ?? null; } catch { return null; } };
+  const isOffer = (key: string) => key.startsWith("offer:");
   const bubble = (key: string, said: Said, o: number | NoticeOptions = {}) => {
     const { emotion, ...b } = said;
     const opts: NoticeOptions = typeof o === "number" ? { ms: o } : o;
     const seq = ++bubbleSeq;
+    // An offer on its own board: it waits behind (or covers) the held bubbles of the other, which stay.
+    const ob = isOffer(key) ? offerBoard() : null;
+    if (ob) {
+      offerShown = { key, seq };
+      try { ob.post(b, { emotion, ...opts }); } catch (err) { log.warn("targets.bubble_failed", { err }); }
+      return;
+    }
     shown = { key, seq };
     const nb = board();
     if (nb) { try { nb.post(b, { emotion, ...opts }); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
@@ -680,6 +700,13 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (opts.ms) parts.setTimeout(() => { if (shown?.seq === seq) hideBubble(key); }, opts.ms);
   };
   const hideBubble = (key?: string) => {
+    const ob = key !== undefined && isOffer(key) ? offerBoard() : null;
+    if (ob) {
+      if (offerShown?.key !== key) return;
+      offerShown = null;
+      try { ob.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); }
+      return;
+    }
     if (key !== undefined && shown?.key !== key) return;
     shown = null;
     const nb = board();
@@ -1720,6 +1747,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // the board, which hides nothing it didn't write: main's own setter would blank the kill switch's message.)
       const nb = board();
       if (nb) { shown = null; try { nb.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } }
+      const ob = offerBoard();
+      if (ob) { offerShown = null; try { ob.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } }
       const settled = await Promise.allSettled(waits);
       const failed = settled.filter(r => r.status === "rejected").length;
       if (failed) log.warn("targets.stop_parts_failed", { failed });

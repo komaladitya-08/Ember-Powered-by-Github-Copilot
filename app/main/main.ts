@@ -1750,6 +1750,8 @@ function start(): void {
       stopTasksOn: (target, only, why) => { agent?.cancelTasksOn(target, only, why); },
       // Its bubbles go through the shared bubble, once the agent exists (the conversation's and the tasks' wait behind them).
       bubbles: () => agent?.notices ?? null,
+      // Its offers on a board of their own: one nobody asked for waits behind a held Lost or "Can't connect" (cross-review X3).
+      offers: () => agent?.offers ?? null,
       // Its bubbles' keyboard route names the settings shortcut only while Ember holds it, and its command window's
       // announcement the stop chord (cross-review X0).
       settingsKey: () => (hasKey(sc.settings.accel) ? sc.settings.label : null),
