@@ -77,6 +77,23 @@ import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello } from "./hello";
+import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
+
+// SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
+// Ember itself with --ember-askpass. That run asks the running Ember (askpass.cjs as a worker thread), prints the answer
+// for ssh and ends here, before anything else of Ember starts: no single-instance lock, no window, nothing in the data
+// folder, and no Dock icon (the run loop never starts; "prohibited" tells macOS so as well).
+if (isAskpassRun(process.argv)) {
+  try {
+    if (typeof app.setActivationPolicy === "function") app.setActivationPolicy("prohibited");
+  } catch {
+    // Not on this OS, or refused: the run loop never starts, so nothing shows anyway.
+  }
+  const code = askpassInEmber({ script: path.join(__dirname, "askpass.cjs") });
+  // Before the run loop app.exit ends the process at once; process.exit only stands behind it.
+  app.exit(code);
+  process.exit(code);
+}
 
 /**
  * Switches for tests and demos (a fake model server, test hooks, another policy

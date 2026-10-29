@@ -831,6 +831,18 @@ describe("the Windows and macOS CI jobs", () => {
     }
   });
 
+  it("check SSH's askpass as Ember itself on Apple silicon, the development Electron and the staged Ember.app (review #177)", () => {
+    const macos = job("macos");
+    const s = step(macos, "test/integration/askpass-darwin.test.ts");
+    expect(s).toContain("node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts");
+    expect(s).toMatch(/EMBER_DARWIN_TEST: "1"/);
+    expect(s).toMatch(/EMBER_PACKAGED_APP: dist\/package\/Ember\.app/);
+    expect(s).toContain("steps.stage.outcome == 'success'");
+    expect(macos.indexOf("node scripts/package/stage.mjs")).toBeLessThan(macos.indexOf("askpass-darwin.test.ts"));
+    // Before Ember.app's own grant and the attribution runs: askpass needs no permission.
+    expect(macos.indexOf("askpass-darwin.test.ts")).toBeLessThan(macos.indexOf("tcc.mjs grant-bundle"));
+  });
+
   it("offer dev:mac, which starts the development Electron through LaunchServices so TCC grants go to Electron (M14)", () => {
     const scripts = JSON.parse(fs.readFileSync(path.resolve("package.json"), "utf8")).scripts as Record<string, string>;
     expect(scripts["dev:mac"]).toBe('node scripts/build-app.mjs && open -n -W node_modules/electron/dist/Electron.app --args "$PWD"');

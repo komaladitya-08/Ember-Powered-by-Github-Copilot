@@ -343,7 +343,7 @@ export function createConnections(o: {
       return { channel, env: { kind: "pipe", program: exe, pipe: channel.address, nonce: channel.nonce } };
     }
     const fs = internals.askpassFs ?? (fsp as unknown as AskpassFs);
-    wrapper ??= writeAskpassWrapper({ fs, userData: o.userData, execPath: o.execPath, appDir: o.appDir });
+    wrapper ??= writeAskpassWrapper({ fs, os, userData: o.userData, execPath: o.execPath, appDir: o.appDir });
     wrapper.catch(() => { wrapper = null; });
     const program = await wrapper;
     const channel = await createAskpassServer({

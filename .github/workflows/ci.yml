@@ -626,6 +626,14 @@ jobs:
         env:
           EMBER_DARWIN_TEST: "1"
           EMBER_PACKAGED_APP: dist/package/Ember.app
+      - name: "SSH's askpass as Ember itself (askpass-darwin: ssh-add unlocks a key through the development Electron and Ember.app, no Dock icon)"
+        # The macOS build refuses node mode (review #177), so ssh's askpass wrapper starts Ember in its askpass mode.
+        # It needs no permission: run before Ember.app's own grant.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.stage.outcome == 'success' }}
+        run: node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts
+        env:
+          EMBER_DARWIN_TEST: "1"
+          EMBER_PACKAGED_APP: dist/package/Ember.app
       - name: "Input Monitoring evidence (design Q10): does key-state polling see another process's key without the grant?"
         # Every Input Monitoring (listen) row is set aside for one test, which prints its verdict (it asserts only with
         # the grant), and put back after. Nothing asks for the permission: a prompt would sit over the later steps.

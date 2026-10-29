@@ -31,8 +31,9 @@ const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/In
 
 /**
  * The SSH and command helpers Ember starts beside main.cjs, which fail only at first use when missing: the SSH link
- * worker (remote-link.cjs) everywhere, the password helper ssh runs (askpass.cjs) on Linux and macOS (Windows compiles
- * ember-askpass.exe instead), and Windows' command job host (job-host.cjs).
+ * worker (remote-link.cjs) everywhere, the password helper ssh runs (askpass.cjs) on Linux and macOS (Linux runs it as
+ * plain Node; macOS, whose build refuses node mode, as a worker thread of Ember's own askpass mode, review #177;
+ * Windows compiles ember-askpass.exe instead), and Windows' command job host (job-host.cjs).
  */
 const POSIX_HELPERS = ["askpass.cjs", "remote-link.cjs"];
 const WINDOWS_HELPERS = ["remote-link.cjs", "job-host.cjs"];
