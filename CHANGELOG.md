@@ -157,7 +157,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   `ssh` somewhere ("You're connected to build-01"). Ember looks for your own `ssh` only once you have added a computer,
   and never offers for one that carries a command (git over ssh, `scp`, `rsync`), uses `-T` or goes to a git hosting
   service. An offer goes after 25 seconds as **Not now**, ignores a press in its first half second, and holds Ember
-  still while it is up; one nobody asked for waits while "Lost build-01" or "Can't connect to build-01" is up. The SSH
+  still while it is up; one nobody asked for waits while "Lost build-01" or "Can't connect to build-01" is up, but
+  25 seconds at most, and goes unseen when the `ssh` it names has ended. The SSH
   card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac, and
   says that a server with no desktop gets commands only. Ember opens its own connection with your SSH settings, keys,
   agent and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer before

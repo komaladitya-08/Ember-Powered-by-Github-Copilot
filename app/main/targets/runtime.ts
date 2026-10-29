@@ -60,7 +60,7 @@ import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception,
 import { registerTargetsIpc, type ActResult } from "./ipc";
 import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, withFlowExtras, type WarmService } from "./local-service";
 import { targetMenu } from "./menu";
-import { NOTICE_TICK_MS, createNoticer, type Noticer, type SshNotice } from "./offer";
+import { NOTICE_TICK_MS, createNoticer, seenKey, type Noticer, type SshNotice } from "./offer";
 import { noWindowContext, remoteQuickContext } from "./quick-context";
 import {
   LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, notConnectedWhy, otherVersionNamed, sshAllowed, summaryOf, wslAllowed,
@@ -1186,18 +1186,57 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   let offerSeq = 0;
   const offers = new Map<number, Offer>();
   let wslOffered = false;
+  /**
+   * The offer `key` is still on its board and hasn't reached the screen since it was posted (as `seq`, when given):
+   * nobody has seen it. False when it shows at once (main's own setter) or the board can't say.
+   */
+  const unseenYet = (key: string, seq?: number): boolean => {
+    const ob = isOffer(key) ? offerBoard() : null;
+    const mine = ob ? offerShown : shown;
+    const b = ob ?? board();
+    try { return !!b && mine?.key === key && (seq === undefined || mine.seq === seq) && b.visible && b.shownAt === null; } catch { return false; }
+  };
+  /**
+   * An offer nobody asked for: it waits for the bubble to be free (an answer being read stays) and goes unanswered after
+   * OFFER_MS on screen. It waits only OFFER_MS too: a held "Can't connect" or Lost can stay up for an hour, and by then
+   * what it says may no longer hold (the ssh it names ended). One that couldn't show in time goes unseen, and `unseen`
+   * lets it be offered again, since the user never saw it (R-stale-offer).
+   */
+  const postUnasked = (key: string, said: Said, unseen: () => void): void => {
+    bubble(key, said, { ms: OFFER_MS, claim: "reply" });
+    // bubble() numbered it last.
+    const seq = bubbleSeq;
+    parts.setTimeout(() => {
+      if (disposed || !unseenYet(key, seq)) return;
+      hideBubble(key);
+      log.info("targets.offer_unseen", {});
+      unseen();
+    }, OFFER_MS);
+  };
   function showSeenOffer(s: SshSeen): void {
     const k = ++offerSeq;
     offers.set(k, { kind: "seen", seen: s });
     const label = hostPart(s.dest);
-    // Nobody asked for it: it waits for the bubble to be free (an answer being read stays), and goes unanswered.
-    const unasked: NoticeOptions = { ms: OFFER_MS, claim: "reply" };
+    const unseen = () => { offers.delete(k); noticer?.release(seenKey(s)); };
     if (s.via && s.via !== "local" && !WSL_SSH_PROVEN) {
-      bubble(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "decide"), unasked);
+      postUnasked(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "decide"), unseen);
       return;
     }
-    bubble(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "decide", keyboard()), unasked);
+    postUnasked(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "decide", keyboard()), unseen);
   }
+  /**
+   * The noticer's look found which of the user's ssh run now (seenKey): an offer up or waiting for one that has ended
+   * goes, as "You're connected to web-07" no longer holds; one nobody saw may come again if the user goes back there.
+   */
+  const sshRunning = (keys: ReadonlySet<string>): void => {
+    for (const [k, o] of offers) {
+      if (o.kind !== "seen" || keys.has(seenKey(o.seen))) continue;
+      const unseen = unseenYet(`offer:${k}`);
+      offers.delete(k);
+      hideBubble(`offer:${k}`);
+      if (unseen) noticer?.release(seenKey(o.seen));
+    }
+  };
   const bringSeen = (s: SshSeen) => {
     const extra: HostRecord["extra"] = {
       ...(s.jump?.length ? { jump: s.jump } : {}), ...(s.identityFiles?.length ? { identityFiles: s.identityFiles } : {}),
@@ -1272,6 +1311,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       connected: s => settings.get().targets.hosts.some(h => reaches(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
       questionUp,
       offer: s => showSeenOffer(s),
+      running: keys => sshRunning(keys),
       now: () => parts.now().getTime(),
     });
     const t = parts.setInterval(() => { try { noticer?.tick(); } catch (err) { log.warn("targets.notice_failed", { err }); } }, NOTICE_TICK_MS);
@@ -1281,7 +1321,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   function offerWsl(): void {
     if (wslOffered || questionUp()) return;
     wslOffered = true;
-    bubble("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "decide", keyboard()), { ms: OFFER_MS, claim: "reply" });
+    // Unseen (it couldn't show in time), the next request that names WSL offers it again.
+    postUnasked("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "decide", keyboard()), () => { wslOffered = false; });
   }
 
   // ── Start ──

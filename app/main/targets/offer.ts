@@ -5,9 +5,10 @@
  * when the window the user is in is a terminal whose title just changed, and at most once every 10 s; on Windows the
  * process query (a PowerShell start) runs only for a title that looks like an SSH session and only while SSH is in use
  * or the user hasn't turned the first offer away; ssh inside WSL is read only with WSL on and only in distros running
- * at that moment (never starting one). Each destination is offered once per run, never one the user dismissed or Ember
- * is already connected to, and never while a question is up. Ember never opens a connection here: the offer's button
- * does, after the SSH card.
+ * at that moment (never starting one). Each destination is offered once per run (again only if its offer never reached
+ * the screen: release), never one the user dismissed or Ember is already connected to, and never while a question is up;
+ * each look also says which of the user's ssh still run, so an offer for one that ended goes (running). Ember never opens
+ * a connection here: the offer's button does, after the SSH card.
  */
 
 import type { OS } from "../../shared/shortcuts";
@@ -62,6 +63,12 @@ export interface NoticerDeps {
   questionUp(): boolean;
   /** Shows the offer. */
   offer(s: SshSeen): void;
+  /**
+   * After each look that read the process list: the destinations (seenKey) of every ssh of the user's running now,
+   * offered or not, so an offer up or waiting for one that has ended goes ("You're connected to web-07" no longer
+   * holds; R-stale-offer). Not called when the list couldn't be read: nobody can tell then what ended.
+   */
+  running?(keys: ReadonlySet<string>): void;
   now(): number;
 }
 
@@ -72,6 +79,11 @@ export interface Noticer {
   check(): Promise<void>;
   /** Destinations offered this run. */
   readonly offered: ReadonlySet<string>;
+  /**
+   * The offer for `key` (seenKey) went without ever reaching the screen (it waited too long behind a held bubble, or its
+   * ssh ended first): the user never saw it, so the next look that finds that destination may offer it again.
+   */
+  release(key: string): void;
 }
 
 /** Makes the noticer. */
@@ -96,11 +108,14 @@ export function createNoticer(d: NoticerDeps): Noticer {
         return;
       }
       if (!procs) return;
+      const all: SshSeen[] = [];
       for (const p of procs) {
         let seen: SshSeen | null;
         try { seen = d.notice.sshDestination(p.argv); } catch { seen = null; }
-        if (!seen) continue;
-        if (p.via) seen = { ...seen, via: p.via };
+        if (seen) all.push(p.via ? { ...seen, via: p.via } : seen);
+      }
+      try { d.running?.(new Set(all.map(seenKey))); } catch (err) { d.log.warn("remote.ssh_running_failed", { err }); }
+      for (const seen of all) {
         const key = seenKey(seen);
         if (offered.has(key) || d.dismissed(seen) || d.connected(seen)) continue;
         // The user's own ssh; logged without its host (§2.7).
@@ -135,5 +150,5 @@ export function createNoticer(d: NoticerDeps): Noticer {
     void check();
   }
 
-  return { tick, check, offered };
+  return { tick, check, offered, release: key => { offered.delete(key); } };
 }

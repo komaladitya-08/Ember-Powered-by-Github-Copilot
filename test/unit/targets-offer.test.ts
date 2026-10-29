@@ -171,6 +171,34 @@ describe("what Ember offers", () => {
     expect([...r.offered, ...bad.offered, ...failing.offered]).toEqual([]);
   });
 
+  it("offers a destination again once its offer is let go unseen (R-stale-offer)", async () => {
+    const r = rig();
+    await r.n.check();
+    r.n.release(seenKey({ dest: "build-01", via: "local" }));
+    expect(r.n.offered.size).toBe(0);
+    await r.n.check();
+    expect(r.offered).toEqual([{ dest: "build-01", via: "local" }, { dest: "build-01", via: "local" }]);
+  });
+
+  it("says after each look which of the user's ssh run now, offered or not, so an offer for one that ended goes (R-stale-offer)", async () => {
+    let procs: { pid: number; argv: string[]; via: SshSeen["via"] }[] | null = [
+      { pid: 1, argv: ["ssh", "-V"], via: "local" }, { pid: 2, argv: ["ssh", "old-box"], via: "local" }, { pid: 3, argv: ["ssh", "db-02"], via: "wsl:Ubuntu" },
+    ];
+    const running: string[][] = [];
+    const r = rig({
+      notice: { sshDestination: argv => (argv.includes("-V") ? null : { dest: argv[argv.length - 1] }), userSshProcesses: async () => procs },
+      dismissed: s => s.dest === "old-box", questionUp: () => true, running: keys => running.push([...keys]),
+    });
+    await r.n.check();
+    procs = [];
+    await r.n.check();
+    // A list that can't be read says nothing: nobody can tell what ended.
+    procs = null;
+    await r.n.check();
+    expect(running).toEqual([[seenKey({ dest: "old-box", via: "local" }), seenKey({ dest: "db-02", via: "wsl:Ubuntu" })], []]);
+    expect(r.offered).toEqual([]);
+  });
+
   it("keys a destination by user, host and port, the host without case", () => {
     expect(seenKey({ dest: "Deploy@Build-01" })).toBe(seenKey({ dest: "Deploy@build-01" }));
     expect(seenKey({ dest: "build-01", user: "deploy", port: 2222 })).not.toBe(seenKey({ dest: "build-01" }));
