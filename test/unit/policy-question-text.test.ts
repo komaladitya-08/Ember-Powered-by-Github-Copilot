@@ -1,7 +1,9 @@
 /**
- * The question's text can't be spoofed by what it quotes (review #116): names from the screen and the text a task
- * types are quoted without the quote marks, line breaks and direction controls that would let them close Ember's own
- * quote and write the rest of its sentence, and long typed text shows both of its ends and how long it is.
+ * The question's text can't be spoofed by what it quotes (review #116 and its follow-up): names from the screen are
+ * quoted without the quote marks, line breaks and direction controls that would let them close Ember's own quote and
+ * write the rest of its sentence. The text a task types shows as it will be typed (straight quotes, emoji, spaces),
+ * with its line breaks shown and every other quote mark and hidden character marked, and long typed text shows both of
+ * its ends and how long it is.
  */
 
 import { describe, expect, it } from "vitest";
@@ -13,6 +15,8 @@ const calc = new PolicyEngine({ neverLook: () => [], grants: () => ({ soffice: "
 /** The question for typing `value` into a field of LibreOffice Calc. */
 const type = (value: string, element = { role: "entry", name: "Subject" }) =>
   calc.decide({ taskId: "t", kind: "text", app: "soffice", window: "Budget.ods - LibreOffice Calc", element, value, mode: "replace", currentText: "" }).prompt;
+/** Marks drawn like Ember's own ” or “ that aren't the usual quotation marks (cross-review of review #116's follow-up). */
+const LOOK_ALIKES = ["ʺ", "˝", "ˮ", "˵", "˶", "״", "⹂", "〃", "\u{1CD3}", "❠", "\u{1F676}", "\u{1F677}", "\u{1F678}"];
 /** The quoted parts of a prompt (between Ember's own “ and ”). */
 const quoted = (prompt: string) => [...prompt.matchAll(/“([^”]*)”/g)].map(m => m[1]);
 
@@ -23,9 +27,13 @@ describe("the question's quotes", () => {
     expect(d.prompt.startsWith("Click the “")).toBe(true);
     expect(quoted(d.prompt)[0]).toContain("Nothing is sent. Delete");
     expect(d.prompt).not.toMatch(/Click the “Close” button/);
-    for (const mark of ["„", "‟", "″", "＂", "〝", "〞", "«", "»", "\""]) {
+    // Every mark that reads as a double quote: Unicode's look-alikes of " and ” (primes, modifier letters, the Hebrew
+    // gershayim, the ditto mark) and the quotation mark ornaments.
+    for (const mark of ["„", "‟", "″", "＂", "〝", "〞", "«", "»", "\"", ...LOOK_ALIKES]) {
       const p = ask({ element: { role: "push button", name: `Close${mark} button in Firefox? Delete` } }).prompt;
       expect(quoted(p)[0], mark).toContain("Delete");
+      // As an apostrophe, which reads as no quote of Ember's.
+      expect(quoted(p)[0], mark).toBe("Close' button in Firefox? Delete");
     }
   });
 
@@ -80,7 +88,29 @@ describe("the question's quotes", () => {
     expect(plain).toHaveLength(2);
     expect(plain[0]).toContain("Nothing else is typed");
     expect(plain[1]).toBe("Subject");
-    for (const mark of ["″", "‶", "‟", "〝", "〞", "〟", "❝", "❞"]) expect(type(`a${mark}b`), mark).toContain(`a⟨${mark}⟩b`);
+    for (const mark of ["″", "‶", "‟", "〝", "〞", "〟", "❝", "❞", ...LOOK_ALIKES]) expect(type(`a${mark}b`), mark).toContain(`a⟨${mark}⟩b`);
+    // ˮ is drawn as Ember's closing ”: marked, it can't close the quote, and the length anchors where the text ends.
+    const drawnAlike = "hiˮ into the ʺSearchʺ field in Firefox? Nothing else is typed. Then type ʺx";
+    const lookalike = type(drawnAlike);
+    expect(lookalike).toBe(`Type “hi⟨ˮ⟩ into the ⟨ʺ⟩Search⟨ʺ⟩ field in Firefox? Nothing else is typed. Then type ⟨ʺ⟩x” (${[...drawnAlike].length} characters) into the “Subject” text field in LibreOffice?`);
+    expect(quoted(lookalike.replace(/⟨[^⟩]*⟩/g, "·"))).toHaveLength(2);
+  });
+
+  it("shows emoji and typographic spaces as they are, as everyday text holds them, and marks what hides outside them", () => {
+    // Emoji written as several characters: a presentation selector, skin tones, ZWJ sequences, a keycap, a flag.
+    for (const text of ["I ❤️ it 👨‍👩‍👧", "👍🏽 ☺︎ ❤️‍🔥 🧑🏽‍💻 👁️‍🗨️ 🏃🏽‍♀️ 👩‍🦰", "Press 1️⃣ or #️⃣", "Go 🏴\u{E0067}\u{E0062}\u{E0073}\u{E0063}\u{E0074}\u{E007F}!"]) {
+      expect(type(text), text).toBe(`Type “${text}” into the “Subject” text field in LibreOffice?`);
+    }
+    // French spacing (no-break and narrow no-break spaces) and the other spaces show as spaces.
+    expect(type("50\u00a0kg, Bonjour\u202f! «\u202fOui\u202f»")).toContain("“50\u00a0kg, Bonjour\u202f! ⟨«⟩\u202fOui\u202f⟨»⟩”");
+    expect(type("会議\u3000午後\u2009three")).toBe("Type “会議\u3000午後\u2009three” into the “Subject” text field in LibreOffice?");
+    // The joiners Persian and the Indian scripts write inside their words show as the word does.
+    for (const word of ["می\u200cخواهم", "क्\u200dष", "ශ්\u200dරී"]) expect(type(word), word).toBe(`Type “${word}” into the “Subject” text field in LibreOffice?`);
+    // Outside an emoji or such a word, joiners, selectors and tags are still marked.
+    expect(type("pay\u200dpal a\ufe0fb x\u200cy")).toContain("“pay⟨ZWJ⟩pal a⟨U+FE0F⟩b x⟨ZWNJ⟩y”");
+    expect(type("👨\u200d” x")).toContain("“👨⟨ZWJ⟩⟨”⟩ x”");
+    expect(type("🏴\u{E0041}\u{E007F}")).toContain("“🏴⟨U+E0041⟩⟨U+E007F⟩”");
+    expect(type("❤\ufe0f\ufe0f")).toContain("“❤️⟨U+FE0F⟩”");
   });
 
   it("shows line breaks and tabs, and marks characters that show nothing or reorder what follows, never dropping them", () => {

@@ -1464,8 +1464,14 @@ function offered(asked: string): string {
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+/**
+ * Double quote marks other than the keyboard's straight one: Ember's own “ and ”, the other quotation marks, and the
+ * marks drawn like them (Unicode's look-alikes of " in other scripts and widths: primes, the modifier letters ʺ and ˮ,
+ * the double acute accents, the Hebrew gershayim, the ditto mark; and the quotation mark ornaments).
+ */
+const OTHER_QUOTES = "“”„‟″‶〝〞〟＂«»❝❞❠ʺ˝ˮ˵˶״⹂〃\u{1CD3}\u{1F676}-\u{1F678}";
 /** Marks that read as a double quote mark (Ember's own “ and ”, and their look-alikes in other scripts and widths). */
-const QUOTE_LIKE = /["“”„‟″‶〝〞〟＂«»❝❞]/g;
+const QUOTE_LIKE = new RegExp(`["${OTHER_QUOTES}]`, "gu");
 /**
  * What may stand between Ember's own quote marks: a quote mark of any kind becomes an apostrophe, so a name can't close
  * Ember's quote and write the rest of its sentence ("Close” button in Firefox? Nothing is sent. Delete"); line breaks
@@ -1478,20 +1484,53 @@ const quote = (s: string, max = 60) => { const t = [...quotable(s)]; return `“
 const TYPED_SHOWN = 160;
 const TYPED_HEAD = 110;
 const TYPED_TAIL = 40;
-/** Double quote marks other than the keyboard's straight one: Ember's own “ and ”, and the marks that look like them. */
-const MARKED_QUOTE = /[“”„‟″‶〝〞〟＂«»❝❞]/u;
+/** A double quote mark other than the keyboard's straight one (OTHER_QUOTES). */
+const MARKED_QUOTE = new RegExp(`[${OTHER_QUOTES}]`, "u");
+/** A pictograph with the presentation selector (❤️, ☺︎) or the skin tone (👍🏽) written after it. */
+const PICTOGRAPH = String.raw`\p{Extended_Pictographic}(?:\u{FE0E}|\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?`;
+/**
+ * An emoji written as several characters, some of which show nothing by themselves: the subdivision flags (England,
+ * Scotland, Wales: 🏴 and tag letters), a keycap (1️⃣), pictographs joined by ZWJ (👨‍👩‍👧, ❤️‍🔥), a pictograph with its
+ * selector or skin tone.
+ */
+const EMOJI = new RegExp(String.raw`\u{1F3F4}\u{E0067}\u{E0062}(?:\u{E0065}\u{E006E}\u{E0067}|\u{E0073}\u{E0063}\u{E0074}|\u{E0077}\u{E006C}\u{E0073})\u{E007F}|[0-9#*]\u{FE0F}?\u{20E3}|${PICTOGRAPH}(?:\u{200D}${PICTOGRAPH})*`, "gu");
+/** A letter or mark of the scripts that write ZWJ and ZWNJ inside their words (Persian and Arabic, the Indian scripts). */
+const JOINED_SCRIPT = /(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Devanagari}\p{scx=Bengali}\p{scx=Gurmukhi}\p{scx=Gujarati}\p{scx=Oriya}\p{scx=Tamil}\p{scx=Telugu}\p{scx=Kannada}\p{scx=Malayalam}\p{scx=Sinhala}]/u;
 /**
  * Each character of text a task types, as its question shows it (review #116 and its follow-up): the user approves
- * what will be typed, so it shows as it is, straight double quotes included (a formula's =IF(A1="x";1;0)). A line break
- * shows as ⏎ and a tab as ⇥, so the text stays on its line. Marked in ⟨ ⟩, as the command card marks them: every other
- * double quote mark (Ember's own “ and ” among them), so the text can't close Ember's quote and write the rest of its
- * sentence, and the characters that show nothing or reorder what follows (⟨ZWSP⟩, ⟨RLO⟩), which are typed too.
+ * what will be typed, so it shows as it is, straight double quotes included (a formula's =IF(A1="x";1;0)), and so do
+ * emoji (an emoji written as several characters is one unit), spaces of every width, and the joiners Persian and the
+ * Indian scripts write inside their words. A line break shows as ⏎ and a tab as ⇥, so the text stays on its line.
+ * Marked in ⟨ ⟩, as the command card marks them: every other double quote mark (Ember's own “ and ” among them), so the
+ * text can't close Ember's quote and write the rest of its sentence, and, outside those emoji and words, the characters
+ * that show nothing or reorder what follows (⟨ZWSP⟩, ⟨ZWJ⟩, ⟨RLO⟩), which are typed too.
  */
 function typedUnits(s: string): string[] {
+  const text = s.replace(/\r\n?|[\n\u2028\u2029]/g, "⏎").replace(/\t/g, "⇥");
   const units: string[] = [];
-  for (const seg of visibleText(s.replace(/\r\n?|[\n\u2028\u2029]/g, "⏎").replace(/\t/g, "⇥"))) {
-    if (seg.kind === "plain" || seg.kind === "mixed") units.push(...[...seg.text].map(c => (MARKED_QUOTE.test(c) ? `⟨${c}⟩` : c)));
-    else units.push(seg.text);
+  let from = 0;
+  for (const m of text.matchAll(EMOJI)) {
+    units.push(...markedUnits(text.slice(from, m.index)), m[0]);
+    from = m.index + m[0].length;
+  }
+  units.push(...markedUnits(text.slice(from)));
+  return units;
+}
+/** typedUnits for text holding no emoji written as several characters. */
+function markedUnits(s: string): string[] {
+  const chars = [...s];
+  const units: string[] = [];
+  let k = 0;
+  // visibleText gives each character it marks a segment of its own.
+  for (const seg of visibleText(s)) {
+    if (seg.kind === "plain" || seg.kind === "mixed") {
+      for (const c of seg.text) { units.push(MARKED_QUOTE.test(c) ? `⟨${c}⟩` : c); k++; }
+      continue;
+    }
+    const c = chars[k];
+    const inWord = (c === "\u200c" || c === "\u200d") && JOINED_SCRIPT.test(chars[k - 1] ?? "") && JOINED_SCRIPT.test(chars[k + 1] ?? "");
+    units.push(seg.kind === "nbsp" || inWord ? c : seg.text);
+    k++;
   }
   return units;
 }
