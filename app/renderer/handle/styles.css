@@ -30,7 +30,7 @@ body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label);
 .target[data-state="lost"] .target-dot { background: var(--red); -webkit-mask: var(--sym-failed) center / 10px no-repeat; }
 .text b { font: var(--type-headline); font-size: 13px; line-height: 17px; letter-spacing: -0.003em; }
 #line { color: var(--label-2); font: var(--type-footnote); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.thought, .step, .task { display: none; }
+.thought, .step, .task, .whole, .whole-hint { display: none; }
 /* Ember hidden: main shrinks the window to a tab with just the face (the menu still opens from it). */
 @media (max-width: 80px) {
   .handle { padding: 0; gap: 0; justify-content: center; }
@@ -69,6 +69,15 @@ body.fallback.streaming .thought[data-overflow="true"] {
 }
 /* Running commentary (thinking, working, listening) is quieter, as in the bubble: the secondary label. */
 body.fallback:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .thought { color: var(--label-2); }
+/* A question's whole text (a long typed text its sentence cuts short, review #116), as the bubble shows it: a panel that
+   scrolls, every character as it will be typed. Until all of it has been in view, the read hint under it. */
+body.fallback .whole {
+  display: block; flex: none; max-height: 7lh; overflow-y: auto; overscroll-behavior: contain; margin-top: 6px; padding: 6px 10px;
+  border-radius: var(--r-md); background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px var(--separator);
+  white-space: pre-wrap; overflow-wrap: anywhere; color: var(--label); font: var(--type-body);
+}
+body.fallback .whole-hint { display: block; flex: none; margin-top: 4px; font: var(--type-footnote); color: var(--label-2); }
+body.fallback :is(.whole, .whole-hint)[hidden] { display: none; }
 /* The step, or a question's keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"). */
 body.fallback .step { display: block; flex: none; margin-top: 4px; font: var(--type-footnote); color: var(--label-2); }
 body.fallback .step[hidden] { display: none; }
@@ -84,6 +93,8 @@ body.fallback .step[hidden] { display: none; }
 }
 @media (hover: hover) { .actions button:hover, .task-actions button:hover { background: rgba(255, 255, 255, 0.15); } }
 .actions button:active, .task-actions button:active { transform: scale(0.97); }
+/* Allow before the question's whole text has all been in view: it takes no press yet. */
+.actions button[aria-disabled="true"] { opacity: 0.4; cursor: default; transform: none; }
 .actions button.primary { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); }
 .actions button:focus-visible, .task-actions button:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 .actions button.primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring); }
@@ -131,6 +142,8 @@ html.calm .mic[data-state="active"]::after { opacity: 0.85; }
   .actions button, .task-actions button { border: 1px solid ButtonText; }
   .actions button.primary { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   .target { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .actions button[aria-disabled="true"], .actions button.primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
+  body.fallback .whole { border: 1px solid CanvasText; }
 }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type.

@@ -1,8 +1,8 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { announcement, onPress, plainStream } from "@ember/bubble";
-import type { BubbleState, EmberState, HandleApi, TaskCard } from "../../shared/overlay";
+import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type WholeView } from "@ember/bubble";
+import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
@@ -86,12 +86,56 @@ function announce(b: BubbleState, status: string | null, micNews: string | null)
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step }, name);
+    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text } : {}) }, name);
     if (text && text !== announced) { announced = text; parts.push(text); }
   }
   parts.push(...live.news(status, micNews));
   if (parts.length) $("live").textContent = parts.join(" ");
 }
+// ── A question's whole text (review #116): all of a long typed text under its sentence, as the bubble shows it, and
+// its Allow waiting until all of it has been in view on the card (packages/bubble/src/whole.ts judges it) ──
+const wholeEl = $("whole");
+const wholeHintEl = $("whole-hint");
+let whole: WholeView | null = null;
+/** The whole text as main sends it (null: none): shown from its start; each approve-key press since, a page on. */
+function showWhole(next: WholeText | null): void {
+  const r = wholeNext(whole, next);
+  whole = r.view;
+  wholeEl.hidden = !whole;
+  if (!whole) { wholeEl.textContent = ""; paintWhole(); return; }
+  if (r.fresh) { wholeEl.textContent = whole.text; wholeEl.scrollTop = 0; }
+  if (r.pages) wholeEl.scrollTop += r.pages * wholePage(wholeEl.clientHeight, parseFloat(getComputedStyle(wholeEl).lineHeight));
+  paintWhole();
+  // Seen here and main doesn't say so yet (just now, or a word that was lost): told (again).
+  if (wholeUnreported(whole, next)) api.bubbleAction(wholeSeenAction(whole.n));
+}
+/** The read hint, and Allow taking no press, while the whole text hasn't all been in view. */
+function paintWhole(): void {
+  const unread = !!whole && !whole.seen;
+  wholeHintEl.hidden = !unread;
+  wholeHintEl.textContent = unread ? WHOLE_READ_HINT : "";
+  for (const el of $("actions").querySelectorAll<HTMLElement>("button")) {
+    if (unread && el.dataset.whole === "wait") el.setAttribute("aria-disabled", "true"); else el.removeAttribute("aria-disabled");
+  }
+}
+/** Measured (a layout read) while it waits to be read: main told the first time all of it is in view on the shown card. */
+function judgeWhole(): void {
+  if (!whole || whole.seen) return;
+  const r = wholeEl.getBoundingClientRect();
+  const shown = fallback && document.visibilityState === "visible";
+  const { view, report } = wholeJudged(whole, wholeInView(
+    { scrollTop: wholeEl.scrollTop, scrollHeight: wholeEl.scrollHeight, clientHeight: wholeEl.clientHeight, top: r.top, bottom: r.bottom, viewportHeight: window.innerHeight },
+    { shown, fontsLoaded: document.fonts.status === "loaded" },
+  ));
+  whole = view;
+  if (!report) return;
+  paintWhole();
+  api.bubbleAction(wholeSeenAction(view.n));
+}
+wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
+window.addEventListener("resize", judgeWhole);
+document.fonts.addEventListener("loadingdone", judgeWhole);
+
 /** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
 let badgeKey = "";
 function renderTarget(s: EmberState, given?: TargetBadge | null): void {
@@ -141,6 +185,7 @@ api.onState(s => {
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;
+  showWhole(b.visible ? b.whole ?? null : null);
   // While it streams, the newest lines show; once done, it reads (and scrolls) from the start.
   if (b.streaming) thoughtEl.scrollTop = thoughtEl.scrollHeight;
   else if (wasStreaming) thoughtEl.scrollTop = 0;
@@ -162,6 +207,9 @@ api.onState(s => {
   document.body.classList.toggle("asking", actions.length > 0);
   $("actions").hidden = actions.length === 0;
   buttons($("actions"), actions, a => a.label);
+  // Allow (never Not now) waits for the question's whole text to have all been in view; main refuses it before, too.
+  [...$("actions").querySelectorAll<HTMLElement>("button")].forEach((el, i) => { el.dataset.whole = actions[i] && waitsForWhole(actions[i].id, b.whole) ? "wait" : ""; });
+  paintWhole();
 
   $("task").hidden = !task;
   if (task) {
@@ -174,6 +222,8 @@ api.onState(s => {
   }
   buttons($("task-actions"), task?.actions ?? [], a => `${a.label}: ${task?.title ?? ""}`);
   requestAnimationFrame(fitCard);
+  // Judged once laid out (and again when the card is fitted to it: resize).
+  if (whole && !whole.seen) requestAnimationFrame(judgeWhole);
 });
 
 /**

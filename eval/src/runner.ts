@@ -100,17 +100,29 @@ const textOf = (m: Msg) => (typeof m.content === "string" ? m.content : JSON.str
 export const SIMULATED_USER_TIMING = { timeoutMs: 30_000, armMs: 0, gapMs: 0 } as const satisfies ConfirmerTiming;
 export const SIMULATED_ANSWER_MS = 30;
 
-/** A Confirmer answered the way the task's user answers (recording each question in `questions`). */
+/**
+ * A Confirmer answered the way the task's user answers (recording each question in `questions`). A question with a whole
+ * text to read (a long typed text) is read through first, as the user scrolls to its end; its bubble shown again for that
+ * is the same question, answered once.
+ */
 export function simulatedUser(task: Task, questions: string[]): Confirmer {
+  let last = "";
   const confirmer: Confirmer = new Confirmer(p => {
     const actions = p.bubble?.actions ?? [];
     if (!actions.length) return;
+    const n = actions.map(a => /^q(\d+):/.exec(a.id)?.[1]).find(Boolean) ?? "";
+    if (n && n === last) return;
+    last = n;
     const prompt = p.bubble!.thought;
     questions.push(prompt);
     const rule = task.user.answers.find(a => new RegExp(a.prompt, "i").test(prompt));
     const answer = rule?.answer ?? task.user.answer;
     const id = answer === "deny" ? "deny" : answer === "always" && actions.some(a => a.id.endsWith(":always")) ? "always" : "once";
-    setTimeout(() => confirmer.answer(actions.find(a => a.id.endsWith(`:${id}`))!.id), SIMULATED_ANSWER_MS);
+    const whole = p.bubble!.whole;
+    setTimeout(() => {
+      if (whole) confirmer.wholeSeen(whole.n);
+      confirmer.answer(actions.find(a => a.id.endsWith(`:${id}`))!.id);
+    }, SIMULATED_ANSWER_MS);
   }, SIMULATED_USER_TIMING);
   return confirmer;
 }

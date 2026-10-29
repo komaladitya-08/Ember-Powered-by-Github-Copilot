@@ -23,7 +23,7 @@ import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } fr
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
-import { OVERLAY, IDLE_BUBBLE, type EmberState, type Rect } from "../shared/overlay";
+import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -1324,6 +1324,10 @@ function start(): void {
     const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
     const task = /^task:(.+):(stop|dismiss)$/.exec(id);
+    // A question's whole text has all been in view on that page (review #116): its Allow works from now on. It says what
+    // the user saw, not a click, so it counts while Ember drives the mouse too (the page takes no pointer then).
+    const seen = wholeSeenOf(id);
+    if (seen !== null) { confirmer?.wholeSeen(seen); return; }
     // Stopping a task is always honoured (also while Ember waits for the mouse), and so is an announced command's Stop
     // (critique integration-24). Anything else that arrives while Ember really drives the pointer was Ember's own
     // click, not the user's: ignored.

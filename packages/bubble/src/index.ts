@@ -3,3 +3,7 @@ export {
   type BubbleAction, type BubbleMood, type BubbleSpot, type BubbleView, type Point, type Rect, type Size,
 } from "./bubble";
 export { plainMarkdown, plainStream } from "./markdown";
+export {
+  WHOLE_LABEL, WHOLE_READ_HINT, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported,
+  type WholeMetrics, type WholeState, type WholeView,
+} from "./whole";

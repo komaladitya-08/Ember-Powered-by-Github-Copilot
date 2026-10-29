@@ -10,7 +10,7 @@
 
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
-import { TASK_STOPPING, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
@@ -33,6 +33,8 @@ const canvas = document.getElementById("stage") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const bubble = new ReasoningBubble(document.getElementById("bubble-host")!);
 bubble.setVisible(false);
+// All of a question's whole text has been in view here (review #116): main lets its Allow work from then on.
+bubble.onWholeSeen = n => api.bubbleAction(wholeSeenAction(n));
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
@@ -144,7 +146,9 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   bubble.setStreaming(b.streaming);
   bubble.setStep(b.step);
   bubble.setExpanded(b.expanded === true);
-  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
+  // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
+  bubble.setWhole(b.whole ?? null);
+  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => api.bubbleAction(a.id) })) : null);
   const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;
   if (f) {

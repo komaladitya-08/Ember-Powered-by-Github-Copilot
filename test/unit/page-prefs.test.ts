@@ -214,8 +214,9 @@ describe("the text size", () => {
   it("keeps as many lines in the bubble at every size: its heights are counted in lines, not px (review #57)", async () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const heights = [...BUBBLE_CSS.matchAll(/max-height: ([^;]+);/g)].map(m => m[1]);
-    // Six lines of an answer, three while it streams or for commentary, ten for a question, sixteen once opened in full.
-    expect(heights.filter(h => /^\d+lh$/.test(h)).sort()).toEqual(["10lh", "16lh", "3lh", "3lh", "6lh"]);
+    // Six lines of an answer, three while it streams or for commentary, ten for a question, sixteen once opened in full,
+    // seven for a question's whole text (review #116).
+    expect(heights.filter(h => /^\d+lh$/.test(h)).sort()).toEqual(["10lh", "16lh", "3lh", "3lh", "6lh", "7lh"]);
     expect(BUBBLE_CSS).not.toMatch(/max-height: calc\(\d+px \* \d+\)/);
   });
 
