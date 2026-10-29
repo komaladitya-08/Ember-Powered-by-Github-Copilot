@@ -365,8 +365,9 @@ Glint"). The choice is stored in `~/.config/ember/settings.json` with size and v
   conductor uses a fast model, workers a stronger vision model (both picked from `listModels()`).
 - **Cost:** every prompt to any session uses Copilot quota, so the conductor answers simple
   things directly and workers stop as soon as a task is verified.
-- **Lifecycle:** finished workers stay resumable for ~10 minutes (for "undo that" or "do the same
-  for the other file"), then close. After a restart, unfinished GUI tasks are not resumed
+- **Lifecycle:** a finished worker's session, which holds the screen text the task read, is
+  deleted as soon as the task ends (a crash's leftovers are swept at the next start); a follow-up
+  such as "undo that" starts a new task. After a restart, unfinished GUI tasks are not resumed
   automatically: Ember asks.
 
 ---
