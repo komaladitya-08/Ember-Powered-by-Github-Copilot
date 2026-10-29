@@ -35,7 +35,7 @@ export interface JumpListTask {
 export function jumpListTasks(o: { execPath: string; appPath: string; packaged: boolean }): JumpListTask[] {
   return [{
     program: o.execPath, arguments: o.packaged ? ASK_ARG : `"${o.appPath}" ${ASK_ARG}`,
-    title: ASK_ENTRY, description: "Open the box to ask Ember something", iconPath: o.execPath, iconIndex: 0,
+    title: ASK_ENTRY, description: "Open the ask box", iconPath: o.execPath, iconIndex: 0,
   }];
 }
 

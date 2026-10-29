@@ -295,7 +295,7 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
   it("puts Ask Ember in the Windows jump list, starting Ember.exe with --ask", () => {
     expect(jumpListTasks({ execPath: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", appPath: "unused", packaged: true })).toEqual([{
       program: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", arguments: "--ask", title: "Ask Ember",
-      description: "Open the box to ask Ember something", iconPath: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", iconIndex: 0,
+      description: "Open the ask box", iconPath: "C:\\Users\\ana\\AppData\\Local\\Programs\\Ember\\Ember.exe", iconIndex: 0,
     }]);
     // A development run: Electron with the app's folder first, quoted (it may have spaces).
     expect(jumpListTasks({ execPath: "C:\\repo\\node_modules\\electron\\dist\\electron.exe", appPath: "C:\\My Repos\\ember", packaged: false })[0].arguments).toBe("\"C:\\My Repos\\ember\" --ask");
