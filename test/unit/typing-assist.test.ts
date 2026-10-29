@@ -13,6 +13,7 @@ import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
 import { KEYS } from "../../app/shared/shortcuts";
 import type { AxNode, Bounds } from "../../app/main/perception/sidecar";
+import type { KeyLevels } from "../../app/main/hands/keymap";
 import type { Logger } from "../../app/main/logger";
 
 const CONTROL_L = 0xffe3, SHIFT_L = 0xffe1;
@@ -99,6 +100,59 @@ describe("a borrow while the keyboard can't be used", () => {
     expect(keys(s.log)).toContain("sym 61 down");
     // Asked about up front (before the wait for the user to be still, and again after it), and as it is pressed.
     expect(s.asked).toEqual(Array(3).fill({ modifiers: [CONTROL_L], sym: 0x61 }));
+  });
+
+  it("plans typed text on the layout of the window it types into, not on the user's (a layout per window)", async () => {
+    // GNOME's "Switch input sources individually for each window": the XKB group follows the focused window. The user
+    // is in 11, set to Russian; the text is for 22, set to US. The preflight runs while 11 still has the focus, so it
+    // mustn't plan the text: "h" is typed on 22's layout once 22 is in front.
+    const { s, x } = fakeX(() => null);
+    let active = 11;
+    const raised: number[] = [];
+    const us: KeyLevels = new Map([[43, [0x68, 0x48]]]), ru: KeyLevels = new Map([[43, [0x6d2, 0x6f2]]]);
+    Object.assign(x, {
+      activeWindow: () => active, focusedWindow: () => active, activate: (w: number) => { raised.push(w); active = w; },
+      layout: () => { const typing = active === 22 ? us : ru; return { typing, shortcuts: typing, shift: 50, others: [] }; },
+    });
+    await new CursorBorrow(x).borrow(async hand => { hand.checkTyping("h"); await hand.type("h"); }, { ...fast, keysOnly: true, preflight: h => h.checkTyping("h") });
+    expect(raised).toEqual([22, 11]);
+    expect(keys(s.log)).toEqual(["code 43 down", "code 43 up"]);
+  });
+
+  it("still refuses text it can never type before the window is brought to the front, whatever the layout", async () => {
+    const { s, x } = fakeX(() => null);
+    let active = 11;
+    const raised: number[] = [];
+    Object.assign(x, { activeWindow: () => active, focusedWindow: () => active, activate: (w: number) => { raised.push(w); active = w; } });
+    const b = new CursorBorrow(x);
+    await expect(b.borrow(hand => hand.type("héllo"), { ...fast, keysOnly: true, preflight: h => h.checkTyping("héllo") })).rejects.toThrow(/plain ASCII/);
+    expect(raised).toEqual([]);
+    expect(keys(s.log)).toEqual([]);
+  });
+
+  it("on macOS, where the input source can follow the document, asks about it only once the window is in front", async () => {
+    // "Automatically switch to a document's input source": the user's document (11) has an input method, the target's
+    // (22) doesn't. Asked from the user's document, the preflight would refuse keys and text the target can take.
+    const { s, x } = fakeX(() => null);
+    let active = 11;
+    const raised: number[] = [];
+    const IM = "An input method is the input source in use, so Ember won't type with the keyboard.";
+    Object.assign(x, {
+      activeWindow: () => active, focusedWindow: () => active, activate: (w: number) => { raised.push(w); active = w; },
+      keyboardBlockedReason: (k?: unknown) => { s.asked.push(k); return active === 22 ? null : IM; },
+    });
+    const b = new CursorBorrow(x, { keys: KEYS.darwin });
+    await b.borrow(async hand => { await hand.keys("a"); hand.checkTyping("hi"); await hand.type("hi"); }, { ...fast, keysOnly: true, preflight: h => { h.checkKeys("a"); h.checkTyping("hi"); } });
+    expect(raised).toEqual([22, 11]);
+    expect(keys(s.log)).toEqual(["sym 61 down", "sym 61 up", "sym 68 down", "sym 68 up", "sym 69 down", "sym 69 up"]);
+    // Asked only as the key is pressed, and by the hand's check and as the text is typed: all with the target in front.
+    expect(s.asked).toEqual([{ modifiers: [], sym: 0x61 }, undefined, undefined]);
+    // The target's own input method is still refused inside the borrow, before any key goes down.
+    raised.length = 0;
+    Object.assign(x, { keyboardBlockedReason: () => IM });
+    await expect(b.borrow(async hand => { hand.checkTyping("hi"); await hand.type("hi"); }, { ...fast, keysOnly: true, preflight: h => h.checkTyping("hi") })).rejects.toThrow(IM);
+    expect(raised).toEqual([22, 11]);
+    expect(keys(s.log)).toHaveLength(6);
   });
 
   it("tells the input which keys a shortcut presses, and nothing for typed text", async () => {

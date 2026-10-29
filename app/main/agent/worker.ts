@@ -2114,8 +2114,9 @@ export class Worker {
     let landedOn: PointElement | undefined;
     // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected. So are
     // keys the keyboard can't press now (Typing Assist; an input method, for keys that type): before the click, and
-    // before Ember's text goes on the user's clipboard. On the user's screen also before their window is brought to
-    // the front (the borrow's preflight), so it doesn't jump for nothing.
+    // before Ember's text goes on the user's clipboard. On the user's screen, what doesn't depend on which window is in
+    // front (plain ASCII text, Typing Assist) is also refused before their window is brought to the front (the
+    // borrow's preflight), so it doesn't jump for nothing.
     const checkFirst = (hand: Pick<Hand, "checkKeys" | "checkTyping">) => {
       if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
       if (kind === "cursor_text" && typeof hand.checkKeys === "function") {
@@ -2409,7 +2410,7 @@ export class Worker {
       ...(expected !== undefined ? { currentText: expected, ...this.ownText(this.fieldOf(element), expected) } : {}) });
     if (verdict) return verdict;
     let filled: { did: string; shows: string | undefined; says?: string } | undefined;
-    // Text the keyboard can't type now is refused before the window is brought to the front, as fillCell refuses it first.
+    // Text the keyboard can't type in any window is refused before the window is brought to the front, as fillCell refuses it first.
     const result = await this.withCursor("cursor_text", element, async hand => { filled = await this.fillCell(hand, job, this.cursorHints(cell)); }, undefined, undefined, true, hand => hand.checkTyping(text));
     if (result.resultType !== "success" || !filled) return result;
     if (filled.shows === undefined) return done(`Done: ${filled.did} (the cell cursor moved on), but Ember couldn't read ${cell} back. Call perceive_window to see what it shows now.`);
@@ -2456,8 +2457,8 @@ export class Worker {
           throw new Error(`${err instanceof Error ? err.message : String(err)}${rest.length ? ` The cells after it (${rest.join(", ")}) weren't typed.` : ""}`, { cause: err });
         }
       }
-      // The first cell's text the keyboard can't type now is refused before the window is brought to the front, as
-      // fillCell refuses it first (each cell after it is checked as it comes, as before).
+      // The first cell's text the keyboard can't type in any window is refused before the window is brought to the
+      // front, as fillCell refuses it first (each cell after it is checked as it comes, as before).
     }, undefined, undefined, true, hand => { if (jobs[0]) hand.checkTyping(jobs[0].text); });
     const told = filled.map(f => f.shows === undefined ? `${f.job.cell} couldn't be read back` : `${f.job.cell} ${f.says ?? `shows ${q(f.shows, 80)}`}`).join(", ");
     if (result.resultType !== "success") return filled.length ? { ...result, textResultForLlm: `Filled ${filled.length} cell${filled.length > 1 ? "s" : ""} first (${told}). ${result.textResultForLlm}` } : result;
@@ -2912,8 +2913,8 @@ export class Worker {
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
-      // Keys the keyboard can't press now are refused before the window is brought to the front (preflight): it would
-      // jump for nothing.
+      // Keys the keyboard can't press in any window (Typing Assist) are refused before the window is brought to the
+      // front (preflight): it would jump for nothing.
       const result = await this.withCursor("keys", approved, async hand => {
         // LibreOffice moves the focus about as its window comes to the front: what the user said yes to gets a moment to come back.
         const look = await this.steadyFocus(approved !== undefined || activating, { want: approved });
