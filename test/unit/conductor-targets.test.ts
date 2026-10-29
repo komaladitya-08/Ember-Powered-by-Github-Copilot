@@ -12,6 +12,8 @@ import { z } from "zod";
 import { Conductor, conductorTools, type ConductorDeps } from "../../app/main/agent/conductor";
 import { emberSystemMessage, NO_CAPS } from "../../app/main/agent/persona";
 import { Presenter } from "../../app/main/agent/presenter";
+import { SHORTCUTS } from "../../app/shared/shortcuts";
+import type { EmberState } from "../../app/shared/overlay";
 import { PLATFORM_WORDS } from "../../app/shared/words";
 import type { PromptCaps } from "../../app/main/targets/types";
 import type { SettingsStore } from "../../app/main/settings";
@@ -73,14 +75,14 @@ describe("the conductor's tools with other computers (§2.6)", () => {
 });
 
 /** A conductor on a pretend client: the session's config and every prompt sent are kept. */
-async function conductorWith(extra: Partial<ConductorDeps>) {
+async function conductorWith(extra: Partial<ConductorDeps>, o: { send?: (prompt: string) => Promise<string> } = {}) {
   const sent: string[] = [];
   let config: { tools: { name: string }[]; systemMessage: unknown } | null = null;
   const session = {
     sessionId: "ember-conductor-x",
     rpc: { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: config!.tools.map(t => ({ name: t.name })) }) } },
     on: () => () => undefined,
-    send: async (m: { prompt: string }) => { sent.push(m.prompt); return "m"; },
+    send: async (m: { prompt: string }) => { sent.push(m.prompt); return o.send ? o.send(m.prompt) : "m"; },
     abort: async () => undefined, disconnect: async () => undefined,
   };
   const client = { createSession: async (c: typeof config) => { config = c; return session; }, deleteSession: async () => undefined };
@@ -117,5 +119,23 @@ describe("the conductor's session (§3.15)", () => {
     ].join("\n\n"));
     await c.ask("thanks", undefined, "");
     expect(sent[1]).toBe("thanks");
+  });
+});
+
+describe("a request that never went (cross-review X5)", () => {
+  /** The problem the conversation's bubble shows when session.send throws a plain error, with these deps. */
+  async function failed(extra: Partial<ConductorDeps>): Promise<string> {
+    const shown: Partial<EmberState>[] = [];
+    const { c } = await conductorWith({ presenter: new Presenter(p => shown.push(p)), ...extra }, { send: async () => { throw new Error("something odd"); } });
+    await expect(c.ask("what's on my screen?")).rejects.toThrow("something odd");
+    return shown.at(-1)!.bubble!.thought!;
+  }
+
+  it("names the settings shortcut only while Ember holds it, and none when the check fails", async () => {
+    expect(await failed({ settingsKey: () => null })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings.");
+    expect(await failed({ settingsKey: () => { throw new Error("no keys"); } })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings.");
+    expect(await failed({ settingsKey: () => "Win+Alt+E", shortcuts: SHORTCUTS.darwin })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Win+Alt+E).");
+    // Without the check (tests, the eval): the OS's own table, as before.
+    expect(await failed({ shortcuts: SHORTCUTS.darwin })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Control+Shift+Command+E).");
   });
 });
