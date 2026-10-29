@@ -64,6 +64,22 @@ jobs:
           EMBER_VOICE_TEST: "1"
       - run: npm run build
       - run: npm run build:lab
+      - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const id = fs.readFileSync("app/main/agent/github-app.ts", "utf8").match(/export const GITHUB_CLIENT_ID = "([^"]*)"/)?.[1] ?? "";
+            if (!id) { console.log("no built-in client id (a fork or development build): nothing to check"); process.exit(0); }
+            const res = await fetch("https://github.com/login/device/code", {
+              method: "POST",
+              headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ client_id: id, scope: "read:user" }),
+            });
+            const j = await res.json().catch(() => ({}));
+            const ok = res.ok && typeof j.device_code === "string" && typeof j.user_code === "string";
+            console.log(`GitHub answered ${res.status}: ${ok ? "a device code (not shown)" : JSON.stringify({ error: j.error, error_description: j.error_description })}`);
+            process.exit(ok ? 0 : 1);
+          '
 
   el8:
     name: RHEL 8 compatibility (rockylinux:8)

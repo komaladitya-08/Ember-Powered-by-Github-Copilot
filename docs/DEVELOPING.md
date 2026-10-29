@@ -193,8 +193,11 @@ quiet room); when a longer one is cut, Ember says it only caught the first part.
 
 ### Connecting Copilot
 
-Ember needs a GitHub account with Copilot. Until Ember's own GitHub App is registered (PLAN.md §7),
-sign in with the GitHub CLI and Ember will reuse it:
+Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's own GitHub App (the device flow:
+enter the code Ember shows on GitHub's page). The app's public client id is checked in at
+`app/main/agent/github-app.ts` and built into `main.cjs`; `EMBER_GITHUB_CLIENT_ID` overrides it at run time. ci.yml's
+`checks` job asks GitHub for a device code with the built-in id, so a client id GitHub doesn't accept (or the app's
+device flow turned off) fails CI. A build without a client id (a fork) signs in through the GitHub CLI:
 
 ```bash
 sudo dnf install -y gh      # or download from cli.github.com
@@ -203,9 +206,9 @@ gh auth login
 
 Ember checks, in order: a token it stored itself, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN`,
 then `gh auth token`. Classic `ghp_` tokens are not accepted by Copilot. For Copilot Business or
-Enterprise, your organization must enable the **Copilot CLI** policy. No restart is needed: press **Sign in with
-GitHub** and run `gh auth login` in a terminal (Ember notices within a few seconds), or press **Check again**. If
-sign-in fails, the Copilot section says which sign-in Ember tried and why; while offline, Ember retries by itself.
+Enterprise, your organization must enable the **Copilot CLI** policy. No restart is needed: run `gh auth login` in a
+terminal (Ember notices within a few seconds), or press **Check again**. If sign-in fails, the Copilot section says
+which sign-in Ember tried and why; while offline, Ember retries by itself.
 
 Then press **Ctrl+Alt+Space** and type a question.
 

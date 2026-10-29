@@ -5,7 +5,7 @@ import path from "node:path";
 import { chooseModels, mayUseRuntimeDefault } from "../../app/main/agent/models";
 import { isUsableToken, resolveToken, TokenStore, startDeviceFlow, pollDeviceFlow, type SecretBox } from "../../app/main/agent/auth";
 import { hardenedSessionConfig, BUILTIN_AGENTS } from "../../app/main/agent/session-config";
-import { explainStartError } from "../../app/main/agent/host";
+import { explainSignInError, explainStartError } from "../../app/main/agent/host";
 import { locateRuntime } from "../../app/main/agent/runtime";
 
 describe("the runtime's default model (Copilot Free lists none)", () => {
@@ -79,6 +79,15 @@ describe("auth", () => {
     expect(token).toBe("gho_done");
     expect(waits).toEqual([5000, 5000, 10000]);
     expect(calls[0]).toContain("/login/device/code");
+  });
+
+  it("takes an error in GitHub's answer for a refusal, never a code of \"undefined\"", async () => {
+    for (const reply of [{ error: "device_flow_disabled", error_description: "Device Flow must be explicitly enabled for this App" }, {}]) {
+      const fetch = async () => ({ ok: true, status: 200, json: async () => reply });
+      const err = await startDeviceFlow(fetch, "client-id").catch((e: unknown) => e);
+      expect(String(err)).toMatch(/refused the sign-in request \(400\)/);
+      expect(explainSignInError(err)).toMatch(/^GitHub didn't accept Ember's sign-in request/);
+    }
   });
 
   it("explains denial and expiry", async () => {

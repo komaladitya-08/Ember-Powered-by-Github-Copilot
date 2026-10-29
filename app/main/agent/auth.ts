@@ -284,6 +284,11 @@ export async function startDeviceFlow(fetch: Fetch, clientId: string, scope = "r
   const res = await fetch("https://github.com/login/device/code", { method: "POST", headers: HEADERS, body: form({ client_id: clientId, scope }) });
   if (!res.ok) throw new Error(`GitHub refused the sign-in request (${res.status})`);
   const j = await res.json() as Record<string, unknown>;
+  // A refusal can come back as 200 with an error (device_flow_disabled, incorrect_client_credentials): never a code of
+  // "undefined" for the user to type.
+  if (typeof j.error === "string" || typeof j.device_code !== "string" || typeof j.user_code !== "string") {
+    throw new Error(`GitHub refused the sign-in request (400)${typeof j.error === "string" ? `: ${j.error}` : ""}`);
+  }
   return {
     deviceCode: String(j.device_code),
     userCode: String(j.user_code),
