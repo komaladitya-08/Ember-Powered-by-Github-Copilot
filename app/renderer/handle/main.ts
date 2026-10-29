@@ -1,7 +1,7 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type WholeView } from "@ember/bubble";
+import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { armMsFor } from "./arm";
@@ -75,6 +75,8 @@ let wasStreaming = false;
  * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
  */
 let announced = "";
+/** What it last said that from (only the news once a question's whole text has all been shown: wholeReadNews). */
+let announcedView: BubbleView | null = null;
 /** The status line and the microphone's news, each said once (live.ts): in the card, and the microphone's in the pill. */
 const live = new HandleLive();
 /**
@@ -86,8 +88,10 @@ function announce(b: BubbleState, status: string | null, micNews: string | null)
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text } : {}) }, name);
-    if (text && text !== announced) { announced = text; parts.push(text); }
+    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}) };
+    const text = announcement(view, name);
+    // The same question, its whole text now all shown: only that news, not the question and its text again.
+    if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }
   }
   parts.push(...live.news(status, micNews));
   if (parts.length) $("live").textContent = parts.join(" ");

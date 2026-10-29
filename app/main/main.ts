@@ -24,6 +24,7 @@ import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSen
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
 import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
+import { WHOLE_KEY_HINT, WHOLE_KEY_SAY } from "@ember/bubble";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
 import { OverlayManager } from "./overlay";
@@ -842,7 +843,8 @@ function start(): void {
     // on screen shows it, and the keys work only there.
     const words = targets?.questionWords(q.question) ?? null;
     // On another computer it says which (§2.4), aloud and in the notification as the bubble's badge does.
-    const aloud = questionAloud(q.question, { keys: heldKeys().map(k => k.say), spoken: spokenText });
+    // A question with a whole text to read (review #116): the approve key shows its next part until all of it has been shown.
+    const aloud = questionAloud(q.question, { keys: heldKeys().map(k => (q.question.detail && k.which === "primary" ? `${sc.allow.say} ${WHOLE_KEY_SAY}` : k.say)), spoken: spokenText });
     if (maySpeak()) voice?.speak(words ?? aloud.say);
     if (userAway()) notify("Ember needs your OK", words ?? aloud.notify);
   };
@@ -1667,6 +1669,8 @@ function start(): void {
       blocked: () => (borrowRef?.driving ?? false) || (inputRef?.pointerLags === true && Date.now() - (borrowRef?.lastSyntheticKeyAt ?? 0) < 500),
       onChange: questionChanged,
       keyHint: questionKeyHint,
+      // Until a question's whole text has all been shown, the approve key shows its next part (review #116).
+      readKeyHint: () => { holdQuestionKeys(); return heldKeys().map(k => (k.which === "primary" ? `${sc.allow.label} ${WHOLE_KEY_HINT}` : k.hint)).join(" · ") || undefined; },
       // A question shown in a window of Ember's own (a command, a consent card): the keys allow it only while that window
       // shows all of it (R7).
       panelReady: n => targets?.panelReady(n) ?? false,

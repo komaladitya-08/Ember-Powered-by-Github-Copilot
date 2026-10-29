@@ -25,7 +25,8 @@ the work in your real apps where you can watch, without taking over your mouse. 
   pass for Ember's own words. Text over 160 characters shows its first 110 and last 40 characters and its length, and
   all of it in a box under the question (so does each cell's whole value when Ember fills several cells at once):
   **Allow** works once you have scrolled to its end, or it fits ("Scroll down to read it all first."), and until then
-  Ember's allow shortcut shows the next part of it. Screen readers hear all of it.
+  Ember's allow shortcut shows the next part of it (a press within half a second of the last one, or a held key, never
+  allows). Screen readers hear all of it, and when **Allow** works.
 - **Your Mac's permissions stay Ember's**: Ember.app never runs as a plain Node.js program, so another program can't
   start it that way to borrow its Accessibility and Screen Recording permissions.
 - **Signing in**: **Sign in with GitHub** shows a code to enter on GitHub's page. A `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`

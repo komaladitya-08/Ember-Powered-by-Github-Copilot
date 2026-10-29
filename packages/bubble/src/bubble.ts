@@ -10,7 +10,7 @@
  * only measures itself (a layout read) after its content changed.
  */
 
-import { WHOLE_LABEL, WHOLE_READ_HINT, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type WholeState, type WholeView } from "./whole";
+import { WHOLE_LABEL, WHOLE_READ_HINT, WHOLE_READ_SAID, WHOLE_UNREAD_SAID, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type WholeState, type WholeView } from "./whole";
 
 export interface Point { x: number; y: number }
 export interface Size { width: number; height: number }
@@ -57,7 +57,14 @@ export interface BubbleView {
   step?: string | null;
   /** A question's whole text (a long typed text its sentence cuts short): heard after the question, before its keys. */
   whole?: string;
+  /** Main says all of the whole text has been shown (its Allow works): until then, that Allow waits for it is said too. */
+  wholeSeen?: boolean;
 }
+
+/** A step row as heard: its parts as a list ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). */
+const stepWords = (step: string | null | undefined): string => step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim() ?? "";
+/** A sentence ended with a stop, unless it has one. */
+const sentence = (s: string): string => (/[.!?…:]$/.test(s) ? s : `${s}.`);
 
 /**
  * What a screen reader hears, once: finished answers and questions, never each
@@ -74,12 +81,13 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   // A question's step row says how to answer it (or where it is shown whole), a problem's how the keyboard reaches what
   // its buttons do, an answer cut short's where it is whole: heard after it, as it is seen under it. (A guide's step,
   // what it points at, is not read.)
-  const hint = v.step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim();
-  const end = (s: string) => (/[.!?…:]$/.test(s) ? s : `${s}.`);
+  const hint = stepWords(v.step);
+  const end = sentence;
   const withHint = hint ? `${end(both)} ${end(hint)}` : both;
-  // A question's whole text is heard whole too (the block that shows it is for the eye), after its sentence.
+  // A question's whole text is heard whole too (the block that shows it is for the eye), after its sentence, and until
+  // all of it has been shown, that Allow waits for that: the approve key shows it a part at a time (its step says so).
   const whole = v.whole?.trim();
-  const asked = whole && both ? `${end(both)} ${WHOLE_LABEL}: ${whole}` : both;
+  const asked = whole && both ? `${end(both)} ${WHOLE_LABEL}: ${v.wholeSeen === true ? whole : `${end(whole)} ${WHOLE_UNREAD_SAID}`}` : both;
   switch (v.mood) {
     case "attention": return both ? `${speaker} needs you${at}: ${hint ? `${end(asked)} ${end(hint)}` : asked}` : "";
     case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
@@ -87,6 +95,19 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
     case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
   }
+}
+
+/**
+ * What the live region says when only one thing changed since it said `prev`: the same question, whose whole text has now
+ * all been shown. Just that and the keys that answer ("You can allow it now. Ctrl+Alt+Y allow; Ctrl+Alt+N not now."), not
+ * the question and all of its text again. Null for anything else (the caller says the announcement).
+ */
+export function wholeReadNews(prev: BubbleView | null, next: BubbleView): string | null {
+  if (!prev || !prev.visible || !next.visible || prev.streaming || next.streaming) return null;
+  if (next.mood !== "attention" || prev.mood !== next.mood || prev.title !== next.title || prev.thought !== next.thought || prev.where !== next.where) return null;
+  if (!next.whole || prev.whole !== next.whole || prev.wholeSeen === true || next.wholeSeen !== true) return null;
+  const hint = stepWords(next.step);
+  return hint ? `${WHOLE_READ_SAID} ${sentence(hint)}` : WHOLE_READ_SAID;
 }
 
 /**
@@ -460,6 +481,10 @@ export class ReasoningBubble {
   private waits: boolean[] = [];
   /** The question's whole text shown now, and whether all of it has been in view (whole.ts). */
   private whole: WholeView | null = null;
+  /** Main says all of it has been shown (its Allow works, the step names the keys that allow): what screen readers hear. */
+  private wholeSeenByMain = false;
+  /** What the live region last said it from (wholeReadNews: only the news once the whole text has been shown). */
+  private announcedView: BubbleView | null = null;
   /**
    * Told the question's number once all of its whole text has been in view while the bubble showed it, and again on
    * each new state that doesn't yet say main knows (the page sends wholeSeenAction).
@@ -605,6 +630,8 @@ export class ReasoningBubble {
     const had = this.whole;
     const { view, fresh, pages } = wholeNext(had, next);
     this.whole = view;
+    const told = !!view && next?.seen === true;
+    if (told !== this.wholeSeenByMain) { this.wholeSeenByMain = told; this.queueAnnounce(); }
     if (!view) {
       if (!had) return;
       this.wholeBox.hidden = true;
@@ -826,12 +853,16 @@ export class ReasoningBubble {
     this.announceQueued = false;
     // Keep what was said while hidden: a hide/show flicker (Ember crossing a screen edge) doesn't repeat it.
     if (!this.visible) return;
-    const text = announcement({
+    const view: BubbleView = {
       visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming, where: this.where,
-      step: this.step.hidden ? null : this.stepText.textContent, ...(this.whole ? { whole: this.whole.text } : {}),
-    }, this.speaker);
+      step: this.step.hidden ? null : this.stepText.textContent, ...(this.whole ? { whole: this.whole.text, wholeSeen: this.wholeSeenByMain } : {}),
+    };
+    const text = announcement(view, this.speaker);
     if (text === this.announced) return;
+    // The same question, its whole text now all shown: only that news, not the question and its text again.
+    const said = wholeReadNews(this.announcedView, view) ?? text;
     this.announced = text;
-    this.live.textContent = text;
+    this.announcedView = view;
+    this.live.textContent = said;
   }
 }

@@ -86,6 +86,12 @@ export interface ConfirmerTiming {
   /** The keys that answer a question, shown under it (e.g. "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"). */
   keyHint?: () => string | undefined;
   /**
+   * The keys under a question whose whole text hasn't all been shown yet, when the approve key shows its next part
+   * instead of allowing (e.g. "Ctrl+Alt+Y shows the next part · Ctrl+Alt+N not now"). Absent: no keys are named then,
+   * never keyHint's "allow", which the key doesn't do yet.
+   */
+  readKeyHint?: () => string | undefined;
+  /**
    * Question n's panel window is on screen showing all of it (main wires TargetsRuntime.panelReady): only then may the
    * approve key allow a panel question. Absent (tests, the eval): panel questions can't be allowed at all.
    */
@@ -106,6 +112,7 @@ export class Confirmer {
   private blocked: () => boolean;
   private onChange: ConfirmerTiming["onChange"];
   private keyHint: ConfirmerTiming["keyHint"];
+  private readKeyHint: ConfirmerTiming["readKeyHint"];
   private panelReady: ConfirmerTiming["panelReady"];
   private panelHint: ConfirmerTiming["panelHint"];
   /** Waiting for no question to be up or queued (settled()). */
@@ -120,6 +127,7 @@ export class Confirmer {
     this.blocked = t.blocked ?? (() => false);
     this.onChange = t.onChange;
     this.keyHint = t.keyHint;
+    this.readKeyHint = t.readKeyHint;
     this.panelReady = t.panelReady;
     this.panelHint = t.panelHint;
   }
@@ -286,8 +294,9 @@ export class Confirmer {
       visible: true, mood: "attention", title: p.q.title,
       thought: task && task !== p.q.prompt ? `${p.q.prompt}\nYour task: ${task}` : p.q.prompt,
       // A panel question is answered in its window, which names the keys while they work there; its step says how to
-      // get there from the keyboard (the bubble's own buttons are mouse-only).
-      step: panel ? this.panelHintFor(panel) : this.keyHint?.() || null, streaming: false,
+      // get there from the keyboard (the bubble's own buttons are mouse-only). Until all of a whole text has been shown,
+      // the approve key shows its next part: the keys say that, not "allow".
+      step: panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.()) || null, streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { WHOLE_READ_HINT, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type WholeMetrics, type WholeState } from "./whole";
-import { announcement, BUBBLE_CSS } from "./bubble";
+import { announcement, wholeReadNews, BUBBLE_CSS, type BubbleView } from "./bubble";
 
 const TEXT = `Dear team, ${"the figures are attached. ".repeat(4)}MIDDLE-SECRET-PAYLOAD ${"see you at lunch. ".repeat(5)}Bye`;
 const state = (o: Partial<WholeState> = {}): WholeState => ({ n: 3, text: TEXT, seen: false, page: 0, ...o });
@@ -81,11 +81,32 @@ describe("the whole text's block (review #116)", () => {
 });
 
 describe("the whole text in the bubble", () => {
-  it("is heard whole after the question, before how to answer it", () => {
-    const v = { visible: true, mood: "attention" as const, title: "May I?", thought: "Type “Dear…Bye” (191 characters) into the “Message” text field?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" };
-    expect(announcement({ ...v, whole: TEXT })).toBe(`Ember needs you: May I? Type “Dear…Bye” (191 characters) into the “Message” text field? The whole text: ${TEXT}. Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+  const SENTENCE = "Type “Dear…Bye” (191 characters) into the “Message” text field?";
+  const v: BubbleView = { visible: true, mood: "attention", title: "May I?", thought: SENTENCE, streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" };
+  /** As main sends it while the whole text waits to be read: the approve key shows the next part. */
+  const unread: BubbleView = { ...v, step: "Ctrl+Alt+Y shows the next part · Ctrl+Alt+N not now", whole: TEXT, wholeSeen: false };
+  const read: BubbleView = { ...v, whole: TEXT, wholeSeen: true };
+
+  it("is heard whole after the question, then, in words that work without sight, that Allow waits for all of it to be shown", () => {
+    expect(announcement(unread)).toBe(`Ember needs you: May I? ${SENTENCE} The whole text: ${TEXT}. You can allow it once all of it has been shown. Ctrl+Alt+Y shows the next part; Ctrl+Alt+N not now.`);
+    // Once it has been, the question heard afresh (shown again later) says the keys that answer it.
+    expect(announcement(read)).toBe(`Ember needs you: May I? ${SENTENCE} The whole text: ${TEXT}. Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
     // Without one, as before.
-    expect(announcement(v)).toBe("Ember needs you: May I? Type “Dear…Bye” (191 characters) into the “Message” text field? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+    expect(announcement(v)).toBe(`Ember needs you: May I? ${SENTENCE} Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+  });
+
+  it("once all of it has been shown, says only that and the keys, not the question and its text again", () => {
+    expect(wholeReadNews(unread, read)).toBe("You can allow it now. Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+    // Paged on, still unread: nothing new (the caller says nothing when the announcement is the same).
+    expect(wholeReadNews(unread, { ...unread })).toBeNull();
+    // Another question (other words, or another text), or nothing heard before: the whole announcement.
+    expect(wholeReadNews(null, read)).toBeNull();
+    expect(wholeReadNews({ ...unread, thought: "Type “Hi…Bye” (170 characters) into the “To” text field?" }, read)).toBeNull();
+    expect(wholeReadNews({ ...unread, whole: `${TEXT}!` }, read)).toBeNull();
+    expect(wholeReadNews({ ...unread, visible: false }, read)).toBeNull();
+    expect(wholeReadNews(read, read)).toBeNull();
+    // No keys held: the news alone.
+    expect(wholeReadNews(unread, { ...read, step: null })).toBe("You can allow it now.");
   });
 
   it("is a panel on the glass that scrolls and takes the wheel, every character as typed, with Allow dimmed until it is read", () => {

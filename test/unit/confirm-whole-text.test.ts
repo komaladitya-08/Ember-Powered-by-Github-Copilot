@@ -14,10 +14,14 @@ const LONG = `Dear team, ${"the figures are attached. ".repeat(4)}MIDDLE-SECRET-
 
 const OPTIONS = [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
 const typing = (more: Partial<Question> = {}): Question => ({ title: "May I?", context: "Write to the team", prompt: "Type “Dear team…Bye” (191 characters) into the “Message” text field?", options: OPTIONS, task: "t1", detail: LONG, ...more });
+const KEYS = "Ctrl+Alt+Y allow · Ctrl+Alt+N not now";
+const READ_KEYS = "Ctrl+Alt+Y shows the next part · Ctrl+Alt+N not now";
 /** A Confirmer that shows at once and takes an answer at once (no arm time), recording what it shows. */
-function confirmer(o: { blocked?: () => boolean } = {}) {
+function confirmer(o: { blocked?: () => boolean; readKeys?: boolean } = {}) {
   const shown: Partial<EmberState>[] = [];
-  const c = new Confirmer(p => shown.push(p), { armMs: 0, gapMs: 0, keyHint: () => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", ...(o.blocked ? { blocked: o.blocked } : {}) });
+  const c = new Confirmer(p => shown.push(p), {
+    armMs: 0, gapMs: 0, keyHint: () => KEYS, ...(o.readKeys === false ? {} : { readKeyHint: () => READ_KEYS }), ...(o.blocked ? { blocked: o.blocked } : {}),
+  });
   return { c, shown, bubble: () => shown.at(-1)!.bubble! };
 }
 
@@ -25,7 +29,8 @@ describe("the Confirmer's question with a whole text to read", () => {
   it("puts the whole text in the bubble, under the question's own sentence, not yet read", async () => {
     const { c, bubble } = confirmer();
     const q = c.ask(typing());
-    expect(bubble()).toMatchObject({ mood: "attention", thought: `${typing().prompt}\nYour task: Write to the team`, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" });
+    // Its keys say what the approve key does for now: show the next part (never "allow", which it doesn't yet).
+    expect(bubble()).toMatchObject({ mood: "attention", thought: `${typing().prompt}\nYour task: Write to the team`, step: READ_KEYS });
     expect(bubble().whole).toEqual({ n: 1, text: LONG, seen: false, page: 0 });
     // The buttons are the question's own: Allow, Not now.
     expect(bubble().actions.map(a => a.id)).toEqual(["q1:once", "q1:deny"]);
@@ -44,6 +49,8 @@ describe("the Confirmer's question with a whole text to read", () => {
     expect(bubble().whole?.seen).toBe(false);
     expect(c.wholeSeen(1)).toBe(true);
     expect(bubble().whole).toMatchObject({ n: 1, seen: true });
+    // From now on the approve key allows, and the keys under the question say so.
+    expect(bubble().step).toBe(KEYS);
     // Said once is enough.
     expect(c.wholeSeen(1)).toBe(false);
     expect(c.answer("q1:once")).toBe(true);
@@ -73,7 +80,7 @@ describe("the Confirmer's question with a whole text to read", () => {
     expect(c.answerKey("primary")).toBe(false);
     expect(bubble().whole?.page).toBe(2);
     // The bubble shown again is the same question: its words, buttons and keys.
-    expect(bubble()).toMatchObject({ mood: "attention", title: "May I?", step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", task: "t1" });
+    expect(bubble()).toMatchObject({ mood: "attention", title: "May I?", step: READ_KEYS, task: "t1" });
     expect(bubble().actions.map(a => a.id)).toEqual(["q1:once", "q1:deny"]);
     driving = true;
     expect(c.answerKey("primary")).toBe(false);
@@ -92,10 +99,21 @@ describe("the Confirmer's question with a whole text to read", () => {
     }
   });
 
+  it("names no key while its whole text waits to be read, when main gives no words for that (never “allow”)", async () => {
+    const { c, bubble } = confirmer({ readKeys: false });
+    const q = c.ask(typing());
+    expect(bubble().step).toBeNull();
+    c.wholeSeen(1);
+    expect(bubble().step).toBe(KEYS);
+    c.cancelAll();
+    await expect(q).resolves.toBeNull();
+  });
+
   it("leaves a question whose text shows whole in its sentence as it was", async () => {
     const { c, shown, bubble } = confirmer();
     const q = c.ask(typing({ detail: undefined, prompt: "Type “Hello” into the “Message” text field?" }));
     expect(bubble()).not.toHaveProperty("whole");
+    expect(bubble().step).toBe(KEYS);
     expect(c.wholeSeen(1)).toBe(false);
     expect(shown).toHaveLength(1);
     expect(c.answerKey("primary")).toBe(true);
@@ -194,6 +212,21 @@ describe("the pages' word that a whole text was read", () => {
       expect(src, page).toContain("wholeSeenAction(");
       expect(src, page).toContain("waitsForWhole(");
     }
+    // And a screen reader hears only the news once all of it has been shown, not the question again: in the bubble (the
+    // overlay's), and on the corner card.
+    for (const page of ["packages/bubble/src/bubble.ts", "app/renderer/handle/main.ts"]) expect(fs.readFileSync(page, "utf8"), page).toContain("wholeReadNews(");
+  });
+
+  it("names what the approve key does while the whole text waits, under the question and aloud (main's wiring)", async () => {
+    const fs = await import("node:fs");
+    const MAIN = fs.readFileSync("app/main/main.ts", "utf8");
+    const { WHOLE_KEY_HINT, WHOLE_KEY_SAY } = await import("@ember/bubble");
+    expect(WHOLE_KEY_HINT).toBe("shows the next part");
+    expect(WHOLE_KEY_SAY).toBe("to show the next part");
+    // The same keys Ember holds, the approve key's words swapped: "Ctrl+Alt+Y shows the next part · Ctrl+Alt+N not now".
+    expect(MAIN).toContain("readKeyHint: () => { holdQuestionKeys(); return heldKeys().map(k => (k.which === \"primary\" ? `${sc.allow.label} ${WHOLE_KEY_HINT}` : k.hint)).join(\" · \") || undefined; },");
+    // Spoken: "Press Control Alt Y to show the next part, or Control Alt N for not now."
+    expect(MAIN).toContain("questionAloud(q.question, { keys: heldKeys().map(k => (q.question.detail && k.which === \"primary\" ? `${sc.allow.say} ${WHOLE_KEY_SAY}` : k.say)), spoken: spokenText })");
   });
 });
 

@@ -10,6 +10,16 @@
 export const WHOLE_READ_HINT = "Scroll down to read it all first.";
 /** Before the whole text, for screen readers (they hear it all; the block is for the eye). */
 export const WHOLE_LABEL = "The whole text";
+/** Heard after the whole text while Allow waits for all of it to have been shown (words that work without sight). */
+export const WHOLE_UNREAD_SAID = "You can allow it once all of it has been shown.";
+/** Heard once all of it has been shown, with the keys that answer, and nothing else: the question isn't read again. */
+export const WHOLE_READ_SAID = "You can allow it now.";
+/**
+ * What the approve key does until then, after the key's name: under the question ("Ctrl+Alt+Y shows the next part ·
+ * Ctrl+Alt+N not now") and aloud ("Press Control Alt Y to show the next part, or …"). Main puts them together.
+ */
+export const WHOLE_KEY_HINT = "shows the next part";
+export const WHOLE_KEY_SAY = "to show the next part";
 /** One CSS pixel of slack for sub-pixel layout. */
 const SLACK = 1;
 

@@ -8,7 +8,7 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { Emotion, Gesture } from "@ember/characters";
 import { IDLE_BUBBLE } from "../../shared/overlay";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
-import { plainMarkdown } from "@ember/bubble";
+import { WHOLE_UNREAD_SAID, plainMarkdown } from "@ember/bubble";
 import { ANNOUNCE_MS } from "../commands/flow";
 import { announcement, firstPerson, keyboardRoute } from "../../renderer/overlay/target-copy";
 
@@ -100,13 +100,14 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
 /**
  * A question as Ember says it aloud and puts it in a notification, naming where it comes from when that isn't this
  * computer (§2.4): "Ember asks, on build-01: Click Save in gedit? Press …". `spoken` makes the prompt fit for speech;
- * `keys` are the held keys that answer it, as they are said.
+ * `keys` are the held keys that answer it, as they are said. A question with a whole text to read (`detail`, review #116)
+ * says that Allow waits for all of it to have been shown (its keys then say the approve key shows the next part).
  */
-export function questionAloud(q: { prompt: string; where?: string }, o: { keys?: readonly string[]; spoken?: (s: string) => string } = {}): { say: string; notify: string } {
+export function questionAloud(q: { prompt: string; where?: string; detail?: string }, o: { keys?: readonly string[]; spoken?: (s: string) => string } = {}): { say: string; notify: string } {
   const where = q.where?.replace(/\s+/g, " ").trim();
   const keys = o.keys ?? [];
   return {
-    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`,
+    say: `Ember asks${where ? `, ${where}` : ""}: ${(o.spoken ?? (s => s))(q.prompt)}${q.detail ? ` ${WHOLE_UNREAD_SAID}` : ""}${keys.length ? ` Press ${keys.join(", or ")}.` : ""}`,
     notify: where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ${q.prompt}` : q.prompt,
   };
 }

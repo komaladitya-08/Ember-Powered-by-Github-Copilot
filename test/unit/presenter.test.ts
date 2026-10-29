@@ -865,6 +865,13 @@ describe("a question said aloud and in a notification names where it comes from 
     expect(words).toEqual({ say: "Ember asks, on build-01: Click Save in gedit? Press Control Alt Y to allow.", notify: "On build-01: Click **Save** in gedit?" });
     expect(questionAloud({ prompt: "Click Save?" })).toEqual({ say: "Ember asks: Click Save?", notify: "Click Save?" });
   });
+
+  it("says Allow waits for all of a long typed text to have been shown, and what the approve key does till then (review #116)", () => {
+    const words = questionAloud({ prompt: "Type “Dear…Bye” (191 characters) into the “Message” text field?", detail: "Dear team, … Bye" }, { keys: ["Control Alt Y to show the next part", "Control Alt N for not now"] });
+    expect(words.say).toBe("Ember asks: Type “Dear…Bye” (191 characters) into the “Message” text field? You can allow it once all of it has been shown. Press Control Alt Y to show the next part, or Control Alt N for not now.");
+    // The notification is the question as before.
+    expect(words.notify).toBe("Type “Dear…Bye” (191 characters) into the “Message” text field?");
+  });
 });
 
 describe("a problem's buttons follow what failed (review #18)", () => {
