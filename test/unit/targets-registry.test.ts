@@ -12,7 +12,7 @@ import type { HostRecord } from "../../app/main/remote/types";
 import type { WslDistro, WslFacts } from "../../app/main/wsl/types";
 import type { TargetId } from "../../app/shared/targets";
 import {
-  activeOf, bindable, buildRegistry, defaultDistro, hostPart, namedTargets, summaryOf, type LinkView, type RegistryInput,
+  activeOf, bindable, buildRegistry, defaultDistro, hostPart, namedTargets, notConnectedWhy, summaryOf, type LinkView, type RegistryInput,
 } from "../../app/main/targets/registry";
 import { bindTarget } from "../../app/main/targets/resolve";
 
@@ -137,6 +137,26 @@ describe("SSH hosts (§2.2)", () => {
     expect(ready).toMatchObject({ state: "ready", usable: true, can: "apps and commands" });
     const stalled = withHosts([["build-01", view("stalled", { desktop: "none", commands: "on" })]]).find(x => x.id === "ssh:build-01")!;
     expect(stalled).toMatchObject({ state: "ready", stalled: true, can: "isn't answering", usable: false });
+  });
+
+  it("says why it can't use a computer in plain words a user may read: no tool, internal or menu names (follow-up F-notconnected)", () => {
+    const states: [string, LinkView | null][] = [
+      ["never connected", null], ["closed", view("closed")], ["connecting", view("connecting")], ["lost", view("lost")],
+      ["stalled", view("stalled", { desktop: "screen", commands: "on" })], ["no desktop, commands off", view("ready", { desktop: "none", commands: "off" })],
+    ];
+    for (const [what, link] of states) {
+      const why = withHosts(link ? [["build-01", link]] : []).find(x => x.id === "ssh:build-01")!.why!;
+      expect(why, what).toMatch(/^(build-01 |The connection to build-01 |Ember is still connecting to build-01)/);
+      // A tool's name (offer_connect), an internal term, the menu (its item is disabled while lost: review #197), or
+      // "the user" (the words speak to the model and the user alike).
+      expect(why, what).not.toMatch(/\b[a-z]+_[a-z_]+\b|\b(worker|job host|brain|sidecar|tier|menu|the user)\b/i);
+      // Whole sentences, each said once.
+      expect(why, what).toMatch(/^\S.*\.$/);
+      const sentences = why.split(/(?<=\.)\s+/);
+      expect(new Set(sentences).size, what).toBe(sentences.length);
+    }
+    // The way to connect is said once: a Connect button Ember can show, or settings (where the keyboard goes).
+    expect(notConnectedWhy("build-01")).toBe("build-01 isn't connected. Ember can show a Connect button for it, or it can be connected in Ember's settings (Computers).");
   });
 
   it("says commands only for a headless remote, and is unusable with no desktop and commands off", () => {
