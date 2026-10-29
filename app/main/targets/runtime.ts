@@ -511,6 +511,9 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   // ── Windows of Ember's own (made only when something needs them; their channels are theirs) ──
   // The card's key hint: the keys main holds for the question up now (none when main doesn't say).
   const keyHint = (): string | null => { try { return deps.keyHint?.() ?? null; } catch { return null; } };
+  // The stop chord the consent cards name: the one main holds now (its fallback, or null for none, D-45b); the OS's own
+  // when main doesn't say (undefined), and none when asking fails.
+  const stopKeyNow = (): string | null | undefined => { try { return deps.stopKey ? deps.stopKey() : undefined; } catch { return null; } };
   // Whether a screen reader runs: each run's terminal then mirrors its output for it (review #43).
   const screenReader = (): boolean => deps.sys.a11y.screenReaderOn();
   const commandWindow = parts.commandWindow({
@@ -898,7 +901,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (abort.signal.aborted) return stopped("Cancelled.");
       const resolved = { user: now.user, hostname: now.hostname, port: now.port, jump: [...now.jump] };
       if (sshNeedsConsent(host, resolved)) {
-        const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
+        const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
         // Cancelled, forgotten or stopped by the kill switch while the card was up: the card goes; nothing is saved.
         const said = await askCard(card, abort.signal);
         if (said !== "yes") return notYes(said);
@@ -913,7 +916,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       if (abort.signal.aborted) return letGo("Cancelled.");
       // Another computer under the same name than the one the user said yes to: asked again (§7.4).
       if (machineChanged(host, link.welcome.machineIdHash)) {
-        const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
+        const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
         const said = await askCard(card, abort.signal);
         if (said !== "yes") { await conn.disconnect(hostId).catch(() => undefined); return notYes(said); }
         if (abort.signal.aborted) return letGo("Cancelled.");
@@ -941,7 +944,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       // SA found another computer under this name after its probe, before uploading anything (§7.4): the card again
       // (once), and on a yes the old machine is forgotten and Ember connects afresh (SA then remembers the new one).
       if (err instanceof ConnectError && err.kind === "machine-changed" && !o.again) {
-        const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
+        const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
         const said = await askCard(card, abort.signal);
         if (said !== "yes") return notYes(said);
         const now = hostOf(hostId);
@@ -1025,7 +1028,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       id, dest: raw.dest, ...(raw.port ? { port: raw.port } : {}), ...(raw.extra ? { extra: raw.extra } : {}), ...(raw.via ? { via: raw.via } : {}),
       resolved, consent: { version: 0, at: null },
     };
-    const card = sshConsent({ os: deps.os, target: targetIdOf("ssh", id), facts: sshFacts(host, resolved) });
+    const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", id), facts: sshFacts(host, resolved) });
     const said = await askCard(card);
     if (said !== "yes") return said === "unshown" ? refused(CARD_UNSHOWN) : { ok: false, message: "Not now." };
     try { saveHost({ ...host, consent: consentGiven("ssh", parts.now()) }); } catch (err) {
@@ -1118,7 +1121,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       }
       const was = settings.get().commands[id];
       if (!consentCurrent("commands", was?.consent)) {
-        const card = commandsConsent({ os: deps.os, target: id, targetLabel: e.label, facts: cardFacts(e) });
+        const card = commandsConsent({ os: deps.os, stopKey: stopKeyNow(), target: id, targetLabel: e.label, facts: cardFacts(e) });
         const said = await askCard(card);
         if (said !== "yes") return { ok: false, message: cardNo(said) };
         const own = settings.own().commands;
@@ -1394,7 +1397,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
       consentPanel: () => {
         rebuild();
         const e = entryOf(id);
-        return e ? commandsConsent({ os: deps.os, target: id, targetLabel: e.label, facts: cardFacts(e) }) : null;
+        return e ? commandsConsent({ os: deps.os, stopKey: stopKeyNow(), target: id, targetLabel: e.label, facts: cardFacts(e) }) : null;
       },
       othersNamed: words => othersNamed(id, words),
       placesNamed: words => unknownPlaces(words),

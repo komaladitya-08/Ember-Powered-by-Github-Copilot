@@ -13,6 +13,7 @@ import { canonicalKeys, isSystemKey } from "../../app/main/policy/policy";
 import { holdShortcuts, type ShortcutRegistry } from "../../app/main/hotkey";
 import { inspectEnvironment, keyboardRoute, type EnvInputs } from "../../app/main/environment";
 import { keysLine } from "../../app/main/hello";
+import { commandsConsent, sshConsent, type SshCardFacts } from "../../app/main/targets/consent";
 
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
@@ -203,10 +204,40 @@ describe("main.ts holds each shortcut by its default or its fallback, and names 
   });
 
   it("names what it holds: the greeting, the handle menu, settings' keyboard route and the agent's and targets' words", () => {
-    expect(MAIN).toContain("const holding = (id: ShortcutId): ShortcutDef | null => heldShortcuts(sc, fb, shortcutsTaken ?? [])[id];");
+    expect(MAIN).toContain("const holding = (id: ShortcutId): ShortcutDef | null => heldShortcuts(sc, fb, [...shortcutsTaken ?? [], ...questionTaken])[id];");
+    // The settings window's chips and sentences (StatusPlatform.shortcuts).
+    expect(MAIN).toContain("shortcuts: shownShortcuts(sc, heldShortcuts(sc, fb, [...shortcutsTaken ?? [], ...questionTaken])),");
     expect(MAIN).toContain("const keys = keysLine(heldShortcuts(sc, fb, shortcutsTaken ?? []), sc);");
     expect(MAIN).toContain("settingsKey: keyName(\"settings\"),");
     expect(MAIN).toContain("keyboardRoute(shortcutsTaken ?? [], sc, fb)");
     expect(MAIN).not.toMatch(/hasKey\(/);
+  });
+});
+
+describe("the commands and SSH consent cards name the stop chord Ember holds (D-45b)", () => {
+  const facts = { kind: "local" as const, privileged: false, windows: false, podman: false };
+  const ssh = (stopKey?: string | null) => sshConsent({
+    os: "linux", target: "ssh:build-01", ...(stopKey !== undefined ? { stopKey } : {}),
+    facts: { label: "build-01", resolved: { user: "deploy", hostname: "build-01", port: 22, jump: [] } as unknown as SshCardFacts["resolved"], desktopOff: false, graceSeconds: 20 },
+  });
+
+  it("names the OS's default when main doesn't say, and the fallback Ember holds when it does", () => {
+    expect(commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts }).body[0]).toContain(" Ctrl+Alt+X stops everything at once;");
+    expect(commandsConsent({ os: "linux", target: "local", targetLabel: "This computer", facts, stopKey: "Ctrl+Alt+Shift+X" }).body[0]).toContain(" Ctrl+Alt+Shift+X stops everything at once;");
+    expect(ssh("Ctrl+Alt+Shift+X").body.join(" ")).toContain("quit Ember or press Ctrl+Alt+Shift+X.");
+  });
+
+  it("names Stop everything while Ember holds neither chord", () => {
+    const card = commandsConsent({ os: "win32", target: "local", targetLabel: "This computer", facts, stopKey: null });
+    expect(card.body[0]).toContain(" Stop everything, in Ember's handle menu and in settings, stops everything at once; what a command already changed stays changed.");
+    expect(card.body.join(" ")).not.toMatch(/Win\+Alt/);
+    expect(ssh(null).body.join(" ")).toContain("quit Ember or use Stop everything.");
+  });
+
+  it("gets the chord from main at each card (targets runtime)", () => {
+    const RUNTIME = fs.readFileSync(path.resolve("app/main/targets/runtime.ts"), "utf8");
+    const calls = RUNTIME.match(/\b(sshConsent|commandsConsent)\(\{[^}]*/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(6);
+    for (const c of calls) expect(c).toContain("stopKey: stopKeyNow()");
   });
 });

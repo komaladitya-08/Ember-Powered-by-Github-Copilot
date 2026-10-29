@@ -31,7 +31,7 @@
       <ul class="terms">
         <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already. <span id="permissions-note" hidden></span></li>
         <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
-        <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</li>
+        <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span data-key-held="stop"><span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</span><span data-key-taken="stop" hidden>Stop everything, in Ember's handle menu and in settings, stops everything at once.</span></li>
         <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (<span id="retention">kept 30 days</span>), in <code id="data-dir">~/.config/ember</code>. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.</li>
         <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.</li>
         <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
@@ -48,6 +48,7 @@
         </div>
         <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
       </div>
+      <p class="hint after-setup" id="settings-taken" data-key-taken="settings" hidden>Open Ember again from your apps any time to come back here, or click Ember's handle.</p>
       <p class="hint after-setup" id="autostart-note" hidden></p>
       <p class="hint after-setup">Press <span class="chord" data-shortcut="settings"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
     </section>
@@ -72,7 +73,8 @@
         </div>
         <p class="usage" id="usage"></p>
       </div>
-      <p class="hint">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
+      <p class="hint" data-key-held="ask">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
+      <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember…, under Comfort &amp; access, or from Ember's handle.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="conversation-h">
@@ -86,7 +88,7 @@
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
         <div id="consent" class="consent" role="group" aria-label="Before Ember listens" hidden>
-          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</p>
+          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
           <div class="agent-actions"><button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
         <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
@@ -181,7 +183,7 @@
           <label class="switch-row"><input type="checkbox" id="reduce-motion" role="switch"><span>Calm mode: no hops, bounces or fidgets</span></label>
           <label class="switch-row"><input type="checkbox" id="more-time" role="switch"><span>More time to read and answer: messages stay ten times as long, and questions wait 20 minutes</span></label>
         </div>
-        <p class="hint">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.</p>
+        <p class="hint"><span data-key-held="allow">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse.</span><span data-key-taken="allow" hidden>When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.</span> With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.</p>
       </div>
     </section>
 

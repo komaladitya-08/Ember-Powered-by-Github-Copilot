@@ -52,7 +52,7 @@ import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
 import { isTerminalWindowApp } from "./hands/system";
 import { freshAskPress, holdShortcuts } from "./hotkey";
-import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
+import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands } from "./agent/host";
@@ -197,6 +197,8 @@ if (process.argv.includes("--doctor")) {
  */
 let wsState: WindowSystem | null | undefined;
 let shortcutsTaken: string[] | undefined;
+/** Of Allow and Not now (held only while a question is up), the accelerators another app held when Ember last took them. */
+let questionTaken: string[] = [];
 /** The shared accessibility host's status (Windows, macOS): undefined until asked, null when it didn't answer. */
 let helper: HelperStatus | null | undefined;
 
@@ -437,7 +439,8 @@ function start(): void {
   /** What the settings window says differently on this OS (shortcuts, the data folder, the microphone, fixes). */
   const platformStatus = (): NonNullable<Status["platform"]> => ({
     os: platform.os,
-    shortcuts: Object.fromEntries(Object.entries(sys.shortcuts).map(([id, d]) => [id, { label: d.label, keys: d.keys }])) as NonNullable<Status["platform"]>["shortcuts"],
+    // The chords Ember holds: a fallback while another app holds the default, none while it holds both (D-45b).
+    shortcuts: shownShortcuts(sc, heldShortcuts(sc, fb, [...shortcutsTaken ?? [], ...questionTaken])),
     dataDir: sys.paths.dataDirLabel(userData),
     settingsFile: sys.paths.dataDirLabel(userData, "settings.json"),
     auditCopy: sys.auditCopy(),
@@ -563,8 +566,11 @@ function start(): void {
   const sc = sys.shortcuts;
   /** Each shortcut's fallback on this OS (D-45b): Ember holds it while another app holds the default. */
   const fb = FALLBACK_SHORTCUTS[platform.os];
-  /** The chord Ember holds for one of its shortcuts now: its default, its fallback, or null (another app holds both). */
-  const holding = (id: ShortcutId): ShortcutDef | null => heldShortcuts(sc, fb, shortcutsTaken ?? [])[id];
+  /**
+   * The chord Ember holds for one of its shortcuts now: its default, its fallback, or null (another app holds both).
+   * Allow and Not now: as Ember last took them, for a question.
+   */
+  const holding = (id: ShortcutId): ShortcutDef | null => heldShortcuts(sc, fb, [...shortcutsTaken ?? [], ...questionTaken])[id];
   /** A shortcut as the copy names it ("Ctrl+Alt+E"), by the chord Ember holds; null while it holds neither. */
   const keyName = (id: ShortcutId) => holding(id)?.label ?? null;
   /**
@@ -817,20 +823,21 @@ function start(): void {
     { id: "allow", which: "primary", hint: "allow", say: "to allow" },
     { id: "deny", which: "deny", hint: "not now", say: "for not now" },
   ];
-  /** Of the question keys, the accelerators another app holds while a question is up (null: none is up). */
-  let questionTaken: string[] | null = null;
+  /** The question keys are held now (a question is up). */
+  let questionKeysUp = false;
   const holdQuestionKeys = () => {
-    if (questionTaken && heldKeys().length) return;
+    if (questionKeysUp && heldKeys().length) return;
     const { taken } = holdShortcuts(QUESTION_KEYS.map(k => k.id), sc, fb, {
       isRegistered: accel => globalShortcut.isRegistered(accel),
       register: (id, accel) => globalShortcut.register(accel, () => confirmer?.answerKey(id === "allow" ? "primary" : "deny")),
     });
-    for (const accel of taken.filter(a => !(questionTaken ?? []).includes(a))) log.warn("shortcut.question_key_taken", { accel });
+    for (const accel of taken.filter(a => !questionTaken.includes(a))) log.warn("shortcut.question_key_taken", { accel });
     questionTaken = taken;
+    questionKeysUp = true;
   };
   /** The question keys Ember holds now, each named by the chord it holds (its default or its fallback). */
-  const heldKeys = () => (questionTaken ? QUESTION_KEYS.flatMap(k => {
-    const def = heldShortcuts(sc, fb, questionTaken ?? [])[k.id];
+  const heldKeys = () => (questionKeysUp ? QUESTION_KEYS.flatMap(k => {
+    const def = holding(k.id);
     return def ? [{ ...k, hint: `${def.label} ${k.hint}`, say: `${def.say} ${k.say}` }] : [];
   }) : []);
   /** The keys that answer the question now up, for its bubble (only keys Ember actually holds). */
@@ -845,7 +852,7 @@ function start(): void {
     stepAside();
     if (!q) {
       for (const k of QUESTION_KEYS) for (const accel of [sc[k.id].accel, fb[k.id].accel]) if (globalShortcut.isRegistered(accel)) globalShortcut.unregister(accel);
-      questionTaken = null;
+      questionKeysUp = false;
       return;
     }
     holdQuestionKeys();

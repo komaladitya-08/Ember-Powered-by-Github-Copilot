@@ -79,6 +79,24 @@ export function heldShortcuts(sc: ShortcutTable, fallback: ShortcutTable, taken:
   return Object.fromEntries((Object.keys(sc) as ShortcutId[]).map(id => [id, held(id)])) as HeldShortcuts;
 }
 
+/** A shortcut as the settings window shows it (StatusPlatform.shortcuts). */
+export interface ShownShortcut {
+  /** As the copy writes the chord Ember holds ("Ctrl+Alt+Space", or its fallback); "" while it holds neither. */
+  readonly label: string;
+  /** Key caps of the chord Ember holds (the default's while it holds neither: the sentence around them is hidden then). */
+  readonly keys: readonly string[];
+  /** Another app holds the default and its fallback: the window says how to do it without the key. */
+  readonly taken?: true;
+}
+
+/** Each shortcut as the settings window shows it: the chord Ember holds, or taken (D-45b). */
+export function shownShortcuts(sc: ShortcutTable, held: HeldShortcuts): Record<ShortcutId, ShownShortcut> {
+  return Object.fromEntries((Object.keys(sc) as ShortcutId[]).map(id => {
+    const now = held[id];
+    return [id, now ? { label: now.label, keys: now.keys } : { label: "", keys: sc[id].keys, taken: true }];
+  })) as Record<ShortcutId, ShownShortcut>;
+}
+
 /** Where the user opens Ember again on each OS: a second start brings up its settings, which have Ask Ember…. */
 export const OPEN_AGAIN: Readonly<Record<OS, string>> = { linux: "from your apps", win32: "from the Start menu", darwin: "from Applications" };
 
