@@ -708,6 +708,22 @@ describe("CHANGELOG.md", () => {
     expect(notes).toMatch(/a command window whose page crashes comes back with its commands instead of closing/);
   });
 
+  it("uses British spelling and plain words, as the app's own copy does", () => {
+    // ui-copy.test.ts's list of American spellings, on the README and the notes outside code, links and the RPM's
+    // License tag, and the internal names the copy rules keep out of what users read.
+    const prose = (text: string) => text.replace(/```[^]*?```/g, "").replace(/`[^`]*`/g, "").replace(/\]\([^)]*\)/g, "]");
+    const american = /\b(organiz\w*|recogniz\w*|behavior\w*|color\w*|favorite\w*|center\w*|canceled|cancelation|analyz\w*|minimiz\w*|customiz\w*|authoriz\w*|licens(e|es)\b(?! file| tag)|gray)\b/gi;
+    const internal = /\b(workers?|job host|brain|sidecars?|tiers?|voice process)\b/gi;
+    for (const file of ["README.md", "CHANGELOG.md"]) {
+      const text = flat(prose(read(file)));
+      expect([...text.matchAll(american)].map(m => m[0]), file).toEqual([]);
+      expect([...text.matchAll(internal)].map(m => m[0]), file).toEqual([]);
+    }
+    // Voice's restart (voice.ts's RESTART_MS), in those words.
+    expect(read("app/main/voice.ts")).toMatch(/const RESTART_MS = \[1000, 5000, 30_000\];/);
+    expect(flat(changelog)).toContain("Voice starts again by itself when it stops answering or its speech recognition keeps failing (after 1, 5, then 30 seconds).");
+  });
+
   it("names the same best-effort computers as the README", () => {
     const readme = flat(read("README.md"));
     const where = /- \*\*Where it runs\*\*: ([^]*?)(?= - \*\*)/.exec(flat(changelog))?.[1] ?? "";

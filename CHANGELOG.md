@@ -332,8 +332,8 @@ allows them.
   speech models… N%" after its last byte.
 - On Linux, speaker rejection follows the default sound output when it changes (`pactl`, from `pulseaudio-utils`, as
   `parec` is), and keeps that output from idle-suspending while Ember listens.
-- The voice process starts again by itself when it stops answering or its recognizer keeps failing (after 1, 5, then
-  30 seconds).
+- Voice starts again by itself when it stops answering or its speech recognition keeps failing (after 1, 5, then 30
+  seconds).
 
 #### Seeing and using apps
 
