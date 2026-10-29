@@ -22,6 +22,7 @@ import { terminalOptions } from "../../app/renderer/command/terminal-options";
 import * as targetCopy from "../../app/renderer/overlay/target-copy";
 import { wslFirstSeen } from "../../app/renderer/overlay/target-copy";
 import * as promptCopy from "../../app/renderer/prompt/copy";
+import { MIC_PROBLEM_MENU } from "../../app/shared/mic";
 import { artifactNames, layoutFor, REMOTE_PARTS_DIR } from "../../scripts/package/layout.mjs";
 
 const read = (file: string) => fs.readFileSync(path.resolve(file), "utf8");
@@ -523,6 +524,22 @@ describe("CHANGELOG.md", () => {
     const offer = /export const OFFER_SWITCH = "([^"]+)"/.exec(computersCopy)?.[1] ?? "";
     expect(offer).not.toBe("");
     expect(changelog).toContain(`**${offer}**`);
+  });
+
+  it("calls the check the setup check and quotes the cards' and the menu's words as the code has them", () => {
+    const notes = flat(changelog);
+    // `ember doctor` prints "Ember <v> setup check" (main.ts), the settings window's name for it (review #229).
+    expect(read("app/main/main.ts")).toMatch(/`Ember \$\{app\.getVersion\(\)\} setup check\\n/);
+    expect(notes).not.toMatch(/check-up/i);
+    expect(notes).toContain(`"Ember ${version} setup check"`);
+    // The commands card's line when the words name a place that looks like a computer (flow.ts).
+    expect(read("app/main/commands/flow.ts")).toContain("`It looks like you named another computer (${listOf(places)}), but this runs ${here}.`");
+    expect(notes).toContain(`"It looks like you named another computer (prod-db), but this runs on this computer."`);
+    expect(notes).not.toMatch(/"You named prod-db, but this runs on this computer\."/);
+    // A first-use card's hint, a declined remote check's tab, the handle's microphone item.
+    expect(notes).toContain(`("${promptCopy.CONSENT_READ_HINT}")`);
+    expect(notes).toContain(`"${commandCopy.reaskEndText("no")}"`);
+    expect(notes).toContain(`"${MIC_PROBLEM_MENU}"`);
   });
 
   it("names the same best-effort computers as the README", () => {
