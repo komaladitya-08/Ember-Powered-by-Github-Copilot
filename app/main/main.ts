@@ -184,6 +184,7 @@ if (process.argv.includes("--doctor")) {
   else {
     log.info("instance.handover", { pid: process.pid });
     app.quit();
+    setTimeout(() => app.exit(0), 5000);
   }
 } else {
   try {
