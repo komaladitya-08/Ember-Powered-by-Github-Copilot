@@ -264,7 +264,7 @@ export function inspectEnvironment(i: EnvInputs): EnvReport {
       id: "session", label: "Desktop session", status: "fail",
       detail: "Wayland session. Ember needs “GNOME on Xorg”: log out, click the gear on the login screen, choose it, and log in again.",
     });
-  } else if (display && (sessionType === "x11" || i.x11 !== false)) {
+  } else if (display && i.x11 !== false) {
     // An X display Ember can use is what matters (the session type is often unset on Xvfb, xrdp or ssh -X).
     checks.push({ id: "session", label: "Desktop session", status: "ok", detail: `X11 on ${display}` });
   } else if (display) {
