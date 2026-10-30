@@ -29,6 +29,19 @@ describe("the autostart entry", () => {
     expect(field(autostartEntry(["/repo/node_modules/electron/dist/electron", "/repo"]), "TryExec")).toBe("/repo/node_modules/electron/dist/electron");
   });
 
+  it("starts this Ember rather than an AppImage it merely inherited from the shell it was started in", () => {
+    const inherited = launchCommand({
+      packaged: true, execPath: "/opt/ember/ember", appPath: "/opt/ember/resources/app",
+      env: { APPIMAGE: "/home/ada/Apps/SomeTerminal-x86_64.AppImage", APPDIR: "/tmp/.mount_SomeTeXy12" }, exists: () => false,
+    });
+    expect(inherited).toEqual(["/opt/ember/ember"]);
+    const own = launchCommand({
+      packaged: true, execPath: "/tmp/.mount_EmberAb12/ember/ember", appPath: "/tmp/.mount_EmberAb12/resources/app",
+      env: { APPIMAGE: "/home/ada/Apps/Ember-0.1.0-x86_64.AppImage", APPDIR: "/tmp/.mount_EmberAb12" }, exists: () => false,
+    });
+    expect(own).toEqual(["/home/ada/Apps/Ember-0.1.0-x86_64.AppImage"]);
+  });
+
   it("writes TryExec as a plain string value: spaces and % as they are, backslashes escaped", () => {
     // TryExec is a string, not an Exec line: no quoting and no field codes, only the spec's escapes.
     expect(field(autostartEntry(["/home/ada/My Apps/100% Ember.AppImage"]), "TryExec")).toBe("/home/ada/My Apps/100% Ember.AppImage");

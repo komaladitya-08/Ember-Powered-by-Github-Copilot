@@ -9,6 +9,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runningAppImage } from "./policy/admin-watch";
 
 export function autostartFile(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): string {
   return path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "autostart", "ember.desktop");
@@ -33,7 +34,8 @@ function stringValue(s: string): string {
 export function launchCommand(o: { packaged: boolean; execPath: string; appPath: string; env?: NodeJS.ProcessEnv; exists?: (p: string) => boolean }): string[] {
   const env = o.env ?? process.env;
   const exists = o.exists ?? fs.existsSync;
-  if (env.APPIMAGE) return [env.APPIMAGE];
+  const appImage = runningAppImage(env, o.execPath);
+  if (appImage) return [appImage];
   if (o.packaged) return exists("/usr/bin/ember") && o.execPath.startsWith("/opt/ember/") ? ["/usr/bin/ember"] : [o.execPath];
   return [o.execPath, o.appPath];
 }
