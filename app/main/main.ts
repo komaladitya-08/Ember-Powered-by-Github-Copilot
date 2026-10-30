@@ -277,47 +277,59 @@ function settingsText(): string | null {
 }
 
 async function runDoctor(): Promise<void> {
-  await app.whenReady();
-  const ws = wsState = platform.openWindows(log);
-  helper = await doctorHelper();
-  const env = readEnvironment();
-  // The doctor never logged xtest.unavailable: no logger.
-  const input = platform.openInput(ws, null);
-  const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
-  const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
-  let auth: DoctorProbes["auth"] = null;
-  if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
-  else {
-    const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), process.env, ghOptions()).catch(() => null);
-    // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
-    const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
-    if (t && !ignored) auth = { kind: "github", source: t.source };
+  let ws: WindowSystem | null = null;
+  let input: Input | null = null;
+  // A step that rejects exits 1: the check-up's report was never printed, so it can't pass.
+  let failed = true;
+  try {
+    await app.whenReady();
+    ws = wsState = platform.openWindows(log);
+    helper = await doctorHelper();
+    const env = readEnvironment();
+    // The doctor never logged xtest.unavailable: no logger.
+    input = platform.openInput(ws, null);
+    const admin = sys.adminPolicy.load(devEnv("EMBER_ADMIN_POLICY"));
+    const runtime = locateRuntime({ appPath: app.getAppPath(), resourcesPath: process.resourcesPath, env: app.isPackaged ? {} : process.env, runtimeId: sys.paths.runtimeId, exe: sys.paths.runtimeExe });
+    let auth: DoctorProbes["auth"] = null;
+    if (admin.policy.provider) auth = { kind: "provider", host: new URL(admin.policy.provider.baseUrl).host };
+    else {
+      const t = await resolveToken(new TokenStore(path.join(userData, "github-token.bin"), safeStorage), process.env, ghOptions()).catch(() => null);
+      // After "Sign out" in Ember, a GitHub CLI or environment sign-in isn't used (as Ember itself does).
+      const ignored = !!t && (t.source === "environment" || t.source === "github-cli") && readAgentState(path.join(userData, "agent.json")).signedOut;
+      if (t && !ignored) auth = { kind: "github", source: t.source };
+    }
+    const signIn = { with: signInWith(), ghInstalled: ghInstalled() };
+    const models = voiceModelsRoot();
+    const probes = await sys.doctorProbes();
+    // Input that can't reach apps counts as missing. Asked about the window the user is in, not window 0: macOS answers
+    // for every window at once (the Accessibility permission, secure input), while Windows refuses a window it can't
+    // check, and 0 is never one, so every Windows check-up would say input was missing. Linux has no such question.
+    const blocked = ws && input?.blockedReason ? input.blockedReason(ws.activeWindow()?.id ?? 0) : null;
+    // What stops Ember's typing but not its clicks (Linux: Typing Assist; macOS: an input method) has a row of its own.
+    const typing = ws && input && !blocked ? input.keyboardBlockedReason?.() ?? null : null;
+    if (typing) probes.extra.push({ id: "typing", status: "warn", label: "Typing", detail: typing });
+    const checks = doctorChecks({
+      os: platform.os, helper, env, compositor: ws ? ws.hasCompositor() : null,
+      xtest: ws ? !!input && !blocked : null,
+      speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
+      voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
+      runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
+      // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
+      extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
+      shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
+    });
+    // The settings window's name for it (review #229).
+    process.stdout.write(`Ember ${app.getVersion()} setup check\n\n${formatDoctor(checks)}\n`);
+    failed = checks.some(c => c.status === "fail");
+  } catch (err) {
+    log.error("doctor.failed", { err });
+    process.stderr.write(`Ember's setup check failed: ${err instanceof Error ? err.message : String(err)}\n`);
+  } finally {
+    // Even a close that throws must not keep the check-up alive.
+    try { input?.close(); } catch (err) { log.warn("doctor.input_close_failed", { err }); }
+    try { ws?.close(); } catch (err) { log.warn("doctor.windows_close_failed", { err }); }
+    app.exit(failed ? 1 : 0);
   }
-  const signIn = { with: signInWith(), ghInstalled: ghInstalled() };
-  const models = voiceModelsRoot();
-  const probes = await sys.doctorProbes();
-  // Input that can't reach apps counts as missing. Asked about the window the user is in, not window 0: macOS answers
-  // for every window at once (the Accessibility permission, secure input), while Windows refuses a window it can't
-  // check, and 0 is never one, so every Windows check-up would say input was missing. Linux has no such question.
-  const blocked = ws && input?.blockedReason ? input.blockedReason(ws.activeWindow()?.id ?? 0) : null;
-  // What stops Ember's typing but not its clicks (Linux: Typing Assist; macOS: an input method) has a row of its own.
-  const typing = ws && input && !blocked ? input.keyboardBlockedReason?.() ?? null : null;
-  if (typing) probes.extra.push({ id: "typing", status: "warn", label: "Typing", detail: typing });
-  const checks = doctorChecks({
-    os: platform.os, helper, env, compositor: ws ? ws.hasCompositor() : null,
-    xtest: ws ? !!input && !blocked : null,
-    speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
-    voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
-    runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
-    // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
-    extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
-    shortcuts: sys.shortcuts, words: sys.words, policyLocation: sys.adminPolicy.location,
-  });
-  // The settings window's name for it (review #229).
-  process.stdout.write(`Ember ${app.getVersion()} setup check\n\n${formatDoctor(checks)}\n`);
-  input?.close();
-  ws?.close();
-  app.exit(checks.some(c => c.status === "fail") ? 1 : 0);
 }
 
 function start(): void {
