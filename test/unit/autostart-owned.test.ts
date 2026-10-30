@@ -64,6 +64,14 @@ describe("the XDG autostart entry (review #85)", () => {
     expect(fs.existsSync(file)).toBe(false);
   });
 
+  it("knows an older Ember's entry written with CRLF line endings as its own", () => {
+    const file = fileIn();
+    put(file, legacy(cmd).replace(/\n/g, "\r\n"));
+    expect(foreignAutostartNote(file, path.dirname(path.dirname(path.dirname(file))))).toBeNull();
+    expect(syncAutostart(false, cmd, file)).toBe(true);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
   it("the settings window says when an entry Ember didn't make starts it at login", () => {
     const file = fileIn();
     const home = path.dirname(path.dirname(path.dirname(file)));

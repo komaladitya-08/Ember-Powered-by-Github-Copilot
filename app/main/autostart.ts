@@ -76,7 +76,7 @@ export function autostartEntry(command: string[]): string {
 /** Did Ember write `text`: it carries the marker, or it is an older Ember's entry (made before the marker), any Exec. */
 export function emberWrote(text: string): boolean {
   if (text.split(/\r?\n/).includes(MANAGED)) return true;
-  const lines = text.split("\n").map(l => (l.startsWith("Exec=") ? "Exec" : l));
+  const lines = text.replace(/\r\n/g, "\n").split("\n").map(l => (l.startsWith("Exec=") ? "Exec" : l));
   return lines.join("\n") === entryLines(null, false).join("\n");
 }
 
