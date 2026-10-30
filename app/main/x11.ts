@@ -5,6 +5,7 @@
  */
 
 import { createRequire } from "node:module";
+import { ignoreXErrors } from "../remote/screen";
 
 export interface X11Window {
   id: number;
@@ -151,6 +152,8 @@ export function openX11(displayName?: string): X11 | null {
 
     const dpy = XOpenDisplay(displayName ?? null);
     if (!dpy) return null;
+    // A window that closes between being listed and read is BadWindow: without a handler Xlib's default ends Ember.
+    ignoreXErrors();
     const root = XDefaultRootWindow(dpy);
     const atom = (name: string) => XInternAtom(dpy, name, 0);
     let open = true;

@@ -38,6 +38,9 @@ function fakeKoffi() {
       log.push(`load ${name}`);
       return { func: (decl: string) => fns[/(\w+)\(/.exec(decl)![1]!] ?? (() => 0) };
     },
+    proto() { return "proto"; },
+    pointer(t: unknown) { return `pointer(${String(t)})`; },
+    register(fn: (...a: unknown[]) => unknown) { return fn; },
   };
 }
 
@@ -66,7 +69,8 @@ describe("setInputShape", () => {
   it("binds libX11 once and keeps one display open across calls", async () => {
     const { setInputShape } = await import("../../app/main/xshape");
     for (let i = 0; i < 30; i++) expect(setInputShape(0x400001, [{ ...allow[0]!, x: 100 + i }])).toBe(true);
-    expect(log.filter(l => l.startsWith("load"))).toEqual(["load libX11.so.6", "load libXext.so.6"]);
+    // libX11 is loaded once for the shapes and once to install the X error handler that ignores a stale overlay xid.
+    expect(log.filter(l => l.startsWith("load"))).toEqual(["load libX11.so.6", "load libXext.so.6", "load libX11.so.6"]);
     expect(log.filter(l => l.startsWith("open"))).toEqual(["open null"]);
     expect(log.filter(l => l.startsWith("close"))).toEqual([]);
     expect(log.filter(l => l.startsWith("shape"))).toHaveLength(30);
