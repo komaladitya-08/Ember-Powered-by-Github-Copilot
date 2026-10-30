@@ -521,6 +521,8 @@ class Parser {
       }
       if (c === "`") {
         const n = this.peek(1);
+        if (n === "\n") { this.i += 2; continue; }
+        if (n === "\r" && this.peek(2) === "\n") { this.i += 3; continue; }
         const map: Record<string, string> = { n: "\n", t: "\t", r: "\r", "0": "", a: "", b: "", e: "", f: "", v: "" };
         if (n in map) {
           if (map[n] === "" && n !== "0") this.note("backtick-escape", "It uses a backtick escape Ember doesn't decode.");

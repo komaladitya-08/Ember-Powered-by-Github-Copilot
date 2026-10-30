@@ -61,6 +61,11 @@ describe("lexPowerShell: commands, values and statements", () => {
     expect(lex("Remove-Item \u2013Recurse x")).toBe("[Remove-Item -Recurse x]");
   });
 
+  it("drops a backtick-escaped line break inside a double-quoted string", () => {
+    expect(lex('Get-Content "C:\\Users\\ana\\.`\nssh\\id_rsa"')).toBe("[Get-Content 'C:\\Users\\ana\\.ssh\\id_rsa']");
+    expect(lex('Get-Content "C:\\Users\\ana\\.`\r\nssh\\id_rsa"')).toBe("[Get-Content 'C:\\Users\\ana\\.ssh\\id_rsa']");
+  });
+
   it("keeps restricted script blocks as text for the classifier", () => {
     expect(lex("Get-ChildItem | Where-Object { $_.Length -gt 1 }")).toBe("[Get-ChildItem] | [Where-Object {' $_.Length -gt 1 '}]");
     expect(lex("Get-ChildItem | Sort-Object { $_.Name }")).toBe("[Get-ChildItem] | [Sort-Object {' $_.Name '}]");
