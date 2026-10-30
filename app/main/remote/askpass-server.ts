@@ -143,15 +143,28 @@ export function answerFor(card: PromptCard, answer: { ok: boolean; value?: strin
 export function serveConnections(nonce: string, handler: AskpassHandler, log?: Logger) {
   let queue = Promise.resolve();
   return (conn: { on(ev: string, fn: (...a: never[]) => void): unknown; write(s: string): unknown; end(): unknown; destroy(): unknown; setEncoding?(e: "utf8"): unknown }) => {
+    const ac = new AbortController();
+    let settled = false;
+    let closed = false;
+    let release: (() => void) | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      closed = true;
+      ac.abort();
+      release?.();
+      release = undefined;
+    };
+    // Attached now, not when this connection reaches the front: a helper may exit while it is still queued.
+    conn.on("close", finish);
+    conn.on("error", finish);
     queue = queue.then(() => new Promise<void>(resolve => {
-      const ac = new AbortController();
+      if (closed) { resolve(); return; }
+      release = resolve;
       let buf = "";
       let asked = false;
-      const finish = () => { ac.abort(); resolve(); };
-      conn.on("close", finish);
-      conn.on("error", finish);
       conn.on("data", ((chunk: Buffer | string) => {
-        if (asked) return;
+        if (settled || asked) return;
         buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
         const nl = buf.indexOf("\n");
         if (nl < 0) {
@@ -167,11 +180,11 @@ export function serveConnections(nonce: string, handler: AskpassHandler, log?: L
           return;
         }
         handler(req, ac.signal).then(value => {
-          if (ac.signal.aborted) return;
+          if (settled) return;
           conn.write(answerLine(value));
           conn.end();
         }, () => {
-          if (!ac.signal.aborted) { conn.write(answerLine(null)); conn.end(); }
+          if (!settled) { conn.write(answerLine(null)); conn.end(); }
         });
       }) as (...a: never[]) => void);
     }));

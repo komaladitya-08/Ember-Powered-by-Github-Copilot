@@ -2,7 +2,7 @@ import { Duplex, PassThrough } from "node:stream";
 import type net from "node:net";
 import { describe, expect, it, vi } from "vitest";
 import { runAskpass } from "../../app/askpass/main";
-import { answerFor, answerLine, createAskpassServer, parseRequest, pickSocketBase, promptCard, serveConnections, socketBases, writeAskpassWrapper, type AskpassFs, type AskpassHandler } from "../../app/main/remote/askpass-server";
+import { answerFor, answerLine, createAskpassServer, parseRequest, pickSocketBase, promptCard, requestLine, serveConnections, socketBases, writeAskpassWrapper, type AskpassFs, type AskpassHandler } from "../../app/main/remote/askpass-server";
 
 const NONCE = "0123456789abcdef0123456789abcdef";
 const ctx = { id: "p1", host: "build-01", names: ["build-01", "build-01.example.com", "203.0.113.7"], client: { major: 9, minor: 6 } };
@@ -25,6 +25,26 @@ function socketPair(): [Duplex, Duplex] {
   };
   return [make(bToA, aToB), make(aToB, bToA)];
 }
+
+/** A connection the test drives by hand: a helper that exits emits `close` while it waits its turn. */
+class FakeConn {
+  private fns = new Map<string, ((...a: never[]) => void)[]>();
+  written: string[] = [];
+  on(ev: string, fn: (...a: never[]) => void): this {
+    const list = this.fns.get(ev) ?? [];
+    list.push(fn);
+    this.fns.set(ev, list);
+    return this;
+  }
+  emit(ev: string, ...args: unknown[]): void {
+    for (const fn of this.fns.get(ev) ?? []) (fn as (...a: unknown[]) => void)(...args);
+  }
+  write(s: string): boolean { this.written.push(s); return true; }
+  end(): void { this.emit("close"); }
+  destroy(): void { this.emit("close"); }
+}
+
+const flush = () => new Promise<void>(r => setImmediate(r));
 
 /** Runs the real helper against serveConnections over an in-memory pair. */
 async function ask(prompt: string, handler: AskpassHandler, o: { nonce?: string; hint?: string; serverNonce?: string } = {}) {
@@ -138,6 +158,42 @@ describe("the askpass channel", () => {
     });
     expect(await Promise.all(runs)).toEqual([0, 0, 0]);
     expect(most).toBe(1);
+  });
+
+  it("still asks the next helper after one waiting its turn exits", async () => {
+    const asks: string[] = [];
+    let answerFirst!: (v: string | null) => void;
+    const handler: AskpassHandler = req => {
+      asks.push(req.prompt);
+      if (asks.length === 1) return new Promise<string | null>(r => { answerFirst = r; });
+      return Promise.resolve("x");
+    };
+    const serve = serveConnections(NONCE, handler);
+    const send = async (conn: FakeConn, prompt: string) => {
+      serve(conn as unknown as net.Socket);
+      await flush();
+      conn.emit("data", requestLine(NONCE, { prompt, mode: "secret" }));
+      await flush();
+    };
+
+    const first = new FakeConn();
+    await send(first, "first");
+    expect(asks).toEqual(["first"]);
+
+    // A second helper arrives while the first prompt is open, then gives up and exits before its turn.
+    const second = new FakeConn();
+    serve(second as unknown as net.Socket);
+    await flush();
+    second.emit("close");
+    await flush();
+
+    answerFirst("one");
+    await flush();
+
+    const third = new FakeConn();
+    await send(third, "third");
+    expect(asks).toEqual(["first", "third"]);
+    expect(third.written).toEqual([answerLine("x")]);
   });
 
   it("checks requests strictly", () => {
