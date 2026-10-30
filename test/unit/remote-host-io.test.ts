@@ -171,7 +171,8 @@ describe.runIf(process.platform === "linux")("tccLimited() on macOS semantics", 
 });
 
 describe.runIf(process.platform === "linux")("realDesktopIo()", () => {
-  const uid = process.getuid!();
+  // getuid is POSIX-only, and a skipped describe still runs its body when collecting (Windows CI).
+  const uid = process.getuid?.() ?? -1;
   const ioFor = (home: string) => realDesktopIo({ uid, user: "ember-user", home, host: "ember-host" });
 
   it("echoes the user, uid, home and host it was given", () => {
@@ -255,7 +256,8 @@ describe.runIf(process.platform === "linux")("realDesktopIo()", () => {
 });
 
 describe.runIf(process.platform === "linux")("realDesktopIo() loginctl and busctl", () => {
-  const uid = process.getuid!();
+  // getuid is POSIX-only, and a skipped describe still runs its body when collecting (Windows CI).
+  const uid = process.getuid?.() ?? -1;
   const home = "/home/ember-user";
   const io = () => realDesktopIo({ uid, user: "ember-user", home, host: "ember-host" });
   const busEnv = {
