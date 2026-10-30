@@ -884,32 +884,51 @@ const EDITOR_ROLES: ReadonlySet<string> = new Set(["AXTextArea", "AXTextField", 
 export function keyboardControl(s: AxSession, el: AxRef): AxRef {
   let cur = el;
   let climbed = false;
-  for (let hop = 0; hop < 4; hop++) {
-    const parent = s.attr(cur, "AXParent");
-    if (typeof parent !== "bigint") break;
-    const parentRole = str(s.attr(parent, "AXRole"));
-    const role = str(s.attr(cur, "AXRole"));
-    if (FIELD_ROLES.has(parentRole) && EDITOR_ROLES.has(role)) {
-      if (climbed) s.api.release(cur);
-      cur = parent;
-      climbed = true;
-      continue;
-    }
-    // The editor can sit in a scroll area that sits in the field. A text area whose scroll area is not inside a
-    // field (the bench's Notes) is itself the element a walk lists.
-    if ((parentRole === "AXScrollArea" || parentRole === "AXGroup") && (role === "AXTextArea" || role === "AXTextField")) {
-      const above = s.attr(parent, "AXParent");
-      if (typeof above === "bigint" && FIELD_ROLES.has(str(s.attr(above, "AXRole")))) {
+  try {
+    for (let hop = 0; hop < 4; hop++) {
+      const parent = s.attr(cur, "AXParent");
+      if (typeof parent !== "bigint") break;
+      try {
+        const parentRole = str(s.attr(parent, "AXRole"));
+        const role = str(s.attr(cur, "AXRole"));
+        if (FIELD_ROLES.has(parentRole) && EDITOR_ROLES.has(role)) {
+          if (climbed) s.api.release(cur);
+          cur = parent;
+          climbed = true;
+          continue;
+        }
+        // The editor can sit in a scroll area that sits in the field. A text area whose scroll area is not inside a
+        // field (the bench's Notes) is itself the element a walk lists.
+        if ((parentRole === "AXScrollArea" || parentRole === "AXGroup") && (role === "AXTextArea" || role === "AXTextField")) {
+          const above = s.attr(parent, "AXParent");
+          if (typeof above === "bigint") {
+            let aboveRole: string;
+            try {
+              aboveRole = str(s.attr(above, "AXRole"));
+            } catch (err) {
+              s.api.release(above);
+              throw err;
+            }
+            if (FIELD_ROLES.has(aboveRole)) {
+              s.api.release(parent);
+              if (climbed) s.api.release(cur);
+              cur = above;
+              climbed = true;
+              continue;
+            }
+            s.api.release(above);
+          }
+        }
         s.api.release(parent);
-        if (climbed) s.api.release(cur);
-        cur = above;
-        climbed = true;
-        continue;
+        break;
+      } catch (err) {
+        s.api.release(parent);
+        throw err;
       }
-      if (typeof above === "bigint") s.api.release(above);
     }
-    s.api.release(parent);
-    break;
+  } catch (err) {
+    if (climbed) s.api.release(cur);
+    throw err;
   }
   return cur;
 }
