@@ -41,6 +41,9 @@ const VALUE_PATTERNS: readonly RegExp[] = [
   /(AccountKey=)[^;\s]+/g,
   /(SharedAccessSignature=)[^;\s]+/g,
   /(Authorization:\s*(?:Bearer|Basic|token)\s+)\S+/gi,
+  // The same secret-named options OPTION_SECRET notices (`--db-pass=x`): the option name with its `=` stays, the
+  // value is hidden. The leading space or quote is kept too, prose words like "compass" never reach a value this way.
+  /((?:^|[\s"'])--?(?:[A-Za-z0-9]+[-_.])*(?:password|passwd|pass|pwd|token|secret|api[-_]?key|access[-_]?key|private[-_]?key|client[-_]?secret)=)[^\s"',;]+/gi,
 ];
 
 /** URL credentials: `://user:pass@` becomes `://[secret hidden]@`. */

@@ -37,12 +37,16 @@ describe("redactSecrets", () => {
     ["ACCESS-KEY=zzz", `ACCESS-KEY=${SECRET_HIDDEN}`],
     ["private_key: k", `private_key: ${SECRET_HIDDEN}`],
     ["passwd=p pwd=q secret=r token=s", `passwd=${SECRET_HIDDEN} pwd=${SECRET_HIDDEN} secret=${SECRET_HIDDEN} token=${SECRET_HIDDEN}`],
+    ["mysql --host=db --db-pass=hunter2 app", `mysql --host=db --db-pass=${SECRET_HIDDEN} app`],
+    ["--pass=hunter2", `--pass=${SECRET_HIDDEN}`],
+    ["node run --deploy-pass=pq --verbose", `node run --deploy-pass=${SECRET_HIDDEN} --verbose`],
+    ["curl --password=hunter2 http://x", `curl --password=${SECRET_HIDDEN} http://x`],
   ])("hides %j", (text, want) => {
     expect(redactSecrets(text)).toBe(want);
   });
 
   it("leaves ordinary text alone", () => {
-    for (const text of ["build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value"]) {
+    for (const text of ["build ok in 3.2s", "password reset email sent to the user", "the token is valid", "https://github.com/o/r", "ghp_short", "AKIA1234", "key: value", "--compass=north", "--max-passes=3"]) {
       expect(redactSecrets(text)).toBe(text);
     }
   });
