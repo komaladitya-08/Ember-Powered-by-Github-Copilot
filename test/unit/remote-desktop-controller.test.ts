@@ -157,8 +157,21 @@ async function until(fn: () => boolean, tries = 500): Promise<void> {
 
 const response = (child: FakeChild, id: number) => child.messages.find(m => m.t === "res" && m.id === id);
 
+/**
+ * Pids for fake children whose stop arms halt()'s real 1 s group-kill timer: far above any real pid (Linux caps at
+ * 4194304, macOS at 99999), so even a timer that fires after the process.kill spy is restored can only get ESRCH.
+ */
+const NO_SUCH_PID = 2_000_000_000;
+
+let killSpy: Mock;
+
+beforeEach(() => {
+  killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+});
+
 afterEach(() => {
   vi.useRealTimers();
+  expect(vi.isMockFunction(process.kill)).toBe(true);
   vi.restoreAllMocks();
 });
 
@@ -354,7 +367,7 @@ describe("desktop.state: ensure starts, reuses and refuses", () => {
 
   it("says why a paused notice can't be resumed", async () => {
     const child = fakeChild({
-      pid: 102,
+      pid: NO_SUCH_PID + 102,
       handle: (op, _a, id, c) => {
         if (op === "init") return { access: "screen", notice: "shown" };
         if (op === "resume") { c.fail(id, "internal", "the notice is gone."); return HANDLED; }
@@ -367,7 +380,7 @@ describe("desktop.state: ensure starts, reuses and refuses", () => {
     await until(() => child.requests.some(x => x.op === "pause"));
     expect(await r.c.ensure(ASK)).toEqual({ access: "none", why: "the notice is gone.", notice: "off" });
     // The controller keeps the paused child, so a later desktop.state can try to resume it again.
-    expect(r.c.pid).toBe(102);
+    expect(r.c.pid).toBe(NO_SUCH_PID + 102);
     r.c.stop();
   });
 
@@ -520,7 +533,7 @@ describe("starting the child's failures", () => {
   });
 
   it("reports init's refusal with its notice and stops the helper", async () => {
-    const child = fakeChild({ pid: 800, init: { access: "none", why: "build-01's screen is locked.", notice: "off" } });
+    const child = fakeChild({ init: { access: "none", why: "build-01's screen is locked.", notice: "off" } });
     const r = rig({ spawnChild: () => child.proc });
     expect(await r.c.ensure(ASK)).toEqual({ access: "none", why: "build-01's screen is locked.", notice: "off" });
     expect(r.c.pid).toBeNull();
@@ -572,13 +585,13 @@ describe("the child's requests and events", () => {
   });
 
   it("reports the console's Stop, then stops the child when the notice went away", async () => {
-    const child = fakeChild({ pid: 300 });
+    const child = fakeChild({ pid: NO_SUCH_PID + 300 });
     const r = rig({ spawnChild: () => child.proc });
     await r.c.ensure(ASK);
 
     child.event("stop", {});
     await until(() => r.consoleStops === 1);
-    expect(r.c.pid).toBe(300);
+    expect(r.c.pid).toBe(NO_SUCH_PID + 300);
 
     child.event("gone", { reason: "closed" });
     await until(() => r.c.pid === null);
@@ -608,17 +621,16 @@ describe("the child's requests and events", () => {
   });
 
   it("stops the desktop when the helper's output closes", async () => {
-    const child = fakeChild({ pid: 301 });
+    const child = fakeChild();
     const r = rig({ spawnChild: () => child.proc });
     await r.c.ensure(ASK);
     child.stdout.end();
-    await until(() => r.c.pid === null);
+    await until(() => r.c.state.access === "none");
     expect(r.c.state).toEqual({ access: "none", why: "Ember's desktop helper on build-01 stopped.", notice: "failed" });
   });
 
   it("closes the link with the helper's exit reason", async () => {
     const child = fakeChild({
-      pid: 302,
       handle: op => (op === "init" ? { access: "screen", notice: "shown" } : new Promise(() => {})),
     });
     const r = rig({ spawnChild: () => child.proc });
@@ -628,14 +640,14 @@ describe("the child's requests and events", () => {
     const rejection = expect(waiting).rejects.toMatchObject({ code: "gone", message: "the desktop helper exited" });
     child.exit(0, null);
     await rejection;
-    await until(() => r.c.pid === null);
+    await until(() => r.c.state.access === "none");
     expect(r.c.state).toMatchObject({ access: "none", why: "Ember's desktop helper on build-01 stopped.", notice: "failed" });
   });
 });
 
 describe("recheck, request, policy and pause", () => {
   it("recheck while paused says the connection was silent and does not look", async () => {
-    const child = fakeChild({ pid: 400 });
+    const child = fakeChild({ pid: NO_SUCH_PID + 400 });
     const discover = vi.fn(async () => found());
     const r = rig({ spawnChild: () => child.proc, discover });
     await r.c.ensure(ASK);
@@ -644,12 +656,12 @@ describe("recheck, request, policy and pause", () => {
     await until(() => child.requests.some(x => x.op === "pause"));
     expect(await r.c.recheck()).toBe("Ember stopped using build-01's screen while the connection was silent.");
     expect(discover).toHaveBeenCalledTimes(looks);
-    expect(r.c.pid).toBe(400);
+    expect(r.c.pid).toBe(NO_SUCH_PID + 400);
     r.c.stop();
   });
 
   it("recheck reuses discovery for DISCOVERY_MS and stops the child when the session changed", async () => {
-    const child = fakeChild({ pid: 401 });
+    const child = fakeChild();
     const discover = vi.fn(async () => found());
     const r = rig({ spawnChild: () => child.proc, discover });
     await r.c.ensure(ASK);
@@ -675,7 +687,7 @@ describe("recheck, request, policy and pause", () => {
   });
 
   it("recheck stops the child and keeps discovery's session when the desktop went away", async () => {
-    const child = fakeChild({ pid: 402 });
+    const child = fakeChild();
     const session = { type: "x11" as const, locked: true, active: true };
     let answer: DesktopFound | NoDesktop = found();
     const r = rig({ spawnChild: () => child.proc, discover: async () => answer });
@@ -868,8 +880,8 @@ describe("timeouts and reaping", () => {
   });
 
   it("stops the helper whose init failed and tells the PC exactly once", async () => {
-    const first = fakeChild({ pid: 700 });
-    const second = fakeChild({ pid: 701, handle: op => (op === "init" ? new Promise(() => {}) : {}) });
+    const first = fakeChild();
+    const second = fakeChild({ handle: op => (op === "init" ? new Promise(() => {}) : {}) });
     const children = [first, second];
     const spawn = vi.fn(() => children.shift()!.proc);
     const r = rig({ spawnChild: spawn });
@@ -903,7 +915,8 @@ describe("timeouts and reaping", () => {
   });
 
   it("kills a stopped child's group after a second when it hasn't gone", async () => {
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const kill = killSpy;
+    kill.mockClear();
     const child = fakeChild({ pid: 4242 });
     const r = rig({ spawnChild: () => child.proc });
     await r.c.ensure(ASK);
@@ -917,7 +930,8 @@ describe("timeouts and reaping", () => {
   });
 
   it("does not reap a stopped child that exited within its second", async () => {
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const kill = killSpy;
+    kill.mockClear();
     const child = fakeChild({ pid: 5151 });
     const r = rig({ spawnChild: () => child.proc });
     await r.c.ensure(ASK);
@@ -928,7 +942,8 @@ describe("timeouts and reaping", () => {
   });
 
   it("reaps a stopped child's group at once and clears it", async () => {
-    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    const kill = killSpy;
+    kill.mockClear();
     const child = fakeChild({ pid: 6262 });
     const r = rig({ spawnChild: () => child.proc });
     await r.c.ensure(ASK);
