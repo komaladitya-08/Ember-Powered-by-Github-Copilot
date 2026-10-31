@@ -353,6 +353,8 @@ export interface ExtractOptions extends TarLimits {
   workers?: number;
   /** Counts where the bzip2 decoder decoded blocks. */
   stats?: Bunzip2Stats;
+  /** extractTarBz2: how much of the archive has been read so far (bytes), for its progress. */
+  onRead?: (bytes: number) => void;
 }
 
 /** What an extraction wrote. */
@@ -429,8 +431,10 @@ export async function extractTar(chunks: AsyncIterable<Uint8Array>, dest: string
 /** Extracts a .tar.bz2 file into `dest` (see extractTar), decompressing in-process. */
 export async function extractTarBz2(archive: string, dest: string, options: ExtractOptions = {}): Promise<ExtractSummary> {
   const source = fs.createReadStream(archive, { highWaterMark: 1 << 20 });
+  const onRead = options.onRead;
+  const counted = onRead ? (async function* () { let n = 0; for await (const c of source) { n += (c as Buffer).length; onRead(n); yield c as Buffer; } })() : source;
   try {
-    return await extractTar(bunzip2(source, { workers: options.workers, stats: options.stats }), dest, options);
+    return await extractTar(bunzip2(counted, { workers: options.workers, stats: options.stats }), dest, options);
   } finally {
     // Only once the file is closed: on Windows the caller's delete of the archive (and the next download to
     // the same name) can fail or linger while a handle to it is still open.

@@ -40,7 +40,10 @@ describe("the Windows doctor probes", () => {
   });
 
   it("warn when Windows keeps desktop apps from the microphone", async () => {
-    expect(await row(deps({ mic: "denied" }), "microphone-privacy")).toMatchObject({ status: "warn", fix: "Settings › Privacy & security › Microphone › Let desktop apps access your microphone" });
+    // Both supported Windows' whole paths (review #100): Windows 10 22H2 calls the page "Privacy" and the switch "Allow …".
+    expect(await row(deps({ mic: "denied" }), "microphone-privacy")).toMatchObject({ status: "warn",
+      fix: "Turn on desktop apps' access to the microphone: Settings › Privacy & security › Microphone › Let desktop apps access your microphone "
+        + "(on Windows 10: Settings › Privacy › Microphone › Allow desktop apps to access your microphone)." });
     expect(await row(deps({ mic: "granted" }), "microphone-privacy")).toMatchObject({ status: "ok", detail: "Desktop apps may use the microphone" });
     expect(await row(deps({ mic: "not-determined" }), "microphone-privacy")).toMatchObject({ status: "ok" });
   });

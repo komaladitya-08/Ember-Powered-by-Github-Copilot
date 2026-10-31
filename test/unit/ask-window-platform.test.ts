@@ -19,14 +19,14 @@ vi.mock("electron", () => {
     visible = false;
     handlers = new Map<string, (() => void)[]>();
     handle = () => { const b = Buffer.alloc(8); b.writeUInt32LE(0x3a00007, 0); return b; };
-    webContents = { on() {}, send() {}, isLoading: () => false };
+    webContents = { on() {}, send() {}, isLoading: () => false, ipc: { on() {} } };
     constructor(readonly options: Record<string, unknown>) { made.push(this); }
     on(e: string, fn: () => void) { this.handlers.set(e, [...(this.handlers.get(e) ?? []), fn]); return this; }
     once(e: string, fn: () => void) { return this.on(e, fn); }
     emit(e: string) { for (const fn of this.handlers.get(e) ?? []) fn(); }
     setAlwaysOnTop(...a: unknown[]) { this.calls.push(["setAlwaysOnTop", ...a]); }
     setVisibleOnAllWorkspaces(...a: unknown[]) { this.calls.push(["setVisibleOnAllWorkspaces", ...a]); }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     setBounds() {}
     show() { this.visible = true; }
     hide() { this.visible = false; }

@@ -10,6 +10,8 @@
  * only measures itself (a layout read) after its content changed.
  */
 
+import { WHOLE_LABEL, WHOLE_READ_HINT, WHOLE_READ_SAID, WHOLE_UNREAD_SAID, wholeInView, wholeJudged, wholeNext, wholePage, wholeUnreported, type WholeState, type WholeView } from "./whole";
+
 export interface Point { x: number; y: number }
 export interface Size { width: number; height: number }
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -34,30 +36,86 @@ export function chipLabel(mood: BubbleMood, streaming: boolean): string {
   return mood === "idle" && streaming ? "Answering" : BUBBLE_LABEL[mood];
 }
 
+/** The title only says the chip's word again ("Thinking…" beside "Thinking"): the bubble shows it once, in the chip. */
+export function titleRepeatsChip(title: string, chip: string): boolean {
+  const norm = (s: string) => s.trim().replace(/[.…]+$/, "").toLowerCase();
+  return !!norm(title) && norm(title) === norm(chip);
+}
+
 export interface BubbleView {
   visible: boolean;
   mood: BubbleMood;
   title: string;
   thought: string;
   streaming: boolean;
+  /** Where its task acts when not on this computer ("on build-01"): the badge says it to the eye, this to the ear. */
+  where?: string;
+  /**
+   * Its step row: under a question, how to answer it ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"); under a problem, how the
+   * keyboard reaches what its buttons do ("Or press Ctrl+Alt+E and go to Computers."). Read after it.
+   */
+  step?: string | null;
+  /** A question's whole text (a long typed text its sentence cuts short): heard after the question, before its keys. */
+  whole?: string;
+  /** Main says all of the whole text has been shown (its Allow works): until then, that Allow waits for it is said too. */
+  wholeSeen?: boolean;
 }
+
+/** A step row as heard: its parts as a list ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). */
+const stepWords = (step: string | null | undefined): string => step?.replace(/\s+·\s+/g, "; ").replace(/\s+/g, " ").trim() ?? "";
+/** A sentence ended with a stop, unless it has one. */
+const sentence = (s: string): string => (/[.!?…:]$/.test(s) ? s : `${s}.`);
 
 /**
  * What a screen reader hears, once: finished answers and questions, never each
  * streamed token or the running commentary while Ember thinks or works.
- * "" means say nothing.
+ * "" means say nothing. A bubble from another computer says which first.
  */
 export function announcement(v: BubbleView, speaker = "Ember"): string {
   if (!v.visible || v.streaming) return "";
   const text = v.thought.trim();
   const title = v.title.trim();
   const both = title && text ? `${/[.!?…:]$/.test(title) ? title : `${title}.`} ${text}` : title || text;
+  const where = v.where?.replace(/\s+/g, " ").trim();
+  const at = where ? `, ${where}` : "";
+  // A question's step row says how to answer it (or where it is shown whole), a problem's how the keyboard reaches what
+  // its buttons do, an answer cut short's where it is whole: heard after it, as it is seen under it. (A guide's step,
+  // what it points at, is not read.)
+  const hint = stepWords(v.step);
+  const end = sentence;
+  const withHint = hint ? `${end(both)} ${end(hint)}` : both;
+  // A question's whole text is heard whole too (the block that shows it is for the eye), after its sentence, and until
+  // all of it has been shown, that Allow waits for that: the approve key shows it a part at a time (its step says so).
+  const whole = v.whole?.trim();
+  const asked = whole && both ? `${end(both)} ${WHOLE_LABEL}: ${v.wholeSeen === true ? whole : `${end(whole)} ${WHOLE_UNREAD_SAID}`}` : both;
   switch (v.mood) {
-    case "attention": return both ? `${speaker} needs you: ${both}` : "";
-    case "error": return both ? `${speaker} has a problem: ${both}` : "";
-    case "idle": case "done": case "guiding": return text || title ? `${speaker} says: ${text || title}` : "";
+    case "attention": return both ? `${speaker} needs you${at}: ${hint ? `${end(asked)} ${end(hint)}` : asked}` : "";
+    case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
+    case "idle": case "done": return text || title ? `${speaker} says${at}: ${hint ? `${end(text || title)} ${end(hint)}` : text || title}` : "";
+    case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
     default: return "";
   }
+}
+
+/**
+ * What the live region says when only one thing changed since it said `prev`: the same question, whose whole text has now
+ * all been shown. Just that and the keys that answer ("You can allow it now. Ctrl+Alt+Y allow; Ctrl+Alt+N not now."), not
+ * the question and all of its text again. Null for anything else (the caller says the announcement).
+ */
+export function wholeReadNews(prev: BubbleView | null, next: BubbleView): string | null {
+  if (!prev || !prev.visible || !next.visible || prev.streaming || next.streaming) return null;
+  if (next.mood !== "attention" || prev.mood !== next.mood || prev.title !== next.title || prev.thought !== next.thought || prev.where !== next.where) return null;
+  if (!next.whole || prev.whole !== next.whole || prev.wholeSeen === true || next.wholeSeen !== true) return null;
+  const hint = stepWords(next.step);
+  return hint ? `${WHOLE_READ_SAID} ${sentence(hint)}` : WHOLE_READ_SAID;
+}
+
+/**
+ * Whether the finished thought scrolls inside the bubble when it is longer than it shows (BUBBLE_CSS): a question's and
+ * a problem's (up to ten lines), and an answer opened with "Read all". Its scroll area then takes the pointer.
+ */
+export function thoughtScrolls(v: { mood: BubbleMood; expanded: boolean; streaming: boolean }): boolean {
+  return !v.streaming && (v.mood === "attention" || v.mood === "error" || v.expanded);
 }
 
 const MARGIN = 8;
@@ -104,7 +162,11 @@ function clearPlace(anchor: Point, box: Size, bounds: Size, size: number, avoid:
     const slides = avoid.flatMap(r => [r.x - w - GAP, r.x + r.width + GAP]).filter(fitsX).sort((a, b) => Math.abs(a - p.x) - Math.abs(b - p.x));
     for (const sx of slides) tries.push({ x: sx, y: p.y });
   }
-  tries.push(fallback);
+  // The fallback ignores Ember (it is clamped to the screen only): never taken over Ember's body and its emote, so a
+  // bubble too big for any clear place (an answer opened in full) goes beside Ember over the cards instead (the usual
+  // placement), not over Ember's face.
+  const e = size > 0 ? { x: anchor.x - size * 0.75, y: anchor.y - size * 1.5, width: size * 1.5, height: size * 1.7 } : null;
+  if (!e || !(fallback.x < e.x + e.width && fallback.x + w > e.x && fallback.y < e.y + e.height && fallback.y + h > e.y)) tries.push(fallback);
   const clear = (p: Point) => !avoid.some(r => p.x < r.x + r.width + GAP && p.x + w > r.x - GAP && p.y < r.y + r.height + GAP && p.y + h > r.y - GAP);
   return tries.find(clear) ?? null;
 }
@@ -236,19 +298,26 @@ export const BUBBLE_CSS = `
   animation: eb-pulse 1.4s ease-in-out infinite;
 }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A question's or a problem's title carries the decision ("Pushing feature-x to origin, as you asked"): it wraps onto a
+   second line rather than lose its end under an ellipsis. */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-title {
+  white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+/* A title that only repeats the chip's word ("Thinking…" beside Thinking) isn't shown twice. */
+.ember-bubble .eb-title[hidden] { display: none; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
 .eb-thought {
-  margin: 0; max-height: calc(20px * 6); overflow: hidden;
+  margin: 0; max-height: 6lh; overflow: hidden;
   display: flex; flex-direction: column; justify-content: flex-start;
   color: var(--label, #f5f2ef); white-space: pre-line; overflow-wrap: anywhere;
 }
 .eb-thought:empty { display: none; }
 /* Running commentary (thinking, working, listening) is quieter: the secondary label, three lines. */
 .ember-bubble:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .eb-thought {
-  max-height: calc(20px * 3); color: var(--label-2, rgba(245, 240, 236, 0.66));
+  max-height: 3lh; color: var(--label-2, rgba(245, 240, 236, 0.66));
 }
 /* While text streams in, the newest lines show and the start slides away under a fade. */
-.ember-bubble[data-streaming="true"] .eb-thought { max-height: calc(20px * 3); justify-content: flex-end; }
+.ember-bubble[data-streaming="true"] .eb-thought { max-height: 3lh; justify-content: flex-end; }
 .ember-bubble[data-streaming="true"] .eb-thought[data-overflow="true"] {
   -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
@@ -258,9 +327,10 @@ export const BUBBLE_CSS = `
   -webkit-mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
   mask-image: linear-gradient(to top, transparent 0, #000 1.1em);
 }
-/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence. */
-.ember-bubble[data-mood="attention"]:not([data-streaming="true"]) .eb-thought {
-  max-height: calc(20px * 10); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+/* A question shows all of it (scrolling if it is very long) so a decision is never made on half a sentence; so does a
+   problem, whose last sentence is usually what to do about it. */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"]):not([data-streaming="true"]) .eb-thought {
+  max-height: 10lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
 /* A question gets room for its answers on one row ("Allow", "Always in …", "Not now"). */
@@ -269,7 +339,7 @@ export const BUBBLE_CSS = `
 /* "Read all": the whole answer, scrolling inside the bubble when it is longer still. As specific as the overflow
    fade above (which it must undo: a fade over the scroll box would hide the last line however far it scrolled). */
 .ember-bubble[data-expanded="true"]:not([data-streaming="true"]) .eb-thought {
-  max-height: calc(20px * 16); overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  max-height: 16lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
   -webkit-mask-image: none; mask-image: none;
 }
 /* Its scrollers' bars as on a Mac (a slim thumb, no track or arrows), with or without the page's tokens. */
@@ -282,16 +352,30 @@ export const BUBBLE_CSS = `
 .eb-step { display: flex; gap: 7px; padding-top: 8px; border-top: 1px solid var(--separator, rgba(255, 255, 255, 0.09)); font: 400 13px/18px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 600; }
-/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. */
-.ember-bubble[data-mood="attention"] .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
-.ember-bubble[data-mood="attention"] .eb-step-arrow { display: none; }
+/* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
+   is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."), and an
+   answer's cut short, where it is whole ("… go to Conversation."). */
+.ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { order: 1; padding-top: 0; border-top: 0; font-size: 12px; line-height: 16px; }
+.ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step-arrow { display: none; }
+/* A question's whole text (a long typed text its sentence cuts to two ends, review #116): every character as it will be
+   typed, in a panel on the glass (a flat fill and a hairline, no glass on glass) that scrolls. It takes the wheel. */
+.eb-whole {
+  max-height: 7lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
+  padding: 6px 10px; border-radius: var(--r-md, 10px);
+  background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px var(--separator, rgba(255, 255, 255, 0.09));
+  color: var(--label, #f5f2ef); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.eb-whole[hidden] { display: none; }
+/* Above the buttons until all of it has been in view, as the consent cards say it. */
+.eb-whole-hint { margin: 0; font: 400 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
+.eb-whole-hint[hidden] { display: none; }
 .eb-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 4px; pointer-events: auto; }
 .eb-actions[hidden] { display: none; }
 /* Capsules (the floating layer's large controls, 28 px). The prominent one is the app's accent; the others carry
    an edge of 3:1 or more (WCAG 1.4.11). */
 .eb-actions button {
   font: 600 13px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: -0.003em;
-  min-height: 28px; padding: 6px 14px; border-radius: var(--r-capsule, 999px); cursor: pointer;
+  min-height: calc(28px * var(--text-scale, 1)); padding: 6px 14px; border-radius: var(--r-capsule, 999px); cursor: pointer;
   max-width: 100%; overflow-wrap: anywhere;
   border: 0; background: rgba(255, 255, 255, 0.08); color: var(--label, #f5f2ef);
   box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42));
@@ -303,8 +387,10 @@ export const BUBBLE_CSS = `
   .eb-actions button.eb-primary:hover { background: var(--accent, #ff9230); filter: brightness(1.08); }
 }
 .eb-actions button:active { transform: scale(0.97); }
-.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
-.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 3px rgba(255, 146, 48, 0.75)); }
+/* Allow before the whole text has all been in view: it takes no press yet. */
+.eb-actions button[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
+.eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
+.eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
 /* Read out by screen readers, never seen. */
 .eb-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes eb-pulse { 50% { opacity: 0.45; } }
@@ -321,6 +407,25 @@ html.calm .ember-bubble { transition: none; translate: none; }
 @media (prefers-contrast: more) {
   .ember-bubble { border-color: rgba(255, 255, 255, 0.5); background: var(--glass-fill, linear-gradient(#141112, #141112)) border-box; }
 }
+/* Windows contrast themes (forced colours): the system's colours, which drop every box-shadow. The buttons get real
+   edges and a real focus outline, the prominent one the highlight's fill, and the dot and caret the text colour (the
+   state's word is beside the dot). Written out here too, as the bubble also runs without ember.css. */
+@media (forced-colors: active) {
+  .ember-bubble, .ember-bubble[data-mood] { --eb-mood: CanvasText; }
+  .eb-actions button { border: 1px solid ButtonText; }
+  .eb-actions button.eb-primary, .eb-actions button.eb-primary:hover { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; }
+  .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+  .eb-actions button[aria-disabled="true"], .eb-actions button.eb-primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
+  .eb-whole { border: 1px solid CanvasText; }
+}
+/* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
+   grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
+html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
+html[data-text-size] .eb-chip { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
+html[data-text-size] .ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-whole-hint { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 `;
 
 /**
@@ -347,6 +452,8 @@ export interface BubbleAction {
   key?: string;
   label: string;
   primary?: boolean;
+  /** It works only once the question's whole text has all been in view (Allow; never Not now): until then it takes no press. */
+  needsWhole?: boolean;
   onClick: () => void;
 }
 
@@ -363,16 +470,32 @@ export class ReasoningBubble {
   private readonly thought: HTMLSpanElement;
   private readonly step: HTMLDivElement;
   private readonly stepText: HTMLSpanElement;
+  private readonly wholeBox: HTMLDivElement;
+  private readonly wholeHint: HTMLParagraphElement;
   private readonly actions: HTMLDivElement;
   /** The one place screen readers hear Ember from (see `announcement`). */
   private readonly live: HTMLDivElement;
   private actionKey = "";
   private handlers: (() => void)[] = [];
+  /** Which buttons wait for the whole text (BubbleAction.needsWhole), by place. */
+  private waits: boolean[] = [];
+  /** The question's whole text shown now, and whether all of it has been in view (whole.ts). */
+  private whole: WholeView | null = null;
+  /** Main says all of it has been shown (its Allow works, the step names the keys that allow): what screen readers hear. */
+  private wholeSeenByMain = false;
+  /** What the live region last said it from (wholeReadNews: only the news once the whole text has been shown). */
+  private announcedView: BubbleView | null = null;
+  /**
+   * Told the question's number once all of its whole text has been in view while the bubble showed it, and again on
+   * each new state that doesn't yet say main knows (the page sends wholeSeenAction).
+   */
+  onWholeSeen: ((n: number) => void) | null = null;
   private mood: BubbleMood = "idle";
   private streaming = false;
   private expanded = false;
   private visible = true;
   private speaker = "Ember";
+  private where: string | undefined;
   private announced = "";
   private announceQueued = false;
   /** Content changed since the bubble last measured itself. */
@@ -400,6 +523,8 @@ export class ReasoningBubble {
     this.root.innerHTML = `
       <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-title"></span></div>
       <p class="eb-thought"><span></span></p>
+      <div class="eb-whole" hidden></div>
+      <p class="eb-whole-hint" hidden></p>
       <div class="eb-step" hidden><span class="eb-step-arrow" aria-hidden="true">→</span><span class="eb-step-text"></span></div>
       <div class="eb-actions" hidden></div>`;
     this.chipText = this.root.querySelector(".eb-chip-text")!;
@@ -409,6 +534,10 @@ export class ReasoningBubble {
     this.step = this.root.querySelector(".eb-step")!;
     this.stepText = this.root.querySelector(".eb-step-text")!;
     this.actions = this.root.querySelector(".eb-actions")!;
+    this.wholeBox = this.root.querySelector(".eb-whole")!;
+    this.wholeHint = this.root.querySelector(".eb-whole-hint")!;
+    // Scrolled (by the wheel, or a page on by the approve key): judged again.
+    this.wholeBox.addEventListener("scroll", () => this.wholeMeasured(), { passive: true });
     this.live = document.createElement("div");
     this.live.className = "eb-live";
     this.live.setAttribute("role", "status");
@@ -430,6 +559,13 @@ export class ReasoningBubble {
     this.speaker = name;
   }
 
+  /** Where the bubble's task acts when not on this computer ("on build-01"), for screen readers (see `announcement`). */
+  setWhere(where: string | undefined): void {
+    if (where === this.where) return;
+    this.where = where;
+    this.queueAnnounce();
+  }
+
   setMood(mood: BubbleMood): void {
     if (mood === this.mood) return;
     this.mood = mood;
@@ -441,6 +577,7 @@ export class ReasoningBubble {
   setTitle(text: string): void {
     if (this.title.textContent === text) return;
     this.title.textContent = text;
+    this.updateTitle();
     this.changed();
   }
 
@@ -485,6 +622,39 @@ export class ReasoningBubble {
   }
 
   /**
+   * A question's whole text under its sentence (null: none), as main sends it: shown from its start in a block that
+   * scrolls, with the read hint above the buttons until all of it has been in view here or main says it was. Each press
+   * of the approve key since the last state (`page`) scrolls it on by a page.
+   */
+  setWhole(next: WholeState | null): void {
+    const had = this.whole;
+    const { view, fresh, pages } = wholeNext(had, next);
+    this.whole = view;
+    const told = !!view && next?.seen === true;
+    if (told !== this.wholeSeenByMain) { this.wholeSeenByMain = told; this.queueAnnounce(); }
+    if (!view) {
+      if (!had) return;
+      this.wholeBox.hidden = true;
+      this.wholeBox.textContent = "";
+      this.paintWhole();
+      this.changed();
+      return;
+    }
+    if (fresh) {
+      this.wholeBox.textContent = view.text;
+      this.wholeBox.hidden = false;
+      this.wholeBox.scrollTop = 0;
+      this.changed();
+    }
+    // Judged where it is drawn: once placed with this content (place) and as it scrolls, never here, where the bubble
+    // may still stand where the last one was.
+    if (pages) this.wholeBox.scrollTop += pages * wholePage(this.wholeBox.clientHeight, parseFloat(getComputedStyle(this.wholeBox).lineHeight));
+    this.paintWhole();
+    // Seen here and main doesn't say so yet (just now, or a word that was lost): told (again).
+    if (wholeUnreported(this.whole, next)) this.onWholeSeen?.(view.n);
+  }
+
+  /**
    * Shows buttons. The same buttons are kept (not rebuilt) when only their
    * handlers change, so a click is never lost to a re-render between
    * mouse-down and mouse-up.
@@ -492,8 +662,9 @@ export class ReasoningBubble {
   setActions(actions: BubbleAction[] | null): void {
     const list = actions ?? [];
     this.handlers = list.map(a => a.onClick);
+    this.waits = list.map(a => a.needsWhole === true);
     const key = JSON.stringify(list.map(a => [a.key ?? a.label, a.label, a.primary === true]));
-    if (key === this.actionKey) return;
+    if (key === this.actionKey) { this.paintWhole(); return; }
     this.actionKey = key;
     this.actions.replaceChildren();
     this.actions.hidden = !list.length;
@@ -502,10 +673,52 @@ export class ReasoningBubble {
       b.type = "button";
       b.textContent = a.label;
       if (a.primary) b.className = "eb-primary";
-      onPress(b, () => this.handlers[i]?.());
+      // A button that waits for the whole text takes no press until all of it has been in view (main refuses it too).
+      onPress(b, () => { if (!(this.waits[i] && this.whole && !this.whole.seen)) this.handlers[i]?.(); });
       this.actions.appendChild(b);
     });
+    this.paintWhole();
     this.changed();
+  }
+
+  /** The read hint and the waiting buttons as the whole text's state says (a hint that comes or goes resizes the bubble). */
+  private paintWhole(): void {
+    const unread = !!this.whole && !this.whole.seen;
+    if (this.wholeHint.hidden === unread) {
+      this.wholeHint.hidden = !unread;
+      this.wholeHint.textContent = unread ? WHOLE_READ_HINT : "";
+      this.dirty = true;
+    }
+    [...this.actions.children].forEach((b, i) => {
+      if (unread && this.waits[i]) b.setAttribute("aria-disabled", "true");
+      else b.removeAttribute("aria-disabled");
+    });
+  }
+
+  /**
+   * Measures the whole text's block (a layout read) while it waits to be read: true the first time all of it is in view
+   * on screen while the bubble shows it.
+   */
+  private judgeWhole(): boolean {
+    const v = this.whole;
+    if (!v || v.seen) return false;
+    const box = this.wholeBox;
+    const r = box.getBoundingClientRect();
+    const fontsLoaded = typeof document.fonts === "undefined" || document.fonts.status === "loaded";
+    const shown = this.visible && !this.crowded && this.pos !== null;
+    const { view, report } = wholeJudged(v, wholeInView(
+      { scrollTop: box.scrollTop, scrollHeight: box.scrollHeight, clientHeight: box.clientHeight, top: r.top, bottom: r.bottom, viewportHeight: window.innerHeight },
+      { shown, fontsLoaded },
+    ));
+    this.whole = view;
+    return report;
+  }
+
+  /** The whole text's block scrolled or the bubble placed: judged, and main told the first time all of it is in view. */
+  private wholeMeasured(): void {
+    if (!this.judgeWhole() || !this.whole) return;
+    this.paintWhole();
+    this.onWholeSeen?.(this.whole.n);
   }
 
   setVisible(on: boolean): void {
@@ -557,9 +770,10 @@ export class ReasoningBubble {
     const shown = this.setCrowded(false);
     this.box = m.box;
     this.hot = m.hot;
-    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) return false;
+    if (!resized && !shown && this.pos?.x === x && this.pos.y === y) { this.wholeMeasured(); return false; }
     this.pos = { x, y };
     this.mount.style.transform = `translate(${x}px, ${y}px)`;
+    this.wholeMeasured();
     return true;
   }
 
@@ -603,6 +817,14 @@ export class ReasoningBubble {
   private updateChip(): void {
     const label = chipLabel(this.mood, this.streaming);
     if (this.chipText.textContent !== label) this.chipText.textContent = label;
+    this.updateTitle();
+  }
+
+  /** Hides a title that only says the chip's word again (the chip shows unless it is a finished answer's "Ready"). */
+  private updateTitle(): void {
+    const chipShown = !(this.mood === "idle" && !this.streaming);
+    const hide = chipShown && titleRepeatsChip(this.title.textContent ?? "", chipLabel(this.mood, this.streaming));
+    if (this.title.hidden !== hide) this.title.hidden = hide;
   }
 
   /** One layout read: size, overflow, and where the clickable parts are. */
@@ -614,7 +836,9 @@ export class ReasoningBubble {
     const rel = (el: HTMLElement): Rect => ({ x: edge + el.offsetLeft, y: edge + el.offsetTop, width: el.offsetWidth, height: el.offsetHeight });
     const hot: Rect[] = [];
     if (!this.actions.hidden) hot.push(rel(this.actions));
-    if (over && (this.mood === "attention" || this.expanded) && !this.streaming) hot.push(rel(t));
+    // The whole text's block scrolls under the wheel, whether or not it runs on (it takes the pointer as a question's does).
+    if (!this.wholeBox.hidden) hot.push(rel(this.wholeBox));
+    if (over && thoughtScrolls({ mood: this.mood, expanded: this.expanded, streaming: this.streaming })) hot.push(rel(t));
     return { box, hot, over };
   }
 
@@ -629,11 +853,16 @@ export class ReasoningBubble {
     this.announceQueued = false;
     // Keep what was said while hidden: a hide/show flicker (Ember crossing a screen edge) doesn't repeat it.
     if (!this.visible) return;
-    const text = announcement({
-      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming,
-    }, this.speaker);
+    const view: BubbleView = {
+      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming, where: this.where,
+      step: this.step.hidden ? null : this.stepText.textContent, ...(this.whole ? { whole: this.whole.text, wholeSeen: this.wholeSeenByMain } : {}),
+    };
+    const text = announcement(view, this.speaker);
     if (text === this.announced) return;
+    // The same question, its whole text now all shown: only that news, not the question and its text again.
+    const said = wholeReadNews(this.announcedView, view) ?? text;
     this.announced = text;
-    this.live.textContent = text;
+    this.announcedView = view;
+    this.live.textContent = said;
   }
 }

@@ -1,36 +1,96 @@
 html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
 body { font: var(--type-body); color: var(--label); }
 /* Inset enough that the shadow fits inside the window (no clipped rectangle around it). The window is 92 px tall
-   (main's ask.ts): 10 + field 46 + 4 + hint line 21 + 11 px. */
+   (main's ask.ts): 10 + field 46 + 4 + hint line 21 + 11 px, 24 px taller for each line the field grows, 24 px
+   taller again (4 + the note's 20) while the note says a paste was cut, and again while the tip says to wait for the
+   box (its first openings on Windows and macOS). Those are the default text size's: the field, the line under it and
+   each row grow with the text size (the twins at the end). */
 .ask { position: absolute; inset: 10px; display: flex; flex-direction: column; gap: 4px; }
 /* The field: a glass capsule with Ember's flame at its start, as Spotlight. It is always focused while open, so its
    focus shows quietly: a firmer rim and the accent caret, no glow. */
+/* One line (46 px); the page grows it by 24 px a line, to four, then the text scrolls (field.ts). */
 .field { position: relative; flex: 0 0 46px; display: flex; }
-.glyph { position: absolute; left: 18px; top: 50%; width: 18px; height: 18px; margin-top: -9px; fill: var(--accent); pointer-events: none; }
-input {
-  flex: 1; min-width: 0; box-sizing: border-box; padding: 0 20px 0 46px; border-radius: var(--r-capsule); outline: none;
+/* Beside the first line, however many the field has grown to. */
+.glyph { position: absolute; left: 18px; top: 14px; width: 18px; height: 18px; fill: var(--accent); pointer-events: none; }
+/* Half the one-line field's height (23 px): a capsule at one line, a rounded field when it has grown. */
+textarea {
+  flex: 1; min-width: 0; box-sizing: border-box; margin: 0; padding: 11px 20px 11px 46px; display: block;
+  resize: none; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: calc(var(--r-xl) + 5px); outline: none;
   border: 1px solid transparent; color: var(--label); background: var(--glass);
   font: 400 18px/24px var(--ember-font); letter-spacing: -0.014em; caret-color: var(--accent);
   box-shadow: var(--glass-spec), 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 3px 8px rgba(0, 0, 0, 0.3);
 }
+textarea.scrolls { overflow-y: auto; }
 /* The field's only visible label: 4.5:1 or more on the glass over any app. */
-input::placeholder { color: var(--label-2); }
-input:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 3px 8px rgba(0, 0, 0, 0.3); }
+textarea::placeholder { color: var(--label-2); }
+textarea:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.6), 0 3px 8px rgba(0, 0, 0, 0.3); }
 /* What Ember will see, and the keys: one quiet line under the field, never wider than it (the place shortens first). */
 .meta {
   box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 10px; display: flex; gap: 12px; justify-content: space-between; align-items: center;
   flex: none; font: var(--type-footnote); line-height: 17px; color: var(--label-2);
   border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
-  width: fit-content; max-width: calc(100% - 28px); white-space: nowrap; overflow: hidden;
+  width: calc(100% - 28px); white-space: nowrap; overflow: hidden;
 }
-.sees { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--label); font-weight: 500; }
+/* What Ember will see: an eye, the window (shortened first), then what else is sent (never shortened). The line is
+   as wide as the field from the start, so it doesn't jump when this arrives after the quick look. */
+.sees { min-width: 0; overflow: hidden; display: inline-flex; align-items: center; gap: 5px; color: var(--label); font-weight: 500; }
+.sees[hidden] { display: none; }
+.eye { flex: none; width: 13px; height: 13px; fill: var(--label-2); }
+/* A private window: the words say Ember won't look, so no eye beside them. */
+.sees.private .eye { display: none; }
+.sees-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.sees-extra { flex: none; color: var(--label-2); font-weight: 400; }
+/* The computer a request goes to, when it isn't this one: the label's colour, a little apart from what Ember sees. Its
+   name shortens (less on a crowded line: .tight), its state ("(lost)") never does. */
+.where { flex: none; max-width: 240px; min-width: 0; overflow: hidden; display: inline-flex; color: var(--accent); font-weight: 600; }
+.where.tight { max-width: 150px; }
+.where[hidden] { display: none; }
+.where-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.where-state { flex: none; white-space: pre; }
+/* A paste longer than what is sent was cut: said in words, in the warning colour, on its own quiet line under the one
+   above (20 px: main grows the window a line for it). */
+.cut {
+  box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 10px; align-self: flex-start; flex: none; max-width: calc(100% - 28px);
+  font: var(--type-footnote); line-height: 16px; color: var(--yellow); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
+}
+.cut[hidden] { display: none; }
+/* The tip to wait for the box before typing: the same quiet line, in the label's colour (advice, not a warning). */
+.tip {
+  box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 10px; align-self: flex-start; flex: none; max-width: calc(100% - 28px);
+  font: var(--type-footnote); line-height: 16px; color: var(--label); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
+}
+.tip[hidden] { display: none; }
 /* The keys as keycaps, each with its few words. */
-.hint { flex: none; display: inline-flex; gap: 10px; color: var(--label-2); }
-.hint [hidden] { display: none; }
+.hint { flex: none; margin-left: auto; display: inline-flex; gap: 10px; color: var(--label-2); }
+.hint [hidden], .hint .crowded { display: none; }
 .meta kbd { font-size: 10.5px; line-height: 13px; padding: 0 4px; vertical-align: 0; }
 /* No compositor: the whole window is an opaque panel (a transparent window would paint black). */
 html.opaque, html.opaque body { background: var(--glass-solid); }
 html.opaque body { box-shadow: var(--glass-rim); }
-html.opaque input { background: rgba(255, 255, 255, 0.05); border-color: var(--separator); box-shadow: none; }
-html.opaque input:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
-html.opaque .meta { background: transparent; border-color: transparent; }
+html.opaque textarea { background: rgba(255, 255, 255, 0.05); border-color: var(--separator); box-shadow: none; }
+html.opaque textarea:focus { border-color: color-mix(in srgb, var(--accent) 70%, transparent); }
+html.opaque .meta, html.opaque .cut, html.opaque .tip { background: transparent; border-color: transparent; }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): the field and the line under it grow with the
+   type, all but the window's 10 px insets, and main grows the window by the same scale (ask.ts askSize, 24 px a row
+   times it; field.ts measures the field's lines at it). */
+html[data-text-size] .field { flex-basis: calc(46px * var(--text-scale)); }
+html[data-text-size] .glyph { left: calc(18px * var(--text-scale)); top: calc(14px * var(--text-scale)); width: calc(18px * var(--text-scale)); height: calc(18px * var(--text-scale)); }
+html[data-text-size] textarea {
+  padding: calc(11px * var(--text-scale)) calc(20px * var(--text-scale)) calc(11px * var(--text-scale)) calc(46px * var(--text-scale));
+  border-radius: calc((var(--r-xl) + 5px) * var(--text-scale)); font-size: calc(18px * var(--text-scale)); line-height: calc(24px * var(--text-scale));
+}
+html[data-text-size] .meta { line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .meta kbd { font-size: calc(10.5px * var(--text-scale)); line-height: calc(13px * var(--text-scale)); }
+html[data-text-size] .eye { width: calc(13px * var(--text-scale)); height: calc(13px * var(--text-scale)); }
+html[data-text-size] .where { max-width: calc(240px * var(--text-scale)); }
+html[data-text-size] .where.tight { max-width: calc(150px * var(--text-scale)); }
+html[data-text-size] .cut, html[data-text-size] .tip { line-height: calc(16px * var(--text-scale)); }
+
+/* Windows contrast themes (forced colours; tokens in ember.css): the computer a request goes to is set apart by its
+   weight (the highlight is no text colour). */
+@media (forced-colors: active) {
+  .where { color: CanvasText; }
+}

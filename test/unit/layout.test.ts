@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { PLATFORM_FAMILIES, TARGETS, artifactNames, layoutFor, npmInvocation, packageNameOf, prodPackageDirs, selectPackages } from "../../scripts/package/layout.mjs";
 import { archivePlan } from "../../scripts/package/archive.mjs";
+import { askpassSourceCandidates } from "../../app/main/remote/askpass-win";
 
 const lock = JSON.parse(fs.readFileSync(path.resolve("package-lock.json"), "utf8")) as { packages: Record<string, { dev?: boolean; os?: string[]; cpu?: string[]; libc?: string[] }> };
 /** The production packages in the lockfile (every platform's), as npm ls would print them under a root. */
@@ -56,8 +57,12 @@ describe("the Windows layout", () => {
         // Ember.exe gets Ember's version resource and that icon (exe-resources.mjs).
         exeResources: true,
       });
-      expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs"]);
-      expect(win.sidecarFiles.every(s => s.from === s.to)).toBe(true);
+      expect(win.sidecarFiles.map(s => s.to)).toEqual(["sidecar/uia/ember_uia.ps1", "sidecar/uia/ember_uia.cs", "sidecar/atspi/ember_atspi.py", "ssh/ember_askpass.cs"]);
+      expect(win.sidecarFiles.filter(s => s.to.startsWith("sidecar/")).every(s => s.from === s.to)).toBe(true);
+      // SSH's askpass source lands where the packaged Ember compiles it from (askpass-win.ts's first candidate).
+      const askpass = win.sidecarFiles.find(s => s.to === "ssh/ember_askpass.cs")!;
+      expect(fs.existsSync(path.resolve(askpass.from))).toBe(true);
+      expect(path.win32.join("C:\\Ember\\resources", ...askpass.to.split("/"))).toBe(askpassSourceCandidates({ resourcesPath: "C:\\Ember\\resources", appDir: "C:\\Ember\\resources\\app\\dist\\app" })[0]);
       // The doctor for a console, beside Ember.exe (cmd.exe waits for it and keeps its exit code).
       expect(win.launchers).toEqual([{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }]);
     });
@@ -151,6 +156,20 @@ describe("every target", () => {
     }
   });
 
+  it("requires the SSH and command helpers each target starts, so a partial build can't be staged (review #209)", () => {
+    // askpass.cjs: the POSIX password helper (askpass-server.ts); remote-link.cjs: the SSH link worker (connections.ts);
+    // job-host.cjs: Windows' command job host (main.ts, wsl/router.ts). Windows asks through ember-askpass.exe instead.
+    const helpers: Record<string, string[]> = { linux: ["askpass.cjs", "remote-link.cjs"], darwin: ["askpass.cjs", "remote-link.cjs"], win32: ["remote-link.cjs", "job-host.cjs"] };
+    const build = fs.readFileSync(path.resolve("scripts/build-app.mjs"), "utf8");
+    for (const l of layouts) {
+      for (const f of helpers[l.platform]) {
+        expect(l.requiredDist, `${l.target}: ${f}`).toContain(f);
+        expect(l.excludeDist, `${l.target}: ${f}`).not.toContain(f);
+        expect(build, f).toContain(`"dist/app/${f}"`);
+      }
+    }
+  });
+
   it("names the archives by version, OS and architecture", () => {
     expect(artifactNames(layoutFor("win32", "x64"), "0.1.0")).toEqual(["Ember-0.1.0-win-x64.zip"]);
     expect(artifactNames(layoutFor("win32", "arm64"), "1.2.3")).toEqual(["Ember-1.2.3-win-arm64.zip"]);
@@ -205,6 +224,12 @@ describe("choosing the packages to bundle", () => {
       .toEqual({ file: "npm ls --omit=dev --all --parseable", args: [], shell: true });
     expect(npmInvocation({ platform: "win32", execPath: "C:\\node\\node.exe" }, args).shell).toBe(true);
     expect(() => npmInvocation({ platform: "win32", execPath: "n" }, ["ls", "& calc"])).toThrow(/through the shell/);
+    // remote-parts.mjs packs scoped packages by version (CI run 133): @ and / pass, cmd.exe's own characters don't.
+    expect(npmInvocation({ platform: "win32", execPath: "n" }, ["pack", "@koromix/koffi-linux-x64@2.15.3", "--json"]))
+      .toEqual({ file: "npm pack @koromix/koffi-linux-x64@2.15.3 --json", args: [], shell: true });
+    for (const bad of ["a%PATH%", "a^b", "a|b", "a>b", "(a)", "a!b", "a b", "a\"b"]) {
+      expect(() => npmInvocation({ platform: "win32", execPath: "n" }, ["pack", bad]), bad).toThrow(/through the shell/);
+    }
   });
 });
 

@@ -11,7 +11,7 @@ import type { OS } from "./shortcuts";
 /**
  * A name table without Object's own keys, so a program called "constructor" or "__proto__" is never looked up as one
  * (a plain object answers those with Object's function and prototype, not a name). Every OS's table is one, Linux's
- * too: for its 22 names it answers as the plain object always did.
+ * too: for its 26 names it answers as the plain object always did.
  */
 const table = (names: Record<string, string>): Readonly<Record<string, string>> => Object.freeze(Object.assign(Object.create(null) as Record<string, string>, names));
 
@@ -40,6 +40,11 @@ export const APP_NAMES: Readonly<Record<OS, Readonly<Record<string, string>>>> =
     firefox: "Firefox",
     thunderbird: "Thunderbird",
     mousepad: "Mousepad",
+    // Apps people run most whose program names read badly capitalised ("Google-chrome", "Code").
+    "google-chrome": "Google Chrome",
+    "google-chrome-stable": "Google Chrome",
+    code: "Visual Studio Code",
+    slack: "Slack",
   }),
   win32: table({
     winword: "Word",
@@ -130,11 +135,47 @@ function capitalised(n: string): string {
   return /^[a-z][a-z0-9-]*$/.test(n) ? n[0].toUpperCase() + n.slice(1) : n;
 }
 
+/**
+ * A WSLg Linux app's window ("wsl:<distro>:<app>", Windows only): the Linux app's familiar name and its distro, "gedit
+ * (Ubuntu)". A distro named all in lower case is shown capitalised, as WSL's own names are.
+ */
+function wslApp(name: string): string | null {
+  const m = /^wsl:([^:\s]+):(.+)$/i.exec(name);
+  if (!m) return null;
+  const app = m[2].trim();
+  const known = APP_NAMES.linux[app.toLowerCase()];
+  return `${known !== undefined && known ? known : capitalised(app)} (${capitalised(m[1])})`;
+}
+
+/**
+ * An app on a computer reached over SSH, as its grant is kept ("ssh:<host>:<app>", review #194): "gedit on build-01".
+ * That computer is Linux or a Mac whatever this one is, so its app is named from those tables.
+ */
+function remoteApp(name: string): string | null {
+  const m = /^ssh:([^:\s]+):(.+)$/i.exec(name);
+  if (!m) return null;
+  const app = m[2].trim().replace(/\.desktop$/i, "");
+  const mac = APP_NAMES.darwin[app.toLowerCase()];
+  return `${mac !== undefined && mac ? mac : familiar(APP_NAMES.linux, app)} on ${m[1]}`;
+}
+
+/** The name people know an app by, on this computer's OS (useAppNames) or, for another computer's, on that one. */
 export function friendlyApp(name: string): string {
   const names = APP_NAMES[appOs];
+  if (appOs === "win32") {
+    const wsl = wslApp(name.trim());
+    if (wsl) return wsl;
+  }
+  const remote = remoteApp(name.trim());
+  if (remote) return remote;
   // A desktop file name (firefox.desktop): the program is what's inside. On Windows a program may come with its ".exe".
   let n = name.trim().replace(/\.desktop$/i, "");
   if (appOs === "win32") n = n.replace(/\.exe$/i, "");
+  return familiar(names, n);
+}
+
+/** A program's familiar name in one OS's table: known, a LibreOffice part, a desktop id's last part, or capitalised. */
+function familiar(names: Readonly<Record<string, string>>, n: string): string {
   if (!n) return "";
   const known = names[n.toLowerCase()];
   // An empty name is a real answer: a program that is never worth naming (Windows' frame host for packaged apps).

@@ -11,8 +11,8 @@
 import type { OwnWindowHandle, Rect, ScreenLike, StackedWindow, WindowSystem, X11Image, X11Window } from "../types";
 import type { Logger } from "../../logger";
 import { captureRect, type DarwinCapture } from "./capture";
-import { openDesktop, desktopError, secureInputOf, type DarwinDesktop, type DarwinSecureInput } from "./desktop";
-import { resolveActive, resolveFocus, type Resolved } from "./focus";
+import { openDesktop, desktopError, secureInputCause, secureInputOf, type DarwinDesktop, type DarwinSecureInput } from "./desktop";
+import { resolveActive, resolveFocus, resolveFocusAndActive, type Resolved } from "./focus";
 import { FLAG, MOUSE_BUTTON } from "./cg";
 import { VK } from "./keys";
 import { SECURITY_OWNERS, clientWindowsOf, parseMediaSourceId, sameFrame, stackOf, unionRect } from "./model";
@@ -53,6 +53,11 @@ export interface DarwinWindowSystem extends WindowSystem {
    * on (a password is being typed somewhere) or can't be checked: no screenshot. True when it can't be checked.
    */
   systemDialogOpen(): boolean;
+  /**
+   * Secure keyboard entry, naming the app that holds it, when that is why systemDialogOpen() is true and no
+   * credential or consent prompt is on screen; null otherwise (a prompt, nothing, or can't tell: the dialog's words).
+   */
+  systemDialogReason(): string | null;
   /** Is Ember trusted for Accessibility (focus, titles, activation and input need it)? */
   accessibilityTrusted(): boolean;
   /** Does Ember have the Screen Recording permission (capture and other apps' window titles need it)? */
@@ -72,6 +77,8 @@ export interface DarwinWindowSystem extends WindowSystem {
    * Settings); for the setup check's fix. null after close() or where the call doesn't exist.
    */
   requestInputMonitoring(): boolean | null;
+  /** focusWindow() and activeWindow() from one CGWindowList copy and at most one AX round trip (review #78). */
+  focusAndActive(): { focus: (X11Window & { wmClass: string }) | null; active: (X11Window & { wmClass: string }) | null };
 }
 
 /** Tunables and seams for the tests. */
@@ -171,6 +178,12 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
       return describe(resolveFocus(focus, desktop.windows()));
     },
 
+    focusAndActive() {
+      if (!open) return { focus: null, active: null };
+      const both = resolveFocusAndActive(focus, desktop.windows());
+      return { focus: describe(both.focus), active: describe(both.active) };
+    },
+
     clientWindows() {
       if (!open) return [];
       const list = desktop.windows();
@@ -222,6 +235,17 @@ export function createDarwinWindows(desktop: DarwinDesktop, deps: DarwinWindowsD
         return desktop.windows().some(e => SECURITY_OWNERS.has(e.owner) && e.alpha > 0);
       } catch {
         return true; // can't check: assume one is up
+      }
+    },
+
+    systemDialogReason() {
+      if (!open) return null;
+      try {
+        if (desktop.windows().some(e => SECURITY_OWNERS.has(e.owner) && e.alpha > 0)) return null; // a prompt: its own words
+        const state = secure();
+        return state.on === true ? `${secureInputCause(state.app)}, so Ember won't look at the screen or use the mouse or keyboard until it's off` : null;
+      } catch {
+        return null; // can't tell: the dialog's words (systemDialogOpen still refuses)
       }
     },
 

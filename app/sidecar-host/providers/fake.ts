@@ -1,8 +1,9 @@
 /**
  * An in-memory desktop for the sidecar host's tests: windows of elements described as plain objects (or JSON, for a
  * test that runs the built host as its own process: EMBER_AX_FAKE_DESKTOP), behaving as a platform's accessibility
- * does where the host relies on it. A snapshot is pre-order with the bridge's caps and cut reasons, and leaves out
- * elements that are off screen with no bounds; every look is live (a test changes an element between calls); actions
+ * does where the host relies on it. A snapshot is pre-order with the bridge's caps and cut reasons, leaves out
+ * elements that are off screen with no bounds, lists what shows before what doesn't, and reads nothing inside an
+ * offscreen element (but a combo box's drop-down); every look is live (a test changes an element between calls); actions
  * change the elements (a toggle flips, a select selects alone in a single-choice list, a value is set) and are logged;
  * an element can be slow (its app "busy"), go away, or open a modal dialog when invoked. Every call hands out a new
  * handle, as a naive bridge would, so tests see the host give them all back. Never used outside tests and development
@@ -61,6 +62,13 @@ export interface FakeElementSpec {
   labelledBy?: string;
   help?: string;
   placeholder?: string;
+  /** Its own native window (a Win32 child window: an edit box, a document's own window). */
+  native?: number;
+  /**
+   * Its app says it has its keyboard while another app's window has it (macOS: the app's AXFocusedUIElement while
+   * Ember's ask box has the keyboard): what focusedKey answers.
+   */
+  appFocus?: boolean;
   /** Every call about it takes this long (an app that is slow to answer). */
   slowMs?: number;
   /** What invoking it does (besides logging it). */
@@ -136,6 +144,10 @@ export interface FakeOptions {
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 const inside = (b: Rect | null | undefined, x: number, y: number) => !!b && b.x <= x && x < b.x + b.width && b.y <= y && y < b.y + b.height;
 const empty = (b: Rect | null | undefined) => !b || b.width <= 0 || b.height <= 0;
+/** The UI Automation bridge's long level (PROTOCOL.md, snapshot): past this many children with theirs... */
+const LONG_LEVEL = 400;
+/** ...only this many of the offscreen children are listed, the rest cut "offscreen". */
+const LISTED_OFFSCREEN = 50;
 
 /** The fake desktop as an AxProvider. */
 export class FakeProvider implements AxProvider {
@@ -242,21 +254,38 @@ export class FakeProvider implements AxProvider {
     const cut: string[] = [];
     const until = Date.now() + o.deadlineMs;
     let busy = false;
-    const visit = async (el: FakeElement, parent: number, depth: number): Promise<boolean> => {
+    const cutShort = (why: string) => { if (!cut.includes(why)) cut.push(why); };
+    // As the bridge walks (PROTOCOL.md, snapshot): what shows first, nothing inside an offscreen element (but a combo
+    // box's closed drop-down), and an offscreen element left out past maxNodes, or past a long level's first 50 (UI
+    // Automation's only), is cut "offscreen", not "nodes".
+    const visit = async (el: FakeElement, parent: number, depth: number, inCombo: boolean): Promise<boolean> => {
       if (el.spec.offscreen && empty(el.spec.bounds)) return true; // the bridge leaves these out, with what they hold
-      if (depth > o.maxDepth) { if (!cut.includes("depth")) cut.push("depth"); return true; }
-      if (nodes.length >= o.maxNodes) { if (!cut.includes("nodes")) cut.push("nodes"); return false; }
-      if (Date.now() >= until) { if (!cut.includes("time")) cut.push("time"); return false; }
+      const offscreen = depth > 0 && !!el.spec.offscreen;
+      if (depth > o.maxDepth) { cutShort("depth"); return true; }
+      if (nodes.length >= o.maxNodes) {
+        if (offscreen) { cutShort("offscreen"); return true; }
+        cutShort("nodes");
+        return false;
+      }
+      if (Date.now() >= until) { cutShort("time"); return false; }
       if (el.spec.slowMs) {
         await sleep(Math.min(el.spec.slowMs, Math.max(0, until - Date.now())));
         if (this.o.deadlineMs !== undefined && el.spec.slowMs > this.o.deadlineMs) { busy = true; return false; }
       }
       const index = nodes.length;
       nodes.push(this.raw(el, parent, depth));
-      for (const c of el.children) if (!await visit(c, index, depth + 1)) return false;
+      const combo = inCombo || el.spec.role === "ComboBox" || el.spec.role === "AXComboBox";
+      if (offscreen && !combo) return true;
+      let hidden = el.children.filter(c => c.spec.offscreen);
+      if (this.vocabulary === "uia" && !combo && el.children.reduce((n, c) => n + 1 + c.children.length, 0) > LONG_LEVEL) {
+        const listed = hidden.filter(c => !empty(c.spec.bounds));
+        if (listed.length > LISTED_OFFSCREEN) { hidden = listed.slice(0, LISTED_OFFSCREEN); cutShort("offscreen"); }
+      }
+      const kids = [...el.children.filter(c => !c.spec.offscreen), ...hidden];
+      for (const c of kids) if (!await visit(c, index, depth + 1, combo)) return false;
       return true;
     };
-    await visit(w, -1, 0);
+    await visit(w, -1, 0, false);
     return { nodes, truncated: cut.length > 0, cut, ...(busy ? { busy } : {}) };
   }
 
@@ -296,6 +325,17 @@ export class FakeProvider implements AxProvider {
       if (f) return { element: this.raw(f, -1, this.depthOf(f)), window: this.handle(w) };
     }
     return { element: null, window: null };
+  }
+
+  /** The element app `pid` says has its keyboard (`appFocus`), as a macOS app keeps it while another app has it. */
+  async focusedKey(pid: number): Promise<string | null> {
+    for (const w of this.windows) {
+      if ((w.spec as FakeWindowSpec).pid !== pid) continue;
+      this.ensureAnswering(w);
+      const f = this.findIn(w, e => !!e.spec.appFocus);
+      if (f) return `${pid}:${f.uid}`; // its key, as raw() gives it
+    }
+    return null;
   }
 
   async children(h: Handle, max: number): Promise<RawNode[]> {
@@ -479,7 +519,7 @@ export class FakeProvider implements AxProvider {
     for (const k of copy) if (s[k] !== undefined) (n as unknown as Record<string, unknown>)[k === "subrole" ? "platformSubrole" : k] = s[k];
     if (s.value !== undefined && !s.password) n.value = s.value.slice(0, 2000);
     if (s.text !== undefined && !s.password) n.hasText = true;
-    if (depth === 0 && (s as FakeWindowSpec).native !== undefined) n.native = (s as FakeWindowSpec).native;
+    if (s.native !== undefined) n.native = s.native;
     return n;
   }
 }

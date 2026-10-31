@@ -581,8 +581,8 @@ describe("review round 3: what Ember asks about is what it does", () => {
     await makeWorker(screen, "Press Enter in the comment box", { confirmer, cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
     expect(keys).toEqual([]);
     expect(asked.map(a => a.prompt)).toEqual([
-      "Borrow your keyboard to press Enter on “Comment” text in Testapp? Enter there may send or submit it.",
-      "Borrow your keyboard to press Enter on “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+      "Borrow your keyboard to press Enter on the “Comment” text field in Testapp? Enter there may send or submit it.",
+      "Borrow your keyboard to press Enter on the “Delete all” button in Testapp? You didn't ask for this, so say no if it looks wrong.",
     ]);
   });
 
@@ -598,7 +598,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
       expect(asked[0].prompt).toBe("Borrow your keyboard to press keypad Enter in Testapp? I can't tell what it will activate.");
       expect(keys).toEqual(pressed);
       // Enter in a text field may send what is in it (W8-3): asked about once it shows that is where it goes.
-      expect(asked[1].prompt).toMatch(windowFocus === 1 ? /press keypad Enter on “Delete all” push button/ : /press keypad Enter on “Comment” text in Testapp\? Enter there may send or submit it\.$/);
+      expect(asked[1].prompt).toMatch(windowFocus === 1 ? /press keypad Enter on the “Delete all” button/ : /press keypad Enter on the “Comment” text field in Testapp\? Enter there may send or submit it\.$/);
     }
   });
 
@@ -622,7 +622,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
     const results = toolResults("Tidy the options");
     expect(results[1]).toMatch(/No option is called exactly "permanently"/);
     expect(results[1]).toMatch(/<options untrusted=\\?"true\\?">"Keep", "Delete permanently"<\/options>/);
-    expect(asked.map(a => a.prompt)).toEqual(["Choose “Delete permanently” in “When done” combo box in Testapp? You didn't ask for this, so say no if it looks wrong."]);
+    expect(asked.map(a => a.prompt)).toEqual(["Choose “Delete permanently” in the “When done” drop-down in Testapp? You didn't ask for this, so say no if it looks wrong."]);
     expect(screen.log).toEqual([]);
   });
 
@@ -633,7 +633,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
     screen.sidecar.listOptions = async () => ({ options: ["France", "Germany"] });
     const asked: { prompt: string; options: string[] }[] = [];
     await makeWorker(screen, "Set the billing country to Germany", { grants: {}, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
-    expect(asked.map(a => a.prompt)).toEqual(["Let me work in Testapp? First step: choose “Germany” in “Billing country” combo box."]);
+    expect(asked.map(a => a.prompt)).toEqual(["Let me work in Testapp? First step: choose “Germany” in the “Billing country” drop-down."]);
     // Still "France" when the user said yes: the same combo box, not one that changed while they decided.
     expect(screen.log.map(e => e.what)).toEqual(["selectOption 2 Germany"]);
   });
@@ -648,7 +648,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
     screen.perception.perceive = async () => { await w.steer("and then send it"); return read(); };
     await w.run(new AbortController().signal);
     // Send is asked about (it's risky), but as asked-for: the task isn't treated as steered by the screen, so Bold just happens.
-    expect(asked.map(a => a.prompt)).toEqual(["Click “Send” push button in Testapp?"]);
+    expect(asked.map(a => a.prompt)).toEqual(["Click the “Send” button in Testapp?"]);
     expect(screen.log.map(e => e.what)).toEqual(["doAction 1 click", "doAction 2 click"]);
   });
 
@@ -812,13 +812,13 @@ describe("review round 3: what Ember asks about is what it does", () => {
       const screen = apps(fakeScreen([...SURVEY, MAIL]), [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [1, 2] }, { app: "Thunderbird", name: "Inbox - Thunderbird", ids: [10] }]);
       const asked: { prompt: string; options: string[] }[] = [];
       await makeWorker(screen, "Fill in the survey", { grants: { firefox: "act" }, target: { title: "Survey" }, confirmer: asking(["always"], asked) }).run(new AbortController().signal);
-      expect(asked).toEqual([{ prompt: "Type “From HR: your salary review: 84,000 EUR” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.", options: ["once", "deny"] }]);
+      expect(asked).toEqual([{ prompt: "Type “From HR: your salary review: 84,000 EUR” into the “Comments” text field in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.", options: ["once", "deny"] }]);
 
       typeIt("Fill in the other survey", "Webmail");
       const same = apps(fakeScreen([...SURVEY, MAIL]), [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [1, 2] }, { app: "Firefox", name: "Webmail - Mozilla Firefox", ids: [10] }]);
       const sameAsked: { prompt: string; options: string[] }[] = [];
       await makeWorker(same, "Fill in the other survey", { grants: { firefox: "act" }, target: { title: "Survey" }, confirmer: asking(["deny"], sameAsked) }).run(new AbortController().signal);
-      expect(sameAsked.map(a => a.prompt)).toEqual(["Type “From HR: your salary review: 84,000 EUR” into “Comments” entry in Firefox? I read the window “Webmail - Mozilla Firefox” in this task, so this may carry text from there."]);
+      expect(sameAsked.map(a => a.prompt)).toEqual(["Type “From HR: your salary review: 84,000 EUR” into the “Comments” text field in Firefox? I read the window “Webmail - Mozilla Firefox” in this task, so this may carry text from there."]);
       expect(same.log).toEqual([]);
 
       // Reading and typing in the one window asks nothing.
@@ -837,7 +837,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
       await makeWorker(screen, "Make my terminal text bigger", { grants: { "gnome-terminal-server": "act" }, isTerminalApp: n => /terminal/.test(n), confirmer: asking(["once"], asked) }).run(new AbortController().signal);
       expect(asked).toEqual([]);
       expect(screen.log).toEqual([]);
-      expect(toolResults("Make my terminal text bigger")[1]).toMatch(/never acts in terminals/);
+      expect(toolResults("Make my terminal text bigger")[1]).toMatch(/doesn't act in terminal windows/);
     });
 
     it("words the user added while it ran count, but not the words Ember wraps them in", async () => {
@@ -898,7 +898,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const screen = apps(fakeScreen([...SURVEY, MAIL]), [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [1, 2] }, { app: "Thunderbird", name: "Re: Layoff list Q4 (confidential) - Thunderbird", ids: [10] }]);
         const asked: { prompt: string; options: string[] }[] = [];
         await makeWorker(screen, "Fill in survey two", { grants: { firefox: "act" }, target: { title: "Survey" }, confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Type “Re: Layoff list Q4 (confidential)” into “Comments” entry in Firefox? I read the list of open windows in this task, so this may carry text from there."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Type “Re: Layoff list Q4 (confidential)” into the “Comments” text field in Firefox? I read the list of open windows in this task, so this may carry text from there."]);
         expect(screen.log).toEqual([]);
       });
 
@@ -914,8 +914,8 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const asked: { prompt: string; options: string[] }[] = [];
         await makeWorker(screen, "Fill in the order form for Ana Silva in Lisboa", { grants: {}, target: { title: "Inbox" }, confirmer: asking(["once", "deny"], asked) }).run(new AbortController().signal);
         // One question: the first step in the form's app ("Allow" covers the rest). The order number, only in the mail, is asked about.
-        expect(asked.map(a => a.prompt)).toEqual(["Let me work in probe_form.py? First step: type “Ana Silva” into “Name” entry.",
-          "Type “Order 7781234” into “City” entry in probe_form.py? I read probe_mail.py (“Inbox - Mail”) in this task, so this may carry text from there."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Let me work in probe_form.py? First step: type “Ana Silva” into the “Name” text field.",
+          "Type “Order 7781234” into the “City” text field in probe_form.py? I read probe_mail.py (“Inbox - Mail”) in this task, so this may carry text from there."]);
         expect(screen.log.map(e => e.what)).toEqual(["setText 20", "setText 21", "setText 20"]);
       });
 
@@ -934,7 +934,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         await w.run(new AbortController().signal);
         // 8, 4, the comma and two zeros went in; the third zero would have made it "84000".
         expect(keyLog.filter(l => l.startsWith("key") && l.endsWith("down"))).toHaveLength(5);
-        expect(asked.map(a => a.prompt)).toEqual(["Press 0 on “Cell” text in Gnumeric on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Press 0 on the “Cell” text field in Gnumeric on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
       });
 
       it("on the desk, Ctrl+A then Backspace on a long document is asked about as replacing it all (W5-02)", async () => {
@@ -947,7 +947,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const w = makeWorker(screen, "Empty the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked), desk: async () => place as never });
         (w as unknown as { setPlace: (p: unknown) => void }).setPlace(place);
         await w.run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Press Backspace on “Document” text in gedit on my desk? Everything there is selected, so this replaces all the characters."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Press Backspace on the “Document” text field in gedit on my desk? Everything there is selected, so this replaces all the characters."]);
         // Ctrl+A and (the script going on) Ctrl+S went in, never the Backspace: nothing was cleared.
         expect(keyLog.filter(l => l.startsWith("key") && l.endsWith("down"))).toEqual(["key 65507 down", "key 97 down", "key 65507 down", "key 115 down"]);
       });
@@ -957,7 +957,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const screen = apps(fakeScreen([{ id: 3, role: "text", name: "Note", text: "", states: [...EDITABLE] }]), [{ app: "gedit", name: "Notes", ids: [3] }]);
         const asked: { prompt: string; options: string[] }[] = [];
         await makeWorker(screen, "Note the code", { grants: { gedit: "act" }, target: { title: "Inbox" }, userWords: "note it down", screen: "Inbox - Mail\nYour reset code is 448812", confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Type “448812” into “Note” text in gedit? I read your screen when you asked in this task, so this may carry text from there."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Type “448812” into the “Note” text field in gedit? I read your screen when you asked in this task, so this may carry text from there."]);
         expect(screen.log).toEqual([]);
       });
 
@@ -986,7 +986,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         plan("Delete the old drafts", [perceive, { tool: { name: "click", args: { id: 1 } } }]);
         const asked: { prompt: string; options: string[] }[] = [];
         await makeWorker(fakeScreen([{ id: 1, role: "push button", name: "Delete drafts" }]), "Delete the old drafts", { userWords: "what's on my screen?", confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Click “Delete drafts” push button in Testapp? You didn't ask for this, so say no if it looks wrong."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Click the “Delete drafts” button in Testapp? You didn't ask for this, so say no if it looks wrong."]);
 
         // What the user said when they changed the task counts; the conductor's wording of it doesn't.
         for (const [goal, said, flagged] of [["Tidy the old drafts", "and delete the drafts", false], ["Tidy the drafts", "ok", true]] as const) {
@@ -1040,7 +1040,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
           screen.sidecar.setText = async (id: number, t?: string) => { const n = screen.live.get(id)!; if (n.text !== undefined) n.text += t ?? ""; return set(id); };
           const asked: { prompt: string; options: string[] }[] = [];
           await makeWorker(screen, goal, { grants: { firefox: "act" }, target: { title: "Inbox" }, confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-          expect(asked.map(a => a.prompt), goal).toEqual(["Type “812” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
+          expect(asked.map(a => a.prompt), goal).toEqual(["Type “812” into the “Comments” text field in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."]);
           expect(screen.log.map(e => e.what), goal).toEqual(pieces.length > 1 ? ["setText 2"] : []);
         }
       });
@@ -1055,7 +1055,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
           await deskWorker(screen, goal, { target: { title: "Inbox" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
           // Every key but the last went in; the last makes the field read the code.
           expect(downs(keyLog), goal).toHaveLength(keys.length - 1);
-          expect(asked.map(a => a.prompt), goal).toEqual([`Press ${keys[keys.length - 1]} on “Cell” text in Gnumeric on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.`]);
+          expect(asked.map(a => a.prompt), goal).toEqual([`Press ${keys[keys.length - 1]} on the “Cell” text field in Gnumeric on my desk? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there.`]);
         }
       });
 
@@ -1066,7 +1066,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const asked: { prompt: string; options: string[] }[] = [];
         const keyLog: string[] = [];
         await deskWorker(screen, "Tidy the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked), keyLog }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Press . on “Document” text in gedit on my desk? Everything there is selected, so this replaces all the characters."]);
+        expect(asked.map(a => a.prompt)).toEqual(["Press . on the “Document” text field in gedit on my desk? Everything there is selected, so this replaces all the characters."]);
         // Ctrl+A and Ctrl+C went in, never the period.
         expect(downs(keyLog)).toHaveLength(4);
 
@@ -1074,7 +1074,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const second = apps(fakeScreen([DOC]), [{ app: "gedit", name: "notes.txt - gedit", ids: [50] }]);
         const asked2: { prompt: string; options: string[] }[] = [];
         await deskWorker(second, "Retitle the desk document", { target: { title: "notes" }, confirmer: asking(["deny"], asked2), keyLog: [] }).run(new AbortController().signal);
-        expect(asked2.map(a => a.prompt)).toEqual(["Replace the text in “Document” text in gedit with “Hello” on my desk? This replaces all the characters there."]);
+        expect(asked2.map(a => a.prompt)).toEqual(["Replace the text in the “Document” text field in gedit with “Hello” on my desk? This replaces all the characters there."]);
         expect(second.log).toEqual([]);
       });
 
@@ -1132,10 +1132,10 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const DOC: FakeNode = { id: 50, role: "text", name: "Document", text: LONG, states: [...EDITABLE, "focused"] };
         const BOLD: FakeNode = { id: 51, role: "push button", name: "Bold" };
         const SELECT_ALL: FakeNode = { id: 52, role: "menu item", name: "Select All" };
-        const all = "Press . on “Document” text in gedit on my desk? Everything there is selected, so this replaces all the characters.";
+        const all = "Press . on the “Document” text field in gedit on my desk? Everything there is selected, so this replaces all the characters.";
         // The keys pressed (down) before the period, and the period itself where nothing is selected any more.
         for (const [goal, steps, prompt, pressed] of [
-          ["Neaten the desk document A", keysOf(["ctrl+Home", "ctrl+shift+End", "period"]), "Press . on “Document” text in gedit on my desk? Text there is selected, so this may replace all the characters.", 5],
+          ["Neaten the desk document A", keysOf(["ctrl+Home", "ctrl+shift+End", "period"]), "Press . on the “Document” text field in gedit on my desk? Text there is selected, so this may replace all the characters.", 5],
           ["Neaten the desk document B", [...keysOf(["ctrl+a"]), { tool: { name: "click", args: { id: 51 } } }, ...keysOf(["period"])], all, 2],
           ["Neaten the desk document C", [...keysOf(["ctrl+a"]), { tool: { name: "scroll", args: { id: 50, direction: "down" } } }, perceive, ...keysOf(["period"])], all, 2],
           ["Neaten the desk document D", [{ tool: { name: "click", args: { id: 52 } } }, ...keysOf(["period"])], all, 0],
@@ -1204,9 +1204,9 @@ describe("review round 3: what Ember asks about is what it does", () => {
           { id: 3, role: "entry", name: "User", text: "", states: [...EDITABLE] }, { id: 4, role: "entry", name: "Domain", text: "", states: [...EDITABLE] }];
         const wins = [{ app: "Firefox", name: "Survey - Mozilla Firefox", ids: [1, 2, 3, 4] }, { app: "Thunderbird", name: "Inbox - Thunderbird", ids: [10] }];
         for (const [goal, typing, prompt] of [
-          ["Enter the email in the survey Y", [[2, "ana.silva@\nexample.com"]], "Type “ana.silva@⏎example.com” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
-          ["Enter the code in the survey Z", [[2, "448\n812"]], "Type “448⏎812” into “Comments” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
-          ["Enter the address in two fields", [[3, "ana.silva"], [4, "example.com"]], "Type “example.com” into “Domain” entry in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
+          ["Enter the email in the survey Y", [[2, "ana.silva@\nexample.com"]], "Type “ana.silva@⏎example.com” into the “Comments” text field in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
+          ["Enter the code in the survey Z", [[2, "448\n812"]], "Type “448⏎812” into the “Comments” text field in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
+          ["Enter the address in two fields", [[3, "ana.silva"], [4, "example.com"]], "Type “example.com” into the “Domain” text field in Firefox? I read the window “Inbox - Thunderbird” in this task, so this may carry text from there."],
         ] as const) {
           plan(goal, [perceive, { tool: { name: "switch_window", args: { title: "Survey" } } },
             ...typing.map(([id, text]) => ({ tool: { name: "type_text", args: { id, text, mode: "replace" } } })), { tool: { name: "finish_task", args: { success: true, summary: "added" } } }]);
@@ -1226,7 +1226,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         [{ app: "mousepad", name: "rep7.txt - Mousepad", ids: [1, 2, 3, 4, 5] }]);
         const asked: { prompt: string; options: string[] }[] = [];
         await makeWorker(screen, goal, { grants: { mousepad: "act" }, target: { title: "rep7" }, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Click “Replace All” push button in Mousepad?"]);
+        expect(asked.map(a => a.prompt)).toEqual(["Click the “Replace All” button in Mousepad?"]);
         expect(screen.log.map(e => e.what)).toEqual(["doAction 1 click", "setText 2", "setText 3", "doAction 4 click", "doAction 5 click"]);
 
         // A step the user didn't ask for: every later question says so plainly, once, after its own note.
@@ -1234,8 +1234,8 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const form = fakeScreen([{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "entry", name: "Comments", text: "x".repeat(100), states: [...EDITABLE] }]);
         const asked2: { prompt: string; options: string[] }[] = [];
         await makeWorker(form, "Answer the survey and check it", { confirmer: asking(["deny", "deny"], asked2) }).run(new AbortController().signal);
-        expect(asked2.map(a => a.prompt)).toEqual(["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
-          "Replace the text in “Comments” entry in Testapp with “Great week”? This replaces all 100 characters there. (I'm checking each step: a step came up that you didn't ask for.)"]);
+        expect(asked2.map(a => a.prompt)).toEqual(["Click the “Delete all” button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+          "Replace the text in the “Comments” text field in Testapp with “Great week”? This replaces all 100 characters there. (I'm checking each step: a step came up that you didn't ask for.)"]);
       });
 
       it("on the user's screen, one yes covers a run of keys that only move; a key that types is asked again (PR7-3)", async () => {
@@ -1245,9 +1245,9 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const keys: string[] = [];
         await makeWorker(screen, "Move down two lines and type x", { confirmer: asking(["once"], asked), cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
         expect(asked.map(a => a.prompt)).toEqual([
-          "Borrow your keyboard to press Down on “Notes” text in Testapp? Keys that only move there after this one won't be asked about.",
-          "Borrow your keyboard to press X on “Notes” text in Testapp?",
-          "Borrow your keyboard to press Down on “Notes” text in Testapp? Keys that only move there after this one won't be asked about.",
+          "Borrow your keyboard to press Down on the “Notes” text field in Testapp? Keys that only move there after this one won't be asked about.",
+          "Borrow your keyboard to press X on the “Notes” text field in Testapp?",
+          "Borrow your keyboard to press Down on the “Notes” text field in Testapp? Keys that only move there after this one won't be asked about.",
         ]);
         expect(keys).toEqual(["Down", "Down", "Right", "x", "Down"]);
       });
@@ -1591,7 +1591,9 @@ describe("review round 3: what Ember asks about is what it does", () => {
           plan("Total column B", [perceive, ...[`=WEBSERVICE("http://127.0.0.1:18765/plain")`, "=SUM(B1:B3)"].map(text => ({ tool: { name: "type_text", args: { cell: "C3", text, mode: "replace" } } }))]);
           const asked: { prompt: string; options: string[] }[] = [];
           await makeWorker(sheet.screen, "Total column B", { grants: { testapp: "act" }, confirmer: asking(["deny", "once"], asked), cursor: sheet.cursor }).run(new AbortController().signal);
-          expect(asked.map(a => a.prompt)[0]).toBe("Borrow your keyboard to type “=WEBSERVICE(\"http://127.0.0.1:18765/plain\")” into cell C3 in Testapp? This formula can fetch from the internet or read other files.");
+          // The question shows the formula as it will be typed, its straight double quotes included, and gives the text's length
+          // after Ember's closing mark, so a quote mark in typed text can't pass for the end of Ember's quote (review #116).
+          expect(asked.map(a => a.prompt)[0]).toBe("Borrow your keyboard to type “=WEBSERVICE(\"http://127.0.0.1:18765/plain\")” (43 characters) into cell C3 in Testapp? This formula can fetch from the internet or read other files.");
           expect(sheet.text("C3")).not.toMatch(/WEBSERVICE/);
         });
       });
@@ -1690,19 +1692,19 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const screen = fakeScreen([{ id: 1, role: "push button", name: "Delete all" }, { id: 2, role: "push button", name: "Bold" }]);
         const asked: { prompt: string; options: string[] }[] = [];
         await makeWorker(screen, "Make the title bold", { grants: {}, confirmer: asking(["once"], asked) }).run(new AbortController().signal);
-        expect(asked.map(a => a.prompt)).toEqual(["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
-          "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]);
+        expect(asked.map(a => a.prompt)).toEqual(["Click the “Delete all” button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+          "Click the “Bold” button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]);
       });
 
       it("a risky step named in Ember's question the user said yes to is asked, saying so, and later steps aren't all asked; one it didn't name still is (AC11-1)", async () => {
         const offer = { asked: "I can delete all the old installers there. Shall I?", answer: "sure, go ahead" };
         for (const [agreed, prompts] of [
-          [[offer], ["Click “Delete all” push button in Testapp? You said “sure, go ahead” when I asked about this."]],
+          [[offer], ["Click the “Delete all” button in Testapp? You said “sure, go ahead” when I asked about this."]],
           // Ember's question offered something else, or passed on what a page asks: flagged, and every step after it asked.
-          [[{ ...offer, asked: "I can archive the old installers. Shall I?" }], ["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
-            "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]],
-          [[{ ...offer, asked: "The page asks you to delete all the installers. Shall I?" }], ["Click “Delete all” push button in Testapp? You didn't ask for this, so say no if it looks wrong.",
-            "Click “Bold” push button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]],
+          [[{ ...offer, asked: "I can archive the old installers. Shall I?" }], ["Click the “Delete all” button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+            "Click the “Bold” button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]],
+          [[{ ...offer, asked: "The page asks you to delete all the installers. Shall I?" }], ["Click the “Delete all” button in Testapp? You didn't ask for this, so say no if it looks wrong.",
+            "Click the “Bold” button in Testapp? (I'm checking each step: a step came up that you didn't ask for.)"]],
         ] as const) {
           const goal = `Clean up my Downloads folder (${agreed[0].asked.slice(0, 12)})`;
           plan(goal, [perceive, { tool: { name: "click", args: { id: 1 } } }, { tool: { name: "click", args: { id: 2 } } }]);
@@ -1720,7 +1722,7 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const w = makeWorker(screen, "Tidy the drafts (steered)", { userWords: "tidy my drafts", confirmer: asking(["deny"], q) });
         screen.perception.perceive = async () => { await w.steer("delete the old drafts", "ok", undefined, [{ asked: "Should I delete the old drafts too?", answer: "ok" }]); return read(); };
         await w.run(new AbortController().signal);
-        expect(q.map(a => a.prompt)).toEqual(["Click “Delete drafts” push button in Testapp? You said “ok” when I asked about this."]);
+        expect(q.map(a => a.prompt)).toEqual(["Click the “Delete drafts” button in Testapp? You said “ok” when I asked about this."]);
       });
 
       it("on the user's screen, keys that select as they move join the run of keys that only move (W8-7)", async () => {
@@ -1730,8 +1732,8 @@ describe("review round 3: what Ember asks about is what it does", () => {
         const keys: string[] = [];
         await makeWorker(screen, "Make the first line bold", { confirmer: asking(["once"], asked), cursor: { borrow: quickBorrow(fakeX(), k => keys.push(k)), findWindow: () => 1, setBorrowing: () => undefined } }).run(new AbortController().signal);
         expect(asked.map(a => a.prompt)).toEqual([
-          "Borrow your keyboard to press Ctrl+Home on “Notes” text in Testapp? Keys that only move there after this one won't be asked about.",
-          "Borrow your keyboard to press Ctrl+B on “Notes” text in Testapp?",
+          "Borrow your keyboard to press Ctrl+Home on the “Notes” text field in Testapp? Keys that only move there after this one won't be asked about.",
+          "Borrow your keyboard to press Ctrl+B on the “Notes” text field in Testapp?",
         ]);
         expect(keys).toEqual(["ctrl+Home", "shift+End", "ctrl+b"]);
       });
@@ -1766,7 +1768,7 @@ describe("review round 9: policy and selections", () => {
       (screen.sidecar as Record<string, unknown>).canDo = async () => ({ tier1: true, action });
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, action).toEqual(asks ? ["Click “Delete this repository now” list item in Testapp?"] : []);
+      expect(asked, action).toEqual(asks ? ["Click the “Delete this repository now” list item in Testapp?"] : []);
       expect(screen.log.length, action).toBe(asks ? 0 : 1);
     }
   });
@@ -1787,7 +1789,7 @@ describe("review round 9: policy and selections", () => {
     const asked: string[] = [];
     const keys: string[] = [];
     await makeWorker(screen, "Fix the typo in my draft", { confirmer: asking(["deny"], asked), cursor: borrowing(keys) }).run(new AbortController().signal);
-    expect(asked).toEqual(["Borrow your keyboard to press X on “Notes” entry in Testapp? Text there is selected, and it may run on past what I can see, so this may replace a lot."]);
+    expect(asked).toEqual(["Borrow your keyboard to press X on the “Notes” text field in Testapp? Text there is selected, and it may run on past what I can see, so this may replace a lot."]);
     expect(keys).toEqual([]);
   });
 
@@ -1811,7 +1813,7 @@ describe("review round 9: policy and selections", () => {
     const keys: string[] = [];
     await makeWorker(screen, "Mark them all as read", { confirmer: asking(["once"], asked), cursor: borrowing(keys) }).run(new AbortController().signal);
     expect(keys).toEqual(["ctrl+a", "m"]);
-    expect(asked[1]).toBe("Borrow your keyboard to press M on “Lunch on Friday?” table cell in Testapp?");
+    expect(asked[1]).toBe("Borrow your keyboard to press M on the “Lunch on Friday?” table cell in Testapp?");
   });
 
   it("Enter in a text editor's lines isn't asked about as sending; in a page's field it is (W9-5, DSK9-1)", async () => {
@@ -1854,7 +1856,7 @@ describe("review round 9: policy and selections", () => {
     const asked: string[] = [];
     const keys: string[] = [];
     await makeWorker(screen, "Go down a cell", { confirmer: asking(["once"], asked), cursor: borrowing(keys, x) }).run(new AbortController().signal);
-    expect(asked).toEqual(["Borrow your keyboard to press Down on “budget.ods — LibreOffice Calc” root pane in Testapp?"]);
+    expect(asked).toEqual(["Borrow your keyboard to press Down on the “budget.ods — LibreOffice Calc” window in Testapp?"]);
     expect(keys).toEqual(["Down"]);
   }, 60_000);
 
@@ -1892,7 +1894,7 @@ describe("review round 9: policy and selections", () => {
       const screen = fakeScreen(nodes);
       const asked: string[] = [];
       await makeWorker(screen, goal, { confirmer: asking(["deny"], asked) }).run(new AbortController().signal);
-      expect(asked, goal).toEqual(asks ? ["Click the push button in Testapp? I can't show what it says: it may reveal something private."] : []);
+      expect(asked, goal).toEqual(asks ? ["Click the button in Testapp? I can't show what it says: it may reveal something private."] : []);
       expect(screen.log.length, goal).toBe(asks ? 0 : 1);
     }
   });

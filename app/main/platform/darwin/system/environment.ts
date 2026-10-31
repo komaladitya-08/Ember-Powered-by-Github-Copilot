@@ -10,7 +10,7 @@ import type { EnvInputs } from "../../../environment";
 import type { AppLike, DesktopCapturerLike, EnvContext, FixId, ShellLike, SystemPlatform, SystemPreferencesLike } from "../../types";
 import { SHORTCUTS } from "../../../../shared/shortcuts";
 import { execRun, type Run } from "./exec";
-import { PANES, darwinExtras, readPermissions, type PermissionDeps } from "./permissions";
+import { PANES, darwinExtras, readPermissions, secureInputState, type PermissionDeps } from "./permissions";
 
 /** Ember's bundle identifier (port/packaging's CFBundleIdentifier): what tccutil resets. */
 export const BUNDLE_ID = "io.github.komaladitya08.ember";
@@ -39,7 +39,10 @@ export interface DarwinEnvDeps extends PermissionDeps {
 
 /** EnvInputs for inspectEnvironment: the common fields, and the `mac` block. */
 export function darwinEnvironment(d: DarwinEnvDeps, ctx: EnvContext): EnvInputs {
-  const p = readPermissions({ ...d, windows: () => (ctx.windows === undefined ? d.windows() : ctx.windows) });
+  const windows = () => (ctx.windows === undefined ? d.windows() : ctx.windows);
+  const p = readPermissions({ ...d, windows });
+  // Secure keyboard entry only where the window system can be asked (the doctor's "Secure input" row, the same reads).
+  const secure = darwinExtras(windows())?.secureInput ? secureInputState({ ...d, windows }) : null;
   return {
     env: d.env,
     osRelease: null,
@@ -52,6 +55,7 @@ export function darwinEnvironment(d: DarwinEnvDeps, ctx: EnvContext): EnvInputs 
     mac: {
       version: p.version, accessibility: p.accessibility, screen: p.screen, microphone: p.microphone,
       inputMonitoring: p.inputMonitoring, inApplications: p.inApplications, root: p.root,
+      ...(secure ? { secureInput: secure.on === true ? { on: true, app: secure.holder } : { on: secure.on, app: "" } } : {}),
     },
   };
 }

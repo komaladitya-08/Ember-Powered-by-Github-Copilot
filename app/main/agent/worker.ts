@@ -11,6 +11,7 @@
  */
 
 import fs from "node:fs";
+import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
@@ -18,16 +19,16 @@ import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, stepOf, type HandStep, type Presenter } from "./presenter";
-import type { Confirmer } from "./confirm";
-import type { Perception, WindowTarget } from "../perception";
-import type { AtspiSidecar, AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
+import type { Confirmer, Question } from "./confirm";
+import type { WindowTarget } from "../perception";
+import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
-import type { AuditEntry, AuditLog } from "../policy/audit";
+import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
-import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar } from "../policy/policy";
+import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
-import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type SettingName } from "../hands/system";
-import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand } from "../hands/borrow";
+import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
+import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
 import { DIALOG_ROLES, deskWindowAt, type DeskPlace } from "../desk/place";
 import { focusedElement, isSheetCell } from "../perception/elements";
 import { SLIVER_PX } from "../perception/marks";
@@ -37,6 +38,12 @@ import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
 import type { AppCatalog, PrivacyVocabulary, SystemSettings } from "../platform/types";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
+import type { ActStamp, PerceptionPort, SidecarPort } from "../perception/ports";
+import type { TargetBinding } from "../targets/types";
+import type { CommandService, ShellId } from "../commands/types";
+import type { TargetId } from "../../shared/targets";
+import { placeName, runCommandTool, whereWords, type CommandFlowContext } from "../commands/flow";
+import { LOCKED_SCREEN } from "../screen-lock";
 
 /**
  * What a worker needs of the OS it runs on (main passes its SystemPlatform, which has all of it): how keys are named
@@ -48,7 +55,10 @@ export interface WorkerSystem {
   keys: KeyConventions;
   words: PlatformWords;
   shortcuts: ShortcutTable;
-  apps: Pick<AppCatalog, "list" | "find" | "launch" | "isTerminalApp" | "programsOf" | "appKey">;
+  apps: Pick<AppCatalog, "list" | "find" | "isTerminalApp" | "programsOf" | "appKey"> & {
+    /** Starts the app. A remote's is asynchronous and throws gate 2's refusal (§2.6), so the worker awaits it. */
+    launch(app: DesktopApp): void | Promise<void>;
+  };
   settings: SystemSettings;
   privacy: Pick<PrivacyVocabulary, "isSecurityWindow">;
 }
@@ -76,8 +86,8 @@ export interface WorkerDeps {
   vision: boolean;
   provider?: ProviderConfig;
   workDir: string;
-  perception: Perception;
-  sidecar: AtspiSidecar;
+  perception: PerceptionPort;
+  sidecar: SidecarPort;
   policy: PolicyEngine;
   confirmer: Confirmer;
   audit: AuditLog;
@@ -131,17 +141,41 @@ export interface WorkerDeps {
   inotifyUsedUp?: () => boolean;
   /** The OS's keys, words, apps, settings and security vocabulary (default LINUX_WORKER_SYSTEM). */
   system?: WorkerSystem;
+  /** Where the task acts (default: this computer, as before targets existed). */
+  target?: TargetBinding;
+  /** The target's commands (absent or null: no run_command). */
+  commands?: CommandService | null;
+  /** The settings.grants key for an app on the task's target (default: the app's name in lower case). */
+  grantKey?: (app: string) => string;
+  /** Called with gate 1's stamp immediately before a step that policy allowed runs (remotes attach it to the step). */
+  onAuthorized?: (stamp: ActStamp) => void;
+  /** Ember's own pids now (D4.5, §3.6.2: live, as helpers restart), for commands on this computer. */
+  emberPids?: () => number[];
+  /** The command window's size for new runs (default COMMAND_SIZE). */
+  commandSize?: () => { cols: number; rows: number };
+  /**
+   * The settings shortcut as Ember holds it now, or null while another app holds it: the task's result names it only
+   * then (cross-review X5). Absent: the OS's table's (tests, the eval).
+   */
+  settingsKey?: () => string | null;
 }
 
 export interface TaskSpec {
   id: string;
   goal: string;
+  /** The target the task acts on, fixed for its life (absent: "local"). */
+  targetId?: TargetId;
   /**
    * What the user said or typed in the turn that started the task (and in turns that changed it): risky steps are
    * checked against these, never against the goal the conductor wrote (it may have read screen text). Without
    * them (tests) the goal stands in.
    */
   userWords?: string;
+  /**
+   * The user's own words for commands when they differ from userWords: those heard where Ember can't tell the user from
+   * its speakers are left out (OWNER V1), so a dangerous command they name asks. Absent: userWords.
+   */
+  commandWords?: string;
   /**
    * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
    * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
@@ -168,9 +202,75 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** Why a task stopped when its audit log can't be written (review #117): its card, bubble and speech say it. */
+const AUDIT_UNAVAILABLE = "I stopped because I can't write my record of what I do (the audit log). The disk may be full, or my audit folder can't be written to. Fix that, then ask me again.";
+
+/** A new run's terminal size when the command window doesn't say (columns, rows). */
+const COMMAND_SIZE = { cols: 120, rows: 32 };
+/** The tools a task has where there is no desktop to work in (§2.6): commands and talking to the user. */
+const NO_DESKTOP_TOOLS = new Set(["run_command", "report_progress", "finish_task"]);
+/** The answers a remote's gate 2 gives a step as errors (§5.3.7; the PC's remote sidecar and apps throw them with `code`). */
+const REMOTE_CODES = new Set(["needs_confirm", "changed", "stale", "stopped", "deny", "denied"]);
+/**
+ * A remote target's own error (SC's RemoteStepError or RemoteError, by name: the worker doesn't load the remote's code):
+ * its message is already Ember's sentence with the remote's words quoted in it (§7.2 item 4), so it is passed on as it
+ * is (without its last full stop), never quoted again. null for any other error.
+ */
+const remoteSaid = (err: unknown): string | null =>
+  err instanceof Error && (err.name === "RemoteStepError" || err.name === "RemoteError") && err.message ? err.message.replace(/\.$/, "") : null;
+const sha256Hex = (s: string) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
+/** A question with S0b's `where` badge (confirm.ts §3.9.1). */
+type WhereQuestion = Question & { where?: string };
 
 /** After Stop, a turn that doesn't wind down within this long is left behind. */
 const STOP_GRACE_MS = 2000;
+
+/**
+ * A task's time limit (limits.maxMs): `onOver` runs once that much of the task has gone by. The time a question waits
+ * for the user's answer doesn't count (with More time to read and answer one waits 20 minutes, and one with a long text
+ * to read longer still): the clock stops while one is up, and goes on with what was left once it is answered.
+ */
+class TaskClock {
+  private left: number;
+  private since = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  /** Questions up (a task asks one at a time). */
+  private asking = 0;
+  /** It ran out, or the task is over: it never runs again. */
+  private over = false;
+
+  constructor(ms: number, private readonly onOver: () => void) {
+    this.left = ms;
+    this.go();
+  }
+
+  private go(): void {
+    this.since = performance.now();
+    this.timer = setTimeout(() => { this.timer = null; this.over = true; this.onOver(); }, Math.max(0, this.left));
+    this.timer.unref?.();
+  }
+
+  /** Waits for the user's answer with the clock stopped. */
+  async waiting<T>(answer: () => Promise<T>): Promise<T> {
+    if (this.asking++ === 0 && this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+      this.left -= performance.now() - this.since;
+    }
+    try {
+      return await answer();
+    } finally {
+      if (--this.asking === 0 && !this.over) this.go();
+    }
+  }
+
+  /** The task is over. */
+  stop(): void {
+    this.over = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+}
 /**
  * How long a pasted text gets to show up in its field before the user's clipboard goes back (Ember's text
  * stays on it until then, so a slow app pastes Ember's text, not the user's). A field whose text can't be
@@ -629,6 +729,8 @@ const CELL_SETTLE_MS = 150;
 interface CellJob { cell: string; place: { col: number; row: number }; text: string; expected: string | undefined; seenKey: string; listed: AxNode | undefined }
 /** Text for a question to the user, quoted (cut short past `max` characters, line breaks and tabs shown as spaces). */
 const curly = (s: string, max: number) => { const t = s.replace(/\s+/g, " "); return `“${t.length > max ? t.slice(0, max - 1) + "…" : t}”`; };
+/** How much of a cell's new content fill_cells' question shows in its sentence (curly); its card shows all of it. */
+const CELL_SHOWN = 24;
 /** Why `text` can't go into a cell with the keyboard (null: it can). */
 function cellTextProblem(text: string): string | null {
   if (/[\n\r\t]/.test(text)) return "A cell takes one line: a line break or tab would move to another cell. Put each value in its own cell.";
@@ -787,6 +889,17 @@ export class Worker {
   private tainted = false;
   /** What the user asked for in their own words, with what they added since (steer): what the policy checks risky steps against. */
   private userWords: string;
+  /**
+   * The user's own words for commands only (§3.7, critique security-1): TaskSpec.userWords and the `userWords` of the
+   * user's steers, never the goal or a steer's text (the conductor's words). "" when none: then no command announces.
+   */
+  private commandWords: string;
+  /** Some of the user's words were heard where Ember can't tell the user from its speakers (TaskSpec.commandWords). */
+  private spokenOnly: boolean;
+  /** The task's folder and downloads on its target, and whether a command is running (commands/flow.ts). */
+  private readonly commandState: CommandFlowContext["state"] = { cwd: null, downloaded: new Set<string>(), running: false };
+  /** The latest decision authorize() let through (gate 1's stamp for a remote step, onAuthorized). */
+  private lastAuth: { at: number; verdict: "allow" | "confirm"; approvedAt: number | null } | null = null;
   /** Ember's questions the user answered with a yes or a choice, with those added since (TaskSpec.agreed). */
   private agreed: Agreement[];
   /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
@@ -841,6 +954,8 @@ export class Worker {
     this.target = { ...spec.target };
     // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
+    this.commandWords = (spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
+    this.spokenOnly = spec.commandWords !== undefined;
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
     if (spec.screen) this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
@@ -860,6 +975,8 @@ export class Worker {
   /** Aborts when the task stops or ends: questions, window waits and borrows give up on it. */
   private overSignal = AbortSignal.any([this.halt.signal, this.ended.signal]);
   private get isOver() { return this.halted || this.ended.signal.aborted; }
+  /** The task's time limit while it runs (run()). */
+  private clock: TaskClock | null = null;
   /** Ember flies to controls on the user's screen; desk work shows in the mini-view instead. No box when there is nothing to point at. */
   private fly(b: Bounds | null): void { if (!this.place) this.d.flyTo(usableBounds(b)); }
 
@@ -890,11 +1007,40 @@ export class Worker {
     void this.session?.abort().catch(() => undefined);
   }
 
+  /** Asks the user a question of this task (its steps' and its commands'): the wait for the answer isn't the task's time. */
+  private ask(question: Question, signal: AbortSignal = this.overSignal): Promise<string | null> {
+    const ask = () => this.d.confirmer.ask(question, signal);
+    return this.clock ? this.clock.waiting(ask) : ask();
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
   tools(): Tool<any>[] {
     const all = this.allTools();
     const guide = new Set(["perceive_window", "list_windows", "switch_window", "point_at", "wait_for_click", "report_progress", "finish_task"]);
-    return this.spec.mode === "guide" ? all.filter(t => guide.has(t.name)) : all.filter(t => t.name !== "point_at" && t.name !== "wait_for_click");
+    const tools = this.spec.mode === "guide" ? all.filter(t => guide.has(t.name)) : all.filter(t => t.name !== "point_at" && t.name !== "wait_for_click");
+    // No desktop on the task's target (headless, no window system): commands and talking to the user only (§2.6).
+    return this.desktop === "none" ? tools.filter(t => NO_DESKTOP_TOOLS.has(t.name)) : tools;
+  }
+
+  /** How much of its target's desktop the task may use (§2.1): this screen's whole, unless its target says otherwise. */
+  private get desktop(): NonNullable<WorkerDeps["target"]>["desktop"] {
+    return this.d.target?.desktop ?? "screen";
+  }
+
+  /** The task's target as sentences name it ("this computer", "build-01"). */
+  private get targetName(): string {
+    return this.d.target ? placeName(this.d.target) : "this computer";
+  }
+
+  /**
+   * The shells run_command offers, when it is offered: the task has a CommandService whose commands aren't "off" at
+   * its start (each call checks again), and at least one shell other than cmd (L3). Null: no run_command.
+   */
+  private commandShells(): ShellId[] | null {
+    const c = this.d.commands;
+    if (!c || c.capability().state === "off") return null;
+    const shells = c.shells().filter(sh => sh !== "cmd");
+    return shells.length ? shells : null;
   }
 
   /**
@@ -944,10 +1090,14 @@ export class Worker {
     const settings = this.sys.settings.available;
     const settingNames = Object.keys(settings) as SettingName[];
     return [
-      this.tool("perceive_window",
-        "Read the window you are working in: its elements with ids, roles, names, states and positions." + (this.d.vision ? " Pass image=true to also get a screenshot with numbered marks." : ""),
-        z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
-        async ({ image }) => this.perceive(image === true && this.d.vision)),
+      // Without pictures of the target's screen ("text": a Wayland remote, §2.6) there is no image to ask for.
+      this.desktop === "text"
+        ? this.tool("perceive_window", "Read the window you are working in: its elements with ids, roles, names, states and positions.", z.object({}),
+          async () => this.perceive(false))
+        : this.tool("perceive_window",
+          "Read the window you are working in: its elements with ids, roles, names, states and positions." + (this.d.vision ? " Pass image=true to also get a screenshot with numbered marks." : ""),
+          z.object({ image: z.boolean().optional().describe("Also return a marked screenshot") }),
+          async ({ image }) => this.perceive(image === true && this.d.vision)),
       this.tool("list_windows", "List the open windows (app and title).", z.object({}), async () => {
         // Ember's own windows aren't for tasks.
         const wins = (await this.perception.windows()).filter(w => !isEmberWindow(w));
@@ -1020,7 +1170,7 @@ export class Worker {
         async a => {
           const app = findApp(listApps(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
           return this.system("open_app", `${app.name} (on Ember's desk)`, async () => {
             const place = await this.d.desk!();
             // Stopped while the desk started: nothing is opened (and the desk view isn't shown for a task that is gone).
@@ -1049,28 +1199,36 @@ export class Worker {
           const apps = this.sys.apps;
           const app = apps.find(apps.list(), a.name);
           if (!app) return fail(`No installed app matches ${q(a.name, 100)}.`);
-          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals or shells. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          if (apps.isTerminalApp(app)) return this.refuse("open_app", "Ember doesn't run terminals", "Not allowed: Ember doesn't run terminals. Don't try another way; tell the user in finish_task.", { app: app.name, value: app.name });
+          // Another computer's app list is that computer's words: its names are quoted as screen text is (§7.2 item 4).
+          const shownApp = this.d.target?.kind === "ssh" ? q(app.name, 100) : app.name;
           return this.system("open_app", app.name, async () => {
             if (this.isOver) throw new BorrowStopped();
             this.setPlace(null);
             // The app's window is a new one of its program (or titled after it); an app that was already open
             // (it only raises its window) is found by its program, never by a title that happens to contain its name.
             const key = (w: { pid: number | null; name: string }) => `${w.pid}:${w.name}`;
-            const before = new Set((await this.perception.windows().catch(() => [])).map(key));
+            // A screen that refuses to be read for being locked gets no app started on it either (cross-review X9: its
+            // system's launch refuses then too); any other failed read only leaves nothing to compare with.
+            const before = new Set((await this.perception.windows().catch((err: unknown) => {
+              if (err instanceof Error && err.message === LOCKED_SCREEN) throw err;
+              return [];
+            })).map(key));
             // Compared as the OS names programs (on Windows without ".exe").
             const programs = apps.programsOf(app);
             const ours = (w: { app: string }) => programs.has(apps.appKey(w.app));
-            apps.launch(app);
+            await apps.launch(app);
             for (let i = 0; i < 40 && !this.isOver; i++) {
               await new Promise(r => setTimeout(r, 250));
               const wins = await this.perception.windows().catch(() => []);
               const w = wins.find(x => !before.has(key(x)) && (ours(x) || x.name.toLowerCase().includes(app.name.toLowerCase())))
                 ?? (i >= 8 ? wins.find(ours) : undefined);
-              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${app.name}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
+              if (w) { this.target = { title: w.name, pid: w.pid ?? undefined }; this.window = { app: w.app, name: w.name }; return `Opened ${shownApp}; now working in its window ${q(w.name, 100)}. Call perceive_window.`; }
             }
-            return `Started ${app.name}, but its window hasn't appeared yet. Use list_windows and switch_window.`;
+            return `Started ${shownApp}, but its window hasn't appeared yet. Use list_windows and switch_window.`;
           }, app.name);
         }),
+      ...this.commandTools(),
       ...(this.d.cursor || this.d.desk ? [
         this.tool("press_keys",
           `Press a key or shortcut in the window you are working in, e.g. ${words.keyExamples}. Borrows the user's keyboard, so the user is asked first; prefer element tools when they work.`,
@@ -1115,6 +1273,61 @@ export class Worker {
     ];
   }
 
+  /** run_command (§3.2), when the task's target offers commands; none otherwise (the tool list is today's). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+  private commandTools(): Tool<any>[] {
+    const shells = this.commandShells();
+    const svc = this.d.commands;
+    if (!shells || !svc) return [];
+    const binding = svc.binding;
+    return [this.tool("run_command",
+      `Run one command on ${placeName(binding)} in Ember's own command window, where the user watches it and can stop it. ` +
+      `Shells here: ${shells.join(", ")} (default ${shells[0]}). Most commands run straight away; ones that delete or ` +
+      `overwrite data, push or publish anywhere, touch passwords or keys, change the system, or download and run code ` +
+      `stop and ask the user first. Never put a password, token or key in a command. The output comes back as untrusted text.`,
+      z.object({
+        target: z.string().min(1).max(80).describe(`Where it runs: "${binding.label}" (this task's computer)`),
+        command: z.string().min(1).max(8000).describe("The exact command text"),
+        shell: z.enum(shells as [ShellId, ...ShellId[]]).optional(),
+        cwd: z.string().min(1).max(1024).optional().describe("The folder to run it in: absolute, or ~/…; default: the task's folder"),
+        timeoutSeconds: z.number().int().min(1).max(900).optional().describe("Default 120"),
+        why: z.string().min(3).max(200).describe("One short sentence: why this command, in plain words"),
+      }),
+      async a => runCommandTool(a, this.commandContext()))];
+  }
+
+  /** What the command flow needs of this task (commands/flow.ts). */
+  private commandContext(): CommandFlowContext {
+    const goal = this.spec.goal;
+    return {
+      task: {
+        id: this.spec.id, title: goal.length > 200 ? `${goal.slice(0, 199)}…` : goal,
+        commandWords: () => this.commandWords, agreed: () => this.agreed, tainted: () => this.tainted,
+        spokenWords: () => (this.spokenOnly ? this.userWords : ""),
+        // Output that reads like instructions: every later step (command or not) is checked with the user (§3.11).
+        taint: () => { this.tainted = true; },
+        readFrom: () => [...this.read.values()],
+      },
+      service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal) }, presenter: this.d.presenter,
+      audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
+      state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
+      onDeclined: () => { this.declined = true; },
+    };
+  }
+
+  /** Whether this session's tools include run_command (its rule then goes into the prompt). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+  private offersCommands(tools: Tool<any>[]): boolean {
+    return tools.some(t => t.name === "run_command");
+  }
+
+  /** The settings shortcut the task's result may name: the one Ember holds now (none if the check fails), else the OS's table's. */
+  private settingsKey(): string | null {
+    const held = this.d.settingsKey;
+    if (!held) return this.sys.shortcuts.settings.label;
+    try { return held() || null; } catch { return null; }
+  }
+
   /** What the user stopping says: a guide has no actions of its own, so stopping it cancelled the guide. */
   private stoppedSummary(): string {
     return this.spec.mode === "guide" ? "The guide was cancelled." : "Stopped.";
@@ -1125,12 +1338,15 @@ export class Worker {
     // Stopped before it began (Stop pressed right after asking): nothing is created or sent.
     if (signal.aborted) return { success: false, summary: this.stoppedSummary(), stopped: true };
     // The runtime's default model only where the host allows it: it may be one the administrator didn't allow.
-    if (!d.model && !d.runtimeDefault) return { success: false, summary: `No model is available for tasks. Pick one in settings (${this.sys.shortcuts.settings.label}).` };
+    if (!d.model && !d.runtimeDefault) {
+      const key = this.settingsKey();
+      return { success: false, summary: `No model is available for tasks. Pick one in ${key ? `settings (${key})` : "Ember's settings"}.` };
+    }
     const onAbort = () => this.stopNow(null);
     signal.addEventListener("abort", onAbort, { once: true });
     const maxMs = d.limits?.maxMs ?? 20 * 60_000;
-    const deadline = setTimeout(() => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`), maxMs);
-    deadline.unref?.();
+    // Its questions' waits for the user's answer don't count (TaskClock).
+    const clock = this.clock = new TaskClock(maxMs, () => this.stopNow(`I stopped because the task took longer than ${Math.round(maxMs / 60_000)} minutes.`));
     let lastAnswer = "";
     try {
       fs.mkdirSync(d.workDir, { recursive: true });
@@ -1141,7 +1357,7 @@ export class Worker {
         provider: d.provider,
         tools,
         systemMessage: this.spec.mode === "guide" ? guideSystemMessage({ words: this.sys.words })
-          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk }),
+          : workerSystemMessage({ words: this.sys.words, settings: this.sys.settings.available, desk: !!d.desk, ...(d.target ? { target: d.target } : {}), ...(this.offersCommands(tools) ? { commands: { shells: this.commandShells() ?? [] } } : {}) }),
         workingDirectory: d.workDir,
         onPermissionRequest: () => ({ kind: "reject", feedback: "Workers use only Ember's own tools." }),
       });
@@ -1216,8 +1432,8 @@ export class Worker {
         }
       }
     } finally {
+      clock.stop();
       this.ended.abort();
-      clearTimeout(deadline);
       signal.removeEventListener("abort", onAbort);
       d.flyTo(null);
       if (this.place) d.onDesk?.(null, this.place);
@@ -1226,15 +1442,16 @@ export class Worker {
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
-    const result = this.result ?? { success: false, summary: lastAnswer || "The worker stopped without a summary." };
+    const result = this.result ?? { success: false, summary: lastAnswer || "The task stopped without saying what happened." };
     return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
   }
 
   /**
    * The user's new instruction for this running task ("use Firefox instead"); `userWords`: what the user said in that
-   * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec).
+   * turn; `screen`: what the conversation read on the screen then; `agreed`: Ember's questions they answered (TaskSpec);
+   * `commandWords`: those words for commands, when some were heard where Ember can't tell the user (TaskSpec).
    */
-  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[]): Promise<boolean> {
+  async steer(text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
     if (!this.session || this.halted || this.result) return false;
     if (agreed?.length) this.agreed = [...this.agreed, ...agreed];
     if (screen) {
@@ -1246,6 +1463,10 @@ export class Worker {
     // when the task has them (the instruction is the conductor's).
     const words = userWords ?? (this.spec.userWords === undefined ? said : "");
     if (words) this.userWords = `${this.userWords}\n${words}`;
+    // Commands hear only the user's own words: never the instruction the conductor wrote (critique security-1).
+    const heard = commandWords ?? userWords;
+    if (commandWords !== undefined) this.spokenOnly = true;
+    if (heard?.trim()) this.commandWords = this.commandWords ? `${this.commandWords}\n${heard}` : heard;
     await this.session.send({ prompt: `<user_update>The user changed the task: ${said}</user_update>`, mode: "immediate" });
     return true;
   }
@@ -1766,6 +1987,7 @@ export class Worker {
       if (this.isOver) return STOPPED();
       // The user may have taken over the desk while Ember waited for the question, the window or its turn.
       if (this.place?.userInControl()) return this.deskTaken(kind, element);
+      this.authorized(req, { role: node.role, name: node.name });
       const res = await run();
       if (kind === "text" && res.ok) this.noteTyped(field, prior + (value ?? ""));
       // A row or an icon chosen by a click is all that is selected there now: what the keys selected before is gone.
@@ -1794,6 +2016,8 @@ export class Worker {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.audit({ event: "action", task: this.spec.id, kind, app: req.app, element: req.element, ok: false, ...(this.place ? { tier: 2 } : {}), error: msg });
+      const remote = this.remoteRefusal(err);
+      if (remote) return remote;
       if (msg.includes("background_unavailable")) {
         release();
         // The router: tier 1 can't do it after all, so try tier 3 (the user's mouse), with their OK.
@@ -1807,6 +2031,9 @@ export class Worker {
       // A slow app may still carry out a request after Ember stopped waiting for it.
       if (/did not answer/.test(msg)) return fail("The app didn't answer in time, so it's unknown whether this happened. Call perceive_window to check before trying again.");
       if (isBusy(msg)) return fail(BUSY);
+      // The PC's own sentence about another computer (its words already quoted in it): passed on, not quoted again.
+      const said = this.d.target?.kind === "ssh" ? remoteSaid(err) : null;
+      if (said !== null) return fail(`${said}. Call perceive_window to see the window as it is now.`);
       // The helper's words can carry the app's own text: quoted, like everything from the screen.
       return fail(`It didn't work: ${q(msg, 300)}. Call perceive_window to see the window as it is now.`);
     } finally {
@@ -1963,10 +2190,21 @@ export class Worker {
     let result: ToolResultObject;
     /** What the app said shows where the mouse clicked, as it clicked. */
     let landedOn: PointElement | undefined;
+    // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected. So are
+    // keys the keyboard can't press now (Typing Assist; an input method, for keys that type): before the click, and
+    // before Ember's text goes on the user's clipboard. On the user's screen, what doesn't depend on which window is in
+    // front (plain ASCII text, Typing Assist) is also refused before their window is brought to the front (the
+    // borrow's preflight), so it doesn't jump for nothing.
+    const checkFirst = (hand: Pick<Hand, "checkKeys" | "checkTyping">) => {
+      if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
+      if (kind === "cursor_text" && typeof hand.checkKeys === "function") {
+        const edit = this.kc.edit;
+        for (const k of [...(mode === "replace" ? [edit.selectAll, "Delete"] : mode === "append" ? [edit.textEnd] : []), ...(paste ? [edit.paste] : [])]) hand.checkKeys(k);
+      }
+    };
     try {
       result = await this.withCursor(kind, element, async hand => {
-        // Text to be typed that the keyboard layout can't type is refused before anything is clicked or selected.
-        if (kind === "cursor_text" && !paste && typeof hand.checkTyping === "function") hand.checkTyping(text);
+        checkFirst(hand);
         // The user may have copied something new while Ember waited for its turn (a picture always counts as new): that
         // is what goes back afterwards, so if it can't be saved, nothing is touched.
         if (paste && !(await this.clipboard!.unchanged(saved!).catch(() => false))) {
@@ -2017,7 +2255,7 @@ export class Worker {
         if (!pasting.pressed) return;
         const ok = await landed();
         if (ok === false) throw new Error(`The pasted text didn't show up in the field within ${Math.round(this.pasteWaitMs / 1000)} seconds (the app may be busy), so it's unknown whether it went in. Call perceive_window to check before trying again.`);
-      });
+      }, undefined, kind === "cursor_text" ? checkFirst : undefined);
     } finally {
       if (pasting.written) {
         // Stopped or taken over right after Ctrl+V: the app still reads the clipboard when it gets to it.
@@ -2250,7 +2488,8 @@ export class Worker {
       ...(expected !== undefined ? { currentText: expected, ...this.ownText(this.fieldOf(element), expected) } : {}) });
     if (verdict) return verdict;
     let filled: { did: string; shows: string | undefined; says?: string } | undefined;
-    const result = await this.withCursor("cursor_text", element, async hand => { filled = await this.fillCell(hand, job, this.cursorHints(cell)); }, undefined, undefined, true);
+    // Text the keyboard can't type in any window is refused before the window is brought to the front, as fillCell refuses it first.
+    const result = await this.withCursor("cursor_text", element, async hand => { filled = await this.fillCell(hand, job, this.cursorHints(cell)); }, undefined, undefined, true, hand => hand.checkTyping(text));
     if (result.resultType !== "success" || !filled) return result;
     if (filled.shows === undefined) return done(`Done: ${filled.did} (the cell cursor moved on), but Ember couldn't read ${cell} back. Call perceive_window to see what it shows now.`);
     return done(`Done: ${filled.did} (the cell cursor moved on).${text && filled.says ? ` It ${filled.says}.` : ""}`);
@@ -2296,7 +2535,9 @@ export class Worker {
           throw new Error(`${err instanceof Error ? err.message : String(err)}${rest.length ? ` The cells after it (${rest.join(", ")}) weren't typed.` : ""}`, { cause: err });
         }
       }
-    }, undefined, undefined, true);
+      // The first cell's text the keyboard can't type in any window is refused before the window is brought to the
+      // front, as fillCell refuses it first (each cell after it is checked as it comes, as before).
+    }, undefined, undefined, true, hand => { if (jobs[0]) hand.checkTyping(jobs[0].text); });
     const told = filled.map(f => f.shows === undefined ? `${f.job.cell} couldn't be read back` : `${f.job.cell} ${f.says ?? `shows ${q(f.shows, 80)}`}`).join(", ");
     if (result.resultType !== "success") return filled.length ? { ...result, textResultForLlm: `Filled ${filled.length} cell${filled.length > 1 ? "s" : ""} first (${told}). ${result.textResultForLlm}` } : result;
     const unread = filled.some(f => f.shows === undefined) ? " Call perceive_window to see what the others show." : "";
@@ -2362,7 +2603,11 @@ export class Worker {
     }
     if (judged.every(j => j.d.verdict === "allow")) return null;
     // Each cell, with what goes in (and what it replaces): the values cut short, all of them listed.
-    const list = jobs.map(j => `${j.cell} ${j.text ? curly(j.text, 24) : "emptied"}${j.expected ? ` (replacing ${curly(j.expected, 16)})` : ""}`).join(", ");
+    const list = jobs.map(j => `${j.cell} ${j.text ? curly(j.text, CELL_SHOWN) : "emptied"}${j.expected ? ` (replacing ${curly(j.expected, 16)})` : ""}`).join(", ");
+    // A value cut short there, or whose spaces it closes up (curly), is approved whole: the card shows each cell with all
+    // of it as it will be typed (review #116), one to a line.
+    const cut = jobs.some(j => { const t = j.text.replace(/\s+/g, " "); return t.length > CELL_SHOWN || t !== j.text; });
+    const detail = cut ? jobs.map(j => `${j.cell} ${j.text ? `“${typedShown(j.text)}”` : "emptied"}`).join("\n") : undefined;
     // What each cell's own question would add (text carried from another app, a long text replaced), once each.
     const notes = new Map<string, string[]>();
     for (const { job, req, d } of judged) {
@@ -2375,7 +2620,10 @@ export class Worker {
     const prompt = `${this.place ? "Fill" : "Borrow your keyboard to fill"} ${jobs.length} cell${jobs.length > 1 ? "s" : ""}${app}${this.place ? " on my desk" : ""}: ${list}?${added ? ` ${added}` : ""}`;
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     this.asked = true;
-    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id }, this.overSignal);
+    // On another computer the question says where (§2.4), as every other question of a task does.
+    const where = this.d.target ? whereWords(this.d.target) : undefined;
+    const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
+    const answer = await this.ask(question);
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
@@ -2747,6 +2995,8 @@ export class Worker {
       const approved = element;
       const turn: { moved?: { to: Focus | undefined }; into?: Focus } = {};
       this.inputValue = { value: keys };
+      // Keys the keyboard can't press in any window (Typing Assist) are refused before the window is brought to the
+      // front (preflight): it would jump for nothing.
       const result = await this.withCursor("keys", approved, async hand => {
         // LibreOffice moves the focus about as its window comes to the front: what the user said yes to gets a moment to come back.
         const look = await this.steadyFocus(approved !== undefined || activating, { want: approved });
@@ -2762,7 +3012,7 @@ export class Worker {
         if (!now && activating) throw new Error("Ember can't tell what that key would activate in this window (nothing there says it has the keyboard), so nothing was pressed. Click the control you mean instead.");
         turn.into = now;
         await hand.keys(keys);
-      }).finally(() => { this.inputValue = {}; });
+      }, undefined, undefined, undefined, hand => hand.checkKeys(keys)).finally(() => { this.inputValue = {}; });
       if (!turn.moved) {
         if (result.resultType === "success") {
           const into = this.fieldOf(turn.into ?? approved);
@@ -2947,7 +3197,8 @@ export class Worker {
   /** What the action lines of the input under way record beyond its kind (the keys pressed: "What Ember did" names them). */
   private inputValue: Record<string, unknown> = {};
 
-  private async withCursor(kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>, keysOnly = kind === "keys"): Promise<ToolResultObject> {
+  /** `preflight`: the borrow's checks of its keys and typing, asked before the user's window is brought to the front. */
+  private async withCursor(kind: ActionKind, element: Focus | undefined, fn: (hand: Hand) => Promise<void>, verifyId?: number, afterBorrow?: () => Promise<void>, keysOnly = kind === "keys", preflight?: (hand: HandChecks) => void): Promise<ToolResultObject> {
     if (this.isOver) return STOPPED();
     if (this.place) return this.onDeskInput(this.place, kind, element, fn, verifyId, afterBorrow);
     if (!this.d.cursor) return fail(`This needs the mouse or keyboard, which isn't available here. ${this.deskHint}`);
@@ -2960,8 +3211,11 @@ export class Worker {
     }
     // GNOME Shell's own prompts (polkit, keyring) aren't X windows: the shell is asked too.
     if (await Promise.resolve().then(() => this.perception.systemDialogOpen()).catch(() => false)) {
-      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: "a system dialog is open" });
-      return denied("A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
+      // Not always a dialog: macOS's secure keyboard entry (Terminal's, a focused password field) is named as itself.
+      const why = await Promise.resolve().then(() => this.perception.systemDialogReason?.() ?? null).catch(() => null);
+      this.audit({ event: "decision", task: this.spec.id, kind, app: this.window.app, window: this.window.name, element, tier: "never", verdict: "deny", reason: why ?? "a system dialog is open" });
+      return denied(why ? `${why[0]!.toUpperCase()}${why.slice(1)}. That's for the user to change: tell them, or finish the task saying what's left.`
+        : "A system dialog (such as a password prompt) is open on the user's screen. That's for the user only: wait, or finish the task saying what's left.");
     }
     const check = () => {
       if (this.isOver) throw new BorrowStopped();
@@ -2987,6 +3241,7 @@ export class Worker {
       onStart: () => c.setBorrowing("active"),
       // Keys alone (press_keys, a spreadsheet's cells): the status says "your keyboard", not "your mouse".
       ...(keysOnly ? { keysOnly: true } : {}),
+      ...(preflight ? { preflight } : {}),
     });
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor
@@ -3067,10 +3322,12 @@ export class Worker {
 
   /** Tier 0 actions (settings, launching): policy and audit, no window. `app`: the app being launched. */
   private async system(kind: "setting" | "open_app", value: string, run: () => Promise<string>, app = ""): Promise<ToolResultObject> {
-    const verdict = await this.authorize({ taskId: this.spec.id, kind, app, window: "", value });
+    const request: ActionRequest = { taskId: this.spec.id, kind, app, window: "", value };
+    const verdict = await this.authorize(request);
     if (verdict) return verdict;
     if (this.isOver) return STOPPED();
     try {
+      this.authorized(request);
       const text = await run();
       this.audit({ event: "action", task: this.spec.id, kind, value, ok: true });
       return done(text);
@@ -3079,6 +3336,15 @@ export class Worker {
       if (err instanceof UserTookOver) return this.deskTaken(kind);
       const msg = err instanceof Error ? err.message : String(err);
       this.audit({ event: "action", task: this.spec.id, kind, value, ok: false, error: msg });
+      // Another computer's own check refused it (gate 2, awaited: §2.6): its words, quoted, as a refusal. The PC's own
+      // sentence about that computer (it didn't answer, the app went) is passed on as it is.
+      const remote = this.remoteRefusal(err);
+      if (remote) return remote;
+      if (this.d.target?.kind === "ssh") {
+        const said = remoteSaid(err);
+        if (said !== null) return fail(`${said}.`);
+        return denied(`Not allowed: ${this.targetName} refused it: ${q(msg, 300)}. Don't try another way; tell the user in finish_task.`);
+      }
       return fail(msg);
     }
   }
@@ -3097,10 +3363,65 @@ export class Worker {
     return this.refuse(kind, "the user has taken over Ember's desk", "The user has taken over your desk. Wait for them, or finish the task saying where you got to.", { element, never: false });
   }
 
+  /**
+   * The step `req` that authorize() just let through runs now: the target hears gate 1's stamp first, with its age
+   * measured now, after the window lease and the pre-step pause (§2.1, critique integration-6). Only remotes listen.
+   * `acted`: the element the step acts on as the target last read it (its own role and name, §5.5: gate 2 compares them
+   * with the element it reads by id), where the request judged another (the control a click goes to, a label's name).
+   */
+  private authorized(req: ActionRequest, acted?: { role: string; name: string }): void {
+    const on = this.d.onAuthorized;
+    const auth = this.lastAuth;
+    if (!on || !auth) return;
+    const now = performance.now();
+    const element = acted ?? req.element;
+    on({
+      taskId: this.spec.id, kind: req.kind, app: req.app, window: req.window,
+      element: element ? { role: element.role, name: element.name } : null,
+      ...(req.value !== undefined ? { valueSha256: sha256Hex(req.value) } : {}),
+      verdict: auth.verdict, approval: auth.approvedAt !== null ? { given: true } : null,
+      ageMs: Math.max(0, Math.round(now - (auth.approvedAt ?? auth.at))),
+    });
+  }
+
+  /**
+   * A remote's answer to a step, thrown by its sidecar or apps with a gate-2 `code` (§5.3.7), as the tool's result; null
+   * for any other error. A remote that wants a confirmation isn't asked again in v1: every remote step already carried
+   * the user's yes (L4), so it is refused (critique integration-24).
+   */
+  private remoteRefusal(err: unknown): ToolResultObject | null {
+    if (this.d.target?.kind !== "ssh") return null;
+    // SC's own refusals before anything is sent (a password field's value) carry `remoteCode` "denied": refusals too.
+    const ownDenial = err instanceof Error && err.name === "RemoteError" && (err as { remoteCode?: unknown }).remoteCode === "denied";
+    const code = ownDenial ? "denied" : (err as { code?: unknown } | null)?.code;
+    if (typeof code !== "string" || !REMOTE_CODES.has(code)) return null;
+    const name = this.targetName;
+    switch (code) {
+      case "needs_confirm": return denied(`${name} refused this step (it wanted a confirmation Ember couldn't give). Don't try another way.`);
+      case "changed": return fail("It changed: call perceive_window again.");
+      case "stale": return fail(`${name} didn't answer in time, so this step wasn't done. Call perceive_window and try again, or finish the task saying so.`);
+      case "stopped": return STOPPED();
+      default: {
+        const said = remoteSaid(err);
+        if (said !== null) return denied(`Not allowed: ${said.replace(/^Not allowed: /, "")}. Don't try another way; tell the user in finish_task.`);
+        const msg = err instanceof Error ? err.message : String(err);
+        return denied(`Not allowed: ${name} refused it: ${q(msg, 300)}. Don't try another way; tell the user in finish_task.`);
+      }
+    }
+  }
+
   /** Every audit entry goes through here: an action (tried or done) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
-    if (e.event === "action") this.declined = false;
-    this.d.audit.write(e);
+    if (e.event === "action" || (e.event === "command" && e.phase === "started")) this.declined = false;
+    try {
+      this.d.audit.write(e);
+    } catch (err) {
+      // Nothing more is done unrecorded: the task stops, plainly. A step already taken is reported as it went (an
+      // error would have the model try a "Send" again); one not taken yet isn't taken (review #117).
+      this.d.log.warn("worker.audit_failed", { task: this.spec.id, event: e.event, err });
+      this.stopNow(AUDIT_UNAVAILABLE);
+      if (!afterTheStep(e)) throw err;
+    }
   }
 
   /**
@@ -3110,6 +3431,7 @@ export class Worker {
    */
   private async authorize(request: ActionRequest, o: { note?: string; covered?: boolean } = {}): Promise<ToolResultObject | null> {
     this.asked = false;
+    this.lastAuth = null;
     if (this.isOver) return STOPPED();
     // The user's click on Allow closed the menu this item is in: their yes covers reopening it and clicking the same item.
     const carried = this.carriedMenuApproval;
@@ -3118,6 +3440,8 @@ export class Worker {
       && request.element?.role === carried.role && request.element.name === carried.name) {
       this.carriedMenuApproval = null;
       this.audit({ event: "decision", task: this.spec.id, kind: request.kind, app: request.app, window: request.window, element: request.element, ...auditValue(request), tier: "reversible", verdict: "allow", reason: "the user already allowed this menu item; their answer closed its menu" });
+      const at = performance.now();
+      this.lastAuth = { at, verdict: "confirm", approvedAt: at };
       return null;
     }
     const inWindow = request.kind !== "open_app" && request.kind !== "setting";
@@ -3155,7 +3479,11 @@ export class Worker {
       && this.allowedApps.has(req.app.toLowerCase());
     this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}) });
     if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
-    if (decision.verdict === "allow" || sessionAllowed) return null;
+    const decidedAt = performance.now();
+    if (decision.verdict === "allow" || sessionAllowed) {
+      this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
+      return null;
+    }
     // "Always in this app" isn't offered once something on screen tried to steer Ember.
     const remember = !!decision.needsGrant && !!decision.remember && !!req.app && !this.tainted;
     const options = remember
@@ -3163,13 +3491,20 @@ export class Worker {
       : [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }];
     const context = this.spec.goal.length > 200 ? this.spec.goal.slice(0, 199) + "…" : this.spec.goal;
     this.asked = true;
-    const answer = await this.d.confirmer.ask({ title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id }, this.overSignal);
+    // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
+    const where = this.d.target ? whereWords(this.d.target) : undefined;
+    // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
+    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}) };
+    const answer = await this.ask(question);
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {
-      this.d.settings.update({ grants: { ...this.d.settings.get().grants, [req.app.toLowerCase()]: "act" } });
+      // Keyed by the task's target (a remote's apps are "ssh:<id>:<app>"): a yes on one computer is never another's.
+      const key = this.d.grantKey ? this.d.grantKey(req.app) : req.app.toLowerCase();
+      this.d.settings.update({ grants: { ...this.d.settings.get().grants, [key]: "act" } });
     }
     if (answer === "once" || answer === "always") {
+      this.lastAuth = { at: decidedAt, verdict: "confirm", approvedAt: performance.now() };
       // Keys that only move don't let Ember type or save later without asking (a yes to Ctrl+End is only that).
       if (decision.needsGrant && req.app && !(req.kind === "keys" && onlyMoves(req.value ?? "", req.element, this.kc))) {
         this.allowedApps.add(req.app.toLowerCase());

@@ -6,12 +6,13 @@
  * never by the wording of a check (Linux's fixes are dnf, gsettings and GNOME's).
  */
 
-import type { EnvReport } from "./environment";
+import { LINUX_A11Y_RESTART, MIXED_SCALING_FIX, type EnvReport } from "./environment";
 import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
-import { SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
+import { FALLBACK_SHORTCUTS, SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
 import { VOICE_MODELS_BYTES } from "../voice/models";
+import { cliSteps, type SignInWith } from "./agent/github-app";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -39,11 +40,16 @@ export interface DoctorProbes {
   runtime: boolean;
   /** How Ember will reach a model: an organisation endpoint, a GitHub sign-in, or nothing yet. */
   auth: { kind: "provider"; host: string } | { kind: "github"; source: string } | null;
+  /**
+   * How this build signs in (github-app.ts), and whether the GitHub CLI is installed: without Ember's own GitHub App the
+   * fix says sign-in needs a GitHub account with Copilot and the GitHub CLI. Absent: the fix offers "Sign in with GitHub".
+   */
+  signIn?: { with: SignInWith; ghInstalled: boolean };
   admin: LoadedAdminPolicy;
   /** Ember's desk (Linux); null where there is none (the row is left out). */
   desk: { ok: boolean; missing: string[] } | null;
-  /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). */
-  sandbox: { userNamespaces: boolean; suidHelper: boolean } | null;
+  /** Chromium's sandbox (Linux); null where the OS provides it (the row is left out). appImage: running as an AppImage. */
+  sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** This user's file watchers (inotify instances) in use and the limit; null when they can't be counted. */
   fileWatchers?: { used: number; max: number } | null;
   /** Windows and macOS: the shared accessibility helper's status answer (null: it didn't answer); its own row. */
@@ -78,6 +84,16 @@ const OFF_LINUX: Record<"win32" | "darwin", { name: string; input: { ok: string;
   },
 };
 
+/**
+ * The platform's rows that are the same check as a row of the settings window's setup check, by that row's id: the
+ * doctor calls them what the window calls them (review #229), whatever the window's words are.
+ */
+const WINDOW_ROW: Readonly<Record<string, string>> = {
+  "accessibility-permission": "accessibility", "microphone-permission": "microphone", "microphone-privacy": "microphone", location: "location", root: "elevated",
+};
+/** The platform's microphone permission rows: where one is, the general "Not checked here" Microphone row isn't. */
+const MIC_ROWS = new Set(["microphone-permission", "microphone-privacy"]);
+
 /** The "Accessibility helper" row (Windows and macOS: the shared host and its provider, started once by the doctor). */
 function helperRow(h: HelperStatus | null, fix: string, reinstall: string): DoctorCheck {
   const label = "Accessibility helper";
@@ -95,7 +111,7 @@ function helperRow(h: HelperStatus | null, fix: string, reinstall: string): Doct
   if (h.toolkitAccessibility === null) return { id: "accessibility-helper", status: "warn", label, detail: withFacts("The accessibility helper answered but couldn't tell whether it can read apps"), fix };
   if (h.dpi && h.processDpi && h.dpi !== h.processDpi) {
     return { id: "accessibility-helper", status: "warn", label,
-      detail: withFacts("Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors"), fix: "Tell the Ember team." };
+      detail: withFacts("Running, but its display scaling differs from Ember's, so it may click in the wrong place on some monitors"), fix: MIXED_SCALING_FIX };
   }
   return { id: "accessibility-helper", status: "ok", label, detail: withFacts("Running: Ember can read apps") };
 }
@@ -105,6 +121,9 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   const linux = os === "linux";
   const off = linux ? null : OFF_LINUX[os];
   const sc = p.shortcuts ?? SHORTCUTS.linux;
+  // The doctor registers no shortcut, so it can't tell which chord Ember holds (D-45b): the default, and the fallback
+  // Ember takes while another app has that, as the setup check names it then.
+  const chord = (id: "ask" | "settings") => `${sc[id].label}, or ${FALLBACK_SHORTCUTS[os][id].label} when another app has that`;
   const reinstall = p.words?.reinstall ?? PLATFORM_WORDS.linux.reinstall;
   const out: DoctorCheck[] = [];
   const env = (id: string) => p.env.checks.find(c => c.id === id);
@@ -122,23 +141,23 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
 
   if (off) {
     out.push(p.compositor === null
-      ? { id: "compositor", status: "fail", label: "Compositor", detail: `${off.name}'s window functions didn't load, so Ember can't see or use the screen.`, fix: reinstall }
-      : { id: "compositor", status: "ok", label: "Compositor", detail: `${off.name} always composites: Ember appears beside your cursor.` });
+      ? { id: "compositor", status: "fail", label: "Transparent windows", detail: `${off.name}'s window functions didn't load, so Ember can't see or use the screen.`, fix: reinstall }
+      : { id: "compositor", status: "ok", label: "Transparent windows", detail: `${off.name} always composites: Ember appears beside your cursor.` });
   } else {
     out.push(p.compositor === null
-      ? { id: "compositor", status: "warn", label: "Compositor", detail: "No X display to check.", fix: "Run ember doctor inside your desktop session." }
+      ? { id: "compositor", status: "warn", label: "Transparent windows", detail: "No X display to check.", fix: "Run ember doctor inside your desktop session." }
       : p.compositor
-        ? { id: "compositor", status: "ok", label: "Compositor", detail: "Transparent windows work: Ember appears beside your cursor." }
-        : { id: "compositor", status: "warn", label: "Compositor", detail: "No compositing manager, so Ember waits in a small card in the corner instead of beside the cursor.", fix: "Use GNOME on Xorg (its compositor is built in)." });
+        ? { id: "compositor", status: "ok", label: "Transparent windows", detail: "They work: Ember appears beside your cursor." }
+        : { id: "compositor", status: "warn", label: "Transparent windows", detail: "No compositing manager, so Ember waits in a small card in the corner instead of beside the cursor.", fix: "Use GNOME on Xorg (its compositor is built in)." });
   }
 
   const a11y = linux ? env("accessibility") : undefined;
   if (a11y) {
     const pyFix = /bindings are missing/i.test(a11y.detail) ? "sudo dnf install python3-pyatspi python3-gobject" : undefined;
-    const onFix = /is off/i.test(a11y.detail) ? "gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then log out and in)" : undefined;
+    const onFix = /is off/i.test(a11y.detail) ? `gsettings set org.gnome.desktop.interface toolkit-accessibility true   (then ${LINUX_A11Y_RESTART})` : undefined;
     // The fix line carries the command, so the detail doesn't repeat it.
     const detail = a11y.detail.replace(/:\s*sudo dnf install.*$/, ".");
-    out.push({ id: "accessibility", status: a11y.status, label: "Reading apps", detail, ...(pyFix || onFix ? { fix: pyFix ?? onFix } : {}) });
+    out.push({ id: "accessibility", status: a11y.status, label: a11y.label, detail, ...(pyFix || onFix ? { fix: pyFix ?? onFix } : {}) });
   }
   // Off Linux the shared host stands where the Python sidecar's accessibility check stands on Linux.
   if (off && p.helper !== undefined) out.push(helperRow(p.helper, off.helperFix, reinstall));
@@ -157,15 +176,21 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
         : { id: "xtest", status: "warn", label: "Mouse and keyboard", detail: "XTest isn't available, so Ember can only act through accessibility.", fix: "sudo dnf install libXtst" });
   }
 
-  for (const r of p.extra ?? []) out.push({ id: r.id, status: r.status, label: r.label, detail: r.detail, ...(r.fix ? { fix: r.fix } : {}) });
+  for (const r of p.extra ?? []) {
+    const same = WINDOW_ROW[r.id] !== undefined ? env(WINDOW_ROW[r.id])?.label : undefined;
+    const label = same ?? (MIC_ROWS.has(r.id) ? "Microphone" : r.label);
+    out.push({ id: r.id, status: r.status, label, detail: r.detail, ...(r.fix ? { fix: r.fix } : {}) });
+  }
 
   const copilot: DoctorCheck = !p.runtime
     ? { id: "copilot", status: "fail", label: "Copilot", detail: "Ember's Copilot runtime is missing from the installation.", fix: reinstall }
     : p.auth?.kind === "provider"
-      ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's endpoint (${p.auth.host}).` }
+      ? { id: "copilot", status: "ok", label: "Model service", detail: `Your organisation's model service (${p.auth.host}).` }
       : p.auth?.kind === "github"
         ? { id: "copilot", status: "ok", label: "Copilot", detail: `Signed in (${p.auth.source === "stored" ? "Ember's saved sign-in" : p.auth.source === "github-cli" ? "GitHub CLI sign-in" : "token from the environment"}).` }
-        : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: `Open Ember's settings (${sc.settings.label}) and choose “Sign in with GitHub”, or run “gh auth login”.` };
+        : { id: "copilot", status: "warn", label: "Copilot", detail: "Not signed in to GitHub yet.", fix: p.signIn?.with === "github-cli"
+          ? `${cliSteps(os, p.signIn.ghInstalled)} Then open Ember's settings (${chord("settings")}) and press Check again.`
+          : `Open Ember's settings (${chord("settings")}) and choose “Sign in with GitHub”, or run “gh auth login”.` };
   out.push(copilot);
 
   if (p.admin.error) out.push({ id: "policy", status: "fail", label: "Organisation policy", detail: `Ember is locked down: ${p.admin.error}`, fix: `Ask your administrator to fix ${p.admin.source}.` });
@@ -173,15 +198,18 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
   else out.push({ id: "policy", status: "ok", label: "Organisation policy", detail: `None (optional: ${p.policyLocation ?? ADMIN_POLICY_FILE}).` });
 
   const micOk = !!p.microphones?.length;
-  out.push(p.microphones === null
+  // The platform's own microphone row says what the OS allows: a second "Microphone" saying nothing is left out.
+  const micRow = (p.extra ?? []).some(r => MIC_ROWS.has(r.id));
+  if (!(micRow && p.microphones === null)) out.push(p.microphones === null
     ? off
       ? { id: "microphone", status: "ok", label: "Microphone", detail: "Not checked here; the settings window tests it when you turn on “Hey Ember”." }
       : { id: "microphone", status: "warn", label: "Microphone", detail: "Can't list microphones (pactl is missing). Only needed for “Hey Ember”.", fix: "sudo dnf install pulseaudio-utils" }
     : micOk
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
-      : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${sc.ask.label}) always works.` });
+      : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${chord("ask")}) always works.` });
+  // The speech models RPM needs Ember's own RPM, so an AppImage is only told to download them.
   out.push(p.voiceModels === "missing"
-    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux ? ", or install ember-voice-models" : ""}.` }
+    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux && !p.sandbox?.appImage ? ", or install ember-voice-models" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded." });
   out.push(off
     ? p.speechDispatcher
@@ -199,18 +227,21 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
 
   if (p.sandbox) {
     out.push(p.sandbox.userNamespaces || p.sandbox.suidHelper
-      ? { id: "sandbox", status: "ok", label: "Sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
-      : { id: "sandbox", status: "fail", label: "Sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
+      ? { id: "sandbox", status: "ok", label: "Window sandbox", detail: p.sandbox.userNamespaces ? "User namespaces are available." : "Using the setuid sandbox helper (user namespaces are off, as on STIG hosts)." }
+      // The AppImage's AppRun runs Ember without the sandbox here on purpose (it can't carry the setuid helper).
+      : p.sandbox.appImage
+        ? { id: "sandbox", status: "warn", label: "Window sandbox", detail: "Ember runs without Chromium's sandbox here: user namespaces are off, and an AppImage can't carry the sandbox helper. Ember's windows show only its own pages.", fix: "On a hardened computer like this one, install Ember's RPM instead: it sets up the sandbox helper." }
+        : { id: "sandbox", status: "fail", label: "Window sandbox", detail: "User namespaces are off and chrome-sandbox isn't setuid root, so Ember's windows can't be sandboxed.", fix: "sudo chown root:root /opt/ember/chrome-sandbox && sudo chmod 4755 /opt/ember/chrome-sandbox (the RPM does this)" });
   }
   // The Copilot runtime needs a free file watcher for each conversation and task; with none left it takes requests
   // and never answers them.
   const w = p.fileWatchers;
   const watchersFix = "sudo sysctl -w fs.inotify.max_user_instances=512, and put fs.inotify.max_user_instances=512 in /etc/sysctl.d/90-ember.conf to keep it";
   if (w) out.push(w.max - w.used >= 8
-    ? { id: "file-watchers", status: "ok", label: "File watchers", detail: `${w.used} of ${w.max} in use.` }
+    ? { id: "file-watchers", status: "ok", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use.` }
     : w.used >= w.max
-      ? { id: "file-watchers", status: "fail", label: "File watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
-      : { id: "file-watchers", status: "warn", label: "File watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
+      ? { id: "file-watchers", status: "fail", label: "Copilot's file watchers", detail: `All ${w.max} are in use, so Copilot can't answer: it needs a free one for each conversation and task.`, fix: watchersFix }
+      : { id: "file-watchers", status: "warn", label: "Copilot's file watchers", detail: `${w.used} of ${w.max} in use: Copilot needs a free one for each conversation and task, and stops answering without.`, fix: watchersFix });
   return out;
 }
 

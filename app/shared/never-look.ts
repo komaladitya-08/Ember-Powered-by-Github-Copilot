@@ -2,7 +2,8 @@
  * The never-look list a fresh install starts with, per OS, and how its entries read on screen. Shared by the
  * settings defaults (main) and the settings window (renderer), so the two can't drift apart. Entries are matched
  * case-insensitively as substrings of "<app> <title>" (perception/elements.ts isNeverLook), so they are specific app
- * names, never generic words such as "passwords" or "windows security" (those are exact matches in the
+ * names (everyday words too, NEVER_LOOK_APP_ONLY, against the app and the start of a word in the title), never
+ * generic words such as "passwords" or "windows security" (those are exact matches in the
  * security-window vocabulary, policy/vocabulary.ts). The Linux row is today's list. Windows and macOS (design §9.11)
  * start with the password managers people use there, as their programs and windows name them ("keepass" also covers
  * KeePassXC), and the system's own password prompt: Windows' CredentialUIBroker, macOS's SecurityAgent, and Keychain
@@ -17,6 +18,13 @@ export const NEVER_LOOK_DEFAULTS: Readonly<Record<OS, readonly string[]>> = {
   win32: ["keepass", "1password", "bitwarden", "lastpass", "dashlane", "nordpass", "roboform", "enpass", "keeper", "credentialuibroker"],
   darwin: ["keepassxc", "1password", "bitwarden", "lastpass", "dashlane", "enpass", "strongbox", "macpass", "keychain access", "securityagent"],
 };
+
+/**
+ * Entries that are everyday words ("Housekeeper wanted"): they name a password manager, so perception/elements.ts
+ * isNeverLook matches them against the window's app, and its title only where a word there starts with them (Keeper's
+ * web vault, "My Vault | Keeper"), as a default or typed by the user alike (cross-review S3).
+ */
+export const NEVER_LOOK_APP_ONLY: ReadonlySet<string> = new Set(["keeper", "seahorse", "strongbox"]);
 
 /** How the defaults read on screen (any OS's entry; the user's own entries read as typed). */
 export const NEVER_LOOK_NAMES: Readonly<Record<string, string>> = {

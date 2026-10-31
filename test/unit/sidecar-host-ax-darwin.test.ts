@@ -7,7 +7,7 @@ import { NEEDS_PERMISSION } from "../../app/sidecar-host/providers/ax-darwin-rea
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import { windowRole } from "../../app/sidecar-host/windows";
 import type { AxNode, AxWindow, ElementInfo, ReadWindowResult as ClientRead } from "../../app/main/perception/sidecar";
-import { FakeAx, benchApp, type AppSpec } from "./sidecar-host-ax-darwin-fake";
+import { El, FakeAx, benchApp, type AppSpec } from "./sidecar-host-ax-darwin-fake";
 
 const at = (x: number, y: number, width: number, height: number) => ({ x, y, width, height });
 /** A read_window answer as the host gives it (the client keeps the secret keys to itself). */
@@ -219,7 +219,8 @@ describe("the macOS AX provider's keys", () => {
     expect(keyOf("Save")).toBe("4300:p9001/10:AXButton");
     expect(keyOf("Remember me")).toBe("4300:p9001/5:AXCheckBox");
     expect(snap.nodes.find(n => n.platformRole === "AXSlider")!.key).toMatch(/^4300:h/);
-    expect(notes).toContainEqual(["ax.key_collision", { count: 2 }]);
+    // The log names the colliding elements by role and index path (never their text), out of the answer's size.
+    expect(notes).toContainEqual(["ax.key_collision", { count: 2, of: snap.nodes.length, collided: ["AXCheckBox@5", "AXButton@10"] }]);
     // A look later says the key the answer gave.
     const save = snap.nodes.find(n => n.name === "Save")!;
     expect((await p.element(save.handle))!.key).toBe("4300:p9001/10:AXButton");
@@ -323,6 +324,42 @@ describe("the macOS AX provider's hit tests, looks and actions", () => {
     fake.frontmost = EMBER;
     expect(await p.focused()).toEqual({ element: null, window: null });
     expect(fake.pidsAsked.has(EMBER)).toBe(false);
+  });
+
+  it("names the element an app says has its keyboard, as its snapshot keys it, while another app is in front (cross-review P1)", async () => {
+    const { fake, p, windows } = await started();
+    // Ember's ask box has the keyboard: the bench still says its Name field has its own.
+    fake.frontmost = EMBER;
+    const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
+    const name = snap.nodes.find(n => n.platformRole === "AXTextField" && n.name === "Name")!;
+    expect(await p.focusedKey(BENCH)).toBe(name.key);
+    fake.apps.find(a => a.pid === BENCH)!.focusedId = undefined;
+    expect(await p.focusedKey(BENCH)).toBeNull();
+    // Never Ember's own.
+    await expect(p.focusedKey(EMBER)).rejects.toMatchObject({ code: "gone" });
+    expect(fake.pidsAsked.has(EMBER)).toBe(false);
+  });
+
+  it("attributes a text field's field editor to the field the walk lists, with the editor's selection", async () => {
+    // AppKit inserts an AXTextArea into the field and does not list it among the field's children (a text field is a
+    // leaf). The field's own AXFocused is false; the editor has the keyboard and the selection.
+    const { fake, p, windows } = await started();
+    const name = fake.el("name");
+    name.spec.focused = false;
+    name.spec.value = "Ember 1";
+    name.children.push(new El(
+      { role: "AXTextArea", id: "editor", value: "Ember 1", selection: "Ember 1", focused: true, frame: name.spec.frame ?? undefined },
+      name, BENCH, () => 900_000,
+    ));
+    fake.apps.find(a => a.pid === BENCH)!.focusedId = "editor";
+    const snap = await p.snapshot(bench(windows).handle, { maxDepth: 64, maxNodes: 1000, deadlineMs: 1500 });
+    const field = snap.nodes.find(n => n.platformRole === "AXTextField" && n.name === "Name")!;
+    expect(field.focused).toBe(true);
+    expect(snap.nodes.some(n => n.platformRole === "AXTextArea" && n.value === "Ember 1")).toBe(false);
+    expect(await p.focusedKey(BENCH)).toBe(field.key);
+    expect(await p.textInfo(field.handle, 100)).toMatchObject({ text: "Ember 1", selection: "Ember 1" });
+    p.stop();
+    expect(fake.outstanding).toBe(0);
   });
 
   it("reads nothing of a secure field's text", async () => {

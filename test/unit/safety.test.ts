@@ -155,6 +155,12 @@ describe("kill switch (M8.9)", () => {
     expect(audit.recent(5)[0]).toMatchObject({ event: "stop", source: "hotkey" });
   });
 
+  it("records a press in settings as settings, not as the handle's menu", async () => {
+    const audit = new AuditLog(tmp());
+    await new KillSwitch(() => [{ name: "a", stop: () => undefined }], quiet, () => audit).pull("settings");
+    expect(audit.recent(1)[0]).toMatchObject({ event: "stop", source: "settings" });
+  });
+
   it("is quick when everything stops promptly", async () => {
     const r = await new KillSwitch(() => [{ name: "a", stop: () => undefined }, { name: "b", stop: async () => undefined }], quiet).pull("voice");
     expect(r.ms).toBeLessThan(50);

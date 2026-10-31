@@ -217,6 +217,63 @@ describe("the active and focused windows on macOS", () => {
   });
 });
 
+describe("the focused and active windows together on macOS (review #78)", () => {
+  /** setup() with CGWindowList's copies counted ("list") among the calls. */
+  function counted(deps: Partial<DarwinWindowsDeps> = {}) {
+    const { s, desktop } = fakeDesktop();
+    const ws = createDarwinWindows({ ...desktop, windows: () => (s.calls.push("list"), s.windows) }, { screen, ...deps }, { ownPid: OWN });
+    return { s, ws };
+  }
+
+  it("answers both from one window list and one AX round trip, as the two calls answer them with two each", () => {
+    const { s, ws } = counted();
+    const both = ws.focusAndActive();
+    expect(s.calls).toEqual(["list", "frontmost", "focused 500"]);
+    s.calls.length = 0;
+    expect(both).toEqual({ focus: ws.focusWindow(), active: ws.activeWindow() });
+    expect(s.calls).toEqual(["list", "frontmost", "focused 500", "list", "frontmost", "focused 500"]);
+    expect(both.focus).toMatchObject({ id: 103, title: "Other" });
+    expect(both.active).toMatchObject({ id: 101, wmClass: "TextEdit" });
+  });
+
+  it("names the active window's title from that one AX answer when it is the focused one", () => {
+    const { s, ws } = counted();
+    s.focused.set(500, { id: 101, title: "notes.txt", frame: null });
+    expect(ws.focusAndActive()).toEqual({ focus: ws.focusWindow(), active: ws.activeWindow() });
+    expect(ws.focusAndActive().active).toMatchObject({ id: 101, title: "notes.txt" });
+  });
+
+  it("asks AX nothing for Ember's own focused panel, and only the frontmost app's for the active window's missing title", () => {
+    const { s, ws } = counted({ focusedOwnWindow: () => ownWindow("window:950:0") });
+    const both = ws.focusAndActive();
+    expect(both.focus).toMatchObject({ id: 950, pid: OWN });
+    expect(both.active?.id).toBe(101);
+    expect(s.calls).toEqual(["list", "frontmost", "focused 500"]);
+  });
+
+  it("needs no AX at all when CGWindowList has the active window's title, nor when Ember is frontmost", () => {
+    const { s, ws } = counted({ focusedOwnWindow: () => ownWindow("window:950:0") });
+    s.frontmost = 600;
+    expect(ws.focusAndActive().active).toMatchObject({ id: 104, title: "Downloads" });
+    expect(s.calls).toEqual(["list", "frontmost"]);
+    s.calls.length = 0;
+    s.frontmost = OWN;
+    const ember = ws.focusAndActive();
+    expect([ember.focus?.id, ember.active?.id]).toEqual([950, 950]);
+    expect(s.calls).toEqual(["list", "frontmost"]);
+  });
+
+  it("matches the two calls when AX can't tell, when the app shows no window, and gives nothing after close()", () => {
+    const { s, ws } = counted();
+    for (const frontmost of [null, 999]) {
+      s.frontmost = frontmost;
+      expect(ws.focusAndActive()).toEqual({ focus: ws.focusWindow(), active: ws.activeWindow() });
+    }
+    ws.close();
+    expect(ws.focusAndActive()).toEqual({ focus: null, active: null });
+  });
+});
+
 describe("the apps' open windows on macOS", () => {
   it("lists normal app windows with AX titles where CGWindowList has none, one AX read per app", () => {
     const { s, ws } = setup();
@@ -325,6 +382,31 @@ describe("system dialogs and permissions on macOS", () => {
     expect(ws.systemDialogOpen()).toBe(true);
     expect(ws.secureInput()).toEqual({ on: null, pid: null, app: "" });
     expect(warned).toEqual(['platform.secure_input_unknown {"part":"windows"}']);
+  });
+
+  it("says secure keyboard entry, naming the app, when that and no prompt is why (review #236)", () => {
+    const { s, ws } = setup();
+    expect(ws.systemDialogReason()).toBeNull();
+    // Terminal's "Secure Keyboard Entry": no dialog anywhere, so "a system dialog is open" would be wrong.
+    s.windows.push(w(130, 777, "Terminal", "bash", 60, 60, 700, 400));
+    s.secure = true;
+    s.session = { locked: false, secureInputPid: 777 };
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(ws.systemDialogReason()).toBe(
+      "secure keyboard entry is on in Terminal (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't look at the screen or use the mouse or keyboard until it's off");
+    // A real prompt on screen is the reason then: the dialog's own words stay.
+    s.windows.unshift(w(990, 77, "SecurityAgent", "", 500, 300, 400, 200, 1000));
+    expect(ws.systemDialogReason()).toBeNull();
+    s.windows.shift();
+    // Can't tell: still refused, with the generic words.
+    s.secure = null;
+    s.session = null;
+    expect(ws.systemDialogOpen()).toBe(true);
+    expect(ws.systemDialogReason()).toBeNull();
+    s.secure = true;
+    s.session = { locked: false, secureInputPid: 777 };
+    ws.close();
+    expect(ws.systemDialogReason()).toBeNull();
   });
 
   it("names the app holding secure input, for the refusal text and the doctor", () => {

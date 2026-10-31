@@ -13,12 +13,15 @@
 //                                     and app/ in Contents/Resources; Info.plist edited, the icon, signed ad hoc
 //                                     last (mac-bundle.mjs)
 // Only the target's own platform builds are kept (no musl, no wasm fallbacks, no other OS). Licence and notice files
-// always are. The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
+// always are; a package that ships none gets the text licences.mjs supplies, or nothing is staged. The staged binary's fuses are set as Ember ships them (fuses.mjs: no --inspect, no NODE_OPTIONS).
 // Every file the target needs must exist, or nothing is staged; --allow-missing-sidecar stages without the
 // accessibility host (dist/app/ax-sidecar.cjs) and the UIA bridge (sidecar/uia), an Ember that can't read apps, for a
 // local try only: CI never passes it.
 // Speech models ship beside the Linux app (an RPM sub-package); on Windows and macOS only with --with-models.
-// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--with-models]   (after npm run build)
+// The remote agent's parts (dist/remote-parts, from remote-parts.mjs) go to resources/remote-parts; without them no
+// SSH target can be set up, so staging stops unless --allow-missing-remote-parts.
+// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models]
+//   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -26,14 +29,15 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { specLicenceIds, uncoveredLicences } from "./licences.mjs";
+import { specLicenceIds, suppliedLicence, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
-import { layoutFor, npmInvocation, prodPackageDirs, selectPackages } from "./layout.mjs";
+import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
+import { stageParts } from "./remote-parts.mjs";
 
-const FLAGS = ["--allow-missing-sidecar", "--with-models"];
+const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models"];
 const flags = process.argv.slice(2);
 const unknown = flags.filter(f => !FLAGS.includes(f));
 if (unknown.length) { console.error(`unknown option ${unknown[0]}\nusage: node scripts/package/stage.mjs [${FLAGS.join("] [")}]`); process.exit(2); }
@@ -51,7 +55,7 @@ const rel = p => path.relative(root, p);
 const notStaged = [];
 
 // The built app: main.cjs, its windows, and the helpers it starts beside itself (Linux: desk-agent.cjs, run as
-// plain Node; Windows and macOS: ax-sidecar.cjs, the accessibility host, likewise).
+// plain Node; Windows: ax-sidecar.cjs, the accessibility host, likewise; macOS: the same host, as a utility process).
 const builtMissing = f => {
   const p = path.join(root, "dist/app", f);
   return f.endsWith("/") ? !fs.existsSync(p) || !fs.readdirSync(p).length : !fs.existsSync(p);
@@ -85,6 +89,15 @@ const uncovered = uncoveredLicences(prod.map(src => {
   return { name: p.name, license: lic, readme: fs.existsSync(readme) ? fs.readFileSync(readme, "utf8") : null };
 }), specLicenceIds(fs.readFileSync(path.join(root, "packaging/rpm/ember.spec"), "utf8")));
 if (uncovered.length) throw new Error(`packaging/rpm/ember.spec "License:" doesn't cover ${uncovered.join(", ")}: add the licence there`);
+// Every bundled package's licence text goes with it: its own licence file, or the text Ember supplies (licences.mjs).
+const NOTICE = /^(licen[cs]es?|copying|notices?|copyrightnotice|third[-_]?party[-_]?notices)([-._].*)?$/i;
+const isNotice = (pkgDir, rel) => NOTICE.test(path.basename(rel)) || (/@img[\\/]sharp-(libvips-|win32-)/.test(pkgDir) && rel === "README.md");
+const noticeFiles = src => fs.readdirSync(src).filter(f => isNotice(src, f) && fs.statSync(path.join(src, f)).isFile()).sort();
+const noLicenceText = prod.filter(src => !noticeFiles(src).length).map(src => {
+  const { p } = licenseOf(src);
+  return suppliedLicence(p.name, p.version);
+}).filter(s => "error" in s).map(s => s.error);
+if (noLicenceText.length) throw new Error(noLicenceText.join("\n"));
 
 // The speech models to bundle. Linux: a sub-package beside the app; Windows and macOS: inside the app with
 // --with-models (otherwise Ember downloads them when "Hey Ember" is turned on).
@@ -135,8 +148,8 @@ if (layout.exeResources) {
   exeIdentity = `${layout.exe}: "${read.versions[0].strings[0].values.FileDescription}" ${pkg.version} by ${company}, ${read.iconGroups[0].icons.length} icon sizes, unsigned`;
 }
 // Its fuses: no debugger (--inspect*) and no NODE_OPTIONS, in the app or in what it runs as plain Node; plain Node
-// itself (RunAsNode) stays, for the desk helper and the accessibility host. Only the copy changes, not
-// node_modules/electron.
+// itself (RunAsNode) is refused on macOS and stays on Linux and Windows for their helpers (fuses.mjs says why). Only the
+// copy changes, not node_modules/electron.
 const fuses = flipFuses(path.join(app, layout.fuseFile), EMBER_FUSES);
 const wrongFuses = fuseMismatches(fuses, EMBER_FUSES);
 if (wrongFuses.length) throw new Error(`the staged binary's fuses didn't take: ${wrongFuses.join("; ")}`);
@@ -156,8 +169,6 @@ fs.cpSync(builtDir, path.join(appDir, "dist/app"), {
 
 // Licence and notice files are how the licences are met: they always ship. libvips's LGPL notice is in its README
 // (sharp-libvips's, or sharp's own on Windows, where it carries libvips itself).
-const NOTICE = /^(licen[cs]es?|copying|notices?|copyrightnotice|third[-_]?party[-_]?notices)([-._].*)?$/i;
-const isNotice = (pkgDir, rel) => NOTICE.test(path.basename(rel)) || (/@img[\\/]sharp-(libvips-|win32-)/.test(pkgDir) && rel === "README.md");
 for (const src of prod) {
   const dest = path.join(appDir, path.relative(root, src));
   fs.cpSync(src, dest, {
@@ -182,6 +193,18 @@ for (const p of layout.prune) fs.rmSync(path.join(appDir, "node_modules", p), { 
 for (const s of sidecars) {
   fs.mkdirSync(path.dirname(path.join(resources, s.to)), { recursive: true });
   fs.copyFileSync(path.join(root, s.from), path.join(resources, s.to));
+}
+
+// 3b. The remote agent's parts (design §5.2.2): every archive remote-parts.json names, checked against its size and
+//     SHA-256 as the PC will check it before sending, then remote-parts.json and the Node runtime policy
+//     (remote-runtime.json, which a packaged Ember reads beside them before it sends a remote its runtime).
+const partsSrc = path.join(root, "dist/remote-parts");
+if (fs.existsSync(path.join(partsSrc, "remote-parts.json"))) {
+  stageParts(partsSrc, path.join(resources, REMOTE_PARTS_DIR));
+} else if (flags.includes("--allow-missing-remote-parts")) {
+  console.warn("warning: dist/remote-parts isn't staged (--allow-missing-remote-parts): this package can't work on computers reached over SSH");
+} else {
+  throw new Error("dist/remote-parts/remote-parts.json is missing: run node scripts/package/remote-parts.mjs after npm run build (--allow-missing-remote-parts stages without SSH)");
 }
 
 // 4. Speech models (optional): only when every model is in place and verified (its marker holds the SHA-256 it's
@@ -210,13 +233,15 @@ if (modelsDest && !unverified.length) {
     + VOICE_MODELS.map(m => `${m.name}: ${m.target}\n  licence ${m.license}; from ${m.url}`).join("\n") + "\n");
 }
 
-// 5. Licences: every bundled package's licence and notices, beside Electron's (LICENSE, LICENSES.chromium.html).
+// 5. Licences: every bundled package's licence and notices, beside Electron's (LICENSE, LICENSES.chromium.html); for
+//    a package that ships none, the text Ember supplies (checked before staging).
 const sections = prod.map(src => {
   const { p, lic } = licenseOf(src);
-  const files = fs.readdirSync(src).filter(f => isNotice(src, f) && fs.statSync(path.join(src, f)).isFile()).sort();
+  const files = noticeFiles(src);
+  const texts = files.length ? [] : suppliedLicence(p.name, p.version).texts;
   return [`${p.name} ${p.version}: ${lic}`, ...(files.length
     ? files.map(f => `--- ${f} ---\n${fs.readFileSync(path.join(src, f), "utf8").trim()}`)
-    : ["(no licence file in the package; its package.json gives the licence above)"])].join("\n\n");
+    : texts.map(t => `--- ${path.posix.basename(t)} (the package ships no licence file; supplied with Ember) ---\n${fs.readFileSync(path.join(root, ...t.split("/")), "utf8").trim()}`))].join("\n\n");
 });
 const electronVersion = JSON.parse(fs.readFileSync(path.join(root, "node_modules/electron/package.json"), "utf8")).version;
 const fonts = path.posix.relative(layout.noticesDir, `${layout.resourcesDir}/app/dist/app/renderer/fonts`);

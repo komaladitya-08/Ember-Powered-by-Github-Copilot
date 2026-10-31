@@ -38,6 +38,7 @@ function Set-CacheFile([string]$From, [string]$To) {
 }
 
 try {
+  # Compiled with -LiteralPath below: Add-Type's -Path takes [ and ] in the install folder for wildcards.
   $source = Join-Path $PSScriptRoot 'ember_uia.cs'
   $hash = Get-Sha256 ([IO.File]::ReadAllBytes($source))
   Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase
@@ -75,7 +76,7 @@ try {
             if (-not $mine -or ($name.Contains('.tmp.') -and [IO.File]::GetLastWriteTimeUtc($old) -lt $stale)) { [IO.File]::Delete($old) }
           } catch { <# in use, read-only or already gone: harmless to leave #> }
         }
-        Add-Type -Path $source -ReferencedAssemblies $refs -OutputAssembly ($tmp + '.dll') -OutputType Library -IgnoreWarnings
+        Add-Type -LiteralPath $source -ReferencedAssemblies $refs -OutputAssembly ($tmp + '.dll') -OutputType Library -IgnoreWarnings
         $bytes = [IO.File]::ReadAllBytes($tmp + '.dll')
         $assembly = [Reflection.Assembly]::Load($bytes)
         [IO.File]::WriteAllText($tmp + '.sha256', (Get-Sha256 $bytes))
@@ -92,7 +93,7 @@ try {
     }
   }
   if ($null -eq $assembly) {
-    $types = @(Add-Type -Path $source -ReferencedAssemblies $refs -IgnoreWarnings -PassThru)
+    $types = @(Add-Type -LiteralPath $source -ReferencedAssemblies $refs -IgnoreWarnings -PassThru)
     $assembly = $types[0].Assembly
   }
   $bridge = $assembly.GetType('Ember.Uia.Bridge', $true)

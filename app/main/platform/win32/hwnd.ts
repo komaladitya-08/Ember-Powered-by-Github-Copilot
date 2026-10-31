@@ -132,6 +132,16 @@ export function focusedTopLevel(api: Win32Api): number {
   return (inner && api.root(inner)) || fg;
 }
 
+/**
+ * The window with the keyboard inside the foreground window's thread (GetGUIThreadInfo's hwndFocus: an edit box, a
+ * document's own child window), 0 when none or it can't be told.
+ */
+export function focusedChild(api: Win32Api): number {
+  const fg = api.foregroundWindow();
+  if (!fg) return 0;
+  return api.guiThreadInfo(api.threadProcess(fg).tid)?.focus ?? 0;
+}
+
 const SW_RESTORE = 9;
 
 /**

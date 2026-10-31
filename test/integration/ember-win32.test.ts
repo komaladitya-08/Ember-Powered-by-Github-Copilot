@@ -8,7 +8,14 @@
  * stand-in in overlay-child.ts: the overlay's own window options in a real Electron) shows in a plain capture and is
  * gone from Perception's, which hides it as main does, and shows again afterwards; C15, the window the bridge lists for
  * the Settings app matched by pid to the window system's frame (only with UAC on: EMBER_CI_LUA); and the packaged
- * accessibility host answers a ping when run as Ember.exe in node mode (EMBER_PACKAGED_APP, after staging).
+ * accessibility host answers a ping when run as Ember.exe in node mode (EMBER_PACKAGED_APP, after staging). Last, Ember
+ * itself (the development build, npm run build) started as at login: the real ask chord (Win+Alt+Space through
+ * SendInput), pressed while the user types in the bench's Name field, opens the box, and what it holds of letters typed
+ * straight after is printed (review #78: Windows has no typed-ahead hold; typeahead-probe.ts), with when Ember heard
+ * the chord, showed the box and had the keyboard (its log), how many letters the bench got, and the box's tip to wait
+ * for it (its first openings); then its right-click menu dismissed by a click on the bench leaves the bench the
+ * keyboard (review #77). Last, Ember started again with Text size set to Larger through its settings opens the box
+ * 728 × 111 DIP (142 with the tip's row), its page and field at that size (review #57; ask-size.ts).
  *
  * Skipped off Windows; with EMBER_WIN32_TEST=1 it fails instead of skipping when Windows, the backends, Windows
  * PowerShell, Electron or (with EMBER_PACKAGED_APP set) the packaged app is missing. What this runner can't show is
@@ -22,7 +29,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { _electron as electron, type ElectronApplication } from "playwright-core";
 import sharp from "sharp";
 import type { ElectronParts, Input, Platform, PlatformDeps, Rect, ScreenLike, SidecarLaunch, WindowSystem } from "../../app/main/platform/types";
 import type { Logger } from "../../app/main/logger";
@@ -32,10 +41,13 @@ import { Perception } from "../../app/main/perception";
 import { matchFrame } from "../../app/main/perception/windows";
 import type { Capture } from "../../app/main/perception/capture";
 import { startOverlayChild, type OverlayChild } from "./overlay-child";
+import { PROBE_PACE_MS, PROBE_TEXT, probeTimeline, probeVerdict } from "./typeahead-probe";
+import { askWant, closeAsk, openAskAt, setTextSize, type InEmber } from "./ask-size";
 
 const required = process.env.EMBER_WIN32_TEST === "1";
 const onWindows = process.platform === "win32";
-const root = fileURLToPath(new URL("../../", import.meta.url));
+// Without the trailing separator: as a command-line argument, `"D:\a\Ember\"` ends in an escaped quote on Windows.
+const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const TITLE = "Ember Bench (Windows)";
 const powershell = path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 const POWERSHELL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass"];
@@ -69,6 +81,20 @@ function benchReady(log: string): BenchReady | null {
     }
   }
   return null;
+}
+
+/** How long the bench's Name field is now, by its log's last "text" line for it (0 before any). */
+function benchNameLength(log: string): number {
+  let length = 0;
+  for (const line of fs.existsSync(log) ? fs.readFileSync(log, "utf8").split("\n") : []) {
+    try {
+      const e = JSON.parse(line) as { event?: string; control?: string; length?: number };
+      if (e.event === "text" && e.control === "Name" && typeof e.length === "number") length = e.length;
+    } catch {
+      // a line still being written: read whole next time
+    }
+  }
+  return length;
 }
 
 /** Builds EmberBench.exe (cached in %TEMP% per version) and gives its path. */
@@ -128,6 +154,8 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
   let started: SidecarStatus;
   let bench: ChildProcess | undefined;
   let ready: BenchReady;
+  /** The bench's JSON-lines log (its Name field's length after each change, among the rest). */
+  let benchLog = "";
   let overlay: OverlayChild | null = null;
   /** Perception's hideOverlay: the stand-in when one is up (as main hides its overlay and handle), else nothing to hide. */
   let hideOverlay: () => Promise<() => void> = async () => () => undefined;
@@ -171,7 +199,7 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
       return st?.toolkitAccessibility === true ? st : null;
     }, 120_000);
     const exe = buildBench();
-    const benchLog = path.join(dir, "bench.jsonl");
+    benchLog = path.join(dir, "bench.jsonl");
     // Not windowsHide: that would hide the bench's window.
     bench = spawn(exe, ["-Log", benchLog, "-Seconds", "900"], { stdio: "ignore" });
     ready = await waitFor("the bench's ready line", () => benchReady(benchLog), 60_000);
@@ -319,6 +347,130 @@ describe.skipIf(!onWindows && !required)("Ember on a real Windows desktop", { ti
     } finally {
       child.stdin.end();
       setTimeout(() => { if (child.exitCode === null) child.kill(); }, 3_000).unref();
+    }
+  });
+
+  it("opens the ask box from the real ask chord, says what it holds of letters typed straight after (review #78 probe), and leaves the bench the keyboard when a click there dismisses its right-click menu (review #77)", async () => {
+    const main = path.join(root, "dist", "app", "main.cjs");
+    if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
+    const userData = path.join(dir, "ember-userData");
+    fs.mkdirSync(userData, { recursive: true });
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
+    // As at login: Ember only greets, so no settings window takes the keyboard.
+    const ember: ElectronApplication = await electron.launch({
+      executablePath: createRequire(import.meta.url)("electron") as unknown as string, args: [root, "--autostart"], timeout: 90_000,
+      env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData },
+    });
+    const askWindow = () => ember.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find(x => x.getTitle() === "Ask Ember");
+      return w ? { visible: w.isVisible(), focused: w.isFocused() } : null;
+    });
+    try {
+      await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
+      const accel = "Super+Alt+Space";
+      if (!(await ember.evaluate(({ globalShortcut }, a) => globalShortcut.isRegistered(a), accel))) {
+        notTestable("letters typed straight after the ask chord", `another app holds ${accel}`);
+        return;
+      }
+      await front();
+      const x = input!;
+      // The user is typing in the bench's Name field: letters that go there instead of the box are in the bench's log.
+      const name = ready.controls.Name;
+      x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+      await sleep(150);
+      x.button(1, true);
+      x.button(1, false);
+      await sleep(300);
+      const nameBefore = benchNameLength(benchLog);
+      // Win+Alt+Space with SendInput (what a person's keyboard gives), let go, then the letters at once.
+      const mods = ["Super_L", "Alt_L"].map(n => x.keysymOf(n));
+      const space = x.keysymOf("space");
+      for (const k of mods) expect(x.keysym(k, true)).toBe(true);
+      const pressedAt = Date.now();
+      x.keysym(space, true);
+      x.keysym(space, false);
+      for (const k of [...mods].reverse()) x.keysym(k, false);
+      const typedAt: number[] = [];
+      for (const ch of PROBE_TEXT) {
+        typedAt.push(Date.now());
+        x.textKey!(ch, true);
+        x.textKey!(ch, false);
+        await sleep(PROBE_PACE_MS);
+      }
+      await waitFor("the ask box from the real chord", async () => (await askWindow())?.visible, 5_000)
+        .catch(async (e: unknown) => { throw new Error(`${(e as Error).message} (the ask window: ${JSON.stringify(await askWindow())})`); });
+      await sleep(800);
+      const { held, tip } = await ember.evaluate(async ({ BrowserWindow }) => {
+        const w = BrowserWindow.getAllWindows().find(b => b.getTitle() === "Ask Ember");
+        return w ? await w.webContents.executeJavaScript(`({ held: document.querySelector("#q")?.value ?? "", tip: document.getElementById("tip")?.hidden === false ? document.getElementById("tip").textContent : null })`) as { held: string; tip: string | null } : { held: "", tip: null };
+      });
+      const verdict = probeVerdict("Windows", PROBE_TEXT, held);
+      console.log(verdict.line);
+      // When Ember heard the chord, showed the box and had the keyboard (its own log), and where the lost letters went.
+      const emberLog = path.join(userData, "logs", "ember.log");
+      console.log(probeTimeline("Windows", fs.existsSync(emberLog) ? fs.readFileSync(emberLog, "utf8") : "", pressedAt, typedAt, verdict.lost).line);
+      console.log(`typed-ahead probe (Windows): the bench's Name field got ${benchNameLength(benchLog) - nameBefore} of the letters; the box's tip: ${tip === null ? "not shown" : JSON.stringify(tip)}`);
+      expect(verdict.inOrder, verdict.line).toBe(true);
+      // A fresh profile: this is the box's first opening, where Ember can't hold the letters typed meanwhile.
+      expect(tip, "the box's tip to wait for it on its first openings").toBe("Wait for this box before you type: letters typed sooner go to the app underneath.");
+
+      // Review #77: right-click in the box's field (its Cut, Copy, Paste menu comes up), then click the bench's Name
+      // field. If that click activates the bench, the box goes away and leaves it the keyboard; if the menu's loop
+      // swallowed the click, the box keeps the keyboard. Never: the box shown while the bench is active, or the box
+      // taking the keyboard back from it.
+      const box = await ember.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => w.getTitle() === "Ask Ember")!.getBounds());
+      x.move(box.x + 200, box.y + 33);
+      await sleep(150);
+      x.button(3, true);
+      x.button(3, false);
+      await sleep(800);
+      x.move(Math.round(name.x + name.width / 2), Math.round(name.y + name.height / 2));
+      await sleep(150);
+      x.button(1, true);
+      x.button(1, false);
+      await sleep(1500);
+      const after = await askWindow();
+      const benchActive = ws.activeWindow()?.id === ready.hwnd;
+      console.log(`right-click menu dismissed by a click on the bench (review #77): bench active ${benchActive}, ask box ${JSON.stringify(after)}`);
+      if (benchActive) expect(after?.visible, "the box after the click activated the bench").toBe(false);
+      else expect(after?.visible && after.focused, "the box kept the keyboard (the menu swallowed the click)").toBe(true);
+    } finally {
+      const proc = ember.process();
+      await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
+      if (proc.exitCode === null) proc.kill();
+    }
+  });
+
+  it("opens the ask box as large as its words at Larger text, its window wider and taller, the tip's row too (review #57)", async () => {
+    // Windows' box is a "toolbar" window without a resizing frame that, before the text size reached it, only ever
+    // changed height: this proves it takes the wider bounds (ask-size.ts: the steps handle-menu-live takes on Linux).
+    const main = path.join(root, "dist", "app", "main.cjs");
+    if (!fs.existsSync(main)) throw new Error(`${main} is missing: run npm run build first`);
+    const userData = path.join(dir, "ember-userData-text");
+    fs.mkdirSync(userData, { recursive: true });
+    fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({ version: 1, onboarded: true, wakeWord: false, consent: { version: 1, at: "2026-10-15T00:00:00.000Z" } }));
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (v !== undefined && k !== "ELECTRON_RUN_AS_NODE") env[k] = v;
+    const ember: ElectronApplication = await electron.launch({
+      executablePath: createRequire(import.meta.url)("electron") as unknown as string, args: [root, "--autostart"], timeout: 90_000,
+      env: { ...env, EMBER_TEST_HOOKS: "1", EMBER_USER_DATA: userData },
+    });
+    const inEmber: InEmber = (fn, arg) => ember.evaluate(fn as never, arg) as never;
+    try {
+      await waitFor("Ember's test hooks", () => ember.evaluate(() => !!(globalThis as { __ember?: unknown }).__ember), 60_000);
+      const seen = await openAskAt(inEmber, "larger");
+      console.log(`the ask box at Larger text (review #57): ${JSON.stringify(seen)}`);
+      // 728 × 111 DIP, and a row of round(24 × 1.3) = 31 more while it says to wait for it (its first openings here).
+      expect(seen, JSON.stringify(seen)).toMatchObject(askWant("larger", seen.tip));
+      expect(seen.room, JSON.stringify(seen)).toBeGreaterThanOrEqual(8);
+    } finally {
+      await closeAsk(inEmber);
+      await setTextSize(inEmber, "default").catch(() => undefined);
+      const proc = ember.process();
+      await Promise.race([ember.close().catch(() => undefined), sleep(10_000)]);
+      if (proc.exitCode === null) proc.kill();
     }
   });
 });

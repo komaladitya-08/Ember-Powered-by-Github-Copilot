@@ -5,10 +5,18 @@
  * it never did. libX11 is a fake here, put in Node's require cache where x11.ts and hands/input.ts load koffi from.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { loadPlatform } from "../../app/main/platform";
+import type * as LinuxWindowSystem from "../../app/main/platform/linux/window-system";
+
+/** An X11 window system the platform's openWindows gets in place of opening libX11 (null: the real openLinuxWindows). */
+const openedX11 = vi.hoisted(() => ({ ws: null as WindowSystem | null }));
+vi.mock("../../app/main/platform/linux/window-system", async importOriginal => {
+  const real = await importOriginal<typeof LinuxWindowSystem>();
+  return { ...real, openLinuxWindows: (o: Parameters<typeof real.openLinuxWindows>[0]) => (o.env.DISPLAY && openedX11.ws) || real.openLinuxWindows(o) };
+});
 import { linuxDesk } from "../../app/main/platform/linux/desk";
 import { DeskManager } from "../../app/main/desk/desk";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
@@ -31,6 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  openedX11.ws = null;
   if (realKoffi) requireCjs.cache[koffiPath] = realKoffi;
   else delete requireCjs.cache[koffiPath];
 });
@@ -105,6 +114,37 @@ describe("the Linux platform", () => {
     const p = loadPlatform(deps({ DISPLAY: ":99" }), "linux");
     expect(p.openWindows(recordingLog().log)).toBeNull();
     expect(loads).toEqual(["libX11.so.6"]);
+  });
+
+  describe("in a Wayland session (review #240)", () => {
+    const WAYLAND = "this is a Wayland session, so Ember can't take screenshots or use the mouse and keyboard here: log out and choose “GNOME on Xorg” on the login screen";
+    /** What openLinuxWindows gives once X opened: no system-dialog check of its own, as on Xorg. */
+    const x11 = (): WindowSystem => ({ kind: "x11", activeWindow: () => ({ id: 1, pid: 77, title: "Notes", x: 0, y: 0, width: 10, height: 10, wmClass: "gedit gedit" }) }) as unknown as WindowSystem;
+
+    it("keeps Ember from screenshots and the mouse on this computer, saying why: XWayland shows it only X11 apps", () => {
+      for (const env of [{ DISPLAY: ":0", XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }]) {
+        openedX11.ws = x11();
+        const ws = loadPlatform(deps(env), "linux").openWindows(recordingLog().log)!;
+        expect(ws.systemDialogOpen?.()).toBe(true);
+        expect(ws.systemDialogReason?.()).toBe(WAYLAND);
+        // Reading through XWayland still works as it did (the accessibility tree is the session's own).
+        expect(ws.activeWindow()?.title).toBe("Notes");
+      }
+    });
+
+    it("changes nothing on Xorg, nor where the session type is unset without a Wayland display (Xvfb, xrdp, ssh -X)", () => {
+      for (const env of [{ DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }, { DISPLAY: ":0", XDG_SESSION_TYPE: "x11", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":55" }]) {
+        const opened = openedX11.ws = x11();
+        const ws = loadPlatform(deps(env), "linux").openWindows(recordingLog().log)!;
+        expect(ws).toBe(opened);
+        expect("systemDialogOpen" in ws).toBe(false);
+      }
+    });
+
+    it("is still null when X can't be opened there", () => {
+      expect(loadPlatform(deps({ DISPLAY: ":0", XDG_SESSION_TYPE: "wayland" }), "linux").openWindows(recordingLog().log)).toBeNull();
+      expect(loadPlatform(deps({ XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" }), "linux").openWindows(recordingLog().log)).toBeNull();
+    });
   });
 
   it("warns xtest.unavailable with XTest's error on the logger it is given, as main did", () => {

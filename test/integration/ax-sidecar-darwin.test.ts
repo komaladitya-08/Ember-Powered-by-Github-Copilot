@@ -1,6 +1,7 @@
 /**
- * The accessibility sidecar host end to end on macOS: the host built from source, started as Ember starts it
- * (hostLaunch: its own binary as plain Node, here this Node), with the in-process AX provider, driven through Ember's
+ * The accessibility sidecar host end to end on macOS: the host built from source, started by hostLaunch's spawn form
+ * with this Node (Ember itself forks it as a utility process, which needs Electron: ember-darwin covers that, review
+ * #177), with the in-process AX provider, driven through Ember's
  * real client (AtspiSidecar) against the macOS bench (test/fixtures/mac_bench.js, an AppKit window run by osascript),
  * whose log says what each action did. It also reads the bench with the provider directly in this process, for what
  * the protocol doesn't show: every key of its 200-row list, and the window list's system prompts at rest.
@@ -11,7 +12,8 @@
  * through LaunchServices is (design §10 item 3); this test checks the provider itself. It records the design's "verify
  * in CI" items as it goes: that JXA's target-action works on this macOS (else Save's click can't be heard, said as
  * "not testable on this runner"), and that CFHash keys agree between two host processes (else KEY_MODE must become
- * "path", R4).
+ * "path", R4). It also checks the ask box's read: the field that had the keyboard, and its selection, once another app
+ * has it.
  */
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,7 +25,7 @@ import path from "node:path";
 import { AtspiSidecar, type AxNode, type AxWindow, type ReadWindowResult, type SidecarLaunch, type SidecarStatus } from "../../app/main/perception/sidecar";
 import { hostLaunch } from "../../app/sidecar-host/launch";
 import { AxDarwinProvider } from "../../app/sidecar-host/providers/ax-darwin";
-import { axApiError, openAxApi } from "../../app/sidecar-host/providers/ax-darwin-api";
+import { axApiError, openAxApi, type AxApi, type AxRef } from "../../app/sidecar-host/providers/ax-darwin-api";
 import { axOverlayRole } from "../../app/sidecar-host/roles";
 import type { Logger } from "../../app/main/logger";
 import { windowsNow } from "./darwin-support";
@@ -67,6 +69,25 @@ function benchEvents(log: string): Record<string, unknown>[] {
   });
 }
 const logged = (log: string, match: Record<string, unknown>) => benchEvents(log).find(e => Object.entries(match).every(([k, v]) => e[k] === v));
+
+/**
+ * Selects every character of the element that has the keyboard. That element is AppKit's field editor once a text
+ * field is editing, and the selection lives on the editor (AXSelectedTextRange), not on a keystroke sent at the
+ * process. System Events' Command-A never arrived there (CI 40921989434, 40926685957, 40933628312).
+ */
+function selectFocusedText(api: AxApi, app: AxRef): void {
+  const focused = api.attr(app, "AXFocusedUIElement");
+  if (typeof focused !== "bigint") throw new Error("the bench has no element with the keyboard");
+  try {
+    const chars = api.attr(focused, "AXNumberOfCharacters");
+    const length = typeof chars === "number" ? chars : 0;
+    if (length <= 0) throw new Error("the element with the keyboard has no text to select");
+    const err = api.set(focused, "AXSelectedTextRange", { type: "range", location: 0, length });
+    if (err) throw new Error(`AXSelectedTextRange was not set (AX error ${err.axError})`);
+  } finally {
+    api.release(focused);
+  }
+}
 
 /** This process and its ancestors (the TCC "responsible process" is one of them), for the grant message. */
 function ancestry(): string {
@@ -273,7 +294,8 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
 
   it("reads the 200-row list by range with no two keys alike, and logs no key collision", async () => {
     const notes: string[] = [];
-    const p = new AxDarwinProvider({ open: openAxApi, openError: () => axApiError, owner: process.pid, note: e => notes.push(e) });
+    const details: unknown[] = [];
+    const p = new AxDarwinProvider({ open: openAxApi, openError: () => axApiError, owner: process.pid, note: (e, f) => { notes.push(e); details.push({ e, ...f }); } });
     try {
       await p.start();
       const w = (await p.topWindows()).find(x => x.key === String(windowId));
@@ -283,7 +305,7 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
       const table = snap.nodes.find(n => n.platformRole === "AXTable");
       expect(table, JSON.stringify(snap.nodes.map(n => n.platformRole))).toBeTruthy();
       const rows = (await p.children(table!.handle, 1000)).filter(n => n.platformRole === "AXRow");
-      console.log(`ax-sidecar-darwin: ${rows.length} rows, ${new Set(rows.map(r => r.key)).size} keys, notes ${JSON.stringify(notes)}`);
+      console.log(`ax-sidecar-darwin: ${rows.length} rows, ${new Set(rows.map(r => r.key)).size} keys, notes ${JSON.stringify(details)}`);
       expect(rows).toHaveLength(200);
       expect(new Set(rows.map(r => r.key)).size).toBe(200);
       expect(notes).not.toContain("ax.key_collision");
@@ -343,6 +365,40 @@ describe.skipIf(!available && !required)("the accessibility sidecar host on a re
     } finally {
       owner.stop();
     }
+  });
+
+  it("tells the ask box's read which field had the keyboard once another app has it, and reads its selection (cross-review P1)", async () => {
+    // The ask box shows before the screen is read, and its panel takes the keyboard: the read of the user's window is
+    // told that something had it there (focusBefore {}), and the host asks the app which element (its
+    // AXFocusedUIElement; a field editor counts as the text field it belongs to). Here the Name field has the keyboard
+    // with its text selected, and Finder takes it, as the box would.
+    const api = openAxApi();
+    const app = api?.app(benchPid) ?? null;
+    expect(app, `the bench's app element (${String(axApiError)})`).toBeTruthy();
+    const frontmost = () => api!.attr(app!, "AXFrontmost") === true;
+    if (!frontmost()) api!.set(app!, "AXFrontmost", true);
+    await waitFor("the bench in front", frontmost, 5_000);
+    await reread();
+    await s.request("focus", { id: node("Name", "entry").id });
+    // Focusing the field does not select its words. AppKit gives the keyboard to a field editor the walk doesn't
+    // list. Select the editor's whole range; a Command-A from System Events never landed in it.
+    await waitFor("the Name field with the keyboard", async () => {
+      await reread();
+      return node("Name", "entry").states.includes("focused");
+    }, 5_000);
+    selectFocusedText(api!, app!);
+    const had = await waitFor("the Name field's text selected", async () => {
+      await reread();
+      const n = node("Name", "entry");
+      return n.states.includes("focused") && n.selection === "Ember 1" ? n : null;
+    }, 5_000);
+    console.log(`ax-sidecar-darwin: the Name field has the keyboard, with ${JSON.stringify(had.selection)} selected`);
+    spawnSync("/usr/bin/open", ["-a", "Finder"]);
+    await waitFor("another app in front", () => !frontmost(), 10_000);
+    await reread();
+    console.log(`ax-sidecar-darwin: with Finder in front, the bench's own read says focused: ${JSON.stringify(read.nodes.filter(n => n.states.includes("focused")).map(n => [n.role, n.name]))}`);
+    read = await s.readWindow({ pid: benchPid, path: String(windowId), ownPid: process.pid, focusBefore: {} });
+    expect(node("Name", "entry"), "the Name field, in the read told something had the keyboard").toMatchObject({ states: expect.arrayContaining(["focused"]), selection: had.selection });
   });
 
   it("writes only protocol lines on stdout and notes, never screen text, on stderr", () => {

@@ -490,21 +490,27 @@ describe.skipIf(!onMac && !required)("the macOS backends on a real desktop", () 
       });
 
       it("brings TextEdit's window to the front from a process without UI, and reports it as active and focused", async () => {
-        // TextEdit, just opened, is already in front, and activate() does nothing for the focused window: put Finder
-        // in front first (through LaunchServices, as the user would), so the activation really starts in the background.
+        // TextEdit, just opened, is often already in front. activate() does nothing when this window is already the
+        // front one and has the keyboard, so Finder is brought forward first and the activation starts in the
+        // background. Another of TextEdit's windows can sit in front of the one that has the keyboard: activate
+        // raises that one, and the three answers below are one sample (a later sample can already be a different window).
         const finder = spawnSync("/usr/bin/open", ["-a", "Finder"], { encoding: "utf8" });
         const away = await waitFor(() => { const f = raw.frontmostPid(); return f !== null && f !== pid ? f : null; }, 5_000, "another app in front")
           .catch(() => null);
         if (away === null) warn(`TextEdit stayed in front after open -a Finder (${finder.status} ${finder.stderr}): the activation wasn't exercised from the background`);
         const fallbacks = logged.filter(l => l.startsWith("platform.activation_fallback")).length;
         x.activate(win);
-        await waitFor(() => x.focusedWindow() === win, 10_000, () => `TextEdit's window to have the keyboard (AX: ${JSON.stringify(axReport(pid))})`);
+        const shown = await waitFor(() => {
+          const both = ws.focusAndActive();
+          const active = x.activeWindow();
+          return both.focus?.id === win && both.active?.id === win && active === win ? { both, active } : null;
+        }, 10_000, () => `TextEdit's window to be in front and to have the keyboard (active ${ws.activeWindow()?.id}, focused ${x.focusedWindow()}; AX: ${JSON.stringify(axReport(pid))})`);
         // Whether macOS declined the background activation and LaunchServices did it (R6-mac): for the CI log.
         console.log(`darwin: activation from the background (${away === null ? "not exercised" : `pid ${away} was in front`}) went through LaunchServices = `
           + `${logged.filter(l => l.startsWith("platform.activation_fallback")).length > fallbacks}`);
-        expect(ws.activeWindow()?.id).toBe(win);
-        expect(ws.focusWindow()).toMatchObject({ id: win, pid, wmClass: "TextEdit" });
-        expect(x.activeWindow()).toBe(win);
+        expect(shown.both.active?.id).toBe(win);
+        expect(shown.both.focus).toMatchObject({ id: win, pid, wmClass: "TextEdit" });
+        expect(shown.active).toBe(win);
       }, 20_000);
 
       it("types text whatever the layout, and saves it with Command+S pressed by keysym", async () => {

@@ -64,6 +64,22 @@ jobs:
           EMBER_VOICE_TEST: "1"
       - run: npm run build
       - run: npm run build:lab
+      - name: The built-in GitHub App client id starts a sign-in (GitHub answers with a device code, never printed)
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const id = fs.readFileSync("app/main/agent/github-app.ts", "utf8").match(/export const GITHUB_CLIENT_ID = "([^"]*)"/)?.[1] ?? "";
+            if (!id) { console.log("no built-in client id (a fork or development build): nothing to check"); process.exit(0); }
+            const res = await fetch("https://github.com/login/device/code", {
+              method: "POST",
+              headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ client_id: id, scope: "read:user" }),
+            });
+            const j = await res.json().catch(() => ({}));
+            const ok = res.ok && typeof j.device_code === "string" && typeof j.user_code === "string";
+            console.log(`GitHub answered ${res.status}: ${ok ? "a device code (not shown)" : JSON.stringify({ error: j.error, error_description: j.error_description })}`);
+            process.exit(ok ? 0 : 1);
+          '
 
   el8:
     name: RHEL 8 compatibility (rockylinux:8)
@@ -77,7 +93,7 @@ jobs:
     steps:
       - name: System packages (build tools, Electron runtime libraries, Xvfb)
         run: |
-          dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 \
+          dnf -y -q --nobest install git tar xz file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
@@ -102,23 +118,25 @@ jobs:
         run: |
           chown -R ci .
           sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, &, brackets and non-ASCII in it (its pages must load there)
+        run: sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Zoë's [x]"
       - name: Screen reading and acting on RHEL 8's Python 3.6 (AT-SPI sidecar, a worker against a GTK3 window, Ember's desk, hostile windows, Electron windows and their secret fields, a click that runs a modal dialog)
         run: |
           sudo -u ci env "PATH=$PATH" HOME=/home/ci EMBER_ATSPI_TEST=1 \
-            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts
+            dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" npm run test:integration -- test/integration/perception.test.ts test/integration/worker.test.ts test/integration/desk.test.ts test/integration/safety.test.ts test/integration/perception-electron.test.ts test/integration/action-link.test.ts test/integration/keybuffer-live.test.ts test/integration/overlay-shape-live.test.ts test/integration/handle-menu-live.test.ts test/integration/handle-card-whole-live.test.ts
 
   package:
     name: Package (RPM, AppImage) and install on rockylinux:8
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 55
     container:
       image: rockylinux:8
       options: --security-opt seccomp=unconfined
     steps:
       - name: Build tools only (the RPM must bring in its own runtime dependencies)
         run: |
-          dnf -y -q install git tar xz file binutils findutils which sudo gcc-c++ make python3 rpm-build \
+          dnf -y -q --nobest install git tar xz file binutils findutils which sudo gcc-c++ make python3 rpm-build \
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -133,13 +151,24 @@ jobs:
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - run: npm run build
+      # The real models, so rpm.sh builds the ember-voice-models package too (the release builds it).
+      - name: Speech models (cached; verified by SHA-256)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/voice
+          key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - run: node scripts/voice/prepare.mjs
       - name: Stage the app and check every binary against RHEL 8.4's glibc
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
           scripts/check-symvers.sh dist/package/ember > /dev/null
-      - name: Build the RPM
-        run: scripts/package/rpm.sh
+      - name: Build the RPMs (Ember and its speech models)
+        run: |
+          scripts/package/rpm.sh
+          ls dist/package/ember-voice-models-*.noarch.rpm
       - name: Build the AppImage
         run: scripts/package/appimage.sh
       - name: Install the RPM with dnf (resolves every Requires from the distribution)
@@ -148,6 +177,9 @@ jobs:
           rpm -q --requires ember | grep -v rpmlib
           stat -c '%A %U %n' /opt/ember/chrome-sandbox | grep -q '^-rwsr-xr-x root'
           test -x /usr/bin/ember && test -f /usr/share/applications/ember.desktop
+          # The desktop entry is valid (desktop-file-utils comes with the RPM), with its Ask Ember action (D-45b).
+          desktop-file-validate /usr/share/applications/ember.desktop
+          grep -qx 'Exec=ember --ask' /usr/share/applications/ember.desktop
           # The desk helper ships beside main.cjs, and the installed binary can run it as plain Node.
           test -f /opt/ember/resources/app/dist/app/desk-agent.cjs
           ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'
@@ -172,7 +204,7 @@ jobs:
           # Without a display the check-up starts no GPU, so Chromium prints no GL errors over the report.
           if { sudo -u ci env HOME=/home/ci ember doctor 2>&1 || true; } | grep -E 'ANGLE|eglInitialize|GPU process'; then exit 1; fi
           sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor || true
-          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Sandbox'
+          sudo -u ci env HOME=/home/ci xvfb-run -a ember doctor | grep -q 'ok    Window sandbox'
       - name: The installed Ember starts and shows its window (as a normal user)
         run: |
           sudo -u ci env HOME=/home/ci EMBER_LOG_STDOUT=1 xvfb-run -a sh -c 'timeout 25 ember > /tmp/ember.log 2>&1; true'
@@ -180,8 +212,34 @@ jobs:
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
-      # The packages are about 340 MB, so they're kept only when asked for (Run workflow, "packages"): uploading them on
-      # every run filled the account's artifact storage, after which no artifact could be uploaded at all.
+      - name: "RPM lifecycle: the speech models package, an upgrade to Release 2, rpm -V, and removal that keeps the admin's policy"
+        run: |
+          set -euo pipefail
+          v=$(node -p "require('./package.json').version")
+          # The models package needs the Ember it was built with (Requires: ember = version-release).
+          dnf -y install ./dist/package/ember-voice-models-$v-1.*.noarch.rpm
+          test -f /usr/share/ember/voice-models/silero_vad.onnx
+          rpm -V ember ember-voice-models
+          # An administrator's policy: no package owns it, so an upgrade and a removal leave it as it is.
+          cp packaging/policy.example.json /etc/ember/policy.json
+          EMBER_RPM_RELEASE=2 scripts/package/rpm.sh
+          dnf -y upgrade ./dist/package/ember-$v-2.*.x86_64.rpm ./dist/package/ember-voice-models-$v-2.*.noarch.rpm
+          test "$(rpm -q --qf '%{RELEASE}' ember | cut -d. -f1)" = 2
+          test "$(rpm -q --qf '%{RELEASE}' ember-voice-models | cut -d. -f1)" = 2
+          rpm -V ember ember-voice-models
+          stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
+          cmp packaging/policy.example.json /etc/ember/policy.json
+          rpm -e ember ember-voice-models
+          for p in /opt/ember /usr/share/ember /usr/bin/ember /usr/share/applications/ember.desktop /usr/share/doc/ember; do
+            if [ -e "$p" ]; then echo "::error::$p is still there after rpm -e"; find "$p" | head -20; exit 1; fi
+          done
+          cmp packaging/policy.example.json /etc/ember/policy.json
+          if rpm -qf /etc/ember/policy.json; then echo "::error::a package owns /etc/ember/policy.json"; exit 1; fi
+          # The packages kept for download are Release 1's.
+          rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm
+      # The packages are about 450 MB with the speech models, so they're kept only when asked for (Run workflow,
+      # "packages"): uploading them on every run filled the account's artifact storage, after which no artifact could be
+      # uploaded at all.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.packages
         continue-on-error: true
@@ -203,7 +261,7 @@ jobs:
     steps:
       - name: System packages (as el8, plus gedit and dconf for the task suite)
         run: |
-          dnf -y -q install git tar xz bzip2 file binutils findutils which sudo gcc-c++ make python3 \
+          dnf -y -q --nobest install git tar xz bzip2 file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
             gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
             libXtst libXrandr libXcomposite libXdamage \
@@ -334,6 +392,8 @@ jobs:
           done
       - name: Launch smoke test (development build)
         run: npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, & and brackets in it (its pages must load there)
+        run: node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Jo's [x]"
       - name: Desktop integration tests (window system and input, UI Automation bridge, accessibility host, system integration, vocabularies)
         run: >-
           node scripts/run-integration.mjs test/integration/win32-desktop.test.ts test/integration/uia-bridge.test.ts
@@ -346,6 +406,8 @@ jobs:
         # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
         if: ${{ !cancelled() }}
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
@@ -402,7 +464,7 @@ jobs:
           cat "$report"
           echo "exit status $status"
           if [ "$EMBER_CI_ELEVATED" = 1 ]; then admin=warn; else admin=ok; fi
-          node scripts/package/doctor-rows.mjs "$report" "Compositor=ok" "Accessibility helper=ok" "Mouse and keyboard=ok" "PowerShell=ok" "Helper command line=ok" "Administrator=$admin" "Copilot=warn" "Organisation policy=ok" || { cat "$RUNNER_TEMP/doctor.err"; exit 1; }
+          node scripts/package/doctor-rows.mjs "$report" "Transparent windows=ok" "Accessibility helper=ok" "Mouse and keyboard=ok" "PowerShell=ok" "Helper command line=ok" "Administrator=$admin" "Copilot=warn" "Organisation policy=ok" || { cat "$RUNNER_TEMP/doctor.err"; exit 1; }
           # ember-doctor.cmd, what a user runs in a console: cmd.exe waits for Ember.exe and keeps its exit code. (Its
           # report goes to the console cmd.exe has, which this runner's pipes aren't: only the line count is shown.)
           launcher=dist/package/Ember/ember-doctor.cmd
@@ -486,6 +548,9 @@ jobs:
       - name: Launch smoke test (development build)
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: npm run test:smoke
+      - name: Launch smoke test from a folder whose name has %, #, &, brackets and non-ASCII in it (its pages must load there)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node test/smoke/launch.mjs --folder "Tools C# 100% Free 50%AB (x86) & Zoë's [x]"
       - name: Grant the processes that may be TCC's responsible one, and approve their screen capture
         id: grant
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -519,9 +584,11 @@ jobs:
         id: stage
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
-      - name: "The packaged Ember.app: its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused (so it knows it's packaged)"
+      - name: "The packaged Ember.app: its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused (so it knows it's packaged)"
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
           app=dist/package/Ember.app
@@ -529,11 +596,33 @@ jobs:
           export EMBER_USER_DATA="$RUNNER_TEMP/ember-checks"
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
-          # The accessibility host runs as Ember's binary in node mode; NODE_OPTIONS is ignored there too.
-          ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
-          ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
-          # --inspect opens no debugger, and a packaged Ember refuses to start with it (exit 2).
-          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
+          # The hardened runtime (review #177): its flag on Ember's signature, whatever SIP says.
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\([^)]*runtime'
+          # With it, macOS ignores DYLD_* for Ember, so a library named there isn't loaded (dyld would stop Ember
+          # otherwise: the library doesn't exist), and Ember gets as far as refusing --inspect (exit 2). Only where SIP is
+          # on, as on users' Macs: these runners report it off, and with it off dyld may honour DYLD_* for any binary, so
+          # the line would prove nothing here.
+          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then
+            status=0
+            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib "$exe" --inspect=127.0.0.1:9229 || status=$?
+            test "$status" -eq 2
+          else
+            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"
+          fi
+          # Node mode is refused (review #177: RunAsNode is off on macOS). Given ELECTRON_RUN_AS_NODE=1, Ember's binary
+          # still starts as Ember, which stops at once on --inspect (exit 2, its message), and never runs the script it
+          # is given, which would leave the mark.
+          mark="$RUNNER_TEMP/ember-node-mode-mark"
+          echo 'require("fs").writeFileSync(process.env.EMBER_MARK, "node mode")' > "$RUNNER_TEMP/ember-node-mode.js"
+          rm -f "$mark"
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log
+          if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi
+          echo "Node mode refused: Ember started as itself, refused --inspect (exit 2) and left no mark"
+          # NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)
+          # whatever the fuse says, and node mode is refused, so no run can show the fuse here. `fuses.mjs --check` above
+          # (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused
+          # with it set.
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000, env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
           test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = io.github.komaladitya08.ember
@@ -549,6 +638,14 @@ jobs:
       - name: "Ember itself: start beside the user's app (M1), the ask box (M2), screenshots, the overlay, the packaged host"
         if: ${{ !cancelled() && steps.grant.outcome == 'success' && steps.stage.outcome == 'success' }}
         run: node scripts/run-integration.mjs test/integration/ember-darwin.test.ts
+        env:
+          EMBER_DARWIN_TEST: "1"
+          EMBER_PACKAGED_APP: dist/package/Ember.app
+      - name: "SSH's askpass as Ember itself (askpass-darwin: ssh-add unlocks a key through the development Electron and Ember.app, no Dock icon)"
+        # The macOS build refuses node mode (review #177), so ssh's askpass wrapper starts Ember in its askpass mode.
+        # It needs no permission: run before Ember.app's own grant.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.stage.outcome == 'success' }}
+        run: node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts
         env:
           EMBER_DARWIN_TEST: "1"
           EMBER_PACKAGED_APP: dist/package/Ember.app
@@ -585,7 +682,7 @@ jobs:
           # The check-up exits 1 on any failing row, as the run before the grant must: the report decides, not open's status.
           open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-before.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
           cat "$report"
-          node scripts/package/doctor-rows.mjs "$report" "Accessibility=fail" "Accessibility helper=fail" || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
+          node scripts/package/doctor-rows.mjs "$report" "Reading and using apps=fail" "Accessibility helper=fail" || { cat "$RUNNER_TEMP/doctor-before.err"; exit 1; }
       - name: Grant Ember.app by its bundle id, with its real code requirement
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: |
@@ -601,7 +698,7 @@ jobs:
           open -n -W --stdout "$report" --stderr "$RUNNER_TEMP/doctor-after.err" -a "$PWD/dist/package/Ember.app" --args --doctor || echo "open exited with status $?"
           cat "$report"
           # Copilot warns (not signed in on a runner) rather than failing: a missing runtime is the failure.
-          node scripts/package/doctor-rows.mjs "$report" "Accessibility=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
+          node scripts/package/doctor-rows.mjs "$report" "Reading and using apps=ok" "Accessibility helper=ok" "Copilot=warn" || { cat "$RUNNER_TEMP/doctor-after.err"; exit 1; }
       - name: "Input Monitoring evidence (Q10), as Ember sees it: Ember.app with Accessibility but no Input Monitoring row of its own"
         # Prints what Ember's check-up says of Input Monitoring once the bundle's listen row is gone (the evidence the
         # suites can't give: their processes need Accessibility to post the key they look for), then puts it back.
@@ -684,9 +781,11 @@ jobs:
           EMBER_DARWIN_TEST: "1"
       - name: Stage Ember.app for x64 (signed ad hoc), zip it and make the disk image
         run: |
+          # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
+          node scripts/package/remote-parts.mjs
           node scripts/package/stage.mjs
           node scripts/package/archive.mjs
-      - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, plain Node kept, NODE_OPTIONS ignored, --inspect refused"
+      - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused"
         run: |
           app=dist/package/Ember.app
           exe="$app/Contents/MacOS/Ember"
@@ -705,9 +804,33 @@ jobs:
           test "$machos" -gt 0
           node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"
           codesign --verify --deep --strict --verbose=2 "$app"
-          ELECTRON_RUN_AS_NODE=1 "$exe" -e 'process.exit(0)'
-          ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--require=/nonexistent/ember-fuse-check.js "$exe" -e 'process.exit(0)'
-          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000 }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
+          # The hardened runtime (review #177): its flag on Ember's signature, whatever SIP says.
+          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\([^)]*runtime'
+          # With it, macOS ignores DYLD_* for Ember, so a library named there isn't loaded (dyld would stop Ember
+          # otherwise: the library doesn't exist), and Ember gets as far as refusing --inspect (exit 2). Only where SIP is
+          # on, as on users' Macs: these runners report it off, and with it off dyld may honour DYLD_* for any binary, so
+          # the line would prove nothing here.
+          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then
+            status=0
+            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib "$exe" --inspect=127.0.0.1:9229 || status=$?
+            test "$status" -eq 2
+          else
+            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"
+          fi
+          # Node mode is refused (review #177: RunAsNode is off on macOS). Given ELECTRON_RUN_AS_NODE=1, Ember's binary
+          # still starts as Ember, which stops at once on --inspect (exit 2, its message), and never runs the script it
+          # is given, which would leave the mark.
+          mark="$RUNNER_TEMP/ember-node-mode-mark"
+          echo 'require("fs").writeFileSync(process.env.EMBER_MARK, "node mode")' > "$RUNNER_TEMP/ember-node-mode.js"
+          rm -f "$mark"
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log
+          if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi
+          echo "Node mode refused: Ember started as itself, refused --inspect (exit 2) and left no mark"
+          # NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)
+          # whatever the fuse says, and node mode is refused, so no run can show the fuse here. `fuses.mjs --check` above
+          # (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused
+          # with it set.
+          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000, env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" } }); console.log(r.stdout + r.stderr + "\nexit " + r.status)' "$exe" > inspect.log
           if grep -q 'Debugger listening' inspect.log; then cat inspect.log; exit 1; fi
           if ! grep -q "doesn't start with debugging switches" inspect.log || ! grep -qx 'exit 2' inspect.log; then cat inspect.log; exit 1; fi
           test "$(plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist")" = io.github.komaladitya08.ember

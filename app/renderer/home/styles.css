@@ -19,6 +19,9 @@ body { margin: 0; color: var(--fg); background: var(--bg); font: var(--type-body
 .home > * { min-width: 0; }
 section { display: grid; gap: 8px; }
 .stack { display: grid; gap: 8px; }
+/* What the page hides stays hidden, whatever display a rule gives it (a section, the SSH add form): the browser's own
+   [hidden] rule loses to any author rule that sets display. */
+[hidden] { display: none !important; }
 
 /* ───── Hero: the character on its tile (the app icon's tile), the name, and what Ember is doing ───── */
 .hero { display: flex; align-items: center; gap: 22px; }
@@ -81,7 +84,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* Size: a slider in its row (the filled part of the track follows the value: main.ts sets --fill). */
 .pick-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .pick-row label { color: var(--fg); min-width: 96px; }
-.pick-row output { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
+/* The number beside "Size" is for the eye: the slider's aria-valuetext says it once (an <output> said it twice). */
+.pick-row .size-out { color: var(--muted); margin-left: 6px; font-variant-numeric: tabular-nums; }
 .pick-row input[type="range"] {
   flex: 1; min-width: 140px; height: 22px; margin: 0; background: transparent; cursor: pointer;
   -webkit-appearance: none; appearance: none;
@@ -103,11 +107,32 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* The first-run Start: agreement and the one prominent button (a large capsule). */
 .start-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 6px; padding: 16px; }
 .start-row[hidden], .switch-row[hidden], .hint[hidden] { display: none; }
+/* It is the page's last part, and in first run it stays at the window's foot while the terms scroll, so agreeing and
+   Start are never below the fold (review #104); focus scrolls clear of it (WCAG 2.4.11). A soft shadow sets it apart.
+   From the card's top down, the window's own background covers everything around it, across the whole window, so
+   nothing scrolls into view beside or below the card or through its rounded corners: a shadow spread from a box the
+   card's shape, behind its content, moved down by its spread so it starts at the card's top (a shadow, so the window
+   never scrolls sideways). The box lies a pixel inside the card's, so nothing behind shows through where their rounded
+   edges meet, and the card's edge is drawn over it there, so it shows all round (in increased contrast, its only
+   edge). */
+body.first-run .start-row {
+  position: sticky; bottom: 12px; z-index: 1;
+  box-shadow: 0 -10px 24px -8px rgba(0, 0, 0, 0.6);
+}
+body.first-run .start-row::before {
+  content: ""; position: absolute; inset: 1px; z-index: -1; border-radius: inherit; pointer-events: none;
+  box-shadow: var(--group-edge), 0 100vmax 0 100vmax var(--bg);
+}
+/* Focus scrolls clear of the row and its gap, with the room left at the top for a focus ring (16 px), at the row's own
+   height, which its words set: the text size, the window's width and its zoom wrap them onto more lines (start-row.ts
+   keeps it as --start-row-h). Until it is measured, at least the row at the narrowest window, not zoomed, at each text
+   size (136, 143.8 and 175.6 px). */
+html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138px * var(--text-scale)) + 12px + 16px); }
 .start-row .hint { margin: 0; flex-basis: 100%; }
 #agree-row { min-height: 28px; }
 .start {
   all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-  min-height: 36px; padding: 8px 22px; border-radius: var(--r-capsule); background: var(--accent); color: var(--on-accent);
+  min-height: calc(36px * var(--text-scale)); padding: 8px 22px; border-radius: var(--r-capsule); background: var(--accent); color: var(--on-accent);
   font: 600 15px/20px var(--ember-font); letter-spacing: -0.009em;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 4px 14px color-mix(in srgb, var(--glow) 26%, transparent);
   transition: filter 160ms ease, transform 220ms var(--spring-snappy);
@@ -141,19 +166,24 @@ h2[tabindex="-1"]:focus { outline: none; }
 }
 .sign-in-msg[hidden] { display: none; }
 .sign-in-msg .wait { flex-basis: 100%; color: var(--muted); }
+.sign-in-msg .nowrap { white-space: nowrap; }
 .models { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
 .models[hidden] { display: none; }
 .models label { color: var(--fg); }
-/* A pop-up button, sized to its choice and set at the row's end. */
-.models select {
-  justify-self: end; max-width: 100%; height: 28px; padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
+/* A choice in a list (Speak … out loud), laid out and styled as the model choices. */
+.choice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
+/* A pop-up button, sized to its choice and set at the row's end; its height grows with the text size, as its words do. */
+.models select, .choice select, #text-size {
+  justify-self: end; max-width: 100%; height: calc(28px * var(--text-scale)); padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.models select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.models select option { background: var(--surface-2); color: var(--fg); }
+.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option, .choice select option, #text-size option { background: var(--surface-2); color: var(--fg); }
+/* Narrow: the choice goes under its label. */
+@media (max-width: 480px) { .choice { grid-template-columns: minmax(0, 1fr); } .choice select { justify-self: start; } }
 .models-hint { grid-column: 1 / -1; margin: 0; }
 .usage { margin: 0; color: var(--muted); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
 .usage:empty { display: none; }
@@ -161,6 +191,7 @@ h2[tabindex="-1"]:focus { outline: none; }
 /* ───── Switch rows: the words first, the switch at the row's end (a checkbox keeps its box in front) ───── */
 .switch-row { display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .switch-row:has(> input[role="switch"]) { flex-direction: row-reverse; justify-content: space-between; }
+.switch-row:has(> select) { justify-content: space-between; }
 .switch-row > span { min-width: 0; }
 .locked { opacity: 0.5; }
 
@@ -195,6 +226,7 @@ progress[hidden] { display: none; }
 .terms li[data-icon="hand"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3l7.5 3v5.5c0 4.6-3.2 8.4-7.5 9.5-4.3-1.1-7.5-4.9-7.5-9.5V6z'/%3E%3Cpath d='m8.8 12 2.2 2.2 4.2-4.4'/%3E%3C/svg%3E"); }
 .terms li[data-icon="lock"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='4.5' y='10.5' width='15' height='10.5' rx='2.5'/%3E%3Cpath d='M8 10.5V7.5a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E"); }
 .terms li[data-icon="mic"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3Cpath d='M3.5 3.5l17 17'/%3E%3C/svg%3E"); }
+.terms li[data-icon="plug"] { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4.5' width='18' height='12' rx='2'/%3E%3Cpath d='M8.5 20h7M12 16.5V20'/%3E%3Cpath d='m7 9 2.5 2L7 13M11.5 13h4'/%3E%3C/svg%3E"); }
 
 /* ───── Lists: each one a group of rows, Remove as a plain text button at the row's end ───── */
 .plain-list { list-style: none; margin: 0; padding: 0 16px; }
@@ -211,9 +243,9 @@ progress[hidden] { display: none; }
 .plain-list .btn.quiet:focus-visible { box-shadow: var(--focus-ring); }
 .managed-tag { color: var(--muted); font: var(--type-footnote); }
 .add-row { display: flex; gap: 8px; margin-top: 4px; }
-/* A text field: filled, rounded, Apple's focus ring. */
+/* A text field: filled, rounded, Apple's focus ring; as tall as the button beside it at every text size. */
 .add-row input {
-  flex: 1; min-width: 0; height: 28px; padding: 0 11px; border-radius: var(--r-sm); border: 0;
+  flex: 1; min-width: 0; height: calc(28px * var(--text-scale)); padding: 0 11px; border-radius: var(--r-sm); border: 0;
   background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-body); letter-spacing: -0.006em;
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
@@ -275,13 +307,16 @@ progress[hidden] { display: none; }
 .pill.fail { color: var(--red-text); background: color-mix(in srgb, var(--red) 18%, transparent); }
 .check-label { font-weight: 600; }
 .check-detail { color: var(--muted); overflow-wrap: anywhere; }
-.checks .check-fix { grid-column: 2; justify-self: start; margin-top: 8px; }
+.checks .check-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .facts { margin: 0; padding: 14px 16px; display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; font: 13px/20px var(--ember-mono); }
 
 /* ── First run: only the welcome, the character picker and Start ── */
 body.first-run .after-setup { display: none !important; }
+/* Until the first status says which of the two layouts this is, nothing of the page shows (the window paints its
+   background), so a first run never flashes the full settings first; main.ts lifts it, after 1.5 s at the latest. */
+body.loading .home { visibility: hidden; }
 
 /* ── Section links. Narrow: one row of capsules that scrolls sideways and away with the page. ── */
 .jump {
@@ -304,6 +339,8 @@ h2, summary { scroll-margin-top: 16px; }
   body:not(.first-run) .home > .jump {
     position: fixed; left: 0; top: 0; bottom: 0; width: 200px; z-index: 2;
     margin: 0; padding: 22px 10px; flex-direction: column; gap: 2px; overflow: auto;
+    /* The slim scrollbar (ember.css) shows when the links outgrow a short window: none is only for the narrow row. */
+    scrollbar-width: auto;
     background: #181517; box-shadow: inset -1px 0 0 var(--separator);
   }
   .jump a { display: flex; align-items: center; gap: 10px; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); color: var(--fg); font: 500 14px/20px var(--ember-font); }
@@ -324,6 +361,8 @@ html { scroll-padding-top: 16px; }
 .jump a[href="#conversation-h"] { --tile: #30d158; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5c5 0 9 3.3 9 7.5s-4 7.5-9 7.5c-.9 0-1.8-.1-2.6-.3L5 20.5l.9-3.6C4.1 15.5 3 13.4 3 11c0-4.2 4-7.5 9-7.5z'/%3E%3C/svg%3E"); }
 .jump a[href="#voice-h"] { --tile: #ff375f; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3' fill='black' stroke='none'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3C/svg%3E"); }
 .jump a[href="#privacy-h"] { --tile: #0091ff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l8 3.2v5.8c0 4.9-3.4 9-8 10-4.6-1-8-5.1-8-10V5.7z'/%3E%3C/svg%3E"); }
+.jump a[href="#computers-h"] { --tile: #5e5ce6; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M4.5 4h15A1.5 1.5 0 0 1 21 5.5v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 15.5v-10A1.5 1.5 0 0 1 4.5 4zm.5 2v9h14V6zM8 19h8a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2z'/%3E%3C/svg%3E"); }
+.jump a[href="#commands-h"] { --tile: #3a3a3c; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 7 5 5-5 5M12.5 18h6.5'/%3E%3C/svg%3E"); }
 .jump a[href="#access-h"] { --tile: #00b8c4; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='4.6' r='2.1'/%3E%3Cpath d='M4.2 7.6a1.1 1.1 0 0 1 1.3-.9l4.5.9h4l4.5-.9a1.1 1.1 0 1 1 .4 2.2l-4 .8V13l2 7a1.1 1.1 0 1 1-2.1.6L12.9 15h-1.8l-1.9 5.6a1.1 1.1 0 1 1-2.1-.6l2-7V9.7l-4-.8a1.1 1.1 0 0 1-.9-1.3z'/%3E%3C/svg%3E"); }
 .jump a[href="#activity-h"] { --tile: #a55eea; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E"); }
 .jump a[href="#checks-h"] { --tile: #8e8e93; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14.7 3.3a5 5 0 0 0-5.9 6.5l-5.4 5.4a2 2 0 0 0 2.8 2.8l5.4-5.4a5 5 0 0 0 6.5-5.9l-2.9 2.9-2.4-.5-.5-2.4z'/%3E%3C/svg%3E"); }
@@ -357,3 +396,68 @@ html { scroll-padding-top: 16px; }
   .jump a[aria-current="true"]:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { box-shadow: inset 0 0 0 1px var(--control-edge); }
 }
+
+/* Windows contrast themes (forced colours; the shared part is in ember.css): groups, fields, pop-ups, the character
+   cards and Start keep an edge; the chosen character a thick highlight edge (and its check); the section you are in
+   an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
+@media (forced-colors: active) {
+  .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row, .consent, .managed, .welcome, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .card, .start, .models select, .choice select, #text-size, .add-row input { border: 1px solid ButtonText; }
+  .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
+  /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
+  .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
+  .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
+  /* First run's Start row stays opaque at the window's foot: what covers the window round it is a shadow, which the
+     system drops, so the terms scrolling under it showed beside and below it. The cover is drawn as it is, in the
+     window's colour, with the row's edge in the text colour over it (and the outline above over that). */
+  body.first-run .start-row { background: Canvas; }
+  body.first-run .start-row::before { forced-color-adjust: none; box-shadow: 0 0 0 1px CanvasText, 0 100vmax 0 100vmax Canvas; }
+  /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
+  .models select, .choice select, #text-size { appearance: auto; -webkit-appearance: menulist; background-image: none; }
+  .pick-row input[type="range"] { forced-color-adjust: none; }
+  .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
+  .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
+  .fold > summary::before, .fold > summary:hover::before { background: CanvasText; }
+  .jump a[aria-current="true"] { outline: 1px solid LinkText; outline-offset: -1px; }
+  .jump a::after { background: LinkText; }
+  .jump-badge { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .sign-in-msg code, .conversation .ember .who { color: CanvasText; }
+}
+
+/* ───── Computers and Commands (§8.3): shown once the targets runtime answers ───── */
+.jump a[hidden] { display: none; }
+/* How many setup rows need the user, on the sidebar's Setup link (review #95): tinted like the check's own pills. */
+.jump-badge { margin-left: auto; padding: 2px 7px; border-radius: var(--r-capsule); font: var(--type-caption); font-weight: 600; font-variant-numeric: tabular-nums; }
+.jump-badge.fail { color: var(--red-text); background: color-mix(in srgb, var(--red) 18%, transparent); }
+.jump-badge.warn { color: var(--warn); background: color-mix(in srgb, var(--yellow) 14%, transparent); }
+@media (max-width: 639px) { .jump-badge { margin-left: 6px; } }
+.intro { margin: 0 4px 4px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
+/* A computer's name and status, then its buttons on a line of their own: three buttons beside a long address left
+   both cramped at the default window size (review #163). */
+.targets li { min-height: 48px; flex-wrap: wrap; row-gap: 2px; }
+.target-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+.target-text b { font-weight: 600; }
+.target-name { min-width: 0; overflow-wrap: anywhere; }
+.target-detail { color: var(--muted); font: var(--type-callout); }
+.target-status { color: var(--muted); font: var(--type-callout); }
+.target-note { color: var(--muted); font: var(--type-footnote); }
+.target-actions { flex: 1 1 100%; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
+/* The words line up with the name above (the buttons' padding hangs past it). */
+.targets .target-actions .btn.quiet { margin-right: 0; color: var(--fg); }
+.targets .target-actions .btn.quiet:first-child { margin-left: -8px; }
+.targets .target-actions .btn.quiet.danger { color: var(--red-text); }
+#computers-switches:not(:has(> :not([hidden]))), #wsl-switch:not(:has(> :not([hidden]))) { display: none; }
+.sub-switch { padding-left: 16px; }
+.row-note { color: var(--muted); font: var(--type-footnote); }
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type. */
+html[data-text-size] .hero-text p { font-size: calc(15px * var(--text-scale)); }
+html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
+html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
+html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: calc(28px * var(--text-scale)); }
+html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .facts dd { font-size: calc(13px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
+html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
+@media (min-width: 640px) { html[data-text-size] .jump a { font-size: calc(14px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); } }

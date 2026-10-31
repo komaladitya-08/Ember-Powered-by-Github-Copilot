@@ -164,7 +164,7 @@ describe("the AX API's other calls", () => {
     expect(api.actions(el)).toEqual(["AXPress", "AXShowMenu"]);
   });
 
-  it("sets text with a CFString it gives back, booleans with the constants, and nothing it can't make", () => {
+  it("sets text with a CFString it gives back, a CFRange for a selection, booleans with the constants, and nothing it can't make", () => {
     const { api, base, el } = setup();
     expect(api.set(el, "AXSelected", true)).toBeNull();
     expect(base.calls).toContain("set AXSelected=true");
@@ -172,6 +172,10 @@ describe("the AX API's other calls", () => {
     expect(api.set(el, "AXValue", "Ember 1")).toBeNull();
     const made = base.f.created.slice(before).find(r => (base.f.objects.get(r) as { v?: unknown }).v === "Ember 1")!;
     expect(base.f.counts.get(made)).toBe(0);
+    expect(api.set(el, "AXSelectedTextRange", { type: "range", location: 0, length: 7 })).toBeNull();
+    const range = [...base.f.objects.entries()].find(([, o]) => o.t === "axvalue" && o.type === AX_VALUE.cfRange && o.v[0] === 0 && o.v[1] === 7);
+    expect(range, "a CFRange was made for the selection").toBeTruthy();
+    expect(base.f.counts.get(range![0])).toBe(0);
     expect(api.set(el, "AXPosition", { type: "point", x: 1, y: 2 })).toEqual({ axError: AX_ERROR.illegalArgument });
     expect(api.perform(el, "AXPress")).toBeNull();
     expect(base.calls).toContain("perform AXPress");

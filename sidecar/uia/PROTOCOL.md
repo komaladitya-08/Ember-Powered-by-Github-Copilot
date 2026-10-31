@@ -297,13 +297,29 @@ Result: `{"nodes": RawNode[], "truncated": boolean, "cut": string[], "busy": boo
   other node's `parent` is its parent's index. Each `FindAll(TreeScope.Children)` carries a cache request that
   prefetches every RawNode property with cache scope `Element | Children`, so one call brings two levels (a provider
   that refuses that is asked for one level).
+- Before that call, a slim one (the runtime id, `isOffscreen`, the bounds and the control type, also two levels)
+  counts the level. Up to 400 elements (the children with theirs) it is a short level, read as above. Past that it is
+  a long level, a list or page of thousands of rows: a Win32 list's rows answer each property with a message to the
+  app, so reading every property of each outlasts the deadline. Then only the children that show are read in full;
+  of the offscreen ones, as the slim read has them, the first 50 are listed (each read on its own as it is listed) and
+  the rest are left out, with `cut` `"offscreen"`. A child's own children come from the slim read when it was long,
+  so a long list under a short window is counted once. A combo box's subtree is always read as a short level.
 - An element that is offscreen **and** has no area (empty or zero-size bounds) is left out together with everything
   under it. Every other element is listed with its `isOffscreen` and `bounds`, so the host decides what counts as
   shown.
-- Under one element with more than `maxChildren` children, the on-screen ones are kept first (in order) up to
-  `maxChildren`; that node gets `childCount` and `childrenCut`, and `cut` gets `"nodes"`.
-- `cut` lists, in this order, `"nodes"` (`maxNodes` reached or children left out), `"depth"` (something lies below
-  `maxDepth`) and `"time"` (the walk stopped at its deadline). `truncated` is true when `cut` isn't empty.
+- Nothing under an offscreen element (other than the root) is read: the element itself is listed, its subtree isn't
+  (the host lists neither). A long web page scrolled down has thousands of elements above the viewport, and walking
+  them spent `maxNodes` before the part on screen was reached. The exception is a combo box's subtree, read whole: its
+  closed drop-down is offscreen, and the host tells an editable combo box's choice from the list's selected item.
+- Each element's children are visited on-screen ones first (in their order), then offscreen ones (in theirs). Under
+  one element with more than `maxChildren` children, the first `maxChildren` of that order are kept; that node gets
+  `childCount` and `childrenCut`.
+- Past `maxNodes`, an offscreen element is left out without ending the walk, which goes on through the children it
+  already has (cached flags, no calls) until an element that shows would be left out.
+- `cut` lists, in this order, `"nodes"` (an element that shows was left out: `maxNodes` reached, or more than
+  `maxChildren` children that show), `"depth"` (something lies below `maxDepth`), `"time"` (the walk stopped at its
+  deadline) and `"offscreen"` (only offscreen elements were left out, for either limit or past a long level's first
+  50: nothing that shows is missing). `truncated` is true when `cut` isn't empty.
 - `busy: true` when an app call didn't return by the deadline: the answer then holds the nodes read so far, `cut`
   includes `"time"`, and the process is marked busy until the call returns.
 - Errors: `gone` (the window or element doesn't exist, or no window of `pid` is named `name`), `busy` (the process is

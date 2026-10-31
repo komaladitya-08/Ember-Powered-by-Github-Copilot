@@ -1,0 +1,410 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { RUN_START_MAX_MS, Server, graceSeconds, type ServeDeps } from "../../app/remote/serve";
+import { PolicyWatch } from "../../app/remote/admin";
+import { DesktopController } from "../../app/remote/desktop";
+import { CONTRACTS } from "../../app/remote/contracts";
+import { GATE_WORDS } from "../../app/remote/gate";
+import { AdminPolicySchema, adminSummary, parseAdminPolicy, type LoadedAdminPolicy } from "../../app/main/admin";
+import { emberNamesRegExp, EV_SCHEMAS, OP_SCHEMAS, type Msg, type Op } from "../../app/main/remote/protocol";
+import type { Mux } from "../../app/main/remote/types";
+import type { RunExit, RunnerFacts, RunSpec } from "../../app/main/commands/types";
+import type { Logger } from "../../app/main/logger";
+import type { RemoteRuns } from "../../app/remote/commands";
+
+const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+const PC = "a".repeat(32);
+const NO_POLICY: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
+
+/** A mux that checks what the agent sends as strictly as MX's does (results against their op's schema). */
+function fakeMux() {
+  const sent: Msg[] = [];
+  const bytes: { channel: number; n: number }[] = [];
+  let onMsg: (m: Msg) => void = () => {};
+  let onClose: (why: string) => void = () => {};
+  const ops = new Map<number, Op>();
+  let silent = 0;
+  let pings = 0;
+  const mux: Mux = {
+    send(msg) {
+      if (msg.t === "res" && msg.ok) {
+        const op = ops.get(msg.id)!;
+        const r = (OP_SCHEMAS[op].result as { safeParse(v: unknown): { success: boolean; error?: unknown } }).safeParse(msg.v);
+        if (!r.success) throw new Error(`${op}'s result fails its schema: ${JSON.stringify(r.error)}`);
+      }
+      if (msg.t === "ev") {
+        const r = (EV_SCHEMAS[msg.ev] as { safeParse(v: unknown): { success: boolean } }).safeParse(msg.d);
+        if (!r.success) throw new Error(`${msg.ev} fails its schema`);
+      }
+      sent.push(msg);
+    },
+    onMessage: fn => { onMsg = fn; return () => {}; },
+    sendBytes: (channel, b) => { bytes.push({ channel, n: b.length }); },
+    onBytes: () => () => {},
+    ping: () => { pings++; },
+    silentMs: () => silent,
+    rttMs: 1,
+    inFlight: () => ({ bytes: 0, throughput: 0 }),
+    reset: () => {},
+    onClose: fn => { onClose = fn; return () => {}; },
+  };
+  let id = 0;
+  return {
+    mux, sent, bytes,
+    get pings() { return pings; },
+    setSilent(ms: number) { silent = ms; },
+    close(why: string) { onClose(why); },
+    /** Sends a request and resolves with its answer. */
+    async req(op: Op, a: unknown): Promise<Msg> {
+      const n = ++id;
+      ops.set(n, op);
+      onMsg({ t: "req", id: n, op, a } as Msg);
+      for (let i = 0; i < 200; i++) {
+        const r = sent.find(m => m.t === "res" && m.id === n);
+        if (r) return r;
+        await new Promise(res => setImmediate(res));
+      }
+      throw new Error(`no answer to ${op}`);
+    },
+  };
+}
+
+const facts: RunnerFacts = {
+  os: "linux", shells: ["bash"], shellPaths: { bash: "/usr/bin/bash" }, script: { path: "/usr/bin/script", kind: "util-linux" }, home: "/home/deploy",
+  user: "deploy", privileged: false, pty: true, ember: { paths: [], pids: [1], names: emberNamesRegExp(["ember-remote"]) }, extraPath: [],
+};
+
+/** A server over fakes; `policy` is this computer's. */
+function server(o: { policy?: LoadedAdminPolicy; lockBusy?: boolean; auditFails?: boolean; classify?: ServeDeps["classify"]; deps?: Partial<ServeDeps> } = {}) {
+  const m = fakeMux();
+  const calls: string[] = [];
+  const audit: Record<string, unknown>[] = [];
+  let exited: number | null = null;
+  let runsLive = 0;
+  const runs = {
+    get running() { return runsLive; },
+    knows: (id: string) => id === "0123456789abcdef",
+    start: (spec: RunSpec, channel: number) => { calls.push(`start ${spec.runId} ${channel}`); runsLive++; return { interactive: true }; },
+    input: () => true,
+    stop: (id: string, why: string) => { calls.push(`stop ${id} ${why}`); return true; },
+    stopAll: async (why: string, attended: boolean) => { calls.push(`stopAll ${why} ${attended}`); },
+    allEnded: () => new Promise<void>(r => setTimeout(r, 400)),
+    ladders: () => Promise.resolve(),
+    pids: () => [],
+  } as unknown as RemoteRuns;
+  const desktop = new DesktopController({
+    unavailable: "headless for this test", host: "build-01", discover: async () => ({ access: "none", why: "none" }),
+    spawnChild: () => { throw new Error("no child here"); }, baseEnv: {}, scripts: { atspi: "/a", notice: "/n" },
+    audit: async () => {}, changed: () => {}, consoleStop: () => {}, log: quiet, now: () => Date.now(),
+  });
+  vi.spyOn(desktop, "stop").mockImplementation(() => { calls.push("desktop stop"); });
+  vi.spyOn(desktop, "pause").mockImplementation(() => { calls.push("desktop pause"); });
+  const policy = new PolicyWatch(() => o.policy ?? NO_POLICY, () => {});
+  const deps: ServeDeps = {
+    mux: m.mux, log: quiet, pcId: PC, partsId: "0.1.0-abc", os: "linux", arch: "x64", machineIdHash: "f".repeat(64), isWsl: false,
+    uid: 1000, user: "deploy", home: "/home/deploy", host: "build-01", pid: 4242, policy,
+    lock: async () => (o.lockBusy ? { ok: false, holder: { pid: 7, start: "1", pcId: "b".repeat(32) } } : { ok: true, release: () => calls.push("release"), tookOver: null }),
+    facts: async () => facts,
+    runs,
+    inspect: async paths => paths.map(() => ({ exists: true, real: null })),
+    git: async () => null,
+    classify: o.classify ?? CONTRACTS.classifyCommand,
+    audit: { write: e => { audit.push(e); return !o.auditFails; }, recent: () => [{ event: "x" }] },
+    setAuditSource: () => {},
+    consent: () => calls.push("consent"),
+    desktop,
+    orphans: async () => [],
+    exit: code => { exited = code; },
+    now: () => Date.now(),
+    ...o.deps,
+  };
+  const s = new Server(deps);
+  s.start();
+  return { s, m, calls, audit, get exited() { return exited; }, setRuns(n: number) { runsLive = n; } };
+}
+
+const helloArgs = (o: { pcId?: string; consent?: number; grace?: number; epoch?: number } = {}) => ({
+  proto: 1, partsId: "0.1.0-abc", local: { name: "ana-laptop", os: "linux" }, pcId: o.pcId ?? PC, consent: { version: o.consent ?? 1, at: "2026-10-22T10:00:00Z" },
+  neverLook: [], localAdmin: adminSummary(o.grace ? { policy: AdminPolicySchema.parse({ ssh: { commandGraceSeconds: o.grace } }), source: "/etc/ember/policy.json" } : NO_POLICY), epoch: o.epoch ?? 5,
+});
+
+const run = (text: string, o: { epoch?: number; rules?: string[]; yes?: boolean } = {}) => ({
+  epoch: o.epoch ?? 5,
+  spec: {
+    runId: "0123456789abcdef", taskId: "1-t", shell: "bash", command: text, cwd: "/home/deploy", timeoutMs: 60_000, cols: 80, rows: 24,
+    stamp: { taskId: "1-t", sha256: createHash("sha256").update(text).digest("hex"), verdict: o.yes ? "ask" : "run", classes: [], rules: o.rules ?? [], approval: o.yes ? { ageMs: 50 } : null },
+  },
+});
+
+const res = (m: Msg) => (m.t === "res" ? (m.ok ? { ok: true, v: m.v } : { ok: false, code: m.e.code, m: m.e.m }) : null);
+
+describe("serve (§5.3, §5.4)", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "Date"] }); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("answers nothing but hello before hello, and refuses ops it doesn't know", async () => {
+    const t = server();
+    expect(res(await t.m.req("cmd.facts", {}))).toMatchObject({ ok: false, code: "not_ready" });
+    expect(res(await t.m.req("nope" as Op, {}))).toMatchObject({ ok: false, code: "unknown_op" });
+  });
+
+  it("checks hello: the PC's id from its argv, the parts, the consent", async () => {
+    expect(res(await server().m.req("hello", helloArgs({ pcId: "b".repeat(32) })))).toMatchObject({ ok: false, code: "denied" });
+    expect(res(await server().m.req("hello", { ...helloArgs(), partsId: "0.1.0-other" }))).toMatchObject({ ok: false, code: "bad_request" });
+    expect(res(await server().m.req("hello", helloArgs({ consent: 0 })))).toMatchObject({ ok: false, code: "denied" });
+  });
+
+  it("says busy when another PC's agent holds the lock", async () => {
+    expect(res(await server({ lockBusy: true }).m.req("hello", helloArgs()))).toEqual({ ok: false, code: "busy", m: "Ember from another computer is already working on build-01." });
+  });
+
+  it("refuses to serve under a policy that turns SSH off, and ends", async () => {
+    const t = server({ policy: parseAdminPolicy('{"features":{"ssh":false}}', "/etc/ember/policy.json") });
+    expect(res(await t.m.req("hello", helloArgs()))).toEqual({ ok: false, code: "denied", m: "This computer's administrator doesn't allow Ember here." });
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(t.exited).toBe(0);
+  });
+
+  it("welcomes with its facts, the desktop as it is, and the smaller of both graces", async () => {
+    const t = server({ policy: parseAdminPolicy('{"commands":{"ssh":"on"},"ssh":{"commandGraceSeconds":40}}', "/etc/ember/policy.json") });
+    const w = res(await t.m.req("hello", helloArgs({ grace: 10 })));
+    expect(w).toMatchObject({ ok: true, v: { proto: 1, partsId: "0.1.0-abc", user: "deploy", graceSeconds: 10, desktop: { access: "none", why: "headless for this test" }, facts: { shells: ["bash"] } } });
+    expect(t.calls).toContain("consent");
+    expect(res(await t.m.req("hello", helloArgs()))).toMatchObject({ ok: false, code: "bad_request" });
+    expect(graceSeconds(null, adminSummary(NO_POLICY))).toBe(20);
+  });
+
+  it("runs a command only through gate 2, judged by CL's classifier: an ordinary one starts, audited first", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("cmd.run", run("make")))).toEqual({ ok: true, v: { status: "started", channel: 1, interactive: true } });
+    expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "make", approved: false });
+  });
+
+  it("asks for what its own check finds that the stamp doesn't cover, and starts it after the yes with those rules", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    const first = res(await t.m.req("cmd.run", run("rm -r build")));
+    expect(first).toMatchObject({ ok: true, v: { status: "needs_confirm", reason: GATE_WORDS.disagree } });
+    const rules = (first as { v: { rules: string[]; says: string[] } }).v.rules;
+    expect(rules.length).toBeGreaterThan(0);
+    expect((first as { v: { says: string[] } }).v.says.some(l => /build/.test(l))).toBe(true);
+    expect(t.calls.some(c => c.startsWith("start"))).toBe(false);
+    const ok = res(await t.m.req("cmd.run", run("rm -r build", { yes: true, rules })));
+    expect(ok).toEqual({ ok: true, v: { status: "started", channel: 1, interactive: true } });
+    expect(t.audit.find(e => e.event === "command" && e.phase === "start")).toMatchObject({ command: "rm -r build", approved: true });
+    // Ember's own files are refused here too, whatever the stamp says (D4.5).
+    const own = server();
+    await own.m.req("hello", helloArgs());
+    expect(res(await own.m.req("cmd.run", run("pkill -f ember-remote", { yes: true, rules: ["anything"] })))).toMatchObject({ ok: true, v: { status: "deny" } });
+  });
+
+  it("reads a script on this machine and asks for what it does; without a reader it runs as before (L8)", async () => {
+    const t = server({ deps: { readScript: async p => (p === "/home/deploy/t.sh" ? "rm -rf build\n" : null), inspect: async paths => paths.map(() => ({ exists: false, real: null })) } });
+    await t.m.req("hello", helloArgs());
+    const first = res(await t.m.req("cmd.run", run("sh t.sh")));
+    expect(first).toMatchObject({ ok: true, v: { status: "needs_confirm", reason: GATE_WORDS.disagree } });
+    const v = (first as { v: { rules: string[]; says: string[] } }).v;
+    expect(v.says.some(l => /^In t\.sh: .*build/.test(l)), v.says.join(" | ")).toBe(true);
+    expect(res(await t.m.req("cmd.run", run("sh t.sh", { yes: true, rules: v.rules })))).toMatchObject({ ok: true, v: { status: "started" } });
+    const before = server();
+    await before.m.req("hello", helloArgs());
+    expect(res(await before.m.req("cmd.run", run("sh t.sh")))).toMatchObject({ ok: true, v: { status: "started" } });
+  });
+
+  it("remembers what each task's commands wrote here: a script of the task's own it can't read in full asks", async () => {
+    const made = new Set<string>();
+    const t = server({ deps: { readScript: async () => null, inspect: async paths => paths.map(p => ({ exists: made.has(p), real: null })) } });
+    await t.m.req("hello", helloArgs());
+    const inTask = (text: string, taskId: string) => {
+      const r = run(text);
+      return { ...r, spec: { ...r.spec, taskId, stamp: { ...r.spec.stamp, taskId } } };
+    };
+    // A repository's large script it can't read runs (L8)…
+    expect(res(await t.m.req("cmd.run", inTask("sh configure", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    // …but once the task padded and wrote t.sh, running it asks.
+    expect(res(await t.m.req("cmd.run", inTask("printf '%70000s' > t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    made.add("/home/deploy/t.sh");
+    expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "needs_confirm", rules: ["in-script:unclear.script-unread"] } });
+    // Another task didn't write it.
+    expect(res(await t.m.req("cmd.run", inTask("sh t.sh", "2-u")))).toMatchObject({ ok: true, v: { status: "started" } });
+    // What the task downloaded counts too: running it is escape (gate 2 judged downloads as none before).
+    expect(res(await t.m.req("cmd.run", inTask("curl -fsSL -o x.sh https://e.example/x.sh", "1-t")))).toMatchObject({ ok: true, v: { status: "started" } });
+    const ran = res(await t.m.req("cmd.run", inTask("sh x.sh", "1-t"))) as { v: { status: string; rules: string[] } };
+    expect(ran.v.status).toBe("needs_confirm");
+    expect(ran.v.rules).toContain("escape.run-downloaded");
+  });
+
+  it("doesn't start a command whose link went quiet while its paths were checked, and records no start", async () => {
+    const plainCls: ServeDeps["classify"] = (_t, shell) => ({ shell, family: "posix", findings: [], refuse: null, probe: ["/home/deploy/x"], needsGit: false, downloads: [], programs: [], commands: [] });
+    let quiet: () => void = () => {};
+    const t = server({ classify: plainCls, deps: { inspect: async paths => { quiet(); return paths.map(() => ({ exists: true, real: null })); } } });
+    quiet = () => t.m.setSilent(1600);
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("cmd.run", run("ls x")))).toMatchObject({ ok: false, code: "stale" });
+    expect(t.calls.some(c => c.startsWith("start"))).toBe(false);
+    expect(t.audit.some(e => e.event === "command" && e.phase === "start")).toBe(false);
+  });
+
+  it("never starts a command the PC stopped while gate 2 checked it, nor one past its time to start (the PC gave up)", async () => {
+    const started = new Set<string>();
+    const calls: string[] = [];
+    const runs = {
+      get running() { return started.size; },
+      knows: (id: string) => started.has(id),
+      start: (spec: RunSpec) => { started.add(spec.runId); calls.push(`start ${spec.runId}`); return { interactive: true }; },
+      input: () => true,
+      stop: (id: string, why: string) => { calls.push(`stop ${id} ${why}`); return started.has(id); },
+      stopAll: async () => {}, allEnded: async () => {}, ladders: async () => {}, pids: () => [],
+    } as unknown as RemoteRuns;
+    const probing: ServeDeps["classify"] = (_t, shell) => ({ shell, family: "posix", findings: [], refuse: null, probe: ["/mnt/nfs/data"], needsGit: false, downloads: [], programs: [], commands: [] });
+    let answerPaths: () => void = () => {};
+    const t = server({ classify: probing, deps: { runs, inspect: paths => new Promise(r => { answerPaths = () => r(paths.map(() => ({ exists: true, real: null }))); }) } });
+    await t.m.req("hello", helloArgs());
+    // A stale NFS path: the PC stops waiting and sends cmd.stop while the path check still runs.
+    const answer = t.m.req("cmd.run", run("ls /mnt/nfs/data"));
+    expect(res(await t.m.req("cmd.stop", { runId: "0123456789abcdef", why: "task" }))).toMatchObject({ ok: false, code: "gone" });
+    answerPaths();
+    expect(res(await answer)).toMatchObject({ ok: false, code: "stopped" });
+    expect(calls.some(c => c.startsWith("start"))).toBe(false);
+    expect(t.audit.some(e => e.event === "command" && e.phase === "start")).toBe(false);
+    // A gate that took longer than RUN_START_MAX_MS: the PC may have said "wasn't started" already.
+    const slow: ServeDeps["classify"] = (text, shell, ctx) => { vi.setSystemTime(Date.now() + RUN_START_MAX_MS + 1000); return CONTRACTS.classifyCommand(text, shell, ctx); };
+    const late = server({ classify: slow, deps: { runs } });
+    await late.m.req("hello", helloArgs());
+    late.m.setSilent(0);
+    expect(res(await late.m.req("cmd.run", { ...run("ls"), spec: { ...run("ls").spec, runId: "00000000000000aa" } }))).toMatchObject({ ok: false, code: "stale", m: "This computer took too long to check the command, so it didn't start." });
+    expect(calls.some(c => c.startsWith("start"))).toBe(false);
+  });
+
+  it("classifies with Ember's own pids as they are now, not as they were at hello (D4.5)", async () => {
+    const seen: number[][] = [];
+    const spy: ServeDeps["classify"] = (text, shell, ctx) => { seen.push(ctx.ember.pids); return CONTRACTS.classifyCommand(text, shell, ctx); };
+    const pids = [1];
+    const t = server({ classify: spy, deps: { ember: () => ({ ...facts.ember, pids: [...pids] }) } });
+    await t.m.req("hello", helloArgs());
+    pids.push(777); // the desktop child started after hello
+    await t.m.req("cmd.run", run("kill 777"));
+    expect(seen.at(-1)).toEqual([1, 777]);
+  });
+
+  it("serves one hello: a second one while the first waits for the lock is refused", async () => {
+    let free: () => void = () => {};
+    const t = server({ deps: { lock: () => new Promise(r => { free = () => r({ ok: true, release: () => {}, tookOver: null }); }) } });
+    const first = t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("hello", helloArgs()))).toMatchObject({ ok: false, code: "bad_request" });
+    free();
+    expect(res(await first)).toMatchObject({ ok: true });
+  });
+
+  it("cleans up old versions once hello holds the lock, and a failed clean-up changes nothing else", async () => {
+    let cleaned = 0;
+    const t = server({ deps: { cleanup: async () => { cleaned++; throw new Error("read-only home"); } } });
+    expect(cleaned).toBe(0);
+    expect(res(await t.m.req("hello", helloArgs()))).toMatchObject({ ok: true });
+    expect(cleaned).toBe(1);
+    expect(t.exited).toBeNull();
+  });
+
+  it("asks a person at the screen first when either machine's administrator wants it (§5.3.9; combineAdmin ORs it)", async () => {
+    const asks: { consent: boolean }[] = [];
+    const none = { access: "none", why: "x", notice: "off" } as const;
+    const desktop = {
+      ensure: async (a: { consent: boolean }) => { asks.push(a); return none; }, preview: async () => none,
+      stop() {}, pause() {}, policy() {}, recheck: async () => "x", request: async () => { throw new Error("no"); }, pid: null, state: none,
+    } as unknown as DesktopController;
+    const t = server({ deps: { desktop } });
+    const pcAsks = adminSummary({ policy: AdminPolicySchema.parse({ ssh: { requireConsoleConsent: true } }), source: "/etc/ember/policy.json" });
+    expect(res(await t.m.req("hello", { ...helloArgs(), localAdmin: pcAsks }))).toMatchObject({ ok: true });
+    await t.m.req("desktop.state", {});
+    expect(asks[0]?.consent).toBe(true);
+  });
+
+  it("refuses a command it can't record (write-ahead)", async () => {
+    const t = server({ auditFails: true });
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("cmd.run", run("make", { yes: true, rules: [] })))).toEqual({ ok: true, v: { status: "deny", reason: GATE_WORDS.noAudit } });
+  });
+
+  it("follows this computer's commands mode: off refuses", async () => {
+    const t = server({ policy: parseAdminPolicy('{"neverLook":["x"]}', "/etc/ember/policy.json") });
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("cmd.run", run("ls", { yes: true, rules: [] })))).toEqual({ ok: true, v: { status: "deny", reason: GATE_WORDS.commandsOff } });
+  });
+
+  it("fences: a command from before a stop is stopped, and Stop pulls every part", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    const stop = res(await t.m.req("stop", { epoch: 6 }));
+    expect(stop).toMatchObject({ ok: true, v: { late: [] } });
+    expect(t.calls).toEqual(expect.arrayContaining(["stopAll killswitch true", "desktop stop"]));
+    expect(res(await t.m.req("cmd.run", run("ls", { epoch: 5, yes: true, rules: [] })))).toMatchObject({ ok: false, code: "stopped" });
+    expect(res(await t.m.req("cmd.run", run("ls", { epoch: 6, yes: true, rules: [] })))).toMatchObject({ ok: true, v: { status: "started" } });
+    expect(t.audit.some(e => e.event === "stop" && e.source === "local")).toBe(true);
+  });
+
+  it("says a run's end after its start, with an error cut to 500 characters", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    const exit: RunExit = { code: null, signal: null, ended: "failed-to-start", ms: 1, error: "e".repeat(900) };
+    t.s.runExited("0123456789abcdef", exit, 0);
+    await vi.advanceTimersByTimeAsync(1);
+    await new Promise(r => setImmediate(r));
+    const ev = t.m.sent.find(m => m.t === "ev" && m.ev === "cmd.exit");
+    expect((ev as { d: { exit: RunExit } }).d.exit.error).toHaveLength(500);
+  });
+
+  it("refuses steps on a silent link and from an older epoch", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    const act = { opId: "x", epoch: 5, stamp: { taskId: "1", kind: "click", app: "a", window: "w", element: { role: "push button", name: "OK" }, verdict: "confirm", approval: { given: true }, ageMs: 10 }, op: "do_action", id: 3, action: "click" };
+    expect(res(await t.m.req("act", { ...act, epoch: 4 }))).toEqual({ ok: true, v: { status: "stopped" } });
+    t.m.setSilent(1600);
+    expect(res(await t.m.req("act", act))).toEqual({ ok: true, v: { status: "stale" } });
+    t.m.setSilent(0);
+    expect(res(await t.m.req("act", act))).toEqual({ ok: true, v: { status: "deny", reason: "headless for this test" } });
+  });
+
+  it("stops desktop work at 3 s of silence, and everything at the grace, exiting no sooner than 1.6 s with runs live", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs({ grace: 5 }));
+    t.setRuns(1);
+    t.m.setSilent(3000);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.calls).toContain("desktop pause");
+    expect(t.calls.some(c => c.startsWith("stopAll"))).toBe(false);
+    t.m.setSilent(5000);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(t.calls).toContain("stopAll lost false");
+    expect(t.exited).toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(t.exited).toBeNull();
+    await vi.advanceTimersByTimeAsync(700);
+    expect(t.exited).toBe(0);
+    expect(t.calls).toContain("release");
+  });
+
+  it("stops on EOF without waiting when nothing runs", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    t.m.close("the other end closed the link");
+    await vi.advanceTimersByTimeAsync(10);
+    expect(t.exited).toBe(0);
+    expect(t.calls).toContain("stopAll lost false");
+    expect(t.audit.some(e => e.event === "stop" && e.source === "link-lost")).toBe(true);
+  });
+
+  it("passes cmd.input and cmd.stop to the run, and says gone for one it never had", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("cmd.stop", { runId: "0123456789abcdef", why: "user" }))).toEqual({ ok: true, v: {} });
+    expect(t.calls).toContain("stop 0123456789abcdef user");
+    expect(res(await t.m.req("cmd.input", { runId: "fedcba9876543210", data: "YQ==" }))).toMatchObject({ ok: false, code: "gone" });
+  });
+
+  it("gives the audit's newest entries", async () => {
+    const t = server();
+    await t.m.req("hello", helloArgs());
+    expect(res(await t.m.req("audit.recent", { limit: 5 }))).toEqual({ ok: true, v: { entries: [{ event: "x" }] } });
+  });
+});

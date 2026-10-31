@@ -5,6 +5,7 @@
  */
 
 import { createRequire } from "node:module";
+import { ignoreXErrors } from "../remote/screen";
 import type { Rect } from "./follow";
 import { shapeRects } from "./follow";
 
@@ -38,6 +39,8 @@ export function setInputShape(xid: number, rects: readonly Rect[], scale = 1, di
     // Only an open display is kept: one that isn't there now is tried again next time.
     dpy = x.XOpenDisplay(display ?? null);
     if (!dpy) return false;
+    // A stale overlay xid is BadWindow/BadDrawable: without a handler Xlib's default ends Ember.
+    ignoreXErrors();
     open.set(key, dpy);
   }
   try {

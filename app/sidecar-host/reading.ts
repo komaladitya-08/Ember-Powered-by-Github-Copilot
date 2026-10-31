@@ -18,7 +18,7 @@ import {
 } from "./roles";
 import { secretByLayout } from "./labels";
 import type { SecretValues, WireKey } from "./secrets";
-import { MAX_DEPTH, MAX_NODES, NODE_TEXT, SELECTION_TEXT, boundsOf, buildNodes, clipTo, finite, readText } from "./tree";
+import { MAX_DEPTH, MAX_NODES, NODE_TEXT, SELECTION_TEXT, boundsOf, buildNodes, clipTo, finite, notHandedOver, readText } from "./tree";
 import { describeWindow, findWindow, listWindows, neverLooked, otherWindows, shellOverlays } from "./windows";
 
 /** A read's walk takes at most this long, and the whole read should be done within READ_TOTAL_MS (as the Python sidecar's). */
@@ -128,6 +128,27 @@ async function fillTexts(host: Host, read: ReadRecord, built: ReturnType<typeof 
   }
 }
 
+/**
+ * The ask box's read (`focusBefore`, cross-review P1): on Windows and macOS the box shows before the screen is read, and
+ * once it has the keyboard nothing in the user's window says it has it. Where nothing does, the element that had it when
+ * the user called Ember is taken for the one with it, so the read says it and reads its selection: the deepest one whose
+ * own native window main named as having the keyboard then (Windows: the focused child window), else the one the app
+ * itself says has its keyboard (macOS: provider.focusedKey). Never the window itself. A copy of the snapshot's elements:
+ * the read's record keeps what the provider reported.
+ */
+async function withFocusBefore(host: Host, raw: RawNode[], pid: number, before: unknown): Promise<RawNode[]> {
+  if (!before || typeof before !== "object" || raw.some(n => n.focused)) return raw;
+  const native = optInt((before as Record<string, unknown>).native);
+  let at = -1;
+  if (native) for (let i = 1; i < raw.length; i++) if (raw[i].native === native && (at < 0 || raw[i].depth > raw[at].depth)) at = i;
+  if (at < 0 && host.provider.focusedKey) {
+    // An app that doesn't answer, or can't say: the read goes on without it.
+    const key = await unlessBusy(() => host.provider.focusedKey!(pid)).catch(() => undefined);
+    if (key) at = raw.findIndex((n, i) => i > 0 && n.key === key);
+  }
+  return at < 0 ? raw : raw.map((n, i) => (i === at ? { ...n, focused: true } : n));
+}
+
 async function readWindow(host: Host, params: Record<string, unknown>): Promise<unknown> {
   const t0 = Date.now();
   const pid = optInt(params.pid);
@@ -174,7 +195,7 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
     else {
       host.see(snap.nodes);
       const read: ReadRecord = { window: win, raw: snap.nodes, roles: [], ctx: [], generation: host.provider.generation };
-      const built = buildNodes(snap.nodes, {
+      const built = buildNodes(await withFocusBefore(host, snap.nodes, win.pid, params.focusBefore), {
         vocabulary: host.vocabulary, maxDepth, maxNodes, windowActive: !!win.active,
         allocate: i => host.snapshots.add({ handle: snap.nodes[i].handle, read, index: i }),
         isSecret: (i, role, name) => host.secrets.isSecret(host.keyOf(snap.nodes[i]), snap.nodes[i], role, name),
@@ -193,7 +214,13 @@ async function readWindow(host: Host, params: Record<string, unknown>): Promise<
       }
       if (!busy) await fillTexts(host, read, built, t0 + READ_TOTAL_MS);
       const keyOf = (id: number) => host.keyOf(snap.nodes[built.indexOf.get(id)!]);
-      const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid);
+      // Secret fields it doesn't list may be named in what it lists; past where the snapshot ended, nothing is known.
+      // An offscreen element the bridge left out past maxNodes ("offscreen") is a child of what holds the last element
+      // it read, as with "nodes": the names from there up may carry its value.
+      const unreadAfter = !!snap.busy || (snap.truncated && snap.cut.some(c => c === "nodes" || c === "time" || c === "offscreen"));
+      const red = host.secrets.redact(built.nodes, built.hidden, keyOf, win.pid, {
+        fields: built.unlisted, unnamed: built.unnamed, keyAt: i => host.keyOf(snap.nodes[i]), unreadAfter, inWeb: id => !!built.ctx[built.indexOf.get(id)!]?.inWeb || DOCUMENT_ROLES.has(built.roles[built.indexOf.get(id)!]),
+      });
       for (const id of red.removed) host.snapshots.remove(id);
       nodes = red.nodes;
       secretKeys = red.secretKeys;
@@ -297,6 +324,7 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
   const closed: boolean[] = new Array(raw.length).fill(false);
   let cut = snap.truncated && snap.cut.some(c => c === "nodes" || c === "depth");
   const fields: number[] = [], labels: number[] = [];
+  let loading = false;
   for (let i = 0; i < raw.length; i++) {
     const n = raw[i];
     const p = n.parent >= 0 && n.parent < i ? n.parent : -1;
@@ -304,6 +332,8 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
     if (n.depth > MAX_DEPTH) { cut = true; closed[i] = true; continue; }
     ctx[i] = p >= 0 ? { ...childContext(ctx[p], raw[p], roles[p]), depth: n.depth } : { ...TOP, depth: n.depth };
     const role = roles[i] = host.roleOf(n, ctx[i]);
+    // A page that shows but isn't handed over yet: none of it can be checked (busy, as the Python sidecar says it).
+    if (notHandedOver(raw, i, role)) loading = true;
     // A field is judged as a whole (what is inside it is its contents); a label names one.
     if (FIELD_ROLES.has(role)) { fields.push(i); closed[i] = true; }
     else if (LABEL_ROLES.has(role)) labels.push(i);
@@ -342,7 +372,7 @@ async function secretFields(host: Host, params: Record<string, unknown>): Promis
     }
     return { id: host.snapshots.add({ handle: raw[i].handle, read, index: i }), role: roles[i], bounds: boundsOf(raw[i].bounds)! };
   });
-  const busy = !!snap.busy;
+  const busy = !!snap.busy || loading;
   const over = snap.cut.includes("time");
   return { fields: out, complete: !(busy || over || cut), busy, secretKeys: [...keys.values()], ms: since(t0) };
 }

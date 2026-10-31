@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -186,8 +186,10 @@ describe("desk", () => {
       const m = new DeskManager(quiet, { handOff });
       const dir = path.join(tmp, id);
       fs.mkdirSync(dir);
-      // As if its desk were up, with LibreOffice there (nothing runs: no X server is needed for this).
+      // As if its desk were up, with LibreOffice there (nothing runs: no X server is needed for this), and listening
+      // for Ember's exit as boot() makes it.
       Object.assign(m, { id, dir, info: { display: ":0", width: 1, height: 1, env: {}, handOff } });
+      (m as unknown as { watchExit(): void }).watchExit();
       return m;
     });
     // Its exit handlers, called here rather than when the test's process exits.
@@ -209,6 +211,35 @@ describe("desk", () => {
       expect(locksIn(home)).toEqual(["Documents/.~lock.mine.ods#"]);
     } finally {
       for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("listens for Ember's exit only while a desk is up or still going, so many managers leave process's listeners flat", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-exit-"));
+    const handOff = path.join(root, "Ember");
+    const before = process.listenerCount("exit");
+    vi.useFakeTimers();
+    try {
+      // Made and never started (as most tests make them): nothing to clean up as Ember exits.
+      const desks = Array.from({ length: 20 }, () => new DeskManager(quiet, { handOff }));
+      expect(process.listenerCount("exit")).toBe(before);
+      // Started and stopped, over and over: one listener while each desk is up, none once it has gone.
+      for (const [i, m] of desks.entries()) {
+        const id = `ember-desk-exit${String(i).padStart(2, "0")}`, dir = path.join(root, id);
+        fs.mkdirSync(dir);
+        // As boot() leaves it (nothing runs: no X server is needed for this).
+        Object.assign(m, { id, dir, info: { display: ":0", width: 1, height: 1, env: {}, handOff } });
+        (m as unknown as { watchExit(): void }).watchExit();
+        expect(process.listenerCount("exit")).toBe(before + 1);
+        m.stop();
+        // Its processes may still be quitting for a moment after stop(): the listener stays until they have gone.
+        expect(process.listenerCount("exit")).toBe(before + 1);
+        vi.advanceTimersByTime(1500);
+        expect(process.listenerCount("exit")).toBe(before);
+      }
+    } finally {
+      vi.useRealTimers();
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
@@ -320,7 +351,7 @@ describe("desk", () => {
     const send = e.decide({ taskId: "t", kind: "click", app: "Mail", window: "w", element: { role: "push button", name: "Send" }, onDesk: true });
     expect(send).toMatchObject({ verdict: "confirm", risky: true });
     // Nothing of the user's is borrowed there: the question says where instead (DK7-2).
-    expect(send.prompt).toBe("Click “Send” push button in Mail on my desk?");
+    expect(send.prompt).toBe("Click the “Send” button in Mail on my desk?");
     expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "w", value: "ctrl+w", onDesk: true }).prompt).toBe("Press Ctrl+W in gedit on my desk?");
     expect(e.decide({ taskId: "t", kind: "text", app: "x", window: "w", element: { role: "password text", name: "" }, value: "x", onDesk: true }).verdict).toBe("deny");
   });

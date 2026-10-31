@@ -101,6 +101,18 @@ describe("openLinuxWindows", () => {
   });
 });
 
+describe("openLinuxWindows in a Wayland session (review #240)", () => {
+  // The SSH remote's desktop child opens X11 through it too, in the x11 session logind chose there: the Wayland rule is
+  // the Linux platform's own, for this computer (platform-linux.test.ts), and never reaches a remote.
+  it("adds no system-dialog check of its own: that is this computer's platform's", () => {
+    for (const env of [{ DISPLAY: ":0", XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }, { DISPLAY: ":0", XDG_SESSION_TYPE: "x11" }]) {
+      const ws = openLinuxWindows({ screen, env, open: () => fakeX11().x })!;
+      expect("systemDialogOpen" in ws).toBe(false);
+      expect("systemDialogReason" in ws).toBe(false);
+    }
+  });
+});
+
 describe("x11WindowId", () => {
   it("reads the X id from the native handle's first 32 bits, and is 0 when it can't", () => {
     const handle = Buffer.alloc(8);

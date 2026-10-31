@@ -5,17 +5,21 @@
  * that no key Ember didn't press is down, so the user can take over at once.
  * After close() every method is a harmless no-op: the Display is freed, and
  * touching it would crash the whole process. Keys and buttons Ember still holds
- * are let go before the connection closes.
+ * are let go before the connection closes. The server filters XTest keys like
+ * the user's: with Typing Assist on (XKB AccessX Slow, Bounce or Sticky Keys)
+ * keys would be lost or changed, so the keyboard is refused (the mouse isn't).
  */
 
 import { createRequire } from "node:module";
 import { shiftKey, type KeyLayout, type KeyLevels } from "./keymap";
+import { ignoreXErrors } from "../../remote/screen";
 
 export interface XInput {
   pointer(): { x: number; y: number } | null;
   /** Pointer position plus button/modifier mask (Button1Mask = 256). */
   pointerState(): { x: number; y: number; mask: number } | null;
   move(x: number, y: number): void;
+  /** Presses or releases a logical button (1 left, 2 middle, 3 right, 4–7 wheel), whatever the pointer map. */
   button(button: number, down: boolean): void;
   /** Presses or releases an X keysym; false if the keyboard has no key for it. */
   keysym(sym: number, down: boolean): boolean;
@@ -81,6 +85,29 @@ export interface XInput {
   watchUser?(on: boolean): boolean;
   /** What the user did since the last call, on their own devices (never Ember's XTest input). */
   userInput?(): "pointer" | "keys" | null;
+  /**
+   * Why Ember can't use the keyboard for this now, or null when it can: asked before any key of a shortcut or of
+   * typed text goes down (clicks and scrolls don't ask). `keys`: the shortcut about to be pressed (its modifiers'
+   * keysyms and its key's); absent for typing text. X11: Typing Assist is on, whatever the keys.
+   */
+  keyboardBlockedReason?(keys?: { modifiers: readonly number[]; sym: number }): string | null;
+}
+
+/** Shown while GNOME's Typing Assist is on: the server would drop, debounce or latch Ember's keys like the user's. */
+export const TYPING_ASSIST_REASON =
+  "Typing Assist is on (Slow Keys, Bounce Keys or Sticky Keys, in Settings › Universal Access), so Ember won't use your keyboard: its keys would be lost or changed. It can still click for you, or fill the field directly.";
+
+/** XkbControlsRec.enabled_ctrls bits that change synthetic keys: XkbSlowKeysMask, XkbBounceKeysMask, XkbStickyKeysMask. */
+const TYPING_ASSIST_CTRLS = (1 << 1) | (1 << 2) | (1 << 3);
+
+/**
+ * Why Typing Assist stops the keyboard, from XKB's enabled controls, or null. Slow Keys drops keys held less than its
+ * delay (all of Ember's), Bounce Keys drops a key pressed again within its delay ("hello" arrives as "helo"), and
+ * Sticky Keys latches modifiers and switches itself off at the first chord (GNOME's "disable if two keys are pressed
+ * together"). Ember never turns them off itself: a crash would leave the user's setting off.
+ */
+export function typingAssistReason(enabledCtrls: number): string | null {
+  return enabledCtrls & TYPING_ASSIST_CTRLS ? TYPING_ASSIST_REASON : null;
 }
 
 const requireCjs = createRequire(__filename);
@@ -95,6 +122,17 @@ const RAW_KEY_PRESS = 13, RAW_BUTTON_PRESS = 15;
 /** EWMH window types (_NET_WM_WINDOW_TYPE_…), and those of an app's menus and dropdown lists. */
 const WINDOW_TYPES = ["NORMAL", "DIALOG", "UTILITY", "TOOLBAR", "MENU", "DROPDOWN_MENU", "POPUP_MENU", "COMBO", "TOOLTIP", "NOTIFICATION", "SPLASH", "DND", "DOCK", "DESKTOP"];
 const MENU_TYPES = new Set(["MENU", "DROPDOWN_MENU", "POPUP_MENU", "COMBO"]);
+
+/**
+ * The physical button to send through XTest for a logical one. X maps XTest's buttons through the core pointer map
+ * (`map[i]`: what physical button i + 1 gives) like the hardware's, so with a left-handed map (xmodmap "pointer =
+ * 3 2 1") button 1 would arrive as a right click. The first physical button that gives `logical`, else `logical`
+ * itself (nothing gives it, or the map couldn't be read). The wheel is mapped too: scrolling down stays down.
+ */
+export function physicalButton(map: readonly number[], logical: number): number {
+  const i = map.indexOf(logical);
+  return i >= 0 ? i + 1 : logical;
+}
 
 export function openXInput(displayName?: string): XInput | null {
   try {
@@ -126,6 +164,7 @@ export function openXInput(displayName?: string): XInput | null {
     const XDefaultScreen = x11.func("int XDefaultScreen(void *dpy)");
     const XGetInputFocus = x11.func("int XGetInputFocus(void *dpy, _Out_ unsigned long *focus, _Out_ int *revertTo)");
     const XGetWindowAttributes = x11.func("int XGetWindowAttributes(void *dpy, unsigned long w, _Out_ uint8_t *attrs)");
+    const XGetPointerMapping = x11.func("int XGetPointerMapping(void *dpy, _Out_ uint8_t *map, int n)");
     const XTestFakeMotionEvent = xtst.func("int XTestFakeMotionEvent(void *dpy, int screen, int x, int y, unsigned long delay)");
     const XTestFakeButtonEvent = xtst.func("int XTestFakeButtonEvent(void *dpy, unsigned int button, int isPress, unsigned long delay)");
     const XTestFakeKeyEvent = xtst.func("int XTestFakeKeyEvent(void *dpy, unsigned int keycode, int isPress, unsigned long delay)");
@@ -143,10 +182,13 @@ export function openXInput(displayName?: string): XInput | null {
 
     const dpy = XOpenDisplay(displayName ?? null);
     if (!dpy) { xinputError = new Error("cannot open the X display"); return null; }
+    // A window that closes between being listed and read is BadWindow: without a handler Xlib's default ends Ember.
+    ignoreXErrors();
     const root = XDefaultRootWindow(dpy);
     let open = true;
     // What Ember holds down right now: let go of before the connection closes, or the server keeps them down.
-    const keysHeld = new Set<number>(), buttonsHeld = new Set<number>();
+    // Buttons: logical button → the physical one that went down (the pointer map may change while it is held).
+    const keysHeld = new Set<number>(), buttonsHeld = new Map<number, number>();
     const ScreenSaverOn = 1, XkbUseCoreKbd = 0x100, ShiftMask = 1, LockMask = 2;
     const atoms = new Map<string, number>();
     const atom = (name: string): number => {
@@ -275,6 +317,12 @@ export function openXInput(displayName?: string): XInput | null {
     const watch = xi ? openWatch(koffi, x11, xi, displayName, dpy) : null;
     let watchers = 0;
 
+    /** The core pointer map, read per press: the user can swap the buttons while Ember runs. */
+    const pointerMap = (): number[] => {
+      const map = Buffer.alloc(256);
+      const n = XGetPointerMapping(dpy, map, map.length);
+      return n > 0 ? [...map.subarray(0, Math.min(n, map.length))] : [];
+    };
     const keycode = (code: number, down: boolean) => {
       if (!open || code < 8 || code > 255) return;
       if (down) watch?.sent("keys");
@@ -285,7 +333,7 @@ export function openXInput(displayName?: string): XInput | null {
     const releaseAll = () => {
       if (!open) return;
       for (const code of keysHeld) XTestFakeKeyEvent(dpy, code, 0, 0);
-      for (const b of buttonsHeld) XTestFakeButtonEvent(dpy, b, 0, 0);
+      for (const b of buttonsHeld.values()) XTestFakeButtonEvent(dpy, b, 0, 0);
       keysHeld.clear();
       buttonsHeld.clear();
       XSync(dpy, 0);
@@ -310,9 +358,11 @@ export function openXInput(displayName?: string): XInput | null {
       button(button, down) {
         if (!open) return;
         if (down) watch?.sent("pointer");
-        XTestFakeButtonEvent(dpy, button, down ? 1 : 0, 0);
+        // The physical button the pointer map turns into this one; a release lets go of the one that went down.
+        const sent = (!down && buttonsHeld.get(button)) || physicalButton(pointerMap(), button);
+        XTestFakeButtonEvent(dpy, sent, down ? 1 : 0, 0);
         XFlush(dpy);
-        if (down) buttonsHeld.add(button); else buttonsHeld.delete(button);
+        if (down) buttonsHeld.set(button, sent); else buttonsHeld.delete(button);
       },
       keysym(sym, down) {
         if (!open) return false;
@@ -439,6 +489,21 @@ export function openXInput(displayName?: string): XInput | null {
           const others: KeyLevels[] = [];
           for (let g = 0; g < Math.min(groups, 4); g++) if (g !== group % groups) others.push(levels(mods & ~LockMask, g));
           return { typing, shortcuts, shift: shiftKey(shortcuts), others };
+        } finally {
+          XkbFreeKeyboard(xkb, 0, 1);
+        }
+      },
+      keyboardBlockedReason() {
+        if (!open) return null;
+        // Without XKB there is no AccessX either.
+        const xkb = XkbGetMap(dpy, 0, XkbUseCoreKbd);
+        if (!xkb) return null;
+        try {
+          if (XkbGetControls(dpy, 0x80000000 /* XkbControlsEnabledMask */, xkb) !== 0) return null;
+          // XkbDescRec.ctrls (16) → XkbControlsRec.enabled_ctrls (12).
+          const ctrls = koffi.decode(xkb, 16, "void *");
+          if (!ctrls) return null;
+          return typingAssistReason(Buffer.from(koffi.decode(ctrls, "uint8_t", 16) as Uint8Array).readUInt32LE(12));
         } finally {
           XkbFreeKeyboard(xkb, 0, 1);
         }

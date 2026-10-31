@@ -5,7 +5,7 @@
  * while another app stays frontmost, and AX must never be asked about Ember's own process from its main thread.
  */
 
-import { axWindowId, frontWindowOf, ownFrontWindow, type CGWindowEntry } from "./model";
+import { axWindowId, frontWindowOf, ownFrontWindow, type AXWindowInfo, type CGWindowEntry } from "./model";
 import type { DarwinDesktop } from "./desktop";
 
 /** What focus resolution needs to know. */
@@ -51,6 +51,26 @@ export function resolveFocus(s: FocusSource, list: readonly CGWindowEntry[]): Re
  */
 export function resolveActive(s: FocusSource, list: readonly CGWindowEntry[]): Resolved | null {
   return resolveFront(s, list, false);
+}
+
+/**
+ * resolveFocus and resolveActive on one window list, asking for the frontmost app and its AX focused window once for
+ * both (each alone asks again): what the ask box takes just before it shows (review #78). The same answers as the two.
+ */
+export function resolveFocusAndActive(s: FocusSource, list: readonly CGWindowEntry[]): { focus: Resolved | null; active: Resolved | null } {
+  let front: { pid: number | null } | null = null;
+  const ax = new Map<number, AXWindowInfo | null>();
+  const once: FocusSource = {
+    ...s,
+    desktop: {
+      frontmostPid: () => (front ??= { pid: s.desktop.frontmostPid() }).pid,
+      focusedWindow: pid => {
+        if (!ax.has(pid)) ax.set(pid, s.desktop.focusedWindow(pid));
+        return ax.get(pid) ?? null;
+      },
+    },
+  };
+  return { focus: resolveFocus(once, list), active: resolveActive(once, list) };
 }
 
 function resolveFront(s: FocusSource, list: readonly CGWindowEntry[], focused: boolean): Resolved | null {

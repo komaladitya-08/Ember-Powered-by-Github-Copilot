@@ -5,7 +5,7 @@ import { BUBBLE_CSS } from "@ember/bubble";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const shared = read("app/renderer/shared/ember.css");
-const PAGES = ["home", "overlay", "handle", "ask", "desk"];
+const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt"];
 
 /** A token's value in the shared stylesheet's :root (the first one: the dark appearance). */
 const token = (name: string) => {
@@ -35,6 +35,33 @@ const contrast = (a: RGB, b: RGB) => {
   return (x + 0.05) / (y + 0.05);
 };
 const solid = (c: string) => parse(c).rgb;
+
+/** A list split at its top-level commas (`:is(h1, h2)` and `rgba(…)` stay whole). */
+const selectors = (list: string): string[] => {
+  const out: string[] = [];
+  let depth = 0, from = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] === "(") depth++;
+    else if (list[i] === ")") depth--;
+    else if (list[i] === "," && depth === 0) { out.push(list.slice(from, i).trim()); from = i + 1; }
+  }
+  return [...out, list.slice(from).trim()];
+};
+/** The rules of a stylesheet's `@media (forced-colors: active)` block, as [selectors, declarations]. */
+const forcedRules = (css: string): [string[], string][] => {
+  const at = css.indexOf("@media (forced-colors: active) {");
+  if (at < 0) return [];
+  const open = css.indexOf("{", at);
+  let depth = 0, end = open;
+  for (let i = open; i < css.length; i++) {
+    if (css[i] === "{") depth++;
+    else if (css[i] === "}" && --depth === 0) { end = i; break; }
+  }
+  const body = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, "");
+  return [...body.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [selectors(m[1]), m[2]] as [string[], string]);
+};
+/** Every declaration the forced-colours block gives `selector`. */
+const forced = (css: string, selector: string) => forcedRules(css).filter(([s]) => s.includes(selector)).map(([, d]) => d).join(" ");
 
 describe("the design system's colours", () => {
   const surfaces = ["surface-0", "surface-1", "surface-2", "glass-solid"].map(token);
@@ -68,10 +95,55 @@ describe("the design system's colours", () => {
   });
 });
 
+describe("the keyboard focus ring", () => {
+  /** `--focus-ring` as the default appearance and Increase Contrast set it, with the accent each uses. */
+  const contrastBlock = /@media \(prefers-contrast: more\) \{\s*:root \{([^}]*)\}/.exec(shared)![1];
+  const modes = [
+    { mode: "default", ring: token("focus-ring"), accent: token("accent") },
+    { mode: "increase contrast", ring: /--focus-ring: ([^;]+);/.exec(contrastBlock)![1].trim(), accent: /--accent: ([^;]+);/.exec(contrastBlock)![1].trim() },
+  ];
+  /** A colour the ring names: a token, or the accent mixed toward transparent (as rgba). */
+  const colour = (c: string, accent: string) => {
+    const mix = /^color-mix\(in srgb, var\(--accent\) (\d+)%, transparent\)$/.exec(c);
+    if (mix) return `rgba(${solid(accent).join(", ")}, ${Number(mix[1]) / 100})`;
+    const v = /^var\(--([\w-]+)\)$/.exec(c);
+    return v ? (v[1] === "accent" ? accent : token(v[1])) : c;
+  };
+  /** The ring's shadows, inside out: [spread px, colour]. */
+  const layers = (ring: string, accent: string) => selectors(ring).map(l => {
+    const m = /^0 0 0 (\d+)px (.+)$/.exec(l.trim())!;
+    return [Number(m[1]), colour(m[2], accent)] as const;
+  });
+
+  it("is set off from a filled control by a gap of the window's colour, so focus on an accent button shows as a ring (review #244)", () => {
+    for (const { mode, ring, accent } of modes) {
+      const ls = layers(ring, accent);
+      expect(ls.length, mode).toBe(2);
+      const [[gap, gapColour], [outer, ringColour]] = ls;
+      expect(gapColour, mode).toBe(token("surface-0"));
+      expect(gap, mode).toBeGreaterThanOrEqual(2);
+      expect(outer - gap, mode).toBeGreaterThanOrEqual(2);
+      // The gap against the accent fill it rings, and the ring against the gap and each surface (WCAG 1.4.11: 3:1).
+      expect(contrast(solid(gapColour), solid(accent)), mode).toBeGreaterThanOrEqual(3);
+      for (const bg of ["surface-0", "surface-1", "surface-2", "glass-solid"].map(token)) {
+        expect(contrast(over(ringColour, bg), solid(bg)), `${mode} on ${bg}`).toBeGreaterThanOrEqual(3);
+        expect(contrast(over(ringColour, bg), solid(gapColour)), `${mode} against its gap`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("is the same ring in the bubble when it runs without ember.css", () => {
+    const fallbacks = [...BUBBLE_CSS.matchAll(/var\(--focus-ring, ([^;]+)\);/g)].map(m => m[1].replace(/\)$/, ""));
+    expect(fallbacks.length).toBeGreaterThan(0);
+    for (const f of fallbacks) expect(layers(f, token("accent")).map(([px]) => px)).toEqual(layers(token("focus-ring"), token("accent")).map(([px]) => px));
+  });
+});
+
 describe("shape", () => {
   it("rounds corners only from the radius tokens (or a circle, a capsule's half, or what a parent passes on)", () => {
     const sources = [shared, BUBBLE_CSS, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
-    const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|50%|0|inherit|1px)$/;
+    // A capsule's half grows with the text size too, as the field it rounds does (the ask box's: review #57).
+    const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|calc\(\(var\(--r-[a-z]+\) \+ \d+px\) \* var\(--text-scale\)\)|50%|0|inherit|1px)$/;
     for (const css of sources) for (const [, v] of css.matchAll(/border-radius: ([^;]+);/g)) expect(v, v).toMatch(ok);
   });
 });
@@ -134,5 +206,87 @@ describe("every window", () => {
     const line = Number(/line-height: (\d+)px/.exec(meta)![1]) + 2 * Number(/padding: (\d+)px/.exec(meta)![1]) + 2 * border;
     expect(/const SIZE = \{ width: 560, height: 92 \}/.test(read("app/main/ask.ts"))).toBe(true);
     expect(2 * inset + field + gap + line).toBeLessThanOrEqual(92);
+  });
+});
+
+describe("Windows contrast themes (forced colours)", () => {
+  const css = (page: string) => page === "shared" ? shared : page === "bubble" ? BUBBLE_CSS : read(`app/renderer/${page}/styles.css`);
+
+  it("gives every window's controls and groups a real edge, as the system drops the shadows that draw them (WCAG 1.4.11; review #44, #151, #242, #267, #129)", () => {
+    const edged: [string, string][] = [
+      ["shared", ".btn"], ["home", ".card"], ["home", ".start"], ["home", ".models select"], ["home", ".add-row input"], ["home", ".group"],
+      ["overlay", ".task-actions button"], ["overlay", ".where"], ["bubble", ".eb-actions button"], ["handle", ".actions button"],
+      ["handle", ".task-actions button"], ["handle", ".target"], ["command", ".tab"], ["command", ".command"], ["command", ".card"],
+      ["prompt", ".form input"], ["desk", "button"], ["command", ".tab-where"], ["home", ".jump-badge"],
+    ];
+    for (const [page, sel] of edged) expect(forced(css(page), sel), `${page}: ${sel}`).toMatch(/(border|outline): 1px solid (ButtonText|CanvasText)/);
+    // Switches and checkboxes keep their geometry: drawn as they are, their edge token a system colour.
+    expect(forced(shared, 'input[type="checkbox"]')).toContain("forced-color-adjust: none");
+    expect(forced(shared, ":root")).toContain("--control-edge: ButtonText;");
+    expect(forced(shared, 'input[type="checkbox"][role="switch"]::before')).toContain("background: ButtonText;");
+    // The slider: a track and a thumb in system colours.
+    expect(forced(css("home"), '.pick-row input[type="range"]::-webkit-slider-runnable-track')).toMatch(/Highlight .*CanvasText/);
+    expect(forced(css("home"), '.pick-row input[type="range"]::-webkit-slider-thumb')).toContain("background: ButtonText;");
+    // Pop-ups: the system's own chevron, and not the painted one too (an image the system keeps).
+    expect(forced(css("home"), ".models select")).toMatch(/appearance: auto;.*background-image: none;/);
+  });
+
+  it("shows keyboard focus as a real outline in every window, the bubble included (WCAG 2.4.7; review #44, #151, #267)", () => {
+    const ring = forcedRules(shared).find(([s]) => s.some(x => x.startsWith(":focus-visible")));
+    expect(ring?.[1]).toMatch(/outline: 2px solid Highlight !important; outline-offset: 2px;/);
+    expect(forced(shared, ":root")).toContain("--focus-ring: 0 0 0 0 transparent;");
+    // The bubble also runs without ember.css (the character lab).
+    expect(forced(BUBBLE_CSS, ".eb-actions button:focus-visible")).toContain("outline: 2px solid Highlight;");
+    // The terminal's own input is hidden: the terminal shows that it has the keyboard.
+    expect(forced(css("command"), ".term:focus-within")).toContain("outline: 2px solid Highlight;");
+  });
+
+  it("keeps every state symbol and status dot painted, in a system colour (WCAG 1.4.1; review #242, #129)", () => {
+    const root = forced(shared, ":root");
+    for (const t of ["accent", "green", "red", "yellow", "purple", "blue", "gray"]) expect(root, t).toMatch(new RegExp(`--${t}: (Highlight|CanvasText|GrayText);`));
+    expect(forced(BUBBLE_CSS, ".ember-bubble[data-mood]")).toContain("--eb-mood: CanvasText;");
+  });
+
+  it("marks what is chosen by more than colour: the character, the selected tab and the section you are in (review #44, #151, #267)", () => {
+    expect(forced(css("home"), '.card[aria-checked="true"]')).toMatch(/border: 3px solid Highlight/);
+    expect(forced(css("command"), '.tab[aria-selected="true"]')).toMatch(/background: Highlight;/);
+    expect(forced(css("home"), '.jump a[aria-current="true"]')).toMatch(/outline: 1px solid LinkText/);
+  });
+
+  it("draws a control filled with the highlight as it is, so the system's text backplate can't hide its words", () => {
+    for (const page of ["shared", "bubble", ...PAGES]) {
+      for (const [sel, decls] of forcedRules(css(page))) {
+        if (/(^|; |\s)color: HighlightText/.test(decls)) expect(decls, `${page}: ${sel.join(", ")}`).toContain("forced-color-adjust: none");
+      }
+    }
+    // Filled through the accent token: the prominent buttons of each window.
+    for (const [page, sel] of [["shared", ".btn:not(.quiet)"], ["home", ".start"], ["handle", ".actions button.primary"], ["desk", "body.control #control"], ["bubble", ".eb-actions button.eb-primary"]]) {
+      expect(forced(css(page), sel), `${page}: ${sel}`).toContain("forced-color-adjust: none");
+    }
+  });
+
+  it("keeps first run's Start row opaque at the window's foot, so the terms scrolling under it don't show round it", () => {
+    // What covers the window round a sticky part is a shadow spread across it (a shadow, so the window never scrolls
+    // sideways), and the system drops every shadow: each such cover is drawn as it is there, in the window's colour.
+    const covers: [string, string][] = [];
+    for (const page of PAGES) {
+      const plain = css(page).replace(/\/\*[\s\S]*?\*\//g, "");
+      const inForced = new Set(forcedRules(plain).map(([s, d]) => `${s.join(", ")}{${d}`));
+      for (const m of plain.matchAll(/([^{}]+)\{([^}]*)\}/g)) {
+        const sel = m[1].trim().replace(/^@media \(forced-colors: active\) \{\s*/, "");
+        if (inForced.has(`${selectors(sel).join(", ")}{${m[2]}`) || !/box-shadow:[^;]*\d+vmax/.test(m[2])) continue;
+        covers.push(...selectors(sel).map(s => [page, s] as [string, string]));
+      }
+    }
+    expect(covers).toContainEqual(["home", "body.first-run .start-row::before"]);
+    for (const [page, sel] of covers) {
+      const d = forced(css(page), sel);
+      expect(d, `${page}: ${sel}`).toContain("forced-color-adjust: none");
+      expect(d, `${page}: ${sel}`).toMatch(/box-shadow: [^;]*\d+vmax Canvas[;,]/);
+    }
+    // The row itself in the window's colour, with an edge in the text colour.
+    expect(forced(css("home"), "body.first-run .start-row")).toContain("background: Canvas;");
+    expect(forced(css("home"), ".start-row")).toMatch(/outline: 1px solid CanvasText/);
+    expect(forced(css("home"), "body.first-run .start-row::before")).toMatch(/box-shadow: 0 0 0 1px CanvasText,/);
   });
 });

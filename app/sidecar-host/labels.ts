@@ -20,6 +20,17 @@ export function secretByLayout(nodes: AxNode[]): number[] {
     && isSecretLabel(labels.get(n.id) ?? "")).map(n => n.id);
 }
 
+/**
+ * Of `fields` (unnamed fields a read doesn't list, as nodes with ids of their own), the ones beside or under a label of
+ * the read (`nodes`) that says their contents are secret, by id: as the Python sidecar's secret_by_labels judges a
+ * field it didn't list by the read's labels.
+ */
+export function secretByLayoutAmong(nodes: AxNode[], fields: AxNode[]): Set<number> {
+  if (!fields.length) return new Set();
+  const ids = new Set(fields.map(f => f.id));
+  return new Set(secretByLayout([...nodes, ...fields]).filter(id => ids.has(id)));
+}
+
 /** How deep inside an option its label is looked for, and how many children of each level. */
 export const INNER_LABEL_LEVELS = 4;
 const INNER_LABEL_CHILDREN = 16;

@@ -11,10 +11,11 @@ import type { Logger } from "../../app/main/logger";
 type Win = X11Window & { wmClass: string; wmClassName?: string };
 
 /** A logger that keeps its warnings (the event names only). */
-function recordingLog(): { log: Logger; warnings: string[] } {
+function recordingLog(): { log: Logger; warnings: string[]; infos: [string, unknown][] } {
   const warnings: string[] = [];
-  const log = { debug() {}, info() {}, warn(event: string) { warnings.push(event); }, error() {}, child() { return log; } } as unknown as Logger;
-  return { log, warnings };
+  const infos: [string, unknown][] = [];
+  const log = { debug() {}, info(event: string, fields?: unknown) { infos.push([event, fields]); }, warn(event: string) { warnings.push(event); }, error() {}, child() { return log; } } as unknown as Logger;
+  return { log, warnings, infos };
 }
 
 const top = (id: number, pid: number | null, r: Bounds, title = "", wmClass = "app"): StackedWindow =>
@@ -54,9 +55,11 @@ function desktop(o: {
   window?: AxWindow | null; nodes?: AxNode[]; listed?: AxWindow[];
   shell?: { overlays: ShellOverlay[]; complete?: boolean } | Error;
   stack?: StackedWindow[]; active?: Win | null; focus?: Win | null; clients?: Win[];
-  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean;
+  capture?: PerceptionWindows["capture"]; systemDialogOpen?: () => boolean; systemDialogReason?: () => string | null;
   screen?: Bounds; neverLook?: string[];
-} & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay">) {
+  screenRecording?: () => boolean;
+  secretFields?: (w: { pid: number; path: string }) => { fields: { id: number; bounds: Bounds }[]; complete: boolean; busy?: boolean };
+} & Pick<PerceptionOptions, "words" | "isSecurityWindow" | "hideOverlay" | "onNoScreenAccess" | "os">) {
   const screen = o.screen ?? { x: 0, y: 0, width: 300, height: 200 };
   const captures: number[][] = [];
   let shellAsked = 0;
@@ -71,26 +74,29 @@ function desktop(o: {
       if (o.shell instanceof Error) throw o.shell;
       return o.shell ?? { overlays: [] };
     },
-    secretFields: async () => ({ fields: [], complete: true, ms: 1 }),
+    secretFields: async (w: { pid: number; path: string }) => ({ ms: 1, ...(o.secretFields ? o.secretFields(w) : { fields: [], complete: true }) }),
   } as unknown as AtspiSidecar;
-  const ws: PerceptionWindows = {
+  const ws: NonNullable<PerceptionOptions["x11"]> = {
     stack: () => o.stack ?? [],
     activeWindow: () => o.active ?? null,
     focusWindow: () => o.focus ?? null,
     clientWindows: () => o.clients ?? [],
+    ...(o.screenRecording ? { screenRecording: o.screenRecording } : {}),
     capture: (x, y, width, height) => {
       captures.push([x, y, width, height]);
       return (o.capture ?? ((cx, cy, cw, ch) => greyImage(screen, cx, cy, cw, ch)))(x, y, width, height);
     },
     ...(o.systemDialogOpen ? { systemDialogOpen: o.systemDialogOpen } : {}),
+    ...(o.systemDialogReason ? { systemDialogReason: o.systemDialogReason } : {}),
   };
-  const { log, warnings } = recordingLog();
+  const { log, warnings, infos } = recordingLog();
   const perception = new Perception({
     sidecar, x11: ws, log, neverLook: () => o.neverLook ?? [], screenBounds: () => screen, ownPid: 999,
     ...(o.words ? { words: o.words } : {}), ...(o.isSecurityWindow ? { isSecurityWindow: o.isSecurityWindow } : {}),
-    ...(o.hideOverlay ? { hideOverlay: o.hideOverlay } : {}),
+    ...(o.hideOverlay ? { hideOverlay: o.hideOverlay } : {}), ...(o.onNoScreenAccess ? { onNoScreenAccess: o.onNoScreenAccess } : {}),
+    ...(o.os ? { os: o.os } : {}),
   });
-  return { perception, captures, warnings, shellAsked: () => shellAsked };
+  return { perception, captures, warnings, infos, shellAsked: () => shellAsked };
 }
 
 const gedit = axWin("gedit", 42, "notes.txt", { x: 10, y: 10, width: 100, height: 100 });
@@ -288,6 +294,26 @@ describe("Perception and the window system's system-dialog check (fails closed)"
     expect(warnings).toContain("perception.system_dialog_check_failed");
   });
 
+  it("says the window system's own reason when it has one (macOS secure keyboard entry, review #236)", async () => {
+    const why = "secure keyboard entry is on in Terminal (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't look at the screen or use the mouse or keyboard until it's off";
+    const { perception, captures } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => true, systemDialogReason: () => why });
+    const p = await perception.perceive({ image: true, scope: "screen" });
+    expect(p.capture).toBeNull();
+    expect(p.text).toContain(`(No screenshot: ${why}.)`);
+    expect(p.text).not.toContain("a system dialog is open");
+    expect(captures).toEqual([]);
+    expect(await perception.systemDialogReason()).toBe(why);
+    // No reason (a real prompt), or one that can't be read: the dialog words, still no picture.
+    const plain = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => true, systemDialogReason: () => null });
+    expect((await plain.perception.perceive({ image: true, scope: "screen" })).text).toContain(NO_DIALOG);
+    const broken = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => true, systemDialogReason: () => { throw new Error("gone"); } });
+    const b = await broken.perception.perceive({ image: true, scope: "screen" });
+    expect(b.capture).toBeNull();
+    expect(b.text).toContain(NO_DIALOG);
+    expect(await broken.perception.systemDialogReason()).toBeNull();
+    expect(await desktop({}).perception.systemDialogReason()).toBeNull();
+  });
+
   it("takes the screenshot when the window system reports no dialog, or has no such check (Linux)", async () => {
     const clear = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), systemDialogOpen: () => false });
     expect((await clear.perception.perceive({ image: true, scope: "screen" })).capture).not.toBeNull();
@@ -390,5 +416,196 @@ describe("Perception with the OS's security-window check", () => {
     const injected = await desktop({ listed, stack, isSecurityWindow: windowsSecurity }).perception.windows();
     expect(injected.map(w => w.name)).toEqual(["notes.txt"]);
     expect((await desktop({ listed, stack }).perception.windows()).map(w => w.name)).toEqual(["Windows Security", "User Account Control", "notes.txt"]);
+  });
+});
+
+describe("Perception's window screenshots when the window can't be found", () => {
+  // review #5: the window asked for has closed, never matched, or its app is hung (the read has no window). Its picture
+  // must not become a picture of the whole screen, which no secret-field check has looked through.
+  it("takes no picture at all, not one of the whole screen", async () => {
+    const { perception, captures, shellAsked } = desktop({ window: null, stack: [top(5, 42, { x: 10, y: 10, width: 100, height: 100 }, "notes.txt", "gedit")] });
+    const p = await perception.perceive({ image: true, scope: "window", target: { pid: 42, title: "gone" } });
+    expect(p.capture).toBeNull();
+    expect(captures).toEqual([]);
+    expect(shellAsked()).toBe(0);
+    // One plain sentence: nothing says "use the screenshot" or "the focused window" (a window was named).
+    expect(p.text).toBe("That window can't be found (it may have closed, or its app isn't answering).");
+  });
+
+  it("says the app is busy when it is, and Ember's own window when the user is in one", async () => {
+    const busy = desktop({ window: null, stack: [top(5, 42, { x: 10, y: 10, width: 100, height: 100 }, "notes.txt", "gedit")] });
+    const seen = { window: null, x11Window: null, nodes: [], blocked: false, busy: true, truncated: null, others: [], ms: 1, axScale: 1 };
+    busy.perception.read = async () => seen;
+    const b = await busy.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(b.capture).toBeNull();
+    expect(b.text).toBe("The app is busy and didn't answer (it may be loading something). Try again in a moment.\n(No screenshot: the app isn't answering.)");
+    busy.perception.read = async () => ({ ...seen, busy: false, ember: true });
+    const own = await busy.perception.perceive({ image: true, scope: "window", target: { pid: 42 } });
+    expect(own.text).toContain("(No screenshot: Ember takes no pictures of its own windows.)");
+    expect(busy.captures).toEqual([]);
+  });
+
+  it("still takes a picture of the whole screen when that is what was asked for", async () => {
+    const { perception, captures } = desktop({ window: null });
+    const p = await perception.perceive({ image: true, scope: "screen", target: { pid: 42 } });
+    expect(p.capture).not.toBeNull();
+    expect(captures).toEqual([[0, 0, 300, 200]]);
+  });
+
+  it("takes a window's picture as before when the window system knows the window the user is in", async () => {
+    // No accessibility, but the window system's active window: its picture is still a window's.
+    const active = win(5, 42, "notes.txt", "gedit");
+    const { perception, captures } = desktop({ window: null, active, stack: [top(5, 42, { x: 10, y: 10, width: 100, height: 100 }, "notes.txt", "gedit")] });
+    const p = await perception.perceive({ image: true, scope: "window" });
+    expect(p.capture?.rect).toEqual({ x: 10, y: 10, width: 100, height: 100 });
+    expect(captures).toEqual([[10, 10, 100, 100]]);
+  });
+});
+
+describe("Perception without the screen-capture permission (macOS Screen Recording)", () => {
+  // reviews #96, #237: macOS gives no picture without Screen Recording; the note must say so, not "off screen".
+  const NO_ACCESS = `(No screenshot: ${PLATFORM_WORDS.darwin.noScreenAccess}.)`;
+
+  it("says the permission is missing, names where to allow it, and captures nothing", async () => {
+    const { perception, captures } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, gedit.bounds!, "notes.txt", "gedit")], screenRecording: () => false, words: PLATFORM_WORDS.darwin });
+    for (const scope of ["window", "screen"] as const) {
+      const p = await perception.perceive({ image: true, scope });
+      expect(p.capture).toBeNull();
+      expect(p.text).toContain(NO_ACCESS);
+      expect(p.text).not.toContain("off screen");
+    }
+    expect(captures).toEqual([]);
+    expect(PLATFORM_WORDS.darwin.noScreenAccess).toContain("System Settings › Privacy & Security › Screen Recording");
+  });
+
+  it("says so when the permission goes while the picture is taken", async () => {
+    let allowed = true;
+    const { perception, captures } = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => allowed, words: PLATFORM_WORDS.darwin,
+      capture: () => { allowed = false; return null; },
+    });
+    const p = await perception.perceive({ image: true, scope: "screen" });
+    expect(captures).toHaveLength(1);
+    expect(p.text).toContain(NO_ACCESS);
+  });
+
+  it("captures as before when the permission is there, or the window system has no such permission (Linux, Windows)", async () => {
+    const mac = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => true, words: PLATFORM_WORDS.darwin });
+    expect((await mac.perception.perceive({ image: true, scope: "screen" })).capture).not.toBeNull();
+    const linux = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit") });
+    expect((await linux.perception.perceive({ image: true, scope: "screen" })).capture).not.toBeNull();
+    // A failed capture elsewhere keeps today's words.
+    const off = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), capture: () => null });
+    expect((await off.perception.perceive({ image: true, scope: "screen" })).text).toContain("(No screenshot: the window is off screen, or the screen couldn't be captured safely.)");
+  });
+
+  it("tells Ember the first time a run, so it can offer the setting (refused before the picture or while it was taken)", async () => {
+    let told = 0;
+    let allowed = false;
+    const { perception } = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => allowed, words: PLATFORM_WORDS.darwin,
+      capture: () => { allowed = false; return null; }, onNoScreenAccess: () => { told++; },
+    });
+    await perception.perceive({ image: true, scope: "screen" });
+    expect(told).toBe(1);
+    allowed = true; // taken back while the picture is taken: said in the text, but Ember was told already
+    expect((await perception.perceive({ image: true, scope: "screen" })).text).toContain(NO_ACCESS);
+    expect(told).toBe(1);
+    // Taken back while the picture is taken, first in a run; a failing notice changes nothing.
+    let once = 0;
+    allowed = true;
+    const late = desktop({
+      window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => allowed, words: PLATFORM_WORDS.darwin,
+      capture: () => { allowed = false; return null; }, onNoScreenAccess: () => { once++; throw new Error("no overlay"); },
+    });
+    expect((await late.perception.perceive({ image: true, scope: "screen" })).text).toContain(NO_ACCESS);
+    expect(once).toBe(1);
+    // A capture that fails with the permission there tells nothing.
+    let never = 0;
+    const off = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => true, capture: () => null, onNoScreenAccess: () => { never++; } });
+    await off.perception.perceive({ image: true, scope: "screen" });
+    expect(never).toBe(0);
+  });
+
+  it("captures when the permission check itself fails: the capture asks again and fails closed", async () => {
+    const { perception, captures } = desktop({ window: gedit, active: win(5, 42, "notes.txt", "gedit"), screenRecording: () => { throw new Error("gone"); }, words: PLATFORM_WORDS.darwin });
+    await perception.perceive({ image: true, scope: "screen" });
+    expect(captures).toHaveLength(1);
+  });
+});
+
+describe("Perception's read of a page the browser hasn't handed over yet (review #6)", () => {
+  // The sidecar says "loading" when a web document shows with neither contents nor size: the read must not pass for a
+  // complete window that has only a menu bar.
+  it("says the page is still loading, not that the window is complete or nested too deeply", async () => {
+    const nodes: AxNode[] = [
+      { id: 1, parent: null, depth: 0, role: "frame", name: "Big page - Browser", states: ["active"], bounds: { x: 10, y: 10, width: 100, height: 100 } },
+      { id: 2, parent: 1, depth: 1, role: "menu bar", name: "", states: [], bounds: { x: 10, y: 10, width: 100, height: 20 } },
+    ];
+    const sidecar = {
+      readWindow: async () => ({ window: gedit, nodes, truncated: true, cut: ["loading"], ms: 1 }),
+      listWindows: async () => ({ windows: [] }),
+      scaleElements: () => undefined,
+      markSecret: async () => undefined,
+      shellOverlays: async () => ({ overlays: [] }),
+    } as unknown as AtspiSidecar;
+    const p = new Perception({ sidecar, x11: null, log: recordingLog().log, neverLook: () => [], screenBounds: () => ({ x: 0, y: 0, width: 300, height: 200 }), ownPid: 999 });
+    const seen = await p.read({ pid: 42 });
+    expect(seen.truncated).toBe("loading");
+    const text = (await p.perceive({ image: false, scope: "window", target: { pid: 42 } })).text;
+    expect(text).toContain("(The page is still loading, so its content isn't listed yet. Try again in a moment.)");
+    expect(text).not.toContain("nested too deeply");
+    expect(await p.describe()).toContain("(The page is still loading");
+  });
+});
+
+describe("the app's own popups in its window's picture (review #7)", () => {
+  // Menus, lists, completion and autofill panels are popups of the app (override-redirect): they are part of what a
+  // window's picture shows, so the secret fields in them are blacked out like the window's own.
+  const frame = { x: 10, y: 10, width: 200, height: 150 };
+  const popupAt = { x: 50, y: 50, width: 120, height: 80 };
+  const popup: StackedWindow = { ...top(6, 42, popupAt, ""), overrideRedirect: true };
+  const window = { ...axWin("gedit", 42, "notes.txt", frame), path: "/w/1" };
+  const popupWin = { ...axWin("gedit", 42, "", popupAt), role: "window", path: "/w/2", active: false };
+  const card = { id: 9, bounds: { x: 60, y: 60, width: 100, height: 20 } };
+  const shot = async (o: Parameters<typeof desktop>[0]) => {
+    const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), popup], ...o });
+    const p = await d.perception.perceive({ image: true, scope: "window" });
+    return { p, at: async (x: number, y: number) => pixel(p.capture!.data, x - frame.x, y - frame.y) };
+  };
+
+  it("blacks out a secret field in a popup over the window, and shows the rest of it", async () => {
+    const { p, at } = await shot({ listed: [window, popupWin], secretFields: w => ({ fields: w.path === "/w/2" ? [card] : [], complete: true }) });
+    expect(p.capture).not.toBeNull();
+    expect(isBlack(await at(110, 70))).toBe(true);
+    expect(isGrey(await at(110, 120))).toBe(true);
+    expect(isGrey(await at(30, 30))).toBe(true);
+  });
+
+  it("blacks out the whole popup when it can't be looked through, and says so", async () => {
+    for (const fields of [() => ({ fields: [], complete: false }), () => { throw new Error("gone"); }]) {
+      const { p, at } = await shot({ listed: [window, popupWin], secretFields: w => (w.path === "/w/2" ? fields() : { fields: [], complete: true }) });
+      expect(isBlack(await at(110, 120))).toBe(true);
+      expect(isGrey(await at(30, 30))).toBe(true);
+      expect(p.text).toContain("(Screenshot: a popup Ember couldn't check for password fields is hidden.)");
+    }
+  });
+
+  it("leaves a popup accessibility doesn't list as a window as it was (a menu on macOS, a shadow on Windows)", async () => {
+    const { p, at } = await shot({ listed: [window] });
+    expect(isGrey(await at(110, 120))).toBe(true);
+    expect(p.text).not.toContain("popup");
+  });
+
+  it("logs such a popup, once a run for each app and size, so CI and the field show which popups go unscanned", async () => {
+    const d = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), { ...popup, wmClass: "gedit" }], listed: [window], os: "darwin" });
+    await d.perception.perceive({ image: true, scope: "window" });
+    await d.perception.perceive({ image: true, scope: "window" });
+    // With the OS: the field's logs come from all three, and each OS lists different popups as windows.
+    expect(d.infos.filter(([e]) => e === "perception.popup_unmatched")).toEqual([["perception.popup_unmatched", { app: "gedit", width: 120, height: 80, os: "darwin" }]]);
+    // A popup that was looked through isn't.
+    const listed = desktop({ window, active: win(5, 42, "notes.txt", "gedit"), stack: [top(5, 42, frame, "notes.txt", "gedit"), popup], listed: [window, popupWin] });
+    await listed.perception.perceive({ image: true, scope: "window" });
+    expect(listed.infos.some(([e]) => e === "perception.popup_unmatched")).toBe(false);
   });
 });

@@ -7,13 +7,23 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
+import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { handleCornerText } from "./copy";
+import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
+import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
-import type { Settings } from "../../main/settings";
+import { speakChoice, speakSettings, type SpeakChoice } from "../../shared/speech";
+import type { Settings, SettingsPatch } from "../../main/settings";
 import {
-  dayLabel, describeEntry, entryWords, friendlyApp, homePatches, micOffText, missingDefaults, neverLookLabel, progressStep, rereadsStatusOnFocus, retryMessage,
-  tagline, usageLine, type HomePatch, type Segment,
+  dayLabel, describeEntry, entryWords, fixButtonName, fixFailedText, friendlyApp, homePatches, ipcErrorText, MANAGED_ROW, micOffText, missingDefaults, neverLookLabel, progressStep,
+  rereadsStatusOnFocus, modelLabel, retryMessage, saveFailedText, signInLabel, STARTED_TEXT, tagline, usageLine, voiceFix, voiceFixFailed, withCommandShells,
+  type HomePatch, type Segment,
 } from "./copy";
+import { startTargets, targetsSettings, targetsStatus } from "./computers";
+import { keptWords, lockdownNotice, lockdownSendLine } from "./admin-copy";
+import { PendingSection, sectionRequest } from "./section-request";
+import { followStartRow } from "./start-row";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -63,7 +73,7 @@ const cards: Card[] = FACTORIES.map(make => {
   const pitch = document.createElement("span"); pitch.textContent = PITCH[character.id] ?? "";
   el.append(canvas, name, pitch);
   el.addEventListener("click", () => {
-    void window.ember.updateSettings({ character: character.id as Settings["character"] });
+    void save({ character: character.id as Settings["character"] });
   });
   $("cards").appendChild(el);
   return { id: character.id, el, canvas, character, rig: new Rig() };
@@ -116,9 +126,19 @@ function applySettings(s: Settings): void {
   if (!sliding && document.activeElement !== size) showSize(s.size);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
+  ($("more-time") as HTMLInputElement).checked = s.moreTime;
+  ($("text-size") as HTMLSelectElement).value = s.textSize;
+  ($("handle-position") as HTMLSelectElement).value = s.handlePosition;
+  // The copy that names the handle's corner follows Handle position (review #75).
+  const corner = handleCornerText(s.handlePosition);
+  if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
+  if (presence) renderPresence(presence);
   // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
   // everything else waits until Ember has started.
   const consented = s.consent.version >= CONSENT_VERSION;
+  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // (review #50), rather than dropping to the page.
+  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
   $("welcome").hidden = consented;
@@ -129,27 +149,54 @@ function applySettings(s: Settings): void {
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
+  if (started) {
+    $("home-live").textContent = STARTED_TEXT;
+    window.scrollTo({ top: 0 });
+    $("pick-h").focus({ preventScroll: true });
+  }
 }
+// First run's Start row stays at the window's foot: focus scrolls clear of it at its height now (start-row.ts).
+followStartRow($("start-row"), document.documentElement);
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
-$("login").addEventListener("change", e => { void window.ember.updateSettings({ startAtLogin: (e.target as HTMLInputElement).checked }); });
+$("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
 $("agree").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   ($("start") as HTMLButtonElement).disabled = !on;
   $("start-hint").hidden = on;
 });
-$("reduce-motion").addEventListener("change", e => { void window.ember.updateSettings({ reduceMotion: (e.target as HTMLInputElement).checked }); });
+$("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
+$("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
+// The text size reaches every window from main (page-prefs.ts), this one included.
+$("text-size").addEventListener("change", e => { void save({ textSize: (e.target as HTMLSelectElement).value as Settings["textSize"] }); });
+// The handle (and its task cards) moves as main hears the change (handle.ts, overlay/main.ts).
+$("handle-position").addEventListener("change", e => { void save({ handlePosition: (e.target as HTMLSelectElement).value as Settings["handlePosition"] }); });
 
 size.addEventListener("input", () => {
   const v = Number(size.value);
   sizeLabel(v);
-  void window.ember.updateSettings({ size: v });
+  void save({ size: v });
 });
 $("start").addEventListener("click", () => {
   const already = (settings?.consent.version ?? 0) >= CONSENT_VERSION;
   if (!already && !($("agree") as HTMLInputElement).checked) return;
-  void window.ember.updateSettings({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true });
+  void save({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true }).then(ok => {
+    // Start did nothing visible: the notice at the top says why (review #84).
+    if (!ok) $("settings-notice").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+  });
 });
+/**
+ * Saves a change made in this window. One that can't be saved says why (main's plain sentence, in the notice at the
+ * top) and the controls go back to the settings still in use, instead of nothing happening (review #84).
+ */
+function save(patch: SettingsPatch): Promise<boolean> {
+  return window.ember.updateSettings(patch).then(() => true, err => {
+    renderSettingsNotice(saveFailedText(err));
+    if (settings) { applySettings(settings); applyVoiceSettings(settings); }
+    if (agent) renderAgent(agent);
+    return false;
+  });
+}
 /** Something needs the user's agreement first: take them to the checkbox. */
 function focusAgree(): void {
   const agree = $("agree");
@@ -159,23 +206,34 @@ function focusAgree(): void {
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
 let failing = 0;
+/** Setup rows that don't fail but need the user: the tagline mentions them once Ember has started. */
+let toLook = 0;
 function renderTagline(): void {
   const text = tagline({
-    failing, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
-    hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true,
+    failing, look: toLook, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
+    hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
 }
 
 // ───── Setup check and build facts ─────
 let checksOpened = false;
+/** The setup check shows on the first-run screen (a row needed the user), and stays there until Start. */
+let checksBeforeStart = false;
 /** The checks on screen, to leave them alone when a fresh status brings the same ones. */
 let shownChecks = "";
+/** The setup check's rows as last shown: the voice line's fix button comes from its microphone row. */
+let checksNow: Status["environment"]["checks"] = [];
 function renderChecks(environment: Status["environment"]): void {
   shownChecks = JSON.stringify(environment.checks);
+  checksNow = environment.checks;
+  renderVoiceFix();
   const hadFocus = $("checks").contains(document.activeElement);
+  // A fix button that had focus keeps it when its row is drawn again (the row's check id says which).
+  const hadFix = hadFocus ? document.activeElement?.closest<HTMLElement>("li")?.dataset.check : undefined;
   $("checks").replaceChildren(...environment.checks.map(c => {
     const li = document.createElement("li");
+    li.dataset.check = c.id;
     const pill = document.createElement("span");
     pill.className = `pill ${c.status}`;
     pill.textContent = c.status === "ok" ? "OK" : c.status === "warn" ? "Check" : "Fix";
@@ -186,32 +244,68 @@ function renderChecks(environment: Status["environment"]): void {
     detail.className = "check-detail";
     detail.textContent = c.detail;
     li.append(pill, label, detail);
-    if (c.fix) {
-      const fix = c.fix;
+    // The row's fix, and a second one beside it for when that didn't take (macOS: Reset Ember's permissions).
+    const actions = Object.assign(document.createElement("span"), { className: "check-actions" });
+    for (const fix of [c.fix, c.alt]) {
+      if (!fix) continue;
       const btn = document.createElement("button");
       btn.className = "btn quiet check-fix";
       btn.textContent = platform?.fixLabels[fix] ?? "Turn on";
+      btn.setAttribute("aria-label", fixButtonName(btn.textContent, c.label));
       btn.addEventListener("click", () => {
-        btn.disabled = true;
+        // Busy, not disabled: a disabled button drops keyboard focus to the page.
+        if (btn.getAttribute("aria-disabled") === "true") return;
+        btn.setAttribute("aria-disabled", "true");
+        $("checks-msg").textContent = "";
         window.ember.applyFix(fix).then(renderChecks, err => {
-          btn.disabled = false;
-          detail.textContent = `Couldn't change it: ${err instanceof Error ? err.message : String(err)}`;
+          btn.removeAttribute("aria-disabled");
+          // A refused fix says why in its own words (main's message, without Electron's IPC prefix), in its row and
+          // in the status line a screen reader reads; focus stays on the button.
+          const why = ipcErrorText(err);
+          detail.textContent = `Couldn't change it: ${why}`;
+          $("checks-msg").textContent = fixFailedText(c.label, why);
+          if (btn.isConnected) btn.focus();
         });
       });
-      li.append(btn);
+      actions.append(btn);
     }
+    if (actions.childElementCount) li.append(actions);
     return li;
   }));
-  if (hadFocus) ($("checks-fold").querySelector("summary") as HTMLElement).focus();
+  if (hadFocus) {
+    const again = hadFix ? $("checks").querySelector<HTMLElement>(`li[data-check="${CSS.escape(hadFix)}"] .check-fix`) : null;
+    (again ?? ($("checks-fold").querySelector("summary") as HTMLElement)).focus();
+  }
   failing = environment.checks.filter(c => c.status === "fail").length;
   const warn = environment.checks.filter(c => c.status === "warn").length;
+  const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
+  toLook = view.needing - failing;
+  renderSetupBadge(view.needing, failing);
   const note = $("checks-note");
-  note.textContent = failing ? `${failing} to fix` : warn ? `${warn} to look at` : "All good";
+  // As `ember doctor` says it ("worth a look"), counted in words (copy.ts checksNote).
+  note.textContent = view.note;
   note.className = `fold-note${failing ? " fail" : warn ? " warn" : ""}`;
-  // Something fails: the check opens by itself (once), and it shows even before Start.
-  if (failing && !checksOpened) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
-  $("checks-fold").closest("section")!.classList.toggle("after-setup", !failing);
+  // A row needs the user (it fails, holds back reading or using apps, or has a button): the check opens by itself
+  // (once), and it shows before Start too, until Start.
+  if (view.open) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
+  checksBeforeStart = view.beforeStart;
+  $("checks-fold").closest("section")!.classList.toggle("after-setup", !checksBeforeStart);
   renderTagline();
+}
+
+/** The sidebar's Setup link carries how many rows need the user, so a warning is seen from anywhere (review #95). */
+function renderSetupBadge(needing: number, fails: number): void {
+  const link = document.querySelector<HTMLAnchorElement>("#jump a[href=\"#checks-h\"]");
+  if (!link) return;
+  const b = setupBadge(needing, fails);
+  let el = link.querySelector<HTMLElement>(".jump-badge");
+  if (!b) { el?.remove(); return; }
+  if (!el) el = link.appendChild(document.createElement("span"));
+  el.className = `jump-badge ${b.tone}`;
+  // The number is for the eye; a screen reader hears the words after the link's name instead.
+  const shown = Object.assign(document.createElement("span"), { textContent: b.text });
+  shown.setAttribute("aria-hidden", "true");
+  el.replaceChildren(shown, Object.assign(document.createElement("span"), { className: "sr", textContent: b.label }));
 }
 
 function render(status: Status): void {
@@ -224,6 +318,8 @@ function render(status: Status): void {
     ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`],
     ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json"],
     ["Log file", status.logFile],
+    // Somewhere to say what went wrong (review #105): the window never opens links, so the address is there to copy.
+    ["Report a problem", ISSUES_URL],
   ];
   $("facts").replaceChildren(...facts.flatMap(([k, val]) => {
     const dt = document.createElement("dt"); dt.textContent = k;
@@ -233,6 +329,7 @@ function render(status: Status): void {
   $("about-note").textContent = `Ember ${status.appVersion}`;
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
+  targetsStatus(status);
 }
 
 // ───── What differs by OS: shortcuts, folders, the consent's OS sentences (from main; Linux's markup until then) ─────
@@ -259,7 +356,7 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   for (const patch of homePatches(p)) applyPatch(patch);
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
-  // Keys and the stop shortcut read differently on this OS: the lines already shown are written again.
+  // Keys read differently on this OS: the lines already shown are written again.
   if (JSON.stringify(entryWords(p)) !== before) { shownActivity = ""; void refreshActivity(); }
   renderTagline();
 }
@@ -291,19 +388,22 @@ let confirmEvery = false;
 let adminNeverLook = new Set<string>();
 const FEATURE_TEXT: Record<string, string> = {
   voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
-  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots",
+  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", ...TARGET_FEATURE_TEXT,
 };
+/** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
+let sendAsWritten: Node[] | null = null;
 function renderAdmin(a: Status["admin"]): void {
   managed = new Set(a.managed);
   confirmEvery = a.confirmEveryAction;
   adminNeverLook = new Set((a.neverLook ?? []).map(x => x.trim().toLowerCase()));
   const el = $("managed");
   el.classList.toggle("error", !!a.error);
-  if (a.error) {
+  const locked = lockdownNotice(a);
+  if (locked) {
     el.hidden = false;
-    el.textContent = `Your organisation's Ember policy has a problem, so Ember is locked down until it's fixed (${a.error}).`;
+    el.textContent = locked;
   } else if (a.source) {
-    const off = Object.entries(a.features).filter(([, v]) => v === false).map(([k]) => FEATURE_TEXT[k] ?? k);
+    const off = Object.entries(a.features).filter(([k, v]) => v === false && targetFeatureApplies(k, platform?.os)).map(([k]) => FEATURE_TEXT[k] ?? k);
     const rules = [
       off.length ? `Turned off: ${off.join(", ")}.` : "",
       a.confirmEveryAction ? "Ember asks before every action." : "",
@@ -315,12 +415,19 @@ function renderAdmin(a: Status["admin"]): void {
   } else {
     el.hidden = true;
   }
-  $("retention").textContent = String(a.retentionDays);
-  if (a.provider) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  $("retention").textContent = keptWords(a);
+  // Locked down, nothing goes to a model service: the data list says so instead of naming one.
+  const send = document.querySelector<HTMLElement>("li[data-icon='send']");
+  const sendLine = lockdownSendLine(a);
+  if (send) {
+    sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
+    send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
+  }
+  if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
-    (input.closest("label") ?? input).classList.toggle("locked", managed.has(key));
+    (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
     if (managed.has(key)) input.title = "Managed by your organisation";
   }
   privacyKey = "";
@@ -341,7 +448,7 @@ async function refreshActivity(): Promise<void> {
   let today = 0;
   const items: HTMLLIElement[] = [];
   const words = entryWords(platform);
-  for (const e of entries) {
+  for (const e of withCommandShells(entries)) {
     const d = describeEntry(e, words);
     if (!d) continue;
     if (items.length >= 80) break;
@@ -458,8 +565,10 @@ function renderAgent(a: AgentStatus | null): void {
   // fix, and reconnecting now stops the tasks: the button says so.
   const waiting = a.waitingForTasks === true;
   $("sign-in").hidden = !notConnected || signingIn || waiting;
+  // Without Ember's own GitHub App the button waits for a GitHub CLI sign-in: it doesn't promise a browser sign-in.
+  $("sign-in").textContent = signInLabel(a.signInWith);
   $("retry").hidden = !notConnected || signingIn;
-  $("retry").textContent = waiting ? "Reconnect now (stops the tasks running)" : "Check again";
+  $("retry").textContent = waiting ? "Reconnect now (stops the tasks that are running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
   $("models").hidden = a.phase !== "ready" || a.models.length === 0;
@@ -471,7 +580,7 @@ function renderAgent(a: AgentStatus | null): void {
       const sel = $(id) as HTMLSelectElement;
       sel.replaceChildren(...list.map(m => {
         const o = document.createElement("option");
-        o.value = m.id; o.textContent = m.name; o.selected = m.id === current;
+        o.value = m.id; o.textContent = modelLabel(m); o.selected = m.id === current;
         return o;
       }));
     };
@@ -488,7 +597,7 @@ for (const [id, key] of [["m-conductor", "conductor"], ["m-worker", "worker"]] a
   $(id).addEventListener("change", e => {
     const value = (e.target as HTMLSelectElement).value;
     const current = settings?.models ?? { conductor: null, worker: null };
-    void window.ember.updateSettings({ models: { ...current, [key]: value } });
+    void save({ models: { ...current, [key]: value } });
   });
 }
 const signInMsg = (text: string, error = false) => {
@@ -514,7 +623,6 @@ const setSigningIn = (on: boolean) => {
   else $("cancel-sign-in").hidden = !on;
   void window.ember.agentStatus().then(renderAgent);
 };
-const cleanError = (err: unknown) => (err instanceof Error ? err.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "") : String(err));
 $("sign-in").addEventListener("click", () => {
   setSigningIn(true);
   $("cancel-sign-in").focus();
@@ -522,22 +630,22 @@ $("sign-in").addEventListener("click", () => {
     setSigningIn(false);
     // Not agreed yet: the way forward is the checkbox at the top, so go there.
     if (settings && settings.consent.version < CONSENT_VERSION) { focusAgree(); return; }
-    signInMsg(cleanError(err), true);
+    signInMsg(ipcErrorText(err), true);
   });
 });
 /** What "Check again" found, while its message shows (it changes to "connected" when Copilot is ready). */
-let retryFound: { found: boolean; source: string | null } | null = null;
+let retryFound: { found: boolean; source: string | null; hint?: string } | null = null;
 $("retry").addEventListener("click", () => {
   signInMsg("Checking…");
   window.ember.retrySignIn().then(r => {
     retryFound = r.found ? r : null;
     say(retryMessage(r, r.found && agent?.phase === "ready"));
-  }, err => signInMsg(cleanError(err), true));
+  }, err => signInMsg(ipcErrorText(err), true));
 });
 $("cancel-sign-in").addEventListener("click", () => { void window.ember.cancelSignIn(); });
 $("sign-out").addEventListener("click", () => { void window.ember.signOut(); });
 
-/** The device code row: "Code ABCD-1234 [Copy] — enter it at github.com/login/device [Open]". */
+/** The device code row: "Code ABCD-1234 [Copy] Enter it at github.com/login/device [Open]". */
 function showCode(userCode: string, uri: string): void {
   const msg = $("sign-in-msg");
   msg.hidden = false;
@@ -548,7 +656,8 @@ function showCode(userCode: string, uri: string): void {
   copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
-  const parts: (string | Node)[] = ["Code ", code, copy, ` — enter it at ${where}`];
+  // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).
+  const parts: (string | Node)[] = ["Code ", code, copy, Object.assign(document.createElement("span"), { className: "nowrap", textContent: `Enter it at ${where}` })];
   // Opening the page again needs the main process (the window never navigates); offered when it can.
   const open = (window.ember as EmberHomeApi & { openSignInPage?: () => Promise<void> }).openSignInPage;
   if (typeof open === "function") {
@@ -560,9 +669,17 @@ function showCode(userCode: string, uri: string): void {
   const wait = Object.assign(document.createElement("span"), { className: "wait", textContent: "Your browser should have opened it. Waiting for you to approve…" });
   msg.replaceChildren(...parts, wait);
 }
+/** A button after the sign-in message that opens the page main offers (the GitHub CLI's download page). */
+function addOpenButton(label: string): void {
+  const open = (window.ember as EmberHomeApi & { openSignInPage?: () => Promise<void> }).openSignInPage;
+  if (typeof open !== "function") return;
+  const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: label });
+  btn.addEventListener("click", () => { void open(); });
+  $("sign-in-msg").append(" ", btn);
+}
 window.ember.onSignInProgress(p => {
   if (p.state === "code") { showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
-  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); return; }
+  if (p.state === "waiting") { setSigningIn(true); signInMsg(p.message ?? ""); if (p.link) addOpenButton(p.link); return; }
   setSigningIn(false);
   if (p.state === "cancelled") { signInMsg(""); return; }
   if (p.state === "done" && !p.message) { say("Signed in.", 3000); return; }
@@ -573,6 +690,9 @@ window.ember.onAgentStatus(renderAgent);
 
 void window.ember.getStatus().then(render);
 window.ember.onSettingsChanged(applySettings);
+// Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
+window.ember.onSettingsChanged(targetsSettings);
+startTargets();
 
 // ───── Conversation (this session only) ─────
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];
@@ -603,22 +723,51 @@ window.ember.onConversation(renderConversation);
 
 // ───── Section links ─────
 // A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.
-/** Shows a section (opening it if folded) and moves focus there. */
-function showSection(section: string): void {
+/** A section main asked for while it was still hidden (Computers shows once its list has come): shown once it shows. */
+const pendingSection = new PendingSection();
+/**
+ * Shows a section (opening it if folded) and moves focus there: to the control main named ("computers:host", the
+ * field to add a computer), else to the heading. A hidden section is shown once it appears, unless the user moves on.
+ */
+function showSection(value: string): void {
+  const { section, control } = sectionRequest(value);
   const h = document.getElementById(`${section}-h`);
-  if (!h || isHidden(h)) return;
+  if (!h) return;
+  if (isHidden(h)) { pendingSection.hold(value); return; }
+  pendingSection.drop();
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
-  target.scrollIntoView({ block: "start", behavior: calm ? "auto" : "smooth" });
-  target.focus({ preventScroll: true });
+  const field = control ? document.getElementById(control) : null;
+  const to = field && !isHidden(field) ? field : target;
+  const block = to === field ? "center" : "start";
+  to.scrollIntoView({ block, behavior: calm ? "auto" : "smooth" });
+  to.focus({ preventScroll: true });
+  keptInView = { el: to, block, until: performance.now() + 3000 };
   markCurrent(section);
   // The scroll this starts (and a page too short to bring the section to the top) doesn't move the mark.
   pinnedUntil = performance.now() + 900;
 }
 let pinnedUntil = 0;
+/**
+ * What showSection just focused, brought back into view while sections above it are still appearing (Computers,
+ * Commands come after the page has loaded and push it down) for a few seconds, until the user moves on.
+ */
+let keptInView: { el: HTMLElement; block: ScrollLogicalPosition; until: number } | null = null;
+new ResizeObserver(() => {
+  if (!keptInView || performance.now() > keptInView.until) { keptInView = null; return; }
+  const r = keptInView.el.getBoundingClientRect();
+  if (r.top < 0 || r.bottom > innerHeight) keptInView.el.scrollIntoView({ block: keptInView.block, behavior: "auto" });
+}).observe(document.body);
 // Main asks for a section ("Read all" on a long answer, connecting after setup).
 window.ember.onFocusSection(showSection);
+// A section that was hidden when main asked for it shows itself once it appears; a click, key or scroll first drops it.
+new MutationObserver(() => {
+  if (!pendingSection.waiting) return;
+  const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !isHidden(h); });
+  if (value) showSection(value);
+}).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
+for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; }, { capture: true, passive: true });
 const jumpLinks = [...document.querySelectorAll<HTMLAnchorElement>("#jump a")];
 const sectionOf = (a: HTMLAnchorElement) => (a.getAttribute("href") ?? "").replace(/^#/, "").replace(/-h$/, "");
 $("jump").addEventListener("click", e => {
@@ -700,7 +849,7 @@ function renderPrivacy(s: Settings): void {
       const next = { ...s.grants };
       delete next[app];
       focusAfter = { list: "grants", index: i };
-      void window.ember.updateSettings({ grants: next });
+      void save({ grants: next });
     }, managed.has("grants")))
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: confirmEvery ? "None." : "None: Ember asks before its first action in each app." })]));
   // The user's own entries (with Remove), then the organisation's (locked).
@@ -711,7 +860,7 @@ function renderPrivacy(s: Settings): void {
       ...own.map((item, i) => row(neverLookLabel(item), () => {
         focusAfter = { list: "never-look", index: i };
         listMsg("");
-        void window.ember.updateSettings({ privacy: { neverLook: own.filter(x => x !== item) } });
+        void save({ privacy: { neverLook: own.filter(x => x !== item) } });
       }, false)),
       ...theirs.map(item => row(neverLookLabel(item), () => {}, null)),
     ]
@@ -738,7 +887,7 @@ $("never-look-form").addEventListener("submit", e => {
   window.ember.updateSettings({ privacy: { neverLook: [...own, v] } }).then(() => {
     input.value = "";
     listMsg(`Added ${v}.`);
-  }, err => listMsg(`Couldn't add it: ${cleanError(err)}`));
+  }, err => listMsg(saveFailedText(err)));
 });
 $("never-look-add").addEventListener("input", () => listMsg(""));
 $("never-look-defaults").addEventListener("click", () => {
@@ -746,14 +895,14 @@ $("never-look-defaults").addEventListener("click", () => {
   const own = ownNeverLook(settings);
   const back = missingDefaults(settings.privacy.neverLook, platform?.os);
   const room = Math.max(0, NEVER_LOOK_MAX - own.length);
-  void window.ember.updateSettings({ privacy: { neverLook: [...own, ...back.slice(0, room)] } });
+  void save({ privacy: { neverLook: [...own, ...back.slice(0, room)] } }).then(ok => { if (!ok) listMsg(""); });
   listMsg(room < back.length
     ? `The list is full (${NEVER_LOOK_MAX} names): remove some to restore the rest of the defaults.`
     : "The usual password managers and password prompts are back on the list.");
   $("never-look-add").focus();
 });
 
-// ───── Ember on screen (the handle menu's Hide / Stay put / Quit, reachable by keyboard) ─────
+// ───── Ember on screen (the handle menu's Ask / Stop everything / Hide / Stay put / Quit, reachable by keyboard) ─────
 let presence: Presence | null = null;
 function renderPresence(p: Presence): void {
   presence = p;
@@ -761,16 +910,19 @@ function renderPresence(p: Presence): void {
   $("p-follow").hidden = !p.overlay;
   $("p-hide").textContent = p.hidden ? "Show Ember" : "Hide Ember";
   $("p-follow").textContent = p.paused ? "Follow my cursor" : "Stay put";
-  $("presence-text").textContent = !p.overlay
-    ? "This desktop session can't show Ember beside your cursor, so it lives in the card in the bottom-right corner."
+  const line = !p.overlay
+    ? `This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`
     : p.hidden
       ? "Ember is hidden. It shows itself again when it needs to ask you something."
       : p.paused ? "Ember stays where it is instead of following your cursor." : "Ember follows your cursor.";
+  if ($("presence-text").textContent !== line) $("presence-text").textContent = line;
   renderTagline();
 }
 $("p-hide").addEventListener("click", () => { void window.ember.setPresence({ hidden: !(presence?.hidden ?? false) }).then(renderPresence); });
 $("p-follow").addEventListener("click", () => { void window.ember.setPresence({ paused: !(presence?.paused ?? false) }).then(renderPresence); });
 $("p-quit").addEventListener("click", () => { void window.ember.quit(); });
+$("p-ask").addEventListener("click", () => { void window.ember.openAsk(); });
+$("p-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
 void window.ember.presence().then(renderPresence);
 window.ember.onPresence(renderPresence);
 
@@ -781,10 +933,32 @@ const VOICE_TEXT: Record<string, string> = {
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;
+/** No voice spoke Ember's replies (main found it): said under the Speak switch, with a row in the setup check. */
+let speechMissing = false;
 /** Screen readers hear the voice line when it changes, and a download only every 25 %. */
 const voiceLive = (text: string) => { if ($("voice-live").textContent !== text) $("voice-live").textContent = text; };
+/** The microphone's fix beside a voice error (Windows' privacy switch, macOS's permission), when the setup check has it. */
+function renderVoiceFix(): void {
+  const fix = voiceFix(voice?.state ?? "off", checksNow);
+  const btn = $("voice-fix") as HTMLButtonElement;
+  btn.hidden = !fix;
+  if (fix) btn.textContent = platform?.fixLabels[fix] ?? "Open Settings";
+}
+$("voice-fix").addEventListener("click", () => {
+  const fix = voiceFix(voice?.state ?? "off", checksNow);
+  if (!fix) return;
+  const btn = $("voice-fix") as HTMLButtonElement;
+  btn.disabled = true;
+  window.ember.applyFix(fix).then(renderChecks, err => {
+    // Said on the voice line (and to screen readers) until the next voice status, as the setup check's button does.
+    const text = voiceFixFailed(err);
+    $("voice-text").textContent = text;
+    voiceLive(text);
+  }).finally(() => { btn.disabled = false; });
+});
 function renderVoice(v: VoiceStatus): void {
   voice = v;
+  renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
   $("voice-text").textContent = text;
   if (v.state !== "downloading") voiceLive(text);
@@ -796,28 +970,37 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  const missing = v.speechMissing === true;
+  if (missing !== speechMissing) {
+    speechMissing = missing;
+    const note = $("speak-note");
+    note.hidden = !missing;
+    note.textContent = missing ? SPEAK_NO_VOICE : "";
+    // The setup check gains (or loses) its Speaking row.
+    window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
+  }
 }
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
-  ($("speak") as HTMLInputElement).checked = s.speak;
+  ($("speak") as HTMLSelectElement).value = speakChoice(s);
   if (voice) renderVoice(voice);
 }
 $("wake").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // First time: the microphone note comes first, and focus moves to it so it is read and answered.
   if (on && !voiceSettings.consent) { $("consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("consent-yes").focus(); return; }
-  void window.ember.updateSettings({ wakeWord: on });
+  void save({ wakeWord: on });
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void window.ember.updateSettings({ wakeWord: true, voice: { muted: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
-$("speak").addEventListener("change", e => { void window.ember.updateSettings({ speak: (e.target as HTMLInputElement).checked }); });
+$("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
   // The button goes while it downloads: focus stays in the section.
@@ -828,8 +1011,10 @@ window.ember.onVoiceProgress(p => {
   bar.hidden = false;
   bar.value = p.done / p.total;
   const pct = Math.round((p.done / p.total) * 100);
-  $("voice-text").textContent = `Downloading speech models… ${pct}%`;
-  voiceLive(`Downloading speech models… ${progressStep(p.done / p.total)}%`);
+  // Once the last byte is in, the archive is checked and unpacked: said, so the bar doesn't look stuck (review #259).
+  const doing = p.phase === "unpacking" ? "Unpacking" : "Downloading";
+  $("voice-text").textContent = `${doing} speech models… ${pct}%`;
+  voiceLive(`${doing} speech models… ${progressStep(p.done / p.total)}%`);
 });
 void window.ember.voiceStatus().then(renderVoice);
 window.ember.onVoiceStatus(renderVoice);

@@ -8,14 +8,15 @@ import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import { KEYS } from "../../app/shared/shortcuts";
 import { PolicyEngine, type ActionKind, type ActionRequest } from "../../app/main/policy/policy";
-import { REMOTE_SURFACE, isRemoteSurface, isWslgImage, remoteSurfaceCheck } from "../../app/main/policy/remote-surface";
+import { REMOTE_SURFACE, isRemoteSurface, isWindowsXServer, isWslgImage, remoteSurfaceCheck } from "../../app/main/policy/remote-surface";
+import { runningXServer } from "../../app/main/wsl/doctor";
 import { Perception } from "../../app/main/perception";
 import type { AtspiSidecar, AxWindow, Bounds } from "../../app/main/perception/sidecar";
 import type { PerceptionWindows, StackedWindow, X11Image } from "../../app/main/platform/types";
 import type { Logger } from "../../app/main/logger";
 import type { OS } from "../../app/shared/shortcuts";
 
-const REASON = "Ember can't tell what's inside a remote window (a remote desktop, or a Linux app under WSL), so it never acts in one";
+const REASON = "Ember can't tell what's inside a remote window (a remote desktop, a virtual machine, or a Linux app under WSL), so it never acts in one";
 
 /** Every kind of action that acts in a window: accessibility, typing, clicks and the borrowed cursor. */
 const IN_WINDOW: ActionKind[] = ["click", "toggle", "text", "select", "value", "cursor_click", "cursor_text", "keys", "scroll"];
@@ -41,23 +42,45 @@ describe("which windows are remote surfaces", () => {
     }
   });
 
+  it("knows the X servers for Windows, whose windows are Linux apps nobody can tell apart (critique wsl-15)", () => {
+    for (const p of ["vcxsrv", "VcXsrv.exe", "x410", "X410.EXE", "xming", "Xming.exe", "xwin", "XWin.exe", "gwsl", "GWSL.exe"]) {
+      expect(isRemoteSurface(p, "win32"), p).toBe(true);
+      expect(isWindowsXServer(p, "win32"), p).toBe(true);
+    }
+    for (const p of ["msrdc", "mstsc", "xwinwrap", "x4100", "notepad", "gwslx", "gwsl-notes"]) expect(isWindowsXServer(p, "win32"), p).toBe(false);
+    for (const os of ["linux", "darwin"] as const) for (const p of ["vcxsrv", "xwin", "gwsl"]) {
+      expect(isRemoteSurface(p, os), `${os} ${p}`).toBe(false);
+      expect(isWindowsXServer(p, os), `${os} ${p}`).toBe(false);
+    }
+  });
+
+  it("knows GWSL's own X server by its real program names (GWSL_vcxsrv, GWSL_vcxsrv_lowdpi), as the WSL doctor does", () => {
+    // GWSL shows Linux apps through its bundled VcXsrv, VCXSRV/GWSL_vcxsrv{,_lowdpi}.exe: the Windows backend names their
+    // windows' app by the program's file name.
+    for (const p of ["GWSL_vcxsrv", "GWSL_vcxsrv.exe", "gwsl_vcxsrv_lowdpi", "GWSL_vcxsrv_lowdpi.exe", "GWSL_service"]) {
+      expect(isRemoteSurface(p, "win32"), p).toBe(true);
+      expect(isWindowsXServer(p, "win32"), p).toBe(true);
+      expect(runningXServer([`${p.replace(/\.exe$/i, "")}.exe`]), p).toBe("GWSL");
+    }
+    for (const os of ["linux", "darwin"] as const) expect(isRemoteSurface("GWSL_vcxsrv", os), os).toBe(false);
+  });
+
   it("takes no ordinary Windows app for one, nor a name that only contains one", () => {
     for (const p of ["", "notepad", "msedge", "explorer", "winword", "Code", "WindowsTerminal", "msrdcx", "xmstsc", "mstsc-notes", "Windows365Setup", "RdClient"]) {
       expect(isRemoteSurface(p, "win32"), p).toBe(false);
     }
   });
 
-  it("knows none on Linux and macOS, where the check isn't even made", () => {
+  it("knows none of Windows' clients on Linux and macOS (their own viewers are theirs: remote-surface-viewers.test.ts, review #118)", () => {
     for (const os of ["linux", "darwin"] as const) {
-      expect(REMOTE_SURFACE[os]).toBeNull();
-      expect(remoteSurfaceCheck(os)).toBeUndefined();
+      expect(REMOTE_SURFACE[os]).not.toBeNull();
       for (const p of ["msrdc", "mstsc", "msrdcw", "Windows365", "RdClient.Windows"]) expect(isRemoteSurface(p, os), `${os} ${p}`).toBe(false);
     }
     expect(remoteSurfaceCheck("win32")?.("msrdc.exe")).toBe(true);
     expect(remoteSurfaceCheck("win32")?.("notepad")).toBe(false);
   });
 
-  it("tells WSLg's msrdc from a Remote Desktop client's by its folder, for the WSL work (nothing decides on it yet)", () => {
+  it("tells WSLg's msrdc from a Remote Desktop client's by its folder (the WSL router identifies only WSLg's)", () => {
     expect(isWslgImage("C:\\Program Files\\WSL\\msrdc.exe")).toBe(true);
     expect(isWslgImage("\\Device\\HarddiskVolume3\\Program Files\\WSL\\MSRDC.EXE")).toBe(true);
     expect(isWslgImage("C:\\Program Files\\WindowsApps\\MicrosoftCorporationII.WindowsSubsystemForLinux_1.2.5.0_x64__8wekyb3d8bbwe\\msrdc.exe")).toBe(true);
@@ -72,7 +95,7 @@ describe("the policy in a remote surface on Windows", () => {
   it("refuses every kind of action in a WSLg app's or a remote desktop's window, with the reason in plain words", () => {
     // A Linux terminal and a polkit prompt under WSLg pass the Windows terminal and security checks by name.
     for (const [app, title] of [["msrdc", "ada@laptop: ~"], ["msrdc", "Authentication Required"], ["mstsc", "build-server - Remote Desktop Connection"],
-      ["msrdc.exe", "gedit"], ["Windows365", "Windows App"]]) {
+      ["msrdc.exe", "gedit"], ["Windows365", "Windows App"], ["vcxsrv", "xterm"], ["x410", "gedit"], ["GWSL", "Authentication Required"], ["GWSL_vcxsrv", "ana@pc: ~"], ["GWSL_vcxsrv_lowdpi", "pinentry"]]) {
       for (const kind of IN_WINDOW) {
         const d = engine("win32").decide(request(kind, app, title));
         expect(d, `${kind} in ${app}`).toMatchObject({ tier: "never", verdict: "deny", reason: REASON });
@@ -174,6 +197,12 @@ describe("screenshots with a remote surface on screen", () => {
     expect(isGrey(await at(p.capture!, 60, 100))).toBe(true);
   });
 
+  it("blacks out an X server's window (VcXsrv) the same way", async () => {
+    const xserver = top(4, 88, "vcxsrv", { x: 150, y: 0, width: 150, height: 200 }, "xterm");
+    const { perception } = desktop({ stack: () => [NOTEPAD, xserver], remote: remoteSurfaceCheck("win32") });
+    expect(await perception.privateWindows()).toEqual([{ x: 150, y: 0, width: 150, height: 200 }]);
+  });
+
   it("blacks it out beside the never-look windows", async () => {
     const vault = top(3, 50, "KeePassXC", { x: 0, y: 0, width: 50, height: 50 }, "vault");
     const { perception } = desktop({ stack: () => [NOTEPAD, vault, RAIL], remote: remoteSurfaceCheck("win32"), neverLook: ["keepassxc"] });
@@ -193,6 +222,19 @@ describe("screenshots with a remote surface on screen", () => {
     expect(await perception.privateWindows()).toBeNull();
     const p = await perception.perceive({ image: true, scope: "screen" });
     expect(p.capture).toBeNull();
+  });
+
+  it("blacks out a remote viewer known by either part of its X11 class, or by its whole app name (review #8)", async () => {
+    // Linux's WM_CLASS is two parts joined ("remmina Org.remmina.Remmina"); macOS names a window by its app's whole
+    // name ("Screen Sharing"). A row for those OSes (policy/remote-surface.ts) names one program, as Windows' do.
+    const viewers = (app: string) => /^(?:remmina|virt-viewer|screen sharing)$/i.test(app.trim());
+    for (const wmClass of ["remmina Org.remmina.Remmina", "virt-viewer Virt-viewer", "Screen Sharing"]) {
+      const viewer = top(5, 66, wmClass, { x: 150, y: 0, width: 150, height: 200 }, "guest");
+      const { perception } = desktop({ stack: () => [NOTEPAD, viewer], remote: viewers });
+      expect(await perception.privateWindows(), wmClass).toEqual([{ x: 150, y: 0, width: 150, height: 200 }]);
+    }
+    const other = top(5, 66, "gedit Gedit", { x: 150, y: 0, width: 150, height: 200 }, "remmina notes");
+    expect(await desktop({ stack: () => [NOTEPAD, other], remote: viewers }).perception.privateWindows()).toEqual([]);
   });
 
   it("captures as before without the check (Linux and macOS): nothing blacked out, nothing more asked", async () => {

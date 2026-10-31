@@ -5,6 +5,7 @@
  */
 
 import { createRequire } from "node:module";
+import { ignoreXErrors } from "../remote/screen";
 
 export interface X11Window {
   id: number;
@@ -61,8 +62,8 @@ export interface X11 {
    */
   pointer(): { x: number; y: number; mask: number } | null;
   /**
-   * The keys held down right now (XQueryKeymap), for checking that a shortcut callback is a real chord press.
-   * null when the display is closed.
+   * The ask chord's keys held down right now (chordHeld: the server's modifier state, and XQueryKeymap's keys by
+   * keysym), for checking that a shortcut callback is a real chord press. null when the display is closed.
    */
   keysDown(): { control: boolean; alt: boolean; space: boolean } | null;
   /** The window the window manager reports as active (_NET_ACTIVE_WINDOW). */
@@ -98,6 +99,26 @@ const requireCjs = createRequire(__filename);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- koffi's type handle
 let ximageType: any = null;
 
+/** X's core state bits for Ctrl and Alt: ControlMask, and Mod1Mask, the modifier Electron's grab takes for Alt. */
+const CONTROL_MASK = 4, MOD1_MASK = 8;
+const CONTROL_SYMS = new Set([0xffe3, 0xffe4]), ALT_SYMS = new Set([0xffe9, 0xffea]), SPACE_SYM = 0x20;
+
+/**
+ * Which of the ask chord's keys are held. `mask`: the modifier state the server reports (XQueryPointer), the state
+ * the shortcut's grab matched on, so a Ctrl or Alt made by another key counts (GNOME Tweaks' "Caps Lock as an
+ * additional Ctrl", Alt on the Win keys); null when it couldn't be read. `held`: the keycodes down (XQueryKeymap),
+ * each read by its keysym (`symOf`), so any key that is Control_L counts, not only the lowest keycode that has it.
+ */
+export function chordHeld(mask: number | null, held: readonly number[], symOf: (code: number) => number): { control: boolean; alt: boolean; space: boolean } {
+  const syms = held.map(symOf);
+  const has = (set: ReadonlySet<number>) => syms.some(sym => set.has(sym));
+  return {
+    control: ((mask ?? 0) & CONTROL_MASK) !== 0 || has(CONTROL_SYMS),
+    alt: ((mask ?? 0) & MOD1_MASK) !== 0 || has(ALT_SYMS),
+    space: syms.includes(SPACE_SYM),
+  };
+}
+
 export function openX11(displayName?: string): X11 | null {
   try {
     const koffi = requireCjs("koffi") as typeof import("koffi");
@@ -118,7 +139,7 @@ export function openX11(displayName?: string): X11 | null {
     const XDefaultRootWindow = lib.func("unsigned long XDefaultRootWindow(void *dpy)");
     const XQueryPointer = lib.func("int XQueryPointer(void *dpy, unsigned long w, _Out_ unsigned long *root, _Out_ unsigned long *child, _Out_ int *rootX, _Out_ int *rootY, _Out_ int *winX, _Out_ int *winY, _Out_ unsigned int *mask)");
     const XQueryKeymap = lib.func("int XQueryKeymap(void *dpy, _Out_ uint8_t *keys)");
-    const XKeysymToKeycode = lib.func("uint8_t XKeysymToKeycode(void *dpy, unsigned long keysym)");
+    const XKeycodeToKeysym = lib.func("unsigned long XKeycodeToKeysym(void *dpy, uint8_t code, int index)");
     const XGetWindowProperty = lib.func("int XGetWindowProperty(void *dpy, unsigned long w, unsigned long prop, long offset, long length, int del, unsigned long reqType, _Out_ unsigned long *actualType, _Out_ int *actualFormat, _Out_ unsigned long *nitems, _Out_ unsigned long *bytesAfter, _Out_ void **data)");
     const XGetGeometry = lib.func("int XGetGeometry(void *dpy, unsigned long d, _Out_ unsigned long *root, _Out_ int *x, _Out_ int *y, _Out_ unsigned int *w, _Out_ unsigned int *h, _Out_ unsigned int *border, _Out_ unsigned int *depth)");
     const XTranslateCoordinates = lib.func("int XTranslateCoordinates(void *dpy, unsigned long src, unsigned long dest, int sx, int sy, _Out_ int *dx, _Out_ int *dy, _Out_ unsigned long *child)");
@@ -131,6 +152,8 @@ export function openX11(displayName?: string): X11 | null {
 
     const dpy = XOpenDisplay(displayName ?? null);
     if (!dpy) return null;
+    // A window that closes between being listed and read is BadWindow: without a handler Xlib's default ends Ember.
+    ignoreXErrors();
     const root = XDefaultRootWindow(dpy);
     const atom = (name: string) => XInternAtom(dpy, name, 0);
     let open = true;
@@ -232,12 +255,13 @@ export function openX11(displayName?: string): X11 | null {
         if (!open) return null;
         const keys = Buffer.alloc(32);
         if (!XQueryKeymap(dpy, keys)) return null;
-        const down = (keysym: number) => {
-          const code = Number(XKeysymToKeycode(dpy, keysym));
-          return code > 0 && (keys[code >> 3] & (1 << (code & 7))) !== 0;
-        };
-        // Either side of each modifier counts (Control_L/Control_R, Alt_L/Alt_R); keycodes do not shift with layout.
-        return { control: down(0xffe3) || down(0xffe4), alt: down(0xffe9) || down(0xffea), space: down(0x20) };
+        const held: number[] = [];
+        for (let i = 0; i < 32; i++) for (let b = 0; b < 8; b++) if (keys[i] & (1 << b)) held.push(i * 8 + b);
+        // The mask is filled in even when the pointer is on another screen (XQueryPointer then returns False).
+        const r = [0], c = [0], rx = [0], ry = [0], wx = [0], wy = [0], m = [0];
+        XQueryPointer(dpy, root, r, c, rx, ry, wx, wy, m);
+        // Either side of each modifier counts (Control_L/Control_R, Alt_L/Alt_R), on whichever key the keymap puts it.
+        return chordHeld(m[0], held, code => Number(XKeycodeToKeysym(dpy, code, 0)));
       },
 
       activeWindow() {

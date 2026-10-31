@@ -5,9 +5,11 @@
  * numbers); key codes are CGKeyCode + 8 (kVK_ANSI_A is 0, and 0 means "no key" to callers); buttons and the button
  * mask are X's. The modifiers Ember holds are set as flags on every event it posts. Posting needs the Accessibility
  * permission, without which macOS drops events silently: blockedReason() says so, and also refuses (failing closed)
- * while secure keyboard entry is on or can't be checked, without Input Monitoring (Ember might not see the user take
- * over the keyboard) and while the input source is an input method (it would compose from the key code Ember's text
- * carries). Posted events become visible asynchronously, so the input says `pointerLags`. AX calls (focus, titles,
+ * while secure keyboard entry is on or can't be checked, and without Input Monitoring (Ember might not see the user
+ * take over the keyboard). While the input source is an input method, or can't be read, only typing is refused
+ * (keyboardBlockedReason, and textKey itself): it would compose from the key code Ember's text carries, while a click,
+ * a scroll or a Command shortcut is never composed. Posted events become visible asynchronously, so the input says
+ * `pointerLags`. AX calls (focus, titles,
  * activation) run with a 0.25 s timeout on Electron's main thread and never target Ember's own process. Whatever
  * Ember holds is let go by releaseAll(), by close() and when the process exits (a key posted down stays down).
  * createDarwinInput() holds the logic over a DarwinDesktop and a DarwinPoster, so it is unit-tested with fakes.
@@ -17,7 +19,7 @@ import { strokeFor, type KeyLayout } from "../../hands/keymap";
 import type { Logger } from "../../logger";
 import type { Input, OwnWindowHandle } from "../types";
 import { EVENT, FLAG, MOUSE_BUTTON } from "./cg";
-import { openDesktop, openPoster, desktopError, secureInputOf, type DarwinDesktop, type DarwinPoster } from "./desktop";
+import { openDesktop, openPoster, desktopError, secureInputCause, secureInputOf, type DarwinDesktop, type DarwinPoster } from "./desktop";
 import { resolveActive, resolveFocus } from "./focus";
 import {
   SHORTCUT_FLAGS, VK, buildLayout, cgKeyOf, charKeysym, isModifierKey, keyFlags, keysymOf, modifierFlags, namedKey, toCode,
@@ -31,8 +33,8 @@ export const ACCESSIBILITY_REASON =
 
 /** Shown while another app holds secure keyboard entry. */
 export function secureInputReason(app: string): string {
-  const where = app ? ` in ${app}` : "";
-  return `Secure keyboard entry is on${where} (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't use the mouse or keyboard until it's off.`;
+  const cause = secureInputCause(app);
+  return `${cause[0]!.toUpperCase()}${cause.slice(1)}, so Ember won't use the mouse or keyboard until it's off.`;
 }
 
 /** Shown when neither IsSecureEventInputEnabled nor the session can say whether secure keyboard entry is on. */
@@ -48,13 +50,18 @@ export const SECURE_INPUT_UNKNOWN_REASON = "Ember can't tell whether a password 
  * which is refused first. Kept until the manual check on a real Mac (design §12.3 item 5) agrees.
  */
 export const INPUT_MONITORING_REASON =
-  "Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard.";
+  "Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard, so it won't use the mouse or keyboard without it.";
 
-/** Shown while the input source is an input method (Japanese, Pinyin, Korean…), which would compose from Ember's keys. */
-export const INPUT_METHOD_REASON = "Switch to a keyboard layout (not an input method) so Ember can type, or let Ember fill the field directly.";
+/** Shown when Ember would type while the input source is an input method, which would compose from Ember's keys. */
+export const INPUT_METHOD_REASON = "An input method (Japanese, Pinyin, Korean…) is selected, so Ember won't type with the keyboard: switch to a keyboard layout, or let Ember fill the field directly.";
 
-/** Shown when the current input source can't be read (so it might be an input method). */
-export const INPUT_SOURCE_UNKNOWN_REASON = "Ember can't tell whether an input method is in use, so it won't use the keyboard.";
+/** Shown when Ember would type while the current input source can't be read (so it might be an input method). */
+export const INPUT_SOURCE_UNKNOWN_REASON = "Ember can't tell whether an input method is in use, so it won't type with the keyboard.";
+
+/** Control, Command (Meta and Super) and Option (Alt) keysyms: held with a key, they make it a shortcut. */
+const SHORTCUT_MODIFIERS: ReadonlySet<number> = new Set([0xffe3, 0xffe4, 0xffe7, 0xffe8, 0xffe9, 0xffea, 0xffeb, 0xffec]);
+/** Does this key type a character, which an input method composes from: any key of the layout, space, the keypad's? */
+const typesCharacter = (sym: number): boolean => namedKey(sym) < 0 || sym === 0x20 || (sym >= 0xffaa && sym <= 0xffbd);
 
 /** Lines one wheel notch scrolls (X's buttons 4–7 are one notch each; 3 matches Windows' default). */
 export const LINES_PER_NOTCH = 3;
@@ -106,6 +113,7 @@ export interface DarwinInput extends Input {
   textKey(ch: string, down: boolean): boolean;
   onScreen(x: number, y: number): boolean;
   blockedReason(window: number): string | null;
+  keyboardBlockedReason(keys?: { modifiers: readonly number[]; sym: number }): string | null;
   layout(): KeyLayout | null;
   keyboardGrabbed(window?: number): boolean;
   pointerOn(window: number, elementWindow?: number): boolean;
@@ -370,7 +378,9 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
       const e = list.find(w => w.id === window);
       // Ember's own windows are focused by main through Electron: AX on Ember's process would block its main thread.
       if (!e || e.pid === ownPid) return;
-      if (resolveFocus(focus, list)?.id === window) return;
+      // Already the front window and the one with the keyboard: nothing to raise. The keyboard alone is not enough —
+      // another window of the same app can sit in front of the one that has it, and that one is not active until raised.
+      if (resolveFocus(focus, list)?.id === window && resolveActive(focus, list)?.id === window) return;
       desktop.raise(e.pid, window, e.bounds);
     },
 
@@ -417,6 +427,15 @@ export function createDarwinInput(desktop: DarwinDesktop, poster: DarwinPoster, 
       if (secure) return secure;
       // null: the call doesn't exist, which means a macOS older than the permission itself (10.15).
       if (desktop.listenAccess() === false) return INPUT_MONITORING_REASON;
+      // The input source matters only for typing (keyboardBlockedReason): clicks and shortcuts aren't composed.
+      return null;
+    },
+
+    keyboardBlockedReason(keys) {
+      if (!open) return null;
+      // Under Command, Control or Option a key is a shortcut, and a key that types nothing (Return, the arrows, the
+      // F-keys) has nothing to compose: only typed text and character keys wait for a keyboard layout.
+      if (keys && (keys.modifiers.some(m => SHORTCUT_MODIFIERS.has(m)) || !typesCharacter(keys.sym))) return null;
       return inputSourceReason();
     },
 

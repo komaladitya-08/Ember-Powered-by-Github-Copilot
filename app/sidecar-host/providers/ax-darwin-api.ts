@@ -64,7 +64,10 @@ export interface AxApi {
   settable(el: AxRef, name: string): boolean | AxError;
   /** AXUIElementCopyActionNames. */
   actions(el: AxRef): string[] | AxError;
-  /** AXUIElementSetAttributeValue with a CFString, CFNumber or CFBoolean (an element: as it is); null when it worked. */
+  /**
+   * AXUIElementSetAttributeValue with a CFString, CFNumber, CFBoolean or CFRange (an element: as it is). A point, a
+   * size, a rect or an array is not set. null when it worked.
+   */
   set(el: AxRef, name: string, v: AxValue): AxError | null;
   /** AXUIElementPerformAction; null when it worked. */
   perform(el: AxRef, action: string): AxError | null;
@@ -217,7 +220,14 @@ export function makeAxApi(p: AxApiParts): AxApi {
     if (typeof v === "number") return { ref: cf.createNumber(v), own: true };
     if (typeof v === "boolean") return { ref: v ? cf.kTrue : cf.kFalse, own: false };
     if (typeof v === "bigint") return { ref: v, own: false };
-    return { ref: null, own: false }; // structs and arrays are never set by the provider
+    // A selection is a CFRange (AXSelectedTextRange). A point, a size, a rect or an array is not set.
+    if (typeof v === "object" && !Array.isArray(v) && v.type === "range") {
+      const buf = Buffer.alloc(RANGE_BYTES);
+      buf.writeBigInt64LE(BigInt(Math.max(0, Math.floor(v.location))), 0);
+      buf.writeBigInt64LE(BigInt(Math.max(0, Math.floor(v.length))), 8);
+      return { ref: extra.AXValueCreate(AX_VALUE.cfRange, buf), own: true };
+    }
+    return { ref: null, own: false };
   };
   /** The app element of `pid`, made once with the messaging timeout set, and kept (the oldest let go past APPS_KEPT). */
   const app = (pid: number): Ref | null => {

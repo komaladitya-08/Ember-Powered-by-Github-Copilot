@@ -14,6 +14,12 @@ export const TARGETS = ["linux-x64", "win32-x64", "win32-arm64", "darwin-arm64",
  */
 export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-"];
 
+/**
+ * The remote agent's parts for SSH targets (scripts/package/remote-parts.mjs): dist/remote-parts/ is staged as this
+ * folder under every target's resources folder (stage.mjs), where the PC finds the archive it sends a remote.
+ */
+export const REMOTE_PARTS_DIR = "remote-parts";
+
 /** Packages never bundled: tslib is only @emnapi's, and @emnapi is only sharp's wasm fallback's. */
 const NEVER_BUNDLED = name => name === "tslib" || name.startsWith("@emnapi/");
 
@@ -22,6 +28,15 @@ const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
 
 /** Built files every target needs (relative to dist/app). A trailing "/" means a folder that must not be empty. */
 const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "preload/", "renderer/"];
+
+/**
+ * The SSH and command helpers Ember starts beside main.cjs, which fail only at first use when missing: the SSH link
+ * worker (remote-link.cjs) everywhere, the password helper ssh runs (askpass.cjs) on Linux and macOS (Linux runs it as
+ * plain Node; macOS, whose build refuses node mode, as a worker thread of Ember's own askpass mode, review #177;
+ * Windows compiles ember-askpass.exe instead), and Windows' command job host (job-host.cjs).
+ */
+const POSIX_HELPERS = ["askpass.cjs", "remote-link.cjs"];
+const WINDOWS_HELPERS = ["remote-link.cjs", "job-host.cjs"];
 
 /**
  * The layout of one target. Paths are POSIX-style; join them with path.join on the OS that stages.
@@ -50,7 +65,7 @@ export function layoutFor(platform, arch) {
       prune: [`${koffi}/musl_x64`, ...tools],
       sidecarFiles: [{ from: "sidecar/atspi/ember_atspi.py", to: "sidecar/atspi/ember_atspi.py" }],
       // The desk helper (run as plain Node beside main.cjs) is Linux-only, like the desk.
-      requiredDist: [...COMMON_DIST.slice(0, 1), "desk-agent.cjs", ...COMMON_DIST.slice(1)],
+      requiredDist: [...COMMON_DIST.slice(0, 1), "desk-agent.cjs", ...COMMON_DIST.slice(1), ...POSIX_HELPERS],
       sidecarDist: [],
       // The Windows/macOS accessibility host never runs here (the Python AT-SPI sidecar does).
       excludeDist: ["ax-sidecar.cjs"],
@@ -69,14 +84,18 @@ export function layoutFor(platform, arch) {
       platformPackages: [copilot, `@img/sharp-${target}`, koffi],
       // koffi's import library and exports file are for linking against it, not for loading it.
       prune: [`${koffiDir}/koffi.lib`, `${koffiDir}/koffi.exp`, ...tools],
-      // The UI Automation bridge: compiled by Windows PowerShell 5.1 at run time, so it ships as source.
+      // The UI Automation bridge: compiled by Windows PowerShell 5.1 at run time, so it ships as source. The AT-SPI
+      // sidecar is the helper Ember runs inside WSL distros to read WSLg's Linux apps (SSH/WSL design §4.3). SSH's
+      // askpass helper is compiled the same way at first use, from resources\ssh (askpass-win.ts, §5.1.6).
       sidecarFiles: [
         { from: "sidecar/uia/ember_uia.ps1", to: "sidecar/uia/ember_uia.ps1" },
         { from: "sidecar/uia/ember_uia.cs", to: "sidecar/uia/ember_uia.cs" },
+        { from: "sidecar/atspi/ember_atspi.py", to: "sidecar/atspi/ember_atspi.py" },
+        { from: "resources/ssh/ember_askpass.cs", to: "ssh/ember_askpass.cs" },
       ],
       // `ember --doctor` for a console: Ember.exe is a windowed program, which cmd.exe doesn't wait for (design §9.9).
       launchers: [{ from: "packaging/windows/ember-doctor.cmd", to: "ember-doctor.cmd" }],
-      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs"],
+      requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...WINDOWS_HELPERS],
       // The accessibility host, run as Ember's own binary in node mode (ELECTRON_RUN_AS_NODE).
       sidecarDist: ["ax-sidecar.cjs"],
       excludeDist: ["desk-agent.cjs"],
@@ -106,7 +125,7 @@ export function layoutFor(platform, arch) {
     // libvips's glib headers are for building against it.
     prune: [`@img/sharp-libvips-${target}/lib/glib-2.0`, ...tools],
     sidecarFiles: [],
-    requiredDist: [...COMMON_DIST, "ax-sidecar.cjs"],
+    requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...POSIX_HELPERS],
     sidecarDist: ["ax-sidecar.cjs"],
     excludeDist: ["desk-agent.cjs"],
     icon: { kind: "icns", file: "Contents/Resources/ember.icns", replaces: "Contents/Resources/electron.icns" },
@@ -193,7 +212,8 @@ export function npmInvocation(host, args) {
   if (host.npmExecPath && /^npm-cli\.c?js$/i.test(host.npmExecPath.split(/[\\/]/).pop() ?? "")) {
     return { file: host.execPath, args: [host.npmExecPath, ...args], shell: false };
   }
-  const unsafe = args.find(a => !/^[\w.=-]+$/.test(a));
+  // Letters, digits and . = - _ @ / only: none is special to cmd.exe, and a scoped package spec needs @ and /.
+  const unsafe = args.find(a => !/^[\w.=@/-]+$/.test(a));
   if (unsafe !== undefined) throw new Error(`won't pass ${JSON.stringify(unsafe)} to npm through the shell`);
   return { file: ["npm", ...args].join(" "), args: [], shell: true };
 }

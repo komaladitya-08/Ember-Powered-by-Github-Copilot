@@ -1,0 +1,107 @@
+/* The command window ("Ember commands", §8.5): an opaque content window. The card (a question or an announcement) on
+   top, a line for each task whose command has no tab yet, then the tabs of the runs and the selected run's panel: its
+   header, its command, its terminal, the typing hint, the status line and Stop. */
+html, body { margin: 0; height: 100%; }
+body { background: var(--surface-0); font: var(--type-body); letter-spacing: -0.006em; color: var(--label); overflow: hidden; }
+.window { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.window > * { min-width: 0; }
+[hidden] { display: none !important; }
+.empty { margin: auto; color: var(--label-2); font: var(--type-callout); }
+
+/* ── The card: grouped on --surface-1, the command in a monospace block that wraps and scrolls (never cut) ── */
+.cards { flex: none; display: grid; gap: 10px; max-height: 72vh; overflow: auto; }
+/* With no tabs or pending lines below it, the card area takes the whole window (review #265). */
+.window.cards-only .cards { flex: 0 1 auto; min-height: 0; max-height: none; }
+/* Allow, Not now and their hints stay at the bottom of the card area while the command and its lines scroll under them:
+   never below the fold. What they cover doesn't count as in view (main.ts measureCard). */
+.card .actions {
+  position: sticky; bottom: 0; z-index: 1; display: grid; gap: 8px; padding: 8px 0 4px;
+  background: var(--surface-1); box-shadow: 0 -1px 0 var(--separator);
+}
+.card { display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--r-lg); background: var(--surface-1); box-shadow: var(--group-edge); }
+.card.announce { box-shadow: var(--group-edge), inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
+.closing-line { margin: 0; font: var(--type-callout); color: var(--label); }
+.where { margin: 0; font: var(--type-footnote); color: var(--label-2); overflow-wrap: anywhere; }
+.heading { margin: 0; font: var(--type-title-2); letter-spacing: -0.009em; text-wrap: balance; }
+.command {
+  margin: 0; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator);
+  font: 13px/19px var(--ember-mono); color: var(--label); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+  max-height: 40vh; overflow: auto; tab-size: 4;
+}
+.command:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--separator), var(--focus-ring); }
+.command.small { max-height: 4.8em; font-size: 12px; line-height: 17px; }
+/* What runs is shown in the order the shell reads it: Hebrew or Arabic letters beside digits and other words are never
+   reordered by the bidi algorithm (the terminal below shows the same logical order; the legend says so). */
+.command, .where, .tab-label { direction: ltr; unicode-bidi: bidi-override; }
+/* Characters you wouldn't see: a token in a distinct colour on a tint; letters from another alphabet underlined. */
+.vt { color: var(--purple-text); background: color-mix(in srgb, var(--purple) 16%, transparent); border-radius: var(--r-xs); padding: 0 2px; }
+.vt-tab { padding: 0 6px 0 0; background: transparent; }
+.vt-mixed { color: var(--yellow); background: transparent; padding: 0; text-decoration: underline 2px var(--yellow); text-underline-offset: 3px; }
+.legend { margin: 0; font: var(--type-footnote); color: var(--label-2); }
+.lines { margin: 0; padding: 0 0 0 18px; display: grid; gap: 4px; font: var(--type-callout); overflow-wrap: anywhere; }
+.why { margin: 0; font: var(--type-footnote); color: var(--label-2); overflow-wrap: anywhere; }
+/* A command that deletes data: a quiet bar on the card's edge (not an alarm), and its Allow doesn't stand out (main.ts). */
+.card.ask.risky { box-shadow: var(--group-edge), inset 3px 0 0 var(--yellow); }
+.hint, .keys, .count { margin: 0; font: var(--type-footnote); color: var(--label-2); }
+.count { font-variant-numeric: tabular-nums; color: var(--label); font-weight: 600; }
+.buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── A task whose command has no tab yet ("Starting Ubuntu…"): a quiet line with the working symbol, above the tabs ── */
+.pending { flex: none; display: grid; gap: 4px; padding: 0 2px; }
+.pending-line { margin: 0; display: flex; align-items: center; gap: 8px; font: var(--type-callout); color: var(--label-2); overflow-wrap: anywhere; }
+.pending-line::before { content: ""; flex: none; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
+
+/* ── Tabs: one per run, newest first; the symbol says how it is going (never colour alone) ── */
+.tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; padding: 4px; }
+.tab {
+  all: unset; box-sizing: border-box; cursor: pointer; flex: none; display: inline-flex; align-items: center; gap: 6px;
+  max-width: 260px; min-height: calc(28px * var(--text-scale)); padding: 4px 10px; border-radius: var(--r-sm);
+  font: 12px/16px var(--ember-mono); color: var(--label-2); background: rgba(255, 255, 255, 0.04); box-shadow: inset 0 0 0 1px var(--separator);
+}
+.tab::before { content: ""; flex: none; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
+.tab[aria-selected="true"] { color: var(--label); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--control-edge); }
+.tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The computer a run is on, when it isn't this one: a small badge before the command. */
+.tab-where { flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--type-caption); color: var(--label-2);
+  padding: 0 5px; border-radius: var(--r-xs); background: rgba(255, 255, 255, 0.06); }
+@media (hover: hover) { .tab:hover { color: var(--label); } }
+.tab:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.tab[data-status="done"] { --sym-tint: var(--green); --sym: var(--sym-done); }
+
+/* ── The selected run: its terminal fills what is left ── */
+.panels { position: relative; flex: 1; min-height: 0; display: flex; }
+.panel { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+/* Untracked: the body's tighter letters, inherited, made xterm measure its cells narrower than it draws them, so a full
+   row ran past its box and lost its last character (and new runs were sized by that narrower cell too). */
+.term { flex: 1; min-height: 0; overflow: auto; border-radius: var(--r-md); background: var(--surface-0); padding: 4px 8px; box-shadow: inset 0 0 0 1px var(--separator); letter-spacing: normal; }
+/* The terminal shows when it has the keyboard (its own input is a hidden text box). */
+.term:focus-within { box-shadow: inset 0 0 0 1px var(--separator), var(--focus-ring); }
+/* Where the terminal's font is measured (main.ts: the size new runs start at). */
+.term.measure { position: absolute; top: 0; left: 0; width: 0; height: 0; padding: 0; overflow: hidden; visibility: hidden; pointer-events: none; }
+.typing { margin: 0; font: var(--type-footnote); color: var(--label-2); }
+.foot { display: flex; align-items: center; gap: 10px; }
+.status { flex: 1; min-width: 0; margin: 0; font: var(--type-callout); color: var(--label); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+/* Windows contrast themes (forced colours; tokens and focus in ember.css): the tabs, the command and the cards keep
+   their edges, the selected tab is filled with the highlight (its symbol in the highlight's text colour), and a
+   character you wouldn't see keeps its box (its tint is gone). */
+@media (forced-colors: active) {
+  .tab, .command { border: 1px solid ButtonText; }
+  .tab[aria-selected="true"] { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; --sym-tint: HighlightText; }
+  .card, .term { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .vt { outline: 1px solid CanvasText; }
+  .vt-mixed { outline: none; }
+  /* The terminal's focus, a deleting command's bar, a run's computer badge and the edge above Allow's row are drawn
+     with shadows, which the system drops. */
+  .term:focus-within { outline: 2px solid Highlight; outline-offset: -2px; }
+  .card.ask.risky { border-left: 3px solid CanvasText; }
+  .tab-where { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .card .actions { border-top: 1px solid CanvasText; }
+}
+
+/* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type.
+   The terminal's type follows it through xterm's own option (main.ts, terminal-options.ts termFontSize). */
+html[data-text-size] .command { font-size: calc(13px * var(--text-scale)); line-height: calc(19px * var(--text-scale)); }
+html[data-text-size] .command.small { font-size: calc(12px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .tab { max-width: calc(260px * var(--text-scale)); font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] .tab-where { max-width: calc(90px * var(--text-scale)); }

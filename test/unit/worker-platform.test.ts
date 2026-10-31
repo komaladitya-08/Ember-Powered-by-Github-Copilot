@@ -50,8 +50,9 @@ interface Field { role: string; name: string; text?: string; states: string[]; b
  * A window with one text field that takes no text by accessibility (a Chromium field): Ember's hands type into it.
  * The pretend hand records keys; Delete empties the field and the paste key puts in what was written to the clipboard.
  */
-function harness(o: { system?: WorkerSystem; desk?: boolean; noCursor?: boolean; model?: string | null; activeWindow?: () => { app: string; title: string } | null;
-  windows?: () => { app: string; pid: number | null; name: string; role: string; active: boolean; bounds: Bounds }[] } = {}) {
+function harness(o: { system?: WorkerSystem; desk?: boolean; noCursor?: boolean; model?: string | null; settingsKey?: () => string | null; activeWindow?: () => { app: string; title: string } | null;
+  windows?: () => { app: string; pid: number | null; name: string; role: string; active: boolean; bounds: Bounds }[];
+  dialog?: { open: boolean; reason?: () => Promise<string | null> } } = {}) {
   const st = { keys: [] as string[], borrows: 0, asked: [] as string[], audit: [] as Record<string, unknown>[] };
   const field: Field = { role: "text", name: "Search", text: "old words", bounds: { x: 10, y: 60, width: 300, height: 30 }, states: ["enabled", "sensitive", "editable", "focusable", "focused"] };
   const frame: AxNode = { id: 1, parent: null, depth: 0, role: "frame", name: "Notes", states: [], bounds: FRAME };
@@ -78,7 +79,8 @@ function harness(o: { system?: WorkerSystem; desk?: boolean; noCursor?: boolean;
       perceive: async () => ({ ...seen(), text: "<screen>", capture: null }),
       read: async () => seen(),
       windows: async () => o.windows?.() ?? [window],
-      systemDialogOpen: async () => false,
+      systemDialogOpen: async () => o.dialog?.open ?? false,
+      ...(o.dialog?.reason ? { systemDialogReason: o.dialog.reason } : {}),
     } as never,
     sidecar: {
       readElement: async (id: number) => {
@@ -107,6 +109,7 @@ function harness(o: { system?: WorkerSystem; desk?: boolean; noCursor?: boolean;
     },
     ...(o.desk ? { desk: async () => { throw new Error("no desk in this test"); } } : {}),
     ...(o.system ? { system: o.system } : {}),
+    ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}),
   } as unknown as WorkerDeps, { id: "t1", goal: "write hello in the notes", target: { title: "Notes" } });
   const tools = () => w.tools();
   const call = (name: string, args: Record<string, unknown>) => tools().find(t => t.name === name)!.handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
@@ -149,6 +152,13 @@ describe("a worker's tools follow what the OS offers", () => {
     expect((await mac.w.run(new AbortController().signal)).summary).toBe("No model is available for tasks. Pick one in settings (Control+Shift+Command+E).");
     const linux = harness({ model: null });
     expect((await linux.w.run(new AbortController().signal)).summary).toBe("No model is available for tasks. Pick one in settings (Ctrl+Alt+E).");
+    // The settings shortcut as Ember holds it now (main's): named only then, none when the check fails (cross-review X5).
+    const taken = harness({ system: fakeSystem("win32"), model: null, settingsKey: () => null });
+    expect((await taken.w.run(new AbortController().signal)).summary).toBe("No model is available for tasks. Pick one in Ember's settings.");
+    const broken = harness({ model: null, settingsKey: () => { throw new Error("no keys"); } });
+    expect((await broken.w.run(new AbortController().signal)).summary).toBe("No model is available for tasks. Pick one in Ember's settings.");
+    const held = harness({ system: fakeSystem("win32"), model: null, settingsKey: () => "Win+Alt+E" });
+    expect((await held.w.run(new AbortController().signal)).summary).toBe("No model is available for tasks. Pick one in settings (Win+Alt+E).");
     const noDesk = harness({ system: fakeSystem("win32"), noCursor: true });
     expect((await noDesk.call("type_text", { cell: "B5", text: "1", mode: "replace" })).textResultForLlm).toBe("Filling a cell needs the keyboard, which isn't available here. Tell the user in finish_task.");
     const desk = harness({ noCursor: true, desk: true });
@@ -234,6 +244,34 @@ describe("an authentication prompt on another OS", () => {
     await h.call("perceive_window", {});
     await h.call("press_keys", { keys: "ctrl+s" });
     expect(h.st.borrows).toBe(1);
+  });
+});
+
+describe("a system dialog, or a state the user can turn off, on another OS", () => {
+  const why = "secure keyboard entry is on in Terminal (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't look at the screen or use the mouse or keyboard until it's off";
+
+  it("names secure keyboard entry and its app instead of a dialog that isn't there (review #236)", async () => {
+    const h = harness({ system: fakeSystem("darwin"), dialog: { open: true, reason: async () => why } });
+    await h.call("perceive_window", {});
+    const r = await h.call("press_keys", { keys: "cmd+s" });
+    expect(r.resultType).toBe("denied");
+    expect(r.textResultForLlm).toBe(
+      "Secure keyboard entry is on in Terminal (a password field, or Terminal's “Secure Keyboard Entry”), so Ember won't look at the screen or use the mouse or keyboard until it's off. That's for the user to change: tell them, or finish the task saying what's left.");
+    expect(r.textResultForLlm).not.toContain("system dialog");
+    expect(h.st.borrows).toBe(0);
+    expect(h.st.audit.some(e => e.verdict === "deny" && e.reason === why)).toBe(true);
+  });
+
+  it("keeps the dialog's words when there is no other reason, or it can't be read", async () => {
+    for (const reason of [undefined, async () => null, async () => { throw new Error("gone"); }]) {
+      const h = harness({ system: fakeSystem("darwin"), dialog: { open: true, ...(reason ? { reason } : {}) } });
+      await h.call("perceive_window", {});
+      const r = await h.call("press_keys", { keys: "cmd+s" });
+      expect(r.resultType).toBe("denied");
+      expect(r.textResultForLlm).toMatch(/^A system dialog \(such as a password prompt\) is open on the user's screen/);
+      expect(h.st.borrows).toBe(0);
+      expect(h.st.audit.some(e => e.reason === "a system dialog is open")).toBe(true);
+    }
   });
 });
 

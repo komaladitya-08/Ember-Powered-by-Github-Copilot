@@ -47,7 +47,7 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
   const folders = knownFolders(api);
   const helper = helperDir(deps);
   const powershell = powershellFacts({ api, env, dir: helper, now: o.now });
-  const environment = win32Environment({ env, api, powershell, shell: deps.electron.shell });
+  const environment = win32Environment({ env, api, powershell, shell: deps.electron.shell, systemPreferences: deps.electron.systemPreferences });
   const lookup = win32Which({ env, programData: folders.programData, isFile: o.isFile ?? isFile, now: o.now });
   return {
     os: "win32",

@@ -4,8 +4,9 @@
  * compiles once into its cache and then starts quickly from it, reads the bench's controls with UIA's own control
  * types (never the password's value), including the classic ListView and TreeView whose UIA view comes from .NET's
  * client-side proxies, acts through UIA patterns (the bench logs what happened), answers by its deadline when a click
- * opens a modal dialog, leaves a skipped process alone, names a console window conhost, reads the bench's 32-bit build
- * as well, and ends at once when stdin closes. Windows only: skipped elsewhere, and failing instead of skipping when
+ * opens a modal dialog, leaves a skipped process alone, names a console window conhost, reads what shows of a long list
+ * scrolled to its end (test/fixtures/win_long_list.ps1) and nothing inside its offscreen rows, reads the bench's 32-bit
+ * build as well, and ends at once when stdin closes. Windows only: skipped elsewhere, and failing instead of skipping when
  * EMBER_UIA_TEST=1. The facts CI needs to judge a failure (DPI awareness, exit timings, why a window was busy) are
  * printed as "uia-bridge: ..." lines.
  */
@@ -19,6 +20,8 @@ import { POWERSHELL, UiaBridge, bridgeEnv, type BridgeAnswer, type BridgeExit, t
 
 const SCRIPT = path.resolve("sidecar/uia/ember_uia.ps1");
 const BENCH = path.resolve("test/fixtures/win_bench.ps1");
+/** A ListView of 3000 rows scrolled to its end (most rows offscreen, as a long web page scrolled down). */
+const LONG_LIST = path.resolve("test/fixtures/win_long_list.ps1");
 const TITLE = "Ember Bench (Windows)";
 /** The bench's program (compiled by win_bench.ps1, so that it isn't powershell, a terminal). */
 const BENCH_PROGRAM = "emberbench";
@@ -253,6 +256,27 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
     expect(warmMs, `cold ${coldMs} ms, warm ${warmMs} ms`).toBeLessThan(Math.max(coldMs, 1));
     expect(warmMs).toBeLessThan(10_000);
   });
+
+  it("starts from a folder whose name has square brackets, from memory and with its cache in such a folder (review #201)", async () => {
+    // Add-Type -Path would take "[portable]" for a wildcard and find no file; the bootstrap compiles by literal path.
+    const staged = path.join(dir, "Ember [portable]", "sidecar", "uia");
+    fs.mkdirSync(staged, { recursive: true });
+    for (const f of ["ember_uia.ps1", "ember_uia.cs"]) fs.copyFileSync(path.join(path.dirname(SCRIPT), f), path.join(staged, f));
+    const bracketCache = path.join(dir, "Jane [Work]", "cache");
+    for (const extra of [{}, { EMBER_UIA_CACHE: bracketCache }] as Record<string, string>[]) {
+      const b = new UiaBridge(path.join(staged, "ember_uia.ps1"), bridgeEnv(process.env, extra));
+      try {
+        expect(await b.ready).toMatchObject({ ready: true, version: 1 });
+        expect(await b.call("ping")).toEqual({ version: 1 });
+      } finally {
+        const exit = await b.close();
+        expect(exit.code).toBe(0);
+      }
+    }
+    // Whether the build could be cached under a bracketed folder (-OutputAssembly); from memory works either way.
+    const cached = fs.existsSync(bracketCache) ? fs.readdirSync(bracketCache) : [];
+    console.log(`uia-bridge: a cache under "Jane [Work]" holds ${JSON.stringify(cached)}`);
+  }, 120_000);
 
   it("lists the bench among the top-level windows, with its process and program name", async () => {
     const { windows, w } = await listedRead(main().hwnd);
@@ -521,6 +545,34 @@ describe.skipIf(!available && !required)("the UI Automation bridge on a real Win
       return !windows.some(x => x.hwnd === w.hwnd);
     });
     consolePid = 0;
+  });
+
+  it("reads what shows of a long list scrolled to its end, and nothing inside the rows that don't show", async () => {
+    // review #1: offscreen elements came first and were walked into, so a big list or page scrolled down read as empty.
+    expect(fs.existsSync(LONG_LIST), "test/fixtures/win_long_list.ps1").toBe(true);
+    const log = path.join(dir, "long-list.log");
+    const child = spawn(POWERSHELL, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Sta", "-File", LONG_LIST, "-Log", log, "-Rows", "3000", "-Seconds", "300"], {
+      stdio: "ignore",
+      env: bridgeEnv(process.env),
+    });
+    try {
+      const ready = await waitFor(`the long list's ready line in ${log}`, () => logged(log, { event: "ready" }), 60_000);
+      const t0 = Date.now();
+      const snap = await ui().call<{ nodes: RawNode[]; truncated: boolean; cut: string[]; busy: boolean }>("snapshot", { hwnd: Number(ready.hwnd), maxNodes: 300, deadlineMs: 8000 }, 15_000);
+      const read = snap.nodes;
+      const offscreen = read.filter(n => n.isOffscreen);
+      const rows = read.filter(n => /^Row \d+$/.test(n.name ?? ""));
+      console.log(`uia-bridge: the long list's snapshot took ${Date.now() - t0} ms: ${read.length} nodes, ${offscreen.length} offscreen, cut ${JSON.stringify(snap.cut)}, shown rows ${JSON.stringify(rows.filter(n => !n.isOffscreen).map(n => n.name))}`);
+      expect(snap.busy).toBe(false);
+      expect(rows.filter(n => !n.isOffscreen).map(n => n.name), `the rows that show in ${shown(read.slice(0, 40))}`).toContain("Row 3000");
+      expect(snap.cut, "only rows that don't show were left out").not.toContain("nodes");
+      expect(offscreen.length, "the rows scrolled out of view are listed, flagged offscreen").toBeGreaterThan(0);
+      // Nothing inside an offscreen element is read (a combo box's drop-down excepted; this window has none).
+      const inside = read.filter(n => n.parent !== undefined && n.parent >= 0 && read[n.parent].isOffscreen);
+      expect(inside.map(n => [n.controlType, n.name]), "nothing listed under an offscreen row").toEqual([]);
+    } finally {
+      if (child.exitCode === null) child.kill();
+    }
   });
 
   it("frees released handles and answers errors with the documented codes", async () => {

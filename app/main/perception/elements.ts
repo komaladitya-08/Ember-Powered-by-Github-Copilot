@@ -6,6 +6,7 @@
  */
 
 import type { AxNode, AxWindow, Bounds } from "./sidecar";
+import { NEVER_LOOK_APP_ONLY } from "../../shared/never-look";
 
 const INTERACTIVE = new Set(["push button", "toggle button", "check box", "radio button", "combo box", "text", "entry",
   "password text", "spin button", "slider", "menu item", "menu", "link", "page tab", "list item", "table cell", "check menu item",
@@ -110,10 +111,10 @@ export const SECRET_WORDS = [
   "pass(word|phrase|code|wd)s?", "passwort", "kennwort", "passord", "wachtwoord", "mot de passe", "contrase(n|ñ)a",
   "contrasenya", "senha", "palavra-passe", "^[\\s:*]*parol(a|ă)[\\s:*]*$", "parolă", "parola d['’]ordine",
   "parola (nou(a|ă)|actual(a|ă)|curent(a|ă)|veche|contului)", "(confirm(a|ă)|introduce(ți|ti)|schimb(a|ă)) parola",
-  "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", "^[\\s:*]*clave[\\s:*]*$",
+  "(afi(ș|ş)eaz(ă|a)|arat(ă|a)|ascunde) parola", "(yeni|mevcut|eski) parola", "parola(nız|yı|nızı)", "парола", "^[\\s:*]*clave[\\s:*]*$",
   "clave (de acceso|secreta|personal|bancaria|de seguridad|de (la )?tarjeta)", "(tu|su) clave", "lösenord", "adgangskode",
-  "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "пароль", "лозинка", "kata sandi",
-  "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
+  "salasana", "hasło", "heslo", "geslo", "lozinka", "jelszó", "(ş|s)ifre", "κωδικός", "(εμφάνιση|απόκρυψη) κωδικού",
+  "κωδικ(ού|ό) πρόσβασης", "пароль", "лозинка", "kata sandi", "mật khẩu", "كلمة (المرور|السر)", "pin( ?code)?s?",
   // Cards and bank accounts. An expiry date only beside a card ("Expiration date of the report" is not one).
   "card ?(number|no)s?", "credit ?cards?", "cvv2?", "cvc2?", "csc", "security codes?", "card verification",
   "card (expir(y|ation)|exp)", "mm ?/ ?(yy|aa|jj){1,2}", "valid (thru|through)", "kartennummer", "kreditkarte(nnummer)?",
@@ -126,11 +127,16 @@ export const SECRET_WORDS = [
   // One-time codes.
   "one[- ]time (code|password|pin)s?", "otps?", "2fa", "two[- ]factor", "totp", "verification codes?", "auth(entication)? codes?",
   "recovery (code|key)s?", "backup codes?", "bestätigungscode", "code de (vérification|sécurité|confirmation)", "verificatiecode", "kod weryfikacyjny",
-  "код (подтверждения|безопасности)",
-  // Keys, network passwords and secret answers.
+  "код (подтверждения|безопасности)", "(authenticator( app)?|sms|text message|login|log-in|sign-in|signin|access|activation|unlock|mfa|pass) codes?",
+  "([0-9]+|four|six|eight)[- ]?digit codes?",
+  // Wallets' seed phrases.
+  "(seed|recovery|backup|mnemonic) phrases?", "mnemonics?",
+  // Keys, network passwords and secret answers. Signing keys only where one is pasted: LibreOffice's "OpenPGP signing key:"
+  // picks one from a list.
   "secrets?", "private keys?", "(api|access|auth|bearer) ?(key|token)s?", "wi-?fi (key|password|passphrase)s?", "network (security )?keys?",
   "wpa2? ?(key|passphrase)s?", "pre-?shared keys?", "psk", "encryption keys?", "security (answer|question)s?", "secret (answer|question)s?",
-  "ssns?", "social security",
+  "(security|session|refresh|id) tokens?", "(master|ssh) keys?", "(jwt|webhook|private|gpg|ssh) signing keys?", "ssns?",
+  "social security",
 ];
 /** The same, for scripts written without spaces between words (matched anywhere in the label). */
 export const SECRET_ANYWHERE = ["密码", "密碼", "口令", "パスワード", "暗証", "비밀번호", "암호", "รหัสผ่าน", "סיסמ", "卡号", "卡號", "カード番号",
@@ -149,8 +155,19 @@ export function isSecretNode(n: Pick<AxNode, "role" | "name"> & { secret?: boole
   return !!n.secret || n.role === "password text" || (FIELD_ROLES.has(n.role) && (isSecretLabel(n.name) || isSecretLabel(label)));
 }
 
-/** "Show", "Reveal", "Hide password", "Passwort anzeigen": a control that shows (or hides again) a password. */
-const REVEAL = /(^|[^\p{L}])(show|reveal|unmask|hide|visibility|anzeigen|einblenden|ausblenden|afficher|masquer|mostrar|ocultar|mostra|nascondi|toon|verbergen|visa|dölj|näytä|piilota|pokaż|ukryj|zobrazit|skrýt|göster|gizle|показать|скрыть)([^\p{L}]|$)|显示|顯示|隐藏|表示/u;
+/**
+ * "Show", "Reveal", "Hide password", "Passwort anzeigen", "비밀번호 표시": a control that shows (or hides again) a
+ * password. Thai, Chinese and Japanese write their words together, so theirs are matched anywhere.
+ */
+const REVEAL = new RegExp("(^|[^\\p{L}])(" + [
+  "show", "reveal", "unmask", "hide", "visibility", "anzeigen", "einblenden", "ausblenden", "afficher", "masquer", "mostrar", "ocultar",
+  "mostra", "nascondi", "toon", "verbergen", "visa", "dölj", "näytä", "piilota", "pokaż", "ukryj", "zobrazit", "skrýt", "göster", "gizle",
+  "показать", "скрыть",
+  // Korean, Danish and Norwegian, Hungarian, Romanian (ș or ş), Greek, Vietnamese, Indonesian, Arabic, Hebrew.
+  "표시", "보기", "숨기기", "vis", "skjul", "megjelenítése", "megjelenítés", "mutat", "elrejtése", "elrejtés", "afi(ș|ş)eaz(ă|a)",
+  "arat(ă|a)", "ascunde", "εμφάνιση", "απόκρυψη", "hiện", "hiển thị", "ẩn", "tampilkan", "sembunyikan", "lihat", "إظهار", "اظهار",
+  "عرض", "إخفاء", "اخفاء", "הצג", "הסתר",
+].join("|") + ")([^\\p{L}]|$)|显示|顯示|隐藏|表示|แสดง|ซ่อน", "u");
 const REVEAL_ROLES = new Set(["check box", "toggle button", "switch", "push button", "check menu item"]);
 /**
  * Fields a bare "Show" or "Reveal" beside them is about: keys, codes and PINs (a password revealed before
@@ -436,8 +453,28 @@ export function focusedElement(nodes: AxNode[]): AxNode | null {
   return found;
 }
 
-/** True when the app or window matches the user's "never look at" list. */
+/**
+ * A name as the never-look list matches it: without format characters (macOS names some apps with a soft hyphen:
+ * German System Settings is "System" + U+00AD + "einstellungen"), composed (macOS may give an accented name with the
+ * accent apart), in lower case (cross-review X15).
+ */
+const lookFold = (s: string) => s.replace(/\p{Cf}/gu, "").normalize("NFC").toLowerCase();
+
+/** Each everyday word, where it begins a word of a title: not right after a letter or digit ("my vault | keeper"). */
+const WORD_START: ReadonlyMap<string, RegExp> = new Map([...NEVER_LOOK_APP_ONLY].map(w => [w, new RegExp(`(?<![\\p{L}\\p{N}])${w}`, "u")]));
+
+/**
+ * True when the app or window matches the user's "never look at" list. An entry that is an everyday word
+ * (NEVER_LOOK_APP_ONLY: "keeper", "seahorse", "strongbox") matches the app, and the title only where a word there starts
+ * with it: "Housekeeper wanted" is read, Keeper's web vault ("My Vault | Keeper") isn't, whether the word is a default or
+ * the user typed it (the list can't tell them apart; cross-review S3).
+ */
 export function isNeverLook(window: { app: string; name: string }, list: string[]): boolean {
-  const hay = `${window.app} ${window.name}`.toLowerCase();
-  return list.some(item => item.trim() && hay.includes(item.trim().toLowerCase()));
+  const app = lookFold(window.app);
+  const title = lookFold(window.name);
+  const hay = `${app} ${title}`;
+  return list.some(item => {
+    const i = lookFold(item).trim();
+    return !!i && (NEVER_LOOK_APP_ONLY.has(i) ? app.includes(i) || WORD_START.get(i)!.test(title) : hay.includes(i));
+  });
 }

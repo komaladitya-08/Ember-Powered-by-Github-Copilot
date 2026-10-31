@@ -1,6 +1,6 @@
 /**
- * The accessibility preferences Ember follows on a Mac: is VoiceOver running (Ember then doesn't speak over it), and
- * does the user want less motion. VoiceOver runs as its own process only while it is on, so `pgrep -x VoiceOver`
+ * The accessibility preferences Ember follows on a Mac: is VoiceOver running (Ember then speaks its replies, questions
+ * and results too, unless the user chose Never for speaking: app/shared/speech.ts), and does the user want less motion. VoiceOver runs as its own process only while it is on, so `pgrep -x VoiceOver`
  * is the test; `defaults read com.apple.universalaccess voiceOverOnOffKey` is only a second opinion for when pgrep
  * can't run (the key is missing until VoiceOver was toggled once, and the domain is privacy-protected on recent
  * releases). Never app.isAccessibilitySupportEnabled(): any accessibility client, Ember's own helper included, turns

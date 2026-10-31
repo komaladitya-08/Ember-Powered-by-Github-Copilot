@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isPlistDict, parsePlist, type PlistValue } from "../../app/main/platform/darwin/system/plist";
+import { isPlistDict, parsePlist, parseStringsFile, type PlistValue } from "../../app/main/platform/darwin/system/plist";
 
 const DIR = join(__dirname, "../fixtures/plist");
 
@@ -158,5 +158,34 @@ describe("parsePlist", () => {
       // Quadratic backtracking takes minutes here; linear parsing a few milliseconds.
       expect(Date.now() - started).toBeLessThan(2000);
     });
+  });
+});
+
+describe("parseStringsFile (an app's localized InfoPlist.strings, review #239)", () => {
+  const utf16 = (text: string) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+
+  it("reads the old text form: quoted and bare keys, comments, escapes, UTF-16 with a byte-order mark", () => {
+    const text = `/* Localized versions of Info.plist keys */\n\n"CFBundleDisplayName" = "Rechner";\nCFBundleName = "Rechner";\n// a line comment\n"NSHumanReadableCopyright" = "\\"Copyright\\" \\U00a9 Apple\\nInc.";\n`;
+    expect(parseStringsFile(utf16(text))).toEqual({ CFBundleDisplayName: "Rechner", CFBundleName: "Rechner", NSHumanReadableCopyright: "\"Copyright\" © Apple\nInc." });
+    expect(parseStringsFile(Buffer.from(`"CFBundleDisplayName" = "Réglages Système";`, "utf8"))).toEqual({ CFBundleDisplayName: "Réglages Système" });
+    expect(parseStringsFile(Buffer.from("", "utf8"))).toEqual({});
+  });
+
+  it("reads the compiled forms too (binary and XML property lists)", () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleName</key><string>Calculatrice</string></dict></plist>`;
+    expect(parseStringsFile(Buffer.from(xml, "utf8"))).toEqual({ CFBundleName: "Calculatrice" });
+    expect(parseStringsFile(readFileSync(join(DIR, "textedit.bplist")))).toEqual(parsePlist(readFileSync(join(DIR, "textedit.bplist"))));
+  });
+
+  it("throws on what isn't a strings file, rather than guessing", () => {
+    for (const bad of [`"CFBundleName" = "Rechner"`, `"CFBundleName" "Rechner";`, `"CFBundleName = "Rechner";`, `/* never closed`, `= "x";`]) {
+      expect(() => parseStringsFile(Buffer.from(bad, "utf8")), bad).toThrow(/not a strings file/);
+    }
+  });
+
+  it("keeps a key named __proto__ as a key", () => {
+    const d = parseStringsFile(Buffer.from(`"__proto__" = "x"; "CFBundleName" = "y";`, "utf8")) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(d)).toBe(Object.prototype);
+    expect(Object.keys(d)).toEqual(["__proto__", "CFBundleName"]);
   });
 });

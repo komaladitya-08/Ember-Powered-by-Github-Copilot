@@ -33,18 +33,28 @@ export function darwinDoctorRows(d: PermissionDeps): PlatformDoctorRow[] {
   const secure = secureInputState(d);
   if (secure.on === true) {
     const where = secure.holder ? ` in ${secure.holder}` : "";
-    rows.push({ id: "secure-input", status: "warn", label: "Secure input", detail: `Secure keyboard entry is on${where}, so Ember won't use the keyboard until it's off.`,
+    rows.push({ id: "secure-input", status: "warn", label: "Secure input", detail: `Secure keyboard entry is on${where}, so Ember won't look at the screen or use the mouse or keyboard until it's off.`,
       fix: `Close the password field${where}, or turn off Secure Keyboard Entry there (Terminal: Terminal menu › Secure Keyboard Entry).` });
   } else if (secure.on === false) {
     rows.push({ id: "secure-input", status: "ok", label: "Secure input", detail: "Off." });
   } else if (d.windows()) {
-    rows.push({ id: "secure-input", status: "warn", label: "Secure input", detail: "Ember can't tell whether a password is being typed, so it won't use the keyboard." });
+    rows.push({ id: "secure-input", status: "warn", label: "Secure input", detail: "Ember can't tell whether a password is being typed, so it won't look at the screen or use the mouse or keyboard." });
   }
   rows.push(p.inApplications
     ? { id: "location", status: "ok", label: "Location", detail: "In the Applications folder." }
     : { id: "location", status: "warn", label: "Location", detail: "Not in the Applications folder, so its permissions and login item may not stick.", fix: "Quit Ember, drag it into Applications and open it from there." });
   if (p.root) rows.push({ id: "root", status: "warn", label: "Root", detail: "Ember is running as root.", fix: "Start it as yourself." });
-  return rows;
+  return regrantOnce(rows);
+}
+
+/** REGRANT after the first permission row that gives it only: under every row it read as noise (review #99). */
+function regrantOnce(rows: PlatformDoctorRow[]): PlatformDoctorRow[] {
+  let said = false;
+  return rows.map(r => {
+    if (!r.fix?.endsWith(` ${REGRANT}`)) return r;
+    if (!said) { said = true; return r; }
+    return { ...r, fix: r.fix.slice(0, -(REGRANT.length + 1)) };
+  });
 }
 
 /** The macOS doctor probes (design §9.9). */

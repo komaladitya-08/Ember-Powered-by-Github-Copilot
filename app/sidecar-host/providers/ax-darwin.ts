@@ -1,8 +1,9 @@
 /**
- * The macOS accessibility provider of Ember's sidecar host (design §5.3): AX through koffi, in this node-mode child of
- * Ember (its own binary with ELECTRON_RUN_AS_NODE=1, so TCC holds Ember.app responsible when LaunchServices started
- * it), behind the host's AxProvider. It reports raw facts in points and does raw actions; the host maps roles
- * (roles.ts's axRole), keeps ids, secrets and wording. What it adds to AX is what makes it safe and fast enough:
+ * The macOS accessibility provider of Ember's sidecar host (design §5.3): AX through koffi, in this child of Ember (an
+ * Electron utility process since the macOS build refuses node mode, review #177; Ember's own child, so TCC holds
+ * Ember.app responsible when LaunchServices started it), behind the host's AxProvider. It reports raw facts in points
+ * and does raw actions; the host maps roles (roles.ts's axRole), keeps ids, secrets and wording. What it adds to AX is
+ * what makes it safe and fast enough:
  *
  * - Ember's own process (EMBER_OWNER_PID, else this process's parent) is never asked anything: no AX element is ever
  *   made for it (a request there would wait on Ember's main thread and turn Chromium's accessibility on for Ember's
@@ -31,7 +32,7 @@ import { AX_ERROR } from "../../main/platform/darwin/ax";
 import { isAxError, type AxApi, type AxRef, type AxWindowEntry } from "./ax-darwin-api";
 import {
   AxSession, BusyApps, CELL_PARENTS, CHAIN_ATTRS, CHAIN_MAX, NEEDS_PERMISSION, WINDOW_ATTRS, busyError, clipInside, clippedOut, doPerform,
-  glance, lookAt, releaseFacts, releaseValue, textOf, walk, type Facts, type NodeBody, type Note,
+  glance, keyboardControl, lookAt, releaseFacts, releaseValue, textOf, walk, type Facts, type NodeBody, type Note,
 } from "./ax-darwin-read";
 
 /**
@@ -352,6 +353,8 @@ export class AxDarwinProvider implements AxProvider {
     const s = this.session(api, held.pid);
     await this.manualAccessibility(api, held.pid);
     const r = walk(s, held.ref, { maxDepth: o.maxDepth, maxNodes: o.maxNodes, deadlineMs: o.deadlineMs, now: this.o.now });
+    // The field editor's keyboard belongs to the text field the walk lists (the editor itself is not in the walk).
+    this.noteFieldEditor(api, s, r.nodes);
     const keys = this.keysFor(api, r.nodes.map(n => ({ ref: n.ref, pid: held.pid, path: n.path, windowId: held.windowId, role: n.node.platformRole })));
     const nodes = r.nodes.map((n, i): RawNode => {
       const key = keys[i]!;
@@ -496,6 +499,58 @@ export class AxDarwinProvider implements AxProvider {
     return { element, window: this.give(win, { pid, role: "AXWindow", subrole: "", frame: null, depth: 0, path: [], windowId, clip: null, key: wkey }) };
   }
 
+  /**
+   * The key of the element app `pid` says has its keyboard (its AXFocusedUIElement, which the app keeps while Ember's ask
+   * box, another app's panel, has the keyboard), as a snapshot keys it; null when it has none or AX can't say.
+   */
+  async focusedKey(pid: number): Promise<string | null> {
+    const api = this.ready();
+    const s = this.session(api, pid);
+    const app = api.app(pid);
+    if (!app) return null;
+    const el = s.attr(app, "AXFocusedUIElement");
+    if (typeof el !== "bigint") {
+      releaseValue(api, el);
+      return null;
+    }
+    // The field editor's key would match nothing in the snapshot: the text field's key is the one the read looks up.
+    let control = el;
+    try {
+      control = keyboardControl(s, el);
+      return this.keysFor(api, [{ ref: control, pid, path: null, windowId: 0, role: "" }])[0] ?? null;
+    } finally {
+      if (control !== el) api.release(control);
+      api.release(el);
+    }
+  }
+
+  /**
+   * Marks the text field a walk lists when AppKit's field editor, which the walk doesn't read, has the keyboard.
+   * A failure leaves each element's own AXFocused as the walk read it.
+   */
+  private noteFieldEditor(api: AxApi, s: AxSession, nodes: { ref: AxRef; node: NodeBody }[]): void {
+    const app = api.app(s.pid);
+    if (!app) return;
+    let el: ReturnType<AxSession["attr"]>;
+    try {
+      el = s.attr(app, "AXFocusedUIElement");
+    } catch {
+      return;
+    }
+    if (typeof el !== "bigint") return;
+    let control = el;
+    try {
+      control = keyboardControl(s, el);
+      const hit = nodes.find(n => n.node.platformRole !== "AXWindow" && api.same(n.ref, control));
+      if (hit) hit.node.focused = true;
+    } catch {
+      // The editor can't be read: the walk's own AXFocused stands.
+    } finally {
+      if (control !== el) api.release(control);
+      api.release(el);
+    }
+  }
+
   async children(h: Handle, max: number): Promise<RawNode[]> {
     const api = this.ready();
     const held = this.held(h);
@@ -628,10 +683,17 @@ export class AxDarwinProvider implements AxProvider {
     return n;
   }
 
-  /** The keys of one answer's elements (answerKeys in KEY_MODE), a collision noted in the log. */
+  /**
+   * The keys of one answer's elements (answerKeys in KEY_MODE), a collision noted in the log with the colliding elements'
+   * roles and index paths (never their text): the evidence for whether AppKit gives two live elements one hash.
+   */
   private keysFor(api: AxApi, items: KeyItem[]): string[] {
     const { keys, collisions } = answerKeys(items, ref => api.hash(ref));
-    if (collisions) this.note("ax.key_collision", { count: collisions });
+    if (collisions) {
+      const collided = items.filter((_, k) => !/^\d+:h[0-9a-f]+$/.test(keys[k]!))
+        .slice(0, 12).map(i => `${i.role}@${i.path ? i.path.join(".") : "?"}`);
+      this.note("ax.key_collision", { count: collisions, of: items.length, collided });
+    }
     return keys;
   }
 

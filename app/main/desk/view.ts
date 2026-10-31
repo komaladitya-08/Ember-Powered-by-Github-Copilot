@@ -12,10 +12,15 @@ import { SHORTCUT_MODIFIERS, planKey } from "./keys";
 import type { DeskPlace } from "./place";
 import type { Logger } from "../logger";
 import { x11WindowId } from "../platform/linux/window-system";
+import { revive } from "../revive";
+import { pageUrl } from "../page-url";
 
 const appDir = path.join(__dirname);
+/** The view at the default text size: its 30 px bar (BAR) over a 16:10 picture. */
 const SMALL = { width: 340, height: 238 };
 const LARGE = { width: 980, height: 646 };
+/** The bar's height at the default text size (renderer/desk/styles.css): it grows with the text size, the picture doesn't. */
+const BAR = 30;
 /** Gap to the screen's edges. */
 const EDGE = 16;
 /** Gap kept between the view and Ember's handle beside it. */
@@ -26,16 +31,30 @@ interface Box { x: number; y: number; width: number; height: number }
 /** Ember's handle when nothing says where it is: the 200 × 56 pill, 12 px in from the bottom-right corner. */
 const pillIn = (wa: Box): Box => ({ x: wa.x + wa.width - 212, y: wa.y + wa.height - 68, width: 200, height: 56 });
 
+/** Ember's handle on this work area (`handle`, global DIP); the pill's usual place when not known or on another screen. */
+const handleOn = (wa: Box, handle?: Box | null): Box =>
+  handle && handle.x < wa.x + wa.width && handle.x + handle.width > wa.x && handle.y < wa.y + wa.height && handle.y + handle.height > wa.y
+    ? handle : pillIn(wa);
+/** The handle is in the work area's bottom-left corner (Handle position, review #75). */
+const handleLeft = (wa: Box, handle?: Box | null): boolean => { const h = handleOn(wa, handle); return h.x + h.width / 2 < wa.x + wa.width / 2; };
+/** `b` mirrored across the middle of the work area. */
+const mirrored = (b: Box, wa: Box): Box => ({ ...b, x: 2 * wa.x + wa.width - b.x - b.width });
+
 /**
  * The view's bounds at its small or large size, from where it is now (`b`): it grows and shrinks from its
  * bottom-left corner, as large as the work area allows (same shape, left of Ember's handle in the corner:
- * the pill, or the 360 px card without a compositor), and its bottom edge is always on screen.
+ * the pill, or the 360 px card without a compositor), and its bottom edge is always on screen. With the handle in the
+ * bottom-left corner, all of that mirrored: right of the handle, growing from its bottom-right corner.
  * `handle`: the handle's bounds (global DIP); the pill's place when not known or on another screen.
+ * `textScale`: the text's scale (page-prefs.ts textScale; 1 when it can't be read): the bar is taller by it.
  */
-export function deskViewBounds(b: Box, large: boolean, wa: Box, handle?: Box | null): Box {
-  const h = handle && handle.x < wa.x + wa.width && handle.x + handle.width > wa.x && handle.y < wa.y + wa.height && handle.y + handle.height > wa.y
-    ? handle : pillIn(wa);
-  const want = large ? LARGE : SMALL;
+export function deskViewBounds(b: Box, large: boolean, wa: Box, handle?: Box | null, textScale = 1): Box {
+  const h = handleOn(wa, handle);
+  if (handleLeft(wa, h)) return mirrored(deskViewBounds(mirrored(b, wa), large, wa, mirrored(h, wa), textScale), wa);
+  const usual = large ? LARGE : SMALL;
+  // The bar's words grow with the text size: the window grows by the bar, so the picture under it keeps its size.
+  const text = Number.isFinite(textScale) && textScale > 0 ? textScale : 1;
+  const want = { width: usual.width, height: usual.height + Math.max(0, Math.round(BAR * text) - BAR) };
   const scale = Math.min(1, (h.x - HANDLE_GAP - wa.x - EDGE) / want.width, (wa.height - 2 * EDGE) / want.height);
   const width = Math.max(1, Math.round(want.width * scale)), height = Math.max(1, Math.round(want.height * scale));
   const bottom = Math.min(Math.max(b.y + b.height, wa.y + height + EDGE), wa.y + wa.height - EDGE);
@@ -44,6 +63,12 @@ export function deskViewBounds(b: Box, large: boolean, wa: Box, handle?: Box | n
   const level = y < h.y + h.height + HANDLE_GAP && bottom > h.y - HANDLE_GAP;
   const right = level ? h.x - HANDLE_GAP : wa.x + wa.width;
   return { width, height, x: Math.max(wa.x, Math.min(b.x, right - width)), y };
+}
+
+/** Where a new view starts (`b` for deskViewBounds): the bottom corner away from Ember's handle and its task cards. */
+export function deskViewStart(wa: Box, handle?: Box | null): Box {
+  const start = { x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height };
+  return handleLeft(wa, handle) ? mirrored(start, wa) : start;
 }
 /** How long the view stays up after the last desk task ends, so the user sees the result. */
 const LINGER_MS = 10_000;
@@ -93,6 +118,8 @@ export class DeskView {
   private lentKeys = false;
   /** Gives the keyboard back to where the user was before taking over (see `userFocus`). */
   private focusBack: (() => void) | null = null;
+  /** The text's scale the window was last sized for (fitText resizes it when the setting changes). */
+  private sizedFor = 1;
 
   /**
    * `handleBounds`: where Ember's handle is now (global DIP), so the view keeps clear of it (the card without a
@@ -100,9 +127,13 @@ export class DeskView {
    * `userFocus`: called as the user takes over; what it returns gives the keyboard back to their window on hand back,
    * when the view still has it.
    * `windowId`: the view's id in the window system's id space (default: its X id), 0 when it can't be told.
+   * `textScale`: the text's scale now (page-prefs.ts textScale; default 1): the bar grows with it (review #57).
    */
   constructor(private log: Logger, private onControl: (userInControl: boolean) => void = () => undefined,
-    private o: { lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void; windowId?: (w: BrowserWindow) => number } = {}) {
+    private o: {
+      lingerMs?: number; handleBounds?: () => Box | null; userFocus?: () => () => void; windowId?: (w: BrowserWindow) => number;
+      textScale?: () => number;
+    } = {}) {
     ipcMain.on(DESK.takeOver, e => { if (this.owns(e.sender) && !this.driving) this.setControl(true); });
     ipcMain.on(DESK.handBack, e => { if (this.owns(e.sender)) this.setControl(false); });
     ipcMain.on(DESK.hide, e => { if (this.owns(e.sender) && !this.driving) this.hide(); });
@@ -137,9 +168,12 @@ export class DeskView {
     }
     if (!this.win || this.win.isDestroyed()) {
       const wa = screen.getPrimaryDisplay().workArea;
+      const handle = this.handle();
+      this.handleWasLeft = this.handleIsLeft(handle);
       const win = new BrowserWindow({
-        // Bottom-left: the bottom-right corner is Ember's handle and its task cards.
-        ...deskViewBounds({ x: wa.x + EDGE, y: wa.y, width: 0, height: wa.height }, false, wa, this.handle()),
+        // Bottom-left: the bottom-right corner is Ember's handle and its task cards (the other way round when Handle
+        // position puts them in the bottom left).
+        ...this.boundsFor(deskViewStart(wa, handle), false, wa, handle),
         frame: false, resizable: false, skipTaskbar: true, alwaysOnTop: true, show: false, title: "Ember's desk",
         backgroundColor: "#000000",
         webPreferences: { preload: path.join(appDir, "preload", "desk.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
@@ -147,12 +181,14 @@ export class DeskView {
       this.win = win;
       win.setAlwaysOnTop(true, "screen-saver");
       if (this.driving) win.setIgnoreMouseEvents(true);
-      void win.loadFile(path.join(appDir, "renderer", "desk", "index.html"));
+      void win.loadURL(pageUrl(path.join(appDir, "renderer", "desk", "index.html")));
       // Shown without focus so it never takes the user's keys; it is focusable so
       // "Take over" can give it the keyboard (a non-focusable X window can't get it later).
       win.once("ready-to-show", () => { if (!win.isDestroyed()) win.showInactive(); });
       // Keys and buttons held when the view loses the keyboard would stay down on the desk.
       win.on("blur", () => this.releaseAll());
+      // A crashed page lets go of what it held and loads again (review #91).
+      revive(win, () => { this.releaseAll(); this.setControl(false); });
       win.on("closed", () => {
         if (this.win === win) this.win = null;
         this.stopFrames();
@@ -183,17 +219,58 @@ export class DeskView {
     if (this.win && !this.win.isDestroyed()) this.win.hide();
   }
 
-  /** Ember's handle changed (the pill became the card or back): the view keeps clear of it at its size now. */
+  /** The handle was in the bottom-left corner when the view was last placed for it. */
+  private handleWasLeft = false;
+
+  /**
+   * Ember's handle changed (the pill became the card or back): the view keeps clear of it at its size now. When the
+   * handle went to the other side (Handle position) on the display the view is on, the view goes to the side it left,
+   * keeping its bottom edge; on another display (the user dragged it there) it stays where it is.
+   */
   handleMoved(): void {
     const win = this.win && !this.win.isDestroyed() ? this.win : null;
     if (!win) return;
     const b = win.getBounds();
-    const next = deskViewBounds(b, this.control, screen.getDisplayMatching(b).workArea, this.handle());
+    const wa = screen.getDisplayMatching(b).workArea;
+    const handle = this.handle();
+    const left = this.handleIsLeft(handle);
+    const across = left !== this.handleWasLeft && handleOn(wa, handle) === handle;
+    const from = across ? { ...deskViewStart(wa, handle), y: b.y, height: b.height } : b;
+    this.handleWasLeft = left;
+    const next = this.boundsFor(from, this.control, wa, handle);
     if (next.x !== b.x || next.y !== b.y || next.width !== b.width || next.height !== b.height) win.setBounds(next);
+  }
+
+  /**
+   * The text size may have changed (main calls this whenever the settings do): the view, open or hidden, grows or
+   * shrinks by its bar from its foot. Left where it is when the size is the one it has (the user may have moved it).
+   */
+  fitText(): void {
+    if (this.scale() !== this.sizedFor) this.handleMoved();
   }
 
   private handle(): Box | null {
     try { return this.o.handleBounds?.() ?? null; } catch { return null; }
+  }
+
+  /** The text's scale now (the default's 1 when it can't be told). */
+  private scale(): number {
+    try {
+      const s = this.o.textScale?.() ?? 1;
+      return Number.isFinite(s) && s > 0 ? s : 1;
+    } catch { return 1; }
+  }
+
+  /** deskViewBounds at the text size now, which the window is then sized for (`handle`: where the handle is now). */
+  private boundsFor(b: Box, large: boolean, wa: Box, handle: Box | null = this.handle()): Box {
+    this.sizedFor = this.scale();
+    return deskViewBounds(b, large, wa, handle, this.sizedFor);
+  }
+
+  /** The handle is in the bottom-left corner of its own display's work area (false when not known). */
+  private handleIsLeft(handle: Box | null): boolean {
+    if (!handle) return false;
+    try { return handleLeft(screen.getDisplayMatching(handle).workArea, handle); } catch { return false; }
   }
 
   /** Gives the desk back to Ember (the kill switch calls this too). */
@@ -228,7 +305,7 @@ export class DeskView {
     if (changed) {
       const b = win.getBounds();
       // Grows up and to the right from its bottom-left corner, as large as the screen allows, staying on it.
-      win.setBounds(deskViewBounds(b, on, screen.getDisplayMatching(b).workArea, this.handle()));
+      win.setBounds(this.boundsFor(b, on, screen.getDisplayMatching(b).workArea));
       if (on) {
         try { this.focusBack = this.o.userFocus?.() ?? null; } catch { this.focusBack = null; }
         win.focus();

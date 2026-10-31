@@ -7,6 +7,7 @@
  */
 
 import type { AxWindow, OtherWindow, ShellOverlay } from "../main/perception/sidecar";
+import { isNeverLook } from "../main/perception/elements";
 import type { RawWindow } from "./provider";
 import { TOP, atspiRole, axOverlayRole } from "./roles";
 import { boundsOf } from "./tree";
@@ -68,11 +69,14 @@ export function findWindow(windows: RawWindow[], q: WindowQuery): RawWindow | nu
   return best(mine).w;
 }
 
-/** Is this window on the user's never-look list (by app name or title, or by process)? Then it is found but not read. */
+/**
+ * Is this window on the user's never-look list (by app name or title, or by process)? Then it is found but not read.
+ * Judged as main judges it (perception/elements.ts isNeverLook: an everyday word such as "keeper" by the app, and by
+ * the title only where a word there starts with it).
+ */
 export function neverLooked(w: AxWindow, neverLook: string[], skipPids: number[]): boolean {
   if (w.pid !== null && skipPids.includes(w.pid)) return true;
-  const hay = `${w.app} ${w.name}`.toLowerCase();
-  return neverLook.some(t => typeof t === "string" && !!t.trim() && hay.includes(t.trim().toLowerCase()));
+  return isNeverLook(w, neverLook.filter(t => typeof t === "string"));
 }
 
 /** The app's other windows the user is in or must answer first (an Open dialog over the main window), five at most. */

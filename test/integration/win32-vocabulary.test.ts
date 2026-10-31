@@ -255,7 +255,7 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
     }
   }, 180_000);
 
-  it("reads File Explorer's items as OPENS_PROGRAMS expects: a script by the extension its name shows, or the gap where Explorer hides it", async () => {
+  it("reads File Explorer's items as OPENS_PROGRAMS expects: a script by the extension its name shows, and an item whose name shows no type as one that may be a program", async () => {
     // A folder of its own (one window, two items, nothing scrolled away): a script that is never run, and a document.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-explorer-"));
     fs.writeFileSync(path.join(dir, "ember-check.cmd"), "@rem Ember's vocabulary check: never run\r\n");
@@ -277,9 +277,13 @@ describe.skipIf(!onWindows && !required)("the Windows vocabularies against real 
       const opened = (n: AxNode) => opensProgram(OPENS_PROGRAMS.win32, { kind: "keys", app: win.app, value: "Return", element: { role: n.role, name: n.name } }, KEYS.win32);
       const script = item(/^ember-check/i), notes = item(/^ember-notes/i);
       expect(script, JSON.stringify(summary(nodes))).toBeTruthy();
-      expect(opened(notes!)).toBeNull();
-      if (/\.cmd$/i.test(script!.name.trim())) expect(opened(script!)).toBe("item");
-      else console.log(`File Explorer hides the extension here (${JSON.stringify(script!.name)}): OPENS_PROGRAMS can't tell the script by its name, the documented gap`);
+      // File Explorer hides file types by default, so (review #110) an item whose name shows none may be a program and
+      // is refused ("untyped"), and one whose name shows a document's type is asked about ("unsure": it may be
+      // notes.txt.exe). Only a name that shows a program's type is known to be one.
+      const shows = /\.txt$/i.test(notes!.name.trim());
+      console.log(`File Explorer ${shows ? "shows" : "hides"} file types here: ${JSON.stringify([script!.name, notes!.name])}`);
+      expect(opened(notes!)).toBe(shows ? "unsure" : "untyped");
+      expect(opened(script!)).toBe(/\.cmd$/i.test(script!.name.trim()) ? "item" : "untyped");
     } finally {
       host.stop();
       ps(`(New-Object -ComObject Shell.Application).Windows() | Where-Object { $_.LocationName -eq ${quote(folder)} } | ForEach-Object { $_.Quit() }`);

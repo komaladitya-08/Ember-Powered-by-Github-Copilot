@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildSync } from "esbuild";
 import { darwinApps } from "../../app/main/platform/darwin/system/apps";
+import { isPlistDict, parsePlist, parseStringsFile } from "../../app/main/platform/darwin/system/plist";
 import { darwinSettings } from "../../app/main/platform/darwin/system/settings";
 import { darwinAdminPolicy, POLICY_FOLDER } from "../../app/main/platform/darwin/system/admin-policy";
 import { voiceOverRunning } from "../../app/main/platform/darwin/system/a11y";
@@ -97,20 +98,102 @@ app.whenReady().then(async () => {
 });
 `;
 
+/**
+ * The keychain child (review #241): first, before anything asks the keychain on the main thread, saves a sign-in with
+ * TokenStore.saveAsync and reads it back through a new store, as Ember on macOS does (the device flow on a fresh Mac
+ * is its first keychain access), noting any synchronous safeStorage call they make (there should be none: each would
+ * fetch the keychain's key on the main thread, and can prompt). Then it seals a sign-in with safeStorage.encryptString,
+ * as TokenStore.save does, and opens it with decryptStringAsync, as TokenStore.load does on macOS (so the keychain
+ * prompt after an update holds no main thread), directly and through TokenStore itself; then seals one with
+ * encryptStringAsync, as TokenStore.saveAsync does on macOS, and opens it both ways. It prints "EMBER_RESULT <json>" and
+ * quits. It adds an "ember-darwin-system-keychain Safe Storage" item to the login keychain.
+ */
+const KEYCHAIN_CHILD = `
+import { app, safeStorage } from "electron";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { TokenStore, type SecretBox } from "./app/main/agent/auth";
+
+app.whenReady().then(async () => {
+  const out: Record<string, unknown> = {};
+  try {
+    // Before any synchronous safeStorage call: what Ember's own save and read ask of the keychain on the main thread.
+    const syncCalls: string[] = [];
+    const onMainThread = <T>(name: string, f: () => T): T => { syncCalls.push(name); return f(); };
+    const watched: SecretBox = {
+      isEncryptionAvailable: () => onMainThread("isEncryptionAvailable", () => safeStorage.isEncryptionAvailable()),
+      encryptString: s => onMainThread("encryptString", () => safeStorage.encryptString(s)),
+      decryptString: b => onMainThread("decryptString", () => safeStorage.decryptString(b)),
+      isAsyncEncryptionAvailable: () => safeStorage.isAsyncEncryptionAvailable(),
+      encryptStringAsync: s => safeStorage.encryptStringAsync(s),
+      decryptStringAsync: b => safeStorage.decryptStringAsync(b),
+    };
+    const first = fs.mkdtempSync(path.join(os.tmpdir(), "ember-keychain-first-"));
+    try {
+      const file = path.join(first, "github-token.bin");
+      out.firstSaved = await new TokenStore(file, watched, { version: "0.0.0-test", asyncKeyring: true }).saveAsync("gho_EmberKeychainCheck0");
+      out.firstLoaded = await new TokenStore(file, watched, { version: "0.0.0-test", asyncKeyring: true }).load();
+      out.firstSyncCalls = syncCalls;
+    } finally {
+      fs.rmSync(first, { recursive: true, force: true });
+    }
+    out.available = safeStorage.isEncryptionAvailable();
+    out.asyncAvailable = await safeStorage.isAsyncEncryptionAvailable();
+    const opened = await safeStorage.decryptStringAsync(safeStorage.encryptString("gho_EmberKeychainCheck1"));
+    out.result = opened.result;
+    out.shouldReEncrypt = opened.shouldReEncrypt;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-keychain-"));
+    try {
+      const file = path.join(dir, "github-token.bin");
+      const store = new TokenStore(file, safeStorage, { version: "0.0.0-test", asyncKeyring: true });
+      out.saved = store.save("gho_EmberKeychainCheck2");
+      out.loaded = await store.load();
+      out.unreadable = store.unreadable;
+      // Sealed off the main thread (encryptStringAsync), as TokenStore.saveAsync does on macOS: it opens both ways (the
+      // doctor and an earlier Ember read with decryptString), from the file itself (a new store holds nothing in memory).
+      const sealedAsync = await safeStorage.encryptStringAsync("gho_EmberKeychainCheck3");
+      out.asyncSealedSync = safeStorage.decryptString(sealedAsync);
+      out.asyncSealedAsync = (await safeStorage.decryptStringAsync(sealedAsync)).result;
+      out.savedAsync = await store.saveAsync("gho_EmberKeychainCheck4");
+      out.loadedAsync = await new TokenStore(file, safeStorage, { version: "0.0.0-test", asyncKeyring: true }).load();
+      out.loadedSync = await new TokenStore(file, safeStorage).load();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch (err) {
+    out.error = String(err);
+  }
+  process.stdout.write("EMBER_RESULT " + JSON.stringify(out) + "\\n");
+  app.exit(0);
+});
+`;
+
+/** What the keychain child reports (see KEYCHAIN_CHILD). */
+interface KeychainReport {
+  available?: boolean; asyncAvailable?: boolean; result?: string; shouldReEncrypt?: boolean;
+  saved?: boolean; loaded?: string | null; unreadable?: boolean; error?: string;
+  asyncSealedSync?: string; asyncSealedAsync?: string; savedAsync?: string; loadedAsync?: string | null; loadedSync?: string | null;
+  firstSaved?: string; firstLoaded?: string | null; firstSyncCalls?: string[];
+}
+
 /** The Electron binary the electron package installed (its main export is the path). */
 const electronBinary = () => createRequire(import.meta.url)("electron") as unknown as string;
 
-/** Builds CHILD into .cache/test (so it loads koffi from the repository's node_modules) and runs it under Electron. */
-async function runChild(): Promise<ChildReport> {
-  const dir = path.join(root, ".cache", "test", "darwin-system-electron");
+/**
+ * Builds a child (CHILD by default) into .cache/test/<folder> (so it loads koffi from the repository's node_modules)
+ * and runs it under Electron as the app `name`.
+ */
+async function runChild<R = ChildReport>(source = CHILD, folder = "darwin-system-electron", name = "ember-darwin-system-test"): Promise<R> {
+  const dir = path.join(root, ".cache", "test", folder);
   fs.mkdirSync(dir, { recursive: true });
   buildSync({
-    stdin: { contents: CHILD, loader: "ts", resolveDir: root, sourcefile: "darwin-system-child.ts" },
+    stdin: { contents: source, loader: "ts", resolveDir: root, sourcefile: `${folder}-child.ts` },
     bundle: true, platform: "node", format: "cjs", target: "node22", external: ["electron", "koffi"], outfile: path.join(dir, "main.cjs"), logLevel: "silent",
   });
-  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "ember-darwin-system-test", main: "main.cjs" }));
+  fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, main: "main.cjs" }));
   const electron = electronBinary();
-  return new Promise<ChildReport>((resolve, reject) => {
+  return new Promise<R>((resolve, reject) => {
     // ELECTRON_RUN_AS_NODE from the caller would start a plain Node instead of the app.
     const child = spawn(electron, [dir], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ELECTRON_ENABLE_LOGGING: "0", ELECTRON_RUN_AS_NODE: undefined } });
     let stdout = "", stderr = "";
@@ -122,7 +205,7 @@ async function runChild(): Promise<ChildReport> {
       const line = stdout.split("\n").find(l => l.startsWith("EMBER_RESULT "));
       if (!line) return reject(new Error(`Electron exited ${code} without a report\n${stderr}`));
       if (stderr.trim()) console.log(`Electron child's stderr:\n${stderr}`);
-      resolve(JSON.parse(line.slice("EMBER_RESULT ".length)) as ChildReport);
+      resolve(JSON.parse(line.slice("EMBER_RESULT ".length)) as R);
     });
   });
 }
@@ -168,6 +251,54 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
       expect(catalogue.find(apps, "text editor")?.name).toBe("TextEdit");
       expect(catalogue.find(apps, "file manager")?.name).toBe("Finder");
       expect(catalogue.find(apps, "System Settings")?.name).toBe("System Settings");
+    });
+
+    // Apple's own bundles, as macOS ships them (review #239): their German names come from InfoPlist.loctable or
+    // de.lproj/InfoPlist.strings, so open_app("Rechner") finds Calculator and its window's owner name matches.
+    it("knows Apple's apps by the names a German Mac shows", () => {
+      const german = darwinApps({ languages: () => ["de-DE"] });
+      const list = german.list();
+      /** What the bundle has for German, so a miss says which layout this macOS uses and what each file holds. */
+      const layout = (bundle: string | undefined) => {
+        const said: string[] = [];
+        const note = (what: string, read: () => unknown) => {
+          try {
+            said.push(`${what}: ${JSON.stringify(read())}`);
+          } catch (err) {
+            said.push(`${what}: ${String(err)}`);
+          }
+        };
+        const resources = path.join(bundle ?? "", "Contents", "Resources");
+        note("German resources", () => fs.readdirSync(resources).filter(n => /^(de|German)([._-]|$)|loctable$/i.test(n)));
+        note("Info.plist names", () => {
+          const info = parsePlist(fs.readFileSync(path.join(bundle ?? "", "Contents", "Info.plist")));
+          return isPlistDict(info) ? { CFBundleName: info.CFBundleName, CFBundleDisplayName: info.CFBundleDisplayName, CFBundleExecutable: info.CFBundleExecutable } : typeof info;
+        });
+        note("InfoPlist.loctable", () => {
+          const file = path.join(resources, "InfoPlist.loctable");
+          const table = parsePlist(fs.readFileSync(file));
+          if (!isPlistDict(table)) return typeof table;
+          const keys = Object.keys(table);
+          const german = keys.filter(k => /^(de|German)([._-]|$)/i.test(k));
+          return { bytes: fs.statSync(file).size, languages: keys.length, sample: keys.slice(0, 8), german: Object.fromEntries(german.map(k => [k, isPlistDict(table[k]) ? Object.keys(table[k]) : typeof table[k]])) };
+        });
+        for (const folder of ["de.lproj", "German.lproj"]) {
+          note(folder, () => fs.readdirSync(path.join(resources, folder)));
+          note(`${folder}/InfoPlist.strings`, () => {
+            const strings = parseStringsFile(fs.readFileSync(path.join(resources, folder, "InfoPlist.strings")));
+            return isPlistDict(strings) ? Object.keys(strings) : typeof strings;
+          });
+        }
+        return said.join("; ");
+      };
+      for (const [id, name] of [["com.apple.calculator", "rechner"], ["com.apple.systempreferences", "systemeinstellungen"]] as const) {
+        const app = list.find(a => a.id.toLowerCase() === id);
+        expect(app, `${id} in the catalogue`).toBeDefined();
+        if (!(app!.programs ?? []).includes(name)) console.log(`${id}: programs ${JSON.stringify(app!.programs)}; ${layout(app!.file)}`);
+        expect(app!.programs, `${id}'s names`).toContain(name);
+        expect(app!.keywords).toContain(name);
+      }
+      expect(german.find(list, "Rechner")?.id.toLowerCase()).toBe("com.apple.calculator");
     });
 
     // Needs the macOS terminal vocabulary (package V, hands/terminals.ts), which Ember can't be switched on without.
@@ -233,6 +364,22 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
     }
   }, 40_000);
 
+  // Writes an item to the login keychain: only where asked for, as CI does.
+  it.runIf(required)("saves and reads a sign-in without asking the keychain on the main thread, opens one sealed with encryptString through decryptStringAsync, and one sealed with encryptStringAsync both ways, as TokenStore does on macOS (review #241)", async () => {
+    const r = await runChild<KeychainReport>(KEYCHAIN_CHILD, "darwin-system-keychain", "ember-darwin-system-keychain");
+    console.log(`keychain child: ${JSON.stringify(r)}`);
+    expect(r.error).toBeUndefined();
+    // Ember's own save and read on a Mac, before anything else asked the keychain: none of it on the main thread.
+    expect({ saved: r.firstSaved, loaded: r.firstLoaded, sync: r.firstSyncCalls }).toEqual({ saved: "kept", loaded: "gho_EmberKeychainCheck0", sync: [] });
+    expect({ available: r.available, asyncAvailable: r.asyncAvailable }).toEqual({ available: true, asyncAvailable: true });
+    // The same key either way: a token TokenStore.save sealed opens, and needn't be sealed again.
+    expect({ result: r.result, shouldReEncrypt: r.shouldReEncrypt }).toEqual({ result: "gho_EmberKeychainCheck1", shouldReEncrypt: false });
+    expect({ saved: r.saved, loaded: r.loaded, unreadable: r.unreadable }).toEqual({ saved: true, loaded: "gho_EmberKeychainCheck2", unreadable: false });
+    // Sealed with encryptStringAsync (saveAsync, the follow-up to review #241): the same key, so either read opens it.
+    expect({ sync: r.asyncSealedSync, async: r.asyncSealedAsync }).toEqual({ sync: "gho_EmberKeychainCheck3", async: "gho_EmberKeychainCheck3" });
+    expect({ saved: r.savedAsync, loaded: r.loadedAsync, sync: r.loadedSync }).toEqual({ saved: "kept", loaded: "gho_EmberKeychainCheck4", sync: "gho_EmberKeychainCheck4" });
+  }, 90_000);
+
   describe("inside Electron", () => {
     let report: ChildReport | null = null;
     let missing = "";
@@ -244,7 +391,7 @@ describe.skipIf(!onMac && !required)("macOS system integration on a real Mac", (
         if (required) throw new Error(missing);
         return;
       }
-      report = await runChild();
+      report = await runChild<ChildReport>();
       console.log(`Electron child: ${JSON.stringify(report)}`);
       // On a developer's Mac the grant belongs to whichever app started the run (Terminal, an editor): skip without it.
       if (report.screenAccess !== "granted") missing = `Screen Recording is ${report.screenAccess} for the app that started this run`;

@@ -53,6 +53,15 @@ export interface BorrowOptions {
   onStart?: () => void;
   /** Only the keyboard is used (keys pressed, a spreadsheet's cells typed into): the status says so (see usesMouse). */
   keysOnly?: boolean;
+  /**
+   * The borrow's checks of the keys it will press and the text it will type, asked before anything is touched: before
+   * Ember waits for the user to be still, and again just before `window` is brought to the front. They press and type
+   * nothing, and ask only what is the same whichever window has the focus: the key's name, plain ASCII text, and on X11
+   * Typing Assist. Keys and text that fail them are then refused without the user's window jumping to the front for
+   * nothing. The layout in use (it can be per window on GNOME) and macOS's input source (it can be per document) are
+   * checked by the hand's own checkTyping and checkKeys, once the window is in front.
+   */
+  preflight?: (hand: HandChecks) => void;
   /** This borrow only: stops it while it waits its turn or runs (the kill switch uses stop() for all). */
   signal?: AbortSignal;
   now?: () => number;
@@ -68,8 +77,16 @@ export interface Hand {
   type(text: string): Promise<void>;
   /** Throws, typing nothing, when `text` can't be typed exactly with the keyboard layout in use. */
   checkTyping(text: string): void;
+  /**
+   * Throws, pressing nothing, when the keyboard can't press the key combination `combo` now (X11: Typing Assist; macOS:
+   * an input method, for keys that type), as keys(combo) would before its first key. Optional for hands that can't tell.
+   */
+  checkKeys?(combo: string): void;
   scroll(direction: "up" | "down" | "left" | "right", steps: number): Promise<void>;
 }
+
+/** The checks a borrow's preflight gets (see BorrowOptions.preflight): they throw, pressing and typing nothing. */
+export type HandChecks = Required<Pick<Hand, "checkKeys" | "checkTyping">>;
 
 const MODIFIERS: Record<string, string> = {
   ctrl: "Control_L", control: "Control_L", shift: "Shift_L", alt: "Alt_L", super: "Super_L", meta: "Super_L",
@@ -99,6 +116,8 @@ const MODIFIER_KEYS: Record<string, string> = {
 };
 /** Any mouse button held (Button1Mask … Button5Mask). */
 const BUTTONS_MASK = 0x1f00;
+/** Ctrl, Alt and the logo key (Super, Meta) by keysym, either side: with them a key is a shortcut, not typing. */
+const SHORTCUT_MODIFIERS: ReadonlySet<number> = new Set([0xffe3, 0xffe4, 0xffe7, 0xffe8, 0xffe9, 0xffea, 0xffeb, 0xffec]);
 const STEP_MS = 8;
 const TOLERANCE = 2;
 
@@ -175,6 +194,8 @@ export class CursorBorrow {
   private runningMouse = false;
   /** When Ember last posted a key event (0 before any): see lastSyntheticKeyAt. */
   private lastKeyAt = 0;
+  /** Hands back at once what the borrow driving now took (see stopForQuit); null while none drives. */
+  private handBack: (() => void) | null = null;
 
   constructor(private x: Input, private options: CursorBorrowOptions = {}) {}
 
@@ -228,6 +249,19 @@ export class CursorBorrow {
   stop(): void {
     this.epoch++;
     if (this.busy) this.stopping = true;
+  }
+
+  /**
+   * Ember is quitting: stop(), and the borrow driving now hands everything back at once (keys and buttons up, then the
+   * pointer home and the keyboard back to the window that had it). Main calls it at will-quit before the window system
+   * closes (mayRefocus asks it whether that window is still there) and again before the input closes, where it does
+   * nothing more. The borrow's own clean-up runs later, against a closed input that does nothing.
+   */
+  stopForQuit(): void {
+    this.stop();
+    const back = this.handBack;
+    this.handBack = null;
+    try { back?.(); } catch { /* quitting: nothing more can be put back */ }
   }
 
   borrow<T>(fn: (hand: Hand) => Promise<T>, o: BorrowOptions = {}): Promise<T> {
@@ -292,6 +326,12 @@ export class CursorBorrow {
     const keyboardFree = () => {
       if (x.keyboardGrabbed?.(o.window)) throw new Error(GRABBED("stopped"));
     };
+    // The keyboard may be unusable while the mouse is fine (X11: Typing Assist; macOS: an input method, for keys that
+    // type): asked before the first key of a shortcut or of typed text, so nothing is half typed.
+    const keyboardUsable = (keys?: { modifiers: readonly number[]; sym: number }) => {
+      const why = x.keyboardBlockedReason?.(keys) ?? null;
+      if (why) throw new Error(why);
+    };
     // A click goes to whatever is on top at that spot: it must be the approved window or the app's own open menu
     // (not its dialog over that spot, unless the element is in it).
     const pointerOnTarget = () => {
@@ -311,6 +351,18 @@ export class CursorBorrow {
       if (down) held.set(code, sym); else held.delete(code);
     };
     const SHIFT_L = 0xffe1;
+    /** The key and the modifiers' keysyms of the combination `combo` (an error for a key there is no keysym for). */
+    const comboKeys = (combo: string): { sym: number; mods: number[] } => {
+      // The logo key's other names ("win", "logo") as the policy read them (policy.canonicalKeys: ⌘ on macOS), so the
+      // key pressed is the one the user was asked about. On Linux the policy refuses every logo-key combination, and
+      // the spellings stay today's.
+      const kc = this.keys;
+      const spelled = kc.os === "linux" ? combo : combo.split("+").map(t => (kc.logoAliases.test(t) ? kc.logoToken : t)).join("+");
+      const { modifiers, key } = parseCombo(spelled, kc);
+      const sym = x.keysymOf(key);
+      if (!sym) throw new Error(`unknown key "${key}"`);
+      return { sym, mods: modifiers.map(m => x.keysymOf(m)) };
+    };
     /** The keys for `text` on the layout in use, or an error before anything is typed. */
     const planText = (text: string): { strokes: TypedKey[]; shift: number; byCode: boolean } => {
       if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard");
@@ -324,6 +376,36 @@ export class CursorBorrow {
       });
       return { strokes, shift: x.keycodeOf(SHIFT_L), byCode: false };
     };
+    // The hand's checks (they press and type nothing).
+    const checks: HandChecks = {
+      checkKeys: combo => {
+        const { sym, mods } = comboKeys(combo);
+        keyboardUsable({ modifiers: mods, sym });
+      },
+      checkTyping: text => {
+        keyboardUsable();
+        // With the backend's own typing any ASCII text goes (see type); otherwise the layout in use must type it all.
+        if (x.textKey) { if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard"); return; }
+        planText(text);
+      },
+    };
+    // The same checks as the preflight asks them, before `window` is in front (o.preflight): only what doesn't depend on
+    // which window has the focus. The layout in use isn't planned here: with a layout per window (GNOME's "Switch input
+    // sources individually for each window") it would be the user's window's, not the target's, so the hand's
+    // checkTyping plans it once the window is in front. Nor is the input source asked on macOS, where it can follow the
+    // document ("Automatically switch to a document's input source"): the hand's checks ask it inside the borrow. What
+    // is left is the same in every window: the key's name, plain ASCII text, and X11's Typing Assist (server-wide).
+    const everyWindow = this.keys.os !== "darwin";
+    const before: HandChecks = {
+      checkKeys: combo => {
+        const { sym, mods } = comboKeys(combo);
+        if (everyWindow) keyboardUsable({ modifiers: mods, sym });
+      },
+      checkTyping: text => {
+        if (everyWindow) keyboardUsable();
+        if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard");
+      },
+    };
 
     // Wait for the user to be still: no movement, no wheel, no button held, no key down.
     const idleMs = o.idleMs ?? 1500;
@@ -333,6 +415,8 @@ export class CursorBorrow {
       // no Accessibility permission, or secure input on) is refused before anything is touched, saying why.
       const why = x.blockedReason?.(o.window ?? 0) ?? null;
       if (why) throw new Error(why);
+      // So are keys and typing the keyboard can't do now, before the user is asked to be still for nothing.
+      o.preflight?.(before);
       watching = x.watchUser?.(true) ?? false;
       let last = x.pointer();
       for (;;) {
@@ -348,6 +432,8 @@ export class CursorBorrow {
       // Nothing is touched on a locked or blank screen, or while something else holds the keyboard.
       if (x.screenLocked?.()) throw new Error("The screen is locked or blank, so Ember didn't borrow the mouse.");
       if (x.keyboardGrabbed?.(o.window)) throw new Error(GRABBED("didn't borrow the mouse"));
+      // Asked again, as the user may have turned Typing Assist on while Ember waited: before the window comes to the front.
+      o.preflight?.(before);
     } catch (err) {
       unwatch();
       this.busy = false;
@@ -358,6 +444,13 @@ export class CursorBorrow {
 
     let home: { x: number; y: number } | null = null;
     let previousWindow = 0;
+    const restoreFocus = () => {
+      if (!previousWindow || !o.window || previousWindow === o.window) return;
+      let may: boolean;
+      try { may = this.options.mayRefocus?.(previousWindow) ?? true; } catch { may = false; }
+      if (may) x.activate(previousWindow);
+    };
+    let handedBack = false;
     const hand: Hand = {
       glideTo: async (tx, ty) => {
         check();
@@ -399,22 +492,21 @@ export class CursorBorrow {
         check();
         keyboardOnTarget();
         keyboardFree();
-        // The logo key's other names ("win", "logo") as the policy read them (policy.canonicalKeys: ⌘ on macOS), so the
-        // key pressed is the one the user was asked about. On Linux the policy refuses every logo-key combination, and
-        // the spellings stay today's.
         const kc = this.keys;
-        const spelled = kc.os === "linux" ? combo : combo.split("+").map(t => (kc.logoAliases.test(t) ? kc.logoToken : t)).join("+");
-        const { modifiers, key } = parseCombo(spelled, kc);
-        const sym = x.keysymOf(key);
-        if (!sym) throw new Error(`unknown key "${key}"`);
+        const { sym, mods } = comboKeys(combo);
+        keyboardUsable({ modifiers: [...mods], sym });
         // The key in the active layout when it has one (with Shift if it's on the shifted level there, like
         // "plus" on a US keyboard); else in another layout of the keyboard (Ctrl+C still works with a Russian
         // layout active). Never a key that gives it only with AltGr: without AltGr it is another shortcut.
         const layout = x.layout?.() ?? null;
         const stroke = layout ? shortcutStroke(sym, layout) : null;
         if (layout && !stroke) throw new Error(`The keyboard layout in use can't press ${combo.trim()} (its key needs AltGr there, or isn't there), so Ember pressed nothing: any other key would be another shortcut. Switch the layout (for example to English) and try again.`);
-        const mods = modifiers.map(m => x.keysymOf(m));
-        if ((stroke ? stroke.shift : x.needsShift(sym)) && !mods.includes(SHIFT_L)) mods.push(SHIFT_L);
+        // A digit under Ctrl, Alt or the logo key is its key without Shift, also where typing the digit needs Shift
+        // (French, Belgian, Czech): that is what the layout's users press, Windows apps match the digit's virtual key
+        // whatever the layout, and Ctrl+Shift+1 is another shortcut (Excel's number format). macOS keeps its layout's
+        // own answer for Command shortcuts (the layout's shortcut level is read with Command held).
+        const digitShortcut = kc.os !== "darwin" && sym >= 0x30 && sym <= 0x39 && mods.some(m => SHORTCUT_MODIFIERS.has(m));
+        if (!digitShortcut && (stroke ? stroke.shift : x.needsShift(sym)) && !mods.includes(SHIFT_L)) mods.push(SHIFT_L);
         const tap = (down: boolean) => (stroke ? pressCode(stroke.code, sym, down) : press(sym, down));
         for (const m of mods) press(m, true);
         try {
@@ -428,6 +520,7 @@ export class CursorBorrow {
         check();
       },
       type: async text => {
+        keyboardUsable();
         if (x.textKey) {
           // The backend types any character whatever the layout (Windows' KEYEVENTF_UNICODE, macOS's Unicode string):
           // no layout plan. Line breaks and tabs are the Return and Tab keys. check() runs only while Ember's own
@@ -467,11 +560,7 @@ export class CursorBorrow {
         }
         check();
       },
-      checkTyping: text => {
-        // With the backend's own typing any ASCII text goes (see type); otherwise the layout in use must type it all.
-        if (x.textKey) { if (!typeableText(text)) throw new Error("Ember can only type plain ASCII text with the keyboard"); return; }
-        planText(text);
-      },
+      ...checks,
       scroll: async (direction, steps) => {
         const button = { up: 4, down: 5, left: 6, right: 7 }[direction];
         check();
@@ -491,6 +580,15 @@ export class CursorBorrow {
       home = x.pointer();
       previousWindow = x.activeWindow();
       expected = home;
+      this.handBack = () => {
+        handedBack = true;
+        // Keys and buttons up first: a move with a button held would be a drag.
+        x.releaseAll();
+        held.clear();
+        ownButtons = 0;
+        if (home) x.move(home.x, home.y);
+        restoreFocus();
+      };
       this.setDriving(true);
       o.onStart?.();
       if (o.window) {
@@ -503,17 +601,14 @@ export class CursorBorrow {
       }
       return await fn(hand);
     } finally {
+      this.handBack = null;
       // Never leave a key or button stuck down, whatever happened.
       // By keycode: the exact key that went down comes up (a keysym could map to another key by now).
       for (const code of held.keys()) { posted(); x.keycode(code, false); }
       held.clear();
-      const restoreFocus = () => {
-        if (!previousWindow || !o.window || previousWindow === o.window) return;
-        let may: boolean;
-        try { may = this.options.mayRefocus?.(previousWindow) ?? true; } catch { may = false; }
-        if (may) x.activate(previousWindow);
-      };
-      if (this.stopping || tookOver === "keys") {
+      if (handedBack) {
+        // Ember quit while driving: stopForQuit() handed everything back, and the input is closed by now.
+      } else if (this.stopping || tookOver === "keys") {
         // Stopped (or the user reached for the keyboard, e.g. Ctrl+Alt+X): no gliding, pointer and focus simply go back.
         if (home) x.move(home.x, home.y);
         restoreFocus();

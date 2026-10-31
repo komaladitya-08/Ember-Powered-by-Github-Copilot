@@ -15,11 +15,17 @@ case "$1" in
     exec "$APP" --doctor --ozone-platform=x11 --disable-gpu $nosandbox "$@"
     ;;
   -h|--help)
-    echo "usage: ember [doctor | --show-settings]"
+    echo "usage: ember [doctor | --show-settings | --ask]"
     echo "  ember              start Ember (it stays beside your cursor; Ctrl+Alt+E opens its settings)"
     echo "  ember doctor       check this computer and explain anything that needs fixing"
     echo "  ember --show-settings   start and open the settings window"
+    echo "  ember --ask        open the ask box (starting Ember if it isn't running)"
     exit 0
     ;;
 esac
+# Without a display (an ssh session without -X, a text console) Chromium prints only its own error.
+if [ -z "$DISPLAY" ]; then
+  echo "Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run 'ember doctor'." >&2
+  exit 1
+fi
 exec "$APP" --ozone-platform=x11 "$@"

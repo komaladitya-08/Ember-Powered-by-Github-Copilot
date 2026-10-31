@@ -345,18 +345,18 @@ describe("a click goes to the control that handles it (SEC7-1)", () => {
     const link = makeWorker({ role: "static", name: "Settings", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "link", name: "Delete my account" } }) });
     await link.call("perceive_window", {});
     expect((await link.call("click", { id: 1 })).resultType).toBe("denied");
-    expect(link.asked).toEqual([expect.stringMatching(/^Click “Delete my account” link .*You didn't ask for this/)]);
+    expect(link.asked).toEqual([expect.stringMatching(/^Click the “Delete my account” link .*You didn't ask for this/)]);
     expect(link.audit).toContainEqual(expect.objectContaining({ event: "decision", kind: "click", element: { role: "link", name: "Delete my account" } }));
     // An unnamed clickable box round "Block user": named by the text, and asked about.
     const box = makeWorker({ role: "static", name: "Block user", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "section", name: "" } }) });
     await box.call("perceive_window", {});
     await box.call("click", { id: 1 });
-    expect(box.asked).toEqual([expect.stringMatching(/^Click “Block user” section/)]);
+    expect(box.asked).toEqual([expect.stringMatching(/^Click the “Block user” section/)]);
     // A row named harmlessly round a risky word: the word is what is asked about.
     const row = makeWorker({ role: "static", name: "Remove", answer: "deny", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "list item", name: "Ana Silva" } }) });
     await row.call("perceive_window", {});
     await row.call("click", { id: 1 });
-    expect(row.asked).toEqual([expect.stringMatching(/^Click “Remove” static/)]);
+    expect(row.asked).toEqual([expect.stringMatching(/^Click the “Remove” text/)]);
     // Nothing risky either way: the app's grant covers it, and the journal names the link.
     const plain = makeWorker({ role: "static", name: "Docs", canDo: () => ({ tier1: true, action: "clickancestor", handler: { role: "link", name: "Help" } }) });
     await plain.call("perceive_window", {});
@@ -382,7 +382,7 @@ describe("one question per step (review round 6)", () => {
     const { call, asked, events } = makeWorker({ role: "check box", name: "Urgent", grants: {}, answer: "deny", canDo: () => ({ tier1: false, why: "no 'toggle' action (has: showcontextmenu)" }) });
     await call("perceive_window", {});
     const r = await call("toggle", { id: 1, on: true });
-    expect(asked).toEqual([expect.stringMatching(/^Borrow your mouse to click “Urgent” check box/)]);
+    expect(asked).toEqual([expect.stringMatching(/^Borrow your mouse to click the “Urgent” checkbox/)]);
     expect(r.resultType).toBe("denied");
     expect(events).toEqual([]);
   });
@@ -391,7 +391,7 @@ describe("one question per step (review round 6)", () => {
     const { call, asked, events } = makeWorker({ grants: {}, canDo: () => ({ tier1: true }) });
     await call("perceive_window", {});
     expect((await call("click", { id: 1 })).resultType).toBe("success");
-    expect(asked).toEqual([expect.stringMatching(/^Let me work in .*First step: click “Bold” push button/)]);
+    expect(asked).toEqual([expect.stringMatching(/^Let me work in .*First step: click the “Bold” button/)]);
     expect(events).toEqual(["start", "end"]);
   });
 
@@ -416,7 +416,7 @@ describe("one question per step (review round 6)", () => {
     const behind = field(false);
     await behind.call("perceive_window", {});
     await behind.call("type_text", { id: 1, text: "Hello", mode: "insert" });
-    expect(behind.asked).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Hello” into “Body” paragraph/)]);
+    expect(behind.asked).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Hello” into the “Body” paragraph/)]);
     expect(behind.events).toEqual([]);
   });
 });

@@ -1,7 +1,9 @@
 /**
  * Ember's handle: a small always-on-top pill in the corner of the primary
  * display with Ember's face and status. Clicking it opens Ember's menu, so
- * nothing depends on a tray (GNOME 3.32 has none by default).
+ * nothing depends on a tray (GNOME 3.32 has none by default). The corner is
+ * the bottom right or the bottom left (Handle position, review #75), inside
+ * the display's work area.
  *
  * Without a compositor (xrdp, VNC) transparent overlays render black, so the
  * handle becomes an opaque card that also shows what Ember is saying.
@@ -17,13 +19,18 @@ import { revive } from "./revive";
 import { OVERLAY, type EmberState, type OverlayInit } from "../shared/overlay";
 import type { FloatingWindow } from "./platform/types";
 import { applyAllWorkspaces } from "./platform/compose";
+import { scaledSize, textScale } from "./page-prefs";
+import { pageUrl } from "./page-url";
+import { HANDLE_MARGIN, handleCorner, type HandlePosition } from "../shared/handle-place";
 
 const appDir = __dirname;
+/** At the default text size; it widens with the text (its two lines fit its height at every size). */
 const PILL = { width: 200, height: 56 };
+/** While Ember is hidden: the pill shrinks to a tab with just Ember's face (still the way back to Show Ember). */
+const TAB = { width: 56, height: 56 };
 const CARD = { width: 360, height: 150 };
 /** The card's height follows what it shows (a question with its buttons, a task with Stop), within these limits. */
 const CARD_MIN = 120, CARD_MAX = 360;
-const MARGIN = 12;
 
 export class HandleWindow {
   readonly win: BrowserWindow;
@@ -33,7 +40,8 @@ export class HandleWindow {
    * workspace); `o.forward`: click-through forwards the pointer's moves (macOS).
    */
   constructor(private settings: () => Settings, readonly fallback: boolean, private o: { floating?: FloatingWindow; forward?: boolean } = {}) {
-    const size = fallback ? CARD : PILL;
+    const size = fallback ? CARD : this.pill();
+    this.pillWidth = size.width;
     this.win = new BrowserWindow({
       ...size,
       ...this.corner(size),
@@ -75,10 +83,25 @@ export class HandleWindow {
     revive(this.win);
     screen.on("display-metrics-changed", this.reposition);
     screen.on("display-removed", this.reposition);
-    void this.win.loadFile(path.join(appDir, "renderer", "handle", "index.html"));
+    void this.win.loadURL(pageUrl(path.join(appDir, "renderer", "handle", "index.html")));
   }
 
   private last: EmberState | null = null;
+
+  /** Ember is hidden: the pill is a tab with only its face (the page drops its words at that width). */
+  private compact = false;
+
+  /**
+   * Ember was hidden (true) or shown again (false): the pill shrinks to its face in the same corner, or grows back, so
+   * "Hide Ember" leaves only what is needed to show it again. The card (no compositor) never shrinks. Returns whether the
+   * handle's place changed.
+   */
+  setCompact(on: boolean): boolean {
+    if (this.fallback || on === this.compact || this.win.isDestroyed()) return false;
+    this.compact = on;
+    this.reposition();
+    return true;
+  }
 
   private cardHeight = CARD.height;
 
@@ -86,15 +109,28 @@ export class HandleWindow {
     this.last = state;
     if (this.win.isDestroyed()) return;
     this.win.webContents.send(OVERLAY.state, state);
+    // Grown for a question's whole text, and that question gone: back within the usual limit at once.
+    if (this.fallback && this.cardHeight > this.cardMax()) { this.cardHeight = this.cardMax(); this.reposition(); }
   }
 
   /** Fallback card: grows or shrinks (upward, same corner) to the height its content needs. */
   fit(height: number): void {
     if (!this.fallback || !Number.isFinite(height)) return;
-    const h = Math.round(Math.min(Math.max(height, CARD_MIN), CARD_MAX));
+    const h = Math.round(Math.min(Math.max(height, CARD_MIN), this.cardMax()));
     if (h === this.cardHeight) return;
     this.cardHeight = h;
     this.reposition();
+  }
+
+  /**
+   * The tallest the card may be now. A question showing a whole text (a long typed text, review #116) may take more, so
+   * its sentence, the text's block, its hint, its keys, its buttons and the task row all show (640 px holds them at the
+   * largest text size), never more than the work area less a margin above and below.
+   */
+  private cardMax(): number {
+    const b = this.last?.bubble;
+    if (!b?.visible || !b.whole) return CARD_MAX;
+    return Math.max(CARD_MAX, Math.min(640, screen.getPrimaryDisplay().workArea.height - 24));
   }
 
   /** The handle's place on screen (Ember keeps off it). */
@@ -109,13 +145,35 @@ export class HandleWindow {
     else this.win.setIgnoreMouseEvents(on);
   }
 
-  sendSettings(s: Settings): void {
-    if (!this.win.isDestroyed()) this.win.webContents.send(OVERLAY.settings, s);
+  /**
+   * Sends the settings to the page; true when the handle moved: Handle position changed (the pill, the tab or the card
+   * goes to the other corner), or the text size changed the pill's width (the tab keeps its size; the pill takes the
+   * new width when Ember is shown again). Main then tells the desk view.
+   */
+  sendSettings(s: Settings): boolean {
+    if (this.win.isDestroyed()) return false;
+    this.win.webContents.send(OVERLAY.settings, s);
+    // Handle position changed (settings, or the menu's "Move to the other side"): the pill, the tab or the card moves.
+    const moved = this.settings().handlePosition !== this.placedAt;
+    if (!moved && (this.fallback || this.compact || this.pill().width === this.pillWidth)) return false;
+    this.reposition();
+    return true;
   }
 
+  /** The pill's width as last placed. */
+  private pillWidth = PILL.width;
+  /** The corner it was last placed in. */
+  private placedAt: HandlePosition | undefined;
+
+  /** The pill at the text size: wider as its words grow ("Microphone problem", the computer's name), as high. */
+  private pill(): { width: number; height: number } {
+    return { width: scaledSize({ width: PILL.width }, textScale(this.settings().textSize)).width, height: PILL.height };
+  }
+
+  /** Where a window of `size` goes: the corner Handle position names, in the primary display's work area (taskbar, Dock and panels outside it). */
   private corner(size: { width: number; height: number }) {
-    const wa = screen.getPrimaryDisplay().workArea;
-    return { x: wa.x + wa.width - size.width - MARGIN, y: wa.y + wa.height - size.height - MARGIN };
+    this.placedAt = this.settings().handlePosition;
+    return handleCorner(this.placedAt, size, screen.getPrimaryDisplay().workArea, HANDLE_MARGIN);
   }
 
   /** Gone for good (Ember switches between the pill and the card when the compositor comes or goes). */
@@ -127,7 +185,8 @@ export class HandleWindow {
 
   private reposition = (): void => {
     if (this.win.isDestroyed()) return;
-    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : PILL;
+    const size = this.fallback ? { width: CARD.width, height: this.cardHeight } : this.compact ? TAB : this.pill();
+    if (!this.fallback && !this.compact) this.pillWidth = size.width;
     this.win.setBounds({ ...size, ...this.corner(size) });
   };
 }

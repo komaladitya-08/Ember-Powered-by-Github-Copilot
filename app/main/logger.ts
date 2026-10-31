@@ -9,6 +9,16 @@ import path from "node:path";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
+/**
+ * The level EMBER_LOG_LEVEL names, in any case; info when it is unset or names no level (`unknown` then holds it,
+ * so the caller can say so). An unknown name used to turn on every debug line (review #90).
+ */
+export function logLevel(value: string | undefined): { level: LogLevel; unknown?: string } {
+  const v = (value ?? "").trim().toLowerCase();
+  if (!v) return { level: "info" };
+  return Object.prototype.hasOwnProperty.call(ORDER, v) ? { level: v as LogLevel } : { level: "info", unknown: value };
+}
+
 export interface LoggerOptions {
   dir: string;
   level?: LogLevel;
@@ -54,7 +64,8 @@ function safeLine(entry: Fields): string {
 }
 
 export function createLogger(opts: LoggerOptions): Logger {
-  const level = opts.level ?? "info";
+  // Checked again here: a level that isn't one (a cast from the environment) means info, never "everything".
+  const level = logLevel(opts.level).level;
   const maxBytes = opts.maxBytes ?? 5 * 1024 * 1024;
   const keep = opts.keep ?? 3;
   const now = opts.now ?? (() => new Date());

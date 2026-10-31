@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CACHE_MS, appRoots, bundleApp, darwinApps, type BundleFs } from "../../app/main/platform/darwin/system/apps";
+import { CACHE_MS, appRoots, bundleApp, darwinApps, localeKeys, type BundleFs } from "../../app/main/platform/darwin/system/apps";
 import { findApp, type DesktopApp } from "../../app/main/hands/system";
 import { fakeRun, tool } from "./darwin-system-fakes";
 
@@ -253,5 +253,104 @@ describe("appRoots", () => {
   it("lists the Applications folders in the design's order, the user's own last", () => {
     expect(appRoots("/Users/ada").map(r => r.dir)).toEqual(["/Applications", "/Applications/Utilities", "/System/Applications", "/System/Applications/Utilities", "/Users/ada/Applications"]);
     expect(appRoots("/Users/ada").filter(r => r.vendors).map(r => r.dir)).toEqual(["/Applications"]);
+  });
+});
+
+describe("Apple's apps by their localized names (review #239)", () => {
+  let root: string, system: string;
+  const utf16 = (text: string) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+  const resource = (b: string, rel: string, data: string | Buffer) => {
+    const p = path.join(b, "Contents", "Resources", rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, data);
+  };
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-apps-l10n-"));
+    system = path.join(root, "System", "Applications");
+    // macOS 13: one InfoPlist.strings per language folder (the old text form, in UTF-16).
+    const calc = bundle(system, "Calculator.app", infoXml({ CFBundleExecutable: "Calculator", CFBundleIdentifier: "com.apple.calculator", CFBundleName: "Calculator" }));
+    resource(calc, "de.lproj/InfoPlist.strings", utf16(`/* Localized */\n"CFBundleDisplayName" = "Rechner";\n"CFBundleName" = "Rechner";\n`));
+    resource(calc, "fr.lproj/InfoPlist.strings", utf16(`"CFBundleDisplayName" = "Calculette";\n`));
+    resource(calc, "en.lproj/InfoPlist.strings", utf16(`"CFBundleDisplayName" = "Calculator";\n`));
+    // macOS 14 and later: every language in one InfoPlist.loctable.
+    const settings = bundle(system, "System Settings.app", infoXml({ CFBundleExecutable: "System Settings", CFBundleIdentifier: "com.apple.systempreferences", CFBundleName: "System Settings" }));
+    resource(settings, "InfoPlist.loctable", `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>
+      <key>LocProvenance</key><dict><key>de</key><string>x</string></dict>
+      <key>de</key><dict><key>System Settings</key><string>Systemeinstellungen</string><key>CFBundleName</key><string>System&#xAD;einstellungen</string></dict>
+      <key>pt_BR</key><dict><key>CFBundleDisplayName</key><string>Ajustes do Sistema</string></dict>
+      <key>zh_CN</key><dict><key>CFBundleName</key><string>系统设置</string></dict>
+    </dict></plist>`);
+    // Both: the loctable has the language's usage descriptions only, its InfoPlist.strings the names.
+    const maps = bundle(system, "Maps.app", infoXml({ CFBundleExecutable: "Maps", CFBundleIdentifier: "com.apple.Maps", CFBundleName: "Maps" }));
+    resource(maps, "InfoPlist.loctable", `<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict>
+      <key>de</key><dict><key>NSLocationUsageDescription</key><string>Karten zeigt, wo Sie sind.</string></dict>
+    </dict></plist>`);
+    resource(maps, "de.lproj/InfoPlist.strings", utf16(`"CFBundleDisplayName" = "Karten";\n`));
+    // A broken localization costs only the localized names.
+    const notes = bundle(system, "Notes.app", infoXml({ CFBundleExecutable: "Notes", CFBundleIdentifier: "com.apple.Notes", CFBundleName: "Notes" }));
+    resource(notes, "de.lproj/InfoPlist.strings", "\"CFBundleName\" = ");
+  });
+
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  const catalogue = (languages?: string[]) => darwinApps({ roots: [{ dir: system }], extraBundles: [], ...(languages ? { languages: () => languages } : {}) });
+  const app = (list: DesktopApp[], id: string) => list.find(a => a.id === id)!;
+
+  it("finds Calculator as “Rechner” on a German Mac, and knows its window by that name", () => {
+    const c = catalogue(["de-DE", "en-US"]);
+    const list = c.list();
+    expect(c.find(list, "Rechner")?.id).toBe("com.apple.calculator");
+    const calc = app(list, "com.apple.calculator");
+    expect(calc.name).toBe("Calculator");
+    expect(calc.keywords).toContain("rechner");
+    // The worker matches the new window's owner ("Rechner") against these.
+    expect(c.programsOf(calc).has(c.appKey("Rechner"))).toBe(true);
+    expect(c.programsOf(calc).has(c.appKey("Calculette"))).toBe(false);
+  });
+
+  it("reads the one loctable of macOS 14 and later, by language and region", () => {
+    expect(app(catalogue(["de-AT"]).list(), "com.apple.systempreferences").programs).toContain("systemeinstellungen");
+    expect(app(catalogue(["pt-BR"]).list(), "com.apple.systempreferences").programs).toContain("ajustes do sistema");
+    expect(app(catalogue(["zh-Hans-CN"]).list(), "com.apple.systempreferences").programs).toContain("系统设置");
+  });
+
+  it("compares names without the soft hyphen Apple puts in “System\u00ADeinstellungen”", () => {
+    const c = catalogue(["de-DE"]);
+    const settings = app(c.list(), "com.apple.systempreferences");
+    expect(settings.keywords).toContain("systemeinstellungen");
+    expect(c.find(c.list(), "Systemeinstellungen")?.id).toBe("com.apple.systempreferences");
+    // The window list may report the owner name with it or without it.
+    expect(c.appKey("System\u00ADeinstellungen")).toBe(c.appKey("Systemeinstellungen"));
+    expect(c.programsOf(settings).has(c.appKey("System\u00ADeinstellungen"))).toBe(true);
+  });
+
+  it("reads the language's InfoPlist.strings too when its loctable entry has no names", () => {
+    const maps = app(catalogue(["de-DE"]).list(), "com.apple.Maps");
+    expect(maps.programs).toContain("karten");
+    expect(maps.keywords).toContain("karten");
+  });
+
+  it("takes the first preferred language the app has, as macOS does", () => {
+    const calc = app(catalogue(["ja-JP", "fr-FR", "de-DE"]).list(), "com.apple.calculator");
+    expect(calc.programs).toContain("calculette");
+    expect(calc.programs).not.toContain("rechner");
+  });
+
+  it("keeps today's names without preferred languages, and skips a broken localization", () => {
+    expect(app(catalogue().list(), "com.apple.calculator").programs).toEqual(["calculator", "com.apple.calculator"]);
+    expect(app(catalogue(["de-DE"]).list(), "com.apple.Notes").programs).toEqual(["notes", "com.apple.notes"]);
+    const throwing = darwinApps({ roots: [{ dir: system }], extraBundles: [], languages: () => { throw new Error("before ready"); } });
+    expect(app(throwing.list(), "com.apple.calculator").programs).toEqual(["calculator", "com.apple.calculator"]);
+  });
+
+  it("names the folders a language may be kept under, most specific first", () => {
+    expect(localeKeys("de-DE")).toEqual(["de_DE", "de-DE", "de", "German"]);
+    expect(localeKeys("zh-Hans-CN")).toEqual(["zh-Hans-CN", "zh_Hans_CN", "zh-Hans", "zh_Hans", "zh_CN", "zh-CN", "zh"]);
+    expect(localeKeys("zh-TW")).toEqual(["zh_TW", "zh-TW", "zh-Hant", "zh"]);
+    expect(localeKeys("es-419")).toEqual(["es_419", "es-419", "es", "Spanish"]);
+    expect(localeKeys("fr")).toEqual(["fr", "French"]);
+    expect(localeKeys("")).toEqual([]);
+    expect(localeKeys("../../etc")).toEqual([]);
   });
 });

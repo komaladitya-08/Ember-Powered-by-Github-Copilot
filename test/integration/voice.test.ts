@@ -6,10 +6,11 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
-import { sherpaBackend } from "../../app/voice/sherpa";
+import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
 
 const dir = path.resolve(process.env.EMBER_VOICE_DIR ?? ".cache/voice");
@@ -210,6 +211,43 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     s.end();
     expect(s.events.filter(e => e.type === "wake")).toHaveLength(1);
     expect(sent(s.events)).toMatchObject([{ text: expect.stringMatching(/night ?light/i), window: "wake" }]);
+  });
+
+  it("hears nothing in under 0.1 s of audio instead of failing (the recognizer throws a bare number on it, review #253)", () => {
+    for (const n of [0, 800, 1599]) expect(backend.transcribe(new Float32Array(n))).toBe("");
+  });
+
+  it("fails to load, with a ModelLoadError, when a model file is cut short or missing (review #254)", () => {
+    const models = modelPaths(path.join(dir, "models"));
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-damaged-"));
+    try {
+      // The recognition model's folder, its encoder cut to 1000 bytes (as an antivirus or a disk error leaves it), then gone.
+      const asr = path.join(tmp, "asr");
+      fs.mkdirSync(asr);
+      for (const f of fs.readdirSync(models.asr)) if (f !== "encode.int8.onnx") fs.symlinkSync(path.join(models.asr, f), path.join(asr, f));
+      fs.writeFileSync(path.join(asr, "encode.int8.onnx"), fs.readFileSync(path.join(models.asr, "encode.int8.onnx")).subarray(0, 1000));
+      expect(() => sherpaBackend({ ...models, asr })).toThrow(ModelLoadError);
+      fs.rmSync(path.join(asr, "encode.int8.onnx"));
+      expect(() => sherpaBackend({ ...models, asr })).toThrow("The speech recognition model couldn't be loaded.");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("cuts in while a listening window is open, and the voice process carries on (review #253)", () => {
+    // "Hey Ember." and a pause: the window waits for the request. Then Ember speaks (a task is announced) and the user says
+    // "Hey Ember, turn on night light" over it; the speakers' stream is on (it plays talk without the phrase).
+    const talk = cat(trimmed("chat"), trimmed("remember"));
+    const playing = (n: number) => new Float32Array(n).map((_, i) => talk[i % talk.length] * 0.5);
+    const first = cat(silence(3), read("wake_pause").subarray(0, at(1.52)), silence(1));
+    const s = session();
+    s.hear(inRoom(first), { speakers: playing(first.length) });
+    expect(s.engine.listening).toBe(true);
+    s.engine.selfSpeaking(true);
+    const second = cat(read("wake"), silence(1.5));
+    s.hear(inRoom(second), { speakers: playing(second.length) });
+    s.end();
+    expect(s.events.filter(e => e.type === "wake")).toHaveLength(2);
   });
 
   it("doesn't send others' talk (10 dB under the user) after a bare 'Hey Ember' (VO9-3)", () => {

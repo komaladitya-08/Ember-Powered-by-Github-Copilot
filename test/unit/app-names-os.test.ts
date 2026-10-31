@@ -31,7 +31,7 @@ describe("friendlyApp", () => {
   });
 
   it("keeps today's Linux table, and gives Windows and macOS their own (apps-names-platforms tests them)", () => {
-    expect(Object.keys(APP_NAMES.linux)).toHaveLength(22);
+    expect(Object.keys(APP_NAMES.linux)).toHaveLength(26);
     expect(APP_NAMES.linux["soffice.bin"]).toBe("LibreOffice");
     expect(APP_NAMES.win32.winword).toBe("Word");
     expect(APP_NAMES.darwin["com.apple.finder"]).toBe("Finder");

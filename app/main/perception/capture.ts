@@ -11,6 +11,7 @@
 import { createRequire } from "node:module";
 import type Sharp from "sharp";
 import type { PerceptionWindows, X11Image } from "../platform/types";
+import { MARK_FONT } from "./marks";
 import type { Bounds } from "./sidecar";
 
 export interface Capture {
@@ -53,6 +54,16 @@ const sharp: typeof Sharp = ((...args: Parameters<typeof Sharp>) => {
   return sharpModule(...args);
 }) as typeof Sharp;
 
+/**
+ * Draws one mark's text (marks.ts's font, size and weight) on a small picture and drops it: the first text sharp draws
+ * builds fontconfig's cache, which text-warm.ts has paid before the first screenshot with marks. sharp draws on
+ * libuv's threads.
+ */
+export async function warmText(): Promise<void> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><text x="2" y="12" font-family="${MARK_FONT}" font-size="11" font-weight="700">1</text></svg>`;
+  await sharp({ create: { width: 24, height: 16, channels: 3, background: "#ffffff" } }).composite([{ input: Buffer.from(svg) }]).png().toBuffer();
+}
+
 export function bgraToRgba(bgra: Buffer): Buffer {
   const out = Buffer.allocUnsafe(bgra.length);
   for (let i = 0; i < bgra.length; i += 4) {
@@ -64,9 +75,15 @@ export function bgraToRgba(bgra: Buffer): Buffer {
   return out;
 }
 
+/**
+ * Paints `r` (image pixels, clipped to the image) opaque black. A rectangle wholly outside the image changes nothing:
+ * masks come for every private window on screen, and one to the left of the picture would otherwise give `fill` a
+ * negative end on the top rows (a RangeError instead of a picture).
+ */
 export function maskRect(rgba: Buffer, width: number, height: number, r: Bounds): void {
   const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
   const x1 = Math.min(width, Math.ceil(r.x + r.width)), y1 = Math.min(height, Math.ceil(r.y + r.height));
+  if (!(x1 > x0 && y1 > y0)) return;
   for (let y = y0; y < y1; y++) rgba.fill(0, (y * width + x0) * 4, (y * width + x1) * 4);
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) rgba[(y * width + x) * 4 + 3] = 255;
 }

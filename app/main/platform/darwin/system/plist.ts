@@ -1,6 +1,7 @@
 /**
  * A property-list reader for the app catalogue: XML plists and binary ("bplist00") plists, the two forms an app
- * bundle's Contents/Info.plist comes in. Ember reads a few hundred of them when it lists apps, so it parses them itself
+ * bundle's Contents/Info.plist comes in, and the .strings files that hold its localized names (those two, or the old
+ * `"key" = "value";` text form). Ember reads a few hundred of them when it lists apps, so it parses them itself
  * instead of starting one /usr/bin/plutil per bundle (about 2 s for 200 apps). Pure and bounded: the input is a file
  * any app on the machine wrote, so every offset is checked, nesting is limited, a shared or cyclic object reference
  * can't make the work grow, and a malformed list throws (the caller skips that bundle).
@@ -31,6 +32,88 @@ export function isPlistDict(v: PlistValue | undefined): v is PlistDict {
 export function parsePlist(buf: Buffer): PlistValue {
   if (buf.length >= 8 && buf.subarray(0, 8).toString("latin1") === "bplist00") return parseBinary(buf);
   return parseXml(decodeText(buf));
+}
+
+/**
+ * Parses a .strings file (an app's localized InfoPlist.strings, review #239): a compiled one (binary or XML property
+ * list), or the old text form, `"key" = "value";` entries with C comments, in UTF-8 or UTF-16 with a BOM. Throws
+ * ("not a strings file") on anything else, rather than guessing.
+ */
+export function parseStringsFile(buf: Buffer): PlistValue {
+  if (buf.length >= 8 && buf.subarray(0, 8).toString("latin1") === "bplist00") return parseBinary(buf);
+  const text = decodeText(buf);
+  return /^\s*<(\?xml|!DOCTYPE|plist)/.test(text) ? parseXml(text) : parseOldStrings(text);
+}
+
+/** At most this many entries in one strings file (InfoPlist.strings has a handful). */
+const MAX_STRINGS = 10_000;
+
+/** The old text form of a strings file: one linear pass, every entry `key = value;` (a bare `key;` means key = key). */
+function parseOldStrings(s: string): PlistDict {
+  const out: PlistDict = {};
+  let i = 0;
+  const fail = (what: string): never => {
+    throw new Error(`not a strings file: ${what} at character ${i}`);
+  };
+  const skip = (): void => {
+    for (;;) {
+      while (i < s.length && /\s/.test(s[i]!)) i++;
+      if (s.startsWith("/*", i)) {
+        const end = s.indexOf("*/", i + 2);
+        if (end < 0) fail("unterminated comment");
+        i = end + 2;
+      } else if (s.startsWith("//", i)) {
+        const end = s.indexOf("\n", i);
+        i = end < 0 ? s.length : end + 1;
+      } else return;
+    }
+  };
+  /** A quoted string (with its escapes) or a bare word. */
+  const token = (): string => {
+    skip();
+    if (s[i] === "\"") {
+      i++;
+      let v = "";
+      for (;;) {
+        if (i >= s.length) fail("unterminated string");
+        const c = s[i++]!;
+        if (c === "\"") return v;
+        if (c !== "\\") {
+          v += c;
+          continue;
+        }
+        const e = s[i++];
+        if (e === undefined) fail("unterminated string");
+        if (e === "n") v += "\n";
+        else if (e === "t") v += "\t";
+        else if (e === "r") v += "\r";
+        else if ((e === "U" || e === "u") && /^[0-9a-fA-F]{4}$/.test(s.slice(i, i + 4))) {
+          v += String.fromCharCode(parseInt(s.slice(i, i + 4), 16));
+          i += 4;
+        } else v += e;
+      }
+    }
+    const start = i;
+    while (i < s.length && /[A-Za-z0-9_.$:/-]/.test(s[i]!)) i++;
+    if (i === start) fail("expected a string");
+    return s.slice(start, i);
+  };
+  let n = 0;
+  for (skip(); i < s.length; skip()) {
+    if (++n > MAX_STRINGS) fail("too many entries");
+    const key = token();
+    skip();
+    let value = key;
+    if (s[i] === "=") {
+      i++;
+      value = token();
+      skip();
+    }
+    if (s[i] !== ";") fail("expected ;");
+    i++;
+    put(out, key, value);
+  }
+  return out;
 }
 
 /** The text of an XML plist: UTF-8 (with or without a BOM) or UTF-16 with a BOM. */

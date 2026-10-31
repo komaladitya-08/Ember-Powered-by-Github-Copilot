@@ -1,0 +1,205 @@
+/**
+ * The hands a worker on each target gets (§2.6's table): this screen's for "local" and for a WSL distro (WSLg windows
+ * are on this screen, so their window leases are this screen's own keys: a local task and a WSL task acting in the same
+ * window must exclude each other, critique wsl-13), and a remote's parts for an SSH target (gate 1 per connection, no
+ * borrowed mouse, no flight to remote coordinates, never the remote person's window as the task's start). Without a
+ * window system this computer still takes commands: its hands then read and act on nothing (ports that refuse every
+ * call). Plain Node.
+ */
+
+import type { OS } from "../../shared/shortcuts";
+import { targetIdOf } from "../../shared/targets";
+import type { Hands } from "../agent/host";
+import type { WorkerSystem } from "../agent/worker";
+import type { CommandService } from "../commands/types";
+import type { PerceptionPort, SidecarPort } from "../perception/ports";
+import type { RemoteTargetParts } from "../remote/target";
+import type { HostRecord } from "../remote/types";
+import type { WslDistro } from "../wsl/types";
+import type { TargetBinding, TargetHands } from "./types";
+import { lockedOutSystem } from "../screen-lock";
+import { LOCAL_LABEL, distroLabel } from "./registry";
+import { isToolDistro } from "./wsl-service";
+
+/** A perception port for a target with no desktop: every read refuses, saying why. */
+export function refusingPerception(why: string): PerceptionPort {
+  const no = (): Promise<never> => Promise.reject(new Error(why));
+  return { focused: no, read: no, atPoint: no, quickContext: no, describe: no, perceive: no, systemDialogOpen: no, windows: no };
+}
+
+/** A sidecar port for a target with no desktop: every read and action refuses; stop does nothing (nothing runs). */
+export function refusingSidecar(why: string): SidecarPort {
+  const no = (): Promise<never> => Promise.reject(new Error(why));
+  return {
+    readElement: no, canDo: no, doAction: no, setText: no, setValue: no, selectOption: no, listOptions: no,
+    scaleOf: () => 1,
+    stop: () => undefined,
+  };
+}
+
+/** This computer's binding: its screen when a window system opened, else commands only (§2.6). */
+export function localBinding(os: OS, desktop: boolean): TargetBinding {
+  return {
+    id: "local", kind: "local", label: LOCAL_LABEL, screenOs: os, shellOs: os, desktop: desktop ? "screen" : "none",
+    ...(desktop ? {} : { desktopWhy: "Ember can't use this computer's screen here." }),
+  };
+}
+
+/**
+ * A distro's binding: the Windows screen judges its windows, commands run in Linux. WSL 1 and a tool's distro have no
+ * Linux apps of the user's, so they are commands only (§1.3, §2.2).
+ */
+export function wslBinding(d: Pick<WslDistro, "name" | "version" | "tool">, screen: boolean): TargetBinding {
+  const label = distroLabel(d.name);
+  const why = !screen ? "Ember can't use this computer's screen here."
+    : d.version === 1 ? `${d.name} runs WSL 1, which shows no Linux apps.`
+      : isToolDistro(d) ? `${d.name} belongs to Podman: Ember only runs commands there.` : null;
+  return {
+    id: targetIdOf("wsl", d.name), kind: "wsl", label, screenOs: "win32", shellOs: "linux",
+    desktop: why ? "none" : "screen", ...(why ? { desktopWhy: why } : {}),
+  };
+}
+
+/** A host's binding before it is connected (bind() names it; handsFor refuses it until it is). */
+export function hostBinding(h: Pick<HostRecord, "id" | "resolved">): TargetBinding {
+  return {
+    id: targetIdOf("ssh", h.id), kind: "ssh", label: h.id, login: h.resolved.user, screenOs: "linux", shellOs: "linux",
+    desktop: "none", desktopWhy: `${h.id} isn't connected.`,
+  };
+}
+
+/** What every target's hands share from main when this screen has none (no window system): audit, Confirmer, policy. */
+export interface HandsBase { audit: Hands["audit"]; confirmer: Hands["confirmer"]; policy: Hands["policy"] }
+
+/**
+ * Hands on this screen (local and WSL: same perception, sidecar, policy, mouse; lease keys unchanged) or, without a
+ * window system, hands that only carry commands. Each call made for one task's hands on this screen tells whether that
+ * task has used it (DesktopUse: a read, a picture, a step, an app opened, a setting changed, Ember's desk), so this
+ * screen locking stops only such tasks, and one running only commands goes on, as on a remote (review #81). Hands that
+ * say this screen is locked (lockedOutHands) refuse its app openings and setting changes meanwhile too (cross-review X9).
+ */
+export function screenHands(o: { hands: Hands | null; base: HandsBase | null; binding: TargetBinding; system: WorkerSystem; commands: CommandService | null }): (TargetHands & Partial<DesktopUse>) | null {
+  const keys = { grantKey: (app: string) => app.toLowerCase(), leaseKey: (k: string) => k };
+  if (o.hands) {
+    let used = false;
+    const use = () => { used = true; };
+    const { desk, screenLocked } = o.hands;
+    const system = screenLocked ? lockedOutSystem(o.system, screenLocked) : o.system;
+    return {
+      ...o.hands, perception: usingPerception(o.hands.perception, use), sidecar: usingSidecar(o.hands.sidecar, use),
+      ...(desk ? { desk: () => { use(); return desk(); } } : {}),
+      binding: o.binding, commands: o.commands, ...keys,
+      system: {
+        ...system,
+        apps: { ...system.apps, launch: app => { use(); return system.apps.launch(app); } },
+        settings: { ...system.settings, change: (name, value) => { use(); return system.settings.change(name, value); } },
+      },
+      usedDesktop: () => used,
+    };
+  }
+  if (!o.base) return null;
+  const why = `There is no desktop to work in on ${o.binding.label === LOCAL_LABEL ? "this computer" : o.binding.label}: work only through run_command.`;
+  return {
+    perception: refusingPerception(why), sidecar: refusingSidecar(why), policy: o.base.policy, audit: o.base.audit, confirmer: o.base.confirmer,
+    flyTo: () => undefined, currentWindow: () => null,
+    binding: o.binding, system: o.system, commands: o.commands, ...keys,
+  };
+}
+
+/** A perception port whose every read waits for `ready` first (it must never reject: a failed wait still reads). */
+export function waitingPerception(p: PerceptionPort, ready: () => Promise<unknown>): PerceptionPort {
+  const after = <T>(f: () => Promise<T>): Promise<T> => ready().then(f, f);
+  return {
+    focused: (...a) => after(() => p.focused(...a)),
+    read: (...a) => after(() => p.read(...a)),
+    atPoint: (...a) => after(() => p.atPoint(...a)),
+    quickContext: () => after(() => p.quickContext()),
+    describe: () => after(() => p.describe()),
+    perceive: (...a) => after(() => p.perceive(...a)),
+    systemDialogOpen: () => after(() => p.systemDialogOpen()),
+    windows: () => after(() => p.windows()),
+  };
+}
+
+/** A sidecar port whose every read and action waits for `ready` first; scaleOf and stop answer at once. */
+export function waitingSidecar(s: SidecarPort, ready: () => Promise<unknown>): SidecarPort {
+  const after = <T>(f: () => Promise<T>): Promise<T> => ready().then(f, f);
+  return {
+    readElement: (...a) => after(() => s.readElement(...a)),
+    canDo: (...a) => after(() => s.canDo(...a)),
+    doAction: (...a) => after(() => s.doAction(...a)),
+    setText: (...a) => after(() => s.setText(...a)),
+    setValue: (...a) => after(() => s.setValue(...a)),
+    selectOption: (...a) => after(() => s.selectOption(...a)),
+    listOptions: (...a) => after(() => s.listOptions(...a)),
+    scaleOf: id => s.scaleOf(id),
+    stop: () => s.stop(),
+  };
+}
+
+/**
+ * Hands that know whether their task has used a remote's desktop (§5.3.4 step 8, the lead's ruling on its scope): a
+ * screen that locks or a session that goes inactive there stops only such tasks; one running only commands goes on.
+ */
+export interface DesktopUse {
+  /** The task read, pictured, stepped or opened an app on the remote's desktop (running a command isn't a use). */
+  usedDesktop(): boolean;
+}
+
+/** A perception port that calls `use` before every read (screenshots included). */
+function usingPerception(p: PerceptionPort, use: () => void): PerceptionPort {
+  return {
+    focused: (...a) => { use(); return p.focused(...a); },
+    read: (...a) => { use(); return p.read(...a); },
+    atPoint: (...a) => { use(); return p.atPoint(...a); },
+    quickContext: () => { use(); return p.quickContext(); },
+    describe: () => { use(); return p.describe(); },
+    perceive: (...a) => { use(); return p.perceive(...a); },
+    systemDialogOpen: () => { use(); return p.systemDialogOpen(); },
+    windows: () => { use(); return p.windows(); },
+    ...(p.systemDialogReason ? { systemDialogReason: () => { use(); return p.systemDialogReason!(); } } : {}),
+  };
+}
+
+/** A sidecar port that calls `use` before every read and action; scaleOf and stop aren't uses. */
+function usingSidecar(s: SidecarPort, use: () => void): SidecarPort {
+  return {
+    readElement: (...a) => { use(); return s.readElement(...a); },
+    canDo: (...a) => { use(); return s.canDo(...a); },
+    doAction: (...a) => { use(); return s.doAction(...a); },
+    setText: (...a) => { use(); return s.setText(...a); },
+    setValue: (...a) => { use(); return s.setValue(...a); },
+    selectOption: (...a) => { use(); return s.selectOption(...a); },
+    listOptions: (...a) => { use(); return s.listOptions(...a); },
+    scaleOf: id => s.scaleOf(id),
+    stop: () => s.stop(),
+  };
+}
+
+/**
+ * Hands on a remote (§2.6's SSH column): its perception, sidecar and gate 1; main's audit and Confirmer (the remote keeps
+ * its own audit too); no flight, no window of the remote person's as a start, no borrowed mouse, clipboard or desk (L4);
+ * grants and leases keyed by the target. `ready`: the remote's desktop as the PC asked for it before this task
+ * (desktop.state, §5.3.4 step 8, which starts the desktop helper and its notice there): reads and steps wait for it.
+ * Each call made for one task's hands tells whether that task has used the desktop (DesktopUse).
+ */
+export function remoteHands(o: { hostId: string; parts: RemoteTargetParts; base: Pick<HandsBase, "audit" | "confirmer">; commands: CommandService | null; ready?: () => Promise<unknown> }): TargetHands & DesktopUse {
+  const id = targetIdOf("ssh", o.hostId);
+  const ready = o.ready;
+  let used = false;
+  const use = () => { used = true; };
+  const system = o.parts.system;
+  return {
+    perception: usingPerception(ready ? waitingPerception(o.parts.perception, ready) : o.parts.perception, use),
+    sidecar: usingSidecar(ready ? waitingSidecar(o.parts.sidecar, ready) : o.parts.sidecar, use),
+    policy: o.parts.policy, audit: o.base.audit, confirmer: o.base.confirmer,
+    flyTo: () => undefined, currentWindow: () => null,
+    binding: o.parts.binding(), commands: o.commands,
+    // Opening an app there is a step on its desktop too.
+    system: { ...system, apps: { ...system.apps, launch: app => { use(); return system.apps.launch(app); } } },
+    usedDesktop: () => used,
+    grantKey: app => `${id}:${app.toLowerCase()}`,
+    leaseKey: k => `${id}|${k}`,
+    onAuthorized: stamp => o.parts.onAuthorized(stamp),
+  };
+}

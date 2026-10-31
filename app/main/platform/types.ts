@@ -33,6 +33,7 @@ import type { EnvInputs } from "../environment";
 import type { DeskManager } from "../desk/desk";
 import type { DeskPlace } from "../desk/place";
 import type { Logger } from "../logger";
+import type { UtilityFork } from "../perception/sidecar";
 import type { KeyConventions, OS, ShortcutTable } from "../../shared/shortcuts";
 import type { PlatformWords } from "../../shared/words";
 
@@ -81,10 +82,36 @@ export interface WindowSystem extends Omit<X11, "capture"> {
    * "Default" (UAC, Ctrl+Alt+Del, lock screen) or a credential prompt window is on screen; macOS, a SecurityAgent /
    * coreautha window is on screen or secure keyboard entry is on (or can't be checked). Fails closed (true when it
    * can't tell). port/darwin implements it natively; the Windows composition adds it with withSystemDialog (§2.5, §7.2).
-   * Absent on Linux, where GNOME Shell's own dialogs come from the sidecar's shell_overlays. Perception ORs it with
+   * Absent on Linux, where GNOME Shell's own dialogs come from the sidecar's shell_overlays, except in a Wayland
+   * session: always true there (XWayland shows Ember only X11 apps, review #240). Perception ORs it with
    * shell_overlays.
    */
   systemDialogOpen?(): boolean;
+  /**
+   * (Added by the release fixes; optional.) Why systemDialogOpen() is true when the cause is a state the user can turn
+   * off rather than a dialog (macOS: secure keyboard entry on in an app, and no system prompt on screen; Linux: a
+   * Wayland session), as a clause
+   * that starts in lower case, has no full stop and says what Ember holds back ("secure keyboard entry is on in
+   * Terminal …, so Ember won't look at the screen or use the mouse or keyboard until it's off"). null when it is a
+   * dialog, when nothing is up, or when it can't be told: the dialog's words stay. Only words: systemDialogOpen()
+   * alone decides.
+   */
+  systemDialogReason?(): string | null;
+  /**
+   * (Added by the release fixes; optional.) focusWindow() and activeWindow() together, from one look at the windows:
+   * macOS copies CGWindowList once and asks the frontmost app's AX once, where the two calls do each twice. What the ask
+   * box takes just before it shows, where every millisecond before it has the keyboard can lose a letter (review #78).
+   * Absent (Linux, Windows): callers make the two calls. A wrapper that renames windows renames both.
+   */
+  focusAndActive?(): { focus: ReturnType<X11["focusWindow"]>; active: ReturnType<X11["activeWindow"]> };
+  /**
+   * (Added by the release fixes; optional.) The native element with the keyboard in the foreground window now (Windows:
+   * its thread's focused child window, GetGUIThreadInfo's hwndFocus), 0 when none or it can't be told. Taken with the
+   * windows just before the ask box shows: once the box has the keyboard nothing in the user's window says what had it,
+   * so the box's read is told (cross-review P1). Absent: Linux (it reads before the box shows) and macOS (the app keeps
+   * its own focus, which the accessibility host asks).
+   */
+  keyboardFocus?(): number;
 }
 
 /**
@@ -116,7 +143,7 @@ export interface Input extends XInput {
 // ───────────── Everything below is added by the design ─────────────
 
 /** What Perception needs of a window system. The desk's remote X11 facade (desk/agent.ts) satisfies it structurally. */
-export type PerceptionWindows = Pick<WindowSystem, "activeWindow" | "focusWindow" | "clientWindows" | "stack" | "capture" | "systemDialogOpen">;
+export type PerceptionWindows = Pick<WindowSystem, "activeWindow" | "focusWindow" | "clientWindows" | "stack" | "capture" | "systemDialogOpen" | "systemDialogReason">;
 
 /**
  * Keys held when an ask-shortcut callback runs (WindowSystem.keysDown, freshAskPress). Every backend answers it, but
@@ -171,6 +198,8 @@ export interface AppLike {
   focus(o?: { steal: boolean }): void;
   isInApplicationsFolder?(): boolean;
   moveToApplicationsFolder?(): boolean;
+  /** The user's preferred languages, most preferred first ("de-DE"): the macOS app catalogue's localized names. */
+  getPreferredSystemLanguages?(): string[];
 }
 
 /** The part of Electron's systemPreferences the permission checks and probes use (some members exist on one OS only). */
@@ -204,6 +233,11 @@ export interface ElectronParts {
   powerMonitor: PowerMonitorLike;
   /** Electron's BrowserWindow class (darwin passes `() => browserWindow.getFocusedWindow()` as focusedOwnWindow). */
   browserWindow: BrowserWindowStatic;
+  /**
+   * Electron's utilityProcess: darwin starts the accessibility host with its fork (review #177: no node mode there).
+   * Only used after app ready.
+   */
+  utilityProcess?: { fork: UtilityFork };
 }
 
 /**
@@ -215,7 +249,7 @@ export interface ElectronParts {
 export interface PlatformDeps {
   electron: ElectronParts;
   packaged: boolean;
-  /** process.execPath (Ember's own binary: the sidecar host runs as it, ELECTRON_RUN_AS_NODE=1). */
+  /** process.execPath (Ember's own binary: on Windows the sidecar host runs as it, ELECTRON_RUN_AS_NODE=1). */
   execPath: string;
   appPath: string;
   resourcesPath: string;
@@ -298,6 +332,8 @@ export interface SidecarLaunch {
   firstRequestMs?: number;
   /** win32: true, so no console window appears for the helper (G1). */
   windowsHide?: boolean;
+  /** darwin: fork `args[0]` as an Electron utility process instead of spawning `command` (review #177). */
+  utility?: { fork: UtilityFork; serviceName: string };
 }
 
 // ───────────── System integration ─────────────
@@ -410,8 +446,8 @@ export interface PlatformDoctorProbes {
   microphones: string[] | null;
   /** linux: speech-dispatcher is there; win32/darwin: true (Chromium uses the system's voices). */
   speechDispatcher: boolean;
-  /** Linux only; null elsewhere (the check is left out). */
-  sandbox: { userNamespaces: boolean; suidHelper: boolean } | null;
+  /** Linux only; null elsewhere (the check is left out). appImage: running as an AppImage, which has no setuid helper. */
+  sandbox: { userNamespaces: boolean; suidHelper: boolean; appImage?: boolean } | null;
   /** Linux only (inotify); null elsewhere. */
   fileWatchers: { used: number; max: number } | null;
   /** Linux only (DeskManager.available()); null elsewhere. */

@@ -12,7 +12,7 @@ import { linuxEnvironment, execSync, type ExecSync } from "./environment";
 import { linuxDoctorProbes } from "./doctor-probes";
 import { SETTINGS, changeSetting, findApp, hasBuiltInShell, isTerminalApp, launchApp, listApps, programsOf } from "../../hands/system";
 import { ADMIN_POLICY_FILE, loadAdminPolicy, providerApiKey } from "../../admin";
-import { autostartFile, launchCommand, syncAutostart } from "../../autostart";
+import { autostartFile, foreignAutostartNote, launchCommand, syncAutostart } from "../../autostart";
 import { journalAvailable, journalSink } from "../../policy/audit";
 import { isSecurityWindow } from "../../policy/policy";
 import { CLIPBOARD_FORMATS } from "../../agent/clipboard-formats";
@@ -78,7 +78,8 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     autostart: {
       sync: on => syncAutostart(on, launchCommand({ packaged: deps.packaged, execPath: deps.execPath, appPath: deps.appPath, env: deps.env }), autostartFile(deps.env)),
       launchedAtLogin: argv => argv.includes("--autostart"),
-      note: () => null,
+      // An entry the user or an admin made starts Ember whatever the switch says (review #85).
+      note: () => foreignAutostartNote(autostartFile(deps.env)),
     },
     auditSink: onError => journalSink(onError),
     auditCopy: () => (journalAvailable(io.exists) ? JOURNAL_COPY : null),
@@ -97,7 +98,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       },
       label: () => "Turn on",
     },
-    doctorProbes: () => linuxDoctorProbes({ execPath: deps.execPath, which: whichLinux, exec, exists: io.exists }),
+    doctorProbes: () => linuxDoctorProbes({ execPath: deps.execPath, which: whichLinux, exec, exists: io.exists, env: deps.env }),
     a11y: {
       screenReaderOn,
       // GNOME's "Animations" switch off counts as asking for calm mode.

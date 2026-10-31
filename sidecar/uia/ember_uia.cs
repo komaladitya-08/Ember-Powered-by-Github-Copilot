@@ -1676,6 +1676,44 @@ namespace Ember.Uia
     }
 
     /// <summary>
+    /// A cache request for only what tells a long level from a short one and what shows from what doesn't: the runtime
+    /// id, the offscreen flag, the bounds and the control type. A Win32 list's rows answer each property with a message
+    /// to the app, so thousands of rows with every RawNode property outlast any deadline; with these four they don't.
+    /// </summary>
+    internal static CacheRequest SlimRequest(bool children)
+    {
+      CacheRequest r = new CacheRequest();
+      r.AutomationElementMode = AutomationElementMode.Full;
+      r.TreeFilter = Automation.ControlViewCondition;
+      r.TreeScope = children ? TreeScope.Element | TreeScope.Children : TreeScope.Element;
+      r.Add(AutomationElement.RuntimeIdProperty);
+      r.Add(AutomationElement.IsOffscreenProperty);
+      r.Add(AutomationElement.BoundingRectangleProperty);
+      r.Add(AutomationElement.ControlTypeProperty);
+      return r;
+    }
+
+    /// <summary>An element's children in the control view with SlimRequest's properties; with twoLevels, theirs too.</summary>
+    internal static AutomationElementCollection FindSlim(AutomationElement el, bool twoLevels)
+    {
+      using (SlimRequest(twoLevels).Activate()) return el.FindAll(TreeScope.Children, Condition.TrueCondition);
+    }
+
+    /// <summary>An element's children that show (not offscreen), every RawNode property cached, one level.</summary>
+    internal static AutomationElementCollection FindShown(AutomationElement el)
+    {
+      Condition shown = new PropertyCondition(AutomationElement.IsOffscreenProperty, false);
+      using (Request(false).Activate()) return el.FindAll(TreeScope.Children, shown);
+    }
+
+    /// <summary>The cached runtime id as a key ("42.1234.5"), or null.</summary>
+    internal static string RuntimeKey(AutomationElement el)
+    {
+      int[] id = Get(el, AutomationElement.RuntimeIdProperty) as int[];
+      return id != null && id.Length > 0 ? JoinIds(id) : null;
+    }
+
+    /// <summary>
     /// The element with its properties cached (some ways of getting an element ignore the active request). A null
     /// element (FromHandle on a window that has just closed) is gone.
     /// </summary>
@@ -2185,7 +2223,16 @@ namespace Ember.Uia
     private bool cutNodes;
     private bool cutDepth;
     private bool cutTime;
+    private bool cutOffscreen;
     private bool stop;
+    // A level is long past this many elements (its children with theirs, as a slim read counts them): a list or page
+    // of thousands of rows, most scrolled away. What shows of it is read whole; of what doesn't, the first
+    // ListedOffscreen are listed (each read on its own) and the rest left out, "offscreen" (review #1).
+    private const int ShortLevel = 400;
+    private const int ListedOffscreen = 50;
+    // A long level's slim read, by runtime id: the children of one of its elements are known from it when that
+    // element is visited, so a long list under a short window isn't read slim twice.
+    private readonly Dictionary<string, AutomationElement> slimRead = new Dictionary<string, AutomationElement>();
 
     internal Walk(Call call, Want want, int maxDepth, int maxNodes, int maxChildren, IntPtr window)
     {
@@ -2199,7 +2246,7 @@ namespace Ember.Uia
       marginMs = Math.Min(100, call.DeadlineMs / 5.0);
     }
 
-    internal void Run(AutomationElement root) { Visit(root, -1, 0); }
+    internal void Run(AutomationElement root) { Visit(root, -1, 0, false, false); }
 
     /// <summary>The answer with what was read so far (the deadline's answer: busy, cut short by time).</summary>
     internal object Partial()
@@ -2218,6 +2265,7 @@ namespace Ember.Uia
       if (cutNodes) cut.Add("nodes");
       if (cutDepth) cut.Add("depth");
       if (cutTime || late) cut.Add("time");
+      if (cutOffscreen) cut.Add("offscreen");
       return new JObj().Add("nodes", nodes).Add("truncated", cut.Count > 0).Add("cut", cut).Add("busy", late);
     }
 
@@ -2234,18 +2282,37 @@ namespace Ember.Uia
       return true;
     }
 
-    private void Visit(AutomationElement el, int parent, int depth)
+    // `inCombo`: el is inside a combo box, whose closed drop-down (offscreen) is read whole: the host tells an editable
+    // combo box's choice from its list's selected item. `slim`: el comes from a long level's slim read (Fetch), with
+    // only SlimRequest's properties.
+    private void Visit(AutomationElement el, int parent, int depth, bool inCombo, bool slim)
     {
       if (stop) return;
+      // Scrolled out of view, or in a closed menu (the window itself is always read). The host lists none of these,
+      // nor anything inside them; Children puts them after the elements that show.
+      bool offscreen = depth > 0 && Props.Flag(el, AutomationElement.IsOffscreenProperty) == true;
       int count;
       lock (gate) count = nodes.Count;
       if (count >= maxNodes)
       {
+        // Leaving out an offscreen element leaves out nothing that shows ("offscreen", not "nodes"): the walk goes on
+        // through what it already has (cached flags, no calls) in case something that shows comes after it.
+        if (offscreen)
+        {
+          Cut(ref cutOffscreen);
+          return;
+        }
         Cut(ref cutNodes);
         stop = true;
         return;
       }
       if (OutOfTime()) return;
+      if (slim)
+      {
+        // Listed, so its RawNode properties are read now, for it alone.
+        try { el = el.GetUpdatedCache(Props.Request(false)); }
+        catch (Exception) { return; /* gone, or not answering: it doesn't show, so nothing that shows is lost */ }
+      }
       int handle = Methods.Register(call, el, window);
       JObj node = Props.Node(el, handle, parent, depth, want);
       int index;
@@ -2255,18 +2322,29 @@ namespace Ember.Uia
         nodes.Add(node);
       }
       if (node.Has("gone")) return;
+      // Nothing inside an offscreen element is read: a long page scrolled down has thousands of elements above what
+      // shows, and walking them spent the budget before the part on screen was reached (only the element itself is
+      // listed, with its flag).
+      bool combo = inCombo || IsComboBox(el);
+      if (offscreen && !combo) return;
       if (depth >= maxDepth)
       {
         if (HasListedChild(el)) Cut(ref cutDepth);
         return;
       }
-      List<AutomationElement> kids = Children(el, node);
+      int slimFrom;
+      List<AutomationElement> kids = Children(el, node, combo, out slimFrom);
       if (kids == null) return;
-      foreach (AutomationElement kid in kids)
+      for (int i = 0; i < kids.Count; i++)
       {
-        Visit(kid, index, depth + 1);
+        Visit(kids[i], index, depth + 1, combo, i >= slimFrom);
         if (stop) return;
       }
+    }
+
+    private static bool IsComboBox(AutomationElement el)
+    {
+      return (Props.Get(el, AutomationElement.ControlTypeProperty) as ControlType) == ControlType.ComboBox;
     }
 
     // Below maxDepth: is there anything a deeper read would list? One level is enough to tell.
@@ -2278,7 +2356,7 @@ namespace Ember.Uia
       if (found == null)
       {
         if (OutOfTime()) return false;
-        try { found = Props.FindChildren(el, false); }
+        try { found = Props.FindSlim(el, false); }
         catch (Exception) { return false; }
       }
       foreach (AutomationElement kid in found)
@@ -2288,17 +2366,21 @@ namespace Ember.Uia
       return false;
     }
 
-    // The children to visit: the ones that came with the element (two levels per call), or found now; without the
-    // offscreen ones that have no area, and at most maxChildren (on-screen ones first, in their order).
-    private List<AutomationElement> Children(AutomationElement el, JObj node)
+    // The children to visit: the ones that came with the element (two levels per call), or found now (Fetch); without
+    // the offscreen ones that have no area, the on-screen ones first (in their order) and then the offscreen ones (in
+    // theirs), so a walk cut short by maxNodes leaves out what doesn't show first; and at most maxChildren.
+    // `slimFrom`: the index from which they come from a long level's slim read (int.MaxValue: none do).
+    private List<AutomationElement> Children(AutomationElement el, JObj node, bool inCombo, out int slimFrom)
     {
+      slimFrom = int.MaxValue;
       AutomationElementCollection found = null;
+      List<AutomationElement> offscreen = null;
       try { found = el.CachedChildren; }
       catch (InvalidOperationException) { found = null; }
       if (found == null)
       {
         if (OutOfTime()) return null;
-        try { found = Props.FindChildren(el, true); }
+        try { found = Fetch(el, inCombo, out offscreen); }
         catch (ElementNotAvailableException)
         {
           lock (gate) node.Add("gone", true);
@@ -2309,39 +2391,109 @@ namespace Ember.Uia
           lock (gate) node.Add("childrenFailed", true);
           return null;
         }
+        if (found == null) return null;
       }
       List<AutomationElement> kids = new List<AutomationElement>(found.Count);
+      List<AutomationElement> hidden = new List<AutomationElement>();
+      Dictionary<string, bool> read = offscreen != null ? new Dictionary<string, bool>() : null;
       foreach (AutomationElement kid in found)
       {
-        if (!Props.Skipped(kid)) kids.Add(kid);
+        if (Props.Skipped(kid)) continue;
+        if (read != null)
+        {
+          string key = Props.RuntimeKey(kid);
+          if (key != null) read[key] = true;
+        }
+        if (Props.Flag(kid, AutomationElement.IsOffscreenProperty) == true) hidden.Add(kid);
+        else kids.Add(kid);
+      }
+      int shown = kids.Count;
+      kids.AddRange(hidden);
+      if (offscreen != null)
+      {
+        slimFrom = kids.Count;
+        int listed = 0;
+        foreach (AutomationElement kid in offscreen)
+        {
+          if (Props.Skipped(kid)) continue;
+          // One that came into view between the two reads was read in full with what shows.
+          string key = Props.RuntimeKey(kid);
+          if (key != null && read.ContainsKey(key)) continue;
+          if (listed == ListedOffscreen)
+          {
+            Cut(ref cutOffscreen);
+            break;
+          }
+          kids.Add(kid);
+          listed++;
+        }
       }
       if (kids.Count <= maxChildren) return kids;
-      bool[] keep = new bool[kids.Count];
-      int kept = 0;
-      for (int i = 0; i < kids.Count && kept < maxChildren; i++)
-      {
-        if (Props.Flag(kids[i], AutomationElement.IsOffscreenProperty) == true) continue;
-        keep[i] = true;
-        kept++;
-      }
-      for (int i = 0; i < kids.Count && kept < maxChildren; i++)
-      {
-        if (keep[i]) continue;
-        keep[i] = true;
-        kept++;
-      }
-      List<AutomationElement> chosen = new List<AutomationElement>(kept);
-      for (int i = 0; i < kids.Count; i++)
-      {
-        if (keep[i]) chosen.Add(kids[i]);
-      }
       lock (gate)
       {
         node.Add("childCount", kids.Count);
         node.Add("childrenCut", true);
-        cutNodes = true;
+        // Only offscreen children left out: nothing that shows is missing.
+        if (shown > maxChildren) cutNodes = true;
+        else cutOffscreen = true;
       }
-      return chosen;
+      return kids.GetRange(0, maxChildren);
+    }
+
+    // The children of an element they didn't come with, read as cheaply as their number allows. A short level (the
+    // element's children with theirs) comes whole in one call, as it always has, after a slim read that counts it. A
+    // long one costs that slim read and a full read of what shows of the element's children; `offscreen` is what
+    // doesn't, as the slim read has it. A combo box's insides are read whole (its closed drop-down tells its choice).
+    // Null when the time ran out between the reads.
+    private AutomationElementCollection Fetch(AutomationElement el, bool inCombo, out List<AutomationElement> offscreen)
+    {
+      offscreen = null;
+      if (inCombo) return Props.FindChildren(el, true);
+      AutomationElementCollection known = KnownChildren(el);
+      if (known == null || known.Count <= ShortLevel)
+      {
+        try { known = Props.FindSlim(el, true); }
+        catch (ElementNotAvailableException) { throw; }
+        catch (TimeoutException) { throw; }
+        catch (Exception) { known = null; /* a provider that refuses two levels: read as before */ }
+        if (known == null || Size(known) <= ShortLevel) return OutOfTime() ? null : Props.FindChildren(el, true);
+        foreach (AutomationElement kid in known)
+        {
+          string key = Props.RuntimeKey(kid);
+          if (key != null) slimRead[key] = kid;
+        }
+      }
+      if (OutOfTime()) return null;
+      offscreen = new List<AutomationElement>();
+      foreach (AutomationElement kid in known)
+      {
+        if (Props.Flag(kid, AutomationElement.IsOffscreenProperty) == true) offscreen.Add(kid);
+      }
+      return Props.FindShown(el);
+    }
+
+    // The element's children as its parent's slim read of a long level has them, or null.
+    private AutomationElementCollection KnownChildren(AutomationElement el)
+    {
+      string key = Props.RuntimeKey(el);
+      AutomationElement twin;
+      if (key == null || !slimRead.TryGetValue(key, out twin)) return null;
+      try { return twin.CachedChildren; }
+      catch (InvalidOperationException) { return null; }
+    }
+
+    // A slim read's size: the children with theirs.
+    private static int Size(AutomationElementCollection found)
+    {
+      int n = found.Count;
+      foreach (AutomationElement kid in found)
+      {
+        AutomationElementCollection theirs;
+        try { theirs = kid.CachedChildren; }
+        catch (InvalidOperationException) { continue; }
+        if (theirs != null) n += theirs.Count;
+      }
+      return n;
     }
   }
 

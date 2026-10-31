@@ -3,12 +3,13 @@
  * for characters (none at all when the layout can't be read), held modifiers as flags on every event, drags while a
  * button is held, X's buttons and wheel, double clicks, text typed whatever the layout, everything Ember holds let go
  * (also at process exit), window lookups with AX titles, activation that never targets Ember, the reasons input is
- * refused (Accessibility; secure input on or unknown; Input Monitoring; an input method), the lagging pointer, and
- * CursorBorrow driving it unchanged.
+ * refused (Accessibility; secure input on or unknown; Input Monitoring) and typing is (an input method), the lagging
+ * pointer, and CursorBorrow driving it unchanged.
  */
 
 import { describe, expect, it } from "vitest";
-import { CursorBorrow } from "../../app/main/hands/borrow";
+import { CursorBorrow, type Hand } from "../../app/main/hands/borrow";
+import { KEYS } from "../../app/shared/shortcuts";
 import {
   ACCESSIBILITY_REASON, DOUBLE_CLICK_MS, INPUT_METHOD_REASON, INPUT_MONITORING_REASON, INPUT_SOURCE_UNKNOWN_REASON,
   SECURE_INPUT_UNKNOWN_REASON, createDarwinInput, type DarwinInputDeps,
@@ -375,6 +376,18 @@ describe("macOS windows for input", () => {
     expect(s.calls).toEqual(["raise 500 103"]);
   });
 
+  it("raises a window that has the keyboard when another of its app is in front", () => {
+    const { s, input } = setup();
+    s.focused.set(500, { id: 103, title: "Other", frame: null });
+    input.activate(103);
+    expect(s.calls).toEqual(["raise 500 103"]);
+    s.calls.length = 0;
+    s.windows.unshift(...s.windows.splice(s.windows.findIndex(w => w.id === 103), 1));
+    s.focused.set(500, { id: 103, title: "Other", frame: null });
+    input.activate(103);
+    expect(s.calls).toEqual([]);
+  });
+
   it("knows whether a click at the pointer lands in the window", () => {
     const { s, input } = setup();
     expect(input.pointerOn(101)).toBe(true);
@@ -436,21 +449,37 @@ describe("why input can't reach a window on macOS", () => {
     const { s, input } = setup();
     s.listen = false;
     expect(input.blockedReason(101)).toBe(INPUT_MONITORING_REASON);
-    expect(INPUT_MONITORING_REASON).toBe("Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard.");
+    // It stops the mouse too, and says so (review #65).
+    expect(INPUT_MONITORING_REASON).toBe("Ember needs Input Monitoring (System Settings › Privacy & Security › Input Monitoring) to notice when you take over the keyboard, so it won't use the mouse or keyboard without it.");
     s.listen = null; // a macOS without the call has no such permission
     expect(input.blockedReason(101)).toBeNull();
   });
 
-  it("refuses while the input source is an input method, or can't be read (M16)", () => {
+  it("refuses typing, not the mouse, while the input source is an input method or can't be read (M16, review #65)", () => {
     const { s, input } = setup();
+    const SUPER_L = 0xffeb, CONTROL_L = 0xffe3, ALT_L = 0xffe9, SHIFT_L = 0xffe1;
     s.layoutSource = false;
-    expect(input.blockedReason(101)).toBe(INPUT_METHOD_REASON);
-    expect(INPUT_METHOD_REASON).toBe("Switch to a keyboard layout (not an input method) so Ember can type, or let Ember fill the field directly.");
+    expect(input.blockedReason(101)).toBeNull();
+    expect(input.keyboardBlockedReason()).toBe(INPUT_METHOD_REASON);
+    expect(INPUT_METHOD_REASON).toBe("An input method (Japanese, Pinyin, Korean…) is selected, so Ember won't type with the keyboard: switch to a keyboard layout, or let Ember fill the field directly.");
+    // A key that types a character is composed; Shift alone doesn't change that.
+    for (const sym of [ch("a"), ch("1"), ch(" "), ch("/"), 0xffb1 /* KP_1 */]) expect(input.keyboardBlockedReason({ modifiers: [], sym })).toBe(INPUT_METHOD_REASON);
+    expect(input.keyboardBlockedReason({ modifiers: [SHIFT_L], sym: ch("A") })).toBe(INPUT_METHOD_REASON);
+    // Command, Control or Option make it a shortcut, and keys that type nothing are never composed.
+    for (const mod of [SUPER_L, CONTROL_L, ALT_L]) expect(input.keyboardBlockedReason({ modifiers: [mod], sym: ch("s") })).toBeNull();
+    for (const sym of [0xff0d /* Return */, 0xff1b /* Escape */, 0xff09 /* Tab */, 0xff54 /* Down */, 0xffc2 /* F5 */, 0xffff /* Delete */]) {
+      expect(input.keyboardBlockedReason({ modifiers: [], sym })).toBeNull();
+    }
     s.layoutSource = null;
-    expect(input.blockedReason(101)).toBe(INPUT_SOURCE_UNKNOWN_REASON);
+    expect(input.blockedReason(101)).toBeNull();
+    expect(input.keyboardBlockedReason()).toBe(INPUT_SOURCE_UNKNOWN_REASON);
+    expect(INPUT_SOURCE_UNKNOWN_REASON).toBe("Ember can't tell whether an input method is in use, so it won't type with the keyboard.");
+    s.layoutSource = true;
+    expect(input.keyboardBlockedReason()).toBeNull();
+    expect(input.keyboardBlockedReason({ modifiers: [], sym: ch("a") })).toBeNull();
   });
 
-  it("names the most basic missing piece first: Accessibility, then secure input, Input Monitoring, the input source", () => {
+  it("names the most basic missing piece first: Accessibility, then secure input, Input Monitoring", () => {
     const { s, input } = setup();
     s.trusted = false;
     s.secure = true;
@@ -462,7 +491,7 @@ describe("why input can't reach a window on macOS", () => {
     s.secure = false;
     expect(input.blockedReason(101)).toBe(INPUT_MONITORING_REASON);
     s.listen = true;
-    expect(input.blockedReason(101)).toBe(INPUT_METHOD_REASON);
+    expect(input.blockedReason(101)).toBeNull(); // an input method stops only typing (review #65)
   });
 
   it("sees a locked session or a sleeping display", () => {
@@ -505,6 +534,44 @@ describe("CursorBorrow on macOS input", () => {
     expect(kinds).toContain("mouse 2");
     expect(log.filter(l => l.startsWith("scroll"))).toEqual(["scroll -3,0 f100", "scroll -3,0 f100"]);
     expect(s.pointer).toEqual({ x: 400, y: 300 }); // glided home afterwards
+  });
+
+  it("under an input method still clicks, scrolls and presses Command shortcuts, and refuses typing before any key (review #65)", async () => {
+    const { s, log, input } = setup();
+    s.layoutSource = false;
+    const b = new CursorBorrow(input);
+    await b.borrow(async hand => {
+      await hand.glideTo(420, 310);
+      await hand.click();
+      await hand.scroll("down", 1);
+      await hand.keys("super+a");
+      await hand.keys("Return");
+    }, fast);
+    const kinds = log.map(l => l.split(" ").slice(0, 2).join(" "));
+    expect(kinds).toContain("mouse 1");
+    expect(log).toContain("scroll -3,0 f100");
+    expect(log.filter(l => l.startsWith("key 12 down"))).toHaveLength(1); // AZERTY's a, with Command
+    log.length = 0;
+    for (const act of [(h: Hand) => h.type("Hi"), (h: Hand) => h.keys("a"), async (h: Hand) => h.checkTyping("Hi")]) {
+      await expect(b.borrow(act, fast)).rejects.toThrow(INPUT_METHOD_REASON);
+    }
+    expect(log.filter(l => /^(key|text)/.test(l))).toEqual([]);
+  });
+
+  it("under an input method lets the typing path's Command shortcuts and Delete through its up-front key check (review #62)", async () => {
+    const { s, log, input } = setup();
+    s.layoutSource = false;
+    const b = new CursorBorrow(input, { keys: KEYS.darwin });
+    await b.borrow(async hand => { for (const k of ["cmd+a", "Delete", "cmd+down", "cmd+v"]) hand.checkKeys!(k); }, fast);
+    await expect(b.borrow(async hand => hand.checkKeys!("a"), fast)).rejects.toThrow(INPUT_METHOD_REASON);
+    expect(log.filter(l => /^(key|text)/.test(l))).toEqual([]); // a check presses nothing
+  });
+
+  it("keeps the layout's Command-level answer for a digit shortcut (review #63 changes Windows and Linux only)", async () => {
+    // On this AZERTY "1" is the shifted level of key 0x12 with Command held too, so Command+1 takes Shift here.
+    const { log, input } = setup();
+    await new CursorBorrow(input, { keys: KEYS.darwin }).borrow(hand => hand.keys("cmd+1"), fast);
+    expect(log.filter(l => l.startsWith("key")).map(l => l.split(" ").slice(1, 3).join(" "))).toEqual(["55 down", "56 down", "18 down", "18 up", "56 up", "55 up"]);
   });
 
   it("refuses a shortcut whose key the layout doesn't have, pressing nothing", async () => {

@@ -17,7 +17,7 @@ import {
 import { PolicyEngine, isRiskyLabel, isSecurityWindow, refusesTyping, type ActionRequest } from "../../app/main/policy/policy";
 import {
   FILE_PATH_WORDS, OFFICE_APP, RISKY_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, TABBED_APP,
-  TERMINAL_REQUEST, TYPING_REFUSED, WEB_APP,
+  TERMINAL_REQUEST, TERMINAL_REQUEST_WSL, TYPING_REFUSED, WEB_APP, terminalRequest,
 } from "../../app/main/policy/vocabulary";
 import { CLIPBOARD_FORMATS, savableFormat } from "../../app/main/agent/clipboard-formats";
 import { electronClipboard } from "../../app/main/agent/clipboard";
@@ -326,6 +326,27 @@ describe("file paths and the terminal named in a request, on Windows", () => {
     expect(t.asks.test("in File Explorer, not in PowerShell".replace(t.refuses, " "))).toBe(false);
     expect(t.names.test("Open PowerShell")).toBe(true);
     expect(t.names.test("Open Notepad")).toBe(false);
+    expect(t.refuses.flags).toContain("g");
+  });
+
+  it("with WSL on, hears bare “WSL” as a place to work, while the WSL terminal and shell are still terminals (§3.15)", () => {
+    // Chosen by state: Windows without WSL, Linux and macOS keep today's rows.
+    expect(terminalRequest("win32", false)).toBe(TERMINAL_REQUEST.win32);
+    expect(terminalRequest("linux", true)).toBe(TERMINAL_REQUEST.linux);
+    expect(terminalRequest("darwin", true)).toBe(TERMINAL_REQUEST.darwin);
+    expect(terminalRequest("win32", true)).toBe(TERMINAL_REQUEST_WSL);
+    const t = TERMINAL_REQUEST_WSL;
+    for (const s of ["open gedit in WSL", "start wsl", "list my files in WSL", "use WSL to open the notes"]) {
+      expect(t.asks.test(s), s).toBe(false);
+      // Today's row (WSL off) still hears them as the terminal.
+      expect(TERMINAL_REQUEST.win32.asks.test(s), s).toBe(true);
+    }
+    for (const s of ["open the WSL terminal", "do it in a WSL shell", "open PowerShell and list the files", "do it in cmd", "use the command prompt", "run it in Windows Terminal", "open a terminal"]) {
+      expect(t.asks.test(s), s).toBe(true);
+    }
+    expect(t.asks.test("in File Explorer, not in PowerShell".replace(t.refuses, " "))).toBe(false);
+    expect(t.names.test("Open gedit in WSL")).toBe(false);
+    expect(t.names.test("Open the WSL terminal")).toBe(true);
     expect(t.refuses.flags).toContain("g");
   });
 });

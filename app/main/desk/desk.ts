@@ -304,6 +304,8 @@ export class DeskManager {
   private deadFns = new Set<(why: string) => void>();
   /** Desks stopped in the last moments, whose processes may still be quitting (id → folder). */
   private leaving = new Map<string, string>();
+  /** Its clean-up as Ember exits (exitNow), listened for while a desk of its is up or still going. */
+  private exitHook: (() => void) | null = null;
 
   /**
    * `profiles`: where the desk's own user folders live (default: a throw-away folder).
@@ -312,32 +314,53 @@ export class DeskManager {
    * `agent`: the desk helper's script (default: desk-agent.cjs beside Ember's main script).
    */
   constructor(private log: Logger, private o: { width?: number; height?: number; handOff?: string; profiles?: string; env?: NodeJS.ProcessEnv; display?: number; agent?: string } = {}) {
-    // Even if Ember exits without quitting cleanly, don't leave the desk running or its cookie on disk.
-    // SIGTERM first (Xvfb then removes its lock and socket), a moment to go, then SIGKILL: Ember won't be
-    // there to wait. A folder keeps its owner record if something still runs; the next Ember clears it.
-    process.once("exit", () => {
-      this.helper?.stop();
-      for (const p of this.procs) signal(p, "SIGTERM");
-      const desks = new Map(this.leaving);
-      if (this.id && this.dir) {
-        desks.set(this.id, this.dir);
-        killAll(deskProcesses(this.id, [...this.groups]), "SIGTERM");
-      }
-      const left = (ms: number) => {
-        const nap = new Int32Array(new SharedArrayBuffer(4));
-        for (const t0 = Date.now(); ; Atomics.wait(nap, 0, 0, 10)) {
-          const pids = [...desks.keys()].flatMap(id => deskProcesses(id));
-          if (!pids.length || Date.now() - t0 >= ms) return pids;
-        }
-      };
-      killAll(left(300), "SIGKILL");
-      const still = left(200).length > 0;
-      for (const dir of desks.values()) removeTree(dir, still ? { keep: [OWNER] } : {});
-      // Their LibreOffice left its locks on the documents it had open: they go now (stop()'s later clearing won't come).
-      if (desks.size) clearDeskLocksNear(this.handOff, [...desks.keys()]);
-    });
     // Desks an earlier Ember left behind (it was killed) go as soon as Ember starts.
     void reapDesks(log);
+  }
+
+  /**
+   * Listens for Ember's exit from the start of a desk until the last of its desks has gone (unwatchExit): one listener
+   * per manager and only then, so a manager that has nothing to clean up adds none to `process` (one added by every
+   * manager made and never removed went past Node's 10 and kept each manager alive).
+   */
+  private watchExit(): void {
+    if (this.exitHook) return;
+    this.exitHook = () => this.exitNow();
+    process.once("exit", this.exitHook);
+  }
+
+  /** Stops listening once no desk is up and none is still going. */
+  private unwatchExit(): void {
+    if (!this.exitHook || this.id || this.leaving.size) return;
+    process.removeListener("exit", this.exitHook);
+    this.exitHook = null;
+  }
+
+  /**
+   * Even if Ember exits without quitting cleanly, don't leave the desk running or its cookie on disk.
+   * SIGTERM first (Xvfb then removes its lock and socket), a moment to go, then SIGKILL: Ember won't be
+   * there to wait. A folder keeps its owner record if something still runs; the next Ember clears it.
+   */
+  private exitNow(): void {
+    this.helper?.stop();
+    for (const p of this.procs) signal(p, "SIGTERM");
+    const desks = new Map(this.leaving);
+    if (this.id && this.dir) {
+      desks.set(this.id, this.dir);
+      killAll(deskProcesses(this.id, [...this.groups]), "SIGTERM");
+    }
+    const left = (ms: number) => {
+      const nap = new Int32Array(new SharedArrayBuffer(4));
+      for (const t0 = Date.now(); ; Atomics.wait(nap, 0, 0, 10)) {
+        const pids = [...desks.keys()].flatMap(id => deskProcesses(id));
+        if (!pids.length || Date.now() - t0 >= ms) return pids;
+      }
+    };
+    killAll(left(300), "SIGKILL");
+    const still = left(200).length > 0;
+    for (const dir of desks.values()) removeTree(dir, still ? { keep: [OWNER] } : {});
+    // Their LibreOffice left its locks on the documents it had open: they go now (stop()'s later clearing won't come).
+    if (desks.size) clearDeskLocksNear(this.handOff, [...desks.keys()]);
   }
 
   get running(): DeskInfo | null {
@@ -396,6 +419,7 @@ export class DeskManager {
     this.dir = dir;
     this.id = path.basename(dir);
     this.groups = new Set();
+    this.watchExit();
     this.record();
     try {
       // Every process on the desk carries this, however it detaches: stop() and reapDesks() find them by it.
@@ -558,6 +582,7 @@ export class DeskManager {
       if (id && info) clearDeskLocksNear(info.handOff, id);
       // Apps that save as they quit may have put files back.
       if (dir && !removeTree(dir)) this.log.warn("desk.folder_left", { dir });
+      this.unwatchExit();
     }, 1500).unref();
     helper?.stop();
     // Apps first, then the window manager, bus and display (reverse start order), each with what it started;

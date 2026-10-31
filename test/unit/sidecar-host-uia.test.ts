@@ -63,6 +63,10 @@ describe("the bridge's elements as the host's", () => {
     });
     expect(fromBridgeWindow({ h: 4, pid: 9, isModal: true, busy: true })).toMatchObject({ key: "uia-9-4", modal: true, busy: true, platformRole: "Window" });
     expect(fromBridgeWindow({ h: 5, hwnd: 6, pid: 9, patterns: { window: { modal: true } } })).toMatchObject({ handle: 5, modal: true });
+    // A handle with the high bit set is negative in the bridge's JSON and unsigned everywhere else (keyboardFocus).
+    const high = fromBridgeNode({ h: 1, hwnd: -2147483648, controlType: "Edit" });
+    expect(high.native).toBe(0x80000000);
+    expect(fromBridgeWindow({ h: 3, hwnd: -2147483648, pid: 9 })).toMatchObject({ native: 0x80000000, key: "2147483648" });
   });
 
   it("maps the bridge's error codes onto the host's", () => {
@@ -99,6 +103,18 @@ describe("starting the bridge", () => {
     const l = hostLaunch({ execPath: "C:\\Ember\\Ember.exe", host: "C:\\Ember\\resources\\app\\dist\\app\\ax-sidecar.cjs", uiaScript: "C:\\s.ps1", uiaCache: "C:\\c", env: { PATH: "p", EMBER_AX_PROVIDER: "fake" }, platform: "win32", packaged: true });
     expect(l).toEqual({ command: "C:\\Ember\\Ember.exe", args: ["C:\\Ember\\resources\\app\\dist\\app\\ax-sidecar.cjs"], env: { PATH: "p", ELECTRON_RUN_AS_NODE: "1", EMBER_UIA_SCRIPT: "C:\\s.ps1", EMBER_UIA_CACHE: "C:\\c" }, firstRequestMs: 20_000, windowsHide: true });
     expect(hostLaunch({ execPath: "e", host: "h", env: { EMBER_AX_PROVIDER: "fake" }, platform: "darwin", packaged: false }).env.EMBER_AX_PROVIDER).toBe("fake");
+  });
+
+  it("starts the macOS host as a utility process of Ember's, never Ember's binary in node mode (review #177)", () => {
+    const fork = () => { throw new Error("not called here"); };
+    const host = "/Applications/Ember.app/Contents/Resources/app/dist/app/ax-sidecar.cjs";
+    const l = hostLaunch({ execPath: "/Applications/Ember.app/Contents/MacOS/Ember", host, env: { PATH: "p", ELECTRON_RUN_AS_NODE: "1", Electron_Run_As_Node: "1", EMBER_AX_PROVIDER: "fake" }, platform: "darwin", packaged: true, fork });
+    expect(l).toEqual({ command: "/Applications/Ember.app/Contents/MacOS/Ember", args: [host], env: { PATH: "p" }, firstRequestMs: 10_000, utility: { fork, serviceName: "Ember accessibility" } });
+    // A packaged Ember on macOS has no other way to start it: without the fork, no launch at all (fail closed).
+    expect(() => hostLaunch({ execPath: "e", host, env: {}, platform: "darwin", packaged: true })).toThrow(/utility process/);
+    // Only the tests start it otherwise, with a real Node as execPath: spawned, still without node mode's variable.
+    expect(hostLaunch({ execPath: "/usr/local/bin/node", host, env: { ELECTRON_RUN_AS_NODE: "1" }, platform: "darwin", packaged: false }))
+      .toEqual({ command: "/usr/local/bin/node", args: [host], env: {}, firstRequestMs: 10_000, windowsHide: true });
   });
 
   it("names the test-only switches it drops from a packaged host, whatever their case", () => {

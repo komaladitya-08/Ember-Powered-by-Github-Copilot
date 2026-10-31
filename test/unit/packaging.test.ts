@@ -7,9 +7,9 @@ import os from "node:os";
 import path from "node:path";
 import { TARGETS, layoutFor, selectPackages } from "../../scripts/package/layout.mjs";
 import { ICONSET, ICO_SIZES, icoFromPngs } from "../../scripts/package/icon.mjs";
-import { BUNDLE_ID, EXECUTABLE, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
+import { BUNDLE_ID, ENTITLEMENTS, EXECUTABLE, FORBIDDEN_ENTITLEMENTS, entitlementsPlist, finishMacBundle, infoPlistValues, type RunResult } from "../../scripts/package/mac-bundle.mjs";
 import { certificateTable, exeResourceMismatches, exeVersionStrings, numericVersion, readExeResources, rewriteExeResources } from "../../scripts/package/exe-resources.mjs";
-import { EMBER_FUSES, SENTINEL, flipFuses, fuseMismatches, readFuses } from "../../scripts/package/fuses.mjs";
+import { SENTINEL, emberFuses, flipFuses, fuseMismatches, readFuses } from "../../scripts/package/fuses.mjs";
 import * as ResEdit from "resedit";
 import { doctorChecks, formatDoctor, type DoctorCheck, type DoctorProbes } from "../../app/main/doctor";
 import { checkDoctorRows, parseDoctorReport, parseExpectation } from "../../scripts/package/doctor-rows.mjs";
@@ -21,7 +21,7 @@ import {
 import { createRequire } from "node:module";
 import { autostartEntry, autostartFile, execArg, launchCommand, syncAutostart } from "../../app/main/autostart";
 import { inspectEnvironment } from "../../app/main/environment";
-import { AdminPolicySchema } from "../../app/main/admin";
+import { AdminPolicySchema, commandMode, parseAdminPolicy } from "../../app/main/admin";
 
 const goodEnv = inspectEnvironment({
   env: { XDG_SESSION_TYPE: "x11", DISPLAY: ":0", XDG_CURRENT_DESKTOP: "GNOME" },
@@ -79,12 +79,23 @@ describe("ember doctor", () => {
     expect(byId(doctorChecks(probes({ sandbox: { userNamespaces: false, suidHelper: false } })), "sandbox")).toMatchObject({ status: "fail", fix: expect.stringMatching(/chmod 4755/) });
   });
 
+  it("only warns about the sandbox in an AppImage on a host with user namespaces off, with no chown for files it lacks", () => {
+    // AppRun starts Ember there with --no-sandbox on purpose: an AppImage can't carry a setuid helper.
+    const checks = doctorChecks(probes({ sandbox: { userNamespaces: false, suidHelper: false, appImage: true } }));
+    const row = byId(checks, "sandbox");
+    expect(row).toMatchObject({ status: "warn", label: "Window sandbox", detail: expect.stringMatching(/without Chromium's sandbox/), fix: expect.stringMatching(/RPM/) });
+    expect(`${row.detail} ${row.fix}`).not.toMatch(/chown|chmod|\/opt\/ember/);
+    expect(formatDoctor(checks)).toMatch(/Ember can work\. 1 thing worth a look\.$/);
+    // With user namespaces the AppImage sandboxes as usual.
+    expect(byId(doctorChecks(probes({ sandbox: { userNamespaces: true, suidHelper: false, appImage: true } })), "sandbox").status).toBe("ok");
+  });
+
   it("gives each desktop-session problem its own fix", () => {
     const withSession = (detail: string) => {
       const p = probes();
       return byId(doctorChecks({ ...p, env: { ...p.env, checks: [...p.env.checks.filter(c => c.id !== "session"), { id: "session", label: "Desktop session", status: "fail", detail }] } }), "session").fix;
     };
-    expect(withSession("Wayland session. Ember v1 needs “GNOME on Xorg”")).toMatch(/GNOME on Xorg/);
+    expect(withSession("Wayland session. Ember needs “GNOME on Xorg”")).toMatch(/GNOME on Xorg/);
     expect(withSession("Ember can't connect to the X display :0.")).toMatch(/terminal inside your desktop/);
     expect(withSession("No X display. Start Ember from inside your desktop session")).not.toMatch(/Xorg/);
   });
@@ -97,7 +108,7 @@ describe("ember doctor", () => {
 describe("start at login", () => {
   it("starts the right Ember", () => {
     expect(launchCommand({ packaged: true, execPath: "/opt/ember/ember", appPath: "/opt/ember/resources/app", env: {}, exists: p => p === "/usr/bin/ember" })).toEqual(["/usr/bin/ember"]);
-    expect(launchCommand({ packaged: true, execPath: "/tmp/.mount_EmberX/ember/ember", appPath: "", env: { APPIMAGE: "/home/ada/Apps/Ember.AppImage" } })).toEqual(["/home/ada/Apps/Ember.AppImage"]);
+    expect(launchCommand({ packaged: true, execPath: "/tmp/.mount_EmberX/ember/ember", appPath: "", env: { APPIMAGE: "/home/ada/Apps/Ember.AppImage", APPDIR: "/tmp/.mount_EmberX" } })).toEqual(["/home/ada/Apps/Ember.AppImage"]);
     expect(launchCommand({ packaged: false, execPath: "/repo/node_modules/electron/dist/electron", appPath: "/repo", env: {} })).toEqual(["/repo/node_modules/electron/dist/electron", "/repo"]);
   });
 
@@ -106,6 +117,12 @@ describe("start at login", () => {
     expect(execArg("/home/ada/My Apps/Ember.AppImage")).toBe('"/home/ada/My Apps/Ember.AppImage"');
     expect(execArg('a"b$c')).toBe('"a\\\\"b\\\\$c"');
     expect(autostartEntry(["/usr/bin/ember"])).toContain("Exec=/usr/bin/ember --autostart\n");
+  });
+
+  it("doubles a % in an Exec argument, which the Desktop Entry spec reserves for field codes", () => {
+    expect(execArg("/home/ada/100%/Ember.AppImage")).toBe('"/home/ada/100%%/Ember.AppImage"');
+    expect(execArg("/home/ada/50%AB/Ember.AppImage")).toBe('"/home/ada/50%%AB/Ember.AppImage"');
+    expect(autostartEntry(["/home/ada/Tools 100% Free/Ember.AppImage"])).toContain('Exec="/home/ada/Tools 100%% Free/Ember.AppImage" --autostart\n');
   });
 
   it("writes, keeps and removes the autostart entry to match the setting", () => {
@@ -128,6 +145,28 @@ describe("the RPM", () => {
     expect(spec).toMatch(/^AutoReqProv:\s+no$/m);
     for (const dep of ["gtk3", "nss", "libXtst", "python3-pyatspi", "platform-python"]) expect(spec).toMatch(new RegExp(`^Requires:.*\\b${dep}\\b`, "m"));
     for (const dep of ["xorg-x11-server-Xvfb", "speech-dispatcher", "gnome-shell-extension-top-icons", "ember-voice-models"]) expect(spec).toMatch(new RegExp(`^Recommends:.*\\b${dep}\\b`, "m"));
+  });
+  it("ships an example policy that takes the current keys, so copying it as-is turns nothing off (review #208, #37)", () => {
+    const example = fs.readFileSync(path.resolve("packaging/policy.example.json"), "utf8");
+    const loaded = parseAdminPolicy(example, "/etc/ember/policy.json");
+    expect(loaded.error).toBeUndefined();
+    // A policy without `commands` turns commands off on every kind of target (R5): the example says "on" for each.
+    for (const kind of ["local", "wsl", "ssh"] as const) expect(commandMode(loaded, kind), kind).toBe("on");
+    expect(loaded.policy.features).toMatchObject({ wsl: true, ssh: true });
+    // SSH reaches every computer, so the Computers tab mustn't say "only some computers": main marks SSH as limited
+    // whenever ssh.allowedHosts is set, even to ["*"] (review #208). The README shows the allowedHosts form instead.
+    expect(loaded.policy.ssh).toEqual({ desktop: true });
+    expect(loaded.policy.ssh?.allowedHosts).toBeUndefined();
+    // The README beside it names every key the policy takes, and the rule about `commands`.
+    const readme = fs.readFileSync(path.resolve("packaging/policy.README"), "utf8");
+    for (const key of Object.keys(AdminPolicySchema.shape)) expect(readme, key).toContain(`"${key}"`);
+    expect(readme).toMatch(/without "commands" turns commands off/);
+    expect(readme).toMatch(/"ssh": \{ "allowedHosts": \[/);
+    for (const f of ["policy.example.json", "policy.README"]) {
+      expect(spec).toContain(`install -Dm644 ${f} %{buildroot}%{_docdir}/ember/${f}`);
+      expect(spec).toContain(`%doc %{_docdir}/ember/${f}`);
+      expect(fs.readFileSync(path.resolve("scripts/package/rpm.sh"), "utf8")).toMatch(new RegExp(`"\\$root/packaging/${f.replace(".", "\\.")}"`));
+    }
   });
   it("puts speech models where Ember looks for them", () => {
     expect(spec).toContain("%{_datadir}/ember/voice-models");
@@ -163,17 +202,56 @@ describe("the RPM's licences", () => {
   });
 });
 
+// The RPM's scriptlet run with /bin/sh (which Windows doesn't have) against a stand-in /proc.
+describe.skipIf(process.platform === "win32")("the RPM's upgrade (review #203)", () => {
+  const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
+  const posttrans = /^%posttrans\n([\s\S]*?)\n(?=%files)/m.exec(spec)![1];
+  /** %posttrans with these processes running: each pid's /proc/<pid>/exe link says where its program is. */
+  const after = (exes: Record<string, string>) => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-posttrans-"));
+    for (const [pid, exe] of Object.entries(exes)) {
+      fs.mkdirSync(path.join(d, "proc", pid), { recursive: true });
+      fs.symlinkSync(exe, path.join(d, "proc", pid, "exe"));
+    }
+    const script = posttrans.replace(/^\/usr\/bin\/gtk-update-icon-cache .*$/m, ":").split("/proc/").join(`${d}/proc/`);
+    return spawnSync("/bin/sh", ["-c", script], { encoding: "utf8" });
+  };
+  it("tells whoever upgrades that a running Ember must be started again to finish the update", () => {
+    // rpm replaced the file under the running Ember, so its link ends in " (deleted)".
+    for (const exe of ["/opt/ember/ember (deleted)", "/opt/ember/ember"]) {
+      const r = after({ 1: "/usr/lib/systemd/systemd", 4242: exe, 4243: exe });
+      expect(r.status, exe).toBe(0);
+      expect(r.stdout).toBe("Ember is still running the version before this update: quit Ember and start it again (each person using it on this computer) to finish the update.\n");
+    }
+  });
+  it("says nothing when no Ember from /opt/ember runs (an AppImage is another Ember)", () => {
+    const r = after({ 1: "/usr/lib/systemd/systemd", 77: "/tmp/.mount_EmberX/ember/ember", 78: "/opt/ember-old/ember" });
+    expect(r).toMatchObject({ status: 0, stdout: "" });
+    expect(after({})).toMatchObject({ status: 0, stdout: "" });
+  });
+});
+
 // The RPM's and the AppImage's sh launchers, run with /bin/sh (which Windows doesn't have).
 describe.skipIf(process.platform === "win32")("the launchers", () => {
   // Each runs with a stand-in Ember that prints its arguments, as root (uid 0) or a normal user.
-  const run = (script: string, args: string[], uid: number, display?: string) => {
+  const stage = (script: string, uid: number) => {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-launcher-"));
     fs.mkdirSync(path.join(d, "bin"));
     fs.writeFileSync(path.join(d, "bin/id"), `#!/bin/sh\necho ${uid}\n`, { mode: 0o755 });
     fs.mkdirSync(path.join(d, "ember"));
     fs.writeFileSync(path.join(d, "ember/ember"), '#!/bin/sh\necho "$@"\n', { mode: 0o755 });
     fs.writeFileSync(path.join(d, "launcher"), script.replace("APP=/opt/ember/ember", `APP=${d}/ember/ember`), { mode: 0o755 });
-    return execFileSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: { PATH: `${d}/bin:/usr/bin:/bin`, ...(display ? { DISPLAY: display } : {}) } }).trim();
+    return d;
+  };
+  const env = (d: string, display?: string) => ({ PATH: `${d}/bin:/usr/bin:/bin`, ...(display ? { DISPLAY: display } : {}) });
+  const run = (script: string, args: string[], uid: number, display?: string) => {
+    const d = stage(script, uid);
+    return execFileSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display) }).trim();
+  };
+  /** As run, but keeps the exit status and stderr. */
+  const attempt = (script: string, args: string[], uid: number, display?: string) => {
+    const d = stage(script, uid);
+    return spawnSync("/bin/sh", [path.join(d, "launcher"), ...args], { encoding: "utf8", env: env(d, display) });
   };
   const launcher = fs.readFileSync(path.resolve("packaging/ember"), "utf8");
   const appRun = /<<'RUN'\n([\s\S]*?)\nRUN\n/.exec(fs.readFileSync(path.resolve("scripts/package/appimage.sh"), "utf8"))![1];
@@ -185,6 +263,34 @@ describe.skipIf(process.platform === "win32")("the launchers", () => {
     expect(run(appRun, ["doctor"], 0)).toBe("--doctor --ozone-platform=headless --disable-gpu --no-sandbox");
     const noUserNs = (() => { try { return fs.readFileSync("/proc/sys/user/max_user_namespaces", "utf8").trim() === "0"; } catch { return true; } })();
     expect(run(appRun, ["doctor"], 1000).includes("--no-sandbox")).toBe(noUserNs);
+  });
+  it("start the AppImage without Chromium's sandbox where either switch the doctor reads turns user namespaces off (review #202)", () => {
+    // A stand-in /proc/sys: the AppRun reads the same two files as the Linux doctor probe (doctor-probes.ts).
+    const withProc = (files: Record<string, string>) => {
+      const d = fs.mkdtempSync(path.join(os.tmpdir(), "ember-proc-"));
+      for (const [f, v] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), `${v}\n`); }
+      return appRun.replaceAll("/proc/sys/", `${d}/`);
+    };
+    const sandboxOff = (files: Record<string, string>) => run(withProc(files), [], 1000, ":0").includes("--no-sandbox");
+    expect(sandboxOff({ "user/max_user_namespaces": "0" })).toBe(true);
+    // Debian and some hardened Ubuntu hosts: namespaces counted, but unprivileged ones refused.
+    expect(sandboxOff({ "user/max_user_namespaces": "15000", "kernel/unprivileged_userns_clone": "0" })).toBe(true);
+    expect(sandboxOff({ "user/max_user_namespaces": "15000", "kernel/unprivileged_userns_clone": "1" })).toBe(false);
+    expect(sandboxOff({ "user/max_user_namespaces": "15000" })).toBe(false);
+    expect(sandboxOff({})).toBe(true);
+    expect(appRun.match(/\/proc\/sys\/[\w/]+/g)?.sort()).toEqual(["/proc/sys/kernel/unprivileged_userns_clone", "/proc/sys/user/max_user_namespaces"]);
+  });
+  it("say Ember needs the desktop session when there is no display, instead of starting into Chromium's error", () => {
+    for (const [script, doctor] of [[launcher, "ember doctor"], [appRun, "Ember.AppImage doctor"]]) {
+      for (const args of [[], ["--show-settings"]]) {
+        const r = attempt(script, args, 1000);
+        expect(r.status, `${doctor} ${args.join(" ")}`).toBe(1);
+        // The stand-in Ember never ran.
+        expect(r.stdout).toBe("");
+        expect(r.stderr).toBe(`Ember needs your desktop session (no display here). Run it from a terminal inside GNOME, or run '${doctor}'.\n`);
+      }
+      expect(attempt(script, [], 1000, ":0")).toMatchObject({ status: 0, stdout: expect.stringMatching(/--ozone-platform=x11/) });
+    }
   });
 });
 
@@ -320,7 +426,7 @@ describe("Ember.exe's identity (exe-resources.mjs)", () => {
     expect(readFuses(ember)).toEqual(readFuses(electron));
     const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-exe-")), "Ember.exe");
     fs.writeFileSync(file, ember);
-    expect(fuseMismatches(flipFuses(file, EMBER_FUSES), EMBER_FUSES)).toEqual([]);
+    expect(fuseMismatches(flipFuses(file, emberFuses("win32")), emberFuses("win32"))).toEqual([]);
     const sections = (bin: Buffer) => ResEdit.NtExecutable.from(bin, { ignoreCert: true });
     const before = sections(electron), after = sections(ember);
     const reloc = (exe: ReturnType<typeof sections>) => exe.getSectionByEntry(ResEdit.Format.ImageDirectoryEntry.BaseRelocation)!;
@@ -386,16 +492,22 @@ describe("the macOS app bundle", () => {
       NSMicrophoneUsageDescription: "Ember listens for “Hey Ember” on this Mac only when you turn it on. Audio never leaves your Mac.",
     });
     expect(values.NSAppleEventsUsageDescription).toMatch(/appearance settings.*when you ask/);
+    // macOS 15's Local Network prompt names SSH too: Ember's ssh reaches computers on the local network (§5.1.8).
+    expect(values.NSLocalNetworkUsageDescription).toBe("Ember connects to your organisation's model service or proxy, and to computers you connect to over SSH, when they are on your local network.");
     // The executable stage.mjs renamed (layout.mjs), so that Electron's app.isPackaged is true.
     expect(values.CFBundleExecutable).toBe(EXECUTABLE);
     expect(layoutFor("darwin", "arm64").exe).toBe(`Contents/MacOS/${EXECUTABLE}`);
   });
 
-  /** A stand-in for plutil, iconutil, xattr and codesign that keeps Info.plist as a map. */
-  const fakeMac = (o: { ignore?: string; verifyFails?: boolean; noExecutable?: boolean } = {}) => {
+  /**
+   * A stand-in for plutil, iconutil, xattr and codesign that keeps Info.plist as a map. codesign --display reports the
+   * flags and entitlements the signing call asked for, unless `runtime` is false or `extra` adds an entitlement.
+   */
+  const fakeMac = (o: { ignore?: string; verifyFails?: boolean; noExecutable?: boolean; runtime?: boolean; extra?: string } = {}) => {
     const plist: Record<string, string> = { CFBundleName: "Electron", CFBundleIdentifier: "com.github.Electron", CFBundleExecutable: "Electron", ElectronAsarIntegrity: "<dict/>" };
     const calls: string[][] = [];
     const ok = (stdout = ""): RunResult => ({ status: 0, stdout, stderr: "" });
+    let signed = { runtime: false, entitlements: "" };
     const run = (file: string, args: string[]): RunResult => {
       calls.push([file, ...args]);
       if (file === "plutil" && args[0] === "-replace") {
@@ -411,6 +523,17 @@ describe("the macOS app bundle", () => {
       if (file === "plutil" && args[0] === "-remove") { delete plist[args[1]]; return ok(); }
       if (file === "iconutil") { fs.writeFileSync(args[args.indexOf("-o") + 1], "icns"); return ok(); }
       if (file === "codesign" && args[0] === "--verify" && o.verifyFails) return { status: 1, stdout: "", stderr: "a sealed resource is missing or invalid" };
+      if (file === "codesign" && args[0] === "--force") {
+        const at = args.indexOf("--entitlements");
+        signed = { runtime: args[args.indexOf("--options") + 1] === "runtime" && o.runtime !== false, entitlements: at > 0 ? fs.readFileSync(args[at + 1], "utf8") : "" };
+        return ok();
+      }
+      if (file === "codesign" && args.join(" ") === `--display --verbose=2 ${args.at(-1)}`) {
+        return { status: 0, stdout: "", stderr: `Executable=${args.at(-1)}/Contents/MacOS/Ember\nCodeDirectory v=20500 size=1234 flags=${signed.runtime ? "0x10002(adhoc,runtime)" : "0x2(adhoc)"} hashes=30+7 location=embedded\n` };
+      }
+      if (file === "codesign" && args.join(" ") === `--display --entitlements - --xml ${args.at(-1)}`) {
+        return ok(signed.entitlements.replace("</dict>", o.extra ? `<key>${o.extra}</key><true/></dict>` : "</dict>").replace(/\n\s*/g, ""));
+      }
       return ok();
     };
     const app = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-bundle-")), "Ember.app");
@@ -438,12 +561,38 @@ describe("the macOS app bundle", () => {
     expect(mac.iconsets).toEqual([path.join(path.dirname(mac.app), "ember.iconset")]);
     expect(fs.existsSync(path.join(mac.app, "Contents", "Resources", "ember.icns"))).toBe(true);
     expect(fs.existsSync(path.join(mac.app, "Contents", "Resources", "electron.icns"))).toBe(false);
-    // The signature covers every change: nothing touches the bundle after it.
-    expect(mac.calls.slice(-3).map(line)).toEqual([
+    // The signature covers every change: nothing touches the bundle after it (it is only read back).
+    const entitlements = path.join(path.dirname(mac.app), "ember.entitlements");
+    expect(mac.calls.slice(-5).map(line)).toEqual([
       `xattr -cr ${mac.app}`,
-      `codesign --force --deep --sign - --timestamp=none ${mac.app}`,
+      `codesign --force --deep --options runtime --entitlements ${entitlements} --sign - --timestamp=none ${mac.app}`,
       `codesign --verify --deep --strict --verbose=2 ${mac.app}`,
+      `codesign --display --verbose=2 ${mac.app}`,
+      `codesign --display --entitlements - --xml ${mac.app}`,
     ]);
+  });
+
+  it("signs under the hardened runtime with only the entitlements Ember needs (review #177)", async () => {
+    const mac = fakeMac();
+    await mac.finish();
+    expect(fs.readFileSync(path.join(path.dirname(mac.app), "ember.entitlements"), "utf8")).toBe(entitlementsPlist());
+    // V8's JIT, an ad hoc signature's frameworks and native modules, the microphone, dark mode through System Events.
+    expect(ENTITLEMENTS).toEqual([
+      "com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory", "com.apple.security.cs.disable-library-validation",
+      "com.apple.security.device.audio-input", "com.apple.security.automation.apple-events",
+    ]);
+    // Either would let another process's code into Ember again (DYLD_INSERT_LIBRARIES, a debugger).
+    expect(FORBIDDEN_ENTITLEMENTS).toEqual(["com.apple.security.cs.allow-dyld-environment-variables", "com.apple.security.get-task-allow"]);
+    const xml = entitlementsPlist();
+    expect(xml).toMatch(/^<\?xml version="1\.0" encoding="UTF-8"\?>\n<!DOCTYPE plist [^\n]+>\n<plist version="1\.0">\n<dict>\n/);
+    expect([...xml.matchAll(/<key>([^<]+)<\/key>\n {2}<true\/>/g)].map(m => m[1])).toEqual(ENTITLEMENTS);
+    for (const k of FORBIDDEN_ENTITLEMENTS) expect(xml).not.toContain(k);
+  });
+
+  it("refuses a signature without the hardened runtime, or with an entitlement that lets code in", async () => {
+    await expect(fakeMac({ runtime: false }).finish()).rejects.toThrow(/isn't signed with the hardened runtime.*flags=0x2\(adhoc\)/s);
+    await expect(fakeMac({ extra: "com.apple.security.cs.allow-dyld-environment-variables" }).finish())
+      .rejects.toThrow(/Ember\.app's entitlements are wrong: com\.apple\.security\.cs\.allow-dyld-environment-variables must not be there/);
   });
 
   it("stops before signing when a value doesn't read back, or when the signature doesn't verify", async () => {
@@ -487,6 +636,95 @@ describe("staging in CI", () => {
   it("marks every temporary allowance (--allow-missing…) for removal", () => {
     const uses = lines.flatMap((l, i) => (/--allow-missing/.test(l) && !/^\s*#/.test(l) ? [i] : []));
     for (const i of uses) expect(lines.slice(Math.max(0, i - 12), i).join("\n"), lines[i]).toMatch(/TODO\(port\): drop --allow-missing/);
+  });
+  it("builds the speech models package, then upgrades, verifies and removes both RPMs, keeping the admin's policy (review #207)", () => {
+    const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
+    const at = (s: string) => { const i = job.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
+    // The real models, verified, before staging: rpm.sh then builds ember-voice-models too.
+    expect(at("node scripts/voice/prepare.mjs")).toBeLessThan(at("node scripts/package/stage.mjs"));
+    expect(at("dist/package/ember-voice-models-")).toBeGreaterThan(at("scripts/package/rpm.sh"));
+    const life = job.slice(at("RPM lifecycle"));
+    const order = ["dnf -y install ./dist/package/ember-voice-models-", "rpm -V ember ember-voice-models", "/etc/ember/policy.json",
+      "EMBER_RPM_RELEASE=2 scripts/package/rpm.sh", "dnf -y upgrade", "rpm -V ember ember-voice-models", "rpm -e ember ember-voice-models"];
+    let from = 0;
+    for (const s of order) { const i = life.indexOf(s, from); expect(i, s).toBeGreaterThanOrEqual(from); from = i + s.length; }
+    for (const gone of ["/opt/ember", "/usr/share/ember", "/usr/bin/ember", "/usr/share/applications/ember.desktop"]) expect(life.slice(life.indexOf("rpm -e"))).toContain(gone);
+    expect(life.slice(life.indexOf("rpm -e"))).toMatch(/cmp packaging\/policy\.example\.json \/etc\/ember\/policy\.json/);
+    // The packages kept for download are Release 1's.
+    expect(life).toContain("rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm");
+    expect(at("RPM lifecycle")).toBeLessThan(at("actions/upload-artifact"));
+  });
+  it("checks the installed desktop entry and its Ask Ember action (D-45b)", () => {
+    const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
+    const install = job.slice(job.indexOf("dnf -y install ./dist/package/ember-*.x86_64.rpm"));
+    expect(install).toMatch(/^\s+desktop-file-validate \/usr\/share\/applications\/ember\.desktop$/m);
+    expect(install).toMatch(/^\s+grep -qx 'Exec=ember --ask' \/usr\/share\/applications\/ember\.desktop$/m);
+    expect(install.indexOf("desktop-file-validate")).toBeLessThan(install.indexOf("RPM lifecycle"));
+  });
+  it("lets rpm.sh build another release of the same version (an upgrade to test)", () => {
+    const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
+    expect(spec).toMatch(/^Release:\s+%\{\?ember_release\}%\{!\?ember_release:1\}%\{\?dist\}$/m);
+    const rpmSh = fs.readFileSync(path.resolve("scripts/package/rpm.sh"), "utf8");
+    expect(rpmSh).toContain('--define "ember_release $release"');
+    expect(rpmSh).toMatch(/release=\$\{EMBER_RPM_RELEASE:-1\}/);
+  });
+});
+
+describe("the SSH, WSL and commands workflow, remote.yml (review #38)", () => {
+  const wf = fs.readFileSync(path.resolve(".github/workflows/remote.yml"), "utf8");
+  const on = wf.slice(wf.indexOf("\non:\n"), wf.indexOf("\npermissions:"));
+  /** A job's text, from its key to the next job's. */
+  const job = (name: string) => {
+    const start = wf.indexOf(`\n  ${name}:\n`);
+    expect(start, name).toBeGreaterThan(0);
+    const next = wf.slice(start + 1).search(/\n {2}[\w-]+:\n/);
+    return next < 0 ? wf.slice(start) : wf.slice(start, start + 1 + next);
+  };
+  const jobs = [...wf.slice(wf.indexOf("\njobs:\n")).matchAll(/^ {2}([\w-]+):$/gm)].map(m => m[1]);
+
+  it("runs on pull requests and pushes to main that touch SSH, WSL or commands code, and on every release tag", () => {
+    expect(on).toMatch(/^ {2}pull_request:\n {4}paths:\n/m);
+    expect(on).toMatch(/^ {4}branches: \[main, /m);
+    expect(on).toMatch(/^ {4}tags: \["v\*"\]$/m);
+    // The same paths for pushes and pull requests.
+    for (const p of ["app/main/commands/**", "app/main/remote/**", "app/main/wsl/**", "app/main/targets/**", "app/remote/**", "scripts/package/**", ".github/workflows/remote.yml"]) {
+      expect(on.split(`- "${p}"`).length - 1, p).toBe(2);
+    }
+    expect(jobs.length).toBeGreaterThan(10);
+    // Every job that runs on a push runs on a pull request too, but macOS (on every push, release tags included) and
+    // arm64 (on release tags instead).
+    for (const name of jobs.filter(n => !["ssh-macos", "ssh-linux-arm64"].includes(n))) expect(job(name), name).toContain("github.event_name == 'pull_request'");
+    expect(job("ssh-macos")).toContain("github.event_name == 'push' ||");
+    expect(job("ssh-macos")).not.toContain("github.event_name == 'pull_request'");
+    expect(job("ssh-linux-arm64")).toContain("startsWith(github.ref, 'refs/tags/')");
+  });
+
+  it("runs the transport suite with RHEL 8's own OpenSSH client (8.0), as a normal user in rockylinux:8", () => {
+    const el8 = job("ssh-el8-client");
+    expect(el8).toMatch(/container:\n\s+image: rockylinux:8\n/);
+    expect(el8).toContain("openssh-clients openssh-server");
+    expect(el8).toMatch(/sudo -u ci env [\s\S]*EMBER_SSH_TEST=1[\s\S]*node scripts\/run-integration\.mjs test\/integration\/ssh-transport\.test\.ts/);
+    expect(el8).not.toContain("--allow-missing");
+  });
+
+  it("signs in with a password, and keyboard-interactive, through Ember's prompt with both clients", () => {
+    for (const name of ["ssh-linux", "ssh-el8-client"]) {
+      const j = job(name);
+      expect(j, name).toContain('"PasswordAuthentication yes"');
+      expect(j, name).toContain('"EMBER_SSH_TEST_PASSWORD_PORT=2224"');
+      expect(j, name).toContain('echo "::add-mask::$pw"');
+    }
+    const transport = fs.readFileSync(path.resolve("test/integration/ssh-transport.test.ts"), "utf8");
+    expect(transport).toContain("process.env.EMBER_SSH_TEST_PASSWORD_PORT");
+    expect(transport).toMatch(/for \(const method of \["password", "keyboard-interactive"\]\)/);
+  });
+
+  it("installs and runs the agent on a Linux arm64 computer, where the repository has such a runner", () => {
+    const arm = job("ssh-linux-arm64");
+    expect(arm).toContain("runs-on: ${{ vars.EMBER_ARM64_RUNNER || 'ubuntu-24.04-arm' }}");
+    expect(arm).toContain("vars.EMBER_ARM64_RUNNER != 'none'");
+    expect(arm).toContain('test "$(uname -m)" = aarch64');
+    for (const f of ["remote-ssh.test.ts", "remote-e2e.test.ts", "remote-desktop.test.ts"]) expect(arm).toContain(`test/integration/${f}`);
   });
 });
 
@@ -556,9 +794,10 @@ describe("the Windows and macOS CI jobs", () => {
     const at = (s: string) => { const i = macos.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
     expect(at("tcc.mjs grant-paths --ancestors")).toBeLessThan(at("node scripts/run-integration.mjs"));
     expect(at("tcc.mjs approve-capture")).toBeLessThan(at("node scripts/run-integration.mjs"));
-    expect(at("node scripts/package/stage.mjs")).toBeLessThan(at('"Accessibility=fail" "Accessibility helper=fail"'));
-    expect(at('"Accessibility=fail" "Accessibility helper=fail"')).toBeLessThan(at("tcc.mjs grant-bundle dist/package/Ember.app"));
-    expect(at("tcc.mjs grant-bundle dist/package/Ember.app")).toBeLessThan(at('"Accessibility=ok" "Accessibility helper=ok"'));
+    // The doctor's Accessibility row is called what the setup check calls it (review #229).
+    expect(at("node scripts/package/stage.mjs")).toBeLessThan(at('"Reading and using apps=fail" "Accessibility helper=fail"'));
+    expect(at('"Reading and using apps=fail" "Accessibility helper=fail"')).toBeLessThan(at("tcc.mjs grant-bundle dist/package/Ember.app"));
+    expect(at("tcc.mjs grant-bundle dist/package/Ember.app")).toBeLessThan(at('"Reading and using apps=ok" "Accessibility helper=ok"'));
     // Through LaunchServices, so Ember.app is its own responsible process.
     expect(macos.match(/open -n -W --stdout "\$report" --stderr "\$RUNNER_TEMP\/doctor-(before|after)\.err" -a "\$PWD\/dist\/package\/Ember\.app" --args --doctor/g)).toHaveLength(2);
     // Ember.app's executable is no path client, which would muddy the first attribution run; it is only approved to capture.
@@ -579,6 +818,73 @@ describe("the Windows and macOS CI jobs", () => {
       "codesign --verify --deep --strict", "test/integration/darwin-desktop.test.ts", "node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember"]) {
       expect(x64, s).toContain(s);
     }
+  });
+
+  it("read the hardened runtime's flag on both Macs, and try DYLD_* only where SIP is on, as on users' Macs (review #177)", () => {
+    for (const name of ["macos", "macos-x64"]) {
+      const s = step(job(name), "fuses.mjs --check");
+      const at = (line: string) => { const i = s.indexOf(line); expect(i, `${name}: ${line}`).toBeGreaterThan(0); return i; };
+      // The flag, whatever SIP says.
+      const flag = at(`\n          codesign --display --verbose=2 "$app" 2>&1 | grep -E 'flags=0x[0-9a-f]+\\([^)]*runtime'\n`);
+      // The runners report SIP off, and with it off dyld may honour DYLD_* for any binary: there the line would fail
+      // for a reason that has nothing to do with Ember, or prove nothing.
+      // Ember started as the app (node mode is refused there now) gets as far as refusing --inspect: exit 2.
+      const sip = at(`\n          if [[ "$(csrutil status 2>&1)" == *"status: enabled"* ]]; then\n`
+        + `            status=0\n`
+        + `            DYLD_INSERT_LIBRARIES=/nonexistent/ember-dyld-check.dylib "$exe" --inspect=127.0.0.1:9229 || status=$?\n`
+        + `            test "$status" -eq 2\n`
+        + `          else\n`
+        + `            echo "::notice::SIP is off on this runner: the DYLD_* check can't prove anything here"\n`
+        + `          fi\n`);
+      expect(flag).toBeLessThan(sip);
+      expect(s.match(/DYLD_INSERT_LIBRARIES/g), name).toHaveLength(1);
+    }
+  });
+
+  it("prove node mode is refused on both Macs: Ember's binary given ELECTRON_RUN_AS_NODE starts as Ember, never runs the script (review #177)", () => {
+    for (const name of ["macos", "macos-x64"]) {
+      const s = step(job(name), "fuses.mjs --check");
+      expect(s, name).toMatch(/^name: ".*node mode refused, NODE_OPTIONS fuse off, --inspect refused/);
+      // Nothing in the step runs the binary as plain Node any more.
+      expect(s, name).not.toContain("-e 'process.exit(0)'");
+      expect(s, name).not.toMatch(/ELECTRON_RUN_AS_NODE=1 [^\n]*"\$exe"/);
+      const at = (line: string) => { const i = s.indexOf(line); expect(i, `${name}: ${line}`).toBeGreaterThan(0); return i; };
+      at(`\n          mark="$RUNNER_TEMP/ember-node-mode-mark"\n`);
+      at(`\n          echo 'require("fs").writeFileSync(process.env.EMBER_MARK, "node mode")' > "$RUNNER_TEMP/ember-node-mode.js"\n`);
+      const run = at(`\n          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229", process.argv[2]], { encoding: "utf8", timeout: 60000, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", EMBER_MARK: process.argv[3] } }); console.log(r.stdout + r.stderr + "\\nexit " + r.status)' "$exe" "$RUNNER_TEMP/ember-node-mode.js" "$mark" > node-mode.log\n`);
+      const verdict = at(`\n          if [ -e "$mark" ] || ! grep -q "doesn't start with debugging switches" node-mode.log || ! grep -qx 'exit 2' node-mode.log; then cat node-mode.log; exit 1; fi\n`);
+      expect(run).toBeLessThan(verdict);
+      // NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)
+      // whatever the fuse says, and node mode is refused, so no run can show the fuse here. `fuses.mjs --check` above
+      // (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused
+      // with it set; the step says exactly that, and claims nothing more of it.
+      const check = at(`\n          node scripts/package/fuses.mjs --check "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework"\n`);
+      const options = at(`\n          # NODE_OPTIONS: a packaged Electron drops all but two NODE_OPTIONS in app mode (and in its utility processes)\n`
+        + `          # whatever the fuse says, and node mode is refused, so no run can show the fuse here. \`fuses.mjs --check\` above\n`
+        + `          # (EnableNodeOptionsEnvironmentVariable off) is the proof. This run only shows that --inspect is still refused\n`
+        + `          # with it set.\n`
+        + `          node -e 'const r = require("child_process").spawnSync(process.argv[1], ["--inspect=127.0.0.1:9229"], { encoding: "utf8", timeout: 60000, env: { ...process.env, NODE_OPTIONS: "--require=/nonexistent/ember-fuse-check.js" } }); console.log(r.stdout + r.stderr + "\\nexit " + r.status)' "$exe" > inspect.log\n`);
+      expect(check).toBeLessThan(options);
+      expect(verdict).toBeLessThan(options);
+      expect(s, name).not.toContain("it is ignored");
+      expect(s.match(/NODE_OPTIONS:/g), name).toHaveLength(2);
+      expect(s.match(/doesn't start with debugging switches/g), name).toHaveLength(2);
+    }
+    // Linux and Windows keep node mode, and their checks say so.
+    expect(job("windows")).toContain('ELECTRON_RUN_AS_NODE=1 "$app/Ember.exe" -e "process.exit(0)"');
+    expect(ci).toContain("ELECTRON_RUN_AS_NODE=1 /opt/ember/ember -e 'process.exit(0)'");
+  });
+
+  it("check SSH's askpass as Ember itself on Apple silicon, the development Electron and the staged Ember.app (review #177)", () => {
+    const macos = job("macos");
+    const s = step(macos, "test/integration/askpass-darwin.test.ts");
+    expect(s).toContain("node scripts/run-integration.mjs test/integration/askpass-darwin.test.ts");
+    expect(s).toMatch(/EMBER_DARWIN_TEST: "1"/);
+    expect(s).toMatch(/EMBER_PACKAGED_APP: dist\/package\/Ember\.app/);
+    expect(s).toContain("steps.stage.outcome == 'success'");
+    expect(macos.indexOf("node scripts/package/stage.mjs")).toBeLessThan(macos.indexOf("askpass-darwin.test.ts"));
+    // Before Ember.app's own grant and the attribution runs: askpass needs no permission.
+    expect(macos.indexOf("askpass-darwin.test.ts")).toBeLessThan(macos.indexOf("tcc.mjs grant-bundle"));
   });
 
   it("offer dev:mac, which starts the development Electron through LaunchServices so TCC grants go to Electron (M14)", () => {
@@ -841,24 +1147,39 @@ describe.skipIf(process.platform === "win32")("the smoke test (test/smoke/launch
 import fs from "node:fs";
 import path from "node:path";
 const dir = process.env.EMBER_USER_DATA;
-const log = msg => console.log(JSON.stringify({ level: "info", msg }));
+const log = (msg, fields = {}) => console.log(JSON.stringify({ ...fields, level: "info", msg }));
 const mode = process.env.FAKE_EMBER_MODE;
 if (mode === "start-failed") { log("app.start_failed"); setInterval(() => {}, 1000); }
 else if (mode === "crash") { console.error("libsomething.so: cannot open shared object file"); process.exit(3); }
-else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(dir, "second"), ""); log("instance.handover"); }
+else if (fs.existsSync(path.join(dir, "first"))) { fs.writeFileSync(path.join(dir, "second"), process.argv.slice(2).join(" ")); log("instance.handover"); }
 else {
   fs.writeFileSync(path.join(dir, "first"), "");
   if (process.env.FAKE_EMBER_LOG) log(process.env.FAKE_EMBER_LOG);
+  // As Ember does once it has started: the jump list on Windows (whether setUserTasks took it), the Dock menu on a Mac.
+  if (mode !== "no-launcher") { log("launcher.tasks", { ok: mode !== "tasks-refused" }); log("launcher.dock"); }
   log("window.home.shown");
-  setInterval(() => { if (fs.existsSync(path.join(dir, "second"))) { fs.rmSync(path.join(dir, "second")); log("instance.second"); } }, 50);
+  // Ember opens the ask box for --ask only once it is set up (else settings, without the box).
+  let settings = {};
+  try { settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8")); } catch {}
+  setInterval(() => {
+    if (!fs.existsSync(path.join(dir, "second"))) return;
+    const args = fs.readFileSync(path.join(dir, "second"), "utf8");
+    fs.rmSync(path.join(dir, "second"));
+    log("instance.second");
+    if (!args.includes("--ask") || settings.onboarded !== true || mode === "no-ask") return;
+    log("ask.open", { source: "launcher" });
+    // Once the box is on screen (AskWindow's reveal); "no-reveal": asked for, but it never showed.
+    if (mode !== "no-reveal") log("ask.reveal", { source: "launcher" });
+  }, 50);
 }
 `, { mode: 0o755 });
     return file;
   })();
-  const smoke = (mode: string, o: { args?: string[]; log?: string } = {}) => {
+  const smoke = (mode: string, o: { args?: string[]; log?: string; os?: NodeJS.Platform } = {}) => {
     const t0 = Date.now();
     const r = spawnSync(process.execPath, [path.resolve("test/smoke/launch.mjs"), "--exe", fake, ...(o.args ?? [])], {
-      encoding: "utf8", timeout: 60_000, env: { ...process.env, FAKE_EMBER_MODE: mode, FAKE_EMBER_LOG: o.log ?? "", EMBER_SMOKE_TIMEOUT_MS: "20000", EMBER_SMOKE_VERBOSE: "" },
+      encoding: "utf8", timeout: 60_000,
+      env: { ...process.env, FAKE_EMBER_MODE: mode, FAKE_EMBER_LOG: o.log ?? "", EMBER_SMOKE_TIMEOUT_MS: "20000", EMBER_SMOKE_VERBOSE: "", EMBER_SMOKE_PLATFORM: o.os ?? "linux" },
     });
     return { ...r, ms: Date.now() - t0 };
   };
@@ -866,8 +1187,38 @@ else {
   it("passes when the window shows and a second launch hands over", () => {
     const r = smoke("ok");
     expect(r.stdout).toMatch(/ok {3}first instance showed its window\nok {3}second launch handed over/);
+    expect(r.stdout).toMatch(/ok {3}a start with --ask handed over and the first instance opened its ask box/);
+    // Linux's Ask Ember is its desktop entry's action, which the package job checks.
+    expect(r.stdout).not.toMatch(/jump list|Dock menu/);
     expect(r.status).toBe(0);
   });
+
+  it("requires Ask Ember in the jump list on Windows and in the Dock menu on a Mac (D-45b)", () => {
+    expect(smoke("ok", { os: "win32" })).toMatchObject({ status: 0, stdout: expect.stringMatching(/ok {3}the first instance put Ask Ember in its jump list\n/) });
+    expect(smoke("ok", { os: "darwin" })).toMatchObject({ status: 0, stdout: expect.stringMatching(/ok {3}the first instance put Ask Ember in its Dock menu\n/) });
+    const refused = smoke("tasks-refused", { os: "win32" });
+    expect(refused.stderr).toMatch(/FAIL Windows refused the jump list \(launcher\.tasks ok: false\)/);
+    expect(refused.status).toBe(1);
+    for (const os of ["win32", "darwin"] as const) {
+      const none = smoke("no-launcher", { os });
+      expect(none.stderr, os).toMatch(/FAIL timed out after 5 s waiting for the first instance to put Ask Ember in its (jump list|Dock menu)/);
+      expect(none.status, os).toBe(1);
+    }
+  }, 60_000);
+
+  it("fails when a start with --ask doesn't open the ask box in the running Ember (D-45b)", () => {
+    const r = smoke("no-ask");
+    expect(r.stdout).toMatch(/ok {3}second launch handed over/);
+    expect(r.stderr).toMatch(/FAIL timed out after 10 s waiting for the first instance to open the ask box for a start with --ask/);
+    expect(r.status).toBe(1);
+  }, 30_000);
+
+  it("fails when the running Ember asked for the ask box but it never showed (ask.open without ask.reveal)", () => {
+    const r = smoke("no-reveal");
+    expect(r.stdout).toMatch(/ok {3}second launch handed over/);
+    expect(r.stderr).toMatch(/FAIL timed out after 10 s waiting for the first instance to open the ask box for a start with --ask/);
+    expect(r.status).toBe(1);
+  }, 30_000);
 
   it("fails at once on app.start_failed, quoting it, and stops the app", () => {
     const r = smoke("start-failed");

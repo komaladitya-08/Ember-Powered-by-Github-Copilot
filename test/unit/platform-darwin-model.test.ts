@@ -48,6 +48,13 @@ describe("reading a CGWindowList entry", () => {
     const e = windowEntry(raw({ owner: null, name: null, layer: null, alpha: null }))!;
     expect(e).toMatchObject({ owner: "", title: "", layer: 1, alpha: 1 });
   });
+  it("takes the owner's name without characters that show nothing, so every list of app names sees one form (cross-review X15)", () => {
+    // Apple's German name for System Settings, as its bundle has it: "System" + soft hyphen + "einstellungen".
+    expect(windowEntry(raw({ owner: "System­einstellungen" }))!.owner).toBe("Systemeinstellungen");
+    expect(windowEntry(raw({ owner: "Schlüssel­bund​verwaltung" }))!.owner).toBe("Schlüsselbundverwaltung");
+    // The title is the window's own text: left as it is.
+    expect(windowEntry(raw({ name: "Kamera­" }))!.title).toBe("Kamera­");
+  });
 });
 
 describe("the stack, as X11 gives it", () => {

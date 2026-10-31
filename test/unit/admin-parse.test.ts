@@ -7,9 +7,10 @@ import path from "node:path";
 import { AdminPolicySchema, loadAdminPolicy, lockedDown, parseAdminPolicy } from "../../app/main/admin";
 
 const LOCKDOWN = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false },
   allowGrants: false,
   confirmEveryAction: true,
+  commands: { local: "off", wsl: "off", ssh: "off" },
 });
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-admin-"));
 const write = (text: string) => { const f = path.join(tmp(), "policy.json"); fs.writeFileSync(f, text); return f; };
@@ -70,5 +71,24 @@ describe("loadAdminPolicy (built on them)", () => {
     const dir = tmp();
     const r = loadAdminPolicy(dir);
     expect(r).toMatchObject({ policy: LOCKDOWN, source: dir, error: expect.stringMatching(new RegExp(`^can't read `)) });
+  });
+});
+
+describe("parseAdminPolicy and what editors add (review #121)", () => {
+  it("reads a correct file saved with a UTF-8 byte-order mark", () => {
+    const r = parseAdminPolicy("\uFEFF" + JSON.stringify({ confirmEveryAction: true }), "/etc/ember/policy.json");
+    expect(r.error).toBeUndefined();
+    expect(r.policy.confirmEveryAction).toBe(true);
+    expect(parseAdminPolicy("\uFEFF{}", "S")).toEqual({ policy: AdminPolicySchema.parse({}), source: "S" });
+  });
+
+  it("names a key this Ember doesn't know, and says it may be older than the policy", () => {
+    const r = parseAdminPolicy(JSON.stringify({ auditRetentionDays: 365, futureKey: 1 }), "S");
+    expect(r.policy).toEqual(LOCKDOWN);
+    expect(r.error).toMatch(/^S: \(top\): .*"futureKey"/);
+    expect(r.error).toMatch(/older than the policy/);
+    expect(parseAdminPolicy(JSON.stringify({ features: { telnet: true } }), "S").error).toMatch(/^S: features: .*"telnet".*older than the policy/);
+    // Other mistakes say only what is wrong.
+    expect(parseAdminPolicy(JSON.stringify({ maxActionsPerMinute: 99 }), "S").error).not.toMatch(/older than the policy/);
   });
 });

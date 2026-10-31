@@ -1,0 +1,1981 @@
+/**
+ * The targets runtime (§2; package TG): where Ember can work (this computer, WSL distros, computers reached over SSH)
+ * and the commands on each. It keeps the registry, binds tasks from the user's own words, hands workers each target's
+ * hands and CommandService, shows the first-use consent cards, notices the user's own ssh and offers to come along,
+ * serves the settings window's channels, builds the handle menu's picker, answers the bubble's actions, reads a remote's
+ * quick context, stops every command and remote for the kill switch, and adds the doctor's rows.
+ *
+ * Nothing new happens without a reason (critique integration-25): with nothing set up, or with the administrator
+ * turning WSL, SSH and commands off, there is no menu item, no badge, no new window, no prompt change (caps all false;
+ * with nothing set up, commandsOffered only lets the conversation say where commands are turned on, review #40)
+ * and no process started; the noticer's cheap look at the window the user is in runs only once the user has added a
+ * computer, while SSH is allowed and the offer switch is on (review #33). Every decision comes from local data: a
+ * remote's own reports only ever narrow what Ember does there, and the model can never connect, pick a computer the user
+ * didn't name, or approve anything. Plain Node (L13): Electron reaches it only through TargetsDeps.
+ */
+
+import { execFile } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import pathPosix from "node:path/posix";
+import pathWin32 from "node:path/win32";
+import { COMMANDS_IPC } from "../../shared/commands";
+import type { ConsentPanel } from "../../shared/consent";
+import { IDLE_BUBBLE } from "../../shared/overlay";
+import type { OS } from "../../shared/shortcuts";
+import { DISTRO_NAME, HOST_ID, LOCAL_TARGET, parseTargetId, targetIdOf, type TargetId, type TargetSummary, type TargetsAct } from "../../shared/targets";
+import { commandMode, type LoadedAdminPolicy } from "../admin";
+import type { Question } from "../agent/confirm";
+import type { NoticeBoard, NoticeBubble, NoticeOptions } from "../agent/presenter";
+import type { Emotion } from "@ember/characters";
+import { plainMarkdown } from "@ember/bubble";
+import type { WorkerSystem } from "../agent/worker";
+import { createLocalRunner } from "../commands/run/local";
+import type { CommandCapability, CommandRunner, CommandService, CommandWindowPort } from "../commands/types";
+import { createCommandWindowPort } from "../commands/window";
+import { isTerminalWindowApp } from "../hands/system";
+import type { Logger } from "../logger";
+import type { QuickContext } from "../perception";
+import type { PlatformDoctorRow, SystemPlatform } from "../platform/types";
+import { PolicyEngine } from "../policy/policy";
+import { createConnections } from "../remote/connections";
+import { parseTypedDestination } from "../remote/destination";
+import { createPromptWindow } from "../remote/prompt-window";
+import { emberNamesRegExp } from "../remote/protocol";
+import { WSL_READER, parseWslReader, sshDestination, userSshProcesses } from "../remote/notice-ssh";
+import { remoteTargetParts, type RemoteTargetExtras } from "../remote/target";
+import { ConnectError, type ConnectProgress, type Connections, type HostRecord, type PromptUi, type RemoteLink, type SshSeen } from "../remote/types";
+import { SettingsSchema, lenientJson, repairSettings } from "../settings";
+import { wslAwareSystem } from "../wsl/privacy";
+import { turnOnLinuxAccessibility } from "../wsl/launch-sidecar";
+import { doctorHelperRows, stopWslHelpers, wslHelperDoctorRows, wslHelperPids } from "../wsl/router";
+import type { WslRunner } from "../wsl/runner";
+import { createWsl } from "../wsl/service";
+import type { WslFacts, WslService } from "../wsl/types";
+import * as words from "../../renderer/overlay/target-copy";
+import { commandsConsent, consentCurrent, consentGiven, consentYes, machineChanged, sshChangedFrom, sshConsent, sshNeedsConsent, wslConsent } from "./consent";
+import { doctorRowsWith, realDoctorProbes, remoteTccRow, type DoctorProbes } from "./doctor";
+import { hostBinding, localBinding, remoteHands, screenHands, waitingPerception, wslBinding, type HandsBase } from "./hands";
+import { registerTargetsIpc, type ActResult } from "./ipc";
+import { createLocalService, forgetCommands, linuxOwnPids, ownTree, psProcTable, setCommandsSwitch, withFlowExtras, type WarmService } from "./local-service";
+import { targetMenu } from "./menu";
+import { NOTICE_TICK_MS, createNoticer, seenKey, type Noticer, type SshNotice } from "./offer";
+import { noWindowContext, remoteQuickContext } from "./quick-context";
+import {
+  LOCAL_LABEL, activeOf, bindable, buildRegistry, defaultDistro, distroLabel, hostPart, namedTargets, notConnectedWhy, otherVersionNamed, sshAllowed, summaryOf, wslAllowed,
+  type LinkState, type LinkView, type TargetEntry,
+} from "./registry";
+import { createRemoteTarget, type RemoteTarget } from "./remote-service";
+import { NOT_NAMED, WSL_WORDS, bindTarget, namedAnywhere, normaliseName, otherTargetsNamed, placesNamed, targetsNamed, type NamedTarget } from "./resolve";
+import type { MenuItemLike, TargetBinding, TargetHands, TargetsDeps, TargetsForAgent, TargetsRuntime } from "./types";
+import { createWslService, isToolDistro } from "./wsl-service";
+
+// ───────────── What the runtime is built from ─────────────
+
+/** A panel's answer from its own window's buttons (already checked there: that window, the card on screen, its hash). */
+export interface PanelAnswer { n: number; answer: "once" | "deny"; sha256: string }
+
+/** UI's command window controller as the runtime uses it: the contract, plus its answer hook when it has one. */
+export type CommandWindow = CommandWindowPort & {
+  show(): void; owns(sender: { readonly id: number }): boolean; dispose(): void;
+  /**
+   * The card's own buttons' answers (UI's extra; without it the runtime hears COMMANDS_IPC.answer itself); `fn` says
+   * whether the Confirmer took it, so the card can give its buttons back when it didn't (review #271).
+   */
+  onAnswer?(fn: (a: PanelAnswer) => boolean | void): () => void;
+};
+
+/** UI's prompt window as the runtime uses it: the contract, plus its consent-answer hook and show() when it has them. */
+export type PromptWindow = PromptUi & {
+  showConsent(n: number, c: ConsentPanel): void; hideConsent(n: number): void; consentReady(n: number): boolean; dispose(): void;
+  /** A consent question's answer from its card (UI's extra; without it a consent question can only be declined). */
+  onConsent?(fn: (a: PanelAnswer) => void): () => void;
+  /** Brings the window back with its card (UI's extra). */
+  show?(): void;
+};
+
+/** The factories and OS facts the runtime is built from: the real ones in createTargets, fakes in tests. */
+export interface TargetsParts {
+  env: NodeJS.ProcessEnv;
+  home: string;
+  user: string;
+  localRunner: typeof createLocalRunner;
+  commandWindow: (o: Parameters<typeof createCommandWindowPort>[0]) => CommandWindow;
+  promptWindow: (o: Parameters<typeof createPromptWindow>[0]) => PromptWindow;
+  wsl: typeof createWsl;
+  connections: typeof createConnections;
+  remoteParts: typeof remoteTargetParts;
+  /** SA's noticing functions; null: Ember doesn't look for the user's own ssh. */
+  notice: SshNotice | null;
+  doctor: DoctorProbes;
+  /** Ember's own helper processes now (its main process's descendants that aren't command runs), for D4.5. */
+  ownPids: () => number[];
+  /**
+   * WB's accessibility helpers in WSL distros (one router per main process, app/main/wsl/router.ts): the kill switch
+   * stops them, their pids are Ember's own (D4.5), and their doctor rows join the targets'.
+   */
+  wslHelpers: { stop(): void; pids(): number[]; doctorRows(): Promise<PlatformDoctorRow[]> };
+  /** Host aliases of the user's ~/.ssh/config (offer_connect's second source). */
+  sshConfigHosts: () => string[];
+  randomHex: (bytes: number) => string;
+  now: () => Date;
+  setInterval: (fn: () => void, ms: number) => { unref?(): void };
+  clearInterval: (t: unknown) => void;
+  setTimeout: (fn: () => void, ms: number) => unknown;
+  clearTimeout: (t: unknown) => void;
+}
+
+// ───────────── Small pure helpers ─────────────
+
+/** A host record's id from what the user calls it (HOST_ID): lower case, [^a-z0-9._-] → "-", unique with "-2", "-3"… */
+export function hostIdFor(alias: string, taken: ReadonlySet<string>): string {
+  let base = alias.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 60);
+  if (!base) base = "host";
+  if (!taken.has(base) && HOST_ID.test(base)) return base;
+  for (let n = 2; ; n++) {
+    const id = `${base}-${n}`;
+    if (!taken.has(id) && HOST_ID.test(id)) return id;
+  }
+}
+
+/**
+ * "user@host:22", "ssh://user@host:22", "[::1]:22" → the destination ssh gets and a port apart (§5.1.2), or null: SA's
+ * own reading of what the user typed (parseTypedDestination), so settings' Add takes exactly what a connect accepts.
+ */
+export function splitDest(raw: string): { dest: string; port?: number } | null {
+  return parseTypedDestination(String(raw ?? ""));
+}
+
+/** Megabytes for the connecting bubble ("12 of 29 MB"). */
+const mb = (bytes: number) => Math.max(0, Math.round(bytes / 1_000_000));
+
+/** The connecting bubble's step, as target-copy says it (§8.2). */
+export function connectStep(p: ConnectProgress): words.ConnectStep | null {
+  switch (p.step) {
+    case "resolving": case "connecting": case "checking": return { step: "checking" };
+    case "downloading": case "copying": return { step: p.step, doneMB: mb(p.done), totalMB: mb(p.total) };
+    case "starting": return { step: "starting" };
+    default: return null;
+  }
+}
+
+/** The connecting bubble's step words (§8.2). */
+export function progressWords(label: string, p: ConnectProgress): string | null {
+  const step = connectStep(p);
+  return step ? words.connecting(label, step).text : null;
+}
+
+/**
+ * How a runtime bubble looks: its state chip (mood) and Ember's face. "Needs you" only where a button needs a decision;
+ * a notice that asks nothing has no chip; connecting is work (no thinking glow); a failure is a problem.
+ */
+const LOOK = {
+  notice: { mood: "idle", emotion: "neutral" },
+  good: { mood: "idle", emotion: "happy" },
+  working: { mood: "acting", emotion: "focused" },
+  decide: { mood: "attention", emotion: "curious" },
+  trouble: { mood: "error", emotion: "worried" },
+  failed: { mood: "error", emotion: "sad" },
+} as const satisfies Record<string, { mood: NoticeBubble["mood"]; emotion: Emotion }>;
+type Look = keyof typeof LOOK;
+
+/** A runtime bubble as it is posted, with Ember's face for it. */
+type Said = NoticeBubble & { emotion: Emotion };
+
+/**
+ * A bubble's words as the runtime posts them: its buttons get the ids the runtime answers, in order. Its text is made
+ * plain as the conversation's is: messages from SSH and the remote carry `code` spans the bubble would show raw.
+ */
+function say(w: words.BubbleWords, ids: readonly string[], look: Look, step?: string): Said {
+  const { mood, emotion } = LOOK[look];
+  return {
+    title: w.title, thought: words.firstPerson(plainMarkdown(w.text)), mood, emotion, actions: w.actions.map((a, i) => ({ id: ids[i], label: a.label, ...(a.primary ? { primary: true } : {}) })),
+    ...(step ? { step } : {}),
+  };
+}
+
+/** The Close button of a bubble that stays until the user has read it (a failure). */
+const CLOSE_ID = "conn:close";
+
+/**
+ * A consent card asked directly that nobody saw (no window to show it in, or its page crashed): said instead of "Not
+ * now.", which is the user's own no (as a sign-in question Ember couldn't show is, review #193).
+ */
+const CARD_UNSHOWN = "Ember couldn't show the card that asks you first, so nothing changed.";
+
+/** Ember's own paths on this computer (§3.6.2): its data, its install, the administrator's policy folder. */
+export function emberPathsOf(o: { os: OS; userData: string; resourcesPath: string; packaged: boolean; env: NodeJS.ProcessEnv }): string[] {
+  const p = o.os === "win32" ? pathWin32 : pathPosix;
+  const out = [o.userData];
+  if (o.packaged) out.push(o.os === "darwin" ? p.resolve(o.resourcesPath, "..", "..") : p.dirname(o.resourcesPath));
+  if (o.os === "linux") {
+    out.push("/opt/ember", "/etc/ember");
+    if (o.env.APPIMAGE) out.push(o.env.APPIMAGE);
+  } else if (o.os === "darwin") {
+    out.push("/Applications/Ember.app", "/Library/Application Support/Ember");
+  } else {
+    out.push(p.join(o.env.ProgramFiles ?? "C:\\Program Files", "Ember"));
+  }
+  return [...new Set(out.filter(Boolean))];
+}
+
+/** Ember's own process names (D4.5): its binary's and the Copilot runtime's (only names emberNamesRegExp accepts). */
+export function emberNamesOf(execPath: string, runtimeExe: string, os: OS): RegExp {
+  const base = (os === "win32" ? pathWin32 : pathPosix).basename(execPath);
+  const names = [...new Set([base, runtimeExe, "ember"].filter(n => /^[A-Za-z0-9._+ -]{1,64}$/.test(n)))];
+  return emberNamesRegExp(names);
+}
+
+/** The Host aliases in an ssh config's text (literal names only: no patterns, no negations; Include isn't followed). */
+export function configHosts(text: string): string[] {
+  const out: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*Host\s+(.+?)\s*$/i.exec(line);
+    if (!m) continue;
+    // Never one ssh would read as an option ("-oProxyCommand…"): the destination validator refuses those too.
+    for (const h of m[1].split(/\s+/)) if (h && !/[*?!]/.test(h) && /^(?!-)[A-Za-z0-9._-]{1,255}$/.test(h)) out.push(h);
+  }
+  return out;
+}
+
+/** Whether a host record is for this destination (dest and port; the host part compared without case). */
+function sameDest(h: HostRecord, dest: string, port: number | undefined): boolean {
+  const fold = (d: string) => { const at = d.lastIndexOf("@"); return at < 0 ? d.toLowerCase() : `${d.slice(0, at)}@${d.slice(at + 1).toLowerCase()}`; };
+  return fold(h.dest) === fold(dest) && (h.port ?? null) === (port ?? null);
+}
+
+/**
+ * Whether a host record is the computer and login ssh -G resolved (§7.4's user, hostname, port and jump hosts, through
+ * the same route): the same computer typed another way ("build-01" and "deploy@build-01.example.com") is one record,
+ * never a second one with its own card and a connection that fights the first for the remote's lock (review #181).
+ */
+function sameIdentity(h: HostRecord, r: HostRecord["resolved"], via: HostRecord["via"] | undefined): boolean {
+  const route = (v: HostRecord["via"] | undefined) => (v && v !== "local" ? v : "local");
+  const hops = (j: readonly string[]) => j.map(x => x.toLowerCase()).join(",");
+  return h.resolved.user === r.user && h.resolved.hostname.toLowerCase() === r.hostname.toLowerCase() && h.resolved.port === r.port
+    && hops(h.resolved.jump) === hops(r.jump) && route(h.via) === route(via);
+}
+
+/**
+ * Whether a destination the user's own ssh uses reaches a host record, as far as Ember can tell without running ssh -G
+ * (the noticer looks every few seconds): the same destination, or its host one of the record's own names (its id, its
+ * host part, its resolved hostname) with the user and the port, where given, the record's resolved ones (review #181).
+ */
+function reaches(h: HostRecord, dest: string, port: number | undefined): boolean {
+  if (sameDest(h, dest, port)) return true;
+  const at = dest.lastIndexOf("@");
+  const host = (at >= 0 ? dest.slice(at + 1) : dest).toLowerCase();
+  if (at >= 0 && dest.slice(0, at) !== h.resolved.user) return false;
+  if (port !== undefined && port !== h.resolved.port) return false;
+  return [h.id, hostPart(h.dest), h.resolved.hostname].some(n => n.toLowerCase() === host);
+}
+
+/** The destination a seen ssh connects to, with its -l user folded in ("deploy@build-01"). */
+function seenDest(s: SshSeen): string {
+  return s.user && !s.dest.includes("@") ? `${s.user}@${s.dest}` : s.dest;
+}
+
+/** The framed stream through wsl.exe is proven binary-safe (L22, verify on `wsl2-windows`): until then, no. */
+export const WSL_SSH_PROVEN = false;
+
+/** A list from a function that may throw (main's live pid list): empty then. */
+function safeList(f: () => number[]): number[] {
+  try { const v = f(); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+
+/** A yes/no from a function that may throw: `failClosed` then (elevation unknown counts as elevated: every command asks). */
+function safeBool(f: () => boolean, failClosed: boolean): boolean {
+  try { return f() === true; } catch { return failClosed; }
+}
+
+/** A service's capability, never throwing (a service that can't say has commands off). */
+function safeCap(svc: CommandService | null): CommandCapability | null {
+  if (!svc) return null;
+  try { return svc.capability(); } catch { return null; }
+}
+const safeState = (svc: CommandService | null): CommandCapability["state"] => safeCap(svc)?.state ?? "off";
+
+// ───────────── The real parts ─────────────
+
+/** The real factories and OS facts (createTargets); `deps` gives what main knows. */
+export function productionParts(deps: TargetsDeps): TargetsParts {
+  const env = process.env;
+  let ps: { at: number; rows: number[] } = { at: -Infinity, rows: [] };
+  let psRunning = false;
+  let proc: { at: number; rows: number[] } = { at: -Infinity, rows: [] };
+  const procReader = {
+    pids: () => fs.readdirSync("/proc").filter(n => /^\d+$/.test(n)).map(Number),
+    stat: (pid: number) => { try { return fs.readFileSync(`/proc/${pid}/stat`, "utf8"); } catch { return null; } },
+    environ: (pid: number) => { try { return fs.readFileSync(`/proc/${pid}/environ`); } catch { return null; } },
+  };
+  return {
+    env,
+    home: os.homedir(),
+    user: (() => { try { return os.userInfo().username; } catch { return env.USER ?? env.USERNAME ?? ""; } })(),
+    localRunner: createLocalRunner,
+    commandWindow: o => createCommandWindowPort(o) as CommandWindow,
+    promptWindow: o => createPromptWindow(o) as PromptWindow,
+    wsl: createWsl,
+    connections: createConnections,
+    remoteParts: remoteTargetParts,
+    // SA's noticing (§2.7): the host argument of the user's own ssh processes, read only while the offer may be shown.
+    notice: { sshDestination, userSshProcesses },
+    wslHelpers: { stop: stopWslHelpers, pids: wslHelperPids, doctorRows: wslHelperDoctorRows },
+    doctor: realDoctorProbes({ os: deps.os, sys: deps.sys, resourcesPath: deps.resourcesPath, env }),
+    ownPids: () => {
+      const now = Date.now();
+      if (deps.os === "linux") {
+        if (now - proc.at > 1000) {
+          try { proc = { at: now, rows: linuxOwnPids(procReader, process.pid) }; } catch { proc = { at: now, rows: [] }; }
+        }
+        return proc.rows;
+      }
+      if (deps.os === "darwin") {
+        // `ps` is a process start: read in the background at most every 5 s; the last answer is used meanwhile.
+        if (now - ps.at > 5000 && !psRunning) {
+          psRunning = true;
+          try {
+            execFile("/bin/ps", ["-A", "-o", "pid=,ppid=,comm="], { timeout: 3000, maxBuffer: 4 * 1024 * 1024 }, (err, out) => {
+              psRunning = false;
+              ps = { at: Date.now(), rows: err ? ps.rows : ownTree(psProcTable(String(out), process.pid), process.pid) };
+            });
+          } catch {
+            psRunning = false;
+          }
+        }
+        return ps.rows;
+      }
+      // Windows: the job object holds every command's tree, and Ember's helpers are named by ember.names (no cheap table).
+      return [];
+    },
+    sshConfigHosts: () => {
+      try {
+        return configHosts(fs.readFileSync((deps.os === "win32" ? pathWin32 : pathPosix).join(os.homedir(), ".ssh", "config"), "utf8"));
+      } catch {
+        return []; // no config: only host records count
+      }
+    },
+    randomHex: n => crypto.randomBytes(n).toString("hex"),
+    now: () => new Date(),
+    setInterval: (fn, ms) => setInterval(fn, ms),
+    clearInterval: t => clearInterval(t as ReturnType<typeof setInterval>),
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: t => clearTimeout(t as ReturnType<typeof setTimeout>),
+  };
+}
+
+/** What main hands the runtime beyond TargetsDeps (an extension of the contract; optional, so tests may leave it out). */
+export interface TargetsDepsExtra {
+  /**
+   * Stops every task bound to `target` (queued or running): someone at that computer pressed Stop, or its connection
+   * dropped or closed (§5.3.9, §5.1.11); with `only: "desktop"`, only the running tasks that used its desktop: its screen
+   * locked or its session went inactive (§5.3.4 step 8), and a task running only commands there goes on. The runtime's
+   * bubble says which. `why`: what each stopped task's result says instead of "Stopped." (target-copy's stoppedTask).
+   */
+  stopTasksOn?(target: TargetId, only?: "desktop", why?: string): void;
+  /**
+   * The window the user is in now (its program and title), from main's window system: what the ssh noticer looks at
+   * (§2.7). It needs only a window system, never the input backend or the administrator's mouse borrowing. Absent: the
+   * hands' tier-3 view of it, when they have one; neither: no noticing.
+   */
+  activeWindow?(): { app: string; title: string } | null;
+  /**
+   * The shared bubble's writer for the runtime's own bubbles (AgentHost.notices): they take the bubble as the user's
+   * request does and hold it until they go, so the conversation's and the tasks' bubbles wait behind them (and they
+   * wait behind a question, then show), and nobody's timer hides one it didn't write. Absent, or null (tests, no agent
+   * yet): main's guarded setter, as before.
+   */
+  bubbles?(): NoticeBoard | null;
+  /**
+   * The board for its offers ("You're connected to web-07", "I can work in WSL", offer_connect's Connect;
+   * AgentHost.offers): a second writer on the same shared bubble, so an offer nobody asked for waits behind a held bubble
+   * of `bubbles` (Lost, "Can't connect") instead of replacing it, and one the user asked for covers it, which comes back
+   * after (cross-review X3). Absent, or null: offers go through `bubbles`, as before.
+   */
+  offers?(): NoticeBoard | null;
+  /** The settings shortcut as this OS writes it while Ember holds it ("Ctrl+Alt+E"), else null: bubbles name it only then. */
+  settingsKey?(): string | null;
+  /**
+   * The stop chord as this OS writes it while Ember holds it ("Ctrl+Alt+X"), else null: the command window's
+   * announcement names it only then, as the bubble and the spoken words (cross-review X0). Absent: the OS's own.
+   */
+  stopKey?(): string | null;
+}
+
+/** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
+export interface TargetsRuntimeExtra {
+  /** Under a question shown in a window of Ember's own, how to reach that window from the keyboard (target-copy's panelHint). */
+  panelHint(panel: NonNullable<Question["panel"]>): string;
+  /**
+   * Applies a fix a target doctor row offers (§8.8): `wsl-a11y:<distro>` turns on toolkit accessibility in that running
+   * distro with WB's fixed command, through its own command runner. Refused (with why) for anything else, with WSL off
+   * or not allowed, or for a distro that isn't running (nothing is booted for it).
+   */
+  applyFix(id: string): Promise<{ ok: boolean; message: string }>;
+}
+
+/** The targets runtime main builds once. */
+export function createTargets(deps: TargetsDeps & TargetsDepsExtra): TargetsRuntime & TargetsRuntimeExtra {
+  return buildTargets(deps, productionParts(deps));
+}
+
+/**
+ * The row that stands for every distro's helper rows while the user's WSL switch is off: Ember doesn't look inside a
+ * distro then (its read-only check script doesn't run there).
+ */
+export const WSL_OFF_ROW: PlatformDoctorRow = { id: "wsl-helper", status: "ok", label: "Linux apps in WSL", detail: "WSL is off in Ember's settings, so Ember doesn't look inside its distros" };
+
+/**
+ * Whether the user's WSL switch is on (with its card accepted) in the settings file's text, read without writing
+ * anything (the doctor runs apart from Ember): a file that is missing or can't be read counts as off; one with a few bad
+ * values is read as Ember would repair it.
+ */
+export function wslSwitchOn(settingsText: string | null): boolean {
+  if (!settingsText) return false;
+  let json: unknown;
+  try { json = JSON.parse(settingsText); } catch { json = lenientJson(settingsText); }
+  if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+  const parsed = SettingsSchema.safeParse(json);
+  const s = parsed.success ? parsed.data : repairSettings(json as Record<string, unknown>);
+  return s.targets.wsl.on && consentCurrent("wsl", s.targets.wsl.consent);
+}
+
+/**
+ * The doctor's and setup check's target rows (§8.8): the SSH client, the commands terminal, the remote parts, WSL's.
+ * `wslOn`: the user's WSL switch (wslSwitchOn); the check script runs inside running distros only when it is true.
+ */
+export async function targetDoctorRows(o: { os: OS; sys: SystemPlatform; admin: () => LoadedAdminPolicy; resourcesPath: string; packaged: boolean; appDir?: string; wslOn?: boolean }): Promise<PlatformDoctorRow[]> {
+  const rows = await doctorRowsWith(o, realDoctorProbes({ os: o.os, sys: o.sys, resourcesPath: o.resourcesPath, env: process.env }));
+  if (o.os !== "win32" || !wslAllowed(o.admin())) return rows;
+  // The doctor runs apart from Ember: its own short-lived view of WSL (nothing is started; it is let go at once).
+  const quiet: Logger = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined, child: () => quiet, file: "" };
+  let wsl: WslService | null = null;
+  try {
+    wsl = createWsl({ log: quiet, env: process.env, os: o.os, ember: { winPaths: [] }, jobHost: null });
+    if (wsl) {
+      rows.push(...await wsl.doctorRows());
+      // No router runs in the doctor's process: a short-lived one looks inside each running distro (nothing is booted),
+      // only while the user's WSL switch is on.
+      // (main.cjs's folder, dist/app, when main doesn't say: the source tree's script beside it in a development copy.)
+      const appDir = o.appDir ?? (typeof __dirname === "string" ? __dirname : null);
+      if (o.wslOn !== true) rows.push(WSL_OFF_ROW);
+      else rows.push(...await doctorHelperRows({ os: o.os, log: quiet, wsl, resourcesPath: o.resourcesPath, appDir, env: process.env }));
+    }
+  } catch {
+    // WSL's rows are left out when it can't be asked (the doctor's other rows stand).
+  } finally {
+    try { wsl?.dispose(); } catch { /* already gone */ }
+  }
+  return rows;
+}
+
+// ───────────── The runtime ─────────────
+
+/** One SSH host's connection as the runtime keeps it. */
+interface Conn {
+  state: LinkState;
+  link: RemoteLink | null;
+  target: RemoteTarget | null;
+  abort: AbortController | null;
+  offs: (() => void)[];
+  /** Make it the picker's choice once it is ready. */
+  activate: boolean;
+  /** It was the picker's choice when its connection dropped: it is again if SA brings it back (and nothing else was picked). */
+  wasActive?: boolean;
+  /** Why its last connect or reconnect failed, until it connects again (the settings row says it: TargetSummary.problem). */
+  problem?: string;
+}
+
+/** An offer on screen: an ssh Ember saw the user run, or offer_connect's button. */
+type Offer = { kind: "seen"; seen: SshSeen } | { kind: "connect"; hostId: string | null; alias: string };
+
+/** How long an informational bubble stays (only if nothing of the runtime's replaced it). */
+const INFO_MS = 7000;
+/** How long an offer stays on screen unanswered: then it goes as a Not now (never as Don't offer again). */
+export const OFFER_MS = 25_000;
+/**
+ * A press on a button of the runtime's this soon after it reached the screen is ignored, as the Confirmer ignores one on
+ * a question's: an offer appears unasked, under a pointer that may already be on its way to click something else.
+ */
+export const ARM_MS = 500;
+
+/** The runtime from its parts (createTargets with the real ones; tests with fakes). */
+export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: TargetsParts): TargetsRuntime & TargetsRuntimeExtra {
+  const log = deps.log;
+  const settings = deps.settings;
+  const admin = () => deps.admin();
+  const system: WorkerSystem = wslAwareSystem(deps.sys);
+  let disposed = false;
+
+  // ── Windows of Ember's own (made only when something needs them; their channels are theirs) ──
+  // The card's key hint: the keys main holds for the question up now (none when main doesn't say).
+  const keyHint = (): string | null => { try { return deps.keyHint?.() ?? null; } catch { return null; } };
+  // The stop chord the consent cards name: the one main holds now (its fallback, or null for none, D-45b); the OS's own
+  // when main doesn't say (undefined), and none when asking fails.
+  const stopKeyNow = (): string | null | undefined => { try { return deps.stopKey ? deps.stopKey() : undefined; } catch { return null; } };
+  // Whether a screen reader runs: each run's terminal then mirrors its output for it (review #43).
+  const screenReader = (): boolean => deps.sys.a11y.screenReaderOn();
+  const commandWindow = parts.commandWindow({
+    create: deps.windows.command, ipc: deps.ipc, log: log.child("command-window"), os: deps.os, keyHint, screenReader,
+    ...(deps.stopKey ? { stopKey: () => deps.stopKey!() } : {}),
+  });
+  // `notify`: a card that takes typing whose window didn't get the keyboard says so (review #235).
+  const promptWindow = parts.promptWindow({ create: deps.windows.prompt, ipc: deps.ipc, log: log.child("prompt-window"), os: deps.os, notify: deps.notify });
+
+  // ── This computer's commands ──
+  const emberPaths = emberPathsOf({ os: deps.os, userData: deps.userData, resourcesPath: deps.resourcesPath, packaged: deps.packaged, env: parts.env });
+  const emberPids = (): number[] => [...new Set([...safeList(deps.emberPids), ...safeList(parts.ownPids), ...safeList(parts.wslHelpers.pids)].filter(p => Number.isInteger(p) && p > 0))];
+  let extraPath: string[] = [];
+  try { extraPath = deps.extraPath(); } catch (err) { log.warn("targets.extra_path_failed", { err }); }
+  const elevated = () => safeBool(deps.elevated, true);
+  const localRunner = parts.localRunner({
+    log: log.child("commands"), os: deps.os, env: parts.env,
+    ember: { paths: emberPaths, pids: emberPids, names: emberNamesOf(deps.execPath, deps.sys.paths.runtimeExe, deps.os) },
+    home: parts.home, user: parts.user, elevated, extraPath, jobHost: deps.jobHost,
+  });
+  const localService = createLocalService({
+    os: deps.os, log, binding: () => localBinding(deps.os, !!deps.localHands), runner: localRunner, window: commandWindow, settings, admin, privileged: elevated,
+  });
+
+  // ── WSL (Windows, allowed by the administrator) ──
+  let wsl: WslService | null = null;
+  if (deps.os === "win32" && wslAllowed(admin())) {
+    try { wsl = parts.wsl({ log: log.child("wsl"), env: parts.env, os: deps.os, ember: { winPaths: emberPaths }, jobHost: deps.jobHost }); } catch (err) { log.error("targets.wsl_failed", { err }); }
+  }
+  let wslFacts: WslFacts | null = null;
+  const wslServices = new Map<string, WarmService>();
+  const wslOn = () => wslAllowed(admin()) && settings.get().targets.wsl.on && consentCurrent("wsl", settings.get().targets.wsl.consent);
+  const distroOf = (name: string) => wslFacts?.distros.find(d => d.name === name) ?? null;
+  const wslService = (name: string): WarmService | null => {
+    if (!wsl) return null;
+    let s = wslServices.get(name);
+    if (!s) {
+      let runner: CommandRunner;
+      try { runner = wsl.runner(name); } catch (err) { log.warn("targets.wsl_runner_failed", { err }); return null; }
+      s = createWslService({
+        name, log, distro: () => distroOf(name), binding: () => wslBinding(distroOf(name) ?? { name, version: 2 }, !!deps.localHands),
+        runner, window: commandWindow, settings, admin, wslOn,
+      });
+      wslServices.set(name, s);
+    }
+    return s;
+  };
+  let wslLoading: Promise<void> | null = null;
+  const refreshWsl = (fresh = false): Promise<void> => {
+    const w = wsl;
+    if (!w) return Promise.resolve();
+    if (wslLoading && !fresh) return wslLoading;
+    wslLoading = (async () => {
+      try { wslFacts = await w.facts(fresh ? { refresh: true } : undefined); } catch (err) { log.warn("targets.wsl_facts_failed", { err }); }
+      wslLoading = null;
+      refresh();
+    })();
+    return wslLoading;
+  };
+
+  // ── SSH ──
+  const conns = new Map<string, Conn>();
+  /** This install's id (§5.1.13): made at first use, kept in settings. */
+  const pcId = (): string => {
+    const have = settings.get().targets.pcId;
+    if (/^[0-9a-f]{32}$/.test(have)) return have;
+    const id = parts.randomHex(16);
+    try { settings.update({ targets: { ...settings.own().targets, pcId: id } }); } catch (err) { log.error("targets.pc_id_failed", { err }); }
+    return id;
+  };
+  let connections: Connections | null = null;
+  try {
+    connections = parts.connections({
+      log: log.child("ssh"), os: deps.os, userData: deps.userData, appDir: deps.appDir, execPath: deps.execPath, resourcesPath: deps.resourcesPath,
+      settings, admin, prompts: promptWindow, fetch: deps.fetch,
+      // This computer over loopback only for the integration tests, and only in a development copy (R10).
+      allowLoopback: !deps.packaged && deps.devEnv("EMBER_TEST_ALLOW_LOOPBACK_SSH") === "1",
+      audit: deps.audit, pcId, wsl: () => wsl, jobHost: deps.jobHost,
+    });
+  } catch (err) {
+    log.error("targets.connections_failed", { err });
+  }
+  const hostOf = (hostId: string) => settings.get().targets.hosts.find(h => h.id === hostId) ?? null;
+  const saveHost = (h: HostRecord) => {
+    const own = settings.own().targets;
+    const hosts = own.hosts.some(x => x.id === h.id) ? own.hosts.map(x => (x.id === h.id ? h : x)) : [...own.hosts, h];
+    settings.update({ targets: { ...own, hosts } });
+  };
+
+  // ── The registry ──
+  let entries: TargetEntry[] = [];
+  let lastPushed = "";
+  // Nothing set up: no badge (the handle is told only when the picker leaves this computer).
+  let lastBadge = "null";
+  const commandsOf = (id: TargetId): CommandService | null => {
+    const p = parseTargetId(id);
+    if (!p) return null;
+    if (p.kind === "local") return localService;
+    if (p.kind === "wsl") return wslService(p.name);
+    return conns.get(p.name)?.target?.service ?? null;
+  };
+  const linkViews = (): Map<string, LinkView> => {
+    const m = new Map<string, LinkView>();
+    for (const [hostId, c] of conns) {
+      const t = c.target;
+      const why = t ? safeCap(t.service)?.why : undefined;
+      m.set(hostId, { state: c.state, ...(t ? { desktop: t.desktop(), commands: safeState(t.service), ...(why ? { commandsWhy: why } : {}) } : {}) });
+    }
+    return m;
+  };
+  const rebuild = () => {
+    entries = buildRegistry({
+      os: deps.os, admin: admin(), settings: settings.get(), localDesktop: !!deps.localHands,
+      commands: id => safeState(commandsOf(id)), wsl: wslFacts, links: linkViews(),
+    });
+  };
+  const activeId = (): TargetId => activeOf(entries, settings.get().targets.active);
+  const entryOf = (id: TargetId) => entries.find(e => e.id === id) ?? null;
+  /** Each target's summary, with why a host's last connection failed while it isn't connected (the settings row keeps it). */
+  const summaries = (): TargetSummary[] => {
+    const a = activeId();
+    return entries.map(e => {
+      const problem = e.kind === "ssh" && e.host && (e.state === "off" || e.state === "lost") ? conns.get(e.host.id)?.problem : undefined;
+      return { ...summaryOf(e, a), ...(problem ? { problem } : {}) };
+    });
+  };
+  const ipc = registerTargetsIpc({
+    ipc: deps.ipc, isHome: deps.isHome, log,
+    // The settings window opening is a moment to look for WSL distros again (WA caches them for a minute).
+    list: () => { if (wsl) void refreshWsl(); return summaries(); },
+    act: a => act(a),
+  });
+  /** Rebuilds the registry and tells the renderers what changed (the settings list, the handle's badge). */
+  function refresh(): void {
+    if (disposed) return;
+    try { rebuild(); } catch (err) { log.error("targets.registry_failed", { err }); return; }
+    const list = summaries();
+    const json = JSON.stringify(list);
+    if (json !== lastPushed) { lastPushed = json; ipc.push(list); }
+    const active = list.find(s => s.active);
+    const badge = active && active.id !== LOCAL_TARGET ? active : undefined;
+    const bj = JSON.stringify(badge ?? null);
+    if (bj !== lastBadge) {
+      lastBadge = bj;
+      try { deps.showState({ target: badge }); } catch (err) { log.warn("targets.badge_failed", { err }); }
+    }
+  }
+  /** The user picked where to work: a computer that comes back after a loss doesn't take that over (Conn.wasActive). */
+  const userPicked = () => { for (const c of conns.values()) c.wasActive = false; };
+  const setActive = (id: TargetId) => {
+    const own = settings.own().targets;
+    if (own.active !== id) { try { settings.update({ targets: { ...own, active: id } }); } catch (err) { log.error("targets.active_failed", { err }); } }
+    refresh();
+  };
+
+  // ── Bubbles: through the shared bubble's notice board (deps.bubbles), else main's guarded setter ──
+  // One runtime bubble at a time, by key ("connecting:build-01", "lost:build-01"): a newer one replaces it, and a hide by
+  // key only hides the one with that key. The board decides when it reaches the screen and keeps anything else from
+  // replacing or hiding it meanwhile (a question still holds it off, and it shows once that is answered). Offers
+  // ("offer:3", "offer:wsl") go on a board of their own when main gives one (deps.offers), one at a time the same way:
+  // a held Lost or "Can't connect" isn't replaced by an offer, and comes back after one that covered it.
+  let bubbleSeq = 0;
+  let shown: { key: string; seq: number } | null = null;
+  /** The offer on the offers' board (deps.offers), by key ("offer:3", "offer:wsl"), while it has one. */
+  let offerShown: { key: string; seq: number } | null = null;
+  /**
+   * The keyboard's way to what a bubble's buttons do (they take only the mouse: the overlay never takes the keyboard):
+   * the same buttons in settings, Computers.
+   */
+  const keyboard = (section?: "Computers" | "Commands"): string => {
+    let key: string | null = null;
+    try { key = deps.settingsKey?.() ?? null; } catch { /* said without a key */ }
+    return words.keyboardRoute(key, section);
+  };
+  const board = (): NoticeBoard | null => { try { return deps.bubbles?.() ?? null; } catch { return null; } };
+  const offerBoard = (): NoticeBoard | null => { try { return deps.offers?.() ?? null; } catch { return null; } };
+  const isOffer = (key: string) => key.startsWith("offer:");
+  /**
+   * The bubble `key` is still on its board and hasn't reached the screen since it was posted (as `seq`, when given):
+   * nobody has seen it. False when it shows at once (main's own setter) or the board can't say.
+   */
+  const unseenYet = (key: string, seq?: number): boolean => {
+    const ob = isOffer(key) ? offerBoard() : null;
+    const mine = ob ? offerShown : shown;
+    const b = ob ?? board();
+    try { return !!b && mine?.key === key && (seq === undefined || mine.seq === seq) && b.visible && b.shownAt === null; } catch { return false; }
+  };
+  /**
+   * Offers nobody asked for (postUnasked), by their bubble's seq: what to do if one leaves its board without reaching the
+   * screen (it waited too long, or another offer took its place). The user never saw it, so it may come again.
+   */
+  const unaskedGone = new Map<number, () => void>();
+  const bubble = (key: string, said: Said, o: number | NoticeOptions = {}) => {
+    const { emotion, ...b } = said;
+    const opts: NoticeOptions = typeof o === "number" ? { ms: o } : o;
+    const seq = ++bubbleSeq;
+    // An offer on its own board: it waits behind (or covers) the held bubbles of the other, which stay.
+    const ob = isOffer(key) ? offerBoard() : null;
+    if (ob) {
+      // One nobody asked for that this replaces before it reached the screen may be offered again (R-stale-offer).
+      const prev = offerShown;
+      const replaced = prev && unseenYet(prev.key, prev.seq) ? unaskedGone.get(prev.seq) : undefined;
+      if (prev) unaskedGone.delete(prev.seq);
+      offerShown = { key, seq };
+      try { ob.post(b, { emotion, ...opts }); } catch (err) { log.warn("targets.bubble_failed", { err }); }
+      replaced?.();
+      return;
+    }
+    shown = { key, seq };
+    const nb = board();
+    if (nb) { try { nb.post(b, { emotion, ...opts }); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
+    try { deps.showState({ bubble: { ...IDLE_BUBBLE, visible: true, ...b } }); } catch (err) { log.warn("targets.bubble_failed", { err }); return; }
+    if (opts.ms) parts.setTimeout(() => { if (shown?.seq === seq) hideBubble(key); }, opts.ms);
+  };
+  const hideBubble = (key?: string) => {
+    const ob = key !== undefined && isOffer(key) ? offerBoard() : null;
+    if (ob) {
+      if (offerShown?.key !== key) return;
+      offerShown = null;
+      try { ob.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); }
+      return;
+    }
+    if (key !== undefined && shown?.key !== key) return;
+    shown = null;
+    const nb = board();
+    if (nb) { try { nb.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } return; }
+    try { deps.showState({ bubble: IDLE_BUBBLE }); } catch { /* the overlay went with Ember */ }
+  };
+
+  // ── Questions with panels (§3.9): which one is up ──
+  let current: { n: number; question: Question } | null = null;
+  const questionUp = () => current !== null || (deps.confirmer()?.waiting ?? false);
+
+  // ── Consent cards asked directly (settings' switches, connecting) ──
+  let cardSeq = 0;
+  /**
+   * The card's answer: "yes" (with its own text's hash), "no" (Not now, closed, or the card taken away), or "unshown"
+   * when nobody saw it (no window to show it in, its page crashed: the prompt window refused it), which is said as
+   * CARD_UNSHOWN, never as the user's Not now. `signal`: the connection the card belongs to; cancelled, forgotten or
+   * stopped, the card leaves the screen as a no.
+   */
+  const askCard = async (card: ConsentPanel, signal?: AbortSignal): Promise<"yes" | "no" | "unshown"> => {
+    const id = `consent-${++cardSeq}`;
+    if (signal?.aborted) return "no";
+    const drop = () => { try { promptWindow.dismiss(id); } catch (err) { log.warn("targets.consent_dismiss_failed", { err }); } };
+    signal?.addEventListener("abort", drop, { once: true });
+    try {
+      const a = await promptWindow.ask({ id, kind: "consent-direct", consent: card });
+      if (!a.ok && a.refused) return "unshown";
+      return consentYes(card, a) ? "yes" : "no";
+    } catch (err) {
+      log.warn("targets.consent_failed", { feature: card.feature, err });
+      return "unshown";
+    } finally {
+      signal?.removeEventListener("abort", drop);
+    }
+  };
+  /** What a consent card that didn't come back yes ends with in the settings window: the user's no, or why nobody was asked. */
+  const cardNo = (said: "no" | "unshown"): string => (said === "unshown" ? CARD_UNSHOWN : "Not now.");
+
+  // ── Connecting ──
+  /** What each host's connecting bubble says now (its progress rewrites it only when this changes). */
+  const progressSaid = new Map<string, string>();
+  const connState = (hostId: string): Conn => {
+    let c = conns.get(hostId);
+    if (!c) { c = { state: "closed", link: null, target: null, abort: null, offs: [], activate: false }; conns.set(hostId, c); }
+    return c;
+  };
+  /**
+   * The tasks on `hostId` stop (main's AgentHost): what they were doing there can't go on; `only`: those on its desktop.
+   * Each stopped task says why (`cause`) instead of a bare "Stopped.".
+   */
+  const stopTasks = (hostId: string, cause: words.StopCause, only?: "desktop") => {
+    try {
+      deps.stopTasksOn?.(targetIdOf("ssh", hostId), only, words.stoppedTask(hostId, cause));
+    } catch (err) {
+      log.warn("targets.stop_tasks_failed", { err });
+    }
+  };
+  const dropTarget = (c: Conn) => {
+    for (const off of c.offs.splice(0)) { try { off(); } catch { /* the link is gone */ } }
+    try { c.target?.dispose(); } catch (err) { log.warn("targets.remote_dispose_failed", { err }); }
+    c.target = null;
+    c.link = null;
+  };
+  const sshFacts = (host: HostRecord, resolved: HostRecord["resolved"]) => ({
+    label: host.id, resolved, ...(host.extra ? { extra: host.extra } : {}),
+    ...(host.via && host.via !== "local" ? { viaLabel: distroLabel(host.via.slice(4)) } : {}),
+    desktopOff: admin().policy.ssh?.desktop === false, graceSeconds: admin().policy.ssh?.commandGraceSeconds ?? 20,
+    // The organisation's own model service: the card says what is read goes there, not to GitHub Copilot.
+    byok: admin().policy.provider !== undefined,
+    // Asked again because the SSH settings now send the name elsewhere: the card says from where to where.
+    changedFrom: sshChangedFrom(host, resolved),
+  });
+  /** Builds the target for a link that came up (a connect, or SA's own reconnect). */
+  const adopt = (hostId: string, link: RemoteLink): boolean => {
+    const host = hostOf(hostId);
+    const c = connState(hostId);
+    if (!host) { void link.close("forgotten").catch(() => undefined); return false; }
+    if (c.link === link && c.target) return true;
+    dropTarget(c);
+    let target: RemoteTarget;
+    try {
+      target = createRemoteTarget({
+        host, link, log: log.child(`ssh-${hostId}`), settings, admin, window: commandWindow, makeParts: parts.remoteParts,
+        onDesktopLost: locked => {
+          // A screen that locks or a session that goes inactive mid-task stops the tasks using that desktop (§5.3.4 step
+          // 8); tasks running only commands there go on (their window is on this PC). The next task asks for it again.
+          stopTasks(hostId, locked ? "locked" : "inactive", "desktop");
+          if (activeId() === targetIdOf("ssh", hostId)) bubble(`locked:${hostId}`, say(locked ? words.screenLocked(host.id) : words.sessionInactive(host.id), [], "notice"), INFO_MS);
+          refresh();
+        },
+        onConsoleStop: () => {
+          // Everything stopped there (§5.3.9): its tasks here too, or a worker would go on with commands after the Stop.
+          stopTasks(hostId, "stopped-there");
+          bubble(`console:${hostId}`, say(words.stoppedFromRemote(host.id), [], "notice"), INFO_MS);
+        },
+      });
+    } catch (err) {
+      log.error("targets.remote_parts_failed", { err });
+      void link.close("parts").catch(() => undefined);
+      c.state = "closed";
+      refresh();
+      return false;
+    }
+    c.link = link;
+    c.target = target;
+    delete c.problem;
+    c.state = link.state === "stalled" ? "stalled" : link.state === "ready" ? "ready" : "closed";
+    try { c.offs.push(link.onState(s => onLinkState(hostId, link, s))); } catch (err) { log.warn("targets.link_listen_failed", { err }); }
+    return true;
+  };
+  function onLinkState(hostId: string, link: RemoteLink, s: "ready" | "stalled" | "lost" | "closed"): void {
+    const c = conns.get(hostId);
+    if (!c || c.link !== link) return;
+    if (s === "stalled") {
+      c.state = "stalled";
+      // Stalled at 5 s of silence; the grace counts from the last frame, as the command tabs' countdown does.
+      bubble(`stalled:${hostId}`, say(words.stalled(hostId, link.welcome.graceSeconds - 5), [`conn:${hostId}:disconnect`], "trouble"));
+    } else if (s === "ready") {
+      c.state = "ready";
+      hideBubble(`stalled:${hostId}`);
+    } else if (s === "lost") {
+      dropTarget(c);
+      c.state = "lost";
+      stopTasks(hostId, "dropped");
+      // Work moves here until it is back (and back there if SA reconnects and nothing else was picked meanwhile).
+      c.wasActive = settings.get().targets.active === targetIdOf("ssh", hostId);
+      if (c.wasActive) setActive(LOCAL_TARGET);
+      // It stays until the user answers it or the connection comes back: the stopped tasks' results wait behind it.
+      bubble(`lost:${hostId}`, say(words.lost(hostId, c.wasActive), [`conn:${hostId}:reconnect`, `conn:${hostId}:stop`], "trouble", keyboard()));
+    } else {
+      dropTarget(c);
+      c.state = "closed";
+      stopTasks(hostId, "closed");
+      hideBubble(`stalled:${hostId}`);
+      if (settings.get().targets.active === targetIdOf("ssh", hostId)) {
+        setActive(LOCAL_TARGET);
+        bubble("back", say(words.backHere(hostId), [], "notice"), INFO_MS);
+      }
+    }
+    refresh();
+  }
+  /**
+   * Connects a host the user chose (settings, an offer, the picker): its card first when needed, then the link. `again`:
+   * the second try after the user said yes to a changed machine's card.
+   */
+  async function connect(hostId: string, o: { interactive: boolean; activate: boolean; again?: boolean }): Promise<ActResult> {
+    if (!sshAllowed(admin())) return { ok: false, message: "Your organisation doesn't allow Ember on other computers." };
+    if (!connections) return { ok: false, message: "Ember can't connect to other computers here." };
+    const conn = connections;
+    let host = hostOf(hostId);
+    if (!host) return { ok: false, message: "Ember doesn't know that computer." };
+    const c = connState(hostId);
+    // Connected again by the user's own choice: that choice (o.activate) says where to work, not the one before the loss.
+    c.wasActive = false;
+    // A new try: the last one's reason is no longer what the settings row says.
+    delete c.problem;
+    if (c.state === "connecting") { c.activate ||= o.activate; return { ok: true }; }
+    if ((c.state === "ready" || c.state === "stalled") && c.target) { if (o.activate) setActive(targetIdOf("ssh", hostId)); return { ok: true }; }
+    const label = host.id;
+    const abort = new AbortController();
+    c.abort = abort;
+    c.state = "connecting";
+    c.activate = o.activate;
+    refresh();
+    const first = words.connecting(label, { step: "checking" });
+    progressSaid.set(hostId, first.text);
+    bubble(`connecting:${hostId}`, say(first, [`conn:${hostId}:cancel`], "working"));
+    const stopped = (message: string): ActResult => { c.state = "closed"; c.abort = null; refresh(); hideBubble(`connecting:${hostId}`); return { ok: false, message }; };
+    /** The connect failed: said until the user closes it (it may be the only place the reason shows), and kept for the row. */
+    const fail = (message: string, retry = false, said = message): ActResult => {
+      c.state = "closed";
+      c.abort = null;
+      c.problem = plainMarkdown(message);
+      refresh();
+      bubble(`fail:${hostId}`, say(words.cantConnect(label, said, retry), retry ? [`conn:${hostId}:reconnect`, CLOSE_ID] : [CLOSE_ID], "failed", retry ? keyboard() : undefined));
+      return { ok: false, message };
+    };
+    /** A consent card that didn't come back yes: cancelled meanwhile or Not now end quietly; one nobody saw is said, with Try again. */
+    const notYes = (said: "no" | "unshown"): ActResult => (abort.signal.aborted ? stopped("Cancelled.") : said === "unshown" ? fail(CARD_UNSHOWN, true) : stopped("Not now."));
+    try {
+      // What ssh -G makes of it now: a changed user, hostname or port (or a card never accepted) asks again (§7.4).
+      const now = await conn.resolve(host.dest, { ...(host.port ? { port: host.port } : {}), ...(host.extra ? { extra: host.extra } : {}), ...(host.via ? { via: host.via } : {}) });
+      if (abort.signal.aborted) return stopped("Cancelled.");
+      const resolved = { user: now.user, hostname: now.hostname, port: now.port, jump: [...now.jump] };
+      if (sshNeedsConsent(host, resolved)) {
+        const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", hostId), facts: sshFacts(host, resolved) });
+        // Cancelled, forgotten or stopped by the kill switch while the card was up: the card goes; nothing is saved.
+        const said = await askCard(card, abort.signal);
+        if (said !== "yes") return notYes(said);
+        if (abort.signal.aborted) return stopped("Cancelled.");
+        host = { ...host, resolved, consent: consentGiven("ssh", parts.now()) };
+        saveHost(host);
+      }
+      if (abort.signal.aborted) return stopped("Cancelled.");
+      const link = await conn.connect(host, { interactive: o.interactive, signal: abort.signal });
+      // A link that came up as the user cancelled (or pressed the kill switch) is let go, never adopted.
+      const letGo = async (message: string): Promise<ActResult> => { await conn.disconnect(hostId).catch(() => undefined); return stopped(message); };
+      if (abort.signal.aborted) return letGo("Cancelled.");
+      // Another computer under the same name than the one the user said yes to: asked again (§7.4).
+      if (machineChanged(host, link.welcome.machineIdHash)) {
+        const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
+        const said = await askCard(card, abort.signal);
+        if (said !== "yes") { await conn.disconnect(hostId).catch(() => undefined); return notYes(said); }
+        if (abort.signal.aborted) return letGo("Cancelled.");
+        host = { ...host, consent: consentGiven("ssh", parts.now()) };
+      }
+      host = { ...host, machineIdHash: link.welcome.machineIdHash, lastUsed: parts.now().toISOString() };
+      saveHost(host);
+      c.abort = null;
+      if (!adopt(hostId, link)) {
+        await conn.disconnect(hostId).catch(() => undefined);
+        return fail(`Ember can't work on ${label} from here yet.`);
+      }
+      if (c.activate) setActive(targetIdOf("ssh", hostId)); else refresh();
+      const headless = c.target?.desktop() === "none";
+      // A headless host is worked on through commands only: said so only when they aren't off there (L1: off until
+      // the user's card), else what turns them on.
+      const off = headless && safeState(c.target?.service ?? null) === "off";
+      let byAdmin = false;
+      try { byAdmin = off && c.target?.service.mode() === "off"; } catch { byAdmin = true; } // a mode that can't be read is off
+      const how: words.ConnectedHow = !headless ? "desktop" : !off ? "commands" : byAdmin ? "commands-off-by-admin" : "commands-off";
+      bubble(`connected:${hostId}`, say(words.connected(label, how), [`conn:${hostId}:commands`], how === "commands-off" ? "decide" : how === "commands-off-by-admin" ? "failed" : "good", how === "commands-off" ? keyboard("Commands") : undefined), how === "commands-off" ? undefined : INFO_MS);
+      return { ok: true };
+    } catch (err) {
+      if (abort.signal.aborted) return stopped("Cancelled.");
+      // SA found another computer under this name after its probe, before uploading anything (§7.4): the card again
+      // (once), and on a yes the old machine is forgotten and Ember connects afresh (SA then remembers the new one).
+      if (err instanceof ConnectError && err.kind === "machine-changed" && !o.again) {
+        const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", hostId), facts: { ...sshFacts(host, host.resolved), machineChanged: true } });
+        const said = await askCard(card, abort.signal);
+        if (said !== "yes") return notYes(said);
+        const now = hostOf(hostId);
+        if (abort.signal.aborted || !now) return stopped("Cancelled.");
+        const { machineIdHash: _was, ...rest } = now;
+        try { saveHost({ ...rest, consent: consentGiven("ssh", parts.now()) }); } catch (e) { log.warn("targets.host_save_failed", { err: e }); return fail(`Ember couldn't connect to ${label}.`); }
+        c.state = "closed";
+        c.abort = null;
+        return connect(hostId, { ...o, again: true });
+      }
+      // The user closed a sign-in card (Cancel, Esc): ended as the bubble's Cancel does, with no error bubble.
+      if (err instanceof ConnectError && err.kind === "cancelled") return stopped("Cancelled.");
+      if (err instanceof ConnectError && err.kind === "host-key-changed") {
+        // Its card says it whole, with the fix's command as code (§4.1); the bubble says it in a sentence.
+        showKeyChanged(label);
+        return fail(err.fix ? `${err.message} ${err.fix}` : err.message, false, words.identityChanged(label));
+      }
+      if (err instanceof ConnectError) return fail(err.fix ? `${err.message} ${err.fix}` : err.message, err.retry);
+      log.warn("targets.connect_failed", { err });
+      return fail(`Ember couldn't connect to ${label}.`);
+    }
+  }
+  /** A changed host key, as the prompt window's card says it (§4.1): shown once per failure, closed by the user. */
+  function showKeyChanged(host: string): void {
+    try {
+      void promptWindow.ask({ id: `key-changed-${++cardSeq}`, kind: "host-key-changed", host }).catch(err => log.warn("targets.key_card_failed", { err }));
+    } catch (err) {
+      log.warn("targets.key_card_failed", { err });
+    }
+  }
+  /** Removals under way, by host: the row's Cancel (a disconnect meanwhile) stops one (review #191). */
+  const removals = new Map<string, AbortController>();
+  async function disconnect(hostId: string): Promise<void> {
+    removals.get(hostId)?.abort();
+    const c = conns.get(hostId);
+    if (c?.abort) c.abort.abort();
+    if (c) delete c.problem;
+    // Its link listener goes with the target: the tasks there stop here, as at any close.
+    if (c) { if (c.target) stopTasks(hostId, "closed"); dropTarget(c); c.state = "closed"; c.wasActive = false; }
+    try { await connections?.disconnect(hostId); } catch (err) { log.warn("targets.disconnect_failed", { err }); }
+    if (settings.get().targets.active === targetIdOf("ssh", hostId)) setActive(LOCAL_TARGET);
+    refresh();
+  }
+  /**
+   * A destination the user typed (settings' Add) or Ember saw them use: its record, then its card, then the link.
+   * `bubble`: asked from a bubble's button (Bring Ember, offer_connect's Connect), where nothing else shows the answer,
+   * so a refusal before connect() (which bubbles its own) gets connect()'s failure bubble; Not now says nothing.
+   */
+  async function addAndConnect(raw: { dest: string; port?: number; extra?: HostRecord["extra"]; via?: HostRecord["via"] }, o: { bubble?: boolean } = {}): Promise<ActResult> {
+    const refused = (message: string): ActResult => {
+      const label = hostPart(raw.dest);
+      if (o.bubble) bubble(`fail:${label}`, say(words.cantConnect(label, message, false), [CLOSE_ID], "failed"));
+      return { ok: false, message };
+    };
+    if (!sshAllowed(admin())) return refused("Your organisation doesn't allow Ember on other computers.");
+    if (!connections) return refused("Ember can't connect to other computers here.");
+    const existing = settings.get().targets.hosts.find(h => sameDest(h, raw.dest, raw.port));
+    if (existing) return connect(existing.id, { interactive: true, activate: true });
+    let resolved: HostRecord["resolved"];
+    try {
+      const r = await connections.resolve(raw.dest, { ...(raw.port ? { port: raw.port } : {}), ...(raw.extra ? { extra: raw.extra } : {}), ...(raw.via ? { via: raw.via } : {}) });
+      resolved = { user: r.user, hostname: r.hostname, port: r.port, jump: [...r.jump] };
+    } catch (err) {
+      if (!(err instanceof ConnectError)) log.warn("targets.resolve_failed", { err });
+      return refused(err instanceof ConnectError ? (err.fix ? `${err.message} ${err.fix}` : err.message) : "Ember couldn't look that computer up.");
+    }
+    // The same computer and login under another spelling: the record Ember has, connected, and said so (review #181).
+    const same = settings.get().targets.hosts.find(h => sameIdentity(h, resolved, raw.via));
+    if (same) {
+      const was = conns.get(same.id)?.state;
+      const r = await connect(same.id, { interactive: true, activate: true });
+      if (!r.ok) return r;
+      // From a bubble's button, an already connected one has nothing else on screen to say where Ember is.
+      if (o.bubble && (was === "ready" || was === "stalled")) {
+        bubble(`connected:${same.id}`, say(words.alreadyAdded(same.id), [], "good"), INFO_MS);
+      }
+      return { ok: true, message: `Already added as ${same.id}.` };
+    }
+    const id = hostIdFor(hostPart(raw.dest), new Set(settings.get().targets.hosts.map(h => h.id)));
+    const host: HostRecord = {
+      id, dest: raw.dest, ...(raw.port ? { port: raw.port } : {}), ...(raw.extra ? { extra: raw.extra } : {}), ...(raw.via ? { via: raw.via } : {}),
+      resolved, consent: { version: 0, at: null },
+    };
+    const card = sshConsent({ os: deps.os, stopKey: stopKeyNow(), target: targetIdOf("ssh", id), facts: sshFacts(host, resolved) });
+    const said = await askCard(card);
+    if (said !== "yes") return said === "unshown" ? refused(CARD_UNSHOWN) : { ok: false, message: "Not now." };
+    try { saveHost({ ...host, consent: consentGiven("ssh", parts.now()) }); } catch (err) {
+      log.warn("targets.host_save_failed", { err });
+      return refused("Ember couldn't save that computer.");
+    }
+    return connect(id, { interactive: true, activate: true });
+  }
+  async function forget(hostId: string): Promise<void> {
+    await disconnect(hostId);
+    conns.delete(hostId);
+    const own = settings.own().targets;
+    settings.update({ targets: { ...own, hosts: own.hosts.filter(h => h.id !== hostId), ...(own.active === targetIdOf("ssh", hostId) ? { active: LOCAL_TARGET } : {}) } });
+    forgetCommands(settings, targetIdOf("ssh", hostId));
+    refresh();
+  }
+
+  // ── The settings window's acts ──
+  async function act(a: TargetsAct): Promise<ActResult> {
+    switch (a.kind) {
+      case "activate": {
+        rebuild();
+        const e = entryOf(a.id);
+        if (!e || e.listedOnly) return { ok: false, message: e?.why ?? "Ember doesn't know that computer." };
+        userPicked();
+        if (e.kind === "ssh" && e.host && e.state !== "ready") return connect(e.host.id, { interactive: true, activate: true });
+        setActive(a.id);
+        return { ok: true };
+      }
+      case "connect": return connect(a.hostId, { interactive: true, activate: true });
+      case "disconnect": await disconnect(a.hostId); return { ok: true };
+      case "forget": await forget(a.hostId); return { ok: true };
+      case "uninstall": {
+        const host = hostOf(a.hostId);
+        if (!host || !connections) return { ok: false, message: "Ember doesn't know that computer." };
+        // The PC then forgets the host record (§5.2.7): Ember isn't there any more.
+        const removal = new AbortController();
+        removals.set(host.id, removal);
+        try { await connections.uninstall(host, { signal: removal.signal }); await forget(host.id); return { ok: true }; } catch (err) {
+          if (removal.signal.aborted) return { ok: false, message: `Stopped removing Ember's helper from ${host.id}. Part of it may still be there: remove it again to finish.` };
+          return { ok: false, message: err instanceof ConnectError ? err.message : `Ember couldn't remove its helper from ${host.id}.` };
+        } finally {
+          if (removals.get(host.id) === removal) removals.delete(host.id);
+        }
+      }
+      case "add": {
+        const d = splitDest(a.dest);
+        if (!d) return { ok: false, message: "That isn't an SSH host Ember can use. Type an alias from your SSH config, or user@host." };
+        return addAndConnect(d);
+      }
+      case "wsl": return setWsl(a.on);
+      case "commands": return setCommands(a.id, a.on, a.askEvery);
+      case "offerSsh":
+        settings.update({ targets: { ...settings.own().targets, offerSsh: a.on } });
+        return { ok: true };
+      case "openCommands":
+        commandWindow.show();
+        return { ok: true };
+      default:
+        return { ok: false, message: "Ember didn't understand that request." };
+    }
+  }
+  async function setWsl(on: boolean): Promise<ActResult> {
+    if (!wslAllowed(admin())) return { ok: false, message: "Your organisation doesn't allow Ember to work in WSL." };
+    if (!wsl) return { ok: false, message: "WSL isn't installed on this computer." };
+    const own = settings.own().targets;
+    if (!on) { settings.update({ targets: { ...own, wsl: { ...own.wsl, on: false } } }); refresh(); return { ok: true }; }
+    if (!consentCurrent("wsl", own.wsl.consent)) {
+      await refreshWsl();
+      const d = defaultDistro(wslFacts);
+      const card = wslConsent({ ...(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" }), byok: admin().policy.provider !== undefined });
+      const said = await askCard(card);
+      if (said !== "yes") return { ok: false, message: cardNo(said) };
+      settings.update({ targets: { ...settings.own().targets, wsl: { on: true, consent: consentGiven("wsl", parts.now()) } } });
+    } else {
+      settings.update({ targets: { ...own, wsl: { ...own.wsl, on: true } } });
+    }
+    await refreshWsl(true);
+    return { ok: true };
+  }
+  async function setCommands(id: TargetId, on: boolean, askEvery?: boolean): Promise<ActResult> {
+    rebuild();
+    const e = entryOf(id);
+    if (!e) return { ok: false, message: "Ember doesn't know that computer." };
+    if (on) {
+      const svc = commandsOf(id);
+      const mode = e.kind === "ssh" && svc ? svc.mode() : commandMode(admin(), e.kind);
+      if (mode === "off") {
+        return { ok: false, message: e.kind === "local" ? "Your organisation has turned off commands on this computer." : e.kind === "wsl" ? "Your organisation has turned off commands in WSL." : "Your organisation has turned off commands on computers reached over SSH." };
+      }
+      const was = settings.get().commands[id];
+      if (!consentCurrent("commands", was?.consent)) {
+        const card = commandsConsent({ os: deps.os, stopKey: stopKeyNow(), target: id, targetLabel: e.label, facts: cardFacts(e) });
+        const said = await askCard(card);
+        if (said !== "yes") return { ok: false, message: cardNo(said) };
+        const own = settings.own().commands;
+        settings.update({ commands: { ...own, [id]: { on: true, askEvery: askEvery ?? own[id]?.askEvery ?? false, consent: consentGiven("commands", parts.now()) } } });
+        refresh();
+        return { ok: true };
+      }
+    }
+    setCommandsSwitch(settings, id, on, askEvery);
+    refresh();
+    return { ok: true };
+  }
+  /** What the commands card says about a target besides its common text (§8.4.3 line 4). */
+  const cardFacts = (e: TargetEntry) => {
+    const privileged = e.kind === "local" ? elevated()
+      : e.kind === "wsl" ? e.distro?.defaultUid === 0 || (wslServices.get(e.distro?.name ?? "")?.facts()?.privileged ?? false)
+        : safeCap(commandsOf(e.id))?.askEvery === "root";
+    return { kind: e.kind, privileged, windows: e.kind === "local" && deps.os === "win32", podman: e.kind === "wsl" && !!e.distro && isToolDistro(e.distro), byok: admin().policy.provider !== undefined };
+  };
+
+  // ── Panel answers (the command card's and a consent card's own buttons) ──
+  // Each window answers only its own kind of question (R7: a command is allowed only from the command window's card, a
+  // consent card only from the prompt window's): the Confirmer checks the hash, not which window sent it. "Not now"
+  // passes from either (the Confirmer takes it from anywhere).
+  const confirmAnswer = (kind: "command" | "consent") => (a: PanelAnswer): boolean => {
+    if (a.answer !== "deny" && (current?.n !== a.n || current.question.panel?.kind !== kind)) {
+      log.warn("targets.panel_answer_refused", { kind });
+      return false;
+    }
+    try { return deps.confirmer()?.answer(`q${a.n}:${a.answer}`, "panel", { sha256: a.sha256 }) === true; } catch (err) { log.warn("targets.panel_answer_failed", { err }); return false; }
+  };
+  if (commandWindow.onAnswer) {
+    commandWindow.onAnswer(confirmAnswer("command"));
+  } else {
+    // The card's Allow sends COMMANDS_IPC.answer; only the command window's own page is heard (§3.9.1).
+    deps.ipc.on(COMMANDS_IPC.answer, (e, raw) => {
+      let mine: boolean;
+      try { mine = commandWindow.owns(e.sender); } catch { mine = false; }
+      if (!mine) { log.warn("targets.ipc_refused", { channel: COMMANDS_IPC.answer }); return; }
+      const r = raw as { n?: unknown; answer?: unknown; sha256?: unknown } | null;
+      if (!r || typeof r !== "object" || typeof r.n !== "number" || !Number.isSafeInteger(r.n) || (r.answer !== "once" && r.answer !== "deny")
+        || typeof r.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(r.sha256)) return;
+      confirmAnswer("command")({ n: r.n, answer: r.answer, sha256: r.sha256 });
+    });
+  }
+  // A consent question's yes comes only from its card's own button; without UI's hook it can only be declined (fail closed).
+  if (promptWindow.onConsent) promptWindow.onConsent(confirmAnswer("consent"));
+  else log.info("targets.consent_answers_unwired", {});
+  const hidePanel = (q: { n: number; question: Question }) => {
+    const p = q.question.panel;
+    try {
+      if (p?.kind === "command") commandWindow.hideCard(q.n);
+      else if (p?.kind === "consent") promptWindow.hideConsent(q.n);
+    } catch (err) { log.warn("targets.panel_hide_failed", { err }); }
+  };
+  const showPanel = (q: { n: number; question: Question }) => {
+    const p = q.question.panel;
+    try {
+      if (p?.kind === "command") commandWindow.showCard(q.n, p.card);
+      else if (p?.kind === "consent") promptWindow.showConsent(q.n, p.consent);
+    } catch (err) { log.warn("targets.panel_show_failed", { err }); }
+  };
+
+  // ── The ssh noticer and the offers ──
+  let offerSeq = 0;
+  const offers = new Map<number, Offer>();
+  let wslOffered = false;
+  /**
+   * An offer nobody asked for: it waits for the bubble to be free (an answer being read stays) and goes unanswered after
+   * OFFER_MS on screen. It waits only OFFER_MS too: a held "Can't connect" or Lost can stay up for an hour, and by then
+   * what it says may no longer hold (the ssh it names ended). One that couldn't show in time goes unseen, and `unseen`
+   * lets it be offered again, since the user never saw it (R-stale-offer).
+   */
+  const postUnasked = (key: string, said: Said, unseen: () => void): void => {
+    bubble(key, said, { ms: OFFER_MS, claim: "reply" });
+    // bubble() numbered it last.
+    const seq = bubbleSeq;
+    unaskedGone.set(seq, unseen);
+    parts.setTimeout(() => {
+      const gone = unaskedGone.get(seq);
+      unaskedGone.delete(seq);
+      if (disposed || !gone || !unseenYet(key, seq)) return;
+      hideBubble(key);
+      log.info("targets.offer_unseen", {});
+      gone();
+    }, OFFER_MS);
+  };
+  function showSeenOffer(s: SshSeen): void {
+    const k = ++offerSeq;
+    offers.set(k, { kind: "seen", seen: s });
+    const label = hostPart(s.dest);
+    const unseen = () => { offers.delete(k); noticer?.release(seenKey(s)); };
+    if (s.via && s.via !== "local" && !WSL_SSH_PROVEN) {
+      postUnasked(`offer:${k}`, say(words.sshSeenInWsl(label, s.via.slice(4)), [`offer:${k}:later`, `offer:${k}:never`], "decide"), unseen);
+      return;
+    }
+    postUnasked(`offer:${k}`, say(words.sshSeen(label), [`offer:${k}:bring`, `offer:${k}:later`, `offer:${k}:never`], "decide", keyboard()), unseen);
+  }
+  /**
+   * The noticer's look found which of the user's ssh run now (seenKey): an offer up or waiting for one that has ended
+   * goes, as "You're connected to web-07" no longer holds; one nobody saw may come again if the user goes back there.
+   * Ended only where the look read: a WSL distro it couldn't read (its reader timed out) may still run that ssh.
+   */
+  const sshRunning = (keys: ReadonlySet<string>, read: (via: SshSeen["via"]) => boolean): void => {
+    for (const [k, o] of offers) {
+      if (o.kind !== "seen" || keys.has(seenKey(o.seen)) || !read(o.seen.via)) continue;
+      const unseen = unseenYet(`offer:${k}`);
+      offers.delete(k);
+      hideBubble(`offer:${k}`);
+      if (unseen) noticer?.release(seenKey(o.seen));
+    }
+  };
+  const bringSeen = (s: SshSeen) => {
+    const extra: HostRecord["extra"] = {
+      ...(s.jump?.length ? { jump: s.jump } : {}), ...(s.identityFiles?.length ? { identityFiles: s.identityFiles } : {}),
+      ...(s.configFile ? { configFile: s.configFile } : {}), ...(s.options && Object.keys(s.options).length ? { options: s.options } : {}),
+    };
+    void addAndConnect({
+      dest: seenDest(s), ...(s.port ? { port: s.port } : {}), ...(Object.keys(extra).length ? { extra } : {}),
+      ...(s.via && s.via !== "local" && WSL_SSH_PROVEN ? { via: s.via } : {}),
+    }, { bubble: true });
+  };
+  const dismissSeen = (s: SshSeen) => {
+    const own = settings.own().targets;
+    const dest = seenDest(s).slice(0, 255);
+    if (own.dismissedOffers.some(d => d.toLowerCase() === dest.toLowerCase())) return;
+    try { settings.update({ targets: { ...own, dismissedOffers: [...own.dismissedOffers, dest].slice(-200) } }); } catch (err) { log.warn("targets.dismiss_failed", { err }); }
+  };
+  /**
+   * SA's noticing with the WSL part read here: the user's own ssh in each distro that runs NOW, by WA's runner for
+   * that distro (runScript without mayBoot: it reads the running set again right before, never starts a stopped
+   * distro, and runs under Ember's job host). The registry's running flags are a cached copy that can be minutes
+   * old, and `wsl.exe -d <distro>` boots a stopped distro: Ember never starts one just to look (§2.7). `o.read` gets
+   * each distro read in full: its reader worked to its end line, or it doesn't run (no ssh runs there). One whose reader
+   * failed, timed out or was cut short, and every one when which of them run can't be told, isn't: its ssh may still
+   * run (R-stale-offer).
+   */
+  const noticeOf = (n: SshNotice): SshNotice => ({
+    sshDestination: argv => n.sshDestination(argv),
+    userSshProcesses: async (os, o) => {
+      const local = await n.userSshProcesses(os);
+      const w = wsl;
+      if (!local || !o?.wsl || !w) return local;
+      let live: Set<string>;
+      try { live = await w.runningNow(); } catch (err) { log.warn("targets.wsl_running_failed", { err }); return local; }
+      for (const distro of o.wsl.distros.slice(0, 8)) {
+        if (!DISTRO_NAME.test(distro)) continue;
+        if (!live.has(distro)) { o.read?.add(`wsl:${distro}`); continue; }
+        let runner: Partial<WslRunner>;
+        try { runner = w.runner(distro) as Partial<WslRunner>; } catch { continue; }
+        if (typeof runner.runScript !== "function") continue; // not WA's runner: nothing is read there
+        const r = await runner.runScript(WSL_READER, { timeoutMs: 5_000 }).catch(() => null);
+        if (!r || r.code !== 0) continue;
+        // Without the reader's end line its output was cut short (the runner keeps about 1 MiB): not read (F-scanmax).
+        const text = r.stdout.toString("utf8");
+        if (!/(?:^|\n)end\n$/.test(text)) continue;
+        local.push(...parseWslReader(text, distro));
+        o.read?.add(`wsl:${distro}`);
+      }
+      return local;
+    },
+  });
+  let noticer: Noticer | null = null;
+  let noticeTimer: unknown = null;
+  // The window the user is in comes from main's window system (or, without that, the hands' tier-3 view of it, which
+  // exists only while Ember may borrow the mouse); without either, no noticing.
+  const look: (() => { app?: string; title?: string } | null) | undefined = deps.activeWindow ? () => deps.activeWindow!() : deps.localHands?.cursor?.activeWindow;
+  if (parts.notice && look) {
+    noticer = createNoticer({
+      os: deps.os, log, notice: noticeOf(parts.notice),
+      // Only once the user has added a computer (said yes to its SSH card): until then nothing new runs at all, as the
+      // first-run screen and the docs promise ("off until you turn them on"; review #33). The switch turns it off.
+      enabled: () => sshAllowed(admin()) && settings.get().targets.offerSsh && settings.get().targets.hosts.length > 0,
+      activeWindow: () => {
+        const w = look();
+        return w && typeof w.app === "string" && typeof w.title === "string" ? { app: w.app, title: w.title } : null;
+      },
+      isTerminal: app => isTerminalWindowApp(app, deps.sys.apps, deps.os),
+      cimAllowed: () => settings.get().targets.hosts.length > 0 || settings.get().targets.dismissedOffers.length === 0,
+      // The distros Ember works in; which of them run is read uncached when the processes are (noticeOf).
+      wsl: () => {
+        if (!wsl || !wslOn() || !wslFacts?.wslExe) return null;
+        const distros = wslFacts.distros.filter(d => entries.some(e => e.distro?.name === d.name && !e.listedOnly)).map(d => d.name);
+        return { exe: wslFacts.wslExe, distros };
+      },
+      // Turned away under this spelling, or under another one of a computer Ember has a record of (review #181).
+      dismissed: s => {
+        const t = settings.get().targets;
+        if (t.dismissedOffers.some(d => d.toLowerCase() === seenDest(s).toLowerCase())) return true;
+        const h = t.hosts.find(x => reaches(x, seenDest(s), s.port));
+        return !!h && t.dismissedOffers.some(d => reaches(h, d, undefined));
+      },
+      connected: s => settings.get().targets.hosts.some(h => reaches(h, seenDest(s), s.port) && ["ready", "stalled", "connecting"].includes(conns.get(h.id)?.state ?? "closed")),
+      questionUp,
+      offer: s => showSeenOffer(s),
+      running: (keys, read) => sshRunning(keys, read),
+      now: () => parts.now().getTime(),
+    });
+    const t = parts.setInterval(() => { try { noticer?.tick(); } catch (err) { log.warn("targets.notice_failed", { err }); } }, NOTICE_TICK_MS);
+    t.unref?.();
+    noticeTimer = t;
+  }
+  function offerWsl(): void {
+    if (wslOffered || questionUp()) return;
+    wslOffered = true;
+    // Unseen (it couldn't show in time), the next request that names WSL offers it again.
+    postUnasked("offer:wsl", say(words.wslFirstSeen(), ["offer:wsl:settings", "offer:wsl:later"], "decide", keyboard()), () => { wslOffered = false; });
+  }
+
+  // ── Start ──
+  rebuild();
+  // A remote picked last time isn't connected after a restart: work here until it is again.
+  if (parseTargetId(settings.get().targets.active)?.kind === "ssh") {
+    try { settings.update({ targets: { ...settings.own().targets, active: LOCAL_TARGET } }); } catch (err) { log.warn("targets.active_reset_failed", { err }); }
+  }
+  if (wsl && wslOn()) void refreshWsl();
+  const offs: (() => void)[] = [];
+  try { offs.push(settings.onChange(() => refresh())); } catch (err) { log.warn("targets.settings_listen_failed", { err }); }
+  if (wsl) { try { offs.push(wsl.onChange(f => { wslFacts = f; refresh(); })); } catch (err) { log.warn("targets.wsl_listen_failed", { err }); } }
+  if (connections) {
+    const cs = connections;
+    try {
+      offs.push(cs.onProgress((hostId, p) => {
+        const c = conns.get(hostId);
+        if (p.step === "ready") {
+          // SA brought the link back by itself (a reconnect after a loss): the target is rebuilt on the new link. Never
+          // for a host the user disconnected meanwhile, and never for another computer than the one the user said yes
+          // to under this name (§7.4): that one is let go, and Reconnect (an interactive connect) shows the card again.
+          const link = cs.link(hostId);
+          if (!link || !c || c.state === "connecting" || c.state === "closed" || c.link === link) return;
+          const host = hostOf(hostId);
+          if (host && machineChanged(host, link.welcome.machineIdHash)) {
+            log.warn("targets.reconnect_machine_changed", { host: hostId });
+            void cs.disconnect(hostId).catch(() => undefined);
+            dropTarget(c);
+            c.state = "lost";
+            bubble(`lost:${hostId}`, say(words.cameBackDifferent(hostId), [`conn:${hostId}:reconnect`], "trouble", keyboard()));
+            refresh();
+            return;
+          }
+          if (adopt(hostId, link)) {
+            // Back where the user was working before it dropped, unless they picked somewhere else meanwhile; said so.
+            const again = c.wasActive === true && settings.get().targets.active === LOCAL_TARGET;
+            c.wasActive = false;
+            if (again) setActive(targetIdOf("ssh", hostId));
+            const lostUp = shown?.key === `lost:${hostId}`;
+            bubble(`back:${hostId}`, say(words.backThere(hostId, again), [], "good"), lostUp ? INFO_MS : { ms: INFO_MS, claim: "reply" });
+            refresh();
+          }
+          return;
+        }
+        if (p.step === "failed" && c?.state === "lost" && !p.retry) {
+          // SA stopped reconnecting after a loss: no more "trying again". A sign-in it can't do in batch mode (a
+          // password, a passphrase outside the agent) is §8.2's "sign in again"; a host key to accept is checked again
+          // (Reconnect shows its card), never called a sign-in (review #196).
+          c.state = "closed";
+          const signIn = p.kind === "auth" || p.kind === "unknown-host-key";
+          const why = p.fix ? `${p.message} ${p.fix}` : p.message;
+          c.problem = plainMarkdown(why);
+          if (p.kind === "host-key-changed") showKeyChanged(hostId);
+          const w = p.kind === "unknown-host-key" ? words.checkKeyAgain(hostId) : signIn ? words.signInAgain(hostId)
+            : words.cantReconnect(hostId, p.kind === "host-key-changed" ? words.identityChanged(hostId) : why);
+          bubble(`lost:${hostId}`, say(w, [`conn:${hostId}:reconnect`], signIn ? "decide" : "failed", keyboard()));
+          refresh();
+          return;
+        }
+        if (c?.state !== "connecting") return;
+        const step = connectStep(p);
+        if (!step) return;
+        // A download reports every network chunk, its words change once a megabyte: only the connecting bubble itself is
+        // updated, only when its words change, and never back over what covered it since (it shows once that goes).
+        const w = words.connecting(hostId, step);
+        if (shown?.key !== `connecting:${hostId}` || progressSaid.get(hostId) === w.text) return;
+        progressSaid.set(hostId, w.text);
+        bubble(`connecting:${hostId}`, say(w, [`conn:${hostId}:cancel`], "working"), { claim: "reply" });
+      }));
+    } catch (err) { log.warn("targets.progress_listen_failed", { err }); }
+  }
+  refresh();
+
+  // ── What the agent asks ──
+  const bindingOf = (e: TargetEntry): TargetBinding => {
+    if (e.kind === "local") return localBinding(deps.os, !!deps.localHands);
+    if (e.kind === "wsl") return wslBinding(e.distro ?? { name: e.id.slice(4), version: 2 }, !!deps.localHands);
+    const t = e.host ? conns.get(e.host.id)?.target : null;
+    if (t) { try { return t.parts.binding(); } catch (err) { log.warn("targets.binding_failed", { err }); } }
+    return hostBinding(e.host ?? { id: e.id.slice(4), resolved: { user: "", hostname: "", port: 22, jump: [] } });
+  };
+  let base: HandsBase | null = null;
+  /** What commands-only hands carry when this screen has none: main's audit and Confirmer, and the PC's policy rules. */
+  const handsBase = (): HandsBase | null => {
+    const audit = deps.audit();
+    const confirmer = deps.confirmer();
+    if (!audit || !confirmer) return null;
+    if (!base || base.audit !== audit || base.confirmer !== confirmer) {
+      base = {
+        audit, confirmer,
+        policy: new PolicyEngine({
+          neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
+          rateLimit: admin().policy.maxActionsPerMinute, actionsAllowed: () => admin().policy.features.actions !== false,
+          confirmEveryAction: () => admin().policy.confirmEveryAction, allowGrants: () => admin().policy.allowGrants,
+          isTerminalApp: name => isTerminalWindowApp(name, deps.sys.apps, deps.os), keys: deps.sys.keys, os: deps.os,
+          isSecurityWindow: deps.sys.privacy.isSecurityWindow,
+        }),
+      };
+    }
+    return base;
+  };
+  /**
+   * A target's commands when they aren't off (its facts read once now, so its shells are its own), with what the
+   * command flow asks beyond the contract: the first-use commands card, and the other computers the user's words name.
+   */
+  const liveCommands = (svc: CommandService | null, id: TargetId): CommandService | null => {
+    if (!svc || safeState(svc) === "off") return null;
+    try { (svc as Partial<WarmService>).warm?.(); } catch { /* the shells stay the defaults */ }
+    return withFlowExtras(svc, {
+      consentPanel: () => {
+        rebuild();
+        const e = entryOf(id);
+        return e ? commandsConsent({ os: deps.os, stopKey: stopKeyNow(), target: id, targetLabel: e.label, facts: cardFacts(e) }) : null;
+      },
+      othersNamed: words => othersNamed(id, words),
+      placesNamed: words => unknownPlaces(words),
+    });
+  };
+  const refuse = (why: string) => ({ ok: false as const, why });
+  /**
+   * Why this computer can't take a task without a screen and with commands off: the user can turn commands on only
+   * where the administrator hasn't turned them off.
+   */
+  const noScreenWhy = (): string => commandMode(admin(), "local") === "off"
+    ? "Ember can't use this computer's screen here, and your organisation has turned off commands on it. Tell the user."
+    : "Ember can't use this computer's screen here, and commands are off. Tell the user they can turn commands on in Ember's settings.";
+  /** SC's desktop.state request for a remote (it never rejects; a failure leaves the binding as it was). */
+  const desktopNow = (t: RemoteTarget): Promise<unknown> => {
+    const refresh = (t.parts as Partial<RemoteTargetExtras>).refreshDesktop;
+    if (typeof refresh !== "function") return Promise.resolve();
+    try { return refresh().catch(() => undefined); } catch (err) { log.warn("targets.desktop_refresh_failed", { err }); return Promise.resolve(); }
+  };
+  const handsFor = (id: TargetId): { ok: true; hands: TargetHands } | { ok: false; why: string } => {
+    try {
+      if (!parseTargetId(id)) return refuse("Ember doesn't know that computer.");
+      rebuild();
+      const e = entryOf(id);
+      if (!e) return refuse("Ember doesn't know that computer, or can't work there now.");
+      // A connected remote's desktop is asked for before every task (§5.3.4 step 8): that starts its desktop helper and
+      // notice there, and is the only way access comes back after a lock, so it goes out even when this one is refused.
+      const live = e.kind === "ssh" && e.host ? conns.get(e.host.id) : undefined;
+      const asking = live?.target && live.state === "ready" && live.target.link.state === "ready" ? desktopNow(live.target) : null;
+      if (e.kind === "local" && !e.usable) return refuse(noScreenWhy());
+      if (e.listedOnly || !e.usable) return refuse(e.why ?? `Ember can't work on ${e.label} now.`);
+      if (e.kind === "ssh") {
+        const c = e.host ? conns.get(e.host.id) : undefined;
+        const t = c?.target;
+        if (!t || !asking || c?.state !== "ready" || t.link.state !== "ready") return refuse(e.why ?? notConnectedWhy(e.label));
+        const audit = deps.localHands?.audit ?? deps.audit();
+        const confirmer = deps.localHands?.confirmer ?? deps.confirmer();
+        if (!audit || !confirmer) return refuse("Ember can't keep its record of what it does, so it won't work there.");
+        const commands = liveCommands(t.service, id);
+        // Reads and steps wait for the desktop's answer.
+        const hands = remoteHands({ hostId: t.hostId, parts: t.parts, base: { audit, confirmer }, commands, ready: () => asking });
+        if (hands.binding.desktop === "none" && !commands) return refuse(`${e.label} has no desktop Ember can use. ${safeCap(t.service)?.why ?? "Commands are off there."}`);
+        return { ok: true, hands };
+      }
+      const binding = bindingOf(e);
+      const commands = liveCommands(commandsOf(id), id);
+      if (binding.desktop === "none" && !commands) {
+        return refuse(e.kind === "local" ? noScreenWhy()
+          : `${binding.desktopWhy ?? `Ember can't use ${e.label}'s screen.`} ${commandMode(admin(), "wsl") === "off" ? "Your organisation has turned off commands in WSL." : "Commands are off there; the user can turn them on in Ember's settings."}`);
+      }
+      const hands = screenHands({ hands: deps.localHands, base: deps.localHands ? null : handsBase(), binding, system, commands });
+      if (!hands) return refuse("Ember can't keep its record of what it does, so it won't work here.");
+      return { ok: true, hands };
+    } catch (err) {
+      log.error("targets.hands_failed", { err });
+      return refuse("Ember can't work there right now.");
+    }
+  };
+  /**
+   * The other computers the user's own words name besides `bound` (D4.4's wrong-target guard, DOC's review): every
+   * target Ember knows, connected or not, and the hosts of the user's ssh config it has no record of yet; this computer
+   * as "this computer".
+   */
+  const knownNamed = (): { known: NamedTarget[]; labels: Map<string, string> } => {
+    rebuild();
+    const known: NamedTarget[] = entries.map(e => ({ id: e.id, names: e.names }));
+    const labels = new Map<string, string>(entries.map(e => [e.id, e.id === LOCAL_TARGET ? "this computer" : e.label]));
+    const taken = new Set(known.flatMap(t => t.names.map(normaliseName)));
+    let config: string[];
+    try { config = parts.sshConfigHosts(); } catch { config = []; } // no config: only Ember's own records count
+    for (const alias of config) {
+      if (taken.has(normaliseName(alias))) continue;
+      const id = `ssh:~config/${alias}` as TargetId;
+      known.push({ id, names: [alias] });
+      labels.set(id, alias);
+    }
+    return { known, labels };
+  };
+  const othersNamed = (bound: TargetId, words: string): string[] => {
+    const { known, labels } = knownNamed();
+    // On a Windows PC "WSL", "Linux" and "the Linux side" name WSL whether or not Ember works there. While no distro it
+    // lists answers to them (WSL off and not looked at yet, not installed, or not allowed), the task binds here (§2.3
+    // rule 5), and they still name a computer other than this one: a command they ask for asks, never announces.
+    if (deps.os === "win32" && !known.some(t => t.names.some(n => normaliseName(n) === "wsl"))) {
+      known.push({ id: "wsl:WSL" as TargetId, names: [...WSL_WORDS] });
+      labels.set("wsl:WSL", "WSL");
+    }
+    return otherTargetsNamed(words, known, bound, deps.os).map(id => labels.get(id) ?? "another computer");
+  };
+  /** The other computers the user's words name as a place (§2.3 rule 3: "on build-02", "build-02: …"), never as a word. */
+  const othersPlaced = (bound: TargetId, words: string): string[] => {
+    const { known, labels } = knownNamed();
+    return targetsNamed(words, known.filter(t => t.id !== bound), deps.os).map(id => labels.get(id) ?? "another computer");
+  };
+  /**
+   * The places the user's words name that look like a computer but are neither a target Ember knows nor a host of the
+   * user's ssh config ("delete build/ on prod-db"): no command of that task announces either (the lead's ruling).
+   */
+  const unknownPlaces = (words: string): string[] => placesNamed(words, knownNamed().known);
+  /** The distros listed while WSL is off for Ember, by their own names (not WSL's words: "Linux" alone never offers). */
+  const wslListedNames = (): NamedTarget[] =>
+    entries.filter(e => e.kind === "wsl" && e.listedOnly && !e.distro?.needsSetup).map(e => ({ id: e.id, names: e.names.filter(n => !WSL_WORDS.includes(n)) }));
+  const bind = (o: { userWords: string; choice?: string }): { ok: true; binding: TargetBinding } | { ok: false; why: string } => {
+    try {
+      rebuild();
+      const words = typeof o.userWords === "string" ? o.userWords : "";
+      const usableNamed = targetsNamed(words, namedTargets(entries), deps.os);
+      // "WSL", "Linux" and a distro's name name a place only while WSL is on for Ember (§2.3 rule 5). While it is off,
+      // not installed or not allowed, they are words of the request ("search for how to install Python on Linux") and
+      // the task binds as any other: refusing them would stop ordinary requests on every Windows PC without WSL set up.
+      if (!usableNamed.length && wsl && wslOn()) {
+        // A place the user named that Ember lists but can't work in yet (a distro to set up first): say why.
+        const listed = entries.filter(e => e.listedOnly);
+        const hit = targetsNamed(words, listed.map(e => ({ id: e.id, names: e.names })), deps.os)[0];
+        const e = hit ? entryOf(hit) : null;
+        if (e) return refuse(e.why ?? NOT_NAMED);
+        // "In WSL" while Ember has no distro listed (not looked at yet, or none found).
+        if (deps.os === "win32" && !entries.some(x => x.kind === "wsl") && targetsNamed(words, [{ id: "wsl:WSL", names: [...WSL_WORDS] }], deps.os).length) {
+          // Discovery has looked and found no distro Ember could use (WSL's installer alone, or only tools' distros).
+          if (wslFacts && !defaultDistro(wslFacts)) return refuse("WSL has no Linux distro Ember can use on this computer.");
+          void refreshWsl();
+          return refuse("Ember is still finding WSL's distros. Try again in a moment.");
+        }
+      } else if (!usableNamed.length && wsl && wslAllowed(admin()) && deps.os === "win32" && targetsNamed(words, [{ id: "wsl:WSL", names: ["WSL"] }, ...wslListedNames()], deps.os).length) {
+        // The user said "in WSL" (or "in Ubuntu", a distro discovery already listed) while it is off for Ember: the task
+        // goes on where Ember is set to work, and "Ember can work in WSL" is offered (once a run), only once discovery
+        // shows a distro to work in (it reads the registry; nothing starts). Never for "Linux" alone, which is as often
+        // what a request is about as where it should run.
+        void refreshWsl().then(() => { if (!wslOn() && defaultDistro(wslFacts)) offerWsl(); });
+      }
+      const r = bindTarget({ userWords: words, ...(o.choice !== undefined ? { choice: o.choice } : {}), targets: namedTargets(entries), active: activeId(), os: deps.os });
+      if (!r.ok) return r;
+      const e = entryOf(r.id);
+      // "In Ubuntu 24.04" where only Ubuntu-22.04 is installed: asked, never done in another version (review #180).
+      const short = e?.kind === "wsl" && usableNamed.includes(e.id) ? otherVersionNamed(words, e) : null;
+      if (short && e) return refuse(`The user named a version of ${short} that isn't on this computer. Ask them: did they mean ${e.label}?`);
+      return e ? { ok: true, binding: bindingOf(e) } : refuse(NOT_NAMED);
+    } catch (err) {
+      log.error("targets.bind_failed", { err });
+      return refuse("Ember can't tell where to work right now.");
+    }
+  };
+  /** "on for this computer", "off in Ubuntu (WSL)", "waiting for the user's OK on build-01". */
+  const commandsWords = (e: TargetEntry): string => {
+    const cap = safeCap(commandsOf(e.id));
+    const state = cap?.state ?? "off";
+    const where = e.kind === "local" ? "for this computer" : e.kind === "wsl" ? `in ${e.label}` : `on ${e.label}`;
+    const how = state === "on" ? (cap?.askEvery ? "on, asking before every command," : "on") : state === "needs-consent" ? "waiting for the user's OK" : "off";
+    return `${how} ${where}`;
+  };
+  const describeTargets = (): string => {
+    try {
+      rebuild();
+      const a = activeId();
+      const lines = bindable(entries).map(e => {
+        const kind = e.kind === "local" ? (deps.os === "win32" ? "Windows" : deps.os === "darwin" ? "macOS" : "Linux") : e.kind === "wsl" ? "WSL" : "SSH";
+        const conn = e.kind !== "ssh" ? "" : e.state === "ready" ? `, connected as ${e.login}` : e.state === "connecting" ? ", connecting" : ", not connected";
+        const set = e.id === a ? ", Ember is set to work here" : "";
+        const t = e.kind === "ssh" && e.host ? conns.get(e.host.id)?.target : null;
+        const desktop = e.kind === "ssh" ? (!t ? "not connected" : t.desktop() === "none" ? "no desktop session" : "apps on its screen")
+          : bindingOf(e).desktop === "none" ? "no desktop" : e.kind === "wsl" ? "Linux apps on this screen" : "apps";
+        const state = safeState(commandsOf(e.id));
+        const cmd = state === "on" ? "commands" : state === "needs-consent" ? "commands once the user agrees" : "no commands";
+        return `- ${e.label} (${kind}${conn}${set}): ${cmd}; ${desktop}`;
+      });
+      return `<computers>\n${lines.join("\n")}\n</computers>`;
+    } catch (err) {
+      log.warn("targets.describe_failed", { err });
+      return `<computers>\n- ${LOCAL_LABEL}\n</computers>`;
+    }
+  };
+  const activeLine = (): string => {
+    try {
+      rebuild();
+      const a = activeId();
+      const e = entryOf(a);
+      const live = bindable(entries);
+      const others = live.filter(x => x.kind === "ssh" && x.state === "ready" && x.id !== a);
+      const withCommands = live.filter(x => safeState(commandsOf(x.id)) !== "off");
+      if (a === LOCAL_TARGET && !others.length && !withCommands.length) return "";
+      const out: string[] = [];
+      if (e) {
+        const conn = e.kind !== "ssh" ? "" : e.state === "ready" && e.login ? `, connected as ${e.login}` : ", which isn't connected";
+        const where = e.kind === "local" ? "on this computer" : e.kind === "wsl" ? `in ${e.label}` : `on ${e.label}`;
+        out.push(`Ember is set to work ${where}${conn}: ${e.can}.`);
+      }
+      if (others.length) out.push(`Also connected: ${others.map(o => o.label).join(", ")}.`);
+      // WSL's default distro is hidden (a tool's): "WSL" names the first visible one, and the line says which (§2.3 rule 5).
+      const def = defaultDistro(wslFacts);
+      const wslMeans = def && !def.isDefault ? live.find(x => x.kind === "wsl" && x.distro?.name === def.name) : undefined;
+      if (wslMeans) out.push(`"WSL" means ${wslMeans.label}.`);
+      out.push(`Commands: ${live.map(commandsWords).join("; ")}.`);
+      return `(${out.join(" ")})`;
+    } catch (err) {
+      log.warn("targets.active_line_failed", { err });
+      return "";
+    }
+  };
+  const caps = () => {
+    try {
+      rebuild();
+      const live = bindable(entries);
+      // "needs-consent" is a user who turned commands on and must accept a newer card: waiting only for the card.
+      const commands = live.some(e => safeState(commandsOf(e.id)) !== "off");
+      // Off everywhere, but somewhere only by the user's switch: the conversation may say where to turn them on (review #40).
+      const offered = !commands && live.some(e => safeCap(commandsOf(e.id))?.userOff === true);
+      return { commands, targets: live.length > 1, ...(offered ? { commandsOffered: true } : {}) };
+    } catch (err) {
+      log.warn("targets.caps_failed", { err });
+      return { commands: false, targets: false };
+    }
+  };
+  const describeScreen = (id: TargetId): Promise<string> | null => {
+    const p = parseTargetId(id);
+    if (!p || p.kind !== "ssh") return null;
+    const c = conns.get(p.name);
+    const t = c?.target;
+    if (!t || c?.state !== "ready") return Promise.resolve(`${p.name} isn't connected.`);
+    if (t.desktop() === "none") return Promise.resolve(`${p.name} has no desktop Ember can see; it can only run commands there.`);
+    // Its desktop asked for first, as before a task (that starts its desktop helper there).
+    try { return waitingPerception(t.parts.perception, () => desktopNow(t)).describe().catch(() => `${p.name}'s screen couldn't be read.`); } catch { return Promise.resolve(`${p.name}'s screen couldn't be read.`); }
+  };
+  const offerConnect = (name: string, userWords: string): string => {
+    try {
+      if (!sshAllowed(admin())) return "Your organisation doesn't allow Ember on other computers. Tell the user.";
+      const n = typeof name === "string" ? name.trim() : "";
+      if (!n || normaliseName(n).length < 3 || !namedAnywhere(typeof userWords === "string" ? userWords : "", { id: "ssh:x", names: [n] }, deps.os)) {
+        return "The user didn't name that computer, so Ember won't offer to connect to it.";
+      }
+      const key = normaliseName(n);
+      // The registry's names: a host's id, host part and resolved hostname, and the short names (reviews #179, #180).
+      rebuild();
+      const named = entries.filter(e => e.kind !== "local" && e.names.some(x => normaliseName(x) === key));
+      const distro = named.find(e => e.kind === "wsl");
+      if (distro) {
+        return distro.listedOnly || !distro.usable ? (distro.why ?? `Ember can't work in ${distro.label} now. Tell the user.`)
+          : `${distro.label} is WSL on this computer, not a computer to connect to: start the task with target ${distro.label}.`;
+      }
+      const hosts = named.filter(e => e.kind === "ssh" && e.host);
+      if (hosts.length > 1) return `More than one computer Ember knows answers to ${n} (${hosts.map(e => e.label).join(", ")}). Ask the user which one.`;
+      const host = hosts[0]?.host ?? null;
+      const state = host ? conns.get(host.id)?.state : undefined;
+      if (host && state === "ready") return `Ember is already connected to ${host.id}: start the task with target ${host.id}.`;
+      if (host && state === "connecting") return `Ember is connecting to ${host.id} now. Start the task once it is connected.`;
+      const alias = host ? null : parts.sshConfigHosts().find(h => normaliseName(h) === key) ?? null;
+      const label = host?.id ?? alias;
+      if (!label) return `Ember doesn't know a computer called ${n}. Tell the user to add it in Ember's settings (Computers).`;
+      if (questionUp()) return `Ember can't show the button while a question is waiting. Tell the user to connect ${label} from Ember's menu or in Ember's settings (Computers).`;
+      const k = ++offerSeq;
+      offers.set(k, { kind: "connect", hostId: host?.id ?? null, alias: label });
+      bubble(`offer:${k}`, say(words.offerConnect(label), [`offer:${k}:connect`, `offer:${k}:later`], "decide", keyboard()), OFFER_MS);
+      return `Ember showed the user a Connect button for ${label}. Tell them to click it, or to connect ${label} in Ember's settings (Computers); once it is connected, start the task there.`;
+    } catch (err) {
+      log.warn("targets.offer_connect_failed", { err });
+      return "Ember can't offer a connection right now. Tell the user.";
+    }
+  };
+  const agent: TargetsForAgent = {
+    get active() { try { return activeId(); } catch { return LOCAL_TARGET; } },
+    bind, handsFor, describeTargets, describeScreen, offerConnect, activeLine, caps,
+    // The task's bubbles say where it acts when the user's words name another computer: with commands there, any it
+    // names anywhere (as D4.4's guard counts them: such a task's commands never announce); without, only one named as a
+    // place, so a name that is just a word of the request ("open github.com in Firefox" with a `Host github.com` in the
+    // ssh config) adds no badge to a task that can only use apps. A place that looks like a computer Ember doesn't know
+    // counts in both.
+    othersNamed: (id, userWords) => {
+      try {
+        const named = safeState(commandsOf(id)) !== "off" ? othersNamed(id, userWords) : othersPlaced(id, userWords);
+        return [...named, ...unknownPlaces(userWords)];
+      } catch {
+        return ["another computer"];
+      }
+    },
+  };
+
+  // ── The picker and the bubble's actions ──
+  function pick(id: TargetId): void {
+    const e = entryOf(id);
+    if (!e || e.listedOnly) return;
+    userPicked();
+    if (e.kind === "ssh" && e.host && e.state !== "ready") { void connect(e.host.id, { interactive: true, activate: true }); return; }
+    setActive(id);
+  }
+  /**
+   * A button of the runtime's bubble (`id`) was pressed too soon after it showed (ARM_MS; only the board can tell): an
+   * offer's on the offers' board when there is one, else the notices'.
+   */
+  const tooSoon = (id: string): boolean => {
+    const shownFor = ((id.startsWith("offer:") ? offerBoard() : null) ?? board())?.shownFor;
+    return typeof shownFor === "number" && shownFor < ARM_MS;
+  };
+  const bubbleAction = (id: string): boolean => {
+    if (typeof id !== "string") return false;
+    try {
+      // Handled (never passed on as a question's answer), and nothing done: the press came before it could be meant.
+      if (/^(offer|conn):/.test(id) && tooSoon(id)) { log.info("targets.press_too_soon", {}); return true; }
+      let m = /^ui:cmdstop:([0-9a-f]{16})$/.exec(id);
+      if (m) { commandWindow.cancelAnnounce(m[1]); return true; }
+      // A command waiting for the user's typing: its window comes up with the keyboard (review #263).
+      if (/^ui:cmdshow:[0-9a-f]{16}$/.test(id)) { commandWindow.show(); return true; }
+      m = /^ui:panel:(\d+)$/.exec(id);
+      if (m) {
+        const n = Number(m[1]);
+        const p = current?.n === n ? current.question.panel : undefined;
+        if (p?.kind === "command") commandWindow.show();
+        else if (p?.kind === "consent") { if (promptWindow.show) promptWindow.show(); else promptWindow.showConsent(n, p.consent); }
+        return true;
+      }
+      m = /^target:(.+)$/.exec(id);
+      if (m) {
+        const t = m[1];
+        if (parseTargetId(t)) pick(t as TargetId);
+        return true;
+      }
+      m = /^conn:([a-z0-9][a-z0-9._-]{0,63}):(cancel|disconnect|reconnect|stop|commands)$/.exec(id);
+      if (m) {
+        const [, hostId, what] = m;
+        if (what === "cancel") { conns.get(hostId)?.abort?.abort(); hideBubble(`connecting:${hostId}`); }
+        else if (what === "reconnect") { hideBubble(); void connect(hostId, { interactive: true, activate: true }); }
+        else if (what === "commands") {
+          // A headless host's commands, turned on from its connected bubble: the commands card first (setCommands).
+          hideBubble(`connected:${hostId}`);
+          void setCommands(targetIdOf("ssh", hostId), true).then(r => {
+            if (r.ok) bubble(`connected:${hostId}`, say(words.commandsOn(hostId), [], "good"), INFO_MS);
+            else if (r.message !== "Not now.") bubble(`connected:${hostId}`, say(words.commandsStayOff(hostId, r.message ?? ""), [], "failed"), INFO_MS);
+          }, err => log.warn("targets.commands_switch_failed", { err }));
+        }
+        else { hideBubble(); void disconnect(hostId); }
+        return true;
+      }
+      if (id === CLOSE_ID) { hideBubble(); return true; }
+      if (id === "offer:wsl:settings") { hideBubble("offer:wsl"); deps.openSettings("computers", "wsl"); return true; }
+      if (id === "offer:wsl:later") { hideBubble("offer:wsl"); return true; }
+      m = /^offer:(\d+):(bring|later|never|connect)$/.exec(id);
+      if (m) {
+        const k = Number(m[1]);
+        const o = offers.get(k);
+        offers.delete(k);
+        hideBubble(`offer:${k}`);
+        if (o?.kind === "seen") {
+          if (m[2] === "bring" && (!o.seen.via || o.seen.via === "local" || WSL_SSH_PROVEN)) bringSeen(o.seen);
+          else if (m[2] === "never") dismissSeen(o.seen);
+        } else if (o?.kind === "connect" && m[2] === "connect") {
+          void (o.hostId ? connect(o.hostId, { interactive: true, activate: true }) : addAndConnect({ dest: o.alias }, { bubble: true }));
+        }
+        return true;
+      }
+      // Ours by prefix, but stale or malformed: handled (nothing to do), never passed on as a question's answer.
+      return /^(target|offer|conn|ui:panel|ui:cmdstop|ui:cmdshow):/.test(id);
+    } catch (err) {
+      log.warn("targets.bubble_action_failed", { err });
+      return /^(target|offer|conn|ui:panel|ui:cmdstop|ui:cmdshow):/.test(id);
+    }
+  };
+
+  return {
+    agent,
+    wsl,
+    stopAll: async () => {
+      // Every part told at once (step 1 of each ladder is synchronous), then waited for together; nothing throws.
+      const waits: Promise<unknown>[] = [];
+      const call = (f: () => unknown) => { try { waits.push(Promise.resolve(f())); } catch (err) { log.warn("targets.stop_part_failed", { err }); } };
+      call(() => localRunner.stopAll("killswitch"));
+      for (const s of wslServices.values()) call(() => s.runner.stopAll("killswitch"));
+      // WSLg apps' accessibility helpers too (they start again when a Linux window needs reading).
+      call(() => parts.wslHelpers.stop());
+      for (const c of conns.values()) {
+        if (c.abort) call(() => c.abort?.abort());
+        const t = c.target;
+        if (t) { call(() => t.link.stop()); call(() => t.parts.runner.stopAll("killswitch")); }
+      }
+      // SA's own part: reconnects after a loss end, connects under way are cancelled, and a link not (yet) a target here
+      // (one awaiting a card, one SA just brought back) is told to stop too.
+      const cs = connections;
+      if (cs) call(() => cs.stopAll());
+      // Its bubble goes too: reconnects end, so a "Lost" that says it will try again would no longer hold. (Only through
+      // the board, which hides nothing it didn't write: main's own setter would blank the kill switch's message.)
+      const nb = board();
+      if (nb) { shown = null; try { nb.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } }
+      const ob = offerBoard();
+      if (ob) { offerShown = null; try { ob.clear(); } catch (err) { log.warn("targets.bubble_failed", { err }); } }
+      const settled = await Promise.allSettled(waits);
+      const failed = settled.filter(r => r.status === "rejected").length;
+      if (failed) log.warn("targets.stop_parts_failed", { failed });
+    },
+    busy: () => {
+      let commands = 0;
+      const count = (r: CommandRunner) => { try { const n = r.running; if (Number.isFinite(n) && n > 0) commands += Math.floor(n); } catch { /* a runner that can't say counts none */ } };
+      count(localRunner);
+      for (const s of wslServices.values()) count(s.runner);
+      let links = 0;
+      for (const c of conns.values()) {
+        if (c.target) count(c.target.parts.runner);
+        if (c.state === "ready" || c.state === "stalled" || c.state === "connecting") links++;
+      }
+      return { commands, connections: links };
+    },
+    menuItems: (): MenuItemLike[] => {
+      try {
+        rebuild();
+        return targetMenu({
+          entries, active: activeId(), sshAllowed: sshAllowed(admin()), pick,
+          bring: () => deps.openSettings("computers", "host"), disconnect: h => { void disconnect(h); },
+        });
+      } catch (err) {
+        log.warn("targets.menu_failed", { err });
+        return [];
+      }
+    },
+    bubbleAction,
+    quickContext: (): Promise<QuickContext | null> | null => {
+      try {
+        const a = activeId();
+        const p = parseTargetId(a);
+        if (!p || p.kind !== "ssh") return null;
+        const c = conns.get(p.name);
+        const t = c?.target ?? null;
+        return remoteQuickContext({
+          id: a, label: p.name, connected: c?.state === "ready" && !!t, desktop: t ? t.desktop() : "none", perception: t?.parts.perception ?? null,
+          setTimer: parts.setTimeout, clearTimer: parts.clearTimeout,
+        });
+      } catch (err) {
+        log.warn("targets.quick_context_failed", { err });
+        const a = settings.get().targets.active;
+        return parseTargetId(a)?.kind === "ssh" ? Promise.resolve(noWindowContext(a, a.slice(4), "its screen couldn't be read.")) : null;
+      }
+    },
+    questionChanged: q => {
+      try {
+        const was = current;
+        current = q && typeof q.n === "number" && q.question ? q : null;
+        if (was && (!current || current.n !== was.n)) hidePanel(was);
+        if (current && (!was || was.n !== current.n)) showPanel(current);
+      } catch (err) {
+        log.warn("targets.question_changed_failed", { err });
+      }
+    },
+    panelReady: n => {
+      try {
+        if (!current || current.n !== n) return false;
+        const p = current.question.panel;
+        if (p?.kind === "command") return commandWindow.cardReady(n) === true;
+        if (p?.kind === "consent") return promptWindow.consentReady(n) === true;
+        return false;
+      } catch {
+        return false;
+      }
+    },
+    questionWords: q => {
+      try {
+        const p = q?.panel;
+        if (!p) return null;
+        // Said with how to get to the window from the keyboard (only where, never the command: R7).
+        const hint = words.panelHint(p.kind, deps.os);
+        if (p.kind === "command") return `${words.commandSpoken(p.card.target === LOCAL_TARGET ? "local" : "ssh", p.card.targetLabel)} ${hint}`;
+        const c = p.consent;
+        if (c.feature === "commands") return `Ember needs your OK to run commands on ${c.target === LOCAL_TARGET ? "this computer" : c.targetLabel}. ${hint}`;
+        return `${c.title} ${hint}`;
+      } catch {
+        return "Ember needs your OK. Read it in the window that opened.";
+      }
+    },
+    panelHint: p => words.panelHint(p?.kind === "command" ? "command" : "consent", deps.os),
+    doctorRows: async () => {
+      const rows = await doctorRowsWith({ os: deps.os, admin, packaged: deps.packaged }, parts.doctor).catch(() => [] as PlatformDoctorRow[]);
+      if (wsl) {
+        try { rows.push(...await wsl.doctorRows()); } catch (err) { log.warn("targets.wsl_doctor_failed", { err }); }
+        // Each running distro's Linux apps and their accessibility (wsl-helper:<d>, wsl-a11y:<d>, §8.8): the check
+        // script runs inside them only while the user's WSL switch is on.
+        if (!wslOn()) rows.push(WSL_OFF_ROW);
+        else try { rows.push(...await parts.wslHelpers.doctorRows()); } catch (err) { log.warn("targets.wsl_helper_doctor_failed", { err }); }
+      }
+      for (const [hostId, c] of conns) if (c.target?.link.welcome.tccLimited) rows.push(remoteTccRow(hostId));
+      return rows;
+    },
+    summaries: () => { try { return summaries(); } catch { return []; } },
+    emberPids,
+    applyFix: async (id: string) => {
+      const m = /^wsl-a11y:(.+)$/.exec(typeof id === "string" ? id : "");
+      if (!m || !DISTRO_NAME.test(m[1])) return { ok: false, message: "Ember doesn't know that fix." };
+      const name = m[1];
+      // The fix is a command in the distro: never where the administrator turned WSL, or commands in WSL, off.
+      if (!wslAllowed(admin()) || commandMode(admin(), "wsl") === "off") return { ok: false, message: "Your organisation has turned this off." };
+      if (!wsl || !wslOn()) return { ok: false, message: "WSL isn't turned on for Ember. Turn it on in Ember's settings (Computers)." };
+      const d = distroOf(name);
+      if (!d || d.needsSetup || isToolDistro(d)) return { ok: false, message: `Ember doesn't use Linux apps in ${name}.` };
+      if (d.defaultUid === 0) return { ok: false, message: "Ember doesn't use Linux apps of a distro that runs as root." };
+      // Never booted for a fix: the fix is for apps on screen now, and starting a distro is the user's call.
+      let running = false;
+      try { running = (await wsl.runningNow()).has(name); } catch (err) { log.warn("targets.wsl_running_failed", { err }); }
+      if (!running) return { ok: false, message: `Start ${name} first: Ember doesn't start a distro to change its settings.` };
+      // Its command service's runner: the kill switch stops the fix as it stops any command there.
+      const svc = wslService(name);
+      if (!svc) return { ok: false, message: `Ember can't run its fix in ${name}.` };
+      const r = await turnOnLinuxAccessibility(svc.runner, name);
+      log.info("targets.wsl_a11y_fix", { ok: r.ok });
+      return r;
+    },
+    dispose: async () => {
+      if (disposed) return;
+      disposed = true;
+      if (noticeTimer !== null) parts.clearInterval(noticeTimer);
+      for (const off of offs.splice(0)) { try { off(); } catch { /* already gone */ } }
+      const waits: Promise<unknown>[] = [];
+      const call = (f: () => unknown) => { try { waits.push(Promise.resolve(f())); } catch (err) { log.warn("targets.dispose_part_failed", { err }); } };
+      call(() => localRunner.stopAll("quit"));
+      for (const s of wslServices.values()) call(() => s.runner.stopAll("quit"));
+      for (const c of conns.values()) { c.abort?.abort(); dropTarget(c); }
+      const cs = connections;
+      if (cs) call(() => cs.dispose());
+      call(() => wsl?.dispose());
+      call(() => commandWindow.dispose());
+      call(() => promptWindow.dispose());
+      await Promise.allSettled(waits);
+    },
+  };
+}

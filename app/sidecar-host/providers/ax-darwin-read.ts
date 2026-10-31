@@ -17,7 +17,7 @@
 import { ProviderError, type PerformOp, type ProviderErrorCode, type RawNode, type Rect, type TextInfo } from "../provider";
 import { INTERACTIVE_ROLES, LAZY_ACTION_ROLES, TEXT_ROLES, axRole, childContext, type RoleContext } from "../roles";
 import { AX_ERROR, axErrorName } from "../../main/platform/darwin/ax";
-import { isAxError, type AxApi, type AxError, type AxRef, type AxValue } from "./ax-darwin-api";
+import { isAxError, type AxApi, type AxError, type AxRef, type AxStruct, type AxValue } from "./ax-darwin-api";
 
 /**
  * The attributes read for every element, in one AXUIElementCopyMultipleAttributeValues round trip: never AXValue, nor
@@ -846,13 +846,137 @@ export function textOf(s: AxSession, el: AxRef, maxChars: number): TextInfo {
     } else releaseValue(s.api, v);
   }
   if (text !== undefined) out.text = text;
+  const ownRange = rangeStruct(range);
+  // The field's own selected text, when it names some. AppKit often leaves AXSelectedText empty and keeps the
+  // selection on the field editor.
   if (typeof selected === "string" && selected) out.selection = selected.slice(0, TEXT_MAX);
-  if (typeof range === "object" && !Array.isArray(range) && !isAxError(range) && range.type === "range") {
-    out.caret = Math.max(0, range.location);
+  let caret = ownRange;
+  if (!out.selection) {
+    const edited = selectionInEditor(s, el);
+    if (edited.selection) out.selection = edited.selection.slice(0, TEXT_MAX);
+    if (edited.range) caret = edited.range;
+  }
+  // No editor (or it named no words): the field's own range, when it covers some. A caret is a range of no length.
+  if (!out.selection && ownRange && ownRange.length > 0) {
+    const words = s.textRange(el, Math.max(0, ownRange.location), Math.min(ownRange.length, TEXT_MAX));
+    if (words) out.selection = words.slice(0, TEXT_MAX);
+  }
+  if (caret) {
+    out.caret = Math.max(0, caret.location);
     const count = chars ?? (text !== undefined && !out.truncated ? text.length : undefined);
-    if (count !== undefined) out.caretAtEnd = range.location >= count;
+    if (count !== undefined) out.caretAtEnd = caret.location >= count;
   }
   return out;
+}
+
+/** A text field AppKit inserts a field editor into (the element a walk lists; the editor is not among its children). */
+const FIELD_ROLES: ReadonlySet<string> = new Set(["AXTextField", "AXSearchField", "AXComboBox", "AXSecureTextField"]);
+/** What sits inside that field on the way to the editor (the editor itself, or the scroll area around it). */
+const EDITOR_ROLES: ReadonlySet<string> = new Set(["AXTextArea", "AXTextField", "AXScrollArea", "AXGroup"]);
+
+/**
+ * The element a walk lists for whatever has the keyboard. AppKit's field editor is an AXTextArea it inserts into a
+ * text field and does not list among the field's children (a text field is a leaf), and the field's own AXFocused is
+ * often false while the editor has the keyboard. The editor's parent, through one scroll area, is that field.
+ * Returns `el` when it already is the element a walk lists. The caller still owns `el`; a different return is another
+ * reference, also the caller's to release.
+ */
+export function keyboardControl(s: AxSession, el: AxRef): AxRef {
+  let cur = el;
+  let climbed = false;
+  try {
+    for (let hop = 0; hop < 4; hop++) {
+      const parent = s.attr(cur, "AXParent");
+      if (typeof parent !== "bigint") break;
+      try {
+        const parentRole = str(s.attr(parent, "AXRole"));
+        const role = str(s.attr(cur, "AXRole"));
+        if (FIELD_ROLES.has(parentRole) && EDITOR_ROLES.has(role)) {
+          if (climbed) s.api.release(cur);
+          cur = parent;
+          climbed = true;
+          continue;
+        }
+        // The editor can sit in a scroll area that sits in the field. A text area whose scroll area is not inside a
+        // field (the bench's Notes) is itself the element a walk lists.
+        if ((parentRole === "AXScrollArea" || parentRole === "AXGroup") && (role === "AXTextArea" || role === "AXTextField")) {
+          const above = s.attr(parent, "AXParent");
+          if (typeof above === "bigint") {
+            let aboveRole: string;
+            try {
+              aboveRole = str(s.attr(above, "AXRole"));
+            } catch (err) {
+              s.api.release(above);
+              throw err;
+            }
+            if (FIELD_ROLES.has(aboveRole)) {
+              s.api.release(parent);
+              if (climbed) s.api.release(cur);
+              cur = above;
+              climbed = true;
+              continue;
+            }
+            s.api.release(above);
+          }
+        }
+        s.api.release(parent);
+        break;
+      } catch (err) {
+        s.api.release(parent);
+        throw err;
+      }
+    }
+  } catch (err) {
+    if (climbed) s.api.release(cur);
+    throw err;
+  }
+  return cur;
+}
+
+/** A CFRange attribute, when `v` is one. */
+function rangeStruct(v: AxValue | AxError | undefined): Extract<AxStruct, { type: "range" }> | undefined {
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && !isAxError(v) && v.type === "range") return v;
+  return undefined;
+}
+
+/**
+ * The selected words of `el`: AXSelectedText when the element gives it, else the text of AXSelectedTextRange when
+ * that range covers some characters (read with AXStringForRange, from the element that holds the range). A caret is
+ * a range of no length and selects nothing. undefined when neither says.
+ */
+function selectedWords(s: AxSession, el: AxRef, selected: AxValue | AxError | undefined, range: AxValue | AxError | undefined): string | undefined {
+  if (typeof selected === "string" && selected) return selected;
+  const span = rangeStruct(range);
+  if (!span || span.length <= 0) return undefined;
+  return s.textRange(el, Math.max(0, span.location), Math.min(span.length, TEXT_MAX));
+}
+
+/** The field editor's selection and caret, when `el` is the text field that editor belongs to and `el`'s own is empty. */
+function selectionInEditor(s: AxSession, el: AxRef): { selection?: string; range?: Extract<AxStruct, { type: "range" }> } {
+  const app = s.api.app(s.pid);
+  if (!app) return {};
+  const focused = s.attr(app, "AXFocusedUIElement");
+  if (typeof focused !== "bigint") return {};
+  let control = focused;
+  try {
+    control = keyboardControl(s, focused);
+    if (control === focused || !s.api.same(control, el)) return {};
+    const m = s.batch(focused, ["AXSelectedText", "AXSelectedTextRange"]);
+    const selected = m.get("AXSelectedText");
+    const range = m.get("AXSelectedTextRange");
+    for (const v of m.values()) releaseValue(s.api, v);
+    const out: { selection?: string; range?: Extract<AxStruct, { type: "range" }> } = {};
+    const words = selectedWords(s, focused, selected, range);
+    if (words) out.selection = words;
+    const span = rangeStruct(range);
+    if (span) out.range = span;
+    return out;
+  } catch {
+    return {}; // the editor can't be read: the field keeps what it said itself
+  } finally {
+    if (control !== focused) s.api.release(control);
+    s.api.release(focused);
+  }
 }
 
 /**
