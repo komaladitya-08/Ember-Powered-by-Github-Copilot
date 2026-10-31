@@ -57,7 +57,7 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
     paths: win32Paths({ env }),
     apps: win32Apps({
       env, execPath: deps.execPath, folders, packageInstalled: family => api()?.packageFamilyInstalled(family) ?? null,
-      fs: o.fs, spawn: o.spawn, now: o.now, log,
+      ansi: bytes => api()?.ansiText(bytes) ?? null, fs: o.fs, spawn: o.spawn, now: o.now, log,
     }),
     settings: win32Settings({ api, log }),
     adminPolicy: win32AdminPolicy({ api, env }),

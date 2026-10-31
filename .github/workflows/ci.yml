@@ -238,10 +238,10 @@ jobs:
           # The packages kept for download are Release 1's.
           rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm
       # The packages are about 450 MB with the speech models, so they're kept only when asked for (Run workflow,
-      # "packages"): uploading them on every run filled the account's artifact storage, after which no artifact could be
-      # uploaded at all.
+      # "packages") and on release tags, for the release job: uploading them on every run filled the account's artifact
+      # storage, after which no artifact could be uploaded at all.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name == 'workflow_dispatch' && inputs.packages
+        if: (github.event_name == 'workflow_dispatch' && inputs.packages) || startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true
         with:
           name: ember-packages
@@ -498,7 +498,7 @@ jobs:
           EMBER_PACKAGED_APP: dist/package/Ember
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name == 'workflow_dispatch' && inputs.packages
+        if: (github.event_name == 'workflow_dispatch' && inputs.packages) || startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true
         with:
           name: ember-windows
@@ -730,7 +730,7 @@ jobs:
           /usr/bin/log show --last 15m --style compact --predicate 'process == "UserNotificationCenter" OR process == "ReportCrash"' 2>/dev/null | tail -60 || true
       # Large: kept only when asked for, like the Linux packages.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name == 'workflow_dispatch' && inputs.packages
+        if: (github.event_name == 'workflow_dispatch' && inputs.packages) || startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true
         with:
           name: ember-macos
@@ -843,7 +843,7 @@ jobs:
       - name: The packaged Ember.app starts and shows its window on Intel
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: github.event_name == 'workflow_dispatch' && inputs.packages
+        if: (github.event_name == 'workflow_dispatch' && inputs.packages) || startsWith(github.ref, 'refs/tags/v')
         continue-on-error: true
         with:
           name: ember-macos-x64
@@ -851,3 +851,57 @@ jobs:
             dist/package/*.zip
             dist/package/*.dmg
           retention-days: 3
+
+  release:
+    name: Publish the release (v* tags, after every other job passed)
+    # docs/DEVELOPING.md §15. Only a v* tag gets here, and only once every platform's checks and packages are green.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [checks, el8, package, eval, windows, macos, macos-x64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: "Release files: ember-packages"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ember-packages
+          path: dist/release
+      - name: "Release files: ember-windows"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ember-windows
+          path: dist/release
+      - name: "Release files: ember-macos"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ember-macos
+          path: dist/release
+      - name: "Release files: ember-macos-x64"
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ember-macos-x64
+          path: dist/release
+      - name: The files the README downloads, the tag's version, and the notes from CHANGELOG.md
+        run: |
+          ls -l dist/release
+          node scripts/package/release.mjs dist/release "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" dist/release-notes.md
+      - name: SHA256SUMS
+        working-directory: dist/release
+        run: |
+          sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS
+          cat SHA256SUMS
+          sha256sum -c SHA256SUMS
+      - name: Publish the release with its files and SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "Ember $v" --notes-file dist/release-notes.md dist/release/*

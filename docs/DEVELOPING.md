@@ -385,8 +385,8 @@ both as Release 2 (`EMBER_RPM_RELEASE=2 scripts/package/rpm.sh`), upgrades to th
 again, checks `chrome-sandbox` is still setuid root and removes both with `rpm -e`. It fails if `/opt/ember`,
 `/usr/share/ember`, `/usr/bin/ember`, the menu entry or `/usr/share/doc/ember` is left, or if the policy changed or
 belongs to a package. It uploads Release 1's packages only when asked (§13): **Actions › ci › Run workflow** with
-**packages** ticked (kept 3 days); at about 450 MB a run with the speech models, uploading them every time filled the
-account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
+**packages** ticked (kept 3 days), and on a `v*` tag for the release (§15); at about 450 MB a run with the speech
+models, uploading them every time filled the account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
 RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles
 (sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly holds, eSpeak NG's GPL-3.0-or-later among them:
 `scripts/package/licences.mjs`), or if a bundled package ships no licence file and `licences.mjs` supplies none (the
@@ -1113,7 +1113,7 @@ To start a run by hand: **Actions › ci › Run workflow**, or `gh workflow run
 
 | Input | Default | What it does | Why |
 |---|---|---|---|
-| `packages` | off | Uploads the packages as artifacts, kept 3 days: `ember-packages` (RPM and AppImage), `ember-windows` (the zip), `ember-macos` (zip and dmg), `ember-macos-x64` | They are 200–400 MB each, and uploading them on every run filled the account's artifact storage, after which no artifact could be uploaded at all |
+| `packages` | off | Uploads the packages as artifacts, kept 3 days (a `v*` tag always uploads them, for the release job, §15): `ember-packages` (RPM and AppImage), `ember-windows` (the zip), `ember-macos` (zip and dmg), `ember-macos-x64` | They are 200–400 MB each, and uploading them on every run filled the account's artifact storage, after which no artifact could be uploaded at all |
 | `intel` | off | Also runs `macos-x64` (with `only` set to `all` or `macos`) | macOS minutes cost ten times Linux's on a private repository, so the Intel job runs only on the default branch and tags unless asked |
 | `only` | `all` | Runs only one platform's jobs: `linux` (the four Linux jobs), `windows` or `macos`. Pushes and pull requests always run them all | The same cost: after a fix for one OS, rerun only that OS |
 
@@ -1295,22 +1295,31 @@ added later has the same effect on the Embers before it: say so in the release n
 ## 15. Publishing a release
 
 The README sends users to the Releases page and tells them to check each file against `SHA256SUMS`, so every release
-needs both.
+needs both. CI publishes them when a `v<v>` tag is pushed:
 
-1. Run **Actions › ci › Run workflow** on the release commit with **packages** ticked and **intel** ticked (§13), and
-   download its four artifacts (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Put the files
-   they hold in one folder: `ember-<v>-1.el8.x86_64.rpm`, `ember-voice-models-<v>-1.el8.noarch.rpm`,
-   `Ember-<v>-x86_64.AppImage`, `Ember-<v>-win-x64.zip`, `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`,
-   `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`.
-2. In that folder, write the checksums. Each line is a hash, two spaces and a file name, which is what
-   `sha256sum -c` reads:
+1. On `main`, set `version` in package.json to `<v>` and give CHANGELOG.md a `## <v> (<date>)` section: its text
+   becomes the release's notes.
+2. Tag that commit and push the tag: `git tag v<v> && git push origin v<v>`.
+3. The tag runs every job of `ci.yml`, the Intel Mac's included, and each platform's job uploads its packages
+   (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
+   the only one with write access, downloads the four artifacts into one folder, and `scripts/package/release.mjs`
+   checks that it holds exactly the eight files the README downloads: `ember-<v>-1.el8.x86_64.rpm`,
+   `ember-voice-models-<v>-1.el8.noarch.rpm`, `Ember-<v>-x86_64.AppImage`, `Ember-<v>-win-x64.zip`,
+   `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
+   refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
+   absolute at the tag and wrapped lines joined. The job then writes the checksums, one line per file (a hash, two
+   spaces and the file name, which is what `sha256sum -c` reads):
 
    ```bash
    sha256sum ember-*.rpm Ember-*.AppImage Ember-*.zip Ember-*.dmg > SHA256SUMS
    ```
 
-3. Create the release for the tag `v<v>` with the version's notes from CHANGELOG.md, and attach the eight files and
-   `SHA256SUMS`.
+   and creates the release `Ember <v>` for the tag with the eight files and `SHA256SUMS`.
+
+When a job fails, nothing is published: fix it on `main`, move the tag to the fixed commit (`git tag -f v<v>` and
+`git push -f origin v<v>`) and the run starts again. To publish by hand instead, run **Actions › ci › Run workflow**
+with **packages** and **intel** ticked (§13), download the four artifacts into one folder, write `SHA256SUMS` there
+with the command above, and create the release with those files.
 
 ## Repository layout
 

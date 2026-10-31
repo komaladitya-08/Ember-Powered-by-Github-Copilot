@@ -40,13 +40,13 @@
     "koffi": "3.2.1",
     "sharp": "0.35.5",
     "sherpa-onnx": "1.13.8",
-    "zod": "4.3.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.0",
-    "electron": "44.5.0",
+    "electron": "44.9.3",
     "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "globals": "17.12.0",
@@ -54,7 +54,12 @@
     "resedit": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
-    "vitest": "5.0.2"
+    "vitest": "5.0.5"
+  },
+  "overrides": {
+    "@github/copilot-sdk": {
+      "zod": "$zod"
+    }
   },
   "packageManager": "npm@11.6.2"
 }

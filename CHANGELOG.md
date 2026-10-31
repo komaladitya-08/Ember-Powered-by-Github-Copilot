@@ -1,6 +1,6 @@
 # Release notes
 
-## 0.1.0 (2026-10-27)
+## 0.1.0 (2026-10-31)
 
 Ember's first release: a small, expressive companion that lives beside your cursor, listens for "Hey Ember" and does
 the work in your real apps where you can watch, without taking over your mouse. It is powered by GitHub Copilot.
@@ -138,7 +138,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
 - **What Ember never runs**: commands that would read or change Ember's own safety settings, records or programs
   ("Ember won't run this: it would read …" or "… change …"), or press keys and click in Ember's windows.
 - **Command output** goes to Copilot as untrusted data, at most 200 lines, with what you typed cut out, output after a
-  password prompt withheld, and recognised passwords, keys and tokens hidden. Output that reads like instructions to
+  password prompt withheld, and recognised passwords, keys and tokens hidden, including the value given to an option
+  named like a secret (`--db-pass=…`, `--api-token=…`). Output that reads like instructions to
   Ember makes every further command in that task ask; ordinary system reports (`hostnamectl`, `docker info`, `kubectl
   describe node`, `inxi`) don't, while lines that look like a transcript ("System:", "Assistant:") still do.
 - **What Ember did** in settings lists each command's question, answer, refusal and end (where it ran, the shell and
@@ -166,7 +167,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   25 seconds at most, and it goes, up or waiting, the next time Ember looks and finds the `ssh` it names has ended. The
   SSH card says what changed when your SSH settings send the name somewhere else, names the helper's folder on a Mac,
   and says that a server with no desktop gets commands only. Ember opens its own connection with your SSH settings,
-  keys, agent and jump hosts, asks for passwords in its own window and never keeps them, checks the other computer
+  keys, agent and jump hosts, asks for passwords in its own window and never keeps them (one at a time: a sign-in
+  that gives up while it waits its turn no longer holds up the ones after it), checks the other computer
   before copying anything, then copies a helper there (about 33 MB, unpacked to about 130 MB) that runs only while it is
   connected and leaves no service or autostart behind. It works there on commands, and on the apps of that computer's
   screen when it is a Linux computer with an X11 desktop and you are the person logged in at it, asking before every
@@ -277,6 +279,9 @@ allows them.
 - On Linux, Ember refuses Ctrl+Alt with a key not named in Latin letters (another script's letter, or an accented
   one), which another keyboard layout could put on Ctrl+Alt+T or on Ember's own shortcuts.
 - Quote marks in names can't rewrite a question, and a slider's new value is quoted.
+- In PowerShell, a backtick before a line break inside a word is read as PowerShell reads it: the word keeps the line
+  break, so ``git`<line break>status`` is never taken for `git status`, and after a Windows (CRLF) line break the next
+  line is checked as a command of its own.
 - Secret fields are recognised by more words: wallet seed and recovery phrases, "6-digit code" and other two-factor
   prompts, security, session, refresh and ID tokens, master and SSH keys, JWTs, webhook, private, GPG and SSH signing
   keys, and show-password switches in Korean, Danish, Norwegian, Hungarian, Romanian, Greek, Vietnamese, Indonesian,
@@ -347,6 +352,9 @@ allows them.
   there it says to wait for it before typing. Letters typed into it as it opens are kept: what was left in it from
   last time is selected when it closes, not as it opens.
 - It follows **Text size**: at Large and Larger the box is wider, and its words and lines are larger.
+- It stays up while the keyboard is being handed to it (on Windows, a moment after it appears), and on a Mac a click in
+  another app puts it away even in that moment. On a Mac, the text you had selected in a field is what goes with your
+  question.
 
 #### Voice
 
@@ -384,6 +392,9 @@ allows them.
 - On Windows, Ember reads long lists and pages that are scrolled down: it reads what shows in full and leaves most of
   what is scrolled away out, so a list of thousands of rows or a very big page no longer reads as empty, and its
   screenshot isn't refused.
+- On Windows, Start Menu shortcuts saved in the system's own code page (older installers in Cyrillic, Greek and other
+  languages) are read in it, so those apps can be opened by name.
+- On Linux, a window that closes while Ember is reading it or using it no longer makes Ember exit.
 - Windows' setup check has a **Microphone** row, and the Voice section a button to the microphone's privacy settings;
   the advice names both Windows 10's and Windows 11's page. The advice for mixed display scaling gives a way round it
   and the issue tracker's address.
@@ -404,6 +415,8 @@ allows them.
   bar do nothing. The settings window zooms with Ctrl+= or Ctrl++, Ctrl+- and Ctrl+0 (back to 100 %), from 58 % to
   249 %. On a Mac, the Ember menu has **About Ember**, and the app is signed ad hoc under the hardened runtime.
 - Quitting while tasks run asks first, and says that quitting stops them where they are.
+- The setup check's X session row fails when the display can't be opened, instead of saying the session is fine, and
+  `ember doctor` exits with 1 when one of its checks can't finish, instead of waiting.
 
 #### Starting, updating and your data
 
@@ -414,7 +427,9 @@ allows them.
   never replaced with defaults: Ember says so, keeps changes in memory and saves them over your settings once the file
   reads again.
 - Ember never deletes an `~/.config/autostart/ember.desktop` it didn't make: its own is marked
-  `X-Ember-Managed=true`, and the settings window says when another entry starts it at login.
+  `X-Ember-Managed=true` (an entry an older Ember wrote with Windows line endings counts as its own too), and the
+  settings window says when another entry starts it at login. Starting at login starts the Ember you turned it on in,
+  never an AppImage whose name Ember only inherited from the program that started it.
 - Audit entries are kept for `auditRetentionDays` by their own time, not by whole months, and pruned at start and once a
   day, without losing lines another process writes meanwhile. An old month that can't be removed (a file another program
   holds open on Windows) doesn't stop the other old months being pruned, on this computer or on a remote, and on a

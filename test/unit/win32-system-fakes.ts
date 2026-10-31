@@ -97,6 +97,7 @@ export function fakeApi(registry = new FakeRegistry(), over: Partial<Win32SysApi
     knownFolder: () => null,
     packageFamilyInstalled: () => null,
     monitorRect: () => null,
+    ansiText: () => null,
     ...over,
   };
 }
@@ -225,4 +226,23 @@ export function buildLnk(s: LnkSpec): Buffer {
   }
   parts.push(u32(0));
   return Buffer.concat(parts);
+}
+
+/** "Привет" in cp1251 (#65). */
+export const CP1251_PRIVET = Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]);
+
+/**
+ * A non-Unicode .lnk (#65): a LinkInfo whose local path is `target`'s bytes in the system code page (NUL-terminated),
+ * and optionally an ANSI description (HasName).
+ */
+export function ansiLink(target: Buffer, description?: Buffer): Buffer {
+  const u32 = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32LE(n >>> 0, 0); return b; };
+  const u16 = (n: number) => { const b = Buffer.alloc(2); b.writeUInt16LE(n, 0); return b; };
+  const header = Buffer.alloc(76);
+  header.writeUInt32LE(0x4c, 0);
+  Buffer.from("0114020000000000c000000000000046", "hex").copy(header, 4);
+  header.writeUInt32LE(0x2 | (description ? 0x4 : 0), 20);
+  const linkInfo = Buffer.concat([u32(0x1c + target.length), u32(0x1c), u32(0x1), u32(0x1c), u32(0x1c), u32(0), u32(0), target]);
+  const strings = description ? Buffer.concat([u16(description.length), description]) : Buffer.alloc(0);
+  return Buffer.concat([header, linkInfo, strings, u32(0)]);
 }

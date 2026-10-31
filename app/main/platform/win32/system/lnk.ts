@@ -9,6 +9,14 @@
  * read from its LinkTargetIDList when that is a plain file-system path (This PC, a drive, file entries). Pure.
  */
 
+/**
+ * Decodes a single-byte or multi-byte string in Windows' ANSI code page (CP_ACP) to text: on Windows,
+ * MultiByteToWideChar; null when it can't, and the bytes are then read as Latin-1, which is right for ASCII.
+ */
+export type AnsiDecoder = (bytes: Buffer) => string | null;
+
+const latin1 = (bytes: Buffer): string => bytes.toString("latin1");
+
 /** A shortcut that isn't a valid MS-SHLLINK file (or is cut short). */
 export class LnkError extends Error {}
 
@@ -49,19 +57,26 @@ const SPS_VERSION = 0x53505331; // "1SPS"
 
 /** Bounds-checked reads over the file's bytes. */
 class Reader {
-  constructor(readonly buf: Buffer) {}
+  constructor(readonly buf: Buffer, private readonly decodeAnsi: AnsiDecoder = latin1) {}
+  /** Bytes in the ANSI code page, decoded (Latin-1 when the decoder can't). */
+  ansi(bytes: Buffer): string {
+    if (!bytes.length) return "";
+    let text: string | null;
+    try { text = this.decodeAnsi(bytes); } catch { text = null; }
+    return text ?? latin1(bytes);
+  }
   need(at: number, n: number): void {
     if (at < 0 || n < 0 || at + n > this.buf.length) throw new LnkError("the shortcut is cut short");
   }
   u16(at: number): number { this.need(at, 2); return this.buf.readUInt16LE(at); }
   u32(at: number): number { this.need(at, 4); return this.buf.readUInt32LE(at); }
   bytes(at: number, n: number): Buffer { this.need(at, n); return this.buf.subarray(at, at + n); }
-  /** A NUL-terminated single-byte string (the system code page; read as Latin-1, which is right for ASCII paths). */
+  /** A NUL-terminated string in the system's ANSI code page (#65: a cp1251 "Привет" folder stays Cyrillic). */
   ansiz(at: number, end = this.buf.length): string {
     this.need(at, 0);
     const stop = this.buf.indexOf(0, at);
     if (stop < 0 || stop > end) throw new LnkError("a string runs past its structure");
-    return this.buf.toString("latin1", at, stop);
+    return this.ansi(this.buf.subarray(at, stop));
   }
   /** A NUL-terminated UTF-16LE string. */
   wstrz(at: number, end = this.buf.length): string {
@@ -82,7 +97,7 @@ function fixedString(r: Reader, at: number, chars: number, unicode: boolean): st
     return field.toString("utf16le", 0, end);
   }
   const stop = field.indexOf(0);
-  return field.toString("latin1", 0, stop < 0 ? field.length : stop);
+  return r.ansi(field.subarray(0, stop < 0 ? field.length : stop));
 }
 
 /** The LinkInfo structure's path: a local base path plus suffix, or a network share plus suffix; null when neither. */
@@ -208,9 +223,13 @@ function aumidOf(r: Reader, at: number, end: number): string | null {
   return null;
 }
 
-/** Parses a .lnk file's bytes. Throws LnkError when they aren't a shortcut. */
-export function parseShellLink(buf: Buffer): ShellLink {
-  const r = new Reader(buf);
+/**
+ * Parses a .lnk file's bytes. Throws LnkError when they aren't a shortcut. `ansi` decodes the strings a non-Unicode
+ * shortcut stores in the system code page (LinkInfo paths, StringData, the environment block's ANSI target); without
+ * one they are read as Latin-1.
+ */
+export function parseShellLink(buf: Buffer, ansi?: AnsiDecoder): ShellLink {
+  const r = new Reader(buf, ansi);
   if (r.u32(0) !== HEADER_SIZE || !r.bytes(4, 16).equals(LINK_CLSID)) throw new LnkError("not a shortcut");
   const flags = r.u32(20);
   let p = HEADER_SIZE;
@@ -242,7 +261,7 @@ export function parseShellLink(buf: Buffer): ShellLink {
     const count = r.u16(p);
     const bytes = r.bytes(p + 2, unicode ? count * 2 : count);
     p += 2 + bytes.length;
-    return bytes.toString(unicode ? "utf16le" : "latin1");
+    return unicode ? bytes.toString("utf16le") : r.ansi(bytes);
   };
   const description = stringData(FLAG.HasName) ?? "";
   stringData(FLAG.HasRelativePath);

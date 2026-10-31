@@ -20,7 +20,7 @@ import type { AppCatalog, AppIdentity } from "../../types";
 import { splitWindowsArgs } from "./argv";
 import { appEnv, findApp, hasBuiltInShell, isTerminalApp, LAUNCHERS, programsOf } from "./interim";
 import type { KnownFolders } from "./known-folders";
-import { expandEnvironmentStrings, LnkError, parseShellLink, type ShellLink } from "./lnk";
+import { expandEnvironmentStrings, LnkError, parseShellLink, type AnsiDecoder, type ShellLink } from "./lnk";
 
 const wpath = path.win32;
 
@@ -112,6 +112,8 @@ export interface Win32AppsDeps {
   folders: Pick<KnownFolders, "programs" | "commonPrograms" | "windowsDirectory">;
   /** Is a package of this family installed for this user? (null: can't tell, so it isn't offered.) */
   packageInstalled: (family: string) => boolean | null;
+  /** Decodes a non-Unicode shortcut's strings in the system's ANSI code page (#65); Latin-1 without it. */
+  ansi?: AnsiDecoder;
   fs?: AppsFs;
   spawn?: (command: string, args: string[], options: SpawnOptions) => { on(event: "error", fn: (err: Error) => void): unknown; unref(): void };
   homedir?: () => string;
@@ -194,7 +196,7 @@ export function win32Apps(d: Win32AppsDeps): AppCatalog & { /** Drops the cached
     const bytes = files.readFile(file, MAX_LNK_BYTES);
     if (bytes) {
       try {
-        link = parseShellLink(bytes);
+        link = parseShellLink(bytes, d.ansi);
       } catch (err) {
         if (!(err instanceof LnkError)) throw err;
         link = null; // not a shortcut Ember can read: skipped
