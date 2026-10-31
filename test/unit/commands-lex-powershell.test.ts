@@ -42,8 +42,11 @@ describe("lexPowerShell: commands, values and statements", () => {
     ["$env:X = 'y'", "$env:X= expr('y')"],
     ["a; b\nc", "[a] ; [b] ; [c]"],
     ["Write-Host `\n hi", "[Write-Host hi]"],
-    ["Remove-Item`\n x", "[Remove-Item x]"],
-    ["Remove-Item`\r\n x", "[Remove-Item x]"],
+    ["Write-Host `\r\n hi", "[Write-Host hi]"],
+    // Inside a word the backtick escapes the line break (#64): a literal LF stays in the word, a literal CR too and
+    // the LF after it ends the statement.
+    ["Remove-Item`\n x", "[Remove-Item'\n' x]"],
+    ["Remove-Item`\r\n x", "[Remove-Item'\r'] ; [x]"],
     ["# comment\nls", "[ls]"],
     ["<# block #> ls", "[ls]"],
     ["Start-Process x &", "[Start-Process x] &"],

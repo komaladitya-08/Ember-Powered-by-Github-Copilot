@@ -439,8 +439,15 @@ class Parser {
       if (c === "`") {
         const n = this.peek(1);
         if (n === "") { lit("`", false); this.i++; continue; }
-        // A backtick before a line break continues the line: it ends the word, like a space.
-        if (n === "\n" || (n === "\r" && this.peek(2) === "\n")) break;
+        // Inside a word, PowerShell escapes the line break like any other character (pwsh 7.6, #64): a backtick and
+        // LF keep a literal LF in the word ("git`<LF>status" is the one word "git\nstatus"), and a backtick and CR keep
+        // a literal CR, after which the LF ends the statement. Between words skipSpaces reads both as a continuation.
+        if (n === "\n" || n === "\r") {
+          lit(n, true);
+          quoted = true;
+          this.i += 2;
+          continue;
+        }
         if (/[0abefnrtvu]/.test(n)) this.note("backtick-escape", "It uses a backtick escape Ember doesn't decode.");
         lit(n, true);
         quoted = true;

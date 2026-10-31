@@ -5037,20 +5037,20 @@
    "cmd": "Remove-Item`\n x",
    "verdict": "ask",
    "classes": [
-    "destroy"
+    "unclear"
    ],
    "rules": [
-    "ps.Remove-Item"
+    "unclear.program"
    ]
   },
   {
    "cmd": "Remove-Item`\r\n x",
    "verdict": "ask",
    "classes": [
-    "destroy"
+    "unclear"
    ],
    "rules": [
-    "ps.Remove-Item"
+    "unclear.program"
    ]
   },
   {
