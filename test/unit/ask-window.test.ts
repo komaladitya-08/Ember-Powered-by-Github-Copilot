@@ -60,7 +60,7 @@ vi.mock("electron", () => {
   };
 });
 
-const { AskWindow } = await import("../../app/main/ask");
+const { AskWindow, MAC_SETTLE_MS } = await import("../../app/main/ask");
 
 afterEach(() => { made.length = 0; menus.length = 0; vi.useRealTimers(); });
 
@@ -207,6 +207,60 @@ describe("the ask box", () => {
     expect(taken).toEqual([0x3a00007, 0x3a00007]);
     expect(win.visible).toBe(true);
     vi.advanceTimersByTime(1500);
+    win.emit("blur");
+    expect(win.visible).toBe(false);
+  });
+
+  it("on macOS, a click into another app once the box has had the keyboard closes it, also in the handover (review #84)", () => {
+    vi.useFakeTimers();
+    const taken: number[] = [];
+    const ask = new AskWindow({ takeFocus: id => taken.push(id), settleMs: MAC_SETTLE_MS });
+    ask.show({ x: 400, y: 300 });
+    const [win] = made;
+    win.emit("ready-to-show");
+    win.emit("focus");
+    const focused = win.focused;
+    // The user types, then clicks back into their app well inside OPENING_MS: the box goes, the app keeps the keyboard.
+    vi.advanceTimersByTime(600);
+    win.isFocused = () => false;
+    win.emit("blur");
+    vi.advanceTimersByTime(0);
+    expect(win.visible).toBe(false);
+    expect(win.focused).toBe(focused);
+    expect(taken).toEqual([0x3a00007]);
+  });
+
+  it("on macOS, a blur before the box ever had the keyboard is still the handover: it takes it again", () => {
+    vi.useFakeTimers();
+    const ask = new AskWindow({ settleMs: MAC_SETTLE_MS });
+    ask.show({ x: 400, y: 300 });
+    const [win] = made;
+    win.emit("ready-to-show");
+    const focused = win.focused;
+    win.isFocused = () => false;
+    win.emit("blur");
+    vi.advanceTimersByTime(0);
+    expect(win.visible).toBe(true);
+    expect(win.focused).toBe(focused + 1);
+    // Once it has the keyboard, a blur is the user: the box goes.
+    win.emit("focus");
+    win.emit("blur");
+    expect(win.visible).toBe(false);
+  });
+
+  it("with a settle time, a blur that comes sooner after the box got the keyboard is still the handover", () => {
+    vi.useFakeTimers();
+    const ask = new AskWindow({ settleMs: 200 });
+    ask.show({ x: 400, y: 300 });
+    const [win] = made;
+    win.emit("ready-to-show");
+    win.emit("focus");
+    vi.advanceTimersByTime(50);
+    win.isFocused = () => false;
+    win.emit("blur");
+    expect(win.visible).toBe(true);
+    win.emit("focus");
+    vi.advanceTimersByTime(250);
     win.emit("blur");
     expect(win.visible).toBe(false);
   });

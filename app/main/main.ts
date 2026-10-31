@@ -36,7 +36,7 @@ import { isNeverLook } from "./perception/elements";
 import { Perception, type QuickContext } from "./perception";
 import { warmText } from "./perception/capture";
 import { TEXT_WARM_DELAY_MS, scheduleTextWarm } from "./perception/text-warm";
-import { AskWindow, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
+import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask";
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
@@ -921,6 +921,8 @@ function start(): void {
     keepOff: () => handle?.bounds ?? null,
     windowId: w => ownId(w),
     floating: platform.overlay.floating("ask"),
+    // A click into another app once the box has had the keyboard closes it there, also in the handover (review #84).
+    settleMs: platform.os === "darwin" ? MAC_SETTLE_MS : undefined,
     // As the handle's menu takes the keyboard: the window manager is asked, and X is told too. On macOS the box is a
     // panel that takes the keyboard on show() without activating Ember (the user's app stays the active one). That route
     // is kept for the box's speed too (review #78): app.focus({ steal: true }), the settings window's, would make Ember

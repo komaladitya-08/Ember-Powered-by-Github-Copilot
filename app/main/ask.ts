@@ -52,6 +52,13 @@ const OPENING_MS = 1500;
 /** How many times, during that handover, a blur makes the box take the keyboard again before it gives up and closes. */
 const OPENING_TRIES = 4;
 /**
+ * macOS (review #84): how long the box has to have held the keyboard before a blur is the user, handover or not. Its
+ * panel takes the keyboard on show() and nothing of Ember's takes it back (showInactive never makes a window key there),
+ * so once it has had the keyboard a blur is the user clicking into another app: it must close the box, not have the box
+ * take the keyboard back from the app they chose (the box stayed up over TextEdit when the click came inside OPENING_MS).
+ */
+export const MAC_SETTLE_MS = 0;
+/**
  * After the field's right-click menu closes, how long the OS has to say where the keyboard went (a click on another app
  * that dismissed the menu activates that app) before the box takes it back or goes away.
  */
@@ -175,6 +182,8 @@ export class AskWindow {
   private openingTries = 0;
   /** The field's menu has just closed and the OS hasn't yet said where the keyboard went. */
   private menuSettle = false;
+  /** When the box last got the keyboard since it was shown (0: not since): how long it has held it (settleMs). */
+  private keyboardAt = 0;
 
   /**
    * `keepOff`: Ember's handle in the corner now (global DIP); the box never covers it. `takeFocus`: gives the box,
@@ -188,11 +197,23 @@ export class AskWindow {
    * its keys as this OS does (Return on a Mac). `onKeyboard`: the first time Electron says the box has the keyboard
    * after each reveal (letters typed before went elsewhere where Ember holds no keys: review #78). `textScale`: the
    * text's scale now (page-prefs.ts textScale; default 1): the box is as large as its words at that size (review #57).
+   * `settleMs`: once the box has held the keyboard this long since it was shown, a blur is the user clicking away even
+   * inside the handover (OPENING_MS), so it closes the box; unset, every blur in the handover takes the keyboard back
+   * (Windows, where Ember's own windows finishing their load or the OS can take it straight back). macOS: MAC_SETTLE_MS.
    */
   constructor(private o: {
     keepOff?: () => Box | null; takeFocus?: (id: number) => void; hasFocus?: () => boolean; onReveal?: (source: string) => void;
     windowId?: (w: BrowserWindow) => number; floating?: FloatingWindow; os?: OS; onKeyboard?: () => void; textScale?: () => number;
+    settleMs?: number;
   } = {}) {}
+
+  /** The box is still being handed the keyboard: a blur now is that handover, not the user (OPENING_MS, settleMs). */
+  private handingOver(): boolean {
+    const now = Date.now();
+    if (now >= this.openingUntil || this.openingTries >= OPENING_TRIES) return false;
+    const settle = this.o.settleMs;
+    return settle === undefined || !this.keyboardAt || now - this.keyboardAt < settle;
+  }
 
   /** The id of `win` in the window system's id space; 0 when it can't be told (never an id of another window). */
   private idOf(win: BrowserWindow): number {
@@ -233,8 +254,9 @@ export class AskWindow {
       if (this.menuUp) { this.menuBlur = true; return; }
       // The click that dismissed the menu: it closes the box, including during the handover below.
       if (this.menuSettle) { this.hide(); return; }
-      if (Date.now() < this.openingUntil && this.openingTries < OPENING_TRIES) {
+      if (this.handingOver()) {
         this.openingTries++;
+        this.keyboardAt = 0;
         setTimeout(() => {
           if (this.win !== win || win.isDestroyed() || !win.isVisible() || this.menuUp || this.menuSettle) return;
           if (win.isFocused()) return;
@@ -248,6 +270,7 @@ export class AskWindow {
     win.on("focus", () => {
       if (this.win !== win) return;
       this.menuBlur = false;
+      this.keyboardAt = Date.now();
       if (this.awaitingKeyboard) { this.awaitingKeyboard = false; this.o.onKeyboard?.(); }
     });
     // Right-click in the field: Cut, Copy, Paste and Select all, for a mouse-only paste or copy.
@@ -280,6 +303,7 @@ export class AskWindow {
     this.awaitingKeyboard = true;
     this.openingUntil = Date.now() + OPENING_MS;
     this.openingTries = 0;
+    this.keyboardAt = 0;
     win.show();
     win.focus();
     // Best effort, as it always was: the box is shown and gets its context whatever the window manager says.
@@ -381,6 +405,7 @@ export class AskWindow {
     this.wanted = false;
     this.awaitingKeyboard = false;
     this.openingUntil = 0;
+    this.keyboardAt = 0;
     this.menuSettle = false;
     if (!this.win || this.win.isDestroyed()) return;
     this.win.hide();
