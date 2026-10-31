@@ -4,7 +4,7 @@
  * out-parameters, the settings broadcast made only through koffi's asynchronous call (never synchronously on the main
  * thread), the screen-reader flag, the token's elevation (the token always closed), session ids, Windows' folders
  * (asked again with room when the buffer was too small), known folders (decoded from real native memory, then freed
- * with CoTaskMemFree whether or not the call succeeded), installed packages and a window's monitor. A missing function
+ * with CoTaskMemFree whether or not the call succeeded), installed packages, a window's monitor and ANSI text in the system code page. A missing function
  * makes only its own method answer "unavailable".
  */
 
@@ -233,6 +233,25 @@ describe("binding the Windows system API", () => {
     const api = bindWin32System(koffi, f.load);
     expect(api.monitorRect(0x40)).toEqual({ x: -1920, y: 0, width: 1920, height: 1080 });
     expect(api.monitorRect(0)).toBeNull();
+  });
+
+  it("decodes ANSI bytes with MultiByteToWideChar(CP_ACP), sizing the buffer first; null when it fails (#65)", () => {
+    const f = fakeLoad({
+      MultiByteToWideChar: (cp: number, flags: number, mb: Buffer, cb: number, wide: Buffer | null, cch: number) => {
+        expect([cp, flags, cb]).toEqual([0, 0, mb.length]);
+        const text = new TextDecoder("windows-1251").decode(mb);
+        if (!wide) return text.length;
+        expect(cch).toBe(text.length);
+        wide.write(text, "utf16le");
+        return text.length;
+      },
+    });
+    const api = bindWin32System(koffi, f.load);
+    expect(api.ansiText(Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]))).toBe("Привет");
+    expect(f.called("MultiByteToWideChar")).toHaveLength(2);
+    expect(api.ansiText(Buffer.alloc(0))).toBe("");
+    expect(bindWin32System(koffi, fakeLoad().load).ansiText(Buffer.from("x"))).toBeNull();
+    expect(bindWin32System(koffi, fakeLoad({}, { missing: ["MultiByteToWideChar"] }).load).ansiText(Buffer.from("x"))).toBeNull();
   });
 
   it("makes only the missing function's method unavailable", () => {

@@ -51,11 +51,13 @@ export interface Win32SysApi {
   packageFamilyInstalled(family: string): boolean | null;
   /** The monitor rectangle (physical pixels) of the monitor a window is on (MonitorFromWindow + GetMonitorInfoW). */
   monitorRect(hwnd: number): Rect | null;
+  /** MultiByteToWideChar(CP_ACP): bytes in the system's ANSI code page as text; null when it fails or isn't there. */
+  ansiText(bytes: Buffer): string | null;
 }
 
 const ERROR_SUCCESS = 0, ERROR_INSUFFICIENT_BUFFER = 122;
 const HWND_BROADCAST = 0xffff, WM_SETTINGCHANGE = 0x001a, SMTO_BLOCK = 0x0001, SMTO_ABORTIFHUNG = 0x0002;
-const SPI_GETSCREENREADER = 0x0046, TOKEN_QUERY = 0x0008, TOKEN_ELEVATION = 20, MONITOR_DEFAULTTONEAREST = 2;
+const CP_ACP = 0, SPI_GETSCREENREADER = 0x0046, TOKEN_QUERY = 0x0008, TOKEN_ELEVATION = 20, MONITOR_DEFAULTTONEAREST = 2;
 /** MONITORINFO: cbSize, rcMonitor, rcWork, dwFlags. */
 const MONITORINFO_SIZE = 40;
 /** Windows' folders are at most MAX_PATH long, but a longer one is asked for again with room for it. */
@@ -90,6 +92,7 @@ export const WIN32_SYSTEM_FUNCTIONS: Readonly<Record<string, readonly string[]>>
     "int __stdcall CloseHandle(void *handle)",
     "int __stdcall ProcessIdToSessionId(uint32_t pid, _Out_ uint32_t *session)",
     "int32_t __stdcall GetPackagesByPackageFamily(const char16_t *family, _Inout_ uint32_t *count, void *names, _Inout_ uint32_t *bufferLength, void *buffer)",
+    "int __stdcall MultiByteToWideChar(uint32_t codePage, uint32_t flags, void *mb, int cbMb, void *wide, int cchWide)",
   ],
   "shell32.dll": [
     "int32_t __stdcall SHGetKnownFolderPath(void *id, uint32_t flags, void *token, _Out_ void **path)",
@@ -177,7 +180,7 @@ export function bindWin32System(koffi: Koffi, load: (name: string) => Pick<impor
   const fn = bindFunctions(load);
   const { RegGetValueW, RegSetKeyValueW, OpenProcessToken, GetTokenInformation, SendMessageTimeoutW, SystemParametersInfoW } = fn;
   const { MonitorFromWindow, GetMonitorInfoW, GetSystemDirectoryW, GetWindowsDirectoryW, GetCurrentProcess, CloseHandle } = fn;
-  const { ProcessIdToSessionId, GetPackagesByPackageFamily, SHGetKnownFolderPath, CoTaskMemFree } = fn;
+  const { ProcessIdToSessionId, GetPackagesByPackageFamily, SHGetKnownFolderPath, CoTaskMemFree, MultiByteToWideChar } = fn;
 
   /** A W function that fills a buffer of `size` UTF-16 units and answers the length (or the size it needs). */
   const folder = (call: Bound): string | null => {
@@ -273,6 +276,16 @@ export function bindWin32System(koffi: Koffi, load: (name: string) => Pick<impor
       if (!GetMonitorInfoW(monitor, info)) return null;
       const left = info.readInt32LE(4), top = info.readInt32LE(8), right = info.readInt32LE(12), bottom = info.readInt32LE(16);
       return { x: left, y: top, width: right - left, height: bottom - top };
+    },
+    ansiText(bytes) {
+      if (!MultiByteToWideChar) return null;
+      if (!bytes.length) return "";
+      // Asked for the size first; an ANSI byte never becomes more than one UTF-16 unit, but DBCS pairs become one.
+      const units = MultiByteToWideChar(CP_ACP, 0, bytes, bytes.length, null, 0) as number;
+      if (units <= 0) return null;
+      const wide = Buffer.alloc(units * 2);
+      const n = MultiByteToWideChar(CP_ACP, 0, bytes, bytes.length, wide, units) as number;
+      return n > 0 ? wide.toString("utf16le", 0, n * 2) : null;
     },
   };
 }

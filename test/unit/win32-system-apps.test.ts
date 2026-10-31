@@ -15,7 +15,7 @@ import {
   type Win32AppsDeps,
 } from "../../app/main/platform/win32/system/apps";
 import { parseShellLink } from "../../app/main/platform/win32/system/lnk";
-import { buildLnk, FakeFs, type LnkSpec } from "./win32-system-fakes";
+import { ansiLink, buildLnk, CP1251_PRIVET, FakeFs, type LnkSpec } from "./win32-system-fakes";
 
 const USER = "C:\\Users\\Ana\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs";
 const COMMON = "C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs";
@@ -115,6 +115,16 @@ describe("listing the Start Menu and packaged apps", () => {
     expect(byName(apps, "Notepad")).toMatchObject({ id: "Accessories/Notepad", file: `${USER}\\Accessories\\Notepad.lnk`, programs: ["notepad"], generic: "text editor" });
     expect(byName(apps, "Microsoft Edge")).toMatchObject({ id: "Microsoft Edge", generic: "web browser", keywords: ["web browser"] });
     expect(apps.filter(a => a.name === "Notepad")).toHaveLength(1);
+  });
+
+  it("offers a non-Unicode shortcut whose target has letters of the system code page (#65)", () => {
+    const t = setup();
+    const target = Buffer.concat([Buffer.from("C:\\Apps\\", "latin1"), CP1251_PRIVET, Buffer.from("\\app.exe\0", "latin1")]);
+    t.fs.add(`${USER}\\Privet.lnk`, ansiLink(target));
+    t.fs.add("C:\\Apps\\Привет\\app.exe", "MZ");
+    expect(byName(t.apps().list(), "Privet")).toBeUndefined(); // read as Latin-1, its target isn't there
+    t.deps.ansi = bytes => new TextDecoder("windows-1251").decode(bytes);
+    expect(byName(t.apps().list(), "Privet")?.argv).toEqual(["C:\\Apps\\Привет\\app.exe"]);
   });
 
   it("finds apps with Windows' terminal words: a terminal never wins a tie against an app Ember will start", () => {
