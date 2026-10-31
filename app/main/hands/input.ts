@@ -12,6 +12,7 @@
 
 import { createRequire } from "node:module";
 import { shiftKey, type KeyLayout, type KeyLevels } from "./keymap";
+import { ignoreXErrors } from "../../remote/screen";
 
 export interface XInput {
   pointer(): { x: number; y: number } | null;
@@ -181,6 +182,8 @@ export function openXInput(displayName?: string): XInput | null {
 
     const dpy = XOpenDisplay(displayName ?? null);
     if (!dpy) { xinputError = new Error("cannot open the X display"); return null; }
+    // A window that closes between being listed and read is BadWindow: without a handler Xlib's default ends Ember.
+    ignoreXErrors();
     const root = XDefaultRootWindow(dpy);
     let open = true;
     // What Ember holds down right now: let go of before the connection closes, or the server keeps them down.
