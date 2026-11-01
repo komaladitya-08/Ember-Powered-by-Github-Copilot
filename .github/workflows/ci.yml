@@ -972,7 +972,7 @@ jobs:
     name: Publish the release (v* tags, after every other job passed)
     # docs/DEVELOPING.md §15. Only a v* tag gets here, and only once every platform's checks and packages are green.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [checks, el8, package, eval, windows, macos, macos-x64]
+    needs: [checks, el8, voice-e2e, package, eval, windows, macos, macos-x64]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
