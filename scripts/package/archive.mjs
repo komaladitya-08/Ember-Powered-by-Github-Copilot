@@ -15,7 +15,7 @@ import { artifactNames, layoutFor } from "./layout.mjs";
 /**
  * The commands that make and check the archives for `layout`, in order. A step with `expect` passes only if its
  * output names every one of those entries; `retries` is for hdiutil, which sometimes fails on CI with
- * "Resource busy". `dmgRoot` is the folder that must hold Ember.app and the Applications link while hdiutil runs.
+ * "Resource busy" when creating the image and "Resource temporarily unavailable" when verifying it. `dmgRoot` is the folder that must hold Ember.app and the Applications link while hdiutil runs.
  * @param {import("./layout.d.mts").Layout} layout
  * @param {{ version: string; out: string; systemRoot?: string }} o
  */
@@ -41,7 +41,7 @@ export function archivePlan(layout, o) {
         { what: "zipping the app", file: "ditto", args: ["-c", "-k", "--sequesterRsrc", "--keepParent", app, names[0]] },
         { what: "listing the zip", file: "zipinfo", args: ["-1", names[0]], expect: [`${layout.appDir}/${layout.exe}`, `${layout.appDir}/Contents/Info.plist`, `${layout.appDir}/Contents/_CodeSignature/CodeResources`, `${layout.appDir}/${layout.resourcesDir}/app/package.json`] },
         { what: "making the disk image", file: "hdiutil", args: ["create", "-volname", "Ember", "-srcfolder", dmgRoot, "-ov", "-format", "UDZO", names[1]], retries: 3 },
-        { what: "verifying the disk image", file: "hdiutil", args: ["verify", names[1]] },
+        { what: "verifying the disk image", file: "hdiutil", args: ["verify", names[1]], retries: 3 },
       ],
     };
   }

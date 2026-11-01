@@ -265,14 +265,14 @@ describe("the archives", () => {
     expect(archivePlan(layoutFor("win32", "arm64"), { version: "0.1.0", out: "/o" }).steps[0].file).toBe("C:\\Windows\\System32\\tar.exe");
   });
 
-  it("makes the macOS zip with ditto and the disk image with hdiutil, retrying it, then verifies both", () => {
+  it("makes the macOS zip with ditto and the disk image with hdiutil, then verifies both, retrying hdiutil's busy failures", () => {
     const plan = archivePlan(layoutFor("darwin", "arm64"), { version: "0.1.0", out: "/r/dist/package" });
     const [zip, dmg] = plan.archives;
     expect(plan.steps.map(s => s.file)).toEqual(["ditto", "zipinfo", "hdiutil", "hdiutil"]);
     expect(plan.steps[0].args).toEqual(["-c", "-k", "--sequesterRsrc", "--keepParent", path.join("/r/dist/package", "Ember.app"), zip]);
     expect(plan.steps[1].expect).toEqual(expect.arrayContaining(["Ember.app/Contents/MacOS/Ember", "Ember.app/Contents/_CodeSignature/CodeResources", "Ember.app/Contents/Resources/app/package.json"]));
     expect(plan.steps[2]).toMatchObject({ args: ["create", "-volname", "Ember", "-srcfolder", plan.dmgRoot, "-ov", "-format", "UDZO", dmg], retries: 3 });
-    expect(plan.steps[3].args).toEqual(["verify", dmg]);
+    expect(plan.steps[3]).toMatchObject({ args: ["verify", dmg], retries: 3 });
   });
 
   it("leaves Linux to rpm.sh and appimage.sh", () => {
