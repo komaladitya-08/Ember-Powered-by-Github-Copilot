@@ -22,10 +22,10 @@ Ember ships as an RPM and an AppImage built on EL8, whose every binary must run 
   - Windows: `npm run package:win` (archive.mjs zips `Ember\Ember.exe`), on Windows;
   - macOS: `npm run package:mac` (`Ember.app`, signed ad hoc, as a zip and a dmg), on a Mac of the target's architecture.
 - **System dependencies (RPM).** Automatic dependency detection is off (`AutoReqProv: no`), so add each one to packaging/rpm/ember.spec yourself: `Requires:` when Ember needs it, `Recommends:` when it's optional. Load a library the RPM doesn't require with a guarded `koffi.load` and a fallback, as the local `optional()` in app/main/hands/input.ts does.
-- **Native code.** Many npm prebuilds won't load on RHEL 8 (sherpa-onnx's native addon needs glibc 2.32, so voice uses its WebAssembly build on every OS).
-  - Prefer koffi FFI or WASM over native addons (`ember.nativeModules` is `[]`).
-  - If a native addon is unavoidable, list it there, run `npm run rebuild:el8`, and pass `scripts/check-symvers.sh`. The limits are at most GLIBC_2.28, GLIBCXX_3.4.25 and CXXABI_1.3.11 (docs/DEVELOPING.md §6).
-  - A package published once per platform goes in `PLATFORM_FAMILIES` in layout.mjs, so each target ships only its own build. Windows and macOS have no glibc gate.
+- **Native code.** Many npm prebuilds won't load on RHEL 8, so prefer koffi FFI or WASM over native addons.
+  - Linux ships none: `ember.nativeModules` is `[]`. If one is ever unavoidable, list it there, run `npm run rebuild:el8`, and pass `scripts/check-symvers.sh`. The limits are at most GLIBC_2.28, GLIBCXX_3.4.25 and CXXABI_1.3.11 (docs/DEVELOPING.md §6).
+  - A prebuilt binary that can't meet those limits may still ship for Windows and macOS only. sherpa-onnx's native addon is the one such case (its Linux build needs glibc 2.32, so Linux runs speech on the WebAssembly build). Ember depends on `sherpa-onnx-win-<arch>` and `sherpa-onnx-darwin-<arch>` directly, as `optionalDependencies` npm installs only on their own OS, and never on `sherpa-onnx-node`, whose own dependencies would bring `sherpa-onnx-linux-x64` and fail check-symvers. It isn't in `ember.nativeModules`, because nothing is rebuilt.
+  - A package published once per platform goes in `PLATFORM_FAMILIES` in layout.mjs, so each target ships only its own build and the Linux layout none of sherpa-onnx's (CI checks the staged Linux folder has no `sherpa-onnx-*`). Windows and macOS have no glibc gate.
 - **Fuses.** Don't weaken the debug lockdown or `EMBER_FUSES`. Change them only together with scripts/package/fuses.mjs, its test and the CI check. RunAsNode stays off on macOS (Ember.app never runs as plain Node) and on for Linux's and Windows' helpers; PLAN.md §2 "Node mode" says why. When you change an export of a `scripts/package/*.mjs` module, update the `.d.mts` file beside it.
 
 ## Licences
