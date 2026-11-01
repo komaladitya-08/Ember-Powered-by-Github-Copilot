@@ -8,6 +8,8 @@ The detail lives in the docs. Read the one for the area you are changing:
 - `docs/COMMANDS-WSL-SSH.md` is what users and administrators see of commands, WSL and SSH; README.md and CHANGELOG.md say what ships.
 - `docs/DESIGN.md` covers the characters, the rig, the bubble, motion and the design system.
 - `docs/RESEARCH.md` holds the background evidence.
+- `docs/ASSISTANT.md` is the plan for voice latency, recognition, a natural voice and a smaller footprint, with the
+  measurements behind it.
 - `docs/MEMORY.md` is the long-term memory design: what it keeps, the safety limits, and the plan.
 
 Topic rules in `.claude/rules/` load when you open matching files:
