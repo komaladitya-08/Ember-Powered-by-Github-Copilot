@@ -275,7 +275,7 @@ jobs:
       # Lets Chromium use its user-namespace sandbox inside the container.
       options: --security-opt seccomp=unconfined
     steps:
-      - name: System packages (as el8; no sound server or sound card: the test's microphone is a WAV file)
+      - name: "System packages (as el8; no sound server or sound card: the test's microphone is a WAV file)"
         run: |
           dnf -y -q --nobest install git tar xz file binutils findutils which sudo gcc-c++ make python3 \
             libX11-devel libXtst-devel libXt-devel \
