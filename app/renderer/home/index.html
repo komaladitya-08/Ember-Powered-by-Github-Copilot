@@ -98,9 +98,9 @@
         <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>
           <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">Answer only my voice (Voice Match)</span></label>
           <p class="hint" id="match-text"></p>
-          <p class="match-prompt" id="match-prompt" role="status" hidden></p>
+          <p class="match-prompt" id="match-prompt" hidden></p>
           <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
-          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button></div>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button></div>
         </div>
         <div class="choice">
           <label for="speak">Speak replies, questions and results out loud</label>
@@ -115,6 +115,7 @@
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
       <div class="stack">
         <h3 class="sub">When Ember asks first</h3>
+        <span id="trust-managed" hidden>Managed by your organisation</span>
         <label class="switch-row"><input type="checkbox" id="trust-apps" role="switch" aria-describedby="trust-apps-hint"><span>Don't ask before working in an app I asked for help with</span></label>
         <p class="hint" id="trust-apps-hint">The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.</p>
         <label class="switch-row"><input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>Ask only about dangerous commands</span></label>
