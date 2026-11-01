@@ -153,8 +153,12 @@ docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Ele
 - **Recalled facts reach a model only through `memoryBlock()`** (`<memory untrusted="true">`). Only `user`-sourced
   facts may shape what Ember does. Policy never checks a risky step against memory.
 - **`memory.json` is 0600** and written whole through `memoryFile()`. A broken file is moved aside, never overwritten.
-- **Nothing is remembered until memory has its own consent** (docs/MEMORY.md §3). Wiring it in comes with the setting,
-  the first-use card and the admin key.
+- **Nothing is remembered until memory has its own consent.** That means `settings.memory.on` with
+  `memory.consent.version >= FEATURE_CONSENT_VERSION.memory`, and the admin's `features.memory` not false. The host
+  gives the conductor memory only then (`memoryWanted()`), and only then does it have remember, recall and
+  forget_memory. With memory off, the tools and the prompt are today's exactly.
+- **A saved fact is the user's only in their own words** (`ownWords`, service.ts). Anything else is `conversation`.
+- **Sign-out and an account change call `forgetAll()`**, which erases the file too.
 
 ## Settings and admin policy
 

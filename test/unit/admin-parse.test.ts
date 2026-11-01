@@ -7,7 +7,7 @@ import path from "node:path";
 import { AdminPolicySchema, loadAdminPolicy, lockedDown, parseAdminPolicy } from "../../app/main/admin";
 
 const LOCKDOWN = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },

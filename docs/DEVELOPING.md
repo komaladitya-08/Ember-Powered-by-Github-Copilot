@@ -120,6 +120,16 @@ cache (test/temp-folder.ts).
   will look at, and ↑/↓ bring back earlier questions.
 - Long answers have **Read all** (counted at the text size you picked): the settings window's **Conversation** section
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+- **Memory** (Settings › Conversation › **Remember what I tell you**, off until you turn it on and agree to its note):
+  Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
+  - It keeps this in `memory.json` in its data folder (mode 0600).
+  - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.
+  - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
+    only.
+  - It never keeps passwords, codes, keys or card numbers.
+  - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
+    signing out forgets it all.
+  - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
 - If another app already holds one of Ember's shortcuts, Ember registers its fallback (the same chord with Shift;
   on a Mac Control+Shift+Command with another key, never VoiceOver's Option: `FALLBACK_SHORTCUTS` in
   `app/shared/shortcuts.ts`), and the **Setup check**, the greeting, the
@@ -387,6 +397,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left untouched and unused |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
@@ -1408,7 +1419,7 @@ with the command above, and create the release with those files.
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
   memory/           long-term memory (docs/MEMORY.md): the temporal graph, recall (BM25 + Personalized PageRank),
-                    sleep-time consolidation, the secret guard and memory.json; not wired into the app yet
+                    sleep-time consolidation, the secret guard, memory.json and MemoryService (main's)
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
   commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
   wsl/              WSL discovery, the WSL runner, the WSLg router and matcher

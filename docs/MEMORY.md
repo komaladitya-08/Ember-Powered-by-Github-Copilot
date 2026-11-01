@@ -1,8 +1,9 @@
 # Ember's long-term memory
 
-Status: design, with the first slice built (the memory core in `app/main/memory/`, not yet wired into the app).
-Nothing is remembered across launches yet: today the conversation is deleted at quit (docs/DEVELOPING.md,
-"Conversation"), and nothing here changes that until the steps below are built and the user turns memory on.
+Status: steps 1 and 2 are built. The core (`app/main/memory/`) is done, and memory is wired into the conversation
+behind Settings › Conversation › **Remember what I tell you**, which is off until the user turns it on and agrees to
+its note. The conversation itself is still deleted at quit (docs/DEVELOPING.md, "Conversation"). Memory keeps only
+facts.
 
 The goal is a companion that knows its user: what they work on, the people and apps involved, how they like things
 done. It should learn this from conversation, from the tasks it does, from what it sees (with consent), from services
@@ -81,7 +82,21 @@ SHA-256 pinned and downloaded only with consent, like the speech models).
 ## 4. Plan
 
 1. **Core** (done): the graph, recall, consolidation, guard and file, with unit tests (`test/unit/memory.test.ts`).
-2. **Remember and recall in conversation.**
+2. **Remember and recall in conversation** (done; `test/unit/memory-conversation.test.ts` and the "memory on the
+   real Copilot runtime" integration test). As built:
+   - The setting is `memory: { on, consent }`, with `FEATURE_CONSENT_VERSION.memory`. The note is in Settings ›
+     Conversation, and so is the list with **Forget** and **Forget everything**.
+   - The admin key is `features.memory`, and LOCKDOWN turns it off.
+   - `MemoryService` (service.ts) saves a second after a change and on quit, and tidies every 30 minutes when
+     something changed.
+   - A fact the model saves is `user` only when at least 60% of its words are in what the user said that turn
+     (`ownWords`). Otherwise it is `conversation`, so text read from the screen and saved by an injected
+     instruction never becomes the user's own.
+   - The conductor resumed after a switch gets the new tools at once. Its system message is the one the
+     conversation was created with (§3.15), so the memory rules reach a resumed conversation through the tools'
+     own descriptions until the next new conversation.
+
+   What the step was planned as:
    - Setting `memory.on` (off), the first-use card and the admin key.
    - Conductor tools `remember` (facts the user states: source `user`), `recall` and `forget_memory`.
    - Before each turn, the host recalls against the request and adds a `<memory>` block.
