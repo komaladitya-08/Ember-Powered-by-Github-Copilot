@@ -1,0 +1,32 @@
+{
+  "name": "ember-copilot",
+  "version": "0.1.0",
+  "description": "Launcher for Ember, a cursor-companion agent powered by the GitHub Copilot SDK: downloads the matching desktop release from GitHub Releases, checks it against SHA256SUMS and starts it.",
+  "license": "MIT",
+  "author": "komaladitya-08",
+  "type": "module",
+  "homepage": "https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot#readme",
+  "bugs": "https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot.git",
+    "directory": "packages/npm"
+  },
+  "keywords": ["ember", "copilot", "github-copilot", "agent", "desktop", "electron", "launcher"],
+  "bin": {
+    "ember": "bin/ember.mjs",
+    "ember-copilot": "bin/ember.mjs"
+  },
+  "exports": "./lib/launcher.mjs",
+  "types": "./lib/launcher.d.mts",
+  "files": ["bin/", "lib/", "README.md", "LICENSE"],
+  "os": ["win32", "darwin", "linux"],
+  "cpu": ["x64", "arm64"],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

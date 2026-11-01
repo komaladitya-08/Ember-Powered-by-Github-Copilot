@@ -50,6 +50,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: The npm launcher's package files (packages/npm, published by npm.yml)
+        working-directory: packages/npm
+        run: npm pack --dry-run
       - name: Accessibility sidecar self-test (stand-in pyatspi, no desktop)
         run: npm run test:sidecar
       - name: Speech models (cached; verified by SHA-256)

@@ -27,6 +27,13 @@ To build them yourself, see [docs/DEVELOPING.md](docs/DEVELOPING.md) (§7 Linux,
 manual CI run with **packages** ticked also keeps them for 3 days as artifacts (`ember-packages`, `ember-windows`,
 `ember-macos`, and `ember-macos-x64` when **intel** is ticked too).
 
+### From npm (beta)
+
+With Node.js 18.17 or later, `npm i -g ember-copilot` and then `ember` (or just `npx ember-copilot`) downloads this
+version's Windows zip, macOS zip or Linux AppImage from the Releases page, checks it against `SHA256SUMS`, caches it in
+your user account and starts it. The builds are unsigned betas, as below; see
+[packages/npm/README.md](packages/npm/README.md).
+
 ## Install on RHEL 8 (or Rocky, Alma, Oracle Linux 8)
 
 Download `ember-0.1.0-1.el8.x86_64.rpm` from the Releases page, then:
