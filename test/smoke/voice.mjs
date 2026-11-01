@@ -100,10 +100,22 @@ const mock = await startMockLlm({ delayMs: 10, respond: () => ({ text: reply }) 
 /** What the scripted model says to the scenario's request. */
 let reply = "";
 
+/**
+ * A room's faint noise (about -74 dBFS, the same every run) under the whole recording: a microphone never sends
+ * digital silence, and after seconds of it the wake word spotter missed "Hey Ember" or the bare name for 2 to 3 of 16
+ * placements of the frames (with this floor, none).
+ */
+function inRoom(samples) {
+  const out = new Float32Array(samples.length);
+  let seed = 12345;
+  for (let i = 0; i < out.length; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; out[i] = samples[i] + (seed / 0x7fffffff - 0.5) * 7e-4; }
+  return out;
+}
+
 function startEmber(name, wav, { debugPort = false } = {}) {
   const userData = mkdtempSync(path.join(tmpdir(), `ember-voice-${name}-`));
   const micWav = path.join(userData, "mic.wav");
-  writeWav(micWav, wav);
+  writeWav(micWav, inRoom(wav));
   // Set up, listening and speaking: wake word on, the microphone agreed to, replies spoken. Speaker rejection off, so
   // the run is the same with or without parec and a sound server (it changes how "Hey Ember" over Ember's voice is taken).
   writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
@@ -113,6 +125,8 @@ function startEmber(name, wav, { debugPort = false } = {}) {
   const env = {
     ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1", EMBER_LOG_LEVEL: "debug",
     EMBER_TEST_PROVIDER_URL: mock.baseUrl, EMBER_VOICE_MODELS: models, EMBER_TEST_MIC_WAV: micWav,
+    // What the voice process received (development builds only), to tell a dropout of the fake microphone (dropouts()).
+    EMBER_VOICE_DUMP: path.join(userData, "heard.f32"),
   };
   const child = spawn(electron, [root, ...noSandbox, ...(debugPort ? ["--remote-debugging-port=0"] : [])], { env, stdio: ["ignore", "pipe", "pipe"] });
   const inst = { name, child, userData, log: [], stdout: "", stderr: "", failed: null };
@@ -134,6 +148,26 @@ function startEmber(name, wav, { debugPort = false } = {}) {
   child.stderr.on("data", d => { inst.stderr = (inst.stderr + d).slice(-20_000); });
   child.on("error", err => { inst.failed ??= `couldn't start ${electron}: ${err.message}`; });
   return inst;
+}
+
+/**
+ * Gaps in what the voice process received (s, ms): runs of exact zeros, which the recording (under its room noise) has
+ * none of. Chromium's fake microphone and output both run on timers, and on a busy machine the capture now and then
+ * stalls and loses ~0.15 s ("Turn on night light." came through as "Turn on, not light.").
+ */
+function dropouts(inst) {
+  let b;
+  try { b = readFileSync(path.join(inst.userData, "heard.f32")); } catch { return []; }
+  const x = new Float32Array(b.buffer, b.byteOffset, Math.floor(b.byteLength / 4));
+  let i = 0;
+  while (i < x.length && x[i] === 0) i++; // (before the first sound: the capture starting)
+  const out = [];
+  for (let run = 0; i < x.length; i++) {
+    if (x[i] === 0) { run++; continue; }
+    if (run >= 320) out.push(`${((i - run) / RATE).toFixed(2)} s: ${Math.round(run / 16)} ms`);
+    run = 0;
+  }
+  return out;
 }
 
 const exited = inst => inst.child.exitCode !== null || inst.child.signalCode !== null;
@@ -204,10 +238,12 @@ async function evaluateInSettings(inst, expression) {
 
 // ───── Scenarios ─────
 /** The request reached the model: the last user message of a request mentions it. */
-const asked = (from, words) => mock.requests.slice(from).some(r => {
+const lastUser = r => {
   const user = [...r.messages].reverse().find(m => m.role === "user");
-  return words.test(typeof user?.content === "string" ? user.content : JSON.stringify(user?.content ?? ""));
-});
+  return (typeof user?.content === "string" ? user.content : JSON.stringify(user?.content ?? "")).replace(/<current_datetime>[^<]*<\/current_datetime>\s*/, "");
+};
+const asked = (from, words) => mock.requests.slice(from).some(r => words.test(lastUser(r)));
+const askedText = from => JSON.stringify(mock.requests.slice(from).map(lastUser));
 
 /** Speech starts, its audio reaches the page, and it ends: [on, first audio, off] indexes from `from`. */
 async function spoken(inst, from, ms = 30_000) {
@@ -228,12 +264,12 @@ const scenarios = {
       const followUp = await waitFor(inst, e => e.msg === "voice.follow_up", 10_000, "the follow-up window (voice.follow_up)");
       // The log, in order. Ember's voice starts loading at the wake (it's warmed then), so its tts_ready may come before
       // or after the request's end: it's checked to come after the wake and before any of its audio.
-      const [ready, wake, utterance, audio] = inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "hey_ember"], ["voice.utterance", e => e.window === "wake"], ["voice.audio_played"]]);
+      const [ready, wake, , audio] = inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "hey_ember"], ["voice.utterance", e => e.window === "wake"], ["voice.audio_played"]]);
       const tts = index(inst, "voice.tts_ready");
       expect(tts > wake && tts < audio, `voice.tts_ready (#${tts}) should come after the wake (#${wake}) and before the reply's audio (#${audio})`);
       expect(ready < wake, "voice.ready came after the wake");
-      expect(asked(sent, /night light/i), `the model wasn't asked about night light (requests: ${JSON.stringify(mock.requests.slice(sent).map(r => r.messages.at(-1)))})`);
-      console.log(`ok   reply: voice.ready → voice.wake → voice.utterance (${inst.log[utterance].chars} chars) → voice.tts_ready → audio on the page`);
+      expect(asked(sent, /night ?light/i), `the model wasn't asked about night light (it was asked ${askedText(sent)})`);
+      console.log(`ok   reply: voice.ready → voice.wake → voice.utterance (${askedText(sent)}) → voice.tts_ready → audio on the page`);
       // Both sentences were played, and the voice process was told while they were.
       const played = all(inst, "voice.audio_played");
       const seconds = played.reduce((n, e) => n + e.seconds, 0);
@@ -259,7 +295,7 @@ const scenarios = {
       await waitFor(inst, e => e.msg === "voice.utterance", 40_000, "the request after the bare name (voice.utterance)");
       await spoken(inst, 0);
       inOrder(inst, [["voice.ready"], ["voice.wake", e => e.keyword === "ember"], ["voice.utterance", e => e.window === "wake"], ["voice.audio_played"]]);
-      expect(asked(sent, /night light/i), "the model wasn't asked about night light");
+      expect(asked(sent, /night ?light/i), `the model wasn't asked about night light (it was asked ${askedText(sent)})`);
       console.log("ok   name: \"Ember, …\" woke Ember (keyword ember), was heard and answered aloud");
     } finally { await finish(inst); }
   },
@@ -324,19 +360,30 @@ async function finish(inst) {
 let ok = true;
 try {
   for (const name of run) {
-    last.inst = null;
-    try {
-      await scenarios[name]();
-      if (last.inst) rmSync(last.inst.userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-    } catch (err) {
-      ok = false;
-      console.error(`FAIL ${name}: ${err.message}`);
-      const current = last.inst;
-      if (current) {
-        const lines = current.log.filter(e => e.msg !== "voice.stderr").slice(-80).map(e => { const { at: _at, ...rest } = e; return JSON.stringify(rest); });
-        process.stderr.write(`--- Ember's log (last lines) ---\n${lines.join("\n")}\n`);
-        if (current.stderr.trim()) process.stderr.write(`--- Ember's stderr (last lines) ---\n${current.stderr.trim().split("\n").slice(-30).join("\n")}\n`);
-        console.error(`(profile kept in ${current.userData})`);
+    for (let attempt = 1; ; attempt++) {
+      last.inst = null;
+      try {
+        await scenarios[name]();
+        if (last.inst) rmSync(last.inst.userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+        break;
+      } catch (err) {
+        const current = last.inst;
+        const gaps = current ? dropouts(current) : [];
+        // Only a run that the fake microphone itself broke is tried again, once (and says so).
+        if (gaps.length && attempt === 1) {
+          console.log(`note ${name}: ${err.message}; the fake microphone dropped audio (${gaps.join(", ")}), so it runs again`);
+          if (current) rmSync(current.userData, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+          continue;
+        }
+        ok = false;
+        console.error(`FAIL ${name}: ${err.message}${gaps.length ? ` (the fake microphone dropped audio: ${gaps.join(", ")})` : ""}`);
+        if (current) {
+          const lines = current.log.filter(e => e.msg !== "voice.stderr").slice(-80).map(e => { const { at: _at, ...rest } = e; return JSON.stringify(rest); });
+          process.stderr.write(`--- Ember's log (last lines) ---\n${lines.join("\n")}\n`);
+          if (current.stderr.trim()) process.stderr.write(`--- Ember's stderr (last lines) ---\n${current.stderr.trim().split("\n").slice(-30).join("\n")}\n`);
+          console.error(`(profile kept in ${current.userData})`);
+        }
+        break;
       }
     }
   }
