@@ -13,6 +13,7 @@ import { LINES } from "../../app/main/commands/decide";
 import { CARD_LINES, OUTPUT_TAINT_LINE, WAITING_BUBBLE } from "../../app/main/commands/flow";
 import * as promptCopy from "../../app/renderer/prompt/copy";
 import * as computersCopy from "../../app/renderer/home/computers-copy";
+import * as matchCopy from "../../app/renderer/home/match-copy";
 import { cardBadge, shortWhere, targetBadge, targetChip, whereText } from "../../app/renderer/handle/badge";
 import { targetMenu } from "../../app/main/targets/menu";
 import type { TargetEntry } from "../../app/main/targets/registry";
@@ -265,6 +266,10 @@ describe("the command window's words (§8.5)", () => {
     expect(commandCopy.isRiskyCard({ classes: ["publish"] })).toBe(false);
     expect(commandCopy.isRiskyCard({})).toBe(false);
     expect(keep(commandCopy.ANNOUNCE_HEADING)).toBe("About to run this, as you asked");
+    // A command the review cleared (the user didn't ask for exactly it) says so in the announcement's heading.
+    expect(keep(commandCopy.REVIEWED_HEADING)).toBe("About to run this: Ember checked it against your request");
+    const commandMain = readFileSync(new URL("../../app/renderer/command/main.ts", import.meta.url), "utf8");
+    expect(commandMain).toMatch(/function buildAnnounce\([^]*?el\("h1", "heading", card\.reviewed \? REVIEWED_HEADING : ANNOUNCE_HEADING\)/);
     expect(keep(commandCopy.announceKeyText("linux"))).toBe("Or press Ctrl+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("win32"))).toBe("Or press Win+Alt+X to stop everything.");
     expect(keep(commandCopy.announceKeyText("darwin"))).toBe("Or press Control+Shift+Command+X to stop everything.");
@@ -741,6 +746,25 @@ describe("the bubble's words for computers and commands (§8.2)", () => {
   });
 });
 
+describe("Voice Match and When Ember asks first in settings", () => {
+  it("passes every fixed line and each state's words through the same copy rules", () => {
+    const flat = (o: object): string[] => Object.values(o).flatMap(v => (typeof v === "string" ? [v] : flat(v as object)));
+    flat(matchCopy.MATCH_TEXT).forEach(keep);
+    flat(matchCopy.TRUST_TEXT).forEach(keep);
+    keep(matchCopy.MANAGED_TEXT);
+    const e = (got: number, again?: "short" | "unlike" | "failed") => ({ enrolled: false, on: false, enrolling: { got, of: 4, phrase: "Ember, open my calendar", again } });
+    for (const m of [e(0), e(2), e(1, "short"), { enrolled: true, on: true, enrolling: null }]) {
+      const v = matchCopy.matchView(m, { listening: true, managed: false });
+      [v.text, v.prompt, v.teach.label, v.progress?.text ?? ""].forEach(keep);
+    }
+    for (const [a, b, cancelled] of [[e(0), e(1)], [e(3), { enrolled: true, on: true, enrolling: null }], [e(1), { enrolled: false, on: false, enrolling: null }, true], [{ enrolled: true, on: false, enrolling: null }, { enrolled: false, on: false, enrolling: null }]] as const) {
+      keep(matchCopy.matchAnnouncement(a, b, cancelled) ?? "");
+    }
+    // One level of quotes: a quote inside a quote reads badly aloud and on screen.
+    for (const s of flat(matchCopy.MATCH_TEXT)) expect(s, s).not.toMatch(/“[^”]*“/);
+  });
+});
+
 describe("every new SSH, WSL and commands string", () => {
   it("is in sentence case: a capital first, and capitals inside only for names", () => {
     expect(NEW_STRINGS.length).toBeGreaterThan(100);
@@ -753,7 +777,7 @@ describe("every new SSH, WSL and commands string", () => {
         const word = w.replace(/^[(“"‘]+|[)”"’.,:;?!…]+$/g, "");
         if (/^[A-Z][a-z]/.test(word)) {
           const afterStop = new RegExp(`[.:?!] ${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(s);
-          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove)$/.test(word), `${word} in: ${s}`).toBe(true);
+          expect(afterStop || PROPER.test(word) || /^(Ubuntu|Remove|Voice|Match)$/.test(word), `${word} in: ${s}`).toBe(true);
         }
       }
     }

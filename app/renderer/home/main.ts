@@ -7,8 +7,9 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { handleCornerText } from "./copy";
+import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
@@ -822,12 +823,13 @@ const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
 $("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), askedApps: (e.target as HTMLInputElement).checked } }); });
 $("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
 function renderTrust(s: Settings): void {
-  for (const [id, key] of [["trust-apps", "askedApps"], ["trust-commands", "reviewCommands"]] as const) {
-    const input = $(id) as HTMLInputElement;
-    input.checked = s.trust[key];
-    input.disabled = managed.has(key);
-    input.closest(".switch-row")?.classList.toggle("locked", managed.has(key));
-    input.title = managed.has(key) ? "Managed by your organisation" : "";
+  for (const row of trustView(s.trust, managed)) {
+    const input = $(row.id) as HTMLInputElement;
+    input.checked = row.checked;
+    input.disabled = row.disabled;
+    (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", row.locked);
+    input.title = row.title;
+    input.setAttribute("aria-describedby", row.describedBy);
   }
 }
 
@@ -975,16 +977,21 @@ function renderVoice(v: VoiceStatus): void {
   renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
   $("voice-text").textContent = text;
-  if (v.state !== "downloading") voiceLive(text);
+  // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
+  const said = renderMatch();
+  if (said) voiceLive(said);
+  else if (v.state !== "downloading" && text !== voiceLine) voiceLive(text);
+  voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;
-  // Listening turned off by the organisation: nothing to download it for.
-  dl.hidden = v.modelsReady || v.state === "downloading" || managed.has("wakeWord");
-  dl.textContent = `Download speech models (${Math.round(v.modelsBytes / 1e6)} MB)`;
+  // Listening turned off by the organisation: nothing to download it for. Otherwise it fetches what's missing (all of
+  // them on first use; later just Ember's voice or Voice Match, should one be missing or damaged).
+  const downloading = v.state === "downloading" || !!v.downloading;
+  dl.hidden = !v.modelsMissing.length || downloading || managed.has("wakeWord");
+  dl.textContent = modelsDownloadLabel(v.modelsMissing, v.modelsBytes);
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
-  ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
-  renderMatch();
+  ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
@@ -995,36 +1002,46 @@ function renderVoice(v: VoiceStatus): void {
     window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
   }
 }
-/** Voice Match's words in settings (renderMatch). */
-const MATCH_TEXT = {
-  none: "Ember answers anyone who says its name. Teach it your voice, and it answers only you. “Ember, stop” still works for anyone.",
-  on: "On: Ember answers only your voice. Your voiceprint stays on this computer; “Ember, stop” still works for anyone.",
-  off: "Off: Ember answers anyone who says its name. It keeps your voiceprint until you forget it.",
-  listening: "Turn on “Listen for “Hey Ember”” first: Ember learns your voice through the microphone.",
-  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:" },
-} as const;
-function renderMatch(): void {
+/** The voice line last shown, so a status that doesn't change it isn't said again after a Voice Match prompt. */
+let voiceLine = "";
+/** Voice Match as last drawn, and whether the user pressed Cancel since (for what is said when teaching ends). */
+let shownMatch: VoiceStatus["match"];
+let matchCancelled = false;
+/** Draws Voice Match (match-copy.ts matchView) and returns what screen readers should hear, if anything. */
+function renderMatch(): string | null {
   const m = voice?.match;
-  const listening = voiceSettings.wakeWord && voiceSettings.consent;
-  $("match").hidden = !m || managed.has("wakeWord") || !listening;
-  if (!m) return;
-  const busy = !!m.enrolling;
-  ($("match-on") as HTMLInputElement).checked = m.on || busy;
-  ($("match-on") as HTMLInputElement).disabled = busy;
-  $("match-text").textContent = busy ? `Say each phrase as you would ask Ember (${m.enrolling!.got} of ${m.enrolling!.of} heard).` : !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  // Voice Match's model alone missing: its size, for the note that says to download it.
+  const speakerBytes = voice?.modelsMissing.length === 1 && voice.modelsMissing[0] === "speaker" ? voice.modelsBytes : null;
+  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes });
+  const group = $("match");
+  // The control that has focus, if this draw hides or disables it: focus moves on (as after Download and the consent buttons).
+  const had = document.activeElement instanceof HTMLElement && group.contains(document.activeElement) ? document.activeElement : null;
+  group.hidden = view.hidden;
+  const sw = $("match-on") as HTMLInputElement;
+  sw.checked = view.checked;
+  sw.disabled = view.disabled;
+  $("match-text").textContent = view.text;
   const prompt = $("match-prompt");
-  prompt.hidden = !busy;
-  prompt.textContent = busy ? `${m.enrolling!.again ? MATCH_TEXT.again[m.enrolling!.again] : "Say:"} “${m.enrolling!.phrase}”` : "";
+  prompt.hidden = !view.prompt;
+  prompt.textContent = view.prompt;
   const bar = $("match-progress") as HTMLProgressElement;
-  bar.hidden = !busy;
-  if (busy) { bar.max = m.enrolling!.of; bar.value = m.enrolling!.got; }
-  $("match-teach").hidden = busy;
-  $("match-teach").textContent = m.enrolled ? "Teach Ember my voice again" : "Teach Ember my voice";
-  $("match-cancel").hidden = !busy;
-  $("match-forget").hidden = busy || !m.enrolled;
+  bar.hidden = !view.progress;
+  if (view.progress) { bar.max = view.progress.max; bar.value = view.progress.value; bar.setAttribute("aria-valuetext", view.progress.text); }
+  else bar.removeAttribute("aria-valuetext");
+  $("match-teach").hidden = view.teach.hidden;
+  $("match-teach").textContent = view.teach.label;
+  $("match-cancel").hidden = view.cancelHidden;
+  $("match-forget").hidden = view.forgetHidden;
+  if (had && (isHidden(had) || (had as HTMLInputElement).disabled)) focusFirst(view.focus);
+  const said = matchAnnouncement(shownMatch, m, matchCancelled);
+  if (!m?.enrolling) matchCancelled = false;
+  shownMatch = m && { ...m, enrolling: m.enrolling && { ...m.enrolling } };
+  return view.hidden ? null : said;
 }
 const startEnrol = () => {
-  void window.ember.enrolVoice().then(ok => { if (!ok) $("match-text").textContent = MATCH_TEXT.listening; else $("match-prompt").focus?.(); });
+  // Ember not listening just now: said where the switch's description is, and to screen readers. Otherwise focus
+  // moves to Cancel once the first phrase is shown (renderMatch).
+  void window.ember.enrolVoice().then(ok => { if (!ok) { $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening); } });
 };
 $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
@@ -1033,8 +1050,9 @@ $("match-on").addEventListener("change", e => {
   void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
-$("match-cancel").addEventListener("click", () => { void window.ember.cancelEnrolVoice(); $("match-teach").focus(); });
-$("match-forget").addEventListener("click", () => { void window.ember.forgetVoice(); $("match-teach").focus(); });
+// Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
+$("match-cancel").addEventListener("click", () => { matchCancelled = true; void window.ember.cancelEnrolVoice(); });
+$("match-forget").addEventListener("click", () => { void window.ember.forgetVoice(); focusFirst(["match-teach", "match-on", "wake"]); });
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
