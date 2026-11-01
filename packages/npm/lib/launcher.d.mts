@@ -1,0 +1,10 @@
+export declare const REPO: string;
+export declare const CACHE_NAME: string;
+export declare function assetFor(platform: string, arch: string, version: string): { asset: string; kind: "zip" | "appimage"; exe: string; app: string };
+export declare function parseSha256Sums(text: string): Map<string, string>;
+export declare function cacheDir(o: { platform: string; env: Record<string, string | undefined>; home: string; version: string }): string;
+export declare function downloadUrl(version: string, file: string, env?: Record<string, string | undefined>): string;
+export declare function packageVersion(): string;
+export declare function ensureInstalled(o: { version: string; platform?: string; arch?: string; env?: Record<string, string | undefined>; force?: boolean }): Promise<{ dir: string; exe: string; app: string; fresh: boolean }>;
+export declare function launchCommand(platform: string, installed: { exe: string; app: string }, args: string[]): { file: string; args: string[] };
+export declare function main(argv: string[]): Promise<number>;
