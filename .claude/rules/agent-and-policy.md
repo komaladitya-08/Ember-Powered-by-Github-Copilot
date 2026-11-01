@@ -19,6 +19,7 @@ paths:
   - "app/main/xshape.ts"
   - "app/main/x11.ts"
   - "app/main/voice.ts"
+  - "app/main/voiceprint-store.ts"
   - "app/main/settings.ts"
   - "app/main/admin.ts"
   - "app/renderer/overlay/main.ts"
@@ -118,10 +119,15 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 
 - **Consent.** Read, hear and send nothing until `hasConsent` is true. WSL, SSH (per computer) and commands (per target) each have a first-use card whose text is in app/main/targets/consent.ts; it is hashed with the OS's stop chord, and a yes counts only with that hash.
 - **The microphone.**
-  - It opens only when all of these hold: Hey Ember is on, the admin's policy allows voice, voice consent and general consent are given, the models are verified, Ember isn't muted, and the screen isn't locked.
+  - It opens only when all of these hold: listening for “Hey Ember” is on (`wakeWord`), the admin's policy allows voice (`features.voice`), voice consent and general consent are given, the listening models (`LISTENING_MODELS`) are verified, Ember isn't muted, and the screen isn't locked.
   - Keep the constraints `echoCancellation: true, noiseSuppression: false, autoGainControl: false`, because gain control and noise suppression distort speech enough to miss the wake word.
-  - Speak only through `VoiceService.speak()`, which plays from the mic page (app/renderer/mic) with the system's voices (speech-dispatcher on Linux). That is the mic window, or, while listening is off, a hidden speak-only window that never opens the mic. Either one tells the voice process while Ember speaks. Whether Ember speaks follows `speaksAloud()` (app/shared/speech.ts), the admin's `features.speak` and the screen lock.
+  - The bare name "Ember" is spotted inside "remember" and "September", so a wake by it shows only once the transcript check hears the name start the request (app/voice/engine.ts, `BARE_NAME`).
+- **Speaking.**
+  - Speak only through `VoiceService.speak()`. Ember's own voice (Piper, or Kokoro: below) is made in the speech utility process (app/voice/tts-process.ts) and played by the mic page (app/renderer/mic); until its model is in, or after it keeps failing, the page speaks with the system's voices (speech-dispatcher on Linux), and only voices that run on the computer (app/renderer/mic/voices.ts), since an online voice would send Ember's words elsewhere. The page is the mic window, or, while listening is off, a hidden speak-only window that never opens the mic. Either one tells the voice process while Ember speaks. Whether Ember speaks follows `speaksAloud()` (app/shared/speech.ts), the admin's `features.speak` and the screen lock.
   - Where Ember's own speech can't be told from the user's (`rejectsSpeakers` is false: Windows, macOS, Linux without `parec`), `speak()` drops Ember's wake and stop phrases (`withoutOwnPhrases`), and words heard then never count towards a dangerous command (`spokenWords`).
+- **Speech on sherpa-onnx.** Both utility processes reach sherpa-onnx only through app/voice/runtime.ts: its WebAssembly build on Linux (the Linux addon needs glibc 2.32; `packaging-and-ci.md` says how the addon is kept out), its native addon on Windows and macOS, and WebAssembly wherever the addon doesn't load. A damaged model aborts the addon's onnxruntime, so a process that dies before it is ready starts again at once on WebAssembly (`voice.native_failed`), which reports the damage. WebAssembly memory never shrinks, so keep every buffer in app/voice/sherpa.ts bounded.
+- **Models.** Each one is pinned by SHA-256 in app/voice/models.ts, downloaded only after the user agrees, and used only once it verifies. Archives unpack in-process (untar.ts, bzip2.ts), refusing anything that could write outside their folder, into a staging folder moved into place whole. The natural voice (Kokoro, `voice.natural`, off by default) is fetched only when the user turns it on, on Windows and macOS, and only where the Piper voice runs natively fast enough (`NATURAL_COST` in app/voice/tts.ts).
+- **Voice Match.** The owner's voiceprint (256 numbers that can't be turned back into speech) is kept only in `voiceprint.json` in Ember's data folder, mode 0600, apart from the settings, which are shown and logged more freely (app/main/voiceprint-store.ts); **Forget my voice** deletes the file. "Ember, stop" is never checked against it: anyone may stop Ember.
 - **Audio** stays on the machine and is never written to disk.
 - **Permissions.** Every web permission request is denied except audio `media` for Ember's mic window (`voicePermissions`). The spellchecker stays off, because it would download dictionaries.
 - **Conversation data.**

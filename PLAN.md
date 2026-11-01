@@ -49,8 +49,8 @@ asked), through a small helper copied there for the length of the connection. Th
 voice and the GitHub token never leave it. Each is off until the user turns it on and accepts its card; an
 organisation policy can turn each off. See M12 and §10.
 
-**Not in v1:** Wayland sessions, RHEL 9/10, ~~macOS, Windows~~ (added by M11), ~~SSH~~ (added by M12), neural TTS, speaker
-verification, screenshot OCR redaction, multi-pointer X. See §9.
+**Not in v1:** Wayland sessions, RHEL 9/10, ~~macOS, Windows~~ (added by M11), ~~SSH~~ (added by M12), ~~neural TTS~~ (Piper,
+added by #91; Kokoro on Windows and macOS, #94), ~~speaker verification~~ (Voice Match, #91), screenshot OCR redaction, multi-pointer X. See §9.
 
 ---
 
