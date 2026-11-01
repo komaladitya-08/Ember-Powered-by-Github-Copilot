@@ -87,6 +87,7 @@ import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
+import { MemoryService } from "./memory/service";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -1178,6 +1179,11 @@ function start(): void {
    * is in use while the setting is on; `enrolling` is the teaching under way (settings shows the phrase to say).
    */
   const voiceprints = voiceprintStore(userData, VOICE_MODELS.find(m => m.id === "speaker")!.target);
+  // Long-term memory (docs/MEMORY.md): memory.json beside the settings, used only while the user has it on and the
+  // organisation allows it. Settings lists it; nothing is read from the file until something asks.
+  const memoryAllowed = () => policy.features.memory !== false;
+  const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
+  memory.start();
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
@@ -1417,6 +1423,12 @@ function start(): void {
     log.info("voice.match_forgotten");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
   }));
+  ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
+  ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
+    if (typeof id !== "string" || !id || id.length > 40) return;
+    memory.forget(id);
+  }));
+  ipcMain.handle(IPC.memoryForgetAll, guard(() => { memory.forgetAll(); }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -1569,6 +1581,8 @@ function start(): void {
   app.on("will-quit", e => {
     globalShortcut.unregisterAll();
     overlay?.stop();
+    // What Ember just remembered is written before it goes (a save waits a second after a change).
+    memory.stop();
     if (quitting || sessionEnding) return;
     quitting = true;
     e.preventDefault();
@@ -1996,6 +2010,7 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
+      ...(memoryAllowed() ? { memory } : {}),
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),

@@ -163,6 +163,12 @@ export const SettingsSchema = z.object({
   }).default({ askedApps: true, reviewCommands: false }),
   /** Commands per target id (§3.9.3): off until the user turns them on with the commands card. */
   commands: z.partialRecord(z.string().refine(isTargetId), TargetCommands).default({}),
+  /**
+   * Long-term memory (docs/MEMORY.md): off until the user turns it on and agrees to its note in Settings ›
+   * Conversation (`consent`, FEATURE_CONSENT_VERSION.memory). What Ember remembers is kept in memory.json, apart from
+   * the settings (app/main/memory/store.ts).
+   */
+  memory: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

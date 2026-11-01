@@ -8,7 +8,8 @@ import path from "node:path";
 import { CopilotClient, RuntimeConnection } from "@github/copilot-sdk";
 // @ts-expect-error -- plain JS test helper
 import { startMockLlm } from "../mock-llm/server.mjs";
-import { Conductor } from "../../app/main/agent/conductor";
+import { Conductor, type ConductorMemory } from "../../app/main/agent/conductor";
+import { MemoryService } from "../../app/main/memory/service";
 import { AgentHost } from "../../app/main/agent/host";
 import { Presenter } from "../../app/main/agent/presenter";
 import { locateRuntime } from "../../app/main/agent/runtime";
@@ -42,6 +43,7 @@ afterAll(async () => {
 
 function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Promise<string>, o: {
   resume?: string | null; turnStartMs?: number; turnSlowMs?: number; turnSilentMs?: number; onStuck?: (why: string) => void; onSilentTurn?: () => void; baseUrl?: string;
+  memory?: ConductorMemory;
 } = {}) {
   const settings = new SettingsStore(path.join(dir, "settings.json"));
   settings.load();
@@ -60,6 +62,7 @@ function makeConductor(states: Partial<EmberState>[], describeScreen?: () => Pro
     turnSilentMs: o.turnSilentMs,
     onStuck: o.onStuck,
     onSilentTurn: o.onSilentTurn,
+    ...(o.memory ? { memory: o.memory } : {}),
   });
   return { conductor, settings };
 }
@@ -374,5 +377,45 @@ describe("the organisation's endpoint behind the system's proxy settings (host o
     expect(stuck).toBe(0);
     expect(states.some(s => s.bubble?.mood === "error")).toBe(false);
     await conductor.stop();
+  }, 60000);
+});
+
+describe("memory on the real Copilot runtime (docs/MEMORY.md step 2)", () => {
+  it("offers remember, recall and forget_memory, keeps what the user said as theirs, and gives it back before a later request", async () => {
+    const fact = "Works on the Atlas project with Priya";
+    // The model saves the fact when asked to remember, and otherwise answers.
+    const scripted = await startMockLlm({
+      delayMs: 5,
+      respond: (messages: { role: string; content: unknown }[]) => {
+        const tail = messages.slice(messages.map(m => m.role).lastIndexOf("assistant") + 1);
+        const last = JSON.stringify([...messages].reverse().find(m => m.role === "user")?.content ?? "");
+        if (/remember that/i.test(last) && tail.every(m => m.role !== "tool")) {
+          return { tool: { name: "remember", args: { fact, about: [{ name: "User", kind: "person" }, { name: "Atlas", kind: "project" }, { name: "Priya", kind: "person" }] } } };
+        }
+        return { text: "Got it." };
+      },
+    });
+    const memory = new MemoryService({ dir: path.join(dir, "memory"), log: { info: () => undefined, warn: () => undefined } });
+    try {
+      const states: Partial<EmberState>[] = [];
+      const { conductor } = makeConductor(states, undefined, { baseUrl: scripted.baseUrl, memory });
+      await conductor.start();
+      await conductor.ask("Remember that I work on the Atlas project with Priya");
+      await idle(states, 0);
+      expect(scripted.requests.at(-1)!.tools).toEqual(expect.arrayContaining(["remember", "recall", "forget_memory"]));
+      expect(memory.list()).toEqual([expect.objectContaining({ text: fact, source: "user" })]);
+      expect(states.some(s => s.bubble?.step === "Remembering that")).toBe(true);
+      const from = states.length;
+      const before = scripted.requests.length;
+      await conductor.ask("Draft a note to Priya about Atlas");
+      await idle(states, from);
+      const sent = JSON.stringify(scripted.requests[before].messages.at(-1)?.content ?? "");
+      expect(sent).toContain('<memory untrusted=\\"true\\">');
+      expect(sent).toContain(fact);
+      await conductor.stop();
+    } finally {
+      memory.stop();
+      await scripted.close();
+    }
   }, 60000);
 });

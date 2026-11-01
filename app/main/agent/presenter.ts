@@ -444,6 +444,9 @@ export const TOOL_STEPS: Record<string, string> = {
   run_command: "Running a command",
   list_computers: "Checking which computers I can use",
   offer_connect: "Offering to connect",
+  remember: "Remembering that",
+  recall: "Thinking back",
+  forget_memory: "Forgetting that",
 };
 
 /** What a borrowed hand does, as the card says it while it does it (its tool's step may have named another thing). */
