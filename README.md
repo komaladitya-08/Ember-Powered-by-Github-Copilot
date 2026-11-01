@@ -44,8 +44,8 @@ true`), restart the apps that were already open, or log out and in, so Ember can
 are silent, settings shows a **Speaking** row and a note under **Speak**: run `sudo dnf install speech-dispatcher
 speech-dispatcher-espeak-ng`, then restart Ember.
 
-The RPM carries Ember's speech models (142 MB: the wake word, speech recognition, Ember's voice and Voice Match), so
-nothing is downloaded when voice is turned on.
+The RPM carries Ember's speech models (142 MB in all: the wake word and speech recognition, 48 MB, which listening
+needs; Ember's own voice, 67 MB; and Voice Match, 27 MB), so nothing is downloaded when voice is turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
@@ -58,7 +58,9 @@ chmod +x Ember-0.1.0-x86_64.AppImage
 ./Ember-0.1.0-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
-The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM). Where user
+The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): 142 MB, of which
+listening needs 48 MB. Should Ember's voice (67 MB) or Voice Match (27 MB) be missing or damaged, Ember still listens,
+replies in the system's voice or answers anyone meanwhile, and settings offers just that one to download. Where user
 namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,

@@ -7,7 +7,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { SPEAK_NO_VOICE, matchNoModelText, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { handleCornerText } from "./copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -978,12 +978,14 @@ function renderVoice(v: VoiceStatus): void {
   if (v.state !== "downloading") voiceLive(text);
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;
-  // Listening turned off by the organisation: nothing to download it for.
-  dl.hidden = v.modelsReady || v.state === "downloading" || managed.has("wakeWord");
-  dl.textContent = `Download speech models (${Math.round(v.modelsBytes / 1e6)} MB)`;
+  // Listening turned off by the organisation: nothing to download it for. Otherwise it fetches what's missing (all of
+  // them on first use; later just Ember's voice or Voice Match, should one be missing or damaged).
+  const downloading = v.state === "downloading" || !!v.downloading;
+  dl.hidden = !v.modelsMissing.length || downloading || managed.has("wakeWord");
+  dl.textContent = modelsDownloadLabel(v.modelsMissing, v.modelsBytes);
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
-  ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
   renderMatch();
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
@@ -1009,16 +1011,20 @@ function renderMatch(): void {
   $("match").hidden = !m || managed.has("wakeWord") || !listening;
   if (!m) return;
   const busy = !!m.enrolling;
+  // Its model missing or damaged: off (every voice is heard, not none) until the download brings it back.
+  const noModel = m.model === false && !busy;
   ($("match-on") as HTMLInputElement).checked = m.on || busy;
-  ($("match-on") as HTMLInputElement).disabled = busy;
-  $("match-text").textContent = busy ? `Say each phrase as you would ask Ember (${m.enrolling!.got} of ${m.enrolling!.of} heard).` : !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  ($("match-on") as HTMLInputElement).disabled = busy || noModel;
+  const speakerOnly = voice?.modelsMissing.length === 1 ? voice.modelsBytes : null;
+  $("match-text").textContent = busy ? `Say each phrase as you would ask Ember (${m.enrolling!.got} of ${m.enrolling!.of} heard).`
+    : noModel ? matchNoModelText(!!m.wanted, speakerOnly) : !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
   const prompt = $("match-prompt");
   prompt.hidden = !busy;
   prompt.textContent = busy ? `${m.enrolling!.again ? MATCH_TEXT.again[m.enrolling!.again] : "Say:"} “${m.enrolling!.phrase}”` : "";
   const bar = $("match-progress") as HTMLProgressElement;
   bar.hidden = !busy;
   if (busy) { bar.max = m.enrolling!.of; bar.value = m.enrolling!.got; }
-  $("match-teach").hidden = busy;
+  $("match-teach").hidden = busy || noModel;
   $("match-teach").textContent = m.enrolled ? "Teach Ember my voice again" : "Teach Ember my voice";
   $("match-cancel").hidden = !busy;
   $("match-forget").hidden = busy || !m.enrolled;

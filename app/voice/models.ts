@@ -1,6 +1,9 @@
 /**
- * Speech models Ember downloads on first use (about 142 MB), each pinned to a
- * SHA-256, into the models folder of Ember's data folder (~/.config/ember/models
+ * Speech models Ember downloads on first use (about 142 MB in all), each pinned to a
+ * SHA-256. Listening needs only the wake word, voice activity and speech recognition
+ * (LISTENING_MODELS, about 48 MB); Ember's own voice (67 MB) and Voice Match (27 MB) are
+ * optional: without them replies are in the system's voice, and Voice Match is off. Each is
+ * downloaded into the models folder of Ember's data folder (~/.config/ember/models
  * on Linux). Nothing is used until it verifies. Archives are unpacked in-process
  * (untar.ts, bzip2.ts), so no system tar, bzip2 or curl is needed on any OS, into
  * a staging folder that is moved into place whole: a half-unpacked model is never
@@ -75,7 +78,15 @@ export const VOICE_MODELS: ModelFile[] = [
   },
 ];
 
-export const VOICE_MODELS_BYTES = VOICE_MODELS.reduce((n, m) => n + m.bytes, 0);
+export type ModelId = ModelFile["id"];
+
+/** What listening needs: the wake word, voice activity and speech recognition. The others (tts, speaker) are optional. */
+export const LISTENING_MODELS: readonly ModelId[] = ["kws", "vad", "asr"];
+
+/** The bytes of `models` (default: all of them). */
+export const modelsBytes = (models: readonly ModelFile[] = VOICE_MODELS): number => models.reduce((n, m) => n + m.bytes, 0);
+
+export const VOICE_MODELS_BYTES = modelsBytes();
 
 /** Downloads `url` to `dest`, reporting bytes so far. */
 export type Downloader = (url: string, dest: string, progress: (bytes: number) => void) => Promise<void>;
@@ -115,18 +126,26 @@ export function modelReady(root: string, id: ModelFile["id"]): boolean {
   return !!m && verified(root, m);
 }
 
+/** Listening can start from `root`: the models it needs (LISTENING_MODELS) are in place and verified. */
 export function modelsReady(root: string): boolean {
-  return VOICE_MODELS.every(m => verified(root, m));
+  return LISTENING_MODELS.every(id => modelReady(root, id));
+}
+
+/** Of `ids` (default: all), the models verified in none of `roots` (the folders Ember looks in, in order). */
+export function missingModels(roots: readonly string[], ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): ModelFile[] {
+  return VOICE_MODELS.filter(m => ids.includes(m.id) && !roots.some(r => verified(r, m)));
 }
 
 /**
- * The models in `root` turned out damaged (they wouldn't load): their markers go, so they count as missing and the
- * download fetches them again (review #254). False when a marker couldn't be removed (permission denied). Never used on
- * models that came with Ember: VoiceService turns to the user's own folder instead.
+ * The models `ids` (default: all) in `root` turned out damaged (they wouldn't load): their markers go, so they count as
+ * missing and the download fetches them again (review #254); the others are left as they are. False when a marker
+ * couldn't be removed (permission denied). Never used on models that came with Ember: VoiceService turns to the user's
+ * own folder for those instead.
  */
-export function forgetModels(root: string): boolean {
+export function forgetModels(root: string, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): boolean {
   let all = true;
   for (const m of VOICE_MODELS) {
+    if (!ids.includes(m.id)) continue;
     try {
       fs.rmSync(marker(root, m), { force: true });
     } catch {
@@ -217,23 +236,25 @@ export async function fetchModel(root: string, m: ModelDownload, download: Downl
 }
 
 /**
- * Makes every model present and verified; skips ones already in place. Progress counts an archive's download as
- * DOWNLOAD_SHARE of its share, and checking and unpacking it as the rest.
+ * Makes the models `ids` (default: all) present and verified in `root`; skips ones already in place. Progress is of
+ * what is fetched (the bytes of the models not yet in place), counting an archive's download as DOWNLOAD_SHARE of its
+ * share, and checking and unpacking it as the rest.
  */
-export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined): Promise<ModelPaths> {
+export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): Promise<ModelPaths> {
   fs.mkdirSync(root, { recursive: true });
+  const fetching = VOICE_MODELS.filter(m => ids.includes(m.id) && !verified(root, m));
+  const total = modelsBytes(fetching);
   let done = 0;
-  for (const m of VOICE_MODELS) {
-    if (verified(root, m)) { done += m.bytes; progress(done, VOICE_MODELS_BYTES); continue; }
+  for (const m of fetching) {
     fs.rmSync(marker(root, m), { force: true });
     const base = done, share = m.kind === "file" ? 1 : DOWNLOAD_SHARE;
     const downloaded = Math.floor(m.bytes * share);
     // (A file has nothing to unpack, and its check is quick.)
-    await fetchModel(root, m, download, bytes => progress(base + Math.min(downloaded, Math.floor(bytes * share)), VOICE_MODELS_BYTES),
-      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), VOICE_MODELS_BYTES, "unpacking"));
+    await fetchModel(root, m, download, bytes => progress(base + Math.min(downloaded, Math.floor(bytes * share)), total),
+      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), total, "unpacking"));
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
     done += m.bytes;
-    progress(done, VOICE_MODELS_BYTES);
+    progress(done, total);
   }
   return modelPaths(root);
 }

@@ -4,7 +4,7 @@
  * name an OS reads exactly as before.
  */
 
-import type { ActivityEntry, StatusPlatform } from "../../shared/ipc";
+import type { ActivityEntry, SpeechModelId, StatusPlatform } from "../../shared/ipc";
 // Plain words for an unnamed control's role: the same table the May I? question uses.
 import { aRoleWord } from "../../shared/role-words";
 import { KEYS, OPEN_AGAIN, SHORTCUTS, type KeyConventions, type OS, type ShortcutId } from "../../shared/shortcuts";
@@ -188,6 +188,25 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
 }
 
 /** Under "Speak replies" once Ember tried to speak and no voice started (review #101); the setup check says how to add one. */
+/**
+ * The speech models' download button: what it fetches and its size. Listening's own models missing: "speech models"
+ * (everything missing comes with them); otherwise only the optional ones that are (Ember's voice, Voice Match).
+ */
+export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: number): string {
+  const mb = `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+  const listening = missing.some(id => id === "kws" || id === "vad" || id === "asr");
+  const parts = listening ? ["speech models"] : [...(missing.includes("tts") ? ["Ember's voice"] : []), ...(missing.includes("speaker") ? ["Voice Match"] : [])];
+  return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;
+}
+
+/** Voice Match without its model: why it's off (a kept voiceprint isn't used meanwhile), or why it can't be taught yet. */
+export function matchNoModelText(wanted: boolean, bytes: number | null): string {
+  const size = bytes ? ` (${Math.max(1, Math.round(bytes / 1e6))} MB)` : "";
+  return wanted
+    ? `Off for now: Voice Match's model is missing or was damaged, so Ember answers anyone who says its name. Download it above${size} and Ember answers only you again.`
+    : `Voice Match needs its own model, which isn't on this computer. Download it above${size}, then teach Ember your voice.`;
+}
+
 export const SPEAK_NO_VOICE = "Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */
