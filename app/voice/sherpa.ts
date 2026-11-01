@@ -8,7 +8,7 @@
 
 import path from "node:path";
 import { MIN_TRANSCRIBE_SAMPLES, Ring, SAMPLE_RATE, type VoiceBackend } from "./engine";
-import { fastestProvider, providers, sherpaRuntime, threads, type KwsStream, type OfflineStream, type ProviderTry, type RuntimeOptions, type Sherpa } from "./runtime";
+import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type KwsStream, type OfflineStream, type ProviderCache, type ProviderTry, type RuntimeOptions, type Sherpa } from "./runtime";
 
 export interface ModelPaths {
   kws: string;
@@ -149,7 +149,7 @@ function probeAudio(): Float32Array {
  * use (runtime.ts; default: native on Windows and macOS when it loads). Throws ModelLoadError when a model can't be
  * loaded.
  */
-export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void; keywords?: string; runtime?: RuntimeOptions } = {}): VoiceBackend & { free(): void; info: BackendInfo } {
+export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void; keywords?: string; runtime?: RuntimeOptions; providerCache?: ProviderCache } = {}): VoiceBackend & { free(): void; info: BackendInfo } {
   const sherpa = sherpaRuntime(opts.runtime);
   // A damaged file throws (a bare number out of WebAssembly); a missing one only gives an empty handle there (and a
   // recognizer that hears nothing, ever), which the runtime throws for too.
@@ -185,9 +185,11 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   // when that comes out faster on this Mac (both are timed on a probe).
   const asrThreads = threads(sherpa.backend, 2);
   const probe = probeAudio();
-  const chosen = load("speech recognition model", () => fastestProvider(providers(sherpa.backend),
+  const list = providers(sherpa.backend);
+  const chosen = load("speech recognition model", () => fastestProvider(list,
     provider => sherpa.createMoonshine({ encoder: a("encoder_model.ort"), mergedDecoder: a("decoder_model_merged.ort"), tokens: a("tokens.txt") }, { provider, numThreads: asrThreads }),
-    r => { const s = r.createStream(); try { s.acceptWaveform(SAMPLE_RATE, probe); r.decode(s); r.getResult(s); } finally { s.free(); } }));
+    r => { const s = r.createStream(); try { s.acceptWaveform(SAMPLE_RATE, probe); r.decode(s); r.getResult(s); } finally { s.free(); } },
+    { cache: { store: opts.providerCache ?? providerCache(), key: modelKey(a("encoder_model.ort"), list, asrThreads) } }));
   const asr = chosen.made;
   const info: BackendInfo = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: asrThreads, tried: chosen.tried };
 

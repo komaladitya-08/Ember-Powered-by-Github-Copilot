@@ -229,7 +229,7 @@ utility process of its own (`app/voice/process.ts`, `app/voice/tts-process.ts`),
 |---|---|---|
 | Build | WebAssembly (`sherpa-onnx`): one thread, no GPU, runs on RHEL 8's glibc 2.28 | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
 | Threads | 1 | Moonshine 2, Ember's voice 2 (Kokoro 4), leaving a core free; the per-frame models 1 |
-| GPU | — | macOS: CoreML for Moonshine and the voice, kept only when it is faster than the CPU on that Mac (both are timed when they load). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
+| GPU | — | macOS: CoreML for Moonshine and the voice, kept only when it is faster than the CPU on that Mac (both are timed the first time a model loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder: compiling for CoreML took seconds on CI's Macs). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
 | Voice | Piper "Kristin" | Piper "Kristin", or Kokoro (below) |
 
 Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only the computer's own):

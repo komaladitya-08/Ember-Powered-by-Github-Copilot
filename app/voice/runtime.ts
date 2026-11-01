@@ -14,8 +14,10 @@
  * installed Ember too); EMBER_VOICE_PROVIDER=cpu turns CoreML off.
  */
 
+import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
+import path from "node:path";
 
 export type SherpaBackend = "native" | "wasm";
 
@@ -290,16 +292,71 @@ export function sherpaRuntime(o: RuntimeOptions = {}): Sherpa {
   }
 }
 
-/** What trying one provider came to: loaded (and how long the probe took, ms), or why not. */
-export interface ProviderTry { provider: string; ms?: number; error?: string }
+/** What trying one provider came to: loaded (and how long the probe took, ms), or why not; `cached`: chosen before. */
+export interface ProviderTry { provider: string; ms?: number; error?: string; cached?: boolean }
+
+/** Which provider was fastest for a model, remembered between processes (see providerCache). */
+export interface ProviderCache { get(key: string): string | undefined; set(key: string, provider: string): void }
+
+/**
+ * The verdicts kept in a small file in this user's temporary folder (on macOS, $TMPDIR is the user's own). Timing
+ * CoreML means compiling the model for it, which took seconds on CI's Macs (the speech process loaded in 8.9 s instead
+ * of 3), so it is done once per model file, not every time a process starts. A verdict read back is only a choice
+ * among the providers being tried; a missing or damaged file just means timing again.
+ */
+export function providerCache(file: string = path.join(os.tmpdir(), "ember-voice-providers.json")): ProviderCache {
+  const read = (): Record<string, string> => {
+    try {
+      const v = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
+      return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, string>) : {};
+    } catch {
+      return {};
+    }
+  };
+  return {
+    get: key => { const v = read()[key]; return typeof v === "string" ? v : undefined; },
+    set(key, provider) {
+      try {
+        const all = read();
+        all[key] = provider;
+        // Only the latest few dozen: a key changes with every model update.
+        const kept = Object.fromEntries(Object.entries(all).slice(-50));
+        fs.writeFileSync(file, JSON.stringify(kept));
+      } catch {
+        // Not remembered: the next process times the providers again.
+      }
+    },
+  };
+}
+
+/** The cache key of a model file: its path, size and modification time (a replaced model is timed again), or null. */
+export function modelKey(file: string, list: string[], threadCount: number): string | null {
+  try {
+    const st = fs.statSync(file);
+    return `${process.platform}-${process.arch}|${list.join(",")}|${threadCount}|${file}|${st.size}|${Math.round(st.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Makes a model with each provider in `list` and keeps the fastest: with one provider, it is made and kept as it is;
  * with more, each is made and `probe`d twice (the first run compiles, for CoreML), and the one whose second probe took
  * least is kept. A provider that fails to make the model, or to run it, is skipped; if every one fails, the last
- * error is thrown.
+ * error is thrown. `cache`: a verdict remembered for `key` is used without timing (timed again if it can't be made);
+ * a new one is remembered.
  */
-export function fastestProvider<T>(list: string[], make: (provider: string) => T, probe: (made: T) => void, now: () => number = () => performance.now()): { made: T; provider: string; tried: ProviderTry[] } {
+export function fastestProvider<T>(list: string[], make: (provider: string) => T, probe: (made: T) => void, o: { now?: () => number; cache?: { store: ProviderCache; key: string | null } } = {}): { made: T; provider: string; tried: ProviderTry[] } {
+  const now = o.now ?? (() => performance.now());
+  const cache = list.length > 1 && o.cache?.key ? { store: o.cache.store, key: o.cache.key } : null;
+  const remembered = cache?.store.get(cache.key);
+  if (cache && remembered && list.includes(remembered)) {
+    try {
+      return { made: make(remembered), provider: remembered, tried: [{ provider: remembered, cached: true }] };
+    } catch {
+      // Timed again below.
+    }
+  }
   const tried: ProviderTry[] = [];
   let best: { made: T; provider: string; ms: number } | null = null;
   let last: unknown = null;
@@ -319,5 +376,6 @@ export function fastestProvider<T>(list: string[], make: (provider: string) => T
     }
   }
   if (!best) throw last;
+  cache?.store.set(cache.key, best.provider);
   return { made: best.made, provider: best.provider, tried };
 }

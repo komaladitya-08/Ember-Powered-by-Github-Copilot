@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fastestProvider, nativePackage, providers, sherpaRuntime, threads } from "../../app/voice/runtime";
+import { fastestProvider, modelKey, nativePackage, providerCache, providers, sherpaRuntime, threads } from "../../app/voice/runtime";
 
 describe("the native addon's package", () => {
   it("is sherpa-onnx-node's own per-platform package on Windows and macOS (npm's names: win, not win32)", () => {
@@ -75,19 +75,56 @@ describe("fastestProvider", () => {
 
   it("keeps the provider whose second probe was quicker (the first compiles)", () => {
     const c = timed({ coreml: 40, cpu: 90 });
-    expect(fastestProvider(["coreml", "cpu"], p => p, c.probe, c.now)).toEqual({ made: "coreml", provider: "coreml", tried: [{ provider: "coreml", ms: 40 }, { provider: "cpu", ms: 90 }] });
+    expect(fastestProvider(["coreml", "cpu"], p => p, c.probe, { now: c.now })).toEqual({ made: "coreml", provider: "coreml", tried: [{ provider: "coreml", ms: 40 }, { provider: "cpu", ms: 90 }] });
     const slow = timed({ coreml: 300, cpu: 90 });
-    expect(fastestProvider(["coreml", "cpu"], p => p, slow.probe, slow.now).provider).toBe("cpu");
+    expect(fastestProvider(["coreml", "cpu"], p => p, slow.probe, { now: slow.now }).provider).toBe("cpu");
   });
 
   it("skips a provider that can't make or run the model, and throws when none can", () => {
     const c = timed({ cpu: 10 });
-    const r = fastestProvider(["coreml", "cpu"], p => { if (p === "coreml") throw new Error("no CoreML"); return p; }, c.probe, c.now);
+    const r = fastestProvider(["coreml", "cpu"], p => { if (p === "coreml") throw new Error("no CoreML"); return p; }, c.probe, { now: c.now });
     expect(r.provider).toBe("cpu");
     expect(r.tried).toEqual([{ provider: "coreml", error: "no CoreML" }, { provider: "cpu", ms: 10 }]);
-    const r2 = fastestProvider(["coreml", "cpu"], p => p, p => { if (p === "coreml") throw new Error("CoreML failed to run it"); }, () => 0);
+    const r2 = fastestProvider(["coreml", "cpu"], p => p, p => { if (p === "coreml") throw new Error("CoreML failed to run it"); }, { now: () => 0 });
     expect(r2.provider).toBe("cpu");
     expect(() => fastestProvider(["coreml", "cpu"], () => { throw new Error("damaged"); }, () => undefined)).toThrow("damaged");
+  });
+});
+
+describe("remembering the fastest provider", () => {
+  it("times once per model, then uses the verdict without timing; times again when it can't be made, or the model changed", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-providers-"));
+    try {
+      const store = providerCache(path.join(dir, "providers.json"));
+      const model = path.join(dir, "model.onnx");
+      fs.writeFileSync(model, "x");
+      const key = modelKey(model, ["coreml", "cpu"], 2);
+      expect(key).not.toBeNull();
+      let t = 0, probes = 0;
+      const probe = (p: string) => { probes++; t += p === "coreml" ? 90 : 40; };
+      const first = fastestProvider(["coreml", "cpu"], p => p, probe, { now: () => t, cache: { store, key } });
+      expect(first.provider).toBe("cpu");
+      expect(probes).toBe(4);
+      const again = fastestProvider(["coreml", "cpu"], p => p, probe, { now: () => t, cache: { store, key } });
+      expect(again).toEqual({ made: "cpu", provider: "cpu", tried: [{ provider: "cpu", cached: true }] });
+      expect(probes).toBe(4);
+      // The remembered provider can't make it: timed again.
+      const broken = fastestProvider(["coreml", "cpu"], p => { if (p === "cpu") throw new Error("gone"); return p; }, probe, { now: () => t, cache: { store, key } });
+      expect(broken.provider).toBe("coreml");
+      // A replaced model has another key; a damaged file is no verdict.
+      fs.writeFileSync(model, "xy");
+      expect(modelKey(model, ["coreml", "cpu"], 2)).not.toBe(key);
+      fs.writeFileSync(path.join(dir, "providers.json"), "{oops");
+      expect(store.get(key!)).toBeUndefined();
+      expect(modelKey(path.join(dir, "missing.onnx"), ["cpu"], 1)).toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores a verdict for a provider that isn't being tried (EMBER_VOICE_PROVIDER=cpu)", () => {
+    const store = { get: () => "coreml", set: () => undefined };
+    expect(fastestProvider(["cpu"], p => p, () => undefined, { cache: { store, key: "k" } }).provider).toBe("cpu");
   });
 });
 
