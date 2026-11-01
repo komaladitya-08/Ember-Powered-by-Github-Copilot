@@ -82,7 +82,8 @@ await Promise.all([
     target: "node24",
     external: ["electron", "koffi", "sharp"],
   }),
-  // The voice utility process (sherpa-onnx WASM stays external: it loads its .wasm beside itself).
+  // The voice utility process (sherpa-onnx WASM stays external: it loads its .wasm beside itself; the native addon is
+  // required at run time from its platform package, app/voice/runtime.ts).
   build({
     ...common,
     entryPoints: ["app/voice/process.ts"],
@@ -103,7 +104,7 @@ await Promise.all([
     target: "node24",
     external: ["electron", "onnxruntime-web"],
   }),
-  // Ember's voice (the neural voice's utility process; sherpa-onnx WASM stays external, as for voice.cjs).
+  // Ember's voice (the neural voice's utility process; sherpa-onnx stays external, as for voice.cjs).
   build({
     ...common,
     entryPoints: ["app/voice/tts-process.ts"],

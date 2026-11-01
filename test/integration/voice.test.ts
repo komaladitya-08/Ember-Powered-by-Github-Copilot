@@ -1,6 +1,8 @@
 /**
- * The real recognizers (sherpa-onnx WASM) on synthesized speech: the clips in
- * test/fixtures/voice. Needs the models from `node scripts/voice/prepare.mjs`
+ * The real recognizers on synthesized speech: the clips in test/fixtures/voice. They run on the build Ember picks
+ * (runtime.ts: the native addon on Windows and macOS, WebAssembly elsewhere); EMBER_VOICE_BACKEND=wasm forces
+ * WebAssembly, and EMBER_SHERPA_ADDON=<path to a sherpa-onnx.node> runs an addon where none is installed (Linux:
+ * sherpa-onnx-linux-x64's, to try the native path there). Needs the models from `node scripts/voice/prepare.mjs`
  * (skipped otherwise; EMBER_VOICE_TEST=1 requires them).
  */
 
@@ -9,9 +11,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
+import { nativePackage, type RuntimeOptions } from "../../app/voice/runtime";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, printFeatures, similarity, unit } from "../../app/voice/voiceprint";
 
@@ -19,11 +23,29 @@ const dir = path.resolve(process.env.EMBER_VOICE_DIR ?? ".cache/voice");
 const clips = path.resolve("test/fixtures/voice");
 const ready = modelsReady(path.join(dir, "models")) && fs.existsSync(path.join(clips, "wake.wav"));
 const sherpa = createRequire(import.meta.url)("sherpa-onnx");
+const addonFile = process.env.EMBER_SHERPA_ADDON ? path.resolve(process.env.EMBER_SHERPA_ADDON) : undefined;
+const runtime: RuntimeOptions | undefined = addonFile ? { prefer: "native", addonFile } : undefined;
 
 // Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
 describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
   let backend: ReturnType<typeof sherpaBackend>;
-  beforeAll(() => { backend = sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true }); }, 60_000);
+  /**
+   * The recognizers the speakers' stream is tested on. Speaker rejection runs only on Linux (it needs parec), which runs
+   * WebAssembly: where the picked build is the native addon (Windows, macOS), those tests run on a WebAssembly backend,
+   * the build that runs them in Ember. (The addon's spotter decides a hair differently on a phrase at its threshold:
+   * on Windows, "Ember, stop" from the speakers came out as "ember_stop" on one stream and the bare name on the other.)
+   */
+  let speakersBackend: ReturnType<typeof sherpaBackend> | null = null;
+  const forSpeakers = () => {
+    if (backend.info.backend === "wasm") return backend;
+    speakersBackend ??= sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true, runtime: { prefer: "wasm" } });
+    return speakersBackend;
+  };
+  beforeAll(() => {
+    const t0 = performance.now();
+    backend = sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true, runtime });
+    console.log(`voice backend: ${JSON.stringify(backend.info)}, loaded in ${Math.round(performance.now() - t0)} ms`);
+  }, 60_000);
 
   const read = (name: string): Float32Array => sherpa.readWave(path.join(clips, `${name}.wav`)).samples;
   /** Plays a clip (or audio) through the engine in 32 ms frames, like the microphone would, with real time; `at`: when each event came (ms). */
@@ -32,7 +54,8 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const events: VoiceEvent[] = [];
     const at: number[] = [];
     let t = 0;
-    const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") { events.push(e); at.push(t); } }, { now: () => t });
+    const b = opts.monitor ? forSpeakers() : backend;
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") { events.push(e); at.push(t); } }, { now: () => t });
     if (opts.followUp) engine.followUp(8000);
     const tail = new Float32Array(16000 * 2);
     const all = new Float32Array(samples.length + tail.length);
@@ -46,12 +69,19 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
       cpu += performance.now() - t0;
       t += 32;
     }
-    backend.resetVad();
+    b.resetVad();
     return { events, at, rtf: cpu / (all.length / 16) };
   };
 
+  it("runs on the native addon on Windows and macOS (WebAssembly on Linux)", () => {
+    const native = !!addonFile || ((process.platform === "win32" || process.platform === "darwin") && process.env.EMBER_VOICE_BACKEND !== "wasm");
+    expect(backend.info).toMatchObject({ backend: native ? "native" : "wasm" });
+    expect(backend.info.threads).toBe(native ? Math.max(1, Math.min(2, os.availableParallelism() - 1)) : 1);
+  });
+
   it("wakes on 'Hey Ember' and hears the request in the same breath", () => {
     const { events, rtf } = play("wake");
+    console.log(`voice: 'Hey Ember, turn on night light' processed at ${rtf.toFixed(3)} of real time (${backend.info.backend}, ${backend.info.provider})`);
     expect(events.map(e => e.type)).toEqual(["wake", "listening", "utterance", "listening"]);
     expect(events.find(e => e.type === "utterance")).toMatchObject({ text: expect.stringMatching(/^Turn on night ?light\.?$/i) });
     expect(rtf).toBeLessThan(1);
@@ -156,11 +186,15 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
   const trimmed = (name: string) => { const s = read(name); let a = 0, b = s.length; while (a < b && Math.abs(s[a]) < 0.01) a++; while (b > a && Math.abs(s[b - 1]) < 0.01) b--; return s.subarray(a, b); };
   /** A quiet room's noise (white, 0.001 RMS) added, from a fixed seed. */
   const inRoom = (s: Float32Array) => { let seed = 5; return s.map(x => x + ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887); };
-  /** One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms). */
-  const session = () => {
+  /**
+   * One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms).
+   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()).
+   */
+  const session = (o: { speakers?: boolean } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
-    const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
+    const b = o.speakers ? forSpeakers() : backend;
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
         o.onFrame?.(k);
@@ -169,7 +203,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
         t += 32;
       }
     };
-    return { engine, events, hear, end: () => backend.resetVad() };
+    return { engine, events, hear, end: () => b.resetVad() };
   };
   const sent = (events: VoiceEvent[]) => events.flatMap(e => (e.type === "utterance" ? [e] : []));
 
@@ -237,7 +271,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const speakers = cat(answer, silence(4)), voice = new Float32Array(speakers.length);
     voice.set(wake, from);
     const mic = inRoom(voice.map((x, i) => x + speakers[i] * 0.1));
-    const s = session();
+    const s = session({ speakers: true });
     let hushAt = -1;
     s.engine.selfSpeaking(true);
     s.hear(mic, {
@@ -256,18 +290,31 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     for (const n of [0, 800, 1599]) expect(backend.transcribe(new Float32Array(n))).toBe("");
   });
 
-  it("fails to load, with a ModelLoadError, when a model file is cut short or missing (review #254)", () => {
+  it("fails to load, with a ModelLoadError, when a model file is cut short or missing (review #254); natively, a cut one ends the process", () => {
     const models = modelPaths(path.join(dir, "models"));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-damaged-"));
     try {
       // The recognition model's folder, its encoder cut to 1000 bytes (as an antivirus or a disk error leaves it), then gone.
       const asr = path.join(tmp, "asr");
       fs.mkdirSync(asr);
-      for (const f of fs.readdirSync(models.asr)) if (f !== "encoder_model.ort") fs.symlinkSync(path.join(models.asr, f), path.join(asr, f));
+      // (Copies: Windows makes symbolic links only with Developer Mode on.)
+      for (const f of ["decoder_model_merged.ort", "tokens.txt"]) fs.copyFileSync(path.join(models.asr, f), path.join(asr, f));
       fs.writeFileSync(path.join(asr, "encoder_model.ort"), fs.readFileSync(path.join(models.asr, "encoder_model.ort")).subarray(0, 1000));
-      expect(() => sherpaBackend({ ...models, asr })).toThrow(ModelLoadError);
+      // WebAssembly throws. The addon's onnxruntime aborts the process instead (an uncaught C++ exception: nothing in
+      // JavaScript can catch it), so main starts a voice process that died loading again on WebAssembly, which says the
+      // models are damaged (VoiceService.nativeFailed).
+      expect(() => sherpaBackend({ ...models, asr }, { runtime: { prefer: "wasm" } })).toThrow(ModelLoadError);
+      if (backend.info.backend === "native") {
+        const file = addonFile ?? createRequire(import.meta.url).resolve(`${nativePackage()}/sherpa-onnx.node`);
+        const make = `const a = require(process.env.ADDON), d = process.env.ASR; a.createOfflineRecognizer({ featConfig: { sampleRate: 16000, featureDim: 80 }, modelConfig: { moonshine: { encoder: d + "/encoder_model.ort", mergedDecoder: d + "/decoder_model_merged.ort" }, tokens: d + "/tokens.txt", numThreads: 1, provider: "cpu", debug: 0 } }); console.log("loaded");`;
+        const r = spawnSync(process.execPath, ["-e", make], { env: { ...process.env, ADDON: file, ASR: asr }, encoding: "utf8", timeout: 30_000 });
+        expect(r.stdout).not.toContain("loaded");
+        expect(r.status !== 0 || r.signal !== null).toBe(true);
+      }
       fs.rmSync(path.join(asr, "encoder_model.ort"));
-      expect(() => sherpaBackend({ ...models, asr })).toThrow("The speech recognition model couldn't be loaded.");
+      // A missing file is refused before onnxruntime sees it, by either build.
+      expect(() => sherpaBackend({ ...models, asr }, { runtime })).toThrow("The speech recognition model couldn't be loaded.");
+      expect(() => sherpaBackend({ ...models, asr }, { runtime: { prefer: "wasm" } })).toThrow("The speech recognition model couldn't be loaded.");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -279,7 +326,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const talk = cat(trimmed("chat"), trimmed("remember"));
     const playing = (n: number) => new Float32Array(n).map((_, i) => talk[i % talk.length] * 0.5);
     const first = cat(silence(3), read("wake_pause").subarray(0, at(1.52)), silence(1));
-    const s = session();
+    const s = session({ speakers: true });
     s.hear(inRoom(first), { speakers: playing(first.length) });
     expect(s.engine.listening).toBe(true);
     s.engine.selfSpeaking(true);
@@ -307,7 +354,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const mic = new Float32Array(speakers.length);
     for (let i = 0; i < answer.length; i++) mic[i + lag] = answer[i] * 0.3; // the echo
     mic.set(reply, answer.length + lag);
-    const s = session(), endFrame = Math.ceil(answer.length / 512);
+    const s = session({ speakers: true }), endFrame = Math.ceil(answer.length / 512);
     s.engine.selfSpeaking(true);
     s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === endFrame) { s.engine.selfSpeaking(false); s.engine.followUp(8000); } } });
     s.end();

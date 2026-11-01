@@ -10,9 +10,14 @@ export const TARGETS = ["linux-x64", "win32-x64", "win32-arm64", "darwin-arm64",
 
 /**
  * Packages published once per platform (npm installs only the host's). Every one of them that isn't the target's
- * own build is left out of the package: another OS's binaries, musl builds, sharp's wasm fallback.
+ * own build is left out of the package: another OS's binaries, musl builds, sharp's wasm fallback. sherpa-onnx-*:
+ * sherpa-onnx's native addon (app/voice/runtime.ts), for Windows and macOS only; Linux has none (it needs glibc 2.32,
+ * RHEL 8 has 2.28: Linux packages run speech on sherpa-onnx's WebAssembly, which isn't in this family).
  */
-export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-"];
+export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-", "sherpa-onnx-"];
+
+/** sherpa-onnx's native addon package for a Windows or macOS target (npm calls Windows "win"). */
+const sherpaNative = (platform, arch) => `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}`;
 
 /**
  * The remote agent's parts for SSH targets (scripts/package/remote-parts.mjs): dist/remote-parts/ is staged as this
@@ -93,9 +98,10 @@ export function layoutFor(platform, arch) {
       resourcesDir: "resources", noticesDir: ".", electronNotices: [],
       fuseFile: "Ember.exe", remove: ["resources/default_app.asar"],
       // sharp's Windows builds carry libvips themselves (there is no @img/sharp-libvips-win32-* package).
-      platformPackages: [copilot, `@img/sharp-${target}`, koffi],
-      // koffi's import library and exports file are for linking against it, not for loading it.
-      prune: [`${koffiDir}/koffi.lib`, `${koffiDir}/koffi.exp`, ...tools],
+      platformPackages: [copilot, `@img/sharp-${target}`, koffi, sherpaNative(platform, arch)],
+      // koffi's import library and exports file are for linking against it, not for loading it. sherpa-onnx's C++ API
+      // library: its addon loads only the C API's (sherpa-onnx.node imports sherpa-onnx-c-api.dll and onnxruntime.dll).
+      prune: [`${koffiDir}/koffi.lib`, `${koffiDir}/koffi.exp`, `${sherpaNative(platform, arch)}/sherpa-onnx-cxx-api.dll`, ...tools],
       // The UI Automation bridge: compiled by Windows PowerShell 5.1 at run time, so it ships as source. The AT-SPI
       // sidecar is the helper Ember runs inside WSL distros to read WSLg's Linux apps (SSH/WSL design §4.3). SSH's
       // askpass helper is compiled the same way at first use, from resources\ssh (askpass-win.ts, §5.1.6).
@@ -133,9 +139,9 @@ export function layoutFor(platform, arch) {
     // The fuse wire is in the framework, not in the small launcher executable.
     fuseFile: "Contents/Frameworks/Electron Framework.framework/Electron Framework",
     remove: ["Contents/Resources/default_app.asar"],
-    platformPackages: [copilot, `@img/sharp-${target}`, `@img/sharp-libvips-${target}`, koffi],
-    // libvips's glib headers are for building against it.
-    prune: [`@img/sharp-libvips-${target}/lib/glib-2.0`, ...tools],
+    platformPackages: [copilot, `@img/sharp-${target}`, `@img/sharp-libvips-${target}`, koffi, sherpaNative(platform, arch)],
+    // libvips's glib headers are for building against it; sherpa-onnx's C++ API library, as on Windows.
+    prune: [`@img/sharp-libvips-${target}/lib/glib-2.0`, `${sherpaNative(platform, arch)}/libsherpa-onnx-cxx-api.dylib`, ...tools],
     sidecarFiles: [],
     requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...POSIX_HELPERS],
     sidecarDist: ["ax-sidecar.cjs"],

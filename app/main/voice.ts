@@ -15,11 +15,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
+import { ensureModel, ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, NATURAL_VOICE, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
 import type { ModelPaths } from "../voice/sherpa";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
-import type { TtsProcessMessage } from "../voice/tts-process";
+import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
+import { nativePackage } from "../voice/runtime";
+import { NATURAL_COST, NATURAL_MAX_RTF } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
@@ -74,6 +76,20 @@ export interface VoiceOptions {
   onSpeech?: (ok: boolean) => void;
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
+  /**
+   * The user turned on the natural voice (Kokoro, models.ts NATURAL_VOICE): it is fetched in the background and
+   * speaks where speech runs natively and the Piper voice shows this computer is fast enough for it. Changed later
+   * with setNaturalVoice.
+   */
+  naturalVoice?: boolean;
+  /**
+   * Speech can run on sherpa-onnx's native addon here (default: Windows and macOS, runtime.ts). A voice or speech
+   * process that dies before it is ready is then started again on WebAssembly: a damaged model aborts the addon's
+   * onnxruntime, which nothing in the process can catch.
+   */
+  native?: boolean;
+  /** Downloads the natural voice (default: Chromium's network stack, electronDownloader; tests pass their own). */
+  downloader?: Downloader;
   /** Voice Match: the owner's voiceprint (base64, app/voice/voiceprint.ts) while it is on, else null. */
   voiceprint?: () => string | null;
   /** Enrolment's progress (Voice Match); at "done", `print` is the voiceprint to keep. */
@@ -157,10 +173,22 @@ export class VoiceService {
   private ttsPending = new Map<number, { text: string; send: PageSend }>();
   /** Enrolment (Voice Match) is under way in the voice process. */
   private enrolling = false;
+  /** The voice and speech processes run on WebAssembly: one died loading natively (reset when the models change). */
+  private wasmOnly = { voice: false, speech: false };
+  /**
+   * The natural voice: being fetched, or not to be used this session (it was too slow here, or couldn't be fetched);
+   * `switchVoice`: fetched, so the speech process starts again with it once it has nothing left to say.
+   */
+  private naturalFetch: Promise<void> | null = null;
+  /** The natural voice is wanted (the setting). */
+  private naturalWanted: boolean;
+  private naturalOff = false;
+  private switchVoice = false;
   /** Whether the log last said that Ember speaks (voice.self_speaking). */
   private saidSpeaking = false;
 
   constructor(private o: VoiceOptions) {
+    this.naturalWanted = !!o.naturalVoice;
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
@@ -239,7 +267,7 @@ export class VoiceService {
   /** Each model's path, from the folder it is used from (the user's own for one that isn't in anywhere). */
   private paths(): ModelPaths {
     const at = (id: ModelId) => modelPaths(this.rootOf(id) ?? this.userRoot)[id];
-    return { kws: at("kws"), vad: at("vad"), asr: at("asr"), tts: at("tts"), speaker: at("speaker") };
+    return { kws: at("kws"), vad: at("vad"), asr: at("asr"), tts: at("tts"), speaker: at("speaker"), natural: at("natural") };
   }
 
   /** The owner's voiceprint for the voice process: none while its model isn't in (Voice Match is off then, not deaf). */
@@ -299,6 +327,8 @@ export class VoiceService {
           this.o.log.info("voice.models_ready", { models: ids, bytes: modelsBytes(missing) });
           for (const id of ids) this.notBundled.delete(id); // (the user's own copy is used: it verified)
           if (ids.includes("tts")) this.ttsFailures = 0;
+          // New models: the native build is tried again (one that died loading may have died on a damaged model).
+          this.wasmOnly = { voice: false, speech: false };
         })
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
@@ -394,6 +424,19 @@ export class VoiceService {
     this.voiceProcess().postMessage({ type: "say", id, text });
   }
 
+  /**
+   * The natural voice turned on or off (the setting): the speech process starts again once it has nothing left to say,
+   * with Kokoro (fetched first, where this computer is fast enough for it) or without.
+   */
+  setNaturalVoice(on: boolean): void {
+    if (on === this.naturalWanted) return;
+    this.naturalWanted = on;
+    this.naturalOff = false;
+    this.o.log.info("voice.natural_wanted", { on });
+    this.switchVoice = true;
+    this.switchWhenIdle();
+  }
+
   hush(): void {
     this.speakingUntil = 0;
     if (this.ttsId > this.ttsHushed) {
@@ -427,6 +470,11 @@ export class VoiceService {
     };
   }
 
+  /** Speech can run natively here (runtime.ts). */
+  private get native(): boolean {
+    return this.o.native ?? nativePackage() !== null;
+  }
+
   /** Ember's voice process, started (and its voice loaded) on first use. */
   private voiceProcess(): UtilityProcess {
     if (this.tts) return this.tts.proc;
@@ -436,13 +484,22 @@ export class VoiceService {
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.tts_stderr", { line: d.toString().slice(0, 300) }));
     proc.on("exit", code => {
       if (this.tts !== tts) return;
+      if (!tts.ready && this.native && !this.wasmOnly.speech) {
+        // It died loading, natively: started again on WebAssembly, with what it had to say.
+        this.o.log.warn("voice.tts_native_failed", { code });
+        this.wasmOnly.speech = true;
+        this.tts = null;
+        const next = this.voiceProcess();
+        for (const [id, p] of this.ttsPending) next.postMessage({ type: "say", id, text: p.text });
+        return;
+      }
       this.o.log.warn("voice.tts_exit", { code });
       this.ttsFailures++;
       this.voiceFailed();
     });
     proc.on("message", (m: TtsProcessMessage) => {
       if (this.tts !== tts) return;
-      if (m.type === "ready") { tts.ready = true; this.o.log.info("voice.tts_ready", { loadMs: m.loadMs, rate: m.rate }); return; }
+      if (m.type === "ready") { tts.ready = true; this.voiceReady(m.loadMs, m.rate, m.voice); return; }
       if (m.type === "error") { this.o.log.error("voice.tts_error", { message: m.message }); this.ttsFailures = VOICE_FAILURES; this.voiceFailed(); return; }
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
@@ -450,9 +507,44 @@ export class VoiceService {
       if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.ttsFailures++; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
+      this.switchWhenIdle();
     });
-    proc.postMessage({ type: "init", model: this.paths().tts });
+    const natural = this.naturalWanted && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
+    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : {}) });
     return proc;
+  }
+
+  /**
+   * Ember's voice loaded: which voice, on which build and how fast (logged). Where it runs natively on the Piper voice
+   * fast enough for the natural voice, that is fetched (once a session).
+   */
+  private voiceReady(loadMs: number, rate: number, v: VoiceInfo | undefined): void {
+    this.o.log.info("voice.tts_ready", { loadMs, rate, ...(v ? { voice: v.voice, backend: v.backend, detail: v.detail, provider: v.provider, threads: v.threads, rtf: v.rtf, tried: v.tried, natural: v.natural } : {}) });
+    if (!v || !this.naturalWanted || this.naturalFetch || this.naturalOff) return;
+    // Downloaded, but too slow here or it wouldn't load: the Piper voice speaks for the rest of the session.
+    if (v.natural) { this.naturalOff = true; return; }
+    if (v.backend !== "native" || v.voice !== "piper" || v.rtf === undefined) return;
+    if (v.rtf * NATURAL_COST > NATURAL_MAX_RTF) {
+      this.o.log.info("voice.natural_skipped", { rtf: v.rtf, needs: Math.round((NATURAL_MAX_RTF / NATURAL_COST) * 1000) / 1000 });
+      this.naturalOff = true;
+      return;
+    }
+    if (this.rootOf("natural") !== null) return;
+    this.o.log.info("voice.natural_fetching", { rtf: v.rtf, bytes: NATURAL_VOICE.bytes });
+    // Into the user's own models folder (one that came with Ember is never changed).
+    this.naturalFetch = ensureModel(this.userRoot, NATURAL_VOICE, this.o.downloader ?? electronDownloader)
+      .then(() => { this.o.log.info("voice.natural_ready", { root: this.userRoot }); this.switchVoice = true; this.switchWhenIdle(); })
+      .catch((err: unknown) => { this.naturalOff = true; this.o.log.warn("voice.natural_download_failed", { message: err instanceof Error ? err.message : String(err) }); });
+  }
+
+  /** The natural voice was fetched: the speech process stops once it has nothing to say, and the next reply starts it with that voice. */
+  private switchWhenIdle(): void {
+    if (!this.switchVoice || !this.tts || this.ttsPending.size) return;
+    this.switchVoice = false;
+    const t = this.tts;
+    this.tts = null;
+    t.proc.removeAllListeners("exit");
+    t.proc.kill();
   }
 
   /**
@@ -494,13 +586,28 @@ export class VoiceService {
     this.proc = proc;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
     proc.on("exit", code => {
-      if (this.proc === proc) { this.o.log.warn("voice.exit", { code }); this.restartLater("The voice process stopped."); }
+      if (this.proc !== proc) return;
+      if (!this.readyAt && this.native && !this.wasmOnly.voice) {
+        // It died loading, natively (a damaged model aborts the addon's onnxruntime): started again at once on
+        // WebAssembly, which says whether the models are damaged.
+        this.o.log.warn("voice.native_failed", { code });
+        this.wasmOnly.voice = true;
+        this.teardown();
+        void this.start();
+        return;
+      }
+      this.o.log.warn("voice.exit", { code });
+      this.restartLater("The voice process stopped.");
     });
     proc.on("message", (m: VoiceProcessMessage) => {
       if (this.proc !== proc) return; // a process being replaced: only the current one speaks for the mic
       this.alive?.watch.frame();
       if (m.type === "alive") return;
-      if (m.type === "ready") { this.o.log.info("voice.ready", { loadMs: m.loadMs }); this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting"); return; }
+      if (m.type === "ready") {
+        const b = m.backend;
+        this.o.log.info("voice.ready", { loadMs: m.loadMs, ...(b ? { backend: b.backend, detail: b.detail, provider: b.provider, threads: b.threads, tried: b.tried } : {}) });
+        this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting"); return;
+      }
       if (m.type === "error") {
         this.o.log.error("voice.error", { message: m.message, models: !!m.models });
         this.teardown();
@@ -512,6 +619,8 @@ export class VoiceService {
             return;
           }
           this.o.onModels?.();
+          // Other copies of the models: the native build is tried again.
+          this.wasmOnly = { voice: false, speech: false };
           if (this.modelsReady) void this.start(); // the user's own copy is there: it's tried
           else this.setState("needs-models", "The speech models look damaged. Download them again.");
           return;
@@ -550,7 +659,7 @@ export class VoiceService {
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint() }, [port1]);
+    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.wasmOnly.voice ? { wasm: true } : {}) }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;

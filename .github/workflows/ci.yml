@@ -50,6 +50,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - name: The npm launcher's package files (packages/npm, published by npm.yml)
+        working-directory: packages/npm
+        run: npm pack --dry-run
       - name: Accessibility sidecar self-test (stand-in pyatspi, no desktop)
         run: npm run test:sidecar
       - name: Speech models (cached; verified by SHA-256)
@@ -172,6 +175,8 @@ jobs:
           node scripts/package/stage.mjs --with-runtimes
           scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
           scripts/check-symvers.sh dist/package/ember > /dev/null
+          # sherpa-onnx's native addon needs glibc 2.32: never in a Linux package (speech runs on its WebAssembly).
+          if ls -d dist/package/ember/resources/app/node_modules/sherpa-onnx-* 2> /dev/null; then exit 1; fi
       - name: Build the RPM (Ember with its speech models inside)
         run: EMBER_RPM_MODELS=required scripts/package/rpm.sh
       # The same verified models as a zip, for Windows, macOS and Linux PCs that can't download them (IT unzips it into
@@ -473,6 +478,13 @@ jobs:
       - name: Fetch and verify the speech models
         if: ${{ !cancelled() }}
         run: node scripts/voice/prepare.mjs
+      - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native picked, WebAssembly compared; latency printed)"
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/run-integration.mjs test/integration/voice.test.ts
+          npx electron test/smoke/voice-backends.mjs
+        env:
+          EMBER_VOICE_TEST: "1"
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() }}
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -508,6 +520,9 @@ jobs:
           test ! -e "$app/resources/app/dist/app/desk-agent.cjs"
           test -f "$app/resources/app/dist/app/ax-sidecar.cjs"
           test -f "$app/resources/sidecar/uia/ember_uia.ps1" && test -f "$app/resources/sidecar/uia/ember_uia.cs"
+          # sherpa-onnx's native addon for speech, without the C++ API library it doesn't load.
+          test -f "$app/resources/app/node_modules/sherpa-onnx-win-x64/sherpa-onnx.node" && test -f "$app/resources/app/node_modules/sherpa-onnx-win-x64/onnxruntime.dll"
+          test ! -e "$app/resources/app/node_modules/sherpa-onnx-win-x64/sherpa-onnx-cxx-api.dll"
       - name: "Ember.exe as Windows sees it: Ember's name, version and publisher, and unsigned rather than tampered with"
         if: ${{ !cancelled() }}
         # Task Manager (and its Startup apps page), the privacy settings, the volume mixer and firewall prompts show
@@ -671,6 +686,13 @@ jobs:
       - name: Fetch and verify the speech models
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node scripts/voice/prepare.mjs
+      - name: "Speech on sherpa-onnx's native addon: the real recognizers on the voice clips, then the voice and speech processes in Electron (native picked, CoreML timed against the CPU, WebAssembly compared; latency printed)"
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          node scripts/run-integration.mjs test/integration/voice.test.ts
+          npx electron test/smoke/voice-backends.mjs
+        env:
+          EMBER_VOICE_TEST: "1"
       - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -732,6 +754,9 @@ jobs:
           test -f "$app/Contents/Resources/ember.icns" && test ! -e "$app/Contents/Resources/default_app.asar"
           test ! -e "$app/Contents/Resources/app/dist/app/desk-agent.cjs"
           test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
+          # sherpa-onnx's native addon for speech (signed with the bundle), without the C++ API library it doesn't load.
+          addon="$app/Contents/Resources/app/node_modules/sherpa-onnx-darwin-arm64"
+          test -f "$addon/sherpa-onnx.node" && test -f "$addon/libonnxruntime.dylib" && test ! -e "$addon/libsherpa-onnx-cxx-api.dylib"
       - name: The packaged Ember.app starts and shows its window
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
@@ -956,6 +981,9 @@ jobs:
           test -f "$app/Contents/Resources/ember.icns" && test ! -e "$app/Contents/Resources/default_app.asar"
           test ! -e "$app/Contents/Resources/app/dist/app/desk-agent.cjs"
           test -f "$app/Contents/Resources/app/dist/app/ax-sidecar.cjs"
+          # sherpa-onnx's native addon for speech (signed with the bundle), without the C++ API library it doesn't load.
+          addon="$app/Contents/Resources/app/node_modules/sherpa-onnx-darwin-x64"
+          test -f "$addon/sherpa-onnx.node" && test -f "$addon/libonnxruntime.dylib" && test ! -e "$addon/libsherpa-onnx-cxx-api.dylib"
       - name: The packaged Ember.app starts and shows its window on Intel
         run: node test/smoke/launch.mjs --exe dist/package/Ember.app/Contents/MacOS/Ember
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

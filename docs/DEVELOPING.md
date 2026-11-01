@@ -221,6 +221,65 @@ listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
 
+### How speech runs (WebAssembly, or natively on Windows and macOS)
+
+Listening (the wake word, the two voice detectors and Moonshine) and Ember's voice run on sherpa-onnx 1.13.8, each in a
+utility process of its own (`app/voice/process.ts`, `app/voice/tts-process.ts`), through `app/voice/runtime.ts`:
+
+| | Linux | Windows, macOS |
+|---|---|---|
+| Build | WebAssembly (`sherpa-onnx`): one thread, no GPU, runs on RHEL 8's glibc 2.28 | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
+| Threads | 1 | Moonshine 2, the Piper voice 1 (a second thread made it slower on a busy computer), Kokoro up to 4, leaving a core free; the per-frame models 1 |
+| GPU | — | macOS: CoreML for Kokoro only, kept when it is faster than the CPU on that Mac (both are timed the first time it loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder). Moonshine and Piper run on the CPU: CoreML lost to it on CI's Macs, and compiling for it held up the first load by seconds (`EMBER_VOICE_PROVIDER=coreml` tries it for every model). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
+| Voice | Piper "Kristin" | Piper "Kristin", or Kokoro (below) |
+
+Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only the computer's own):
+`sherpa-onnx-node`'s JavaScript would bring `sherpa-onnx-linux-x64` too, which needs glibc 2.32 and would fail
+`npm run check:symvers`. No Linux package carries the addon (`scripts/package/layout.mjs`; CI checks the staged Linux
+folder has no `sherpa-onnx-*`). The log says which build each process runs: `voice.ready` and `voice.tts_ready`
+carry `backend` (`native` or `wasm`), `detail` (the addon's and onnxruntime's versions, or why WebAssembly runs),
+`provider`, `threads` and `tried` (each provider's probe time); `voice.tts_ready` also has the voice and its measured
+real-time factor (`rtf`).
+
+**Falling back.** A model the addon can't make throws, and WebAssembly is used as before. A damaged model file aborts
+the addon's onnxruntime instead (an uncaught C++ exception, which ends the process), so a voice or speech process that
+dies before it is ready is started again at once on WebAssembly (`voice.native_failed`, `voice.tts_native_failed`),
+which then says the models are damaged and Ember downloads them again; after that, the native build is tried again.
+`EMBER_VOICE_BACKEND=wasm` forces WebAssembly and `EMBER_VOICE_PROVIDER=cpu` turns CoreML off (both honoured by an
+installed Ember: neither loads code). `npx electron test/smoke/voice-backends.mjs` (after `npm run build` and
+`node scripts/voice/prepare.mjs`) starts both processes in Electron, has them hear a clip and speak a reply on the
+build Ember picks and then on WebAssembly, and prints each one's build, load time and latency; CI runs it on Windows
+and macOS, after `test/integration/voice.test.ts` (which runs on the picked build too; `EMBER_SHERPA_ADDON=<a
+sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux).
+
+**The natural voice (Kokoro).** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default;
+shown on Windows and macOS) lets Ember fetch Kokoro v1.0 (`kokoro-multi-lang-v1_0`, fp32, its `af_heart` voice in US
+English, Apache-2.0, 350 MB, pinned by SHA-256) into the user's models folder. It is fetched only where Ember's voice
+runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is about 3.5 times the work:
+`NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
+again with it once it has nothing to say. Each time it loads, Kokoro is timed on a sentence (on up to 4 threads, and
+against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
+voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). No package carries
+Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below). `node scripts/voice/bench.mjs
+--kokoro` times listening, the Piper voice and Kokoro on the computer it runs on (both builds, every thread count and
+provider Ember would try), as a table and as JSON.
+
+Measured in a Linux container (2.1 GHz Xeon, 4 vCPUs) with `sherpa-onnx-linux-x64`, the same addon as Windows' and
+macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/voice-backends.mjs`), and in Node
+(`test/integration/voice.test.ts`, the Piper/Kokoro benchmarks):
+
+| | WebAssembly | Native |
+|---|---|---|
+| Hearing "Hey Ember, turn on night light" (spotter, both detectors, Moonshine) | 0.149 of real time | 0.042 (2 threads) |
+| Voice process load | 1.6–3.0 s | 1.2–1.5 s |
+| The 25 real-model voice tests | 36 s | 21 s |
+| Piper "Kristin", real-time factor | 0.30–0.49 | 0.07–0.09 (1–2 threads) |
+| Piper, first audio of a reply | 1.34 s | 0.33 s |
+| Kokoro v1.0 fp32 (`kokoro-multi-lang-v1_0`) | several times real time | 0.52 / 0.41 / 0.38 (2 / 3 / 4 threads) |
+| Kokoro v0.19 fp32 (`kokoro-en-v0_19`) | — | 0.74 / 0.53 / 0.48 (2 / 3 / 4 threads) |
+| All 4 cores kept busy by other work: listening / Piper (1 thread) / Piper WebAssembly | 0.237 / — / 0.56 | 0.071 / 0.14 |
+| Kokoro int8 (`kokoro-int8-multi-lang-v1_0`) | — | 1.14–1.27 (2–4 threads) |
+
 ### Connecting Copilot
 
 Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's own GitHub App (the device flow:
@@ -358,6 +417,10 @@ Rules:
    `rockylinux:8` container (needs podman or docker).
 3. `scripts/check-symvers.sh` must pass. CI runs both steps on every pull request.
 
+A prebuilt binary that can't meet that may still ship for Windows and macOS only, as an optional dependency npm
+installs only there, left out of the Linux layout (`scripts/package/layout.mjs`): sherpa-onnx's native addon is one
+(§5, How speech runs). It isn't in `ember.nativeModules` (nothing is rebuilt), and Linux never installs it.
+
 ## 7. Packages
 
 ```bash
@@ -394,7 +457,7 @@ belongs to a package. It uploads Release 1's packages only when asked (§13): **
 **packages** ticked (kept 3 days), and on a `v*` tag for the release (§15); at about 450 MB a run with the speech
 models, uploading them every time filled the account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
 RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles
-(sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly holds, eSpeak NG's GPL-3.0-or-later among them:
+(sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly and its native addon hold, eSpeak NG's GPL-3.0-or-later among them:
 `scripts/package/licences.mjs`), or if a bundled package ships no licence file and `licences.mjs` supplies none (the
 texts are in `packaging/licences/`; sherpa-onnx's is pinned to 1.13.8, whose WebAssembly was checked). `sudo ember
 doctor` works (it adds `--no-sandbox` only for the setup check run as root).
@@ -532,7 +595,8 @@ accessibility helper, which takes a few seconds once per version of the helper (
 
 These work as in §5, from Command Prompt, PowerShell or Git Bash: `npm run dev`, `npm test`, `npm run lint`,
 `npm run typecheck`, `npm run build`, `npm run test:smoke` and `npm run doctor` (the setup check, printed in the
-terminal). CI runs the Copilot-runtime and voice integration suites on Linux only; on Windows it runs the suites in
+terminal). CI runs the Copilot-runtime integration suite on Linux only, and the voice suite on Linux (WebAssembly),
+Windows and macOS (the native addon, with `test/smoke/voice-backends.mjs`); on Windows it also runs the suites in
 §10.3. Linux only: `npm run test:sidecar`, `npm run rebuild:el8`, `npm run check:symvers`, `npm run package`, Ember's
 desk and the eval.
 
@@ -822,7 +886,7 @@ Ember can't work.
 | Helper command line | Never: it is the facts for an allow-list | — |
 | Copilot | Not signed in, or the Copilot runtime is missing from the package | Sign in from Ember's settings (Win+Alt+E) or with `gh auth login`; reinstall if the runtime is missing |
 | Organisation policy | The registry policy can't be trusted, so Ember is locked down | Fix `PolicyJson` (§10.7) |
-| Speech models, Speaking | As on Linux; Ember speaks with Windows' own voices | — |
+| Speech models, Speaking | As on Linux; speech runs on sherpa-onnx's native addon (§5, How speech runs) | — |
 
 The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
 scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
@@ -1323,6 +1387,16 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    ```
 
    and creates the release `Ember <v>` for the tag with the eight files and `SHA256SUMS`.
+4. When that ci run has passed, `.github/workflows/npm.yml` publishes the npm launcher, `packages/npm` (the
+   `ember-copilot` package, whose `ember` command downloads the release's zip or AppImage, checks it against
+   `SHA256SUMS` and starts it), with `npm publish --access public --provenance`. Its version must be the tag's: bump
+   `version` in `packages/npm/package.json` with the app's (a unit test checks they match). It refuses a release
+   missing `SHA256SUMS` or one of the files it downloads, and does nothing when that version is already on npm. It
+   signs in with npm Trusted Publishing (OIDC, no token) and falls back to the `NPM_TOKEN` repository secret (a
+   granular npm token that can publish `ember-copilot`); with neither it warns and skips, so a release never fails
+   because of npm. The first publish needs `NPM_TOKEN`; after it, add a trusted publisher on npmjs.com
+   (**ember-copilot › Settings › Trusted publishing**: GitHub Actions, this repository, workflow `npm.yml`) and the
+   token can be deleted. For a release that already exists, run **Actions › npm › Run workflow** with its tag.
 
 When a job fails, nothing is published: fix it on `main`, move the tag to the fixed commit (`git tag -f v<v>` and
 `git push -f origin v<v>`) and the run starts again. To publish by hand instead, run **Actions › ci › Run workflow**

@@ -51,6 +51,11 @@ the work in your real apps where you can watch, without taking over your mouse. 
   voice on Windows 11, a Premium or Enhanced one on a Mac). It speaks always (the default), when a screen reader runs,
   or never (**Speak replies, questions and results out loud** in Settings › **Voice**; an organisation that turns
   speaking off shows it as Never, managed).
+- **Faster speech on Windows and macOS**: listening and Ember's voice run on sherpa-onnx's native addon there, about
+  three times faster to hear a request and five times faster to speak than the WebAssembly build Linux uses, so a reply
+  starts in about a third of a second (measured on CI: 252 ms on Windows, 525 ms on a Mac, against 1.3–1.9 s). Should
+  the addon not load, speech runs on WebAssembly as before. Settings › **Voice** › **Use a more natural voice** (off by
+  default) downloads Kokoro (350 MB) and speaks with it where the computer is fast enough for it.
 - **Voice Match**: Settings › **Voice** › **Answer only my voice** teaches Ember your voice from four short phrases,
   and from then on it answers only you: a request in another voice (someone else in the room, a call, a video) is
   ignored. "Ember, stop" still works for anyone. Your voiceprint (256 numbers that describe how your voice sounds; it

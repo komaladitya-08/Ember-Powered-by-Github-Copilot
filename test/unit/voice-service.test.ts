@@ -41,10 +41,10 @@ const electron = vi.hoisted(() => {
 });
 vi.mock("electron", () => electron);
 
-import { VoiceService } from "../../app/main/voice";
+import { VoiceService, type VoiceOptions } from "../../app/main/voice";
 import { VOICE, type MicState } from "../../app/shared/voice";
 import crypto from "node:crypto";
-import { VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
+import { NATURAL_VOICE, VOICE_MODELS, modelReady, modelsReady, type ModelId } from "../../app/voice/models";
 import type { VoiceEvent } from "../../app/voice/engine";
 import type { Logger } from "../../app/main/logger";
 
@@ -63,11 +63,12 @@ const LISTENING: ModelId[] = ["kws", "vad", "asr"];
 const markers = (dir: string) => fs.readdirSync(dir).filter(f => f.endsWith(".ok")).sort();
 const markerOf = (id: ModelId) => `.${VOICE_MODELS.find(m => m.id === id)!.target}.ok`;
 
-function service(ready: boolean | readonly ModelId[] = true, o: { neuralVoice?: boolean; voiceprint?: () => string | null; onEnrol?: (e: unknown) => void } = {}) {
+function service(ready: boolean | readonly ModelId[] = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "naturalVoice" | "native" | "downloader" | "voiceprint" | "log">> & { onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
-  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), ...o });
+  // Speech runs on WebAssembly unless a test says otherwise (on Windows and macOS the service would default to the addon).
+  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), native: false, ...o } as VoiceOptions);
   services.push(v);
   return { v, states, events };
 }
@@ -697,6 +698,144 @@ describe("speech models", () => {
       expect(posted(proc, "enrol-cancel")).toHaveLength(1);
       v.setVoiceprint(null);
       expect(posted(proc, "voiceprint")).toEqual([{ type: "voiceprint", print: null }]);
+    });
+  });
+
+  describe("the native build (Windows and macOS)", () => {
+    /** A logger that keeps what it was told. */
+    const recording = () => {
+      const lines: { level: string; event: string; data?: Record<string, unknown> }[] = [];
+      const rec = (level: string) => (event: string, data?: Record<string, unknown>) => { lines.push({ level, event, data }); };
+      const l = { debug: rec("debug"), info: rec("info"), warn: rec("warn"), error: rec("error"), child: () => l, file: "" } as unknown as Logger;
+      return { log: l, lines };
+    };
+    const piper = (over: Record<string, unknown> = {}) => ({ voice: "piper", backend: "native", detail: "sherpa-onnx 1.13.8", provider: "cpu", threads: 2, tried: [{ provider: "cpu" }], rtf: 0.05, ...over });
+
+    it("logs which build and provider the voice process runs on", async () => {
+      const { log: l, lines } = recording();
+      const { v } = service(true, { native: true, log: l });
+      await v.setWanted(true);
+      const backend = { backend: "native", detail: "sherpa-onnx 1.13.8 (11afbd00), onnxruntime 1.28.2", provider: "coreml", threads: 2, tried: [{ provider: "coreml", ms: 31 }, { provider: "cpu", ms: 48 }] };
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, backend });
+      expect(lines.find(x => x.event === "voice.ready")?.data).toEqual({ loadMs: 900, ...backend });
+    });
+
+    it("starts a voice process that died loading natively again at once on WebAssembly, and only once", async () => {
+      const { log: l, lines } = recording();
+      const { v, states } = service(true, { native: true, log: l });
+      await v.setWanted(true);
+      expect(posted(electron.procs[0], "init")[0]).not.toHaveProperty("wasm");
+      electron.procs[0].emit("exit", 134);
+      await flush();
+      expect(electron.procs).toHaveLength(2);
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ wasm: true });
+      expect(lines.some(x => x.event === "voice.native_failed")).toBe(true);
+      expect(states.map(x => x.s)).not.toContain("error");
+      // WebAssembly dying too is an ordinary failure: the backoff, saying so.
+      electron.procs[1].emit("exit", 1);
+      expect(states.at(-1)).toMatchObject({ s: "error", detail: expect.stringMatching(/^The voice process stopped\. Trying again in 1 s/) });
+    });
+
+    it("keeps a voice process that died after it was ready on the native build (the backoff starts it again)", async () => {
+      vi.useFakeTimers();
+      const { v } = service(true, { native: true });
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+      electron.procs[0].emit("exit", 1);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(posted(electron.procs[1], "init")[0]).not.toHaveProperty("wasm");
+    });
+
+    it("doesn't try WebAssembly first where there is no native build (Linux): a voice process that dies is just restarted", async () => {
+      const { v } = service(true, { native: false });
+      await v.setWanted(true);
+      electron.procs[0].emit("exit", 134);
+      await flush();
+      expect(electron.procs).toHaveLength(1);
+    });
+
+    it("starts Ember's voice again on WebAssembly when it dies loading natively, with what it had to say", async () => {
+      const { v } = service(true, { neuralVoice: true, native: true });
+      v.speak("Night Light is on.");
+      const [tts] = electron.procs;
+      expect(posted(tts, "init")[0]).not.toHaveProperty("wasm");
+      tts.emit("exit", 134);
+      expect(electron.procs).toHaveLength(2);
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ wasm: true });
+      expect(posted(electron.procs[1], "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
+      // Not a failure of the voice: the system's voice wasn't asked.
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+    });
+
+    it("logs which voice speaks, on which build, how fast", async () => {
+      const { log: l, lines } = recording();
+      const { v } = service(true, { neuralVoice: true, native: true, log: l });
+      v.speak("Hello.");
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.08 }) });
+      expect(lines.find(x => x.event === "voice.tts_ready")?.data).toMatchObject({ loadMs: 1200, rate: 22_050, voice: "piper", backend: "native", provider: "cpu", threads: 2, rtf: 0.08 });
+    });
+
+    it("fetches the natural voice in the background where the Piper voice shows the computer is fast enough, once", async () => {
+      const urls: string[] = [];
+      const { log: l, lines } = recording();
+      const downloader = vi.fn(async (url: string) => { urls.push(url); throw new Error("HTTP 503"); });
+      const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader, log: l });
+      v.speak("Hello.");
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
+      await vi.waitFor(() => expect(lines.some(x => x.event === "voice.natural_download_failed")).toBe(true));
+      expect(urls).toEqual([NATURAL_VOICE.url]);
+      // Failed: not tried again this session.
+      electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice: piper({ rtf: 0.05 }) });
+      await flush();
+      expect(urls).toHaveLength(1);
+    });
+
+    it("doesn't fetch it where the Piper voice is too slow for it, on WebAssembly, or when not wanted", async () => {
+      for (const [voice, naturalVoice] of [[piper({ rtf: 0.2 }), true], [piper({ backend: "wasm", rtf: undefined }), true], [piper(), false]] as const) {
+        electron.procs.length = 0;
+        const downloader = vi.fn(async () => undefined);
+        const { v } = service(true, { neuralVoice: true, naturalVoice, native: true, downloader });
+        v.speak("Hello.");
+        electron.procs[0].emit("message", { type: "ready", loadMs: 1200, rate: 22_050, voice });
+        await flush();
+        expect(downloader).not.toHaveBeenCalled();
+        v.stop();
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    });
+
+    it("follows the setting: turned on, the speech process starts again with the natural voice once it has nothing to say; turned off, without it", async () => {
+      const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
+      fs.mkdirSync(path.join(root, NATURAL_VOICE.target));
+      fs.writeFileSync(path.join(root, `.${NATURAL_VOICE.target}.ok`), `${NATURAL_VOICE.sha256}\n`);
+      v.speak("Hello.");
+      const [first] = electron.procs;
+      expect(posted(first, "init")[0]).toMatchObject({ natural: null });
+      v.setNaturalVoice(true);
+      expect(first.kill).not.toHaveBeenCalled(); // "Hello." is still being said
+      first.emit("message", { type: "done", id: 1 });
+      expect(first.kill).toHaveBeenCalled();
+      v.speak("Again.");
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
+      electron.procs[1].emit("message", { type: "done", id: 2 });
+      v.setNaturalVoice(false);
+      v.speak("Once more.");
+      expect(posted(electron.procs[2], "init")[0]).toMatchObject({ natural: null });
+    });
+
+    it("lets the natural voice speak once it is in, unless it turned out too slow here", async () => {
+      const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader: vi.fn() });
+      fs.mkdirSync(path.join(root, NATURAL_VOICE.target));
+      fs.writeFileSync(path.join(root, `.${NATURAL_VOICE.target}.ok`), `${NATURAL_VOICE.sha256}\n`);
+      v.speak("Hello.");
+      const [tts] = electron.procs;
+      expect(posted(tts, "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
+      tts.emit("message", { type: "ready", loadMs: 3000, rate: 22_050, voice: piper({ natural: "too slow here: 0.9 of real time (at most 0.5)" }) });
+      // Started again (it stopped), it isn't offered the natural voice this session.
+      tts.emit("exit", 1);
+      v.speak("Again.");
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: null });
     });
   });
 });

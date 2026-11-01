@@ -38,6 +38,14 @@ describe("the Linux layout", () => {
     }
   });
 
+  it("never ships sherpa-onnx's native addon (it needs glibc 2.32; RHEL 8 has 2.28): speech runs on its WebAssembly", () => {
+    expect(linux.platformPackages.some(p => p.startsWith("sherpa-onnx"))).toBe(false);
+    const dirs = ["sherpa-onnx", "sherpa-onnx-linux-x64", "sherpa-onnx-win-x64"].map(n => `/r/node_modules/${n}`);
+    const { bundle, skipped } = selectPackages(dirs, linux);
+    expect(bundle.map(packageNameOf)).toEqual(["sherpa-onnx"]);
+    expect(skipped.map(s => s.name)).toEqual(["sherpa-onnx-linux-x64", "sherpa-onnx-win-x64"]);
+  });
+
   it("leaves out the Windows and macOS accessibility host, so the RPM doesn't change when it is built", () => {
     expect(linux.excludeDist).toEqual(["ax-sidecar.cjs"]);
     expect(linux.requiredDist).not.toContain("ax-sidecar.cjs");
@@ -83,9 +91,14 @@ describe("the Windows layout", () => {
     });
 
     it(`keeps sharp's own Windows build, which carries libvips (${arch})`, () => {
-      expect(win.platformPackages).toEqual([`@github/copilot-sdk-win32-${arch}`, `@img/sharp-win32-${arch}`, `@koromix/koffi-win32-${arch}`]);
+      expect(win.platformPackages).toEqual([`@github/copilot-sdk-win32-${arch}`, `@img/sharp-win32-${arch}`, `@koromix/koffi-win32-${arch}`, `sherpa-onnx-win-${arch}`]);
       expect(win.prune).toEqual(expect.arrayContaining([`@koromix/koffi-win32-${arch}/win32_${arch}/koffi.lib`, `@github/copilot-sdk-win32-${arch}/ripgrep`]));
       expect(win.prune.some(p => p.endsWith("koffi.node"))).toBe(false);
+    });
+
+    it(`ships sherpa-onnx's native addon for speech, without the C++ API library it doesn't load (${arch})`, () => {
+      expect(win.prune).toContain(`sherpa-onnx-win-${arch}/sherpa-onnx-cxx-api.dll`);
+      expect(win.prune.filter(p => p.startsWith("sherpa-onnx-"))).toEqual([`sherpa-onnx-win-${arch}/sherpa-onnx-cxx-api.dll`]);
     });
   }
 });
@@ -125,7 +138,8 @@ describe("the macOS layout", () => {
       expect(mac.sidecarFiles).toEqual([]);
       expect(mac.sidecarDist).toEqual(["ax-sidecar.cjs"]);
       expect(mac.excludeDist).toEqual(["desk-agent.cjs"]);
-      expect(mac.platformPackages).toEqual([`@github/copilot-sdk-darwin-${arch}`, `@img/sharp-darwin-${arch}`, `@img/sharp-libvips-darwin-${arch}`, `@koromix/koffi-darwin-${arch}`]);
+      expect(mac.platformPackages).toEqual([`@github/copilot-sdk-darwin-${arch}`, `@img/sharp-darwin-${arch}`, `@img/sharp-libvips-darwin-${arch}`, `@koromix/koffi-darwin-${arch}`, `sherpa-onnx-darwin-${arch}`]);
+      expect(mac.prune.filter(p => p.startsWith("sherpa-onnx-"))).toEqual([`sherpa-onnx-darwin-${arch}/libsherpa-onnx-cxx-api.dylib`]);
     });
   }
 });
@@ -198,12 +212,12 @@ describe("choosing the packages to bundle", () => {
 
   it("keeps the target's builds, drops other platforms' and the wasm fallback's, and says what is missing", () => {
     const win = layoutFor("win32", "x64");
-    const dirs = ["sharp", "@img/sharp-win32-x64", "@img/sharp-wasm32", "@emnapi/runtime", "tslib", "@koromix/koffi-win32-x64", "@github/copilot-sdk", "@img/colour"]
+    const dirs = ["sharp", "@img/sharp-win32-x64", "@img/sharp-wasm32", "@emnapi/runtime", "tslib", "@koromix/koffi-win32-x64", "@github/copilot-sdk", "@img/colour", "sherpa-onnx", "sherpa-onnx-darwin-arm64"]
       .map(n => `C:\\r\\node_modules\\${n.replace("/", "\\")}`);
     const { bundle, skipped, missing } = selectPackages(dirs, win);
-    expect(bundle.map(packageNameOf)).toEqual(["sharp", "@img/sharp-win32-x64", "@koromix/koffi-win32-x64", "@github/copilot-sdk", "@img/colour"]);
-    expect(skipped.map(s => s.name)).toEqual(["@img/sharp-wasm32", "@emnapi/runtime", "tslib"]);
-    expect(missing).toEqual(["@github/copilot-sdk-win32-x64"]);
+    expect(bundle.map(packageNameOf)).toEqual(["sharp", "@img/sharp-win32-x64", "@koromix/koffi-win32-x64", "@github/copilot-sdk", "@img/colour", "sherpa-onnx"]);
+    expect(skipped.map(s => s.name)).toEqual(["@img/sharp-wasm32", "@emnapi/runtime", "tslib", "sherpa-onnx-darwin-arm64"]);
+    expect(missing).toEqual(["@github/copilot-sdk-win32-x64", "sherpa-onnx-win-x64"]);
     // A Linux build in a Windows stage is another platform's.
     expect(selectPackages(["/r/node_modules/@img/sharp-linux-x64"], win).skipped[0].why).toMatch(/not win32-x64's build/);
   });

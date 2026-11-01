@@ -2107,6 +2107,8 @@ function start(): void {
       onEvent: onVoice,
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
+      // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
+      naturalVoice: settings.get().voice.natural,
       voiceprint: ownerPrint,
       onEnrol: p => {
         if (p.state === "done") {
@@ -2160,6 +2162,7 @@ function start(): void {
       voice?.setVoiceprint(ownerPrint());
       broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
     });
+    settings.onChange(next => voice?.setNaturalVoice(next.voice.natural));
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));

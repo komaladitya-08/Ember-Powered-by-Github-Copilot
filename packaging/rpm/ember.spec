@@ -15,17 +15,19 @@ Summary:        A cursor companion that works visibly in your apps, powered by G
 # Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
 # LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0; its
 # WebAssembly also holds ONNX Runtime and piper-phonemize (MIT), Protocol Buffers and RE2 (BSD-3-Clause),
-# and eSpeak NG (GPL-3.0-or-later), part of a text-to-speech Ember never calls), semver
+# and eSpeak NG (GPL-3.0-or-later), part of the text-to-speech that speaks Ember's voice), semver
 # (ISC), koffi, zod and the Copilot SDK and runtime (MIT), and libvips (LGPL-3.0-or-later) with the
 # libraries @img/sharp-libvips bundles: cairo (MPL-1.1), aom, libarchive and libimagequant (BSD-2-Clause;
 # aom also grants the AOMedia Patent License 1.0), highway and libwebp (BSD-3-Clause), mozjpeg (IJG,
 # BSD-3-Clause, Zlib), zlib-ng (Zlib), freetype (FTL), libpng (libpng-2.0), libtiff (libtiff), fontconfig
 # (HPND-sell-variant), and more under MIT and LGPL-3.0-or-later (its README.md, shipped as %%license).
 # The Inter typeface Ember's windows use is under the SIL Open Font License 1.1 (OFL-1.1).
+# This tag is the one list for every target: the Windows and macOS packages also carry sherpa-onnx's
+# native addon, with Eigen (MPL-2.0) in it (never in the RPM: it needs a newer glibc than RHEL 8's).
 # The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
 # a bundled package's licence, or a library one declares it bundles, is missing here
 # (scripts/package/licences.mjs).
-License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
+License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND MPL-2.0 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
 URL:            https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot
 Source0:        ember-%{version}-staged.tar
 ExclusiveArch:  x86_64

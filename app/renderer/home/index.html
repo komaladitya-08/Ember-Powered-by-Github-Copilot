@@ -102,6 +102,10 @@
           <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
           <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button></div>
         </div>
+        <div id="natural-row" hidden>
+          <label class="switch-row"><input type="checkbox" id="natural" role="switch" aria-describedby="natural-text"><span>Use a more natural voice</span></label>
+          <p class="hint" id="natural-text">Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).</p>
+        </div>
         <div class="choice">
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
