@@ -73,6 +73,8 @@ export const CLIPS = {
   followup: "And turn on do not disturb too.",
   dnd: "Hey Ember, turn on do not disturb.",
   bigger: "And make the text a bit bigger.",
+  name_wake: "Ember, turn on night light.",
+  embers: "The embers in the fireplace were still glowing.",
 };
 // Into a scratch folder unless the committed clips are to be replaced (--update-fixtures).
 const clips = updateFixtures ? path.join(root, "test/fixtures/voice") : path.join(dir, "clips");

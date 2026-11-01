@@ -929,7 +929,7 @@ window.ember.onPresence(renderPresence);
 // ───── Voice ─────
 const VOICE_TEXT: Record<string, string> = {
   off: "Off", "needs-models": "Speech models aren't downloaded yet (a one-time download)", downloading: "Downloading speech models…",
-  starting: "Starting…", waiting: "Listening for “Hey Ember”", active: "Hearing you…", muted: micOffText(), error: "Not working",
+  starting: "Starting…", waiting: "Listening for “Ember”", active: "Hearing you…", muted: micOffText(), error: "Not working",
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;

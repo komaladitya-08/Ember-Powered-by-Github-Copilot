@@ -58,11 +58,11 @@ function modelsRoot(ready: boolean): string {
   return dir;
 }
 
-function service(ready = true) {
+function service(ready = true, o: { neuralVoice?: boolean } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
-  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }) });
+  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), ...o });
   services.push(v);
   return { v, states, events };
 }
@@ -191,10 +191,10 @@ describe("VoiceService", () => {
     const mic = electron.windows.find(w => w.title === "Ember microphone")!;
     proc.emit("message", { type: "ready", loadMs: 900 });
     v.speak("Say 'Ember, stop' to cancel.");
-    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say the stop phrase to cancel.");
+    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Say the stop phrase to cancel." });
     proc.emit("message", { type: "monitor", on: true });
     v.speak("Say 'Ember, stop' to cancel.");
-    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say 'Ember, stop' to cancel.");
+    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Say 'Ember, stop' to cancel." });
   });
 
   it("stops listening and speaking while the screen is locked, and listens again once it's unlocked (review #81)", async () => {
@@ -252,7 +252,7 @@ describe("VoiceService", () => {
     v.speak("Hello.");
     await flush();
     const speech = electron.windows.find(w => w.title === "Ember speech")!;
-    expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, "Hello.");
+    expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Hello." });
     expect(speech.webContents.postMessage).not.toHaveBeenCalled(); // no audio port: no microphone
     expect(v.allowsMedia(speech.webContents as unknown as Electron.WebContents, ["audio"])).toBe(false);
     v.speak("Again.");
@@ -580,5 +580,65 @@ describe("speech models", () => {
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  describe("Ember's own voice", () => {
+    const audio = (id: number) => ({ type: "audio", id, samples: new Float32Array(4), rate: 22_050 });
+
+    it("says replies in it once its model is in: numbered, chunk by chunk, to the page that plays them", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Night Light is on.");
+      await flush();
+      const [tts] = electron.procs;
+      expect(posted(tts, "init")).toHaveLength(1);
+      expect(posted(tts, "say")).toEqual([{ type: "say", id: 1, text: "Night Light is on." }]);
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).not.toHaveBeenCalledWith(VOICE.speak, expect.anything());
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", audio(1));
+      tts.emit("message", { type: "done", id: 1 });
+      await flush();
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.audio, expect.objectContaining({ id: 1, rate: 22_050 }));
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.audioDone, 1);
+    });
+
+    it("drops what was on its way once hushed, and a new reply cuts the old one off (the next sentence of one doesn't)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("A long answer.");
+      const [tts] = electron.procs;
+      v.speak("Its next sentence.", { append: true });
+      expect(posted(tts, "hush")).toEqual([]);
+      v.speak("A new answer.");
+      expect(posted(tts, "hush")).toEqual([{ type: "hush", id: 2 }]);
+      tts.emit("message", audio(1));
+      tts.emit("message", audio(3));
+      await flush();
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      const sent = speech.webContents.send.mock.calls.filter(c => c[0] === VOICE.audio).map(c => (c[1] as { id: number }).id);
+      expect(sent).toEqual([3]);
+    });
+
+    it("lets the system's voice say what it hadn't, when it can't load, and from then on", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Hello.");
+      const [tts] = electron.procs;
+      tts.emit("message", { type: "error", message: "Ember's voice couldn't be loaded." });
+      await flush();
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Hello.", append: true });
+      v.speak("Again.");
+      await flush();
+      expect(speech.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Again." });
+      expect(electron.procs).toHaveLength(1);
+    });
+
+    it("uses the system's voice while its model isn't there", async () => {
+      const { v } = service(false, { neuralVoice: true });
+      v.speak("Hello.");
+      await flush();
+      expect(electron.procs).toHaveLength(0);
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Hello." });
+    });
   });
 });

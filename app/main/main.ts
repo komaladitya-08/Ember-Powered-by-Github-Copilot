@@ -63,6 +63,7 @@ import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
+import { SpeechStream } from "../voice/tts";
 import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
@@ -910,6 +911,17 @@ function start(): void {
    * chose (review #55); never when the organisation turned speaking off.
    */
   const maySpeak = () => policy.features.speak !== false && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
+  /**
+   * The answer being spoken as it streams: each message's first sentence cuts off whatever Ember was saying (as a new
+   * answer always did), the rest follow it.
+   */
+  const answerSpeech = new SpeechStream();
+  let answerSpoken = false;
+  const sayStreamed = (chunks: string[]) => {
+    if (!maySpeak()) return;
+    for (const c of chunks) { voice?.speak(c, { append: answerSpoken }); answerSpoken = true; }
+    if (!answerSpeech.started) answerSpoken = false;
+  };
 
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
@@ -1098,7 +1110,7 @@ function start(): void {
    */
   const CUT_NOTES = {
     wake: "I only caught the first part: say the rest after my answer.",
-    "follow-up": "I only caught the first part: say “Hey Ember” and the rest.",
+    "follow-up": "I only caught the first part: say “Ember” and the rest.",
   } as const;
   const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"];
   let shownForAnswer = false;
@@ -1944,10 +1956,15 @@ function start(): void {
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
-      // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
-      onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },
+      // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
+      // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
+      onAnswerDelta: delta => sayStreamed(answerSpeech.push(delta)),
+      onAnswerEnd: text => sayStreamed(answerSpeech.finish(text)),
+      onAnswer: text => { turnAnswer = text; sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
+        answerSpeech.reset();
+        answerSpoken = false;
         if (lastAskByVoice && !aborted) voice?.followUp(8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
@@ -2045,6 +2062,8 @@ function start(): void {
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
+      // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
+      neuralVoice: true,
       onSpeech: ok => {
         if (speechHeard === ok) return;
         speechHeard = ok;

@@ -1,7 +1,7 @@
 /**
  * The real recognizers: sherpa-onnx compiled to WebAssembly (runs on RHEL 8's
  * glibc 2.28; the native addon needs 2.32). Keyword spotting with a 3.3M
- * zipformer, Silero VAD, and Moonshine tiny for transcription.
+ * zipformer, Silero VAD, and Moonshine v2 tiny for transcription.
  * WebAssembly memory never shrinks, so every buffer here is bounded: a VAD
  * that hears speech for minutes (a TV, colleagues) would otherwise grow until
  * the process runs out of memory.
@@ -15,6 +15,8 @@ export interface ModelPaths {
   kws: string;
   vad: string;
   asr: string;
+  /** Ember's voice (app/voice/tts.ts); the recognizers don't use it. */
+  tts: string;
 }
 
 /**
@@ -24,11 +26,16 @@ export interface ModelPaths {
  * talk, babble and music).
  * "Ember, stop" stays as it is: other spellings, boosts and thresholds didn't hear it better in the voices that
  * miss it (alan 14/30, ryan 8/30; amy 30/30); "Hey Ember, stop" and Ctrl+Alt+X are there for those.
+ * The bare name ("Ember, open the terminal") is two syllables, heard inside "remember" and "September" too (the
+ * engine's check takes those back before anything shows), and comes before "stop" in "Ember, stop" (the spotter takes
+ * the name first, and the check hears the stop). Its threshold, measured on 36 renderings of four "Ember, …" requests
+ * and 45 of five near-miss phrases: 0.2 spotted 30 and 16, 0.1 spotted 34 and 17.
  */
 export const KEYWORDS = [
   "▁HE Y ▁E M BER :2.0 #0.08 @hey_ember",
   "▁O K ▁E M BER :2.0 #0.08 @hey_ember",
   "▁E M BER ▁ST O P :2.0 #0.15 @ember_stop",
+  "▁E M BER :2.0 #0.1 @ember",
 ].join("\n");
 
 /** Silence fed to the spotter when the speaker pauses, so it decides without waiting for more audio. */
@@ -51,6 +58,59 @@ const BEFORE_SEGMENT = Math.round(0.1 * SAMPLE_RATE);
 const VAD_MAX_SAMPLES = 25 * SAMPLE_RATE;
 const VAD_MAX_SPEECH_SECONDS = 30;
 const CHECK_MAX_SAMPLES = 10 * SAMPLE_RATE;
+
+/**
+ * Moonshine v2 in this WebAssembly build throws on audio past about 9 s (measured: 9 s of fast talk transcribed, 9.5 s
+ * threw), so a longer request is transcribed in pieces of at most 7 s, each cut at its quietest tenth of a second
+ * between 4 and 7 s in (a pause between words, wherever the speaker took one), and the pieces' words are joined.
+ */
+const PIECE_MAX = 7 * SAMPLE_RATE;
+const PIECE_MIN = 4 * SAMPLE_RATE;
+const CUT_WINDOW = SAMPLE_RATE / 10;
+const CUT_STEP = SAMPLE_RATE / 100;
+
+/** `samples` in pieces the recognizer can take (see PIECE_MAX); audio no longer than that is one piece. */
+export function recognizerPieces(samples: Float32Array): Float32Array[] {
+  const out: Float32Array[] = [];
+  let from = 0;
+  while (samples.length - from > PIECE_MAX) {
+    let cut = from + PIECE_MAX, quietest = Infinity;
+    for (let at = from + PIECE_MIN; at + CUT_WINDOW <= from + PIECE_MAX; at += CUT_STEP) {
+      let e = 0;
+      for (let i = at; i < at + CUT_WINDOW; i++) e += samples[i] * samples[i];
+      if (e < quietest) { quietest = e; cut = at + CUT_WINDOW / 2; }
+    }
+    out.push(samples.subarray(from, cut));
+    from = cut;
+  }
+  out.push(samples.subarray(from));
+  return out;
+}
+
+/**
+ * The recognizer's words with a looping repeat taken out: on a short clip Moonshine v2 can repeat what it heard until
+ * its token limit ("pay embers pay embers pay embers pay em"), or say a whole sentence twice. A word said three times or
+ * more in a row, or a phrase of two words or more said twice or more, is kept once, along with a cut-off repeat at the
+ * very end. A word said twice ("very, very") stays.
+ */
+export function withoutRepeats(text: string): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+  const same = (a: number, b: number, k: number) => { for (let j = 0; j < k; j++) if (norm(words[a + j]) !== norm(words[b + j])) return false; return true; };
+  for (let k = 1; k <= words.length / 2; k++) {
+    for (let i = 0; i + 2 * k <= words.length; i++) {
+      if (!norm(words[i])) continue;
+      let n = 1;
+      while (i + (n + 1) * k <= words.length && same(i, i + n * k, k)) n++;
+      if (n < (k === 1 ? 3 : 2)) continue;
+      let end = i + n * k, j = 0;
+      while (end + j < words.length && j < k && norm(words[i + j]).startsWith(norm(words[end + j])) && (norm(words[end + j]) === norm(words[i + j]) || end + j === words.length - 1)) j++;
+      if (end + j === words.length) end += j;
+      words.splice(i + k, end - (i + k));
+    }
+  }
+  return words.join(" ");
+}
 
 /**
  * A speech model couldn't be loaded: one of its files is missing (an antivirus quarantined it), cut short or damaged.
@@ -109,7 +169,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   const asr = load("speech recognition model", () => sherpa.createOfflineRecognizer({
     featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
     modelConfig: {
-      moonshine: { preprocessor: a("preprocess.onnx"), encoder: a("encode.int8.onnx"), uncachedDecoder: a("uncached_decode.int8.onnx"), cachedDecoder: a("cached_decode.int8.onnx") },
+      moonshine: { encoder: a("encoder_model.ort"), mergedDecoder: a("decoder_model_merged.ort") },
       tokens: a("tokens.txt"), numThreads: 1, provider: "cpu", debug: 0,
     },
     decodingMethod: "greedy_search",
@@ -235,18 +295,24 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     resetVad: () => reset(),
     transcribe(samples) {
       if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";
-      let s: any = null;
-      try {
-        s = asr.createStream();
-        s.acceptWaveform(SAMPLE_RATE, samples);
-        asr.decode(s);
-        return String(asr.getResult(s).text ?? "").trim();
-      } catch (err) {
-        opts.onError?.(err);
-        return "";
-      } finally {
-        s?.free();
+      const words: string[] = [];
+      for (const piece of recognizerPieces(samples)) {
+        if (piece.length < MIN_TRANSCRIBE_SAMPLES) continue;
+        let s: any = null;
+        try {
+          s = asr.createStream();
+          s.acceptWaveform(SAMPLE_RATE, piece);
+          asr.decode(s);
+          const text = withoutRepeats(String(asr.getResult(s).text ?? "").trim());
+          if (text) words.push(text);
+        } catch (err) {
+          opts.onError?.(err);
+          return "";
+        } finally {
+          s?.free();
+        }
       }
+      return words.join(" ");
     },
     before: seg => before.get(seg) ?? null,
     free() {

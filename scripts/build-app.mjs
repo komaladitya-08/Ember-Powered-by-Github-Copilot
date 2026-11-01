@@ -1,6 +1,6 @@
 // Builds the Electron app into dist/app:
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
-//   desk-agent.cjs, voice.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
+//   desk-agent.cjs, voice.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
@@ -87,6 +87,16 @@ await Promise.all([
     ...common,
     entryPoints: ["app/voice/process.ts"],
     outfile: "dist/app/voice.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "sherpa-onnx"],
+  }),
+  // Ember's voice (the neural voice's utility process; sherpa-onnx WASM stays external, as for voice.cjs).
+  build({
+    ...common,
+    entryPoints: ["app/voice/tts-process.ts"],
+    outfile: "dist/app/tts.cjs",
     platform: "node",
     format: "cjs",
     target: "node24",

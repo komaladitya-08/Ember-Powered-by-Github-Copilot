@@ -80,8 +80,8 @@ export const SettingsSchema = z.object({
   character: z.enum(CHARACTERS).default("cinder"),
   /** Character size on screen, in px. */
   size: z.number().int().min(36).max(110).default(60),
-  /** Speak replies aloud (text always shows in the bubble). */
-  speak: z.boolean().default(false),
+  /** Speak replies aloud (text always shows in the bubble). On by default: Ember is a voice assistant (0.1.1). */
+  speak: z.boolean().default(true),
   /** Speak them while a screen reader runs, even with `speak` off; off with it, Ember never speaks (app/shared/speech.ts). */
   speakWithScreenReader: z.boolean().default(true),
   /** Listen for "Hey Ember". */

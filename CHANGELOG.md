@@ -37,11 +37,16 @@ the work in your real apps where you can watch, without taking over your mouse. 
   isn't in the middle of something, and as soon as the computer wakes if it ran out during sleep. Copilot switches to
   the renewed sign-in at once, and a renewed sign-in Ember couldn't save (a full or read-only disk) is still used until
   Ember quits. On a Mac, Ember keeps working while the Keychain asks to open or save the sign-in.
-- **Voice**: "Hey Ember", with speech recognition on this computer (the models download once, 126 MB, or come with
-  the `ember-voice-models` RPM); only the text of a request goes to Copilot. Ember can speak its replies, questions
-  and results with the system's voices: when a screen reader runs (the default), always or never (**Speak replies,
-  questions and results out loud** in Settings › **Voice**; an organisation that turns speaking off shows it as Never,
-  managed).
+- **Voice**: call Ember by its name ("Ember, open the terminal"; "Hey Ember" and "OK Ember" work too), with speech
+  recognition on this computer (Moonshine v2 tiny, punctuated; the models download once, 115 MB, or come with the
+  `ember-voice-models` RPM); only the text of a request goes to Copilot. The name heard inside another word
+  ("remember", "September", "the embers") shows nothing: a wake by the bare name shows once the recogniser has heard
+  the name start what was said. Ember speaks its replies, questions and results in its own natural neural voice (Piper
+  "Kristin", made on this computer), sentence by sentence while Copilot is still writing, so it starts talking within
+  about a second; until its voice is downloaded, or should it fail, the system's most natural voice speaks (a Natural
+  voice on Windows 11, a Premium or Enhanced one on a Mac). It speaks always (the default), when a screen reader runs,
+  or never (**Speak replies, questions and results out loud** in Settings › **Voice**; an organisation that turns
+  speaking off shows it as Never, managed).
 - **Four characters**: Cinder, Wisp, Glassling and Glint share one rig of twelve emotions. Pick one in setup or
   settings, or ask Ember to switch.
 - **Ember's desk** (Linux): a private display where Ember uses a full mouse and keyboard out of your way, which you

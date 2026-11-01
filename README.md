@@ -46,7 +46,7 @@ speech-dispatcher-espeak-ng`, then restart Ember.
 
 For “Hey Ember” without downloading the speech models on each computer, also install
 `ember-voice-models-0.1.0-1.el8.noarch.rpm` from the same release (to build it, run `node scripts/voice/prepare.mjs`
-before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (126 MB) when voice is
+before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (115 MB) when voice is
 turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
@@ -237,7 +237,7 @@ Orca, NVDA, JAWS, Narrator or VoiceOver on real computers yet; please
 and VoiceOver on a Mac. While one runs:
 
 - Ember speaks its questions and results itself, unless you choose otherwise in Settings › **Voice** › **Speak
-  replies, questions and results out loud**: **When a screen reader runs** (the default), **Always** or **Never**.
+  replies, questions and results out loud**: **When a screen reader runs**, **Always** (the default) or **Never**.
   When your organisation turns speaking off, Ember never speaks.
 - The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
   Ctrl+Alt+N not now") and all of a long text it would type (then "You can allow it once all of it has been shown.

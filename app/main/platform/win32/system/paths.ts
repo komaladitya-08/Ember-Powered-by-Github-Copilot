@@ -1,6 +1,6 @@
 /**
  * Where Ember keeps things on Windows, and where it finds the GitHub CLI. Data lives in %LOCALAPPDATA%\ember, not the
- * roaming profile (D7): it holds Chromium's caches, Copilot's session state and 126 MB of speech models, which would
+ * roaming profile (D7): it holds Chromium's caches, Copilot's session state and 115 MB of speech models, which would
  * bloat a roaming profile. The settings window names it "%LOCALAPPDATA%\ember" unless EMBER_USER_DATA moved it.
  * Saving settings retries a rename refused by an antivirus scan or a sync client (EPERM/EBUSY/EACCES). Apps started
  * from the Start menu or at sign-in get the user's PATH, but gh may be installed where PATH doesn't reach (winget's

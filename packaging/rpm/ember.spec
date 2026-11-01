@@ -52,14 +52,15 @@ matters. Run "ember doctor" to check this computer.
 
 %if 0%{?with_models}
 %package voice-models
-Summary:        Offline speech models for Ember ("Hey Ember")
+Summary:        Offline speech models and voice for Ember ("Hey Ember")
 BuildArch:      noarch
 License:        Apache-2.0 AND MIT
 Requires:       ember = %{version}-%{release}
 
 %description voice-models
 The wake-word spotter, voice-activity detector and speech recogniser Ember uses
-for "Hey Ember". With this package Ember doesn't download them (about 126 MB).
+for "Ember" and "Hey Ember", and Ember's own neural voice. With this package
+Ember doesn't download them (about 115 MB).
 Everything runs on this computer.
 %endif
 

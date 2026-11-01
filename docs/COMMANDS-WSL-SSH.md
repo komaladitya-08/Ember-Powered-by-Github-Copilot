@@ -226,8 +226,8 @@ runs without a question, after an announcement: "delete build/" covers `rm -r bu
 reason, "Starts in 4 s.", "Or press Ctrl+Alt+X to stop everything." and **Stop**. While another app holds the stop
 chord, both name its fallback (Ctrl+Alt+Shift+X); while another app holds that too,
 neither the bubble nor the command window names it: **Stop** is the way, as the spoken "Press Stop to cancel."
-says. When Ember speaks (**Speak replies, questions and results out loud** set to Always, or a screen reader running
-with it on When a screen reader runs, the default), Ember says it and adds how to cancel it: "Say 'Ember, stop' to
+says. When Ember speaks (**Speak replies, questions and results out loud** set to Always, the default, or a screen
+reader running with it on When a screen reader runs), Ember says it and adds how to cancel it: "Say 'Ember, stop' to
 cancel." only where Ember can tell its own voice from yours (Linux with speaker rejection on and parec installed);
 elsewhere it names the stop chord ("Press Windows key, Alt, X to cancel."), because its own microphone would hear it say
 the phrase and stop everything. There it never says "Ember, stop" or "Hey Ember" out loud at all (it says "the stop

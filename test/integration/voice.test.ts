@@ -55,6 +55,26 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(rtf).toBeLessThan(1);
   });
 
+  it("wakes on the bare name, 'Ember', and hears the request in the same breath", () => {
+    const { events } = play("name_wake");
+    expect(events.map(e => e.type)).toEqual(["wake", "listening", "utterance", "listening"]);
+    expect(events[0]).toEqual({ type: "wake", keyword: "ember" });
+    expect(events.find(e => e.type === "utterance")).toMatchObject({ text: expect.stringMatching(/^Turn on night ?light\.?$/i) });
+  });
+
+  it("shows no wake for the name inside other words ('the embers', 'I remember')", () => {
+    for (const clip of ["embers", "remember"]) {
+      const { events } = play(clip);
+      expect(events.filter(e => e.type !== "rejected"), clip).toEqual([]);
+    }
+  });
+
+  it("stops on 'Ember, stop' though the bare name is spotted first", () => {
+    const { events } = play("stop");
+    expect(events.filter(e => e.type === "stop")).toHaveLength(1);
+    expect(events.filter(e => e.type === "utterance")).toEqual([]);
+  });
+
   it("waits for the request after a pause", () => {
     const { events } = play("wake_pause");
     expect(events.find(e => e.type === "utterance")).toMatchObject({ text: expect.stringMatching(/make the text bigger/i) });
@@ -67,7 +87,8 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
   it("doesn't stop on 'Ember, stop' that comes out of the speakers", () => {
     const { events } = play("stop", { monitor: true });
     expect(events).not.toContainEqual({ type: "stop" });
-    expect(events).toContainEqual({ type: "rejected", keyword: "ember_stop", reason: "speakers" });
+    // The spotter takes the bare name first in "Ember, stop" (see KEYWORDS): either is rejected as the speakers'.
+    expect(events).toContainEqual({ type: "rejected", keyword: expect.stringMatching(/^ember(_stop)?$/), reason: "speakers" });
   });
 
   it("ends a request when the speaker does, though someone keeps talking in the background", () => {
@@ -224,10 +245,10 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
       // The recognition model's folder, its encoder cut to 1000 bytes (as an antivirus or a disk error leaves it), then gone.
       const asr = path.join(tmp, "asr");
       fs.mkdirSync(asr);
-      for (const f of fs.readdirSync(models.asr)) if (f !== "encode.int8.onnx") fs.symlinkSync(path.join(models.asr, f), path.join(asr, f));
-      fs.writeFileSync(path.join(asr, "encode.int8.onnx"), fs.readFileSync(path.join(models.asr, "encode.int8.onnx")).subarray(0, 1000));
+      for (const f of fs.readdirSync(models.asr)) if (f !== "encoder_model.ort") fs.symlinkSync(path.join(models.asr, f), path.join(asr, f));
+      fs.writeFileSync(path.join(asr, "encoder_model.ort"), fs.readFileSync(path.join(models.asr, "encoder_model.ort")).subarray(0, 1000));
       expect(() => sherpaBackend({ ...models, asr })).toThrow(ModelLoadError);
-      fs.rmSync(path.join(asr, "encode.int8.onnx"));
+      fs.rmSync(path.join(asr, "encoder_model.ort"));
       expect(() => sherpaBackend({ ...models, asr })).toThrow("The speech recognition model couldn't be loaded.");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

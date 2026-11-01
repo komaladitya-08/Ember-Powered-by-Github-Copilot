@@ -27,7 +27,7 @@ const NEVER_BUNDLED = name => name === "tslib" || name.startsWith("@emnapi/");
 const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
 
 /** Built files every target needs (relative to dist/app). A trailing "/" means a folder that must not be empty. */
-const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "preload/", "renderer/"];
+const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "tts.cjs", "preload/", "renderer/"];
 
 /**
  * The SSH and command helpers Ember starts beside main.cjs, which fail only at first use when missing: the SSH link
