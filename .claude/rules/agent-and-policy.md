@@ -11,6 +11,7 @@ paths:
   - "app/main/targets/**"
   - "app/main/wsl/**"
   - "app/main/remote/**"
+  - "app/main/memory/**"
   - "app/remote/**"
   - "app/askpass/**"
   - "app/main/screen-lock.ts"
@@ -143,6 +144,21 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 
   Typed text appears only as a character count. On Linux the journald copy (`journalctl -t ember-audit`, built by `journalLine()`) replaces goals, summaries, window titles, element names, chosen values, errors, folders and command text with their sizes; reasons, app names and shortcuts stay. Windows and macOS keep only the file.
 - **Tokens.** Store the GitHub token only with `safeStorage`, and never when its backend is `basic_text`. Accept `gho_`, `ghu_` and `github_pat_` tokens; refuse classic `ghp_` tokens.
+
+## Long-term memory
+
+docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Electron. Keep it that way.
+- **Every fact goes through `MemoryGraph.add()`**, which runs `memoryRefusal()` (guard.ts). A fact holding a secret is
+  refused whole, never stored redacted.
+- **Recalled facts reach a model only through `memoryBlock()`** (`<memory untrusted="true">`). Only `user`-sourced
+  facts may shape what Ember does. Policy never checks a risky step against memory.
+- **`memory.json` is 0600** and written whole through `memoryFile()`. A broken file is moved aside, never overwritten.
+- **Nothing is remembered until memory has its own consent.** That means `settings.memory.on` with
+  `memory.consent.version >= FEATURE_CONSENT_VERSION.memory`, and the admin's `features.memory` not false. The host
+  gives the conductor memory only then (`memoryWanted()`), and only then does it have remember, recall and
+  forget_memory. With memory off, the tools and the prompt are today's exactly.
+- **A saved fact is the user's only in their own words** (`ownWords`, service.ts). Anything else is `conversation`.
+- **Sign-out and an account change call `forgetAll()`**, which erases the file too.
 
 ## Settings and admin policy
 

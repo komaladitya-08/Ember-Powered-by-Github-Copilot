@@ -8,7 +8,7 @@ export const CONSENT_VERSION = 1;
  * CONSENT_VERSION (L1: the global consent stays true for everything Ember does without them). Bumping one asks that
  * card again, and nothing else.
  */
-export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1 } as const;
+export const FEATURE_CONSENT_VERSION = { wsl: 1, ssh: 1, commands: 1, memory: 1 } as const;
 
 /**
  * A first-use consent card (§8.4): its exact text, and a hash of it that the yes must carry back. Shown in Ember's
