@@ -67,7 +67,8 @@ export function win32System(deps: PlatformDeps, o: Win32SystemOptions = {}): Sys
     ghCliPath: () => lookup.ghCliPath(),
     which: cmd => lookup.which(cmd),
     spawnDefaults: { windowsHide: true },
-    chromiumSwitches: [],
+    // The mic page's device listing starts Chromium's video capture service: in the browser process, not one of its own.
+    chromiumSwitches: ["enable-features=RunVideoCaptureServiceInBrowserProcess"],
     environment: ctx => environment.environment(ctx),
     fixes: environment.fixes,
     doctorProbes: () => win32DoctorProbes({

@@ -9,7 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
@@ -30,6 +30,7 @@ import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { otherSide } from "../shared/handle-place";
 import { revive } from "./revive";
+import { memoryReport } from "./memory-report";
 import { useAppNames } from "../shared/apps";
 import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
@@ -69,7 +70,7 @@ import { voiceprintStore } from "./voiceprint-store";
 import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
-import { loadPlatform } from "./platform";
+import { loadPlatform, switchArgs } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
 import type { HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
 import { extraBinDirs } from "./platform/darwin/system";
@@ -131,8 +132,9 @@ const platform = loadPlatform({
 const sys = platform.system;
 useAppNames(platform.os);
 
-// Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
-for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(s);
+// Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch. Windows: the
+// video capture service runs in the browser process, not a process of its own (platform/types.ts).
+for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(...switchArgs(s));
 // Development only (test/voice-e2e): EMBER_TEST_MIC_WAV gives the microphone window a fake microphone that "hears"
 // that WAV file (once; a trailing %noloop is added unless the path has one), with no device prompt.
 const testMicWav = devEnv("EMBER_TEST_MIC_WAV");
@@ -2227,6 +2229,16 @@ function start(): void {
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.
     if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHomeFromKeys());
+
+    // Development: what each process costs (private bytes on Windows), with each renderer named after its page, every
+    // EMBER_MEMORY_LOG seconds (memory-report.ts).
+    const memoryEvery = Number(devEnv("EMBER_MEMORY_LOG") ?? "");
+    if (memoryEvery > 0) {
+      setInterval(() => {
+        const pages = webContents.getAllWebContents().map(wc => ({ pid: wc.getOSProcessId(), url: wc.getURL(), title: BrowserWindow.fromWebContents(wc)?.getTitle() ?? "" }));
+        log.info("memory.report", memoryReport(app.getAppMetrics(), pages));
+      }, memoryEvery * 1000).unref();
+    }
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {
