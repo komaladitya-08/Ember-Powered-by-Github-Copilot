@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PROMPT_IPC, type PromptAnswer, type PromptCard } from "../../app/shared/remote-ui";
 import {
-  PROMPT_FOCUS_CHECK_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
+  PROMPT_FOCUS_CHECK_MS, PROMPT_IDLE_MS, PROMPT_SIZE, consentHash, consentPanel, createPromptWindow, createPromptWindowController, fitBounds, promptSizeOf, validConsent, validPromptCard, type ConsentAnswer,
 } from "../../app/main/remote/prompt-window";
 import {
   CONSENT_READ_HINT, KEYBOARD_ELSEWHERE_HINT, PROMPT_ARM_MS, consentHashText, judgeRead, moreBelow, pressResult, promptHint, promptView, readIn, readThrough,
@@ -97,6 +97,30 @@ describe("the prompt window's queue", () => {
     await expect(b).resolves.toEqual({ id: "b", ok: false });
     expect(win().visible).toBe(false);
     expect(JSON.stringify(logs)).not.toContain("hunter2");
+  });
+
+  it("closes its hidden window a minute after the last card, and the next card gets a new one", async () => {
+    vi.useFakeTimers();
+    const { ctl, windows, win } = setup();
+    const a = ctl.ask(password("a"));
+    ctl.dismiss("a");
+    await expect(a).resolves.toEqual({ id: "a", ok: false });
+    const first = win();
+    vi.advanceTimersByTime(PROMPT_IDLE_MS - 1);
+    expect(first.destroyed).toBe(false);
+    void ctl.ask(hostKey("b")); // a card in time keeps the window
+    vi.advanceTimersByTime(PROMPT_IDLE_MS);
+    expect(first.destroyed).toBe(false);
+    expect(windows).toHaveLength(1);
+    ctl.dismiss("b");
+    vi.advanceTimersByTime(PROMPT_IDLE_MS);
+    expect(first.destroyed).toBe(true);
+    const c = ctl.ask(password("c"));
+    expect(windows).toHaveLength(2);
+    expect(win().shown()?.id).toBe("c");
+    expect(win().visible).toBe(true);
+    ctl.dismiss("c");
+    await expect(c).resolves.toEqual({ id: "c", ok: false });
   });
 
   it("dismisses a card shown or waiting, answering it no", async () => {

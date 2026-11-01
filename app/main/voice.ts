@@ -39,6 +39,12 @@ const VOICE_START_MS = 8000;
 const VOICE_FAILURES = 3;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks; ms). */
 const SPEAKING_MAX_MS = 60_000;
+/**
+ * The speech-only window closes once it has said nothing for this long (ms): with listening off it was kept for good
+ * after the first reply, a renderer of about 30 MB private bytes on Windows. Loading it again for the next reply takes
+ * a few hundred ms, under Ember's voice starting up (VOICE_START_MS).
+ */
+const SPEAKER_IDLE_MS = 60_000;
 /** A request heard this soon after a cancel (the kill switch) was already on its way: it's dropped (ms). */
 const CANCEL_GRACE_MS = 1000;
 /** Listening that broke starts again after 1 s, 5 s, then every 30 s (ms). */
@@ -131,6 +137,8 @@ export class VoiceService {
   private mic: BrowserWindow | null = null;
   /** Speaks replies while listening is off (loaded on first use; it never opens the microphone). */
   private speaker: Speaker | null = null;
+  /** Closes the speech-only window once it has been quiet for SPEAKER_IDLE_MS. */
+  private speakerIdle: NodeJS.Timeout | null = null;
   private state: MicState = "off";
   private muted = false;
   private wanted = false;
@@ -216,8 +224,9 @@ export class VoiceService {
       this.speakingUntil = on ? Date.now() + SPEAKING_MAX_MS : 0;
       if (this.speaker && e.sender === this.speaker.wc) {
         this.speaker.saying = !!on;
-        // Listening started while it spoke: the mic window speaks from now on.
+        // Listening started while it spoke: the mic window speaks from now on. Otherwise it goes once it stays quiet.
         if (!on && this.mic) this.closeSpeaker();
+        else this.idleSpeaker();
       }
       this.openFollowUp();
     });
@@ -466,6 +475,7 @@ export class VoiceService {
     if (mic && !mic.isDestroyed()) return (channel, payload) => { if (!mic.isDestroyed()) mic.webContents.send(channel, payload); };
     const s = this.speakerWindow();
     return (channel, payload) => {
+      if (this.speaker === s) this.idleSpeaker();
       s.loaded.then(() => { if (!s.win.isDestroyed()) s.win.webContents.send(channel, payload); }, (err: unknown) => this.o.log.warn("voice.speaker_failed", { message: String(err) }));
     };
   }
@@ -568,7 +578,17 @@ export class VoiceService {
     // The mic page without its audio port: it speaks, and never asks for the microphone.
     const win = hiddenWindow("Ember speech");
     this.speaker = { win, wc: win.webContents, loaded: win.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))), saying: false };
+    this.idleSpeaker();
     return this.speaker;
+  }
+
+  /** The speech-only window closes SPEAKER_IDLE_MS from now unless it speaks or is sent more meanwhile. */
+  private idleSpeaker(): void {
+    if (this.speakerIdle) clearTimeout(this.speakerIdle);
+    this.speakerIdle = null;
+    if (!this.speaker || this.speaker.saying) return;
+    this.speakerIdle = setTimeout(() => { this.speakerIdle = null; if (this.speaker && !this.speaker.saying) this.closeSpeaker(); }, SPEAKER_IDLE_MS);
+    this.speakerIdle.unref?.();
   }
 
   private async start(): Promise<void> {
@@ -766,6 +786,7 @@ export class VoiceService {
   private closeSpeaker(): void {
     const s = this.speaker;
     this.speaker = null;
+    if (this.speakerIdle) { clearTimeout(this.speakerIdle); this.speakerIdle = null; }
     if (s && !s.win.isDestroyed()) s.win.destroy();
   }
 

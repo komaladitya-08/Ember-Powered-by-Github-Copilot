@@ -17,3 +17,9 @@ export function loadPlatform(deps: PlatformDeps, os: NodeJS.Platform = process.p
   if (os === "darwin") return darwinPlatform(deps);
   return linuxPlatform(deps);
 }
+
+/** A Chromium switch as the platform names it ("name" or "name=value"), as app.commandLine.appendSwitch takes it. */
+export function switchArgs(s: string): [name: string, value?: string] {
+  const at = s.indexOf("=");
+  return at < 0 ? [s] : [s.slice(0, at), s.slice(at + 1)];
+}

@@ -195,7 +195,7 @@ describe("the Windows SystemPlatform", () => {
     expect(s.words).toBe(PLATFORM_WORDS.win32);
     expect(s.shortcuts).toBe(SHORTCUTS.win32);
     expect(s.keys).toBe(KEYS.win32);
-    expect(s.chromiumSwitches).toEqual([]);
+    expect(s.chromiumSwitches).toEqual(["enable-features=RunVideoCaptureServiceInBrowserProcess"]);
     expect(s.spawnDefaults).toEqual({ windowsHide: true });
     expect(s.auditSink(() => undefined)).toBeUndefined();
     expect(s.auditCopy()).toBeNull();
