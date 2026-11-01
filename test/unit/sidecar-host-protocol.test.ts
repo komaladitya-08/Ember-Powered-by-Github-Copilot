@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Host } from "../../app/sidecar-host/host";
 import { FakeProvider, benchDesktop, type FakeWindowSpec } from "../../app/sidecar-host/providers/fake";
 import { UnsupportedProvider, isPackaged, openProvider, providerKind } from "../../app/sidecar-host/providers";
@@ -250,6 +250,19 @@ describe("read_window", () => {
     const timed = await harness(late, 5000).call<Read>("read_window", {});
     expect(timed).toMatchObject({ truncated: true, slow: true });
     expect(timed.busy).toBeUndefined();
+  });
+
+  it("says slow when an element outlasts the time, even if the clock lags the timer (Windows CI)", async () => {
+    const late = benchDesktop();
+    late[0].children![5].slowMs = 2000;
+    const frozen = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(frozen);
+    try {
+      const timed = await harness(late, 5000).call<Read>("read_window", {});
+      expect(timed).toMatchObject({ truncated: true, slow: true });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("stops at maxNodes and says what was left out", async () => {

@@ -19,6 +19,26 @@ export const NATURAL_MAX_RTF = 0.5;
  * time on its one thread (in WebAssembly: 0.36–0.49), Kokoro v1.0 (fp32) at 0.41 on 3 threads and 0.38 on 4.
  */
 export const NATURAL_COST = 3.5;
+/**
+ * How long a "too slow here" verdict on the natural voice holds before Kokoro is timed again. The cost ratio above
+ * depends on the CPU (about 6, not 3.5, on a Core i5-10300H laptop: Piper 0.104, Kokoro 0.64–0.75), so Kokoro can be
+ * fetched where it then never keeps up; loading and timing it there added about 5.7 s to every speech process start
+ * (8.0 s against 2.2 s). A week, not for ever: a laptop timed on battery or while busy gets another try.
+ */
+export const NATURAL_RECHECK_MS = 7 * 24 * 3_600_000;
+
+/** The remembered verdict that the natural voice is too slow here: its real-time factor, or null (none, unreadable or expired). */
+export function rememberedSlow(value: string | undefined, now: number): number | null {
+  const m = /^slow:(\d+(?:\.\d+)?):(\d+)$/.exec(value ?? "");
+  if (!m) return null;
+  const at = Number(m[2]);
+  return at <= now && now - at < NATURAL_RECHECK_MS ? Number(m[1]) : null;
+}
+
+/** The verdict to remember when the natural voice was timed at `rtf`, too slow, at `now`. */
+export function slowVerdict(rtf: number, now: number): string {
+  return `slow:${rtf}:${Math.round(now)}`;
+}
 
 /** A first chunk longer than this is cut at its first comma (or semicolon, or dash) past FIRST_MIN: its sound comes sooner. */
 const FIRST_MAX = 90;

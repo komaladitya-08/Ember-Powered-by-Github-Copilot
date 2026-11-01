@@ -298,6 +298,24 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
 | All 4 cores kept busy by other work: listening / Piper (1 thread) / Piper WebAssembly | 0.237 / — / 0.56 | 0.071 / 0.14 |
 | Kokoro int8 (`kokoro-int8-multi-lang-v1_0`) | — | 1.14–1.27 (2–4 threads) |
 
+Measured on a real laptop (Windows 11, Intel Core i5-10300H, 4 cores and 8 threads, on mains power, Balanced power
+plan), two runs of `node scripts/voice/bench.mjs --kokoro` and one of `npx electron test/smoke/voice-backends.mjs`:
+
+| | WebAssembly | Native |
+|---|---|---|
+| Hearing "Hey Ember, turn on night light" | 0.131–0.142 of real time | 0.044–0.052 (2 threads) |
+| Piper "Kristin", real-time factor | 0.31 | 0.10–0.11 / 0.08 (1 / 2 threads) |
+| Piper, first audio of a reply (Electron) | 1.63 s | 0.45–0.48 s |
+| Speech process load (Electron), without Kokoro / with Kokoro downloaded | 1.8 s / — | 2.2 s / 8.0 s |
+| Kokoro v1.0 fp32 (`kokoro-multi-lang-v1_0`) | — | 0.75 / 0.68–0.69 / 0.64–0.69 (2 / 3 / 4 threads) |
+
+On this CPU Kokoro is about 6 times the Piper voice's work, not `NATURAL_COST`'s 3.5, so the fetch gate passes (Piper
+at 0.104 × 3.5 = 0.36) and Kokoro is downloaded, then turned down when it loads (`natural`: "too slow here: 0.598 of
+real time"). Loading and timing it added about 5.7 s to each start of the speech process, so that verdict is now
+remembered per model file, next to the providers' (`ember-voice-providers.json` in the temporary folder), for a week
+(`NATURAL_RECHECK_MS`); until then the speech process skips Kokoro ("…; timed before") and loads as fast as without it.
+`voice.test.ts` (real models, native build): 26/26.
+
 **How long a spoken answer takes.** Each spoken request logs one `voice.latency` line, with times only, never words.
 - `asrMs` is what transcribing the request took.
 - The other fields count from when its transcript arrived:

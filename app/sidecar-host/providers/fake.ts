@@ -269,8 +269,12 @@ export class FakeProvider implements AxProvider {
       }
       if (Date.now() >= until) { cutShort("time"); return false; }
       if (el.spec.slowMs) {
-        await sleep(Math.min(el.spec.slowMs, Math.max(0, until - Date.now())));
+        const left = Math.max(0, until - Date.now());
+        await sleep(Math.min(el.spec.slowMs, left));
         if (this.o.deadlineMs !== undefined && el.spec.slowMs > this.o.deadlineMs) { busy = true; return false; }
+        // An element that outlasts the deadline ends the walk there, as the bridge's does. Not left to the next
+        // element's clock check: Windows timers can wake a millisecond before Date.now() reaches `until`.
+        if (el.spec.slowMs >= left) { cutShort("time"); return false; }
       }
       const index = nodes.length;
       nodes.push(this.raw(el, parent, depth));
