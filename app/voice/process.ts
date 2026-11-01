@@ -33,7 +33,7 @@ type FromMain =
 
 /**
  * Messages for main (VoiceService); `error`: listening couldn't start (`models`: the speech models couldn't be loaded,
- * and downloading them again repairs it); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone
+ * and downloading them again repairs it; `model`: which one, when known); `monitor`: the speakers' stream started or stopped; `stalled`: no microphone
  * frames for `ms`; `engine-error`: the recognizers failed on some audio (`count` times since the last report), and the
  * process carried on; `engine-broken`: they keep failing, so they are taken for unusable (main starts the process again);
  * `alive`: every second once started (main restarts a process that goes quiet: it is stuck or
@@ -43,7 +43,7 @@ type FromMain =
 export type VoiceProcessMessage =
   | VoiceEvent
   | { type: "ready"; loadMs: number }
-  | { type: "error"; message: string; models?: boolean }
+  | { type: "error"; message: string; models?: boolean; model?: "kws" | "vad" | "asr" }
   | { type: "engine-error"; message: string; count: number }
   | { type: "engine-broken"; message: string }
   | { type: "stats"; cpuMs: number; audioMs: number; peak: number }
@@ -56,6 +56,10 @@ export type VoiceProcessMessage =
   | { type: "enrol"; state: "done"; got: number; of: number; print: string }
   /** Voice Match couldn't check a request (it was heard anyway). */
   | { type: "voice-match-error"; message: string };
+
+/** Which model a ModelLoadError is about, by the name sherpa.ts gives it ("The wake word model couldn't be loaded."). */
+const LOADED_AS: [RegExp, "kws" | "vad" | "asr"][] = [[/wake word/i, "kws"], [/voice activity/i, "vad"], [/speech recognition/i, "asr"]];
+const damagedModel = (message: string) => LOADED_AS.find(([re]) => re.test(message))?.[1];
 
 const parent = process.parentPort;
 const send = (m: VoiceProcessMessage) => parent.postMessage(m);
@@ -158,7 +162,10 @@ parent.on("message", e => {
       send({ type: "ready", loadMs: Date.now() - t0 });
     } catch (err) {
       // What WebAssembly throws while loading a model is a bare number: the models are damaged (review #254).
-      if (err instanceof ModelLoadError) send({ type: "error", message: err.message, models: true });
+      if (err instanceof ModelLoadError) {
+        const model = damagedModel(err.message);
+        send({ type: "error", message: err.message, models: true, ...(model ? { model } : {}) });
+      }
       else if (err instanceof Error) send({ type: "error", message: err.message });
       else send({ type: "error", message: "The speech models couldn't be loaded.", models: true });
     }

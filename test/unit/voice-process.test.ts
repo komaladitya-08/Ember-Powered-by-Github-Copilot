@@ -91,7 +91,15 @@ describe("the voice process", () => {
   it("tells main when a model file is missing or damaged, so it can offer the download again (review #254)", async () => {
     const p = await voiceProcess(() => { throw new sherpa.ModelLoadError("The speech recognition model couldn't be loaded."); });
     p.init();
-    expect(p.sent()).toEqual([{ type: "error", message: "The speech recognition model couldn't be loaded.", models: true }]);
+    expect(p.sent()).toEqual([{ type: "error", message: "The speech recognition model couldn't be loaded.", models: true, model: "asr" }]);
+  });
+
+  it("names the damaged model, so main forgets only that one", async () => {
+    for (const [what, model] of [["wake word model", "kws"], ["voice activity model", "vad"]]) {
+      const p = await voiceProcess(() => { throw new sherpa.ModelLoadError(`The ${what} couldn't be loaded.`); });
+      p.init();
+      expect(p.sent()[0]).toEqual({ type: "error", message: `The ${what} couldn't be loaded.`, models: true, model });
+    }
   });
 
   it("says it's alive every second once started, so main can tell a frozen process from a quiet room (review #257)", async () => {

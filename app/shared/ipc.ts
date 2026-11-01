@@ -75,17 +75,30 @@ export interface SignInProgress {
 export interface VoiceStatus {
   state: MicState;
   detail: string | null;
+  /** Listening can start: the wake word, voice activity and speech recognition models are in. */
   modelsReady: boolean;
+  /** The models not in yet (or damaged), which the download fetches, and their size together. */
+  modelsMissing: SpeechModelId[];
   modelsBytes: number;
+  /** A download is under way, perhaps while listening carries on (only Ember's voice or Voice Match coming). */
+  downloading?: boolean;
   /** Ember tried to speak and no voice started: the computer has none (review #101). */
   speechMissing?: boolean;
   /** Voice Match: whether a voiceprint is kept (`enrolled`) and in use (`on`), and enrolment's progress while it runs. */
   match?: VoiceMatchStatus;
 }
 
+/** The speech models (app/voice/models.ts): wake word, voice activity, speech recognition, Ember's voice, Voice Match. */
+export type SpeechModelId = "kws" | "vad" | "asr" | "tts" | "speaker";
+
 export interface VoiceMatchStatus {
   enrolled: boolean;
+  /** In use: wanted, a voiceprint kept, and its model in. */
   on: boolean;
+  /** Its voiceprint model is in (false: Voice Match is off until it is downloaded, whatever the setting says). */
+  model?: boolean;
+  /** Turned on in settings with a voiceprint kept, but off for now: its model is missing or was damaged. */
+  wanted?: boolean;
   /** `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why. */
   enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" } | null;
 }

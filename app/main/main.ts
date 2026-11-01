@@ -42,7 +42,7 @@ import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
-import { VOICE_MODELS, VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
+import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
@@ -229,12 +229,14 @@ function readEnvironment(): EnvReport {
 
 /**
  * Speech models installed with Ember (the ember-voice-models package, which puts them in "/usr/share/ember/voice-models"
- * on Linux; sys.voice says where on each OS) are used in place of a download.
+ * on Linux; sys.voice says where on each OS) are used in place of a download: the first such folder with what listening
+ * needs. One it lacks (Ember's voice, Voice Match) comes from the user's own folder (`userRoot`), downloaded there.
  */
-function voiceModelsRoot(): { root: string; bundled: boolean } {
+function voiceModelsRoot(): { root: string; bundled: boolean; userRoot: string } {
+  const userRoot = path.join(userData, "models");
   const bundled = [devEnv("EMBER_VOICE_MODELS"), ...sys.voice.bundledModelDirs(process.resourcesPath ?? "")]
     .find((d): d is string => !!d && modelsReady(d));
-  return bundled ? { root: bundled, bundled: true } : { root: path.join(userData, "models"), bundled: false };
+  return bundled ? { root: bundled, bundled: true, userRoot } : { root: userRoot, bundled: false, userRoot };
 }
 
 /** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
@@ -324,6 +326,7 @@ async function runDoctor(): Promise<void> {
       xtest: ws ? !!input && !blocked : null,
       speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
       voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
+      voiceModelsMissing: missingModels([models.root, models.userRoot]).map(m => m.id),
       runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
       // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
       extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
@@ -1157,8 +1160,12 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
-    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES, speechMissing: speechHeard === false,
-    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint(), enrolling },
+    modelsReady: voice?.modelsReady ?? false,
+    modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
+    ...(voice?.isDownloading ? { downloading: true } : {}),
+    speechMissing: speechHeard === false,
+    // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
+    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling },
   });
   /**
    * Voice Match (app/voice/voiceprint.ts): the owner's voiceprint, kept apart from the settings (voiceprint-store.ts),
@@ -2091,7 +2098,7 @@ function start(): void {
       log: log.child("voice"),
       modelsRoot: speechModels.root,
       // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
-      ...(speechModels.bundled ? { bundled: { userRoot: path.join(userData, "models") } } : {}),
+      ...(speechModels.bundled ? { bundled: { userRoot: speechModels.userRoot } } : {}),
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without
@@ -2117,6 +2124,7 @@ function start(): void {
         }
         broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
       },
+      onModels: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       onSpeech: ok => {
         if (speechHeard === ok) return;
         speechHeard = ok;
