@@ -7,11 +7,14 @@ import { Spring2D, type Point } from "@ember/motion";
 
 export interface Rect { x: number; y: number; width: number; height: number }
 
+/** What Ember keeps off, as a list: none, one area, or several apart (its handle, and the task cards in another corner). */
+const areasOf = (avoid: Rect | readonly Rect[] | null): readonly Rect[] => (avoid === null ? [] : "width" in avoid ? [avoid] : avoid);
+
 /**
  * Ember's centre relative to the cursor tip, flipped to stay inside the work area,
- * and kept off `avoid` (Ember's own handle in the corner: it never hides behind it).
+ * and kept off `avoid` (Ember's own handle in the corner, and the task cards: it never hides behind them).
  */
-export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rect | null = null): Point {
+export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rect | readonly Rect[] | null = null): Point {
   const dx = size * 0.55 + 14;
   const dy = size * 0.62 + 16;
   const half = size * 0.6;
@@ -23,9 +26,12 @@ export function followTarget(cursor: Point, size: number, area: Rect, avoid: Rec
     x: Math.min(Math.max(x, area.x + half), area.x + area.width - half),
     y: Math.min(Math.max(y, area.y + half), area.y + area.height - half),
   };
-  if (avoid && p.x + half > avoid.x && p.x - half < avoid.x + avoid.width && p.y + half > avoid.y && p.y - half < avoid.y + avoid.height) {
-    // Over the handle: sit just above it instead.
-    p.y = Math.max(area.y + half, avoid.y - half - 4);
+  // Over the handle (or cards): sit just above it instead, and above the next if that puts it over another.
+  const areas = areasOf(avoid);
+  for (let i = 0; i < areas.length; i++) {
+    const r = areas.find(a => p.x + half > a.x && p.x - half < a.x + a.width && p.y + half > a.y && p.y - half < a.y + a.height);
+    if (!r) break;
+    p.y = Math.max(area.y + half, r.y - half - 4);
   }
   return p;
 }
@@ -44,13 +50,29 @@ export function besideRect(r: Rect, size: number, area: Rect, y: number, gap = 1
   return null;
 }
 
-/** Beside a control Ember works on, always on screen (inside it when the control is as wide as the screen). */
-export function besideControl(r: Rect, size: number, area: Rect): Point {
+/** Ember's body (`half` each way round `p`) overlaps `r`. */
+export const overlapsBody = (p: Point, half: number, r: Rect): boolean =>
+  p.x + half > r.x && p.x - half < r.x + r.width && p.y + half > r.y && p.y - half < r.y + r.height;
+
+/**
+ * Beside a control Ember works on, always on screen (inside it when the control is as wide as the screen). Where
+ * that spot is under `avoid` (its handle and the task cards), the other side, or above or below the control, if one
+ * of those is clear: it never parks under the card of the very task it works for.
+ */
+export function besideControl(r: Rect, size: number, area: Rect, avoid: Rect | readonly Rect[] | null = null): Point {
   const half = size * 0.6;
-  return besideRect(r, size, area, r.y + r.height / 2) ?? {
-    x: Math.min(Math.max(r.x + r.width - half, area.x + half), area.x + area.width - half),
-    y: Math.min(Math.max(r.y + r.height / 2, area.y + half), area.y + area.height - half),
-  };
+  const cy = Math.min(Math.max(r.y + r.height / 2, area.y + half), area.y + area.height - half);
+  const cx = Math.min(Math.max(r.x + r.width - half, area.x + half), area.x + area.width - half);
+  const spot = besideRect(r, size, area, r.y + r.height / 2) ?? { x: cx, y: cy };
+  const clear = (p: Point) => !areasOf(avoid).some(a => overlapsBody(p, half, a));
+  if (clear(spot)) return spot;
+  const gap = 10;
+  const onScreen = (p: Point) => p.x - half >= area.x && p.x + half <= area.x + area.width && p.y - half >= area.y && p.y + half <= area.y + area.height;
+  const spots = [
+    { x: r.x + r.width + gap + half, y: cy }, { x: r.x - gap - half, y: cy },
+    { x: cx, y: r.y - gap - half }, { x: cx, y: r.y + r.height + gap + half },
+  ];
+  return spots.find(p => onScreen(p) && clear(p)) ?? spot;
 }
 
 export class Follower {
@@ -82,9 +104,12 @@ export class Follower {
 
   /** `force`: go to the target even when parked or paused (stepping out of the way of a window). */
   step(target: Point, dt: number, force = false): Point {
-    if (force) return this.spring.step(target, Math.min(dt, 0.05));
+    // 0 to 50 ms: a clock that stepped back (VM time sync, NTP) or a frame time that isn't a number moves nothing,
+    // instead of throwing Ember hundreds of thousands of pixels off screen (review #88).
+    const t = dt > 0 ? Math.min(dt, 0.05) : 0;
+    if (force) return this.spring.step(target, t);
     if (this.paused && !this.parked) return this.position;
-    return this.spring.step(this.parked ?? target, Math.min(dt, 0.05));
+    return this.spring.step(this.parked ?? target, t);
   }
 
   jump(p: Point): void {

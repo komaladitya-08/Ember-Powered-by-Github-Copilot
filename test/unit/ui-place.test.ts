@@ -1,11 +1,12 @@
 /** Where the ask box and the desk view go on the screen (small screens and Ember near an edge included). */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ BrowserWindow: class {}, screen: {}, ipcMain: { on() {} } }));
 
-const { askBounds } = await import("../../app/main/ask");
-const { deskViewBounds } = await import("../../app/main/desk/view");
+const { askBounds, askSize, grownBounds } = await import("../../app/main/ask");
+const { deskViewBounds, deskViewStart } = await import("../../app/main/desk/view");
 const { foldCount, foldedLine, stackOrder } = await import("../../app/renderer/overlay/stack");
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -67,6 +68,37 @@ describe("askBounds", () => {
   });
 });
 
+describe("grownBounds (review #70: the field grows to four lines, and a row for the note that a paste was cut)", () => {
+  const wa = { x: 0, y: 0, width: 1024, height: 600 };
+
+  it("grows upward above Ember, so the hint row stays where it was, and back down to one line", () => {
+    const b = askBounds({ x: 500, y: 300 }, wa);
+    const tall = grownBounds(b, 4, wa, true);
+    expect(tall).toEqual({ ...b, height: 92 + 3 * 24, y: b.y + b.height - (92 + 3 * 24) });
+    expect(grownBounds(tall, 1, wa, true)).toEqual(b);
+    // Never more than four lines, the note's row (a paste cut at the limit) and the tip's (wait for the box, review
+    // #78), never less than one.
+    expect(grownBounds(b, 5, wa, true)).toEqual({ ...b, height: 92 + 4 * 24, y: b.y + b.height - (92 + 4 * 24) });
+    expect(grownBounds(b, 9, wa, true).height).toBe(212);
+    expect(grownBounds(b, 0, wa, true).height).toBe(92);
+  });
+
+  it("grows downward below Ember (near the top of the screen), and stays inside the work area", () => {
+    const b = askBounds({ x: 500, y: 20 }, wa);
+    expect(grownBounds(b, 3, wa, false)).toEqual({ ...b, height: 140 });
+    const low = { x: 200, y: 500, width: 560, height: 92 };
+    expect(inside(grownBounds(low, 4, wa, false), wa)).toBe(true);
+    const high = { x: 200, y: 10, width: 560, height: 92 };
+    expect(inside(grownBounds(high, 4, wa, true), wa)).toBe(true);
+  });
+
+  it("keeps clear of the pill as it grows", () => {
+    const pill = { x: 812, y: 532, width: 200, height: 56 };
+    const b = askBounds({ x: 900, y: 540, size: 60 }, wa, pill);
+    expect(overlaps(grownBounds(b, 4, wa, false, pill), pill)).toBe(false);
+  });
+});
+
 describe("deskViewBounds", () => {
   const handle = (wa: Box) => ({ x: wa.x + wa.width - 212, y: wa.y + wa.height - 68, width: 200, height: 56 });
 
@@ -116,10 +148,163 @@ describe("deskViewBounds", () => {
     expect(overlaps(deskViewBounds(small, true, wa, null), handle(wa))).toBe(false);
   });
 
+  it("starts where it always has with the handle in the bottom right (or not known)", () => {
+    const wa = { x: 0, y: 27, width: 1280, height: 773 };
+    expect(deskViewStart(wa, handle(wa))).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+    expect(deskViewStart(wa, null)).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+    expect(deskViewStart(wa)).toEqual({ x: 16, y: 27, width: 0, height: 773 });
+  });
+
+  it("with the handle in the bottom left (Handle position), is bottom-right, growing up and to the left (review #75)", () => {
+    const wa = { x: 0, y: 0, width: 1920, height: 1080 };
+    const left = { x: 12, y: 1012, width: 200, height: 56 };
+    const small = deskViewBounds(deskViewStart(wa, left), false, wa, left);
+    expect(small).toEqual({ x: 1920 - 16 - 340, y: 826, width: 340, height: 238 });
+    const large = deskViewBounds(small, true, wa, left);
+    expect(large).toEqual({ x: 1920 - 16 - 980, y: 418, width: 980, height: 646 });
+    expect(deskViewBounds(large, false, wa, left)).toEqual(small);
+  });
+
+  it("with the handle or its card in the bottom left, keeps clear of it on small screens and a left taskbar too", () => {
+    for (const wa of [{ x: 0, y: 0, width: 1024, height: 600 }, { x: 0, y: 27, width: 1280, height: 773 }, { x: 48, y: 0, width: 1232, height: 800 }]) {
+      for (const h of [56, 120, 360]) {
+        const width = h === 56 ? 200 : 360;
+        const card = { x: wa.x + 12, y: wa.y + wa.height - 12 - h, width, height: h };
+        const small = deskViewBounds(deskViewStart(wa, card), false, wa, card);
+        const large = deskViewBounds(small, true, wa, card);
+        for (const b of [small, large]) {
+          expect(inside(b, wa), `${wa.width} ${h}`).toBe(true);
+          expect(overlaps(b, card), `${wa.width} ${h}`).toBe(false);
+          expect(b.width, `${wa.width} ${h}`).toBeGreaterThan(100);
+        }
+        expect(large.width / large.height).toBeCloseTo(980 / 646, 2);
+        expect(deskViewBounds(large, false, wa, card)).toEqual(small);
+        // Dragged towards the handle first: it still grows clear of it.
+        expect(overlaps(deskViewBounds({ ...small, x: wa.x + 100 }, true, wa, card), card)).toBe(false);
+      }
+    }
+  });
+
   it("keeps its bottom edge on screen wherever it was dragged", () => {
     const wa = { x: 0, y: 27, width: 1280, height: 773 };
     for (const b of [{ x: 900, y: 700, width: 340, height: 238 }, { x: -50, y: 0, width: 340, height: 238 }, { x: 16, y: 600, width: 980, height: 646 }]) {
       for (const large of [false, true]) expect(inside(deskViewBounds(b, large, wa), wa), JSON.stringify([b, large])).toBe(true);
+    }
+  });
+});
+
+describe("the ask box at the text size (review #57)", () => {
+  const wa = { x: 0, y: 0, width: 1280, height: 800 };
+
+  it("grows the ask box by the scale of its words: its field and the line under it, not its insets", () => {
+    expect(askSize(1)).toEqual({ width: 560, height: 92 });
+    expect(askSize(1.15)).toEqual({ width: 644, height: 101 });
+    expect(askSize(1.3)).toEqual({ width: 728, height: 111 });
+    // A scale that can't be read is the default's.
+    expect(askSize(Number.NaN)).toEqual(askSize(1));
+    expect(askSize(0)).toEqual(askSize(1));
+    // Centred over Ember, its hint row (the box's foot) as far from Ember's head as at the default size.
+    const usual = askBounds({ x: 500, y: 300 }, wa), larger = askBounds({ x: 500, y: 300 }, wa, null, 1.3);
+    expect(larger).toEqual({ x: 136, y: 167, width: 728, height: 111 });
+    expect(larger.y + larger.height).toBe(usual.y + usual.height);
+    expect(askBounds({ x: 500, y: 300 }, wa, null, 1)).toEqual(usual);
+    // Without Ember: low in the middle, its foot where it always is.
+    const alone = askBounds(null, wa, null, 1.15);
+    expect(alone).toEqual({ x: 318, y: 609, width: 644, height: 101 });
+    expect(alone.y + alone.height).toBe(askBounds(null, wa).y + askBounds(null, wa).height);
+  });
+
+  it("keeps the larger box inside a small screen, below Ember near its top, and clear of the handle", () => {
+    const small = { x: 0, y: 0, width: 1024, height: 600 };
+    const pill = { x: 782, y: 532, width: 230, height: 56 };
+    for (const scale of [1.15, 1.3]) {
+      for (const c of [{ x: 66, y: 60 }, { x: 980, y: 560 }, { x: 512, y: 300 }]) {
+        const b = askBounds({ ...c, size: 60 }, small, pill, scale);
+        expect(inside(b, small), `${scale} ${JSON.stringify(c)}`).toBe(true);
+        expect(overlaps(b, pill), `${scale} ${JSON.stringify(c)}`).toBe(false);
+        for (const rows of [1, 4, 6]) expect(inside(grownBounds(b, rows, small, b.y < c.y, pill, scale), small)).toBe(true);
+      }
+    }
+    // A screen narrower than the larger box: as wide as fits, never narrower than the usual box.
+    expect(askBounds(null, { x: 0, y: 0, width: 640, height: 480 }, null, 1.3).width).toBe(624);
+    expect(askBounds(null, { x: 0, y: 0, width: 500, height: 480 }, null, 1.3).width).toBe(560);
+  });
+
+  it("has room for its field, the line under it, and the note's and the tip's rows at every size (styles.css)", () => {
+    const css = readFileSync(new URL("../../app/renderer/ask/styles.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const px = (re: RegExp) => Number(re.exec(css)?.[1] ?? NaN);
+    const inset = px(/\.ask \{[^}]*inset: (\d+)px/), gap = px(/\.ask \{[^}]*gap: (\d+)px/);
+    // What grows with the text: each size the page sets times --text-scale, the default's px in its usual rule.
+    const grows = (sel: string, prop: string, usual: number) => {
+      expect(css, `${sel} ${prop}`).toContain(`${prop}: calc(${usual}px * var(--text-scale))`);
+      expect(new RegExp(`html\\[data-text-size\\] ${sel.replace(/\./g, "\\.")}[^{]*\\{[^}]*${prop}: calc\\(${usual}px \\* var\\(--text-scale\\)\\)`).test(css), `${sel} ${prop}`).toBe(true);
+      return usual;
+    };
+    const field = grows(".field", "flex-basis", px(/\.field \{[^}]*flex: 0 0 (\d+)px/));
+    const metaLine = grows(".meta", "line-height", px(/\.meta \{[^}]*line-height: (\d+)px/));
+    const noteLine = grows(".tip", "line-height", px(/\.tip \{[^}]*line-height: (\d+)px/));
+    expect(px(/\.cut \{[^}]*line-height: (\d+)px/)).toBe(noteLine);
+    // The lines' padding and border (1 px each, top and bottom) don't grow.
+    const edges = 4;
+    for (const scale of [1, 1.15, 1.3]) {
+      const one = 2 * inset + field * scale + gap + metaLine * scale + edges;
+      expect(one, `${scale}`).toBeLessThanOrEqual(askSize(scale).height);
+      // Each further row: a field line (24 px times the scale), or the note's or the tip's line with its gap and edges.
+      expect(gap + noteLine * scale + edges, `${scale}`).toBeLessThanOrEqual(24 * scale);
+      // Six rows at most: four lines, the note and the tip, inside the box main makes.
+      const wa = { x: 0, y: 0, width: 1920, height: 1080 };
+      const tallest = 2 * inset + (field + 3 * 24) * scale + gap + metaLine * scale + edges + 2 * (gap + noteLine * scale + edges);
+      expect(tallest, `${scale}`).toBeLessThanOrEqual(grownBounds(askBounds(null, wa, null, scale), 6, wa, true, null, scale).height);
+    }
+  });
+
+  it("grows the ask box a line of the larger size at a time, upward above Ember", () => {
+    for (const [scale, line] of [[1, 24], [1.15, 27.6], [1.3, 31.2]]) {
+      const b = askBounds({ x: 500, y: 400 }, wa, null, scale);
+      for (const rows of [1, 2, 4, 6]) {
+        const g = grownBounds(b, rows, wa, true, null, scale);
+        expect(g.height, `${scale} ${rows}`).toBe(askSize(scale).height + Math.round((rows - 1) * line));
+        // Above Ember: the hint row stays where it was.
+        expect(g.y + g.height, `${scale} ${rows}`).toBe(b.y + b.height);
+      }
+      expect(grownBounds(grownBounds(b, 6, wa, true, null, scale), 1, wa, true, null, scale)).toEqual(b);
+    }
+  });
+});
+
+describe("the desk view at the text size (review #57)", () => {
+  it("grows the desk view by its bar only, so the picture under it keeps its size", () => {
+    const big = { x: 0, y: 0, width: 1920, height: 1080 };
+    const start = { x: 16, y: 0, width: 0, height: 1080 };
+    expect(deskViewBounds(start, false, big, null, 1)).toEqual({ x: 16, y: 826, width: 340, height: 238 });
+    for (const [scale, bar] of [[1.15, 35], [1.3, 39]]) {
+      const small = deskViewBounds(start, false, big, null, scale);
+      expect(small, `${scale}`).toEqual({ x: 16, y: 826 - (bar - 30), width: 340, height: 208 + bar });
+      const large = deskViewBounds(small, true, big, null, scale);
+      expect(large, `${scale}`).toEqual({ x: 16, y: 418 - (bar - 30), width: 980, height: 616 + bar });
+      // Its foot stays put, at every size and back.
+      expect(deskViewBounds(large, false, big, null, scale)).toEqual(small);
+      expect(deskViewBounds(small, false, big, null, 1)).toEqual(deskViewBounds(start, false, big, null, 1));
+    }
+    // On a small screen, the larger bar still fits, clear of the handle.
+    const wa = { x: 0, y: 0, width: 1024, height: 600 };
+    const pill = { x: 782, y: 532, width: 230, height: 56 };
+    const large = deskViewBounds(deskViewBounds(start, false, wa, pill, 1.3), true, wa, pill, 1.3);
+    expect(inside(large, wa)).toBe(true);
+    expect(large.x + large.width + 12).toBeLessThanOrEqual(pill.x);
+    // A scale that can't be read is the default's.
+    expect(deskViewBounds(start, false, big, null, Number.NaN)).toEqual(deskViewBounds(start, false, big));
+  });
+
+  it("grows by its bar the same with the handle in the bottom left (Handle position, review #75)", () => {
+    const big = { x: 0, y: 0, width: 1920, height: 1080 };
+    const left = { x: 12, y: 1012, width: 200, height: 56 };
+    for (const [scale, bar] of [[1, 30], [1.15, 35], [1.3, 39]]) {
+      const small = deskViewBounds(deskViewStart(big, left), false, big, left, scale);
+      expect(small, `${scale}`).toEqual({ x: 1920 - 16 - 340, y: 826 - (bar - 30), width: 340, height: 208 + bar });
+      const large = deskViewBounds(small, true, big, left, scale);
+      expect(large, `${scale}`).toEqual({ x: 1920 - 16 - 980, y: 418 - (bar - 30), width: 980, height: 616 + bar });
+      expect(deskViewBounds(large, false, big, left, scale)).toEqual(small);
     }
   });
 });

@@ -4,17 +4,22 @@
  * toward the cursor) lives here in global coordinates, so it can cross
  * displays; each overlay renderer only draws what falls inside its bounds.
  *
- * Linux has no `forward` option for click-through, so hover is detected by
- * polling the cursor against the interactive rectangles each renderer reports.
+ * Clicks reach an overlay only inside the interactive rectangles each renderer
+ * reports: on Linux through the X input region the platform's shaper sets (Linux
+ * has no `forward` option for click-through); on Windows and macOS, which have no
+ * input region, by polling the cursor against those rectangles.
  */
 
 import { BrowserWindow, screen, type Display } from "electron";
 import path from "node:path";
-import { Follower, followTarget, contains, besideRect, besideControl, takesPointer } from "./follow";
-import { setInputShape, closeInputShape } from "./xshape";
+import { Follower, followTarget, contains, besideRect, besideControl, overlapsBody, takesPointer } from "./follow";
 import { revive } from "./revive";
 import type { Logger } from "./logger";
 import type { Settings } from "./settings";
+import type { OverlayShaper } from "./platform/types";
+import { applyAllWorkspaces } from "./platform/compose";
+import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
+import { pageUrl } from "./page-url";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
 
 const appDir = __dirname;
@@ -24,7 +29,7 @@ interface Overlay {
   display: Display;
   interactive: Rect[];
   clickThrough: boolean;
-  /** ShapeInput is set to the clickable rectangles (clicks elsewhere pass through at X, not by hover polling). */
+  /** The input region is set to the clickable rectangles (clicks elsewhere pass through at X, not by hover polling). */
   shaped: boolean;
   /** The task cards on this display (global DIP). */
   cards: Rect | null;
@@ -35,7 +40,7 @@ export class OverlayManager {
   private follower: Follower;
   private timer: NodeJS.Timeout | null = null;
   private topTimer: NodeJS.Timeout | null = null;
-  private last = Date.now();
+  private last = performance.now();
   private hidden = false;
   /** While Ember borrows the cursor its windows never take clicks, so every click reaches the app. */
   private borrowing = false;
@@ -46,6 +51,8 @@ export class OverlayManager {
     private log: Logger,
     /** Cursor in global DIP, and the mouse buttons held (X's mask) when known; defaults to Electron's (which can be stale on X11). */
     private cursor: () => { x: number; y: number; buttons?: number } = () => screen.getCursorScreenPoint(),
+    /** The platform's input regions and window options (Linux XShape by default; hover polling elsewhere). */
+    private shaper: OverlayShaper = linuxOverlayShaper(),
   ) {
     const c = this.cursor();
     this.follower = new Follower({ x: c.x + 60, y: c.y + 60 });
@@ -79,7 +86,7 @@ export class OverlayManager {
     screen.off("display-metrics-changed", this.onMetrics);
     for (const id of [...this.overlays.keys()]) this.destroy(id);
     // The X connection the input shapes went over goes with the windows (a new manager opens its own).
-    closeInputShape();
+    this.shaper.release();
   }
 
   setHidden(on: boolean): void {
@@ -105,9 +112,19 @@ export class OverlayManager {
     return this.follower.position;
   }
 
-  /** Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion. */
+  /**
+   * Where Ember's handle sits (Ember keeps off it), and whether the desktop asks for less motion: read at start, then
+   * as the overlay's page sees it change (reducedMotionChanged), so the spring follows the switch without a restart.
+   */
   avoid: (() => Rect | null) | null = null;
   systemReducedMotion = false;
+
+  /** Called by IPC when an overlay's page sees the desktop's reduce-motion preference change. */
+  reducedMotionChanged(on: boolean): void {
+    if (on === this.systemReducedMotion) return;
+    this.systemReducedMotion = on;
+    this.log.info("overlay.reduced_motion", { on });
+  }
   /** A window of Ember's own the user is working in (settings): Ember waits beside it, or out of sight. */
   private aside: Rect | null = null;
 
@@ -141,9 +158,9 @@ export class OverlayManager {
       // the cursor (where it would be now, not wherever it was on its way), so its buttons don't run away.
       // Otherwise it follows the cursor again.
       const c = this.cursor();
-      const here = () => followTarget(c, size, screen.getDisplayNearestPoint(c).workArea, this.keepOff());
+      const here = () => { const d = screen.getDisplayNearestPoint(c); return followTarget(c, size, d.workArea, this.keepOff(d)); };
       // ("Stay put": it answers where it already is.)
-      this.follower.park(f ? besideControl(f, size, screen.getDisplayMatching(f).workArea) : now ? (this.paused ? this.follower.position : here()) : null);
+      this.follower.park(f ? this.besideFocus(f) : now ? (this.paused ? this.follower.position : here()) : null);
     }
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.state, this.state);
   }
@@ -165,7 +182,7 @@ export class OverlayManager {
   }
 
   private lastHandleCheck = 0;
-  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; at: number } | null = null;
+  private lastFrame: { ember: { x: number; y: number }; cursor: { x: number; y: number }; visible: boolean; on: number; at: number } | null = null;
 
   getState(): EmberState {
     return this.state;
@@ -173,24 +190,51 @@ export class OverlayManager {
 
   broadcastSettings(s: Settings): void {
     for (const o of this.overlays.values()) o.win.webContents.send(OVERLAY.settings, s);
+    // The handle may have moved with them (Handle position, the text size): the task cards follow it now, not at the
+    // next second's check.
+    this.checkHandle();
+  }
+
+  /** Where Ember holds still beside the control it works on (null: it isn't). */
+  private beside: { x: number; y: number } | null = null;
+
+  /** Beside the control Ember works on, off its handle and that display's task cards. */
+  private besideFocus(f: Rect): { x: number; y: number } {
+    const d = screen.getDisplayMatching(f);
+    this.beside = besideControl(f, this.settings().size, d.workArea, this.keepOff(d));
+    return this.beside;
   }
 
   /** Called by IPC when a renderer reports where its task cards are. */
   setCards(sender: Electron.WebContents, r: Rect | null): void {
     for (const o of this.overlays.values()) if (o.win.webContents === sender) o.cards = r;
+    // Cards that came up over where Ember holds still beside a control: it moves off them (only then: a question's
+    // buttons move with it).
+    const f = this.state.focus, at = this.beside;
+    const half = this.settings().size * 0.6;
+    if (f && at && this.keepOff(screen.getDisplayMatching(f)).some(r => overlapsBody(at, half, r))) this.follower.park(this.besideFocus(f));
   }
 
-  /** What Ember keeps off: its handle and the task cards stacked above it (one area: they touch). */
-  private keepOff(): Rect | null {
-    let r = this.avoid?.() ?? null;
-    for (const o of this.overlays.values()) {
-      const c = o.cards;
-      if (!c) continue;
-      if (!r) { r = c; continue; }
-      const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
-      r = { x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y };
-    }
-    return r;
+  /**
+   * What Ember keeps off on `display`: its handle (when it is there) and that display's task cards, within the
+   * display's work area. Cards stacked above the handle make one area with it (Ember fits in no gap between them);
+   * cards moved to the other corner stay a separate area, as each display's cards do: one area round them all would
+   * be a band across the screen that Ember could not follow the cursor into.
+   */
+  private keepOff(display: Pick<Display, "id" | "workArea">): Rect[] {
+    const a = display.workArea;
+    const clip = (r: Rect | null | undefined): Rect | null => {
+      if (!r) return null;
+      const x = Math.max(r.x, a.x), y = Math.max(r.y, a.y);
+      const width = Math.min(r.x + r.width, a.x + a.width) - x, height = Math.min(r.y + r.height, a.y + a.height) - y;
+      return width > 0 && height > 0 ? { x, y, width, height } : null;
+    };
+    const r = clip(this.avoid?.());
+    const c = clip([...this.overlays.values()].find(o => o.display.id === display.id)?.cards);
+    if (!r || !c) return r ? [r] : c ? [c] : [];
+    if (c.x >= r.x + r.width || r.x >= c.x + c.width) return [r, c];
+    const x = Math.min(r.x, c.x), y = Math.min(r.y, c.y);
+    return [{ x, y, width: Math.max(r.x + r.width, c.x + c.width) - x, height: Math.max(r.y + r.height, c.y + c.height) - y }];
   }
 
   /** Called by IPC when a renderer reports where its clickable parts are. */
@@ -204,21 +248,20 @@ export class OverlayManager {
 
   /**
    * Clicks hit only the reported rectangles. On X11 that is the window's ShapeInput (so a press on Allow or Stop
-   * is the overlay's even if hover polling has not run yet). Without a shape, hover-to-interact is the fallback.
+   * is the overlay's even if hover polling has not run yet). Without a shape (Windows, macOS), hover-to-interact.
    */
   private applyHits(o: Overlay): void {
     if (o.win.isDestroyed()) return;
     const rects = this.borrowing ? [] : o.interactive;
     const hit = rects.length > 0;
     const scale = o.display.scaleFactor || 1;
-    const xid = xidOf(o.win);
-    if (hit && xid && setInputShape(xid, rects, scale)) {
+    if (hit && this.shaper.setInputRegion(o.win, rects, scale)) {
       if (o.clickThrough) {
         o.win.setIgnoreMouseEvents(false);
         o.clickThrough = false;
         // setIgnoreMouseEvents(false) restores a full input region: put the holes back. Only then: the reports
         // come every frame while Ember flies, and an already shaped window needs the one request above.
-        setInputShape(xid, rects, scale);
+        this.shaper.setInputRegion(o.win, rects, scale);
       }
       o.shaped = true;
       return;
@@ -226,8 +269,17 @@ export class OverlayManager {
     o.shaped = false;
     if (!hit && !o.clickThrough) {
       o.clickThrough = true;
-      o.win.setIgnoreMouseEvents(true);
+      this.passThrough(o.win);
     }
+  }
+
+  /**
+   * Clicks go through `win` to what is under it. macOS forwards the pointer's moves meanwhile (the renderer sees
+   * hover); Linux and Windows take no options, as always (on Windows `forward` would hook every app's mouse).
+   */
+  private passThrough(win: BrowserWindow): void {
+    if (this.shaper.forward) win.setIgnoreMouseEvents(true, { forward: true });
+    else win.setIgnoreMouseEvents(true);
   }
 
   owns(sender: Electron.WebContents): boolean {
@@ -239,7 +291,7 @@ export class OverlayManager {
     const h = this.avoid?.() ?? null;
     const b = o.display.bounds;
     const here = !!h && h.x < b.x + b.width && h.x + h.width > b.x && h.y < b.y + b.height && h.y + h.height > b.y;
-    return { displayId: o.display.id, bounds: b, settings: this.settings(), fallback: false, handle: here ? h : null };
+    return { displayId: o.display.id, bounds: b, workArea: o.display.workArea, settings: this.settings(), fallback: false, handle: here ? h : null };
   }
 
   /** The handle moved (another screen layout): every overlay is told where it is now. */
@@ -253,6 +305,7 @@ export class OverlayManager {
 
   private create(display: Display): void {
     if (this.overlays.has(display.id)) return;
+    const floating = this.shaper.floating("overlay");
     const win = new BrowserWindow({
       ...display.bounds,
       transparent: true,
@@ -270,6 +323,7 @@ export class OverlayManager {
       show: false,
       type: "toolbar",
       title: "Ember overlay",
+      ...floating.options,
       webPreferences: {
         preload: path.join(appDir, "preload", "overlay.cjs"),
         contextIsolation: true,
@@ -280,8 +334,8 @@ export class OverlayManager {
       },
     });
     win.setAlwaysOnTop(true, "screen-saver");
-    win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    win.setIgnoreMouseEvents(true);
+    applyAllWorkspaces(win, floating.allWorkspaces);
+    this.passThrough(win);
     const overlay: Overlay = { win, display, interactive: [], clickThrough: true, shaped: false, cards: null };
     this.overlays.set(display.id, overlay);
     // Every load (also after a crash and reload) gets the current picture.
@@ -300,10 +354,10 @@ export class OverlayManager {
       overlay.interactive = [];
       overlay.clickThrough = true;
       overlay.shaped = false;
-      if (!win.isDestroyed()) win.setIgnoreMouseEvents(true);
+      if (!win.isDestroyed()) this.passThrough(win);
     });
     win.on("closed", () => this.overlays.delete(display.id));
-    void win.loadFile(path.join(appDir, "renderer", "overlay", "index.html"));
+    void win.loadURL(pageUrl(path.join(appDir, "renderer", "overlay", "index.html")));
   }
 
   private destroy(id: number): void {
@@ -322,8 +376,10 @@ export class OverlayManager {
 
   private tick(): void {
     const now = Date.now();
-    const dt = (now - this.last) / 1000;
-    this.last = now;
+    // A frame's time on a monotonic clock: the wall clock steps after a resume or an NTP sync (review #88).
+    const mono = performance.now();
+    const dt = (mono - this.last) / 1000;
+    this.last = mono;
     if (now - this.lastHandleCheck > 1000) { this.lastHandleCheck = now; this.checkHandle(); }
     const cursor = this.cursor();
     const display = screen.getDisplayNearestPoint(cursor);
@@ -335,36 +391,30 @@ export class OverlayManager {
     const asking = this.state.bubble.visible && this.state.bubble.actions.length > 0;
     const ember = aside
       ? this.follower.step(aside, dt, true)
-      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff()), dt);
-    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking) };
+      : this.follower.step(followTarget(cursor, s.size, display.workArea, this.keepOff(display)), dt);
+    // Which display Ember is on (only its overlay shows the bubble; each display it straddles draws its body).
+    const on = screen.getDisplayNearestPoint({ x: Math.round(ember.x), y: Math.round(ember.y) }).id;
+    const frame = { ember, cursor, visible: !this.hidden && !(this.aside && !aside && !asking), on };
     // Nothing moved: no message (the renderers keep the last frame); a heartbeat each second keeps them in step.
     const p = this.lastFrame;
-    const still = !!p && p.visible === frame.visible && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
+    const still = !!p && p.visible === frame.visible && p.on === on && Math.abs(p.ember.x - ember.x) < 0.25 && Math.abs(p.ember.y - ember.y) < 0.25
       && p.cursor.x === cursor.x && p.cursor.y === cursor.y && now - p.at < 1000;
     if (!still) this.lastFrame = { ...frame, ember: { ...ember }, at: now };
 
     for (const o of this.overlays.values()) {
       if (o.win.isDestroyed()) continue;
       if (!still) o.win.webContents.send(OVERLAY.frame, frame);
-      // ShapeInput already delivers presses on the buttons. Hover-to-interact is only the fallback when a
-      // shape could not be set (no X, a test double): a press that starts while still click-through still
-      // goes through, which is why live clicks on Allow/Stop missed the overlay until the shape was used.
+      // ShapeInput already delivers presses on the buttons. Hover-to-interact is the way where a shape could not
+      // be set (Windows, macOS, no X, a test double): a press that starts while still click-through still goes
+      // through, which is why live clicks on Allow/Stop missed the overlay on X11 until the shape was used.
       if (o.shaped) continue;
       const local = { x: cursor.x - o.display.bounds.x, y: cursor.y - o.display.bounds.y };
       const over = !this.borrowing && takesPointer(!o.clickThrough, contains(o.display.bounds, cursor) ? local : null, o.interactive, cursor.buttons ?? 0);
       if (over === o.clickThrough) {
         o.clickThrough = !over;
-        o.win.setIgnoreMouseEvents(!over);
+        if (over) o.win.setIgnoreMouseEvents(false); else this.passThrough(o.win);
         this.log.debug("overlay.clickthrough", { display: o.display.id, clickThrough: !over });
       }
     }
-  }
-}
-
-function xidOf(win: BrowserWindow): number {
-  try {
-    return win.getNativeWindowHandle().readUInt32LE(0);
-  } catch {
-    return 0;
   }
 }

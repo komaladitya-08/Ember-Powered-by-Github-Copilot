@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Ember's icon at 32 px and below (scripts/package/icon.mjs draws those sizes from this file; ember.svg's detail
+       turns to mud there). The tile fills the canvas with no shadow (macOS puts it on Apple's grid itself), its
+       graphite is lighter and its rim brighter so it holds on a dark taskbar, and Cinder keeps only what reads at 16 px:
+       the three flame tufts, the coal with the rim its fire lights, and the eyes, in front of the hearth's glow. -->
+  <defs>
+    <linearGradient id="tile-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5c4f52"/><stop offset="1" stop-color="#2a2224"/>
+    </linearGradient>
+    <radialGradient id="hearth" cx="16" cy="20" r="15" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9230" stop-opacity="0.95"/><stop offset="0.55" stop-color="#ff6a1f" stop-opacity="0.45"/><stop offset="1" stop-color="#ff6a1f" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.16"/>
+    </linearGradient>
+    <linearGradient id="tuft" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#ff6a1f"/><stop offset="0.55" stop-color="#ff9230"/><stop offset="1" stop-color="#ffd36b"/>
+    </linearGradient>
+    <radialGradient id="body" cx="13" cy="15" r="12" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4a3832"/><stop offset="1" stop-color="#1a1210"/>
+    </radialGradient>
+  </defs>
+
+  <!-- The tile, the hearth's glow and the rim (one pixel at 16 px). -->
+  <rect width="32" height="32" rx="7" fill="url(#tile-fill)"/>
+  <rect width="32" height="32" rx="7" fill="url(#hearth)"/>
+  <rect x="1" y="1" width="30" height="30" rx="6" fill="none" stroke="url(#rim)" stroke-width="2"/>
+
+  <!-- Cinder: three tufts, the coal and its lit rim, the eyes. -->
+  <path d="M10.6 12.6q.2-3.4 -1.4-5.6q3.6 1.6 4.6 5.2z" fill="url(#tuft)"/>
+  <path d="M13.4 12q-.4-5.2 2.6-9q3 3.8 2.6 9z" fill="url(#tuft)"/>
+  <path d="M18.2 12.2q1-3.6 4.6-5.2q-1.6 2.2 -1.4 5.6z" fill="url(#tuft)"/>
+  <circle cx="16" cy="20" r="9" fill="url(#body)" stroke="#ff8a2a" stroke-width="1.3"/>
+  <ellipse cx="12.6" cy="19.4" rx="2" ry="2.7" fill="#fff3cf"/>
+  <ellipse cx="19.4" cy="19.4" rx="2" ry="2.7" fill="#fff3cf"/>
+</svg>

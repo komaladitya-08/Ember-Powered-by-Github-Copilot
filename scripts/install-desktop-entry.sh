@@ -35,11 +35,18 @@ Icon=$icon
 Terminal=false
 Categories=Utility;Accessibility;
 StartupNotify=false
+Actions=Ask;
+
+[Desktop Action Ask]
+Name=Ask Ember
+Exec=$(exec_arg "$repo/node_modules/.bin/electron") $(exec_arg "$repo") --ask
 DESKTOP
 echo "Added Ember (dev) to the application menu."
 
 if [ "${1:-}" = "--autostart" ]; then
   mkdir -p "$autostart"
-  sed -e 's/ --show-settings/ --autostart/' -e '$a X-GNOME-Autostart-enabled=true' "$apps/ember-dev.desktop" > "$autostart/ember-dev.desktop"
+  # The entry alone (not its Ask Ember action), with the autostart switch in its group.
+  { sed -e '/^Actions=/d' -e '/^$/,$d' -e 's/ --show-settings/ --autostart/' "$apps/ember-dev.desktop"
+    echo "X-GNOME-Autostart-enabled=true"; } > "$autostart/ember-dev.desktop"
   echo "Ember (dev) will start when you log in."
 fi

@@ -3,10 +3,10 @@
  * environment, that a dying display or helper can't take Ember with it, that
  * stale displays are reused, that a failed start leaves nothing behind and
  * that desks left by a killed Ember are cleared away. Skipped where the desk
- * can't run.
+ * can't run: everywhere but Linux (the desk is Linux-only), and without Xvfb.
  */
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,12 +17,40 @@ import { deskAgentScript } from "./desk-agent-build";
 import type { Logger } from "../../app/main/logger";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+
+/**
+ * What this file's desks start, seen through child_process.spawn (passed through unchanged): the checks look only at
+ * these, never at the whole machine's /tmp/.X11-unix, where other tests and programs start and stop X servers too.
+ */
+const started = vi.hoisted(() => ({ commands: [] as string[], xvfb: [] as { display: number; pid: number }[] }));
+vi.mock("node:child_process", async importOriginal => {
+  const real = await importOriginal<typeof import("node:child_process")>();
+  const spawnSeen = ((...args: Parameters<typeof real.spawn>) => {
+    const p = real.spawn(...args);
+    started.commands.push(String(args[0]));
+    const display = Array.isArray(args[1]) ? /^:(\d+)$/.exec(String(args[1][0]))?.[1] : undefined;
+    if (args[0] === "Xvfb" && display && p.pid) started.xvfb.push({ display: Number(display), pid: p.pid });
+    return p;
+  }) as typeof real.spawn;
+  return { ...real, spawn: spawnSeen };
+});
+/** The pid in display `n`'s lock file, or null. */
+const lockOf = (n: number) => { try { const pid = Number(fs.readFileSync(`/tmp/.X${n}-lock`, "utf8").trim()); return Number.isInteger(pid) && pid > 0 ? pid : null; } catch { return null; } };
+/**
+ * What an X server this file started left in /tmp: its lock still naming it, or its socket with no live server holding
+ * the number (the desk took the number only while neither was there, so another server's would have its own lock).
+ */
+const leftBehind = (x: { display: number; pid: number }) => {
+  const lock = lockOf(x.display);
+  return lock === x.pid || (fs.existsSync(`/tmp/.X11-unix/X${x.display}`) && (lock === null || !running(lock)));
+};
 const libX11 = (() => { try { return fs.existsSync("/usr/lib64/libX11.so.6") || fs.existsSync("/usr/lib/x86_64-linux-gnu/libX11.so.6"); } catch { return false; } })();
 const available = DeskManager.available().ok && libX11 && process.platform === "linux";
 const until = async (cond: () => boolean, ms = 5000) => { const t0 = Date.now(); while (!cond() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 25)); return cond(); };
 const environ = (pid: number) => { try { return fs.readFileSync(`/proc/${pid}/environ`, "utf8").split("\0"); } catch { return []; } };
 
-describe("removeTree", () => {
+// The desk is Linux-only, and so is this: removeTree finds mounts in /proc/self/mountinfo, as POSIX paths.
+describe.skipIf(process.platform !== "linux")("removeTree", () => {
   it("removes a desk folder but never reaches into a mount inside it, and never throws", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-tree-"));
     const mount = path.join(dir, "runtime", "gvfs");
@@ -51,7 +79,8 @@ describe("removeTree", () => {
   });
 });
 
-describe("reapDesks", () => {
+// Linux only: desk processes are found through /proc, and the stand-ins are true, sleep and setsid.
+describe.skipIf(process.platform !== "linux")("reapDesks", () => {
   it("clears away desks whose Ember is gone, by their mark, and leaves a running Ember's desks alone", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-reap-"));
     const gone = spawnSync("true").pid!; // a process that has exited: its id names no Ember
@@ -226,17 +255,33 @@ describe.skipIf(!available)("a real desk", () => {
   it("leaves nothing behind when it can't start", async () => {
     const file = path.join(dir, "not-a-folder");
     fs.writeFileSync(file, "");
-    const before = fs.readdirSync("/tmp/.X11-unix").length;
+    started.commands.length = 0;
+    started.xvfb.length = 0;
     const desk = make({ handOff: path.join(file, "Ember") });
     await expect(desk.start()).rejects.toThrow();
     expect(desk.running).toBeNull();
-    expect(fs.readdirSync("/tmp/.X11-unix").length).toBeLessThanOrEqual(before);
-    // Nor when its helper can't start.
+    // Its hand-off folder can't be made: nothing was started at all.
+    expect(started.commands).toEqual([]);
+    // Nor when its helper can't start: the display it had started goes, with its lock and socket.
     const broken = make({ display: 250, agent: path.join(dir, "no-such-helper.cjs") });
     await expect(broken.start()).rejects.toThrow(/helper/);
     expect(broken.running).toBeNull();
-    expect(await until(() => fs.readdirSync("/tmp/.X11-unix").length <= before)).toBe(true);
+    expect(started.xvfb.length).toBeGreaterThan(0);
+    expect(await until(() => started.xvfb.every(x => !running(x.pid) && !leftBehind(x)))).toBe(true);
   });
+
+  it("listens for Ember's exit only while its desk is up or still going, however often it starts", async () => {
+    // Other desks' listeners may still come and go meanwhile (their processes quitting): only this one's are counted.
+    const before = process.listeners("exit");
+    const added = () => process.listeners("exit").filter(l => !before.includes(l)).length;
+    const desk = make({ display: 247 });
+    for (let i = 0; i < 3; i++) {
+      await desk.start();
+      expect(added()).toBe(1);
+      desk.stop();
+    }
+    expect(await until(() => added() === 0, 4000)).toBe(true);
+  }, 20_000); // three desk starts
 
   const which = (cmd: string) => spawnSync("sh", ["-c", `command -v ${cmd}`]).status === 0;
   it.skipIf(!["metacity", "openbox", "xfwm4"].some(which) || !which("xev"))("starts once its window manager manages windows: one mapped at once is managed, and no test window is left", async () => {

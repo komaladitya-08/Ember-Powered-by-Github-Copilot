@@ -6,17 +6,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpeakerMonitor } from "../../app/voice/speakers";
 import { FrameWatchdog } from "../../app/voice/watchdog";
 
+/**
+ * `children`: parec's runs; `watchers`: `pactl subscribe`'s (what it is asked is in `watched`); `infos`: `pactl info`'s,
+ * answered with `answer`. `locales`: the LC_ALL each pactl ran with.
+ */
 function setup() {
-  const children: (EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> })[] = [];
+  type Child = EventEmitter & { stdout: EventEmitter; kill: ReturnType<typeof vi.fn> };
+  const children: Child[] = [], watchers: Child[] = [], infos: Child[] = [];
+  const watched: string[][] = [];
+  const locales: (string | undefined)[] = [];
   const states: [boolean, string?][] = [];
   const frames: Float32Array[] = [];
-  const spawn = () => {
+  const spawn = (cmd: string, args: string[], o: { env?: NodeJS.ProcessEnv }) => {
     const p = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), kill: vi.fn() });
-    children.push(p);
+    if (cmd === "pactl") locales.push(o.env?.LC_ALL);
+    if (cmd === "pactl" && args[0] === "info") infos.push(p);
+    else if (cmd === "pactl") { watchers.push(p); watched.push(args); } else children.push(p);
     return p as unknown as ChildProcess;
   };
   const monitor = new SpeakerMonitor(f => frames.push(f), (on, reason) => states.push(reason ? [on, reason] : [on]), spawn);
-  return { monitor, children, states, frames };
+  /** `pactl info` number `i` answers with `sink` as the default output (null: it fails). */
+  const answer = async (i: number, sink: string | null) => {
+    if (sink === null) infos[i].emit("exit", 1, null);
+    else { infos[i].stdout.emit("data", Buffer.from(`Server String: /run/user/1000/pulse/native\nDefault Sink: ${sink}\nDefault Source: alsa_input.pci-0000_00_1f.3.analog-stereo\n`)); infos[i].emit("exit", 0, null); }
+    await vi.advanceTimersByTimeAsync(0);
+  };
+  return { monitor, children, watchers, watched, infos, locales, answer, states, frames };
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -68,12 +83,76 @@ describe("speakers' stream", () => {
     expect(s.states).toEqual([[false, "parec isn't installed (pulseaudio-utils)"]]);
   });
 
+  it("starts parec again on the new default output when it changes (headphones, a Bluetooth speaker) (review #260)", async () => {
+    const s = setup();
+    s.monitor.start();
+    s.children[0].emit("spawn");
+    expect(s.watched).toEqual([["subscribe"]]);
+    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo"); // the output parec took
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'new' on sink-input #12\nEvent 'change' on sink #1\n"));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(s.infos).toHaveLength(1); // something played: nothing to ask
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on ser"));
+    s.watchers[0].stdout.emit("data", Buffer.from("ver #4294967295\n"));
+    await vi.advanceTimersByTimeAsync(499);
+    expect(s.infos).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.infos).toHaveLength(2);
+    expect(s.children[0].kill).not.toHaveBeenCalled();
+    await s.answer(1, "bluez_sink.00_1B_66_A1_B2_C3.a2dp_sink");
+    expect(s.children[0].kill).toHaveBeenCalled();
+    expect(s.children).toHaveLength(2); // at once, on the new default's monitor
+    s.children[0].emit("exit", null, "SIGTERM");
+    s.children[1].emit("spawn");
+    expect(s.states).toEqual([[true], [true]]); // never reported off meanwhile
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(s.children).toHaveLength(2); // nor started again after the old one's end
+    expect(s.watchers).toHaveLength(1);
+  });
+
+  it("leaves parec running when the server changed but the default output didn't (the default input, a server setting) (review #260)", async () => {
+    const s = setup();
+    s.monitor.start();
+    s.children[0].emit("spawn");
+    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo");
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on server #4294967295\n"));
+    await vi.advanceTimersByTimeAsync(500);
+    await s.answer(1, "alsa_output.pci-0000_00_1f.3.analog-stereo");
+    expect(s.children[0].kill).not.toHaveBeenCalled();
+    expect(s.children).toHaveLength(1);
+    // The output does change later: compared with the one parec still monitors.
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on server #4294967295\n"));
+    await vi.advanceTimersByTimeAsync(500);
+    await s.answer(2, "alsa_output.usb-Logitech_Headset-00.analog-stereo");
+    expect(s.children).toHaveLength(2);
+  });
+
+  it("starts parec again when it can't tell which output is the default (review #260)", async () => {
+    const s = setup();
+    s.monitor.start();
+    s.children[0].emit("spawn");
+    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo");
+    s.watchers[0].stdout.emit("data", Buffer.from("Event 'change' on server #4294967295\n"));
+    await vi.advanceTimersByTimeAsync(500);
+    await s.answer(1, null);
+    expect(s.children).toHaveLength(2);
+  });
+
+  it("reads pactl in English, whatever the user's language (its words are translated) (review #260)", async () => {
+    const s = setup();
+    s.monitor.start();
+    s.children[0].emit("spawn");
+    await s.answer(0, "alsa_output.pci-0000_00_1f.3.analog-stereo");
+    expect(s.locales).toEqual(["C", "C"]);
+  });
+
   it("stop() ends it for good", () => {
     const s = setup();
     s.monitor.start();
     s.children[0].emit("spawn");
     s.monitor.stop();
     expect(s.children[0].kill).toHaveBeenCalled();
+    expect(s.watchers[0].kill).toHaveBeenCalled();
     s.children[0].emit("exit", null, "SIGTERM");
     vi.advanceTimersByTime(60_000);
     expect(s.children).toHaveLength(1);

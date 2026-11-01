@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { DeskManager, clearDeskLocks, clearDeskLocksNear, freeDisplay, removeTree, running } from "../../app/main/desk/desk";
 import { deskRecipe, deskWindowAt, guardX, lockDownLibreOffice } from "../../app/main/desk/place";
 import { keysymFor, wheelButtons, xButton } from "../../app/main/desk/view";
@@ -19,7 +19,9 @@ const lockFile = (dir: string, name: string, profile: string) => {
   fs.writeFileSync(path.join(dir, `.~lock.${name}#`), `,Ana,host,16.10.2026 10:00,${profile};`);
 };
 const deskProfile = (id: string) => `file:///tmp/${id}/runtime/libreoffice`;
-const locksIn = (dir: string) => fs.readdirSync(dir, { recursive: true }).map(String).filter(n => path.basename(n).startsWith(".~lock.")).sort();
+/** The names under `dir`, relative and with "/" between folders whatever the OS (Windows lists them with "\"). */
+const listed = (dir: string) => fs.readdirSync(dir, { recursive: true }).map(n => String(n).split(path.sep).join("/"));
+const locksIn = (dir: string) => listed(dir).filter(n => path.basename(n).startsWith(".~lock.")).sort();
 
 describe("desk", () => {
   it("picks the first free display number", () => {
@@ -50,7 +52,8 @@ describe("desk", () => {
     expect(running(123, stat("Z"))).toBe(false);
     expect(running(123, () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); })).toBe(false);
     expect(running(undefined)).toBe(false);
-    expect(running(process.pid)).toBe(true);
+    // The live process table is /proc, which only Linux has (the desk is Linux-only).
+    if (process.platform === "linux") expect(running(process.pid)).toBe(true);
   });
 
   it("starts apps as Ember's own instances", () => {
@@ -74,7 +77,9 @@ describe("desk", () => {
     const argv = deskRecipe(app("libreoffice-calc", "LibreOffice Calc", "libreoffice --calc %U"), { handOff: "/h" }, p);
     const url = argv.at(-1)!.replace("-env:UserInstallation=", "");
     expect(url).toMatch(/^file:\/\/\/.*%20profiles%20%231%20/);
-    expect(new URL(url).pathname).toBe(encodeURI(path.join(p, "libreoffice")).replace(/#/g, "%23"));
+    // It reads back as the same folder ("#" not taken for a fragment, no space lost), Windows paths too: compared as a
+    // path, since Node also escapes "~", which a Windows runner's short temp path (C:\Users\RUNNER~1\…) has.
+    expect(fileURLToPath(url)).toBe(path.join(p, "libreoffice"));
     removeTree(p);
   });
 
@@ -96,7 +101,8 @@ describe("desk", () => {
     // No macro can be written where LibreOffice runs them from (saving a document over a module, a new script).
     const mode = (f: string) => fs.statSync(path.join(p, "user", f)).mode & 0o777;
     expect(fs.readFileSync(path.join(p, "user", "basic", "Standard", "Module1.xba"), "utf8")).toBe("<module/>");
-    expect([mode("basic"), mode("basic/Standard"), mode("basic/Standard/Module1.xba"), mode("Scripts")]).toEqual([0o500, 0o500, 0o400, 0o500]);
+    // (POSIX modes: Windows has only a read-only flag, which it ignores on folders.)
+    if (process.platform !== "win32") expect([mode("basic"), mode("basic/Standard"), mode("basic/Standard/Module1.xba"), mode("Scripts")]).toEqual([0o500, 0o500, 0o400, 0o500]);
     expect(xcu).toContain('<prop oor:name="DisableExtensionInstallation" oor:op="fuse"><value>true</value></prop>');
     expect(xcu).toContain("<value>PackageManager</value>");
     expect(xcu.match(/MacroSecurityLevel/g)).toHaveLength(1);
@@ -125,10 +131,11 @@ describe("desk", () => {
     lock(home, "notes.odt", "file:///tmp/ember-desk-zzz999/runtime/libreoffice");
     lock(home, "mine.odt", "file:///home/ana/.config/libreoffice/4");
     lock(elsewhere, "linked.odt", "file:///tmp/ember-desk-abc123/runtime/libreoffice");
-    fs.symlinkSync(elsewhere, path.join(home, "link"));
+    // A junction on Windows: a link to a folder that needs no symlink rights there (other systems ignore the type).
+    fs.symlinkSync(elsewhere, path.join(home, "link"), "junction");
     fs.writeFileSync(path.join(home, "letter.odt"), "doc");
     // (Listed without going through the link: what lies behind it is checked on its own below.)
-    const left = () => fs.readdirSync(home, { recursive: true }).map(String).filter(n => n.includes(".~lock.") && !n.startsWith("link/")).sort();
+    const left = () => listed(home).filter(n => n.includes(".~lock.") && !n.startsWith("link/")).sort();
     // One desk's (as it stops): only its own.
     expect(clearDeskLocks(home, "ember-desk-abc123")).toBe(2);
     expect(left()).toEqual([".~lock.mine.odt#", ".~lock.notes.odt#"]);
@@ -169,17 +176,20 @@ describe("desk", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-quit-"));
     const home = path.join(root, "home"), handOff = path.join(home, "Ember"), docs = path.join(home, "Documents"), tmp = path.join(root, "tmp");
     for (const d of [handOff, docs, tmp]) fs.mkdirSync(d, { recursive: true });
-    // os.homedir() and os.tmpdir() go by these: the real home folder and other desks stay out of it.
-    const saved = { HOME: process.env.HOME, TMPDIR: process.env.TMPDIR };
-    Object.assign(process.env, { HOME: home, TMPDIR: tmp });
+    // os.homedir() and os.tmpdir() go by these (Windows reads USERPROFILE and TEMP): the real home folder and other
+    // desks stay out of it.
+    const saved = { HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, USERPROFILE: process.env.USERPROFILE, TEMP: process.env.TEMP, TMP: process.env.TMP };
+    Object.assign(process.env, { HOME: home, TMPDIR: tmp, USERPROFILE: home, TEMP: tmp, TMP: tmp });
     const before = process.listeners("exit");
     const ids = ["ember-desk-quit01", "ember-desk-quit02"];
     const desks = ids.map(id => {
       const m = new DeskManager(quiet, { handOff });
       const dir = path.join(tmp, id);
       fs.mkdirSync(dir);
-      // As if its desk were up, with LibreOffice there (nothing runs: no X server is needed for this).
+      // As if its desk were up, with LibreOffice there (nothing runs: no X server is needed for this), and listening
+      // for Ember's exit as boot() makes it.
       Object.assign(m, { id, dir, info: { display: ":0", width: 1, height: 1, env: {}, handOff } });
+      (m as unknown as { watchExit(): void }).watchExit();
       return m;
     });
     // Its exit handlers, called here rather than when the test's process exits.
@@ -205,6 +215,35 @@ describe("desk", () => {
     }
   });
 
+  it("listens for Ember's exit only while a desk is up or still going, so many managers leave process's listeners flat", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-exit-"));
+    const handOff = path.join(root, "Ember");
+    const before = process.listenerCount("exit");
+    vi.useFakeTimers();
+    try {
+      // Made and never started (as most tests make them): nothing to clean up as Ember exits.
+      const desks = Array.from({ length: 20 }, () => new DeskManager(quiet, { handOff }));
+      expect(process.listenerCount("exit")).toBe(before);
+      // Started and stopped, over and over: one listener while each desk is up, none once it has gone.
+      for (const [i, m] of desks.entries()) {
+        const id = `ember-desk-exit${String(i).padStart(2, "0")}`, dir = path.join(root, id);
+        fs.mkdirSync(dir);
+        // As boot() leaves it (nothing runs: no X server is needed for this).
+        Object.assign(m, { id, dir, info: { display: ":0", width: 1, height: 1, env: {}, handOff } });
+        (m as unknown as { watchExit(): void }).watchExit();
+        expect(process.listenerCount("exit")).toBe(before + 1);
+        m.stop();
+        // Its processes may still be quitting for a moment after stop(): the listener stays until they have gone.
+        expect(process.listenerCount("exit")).toBe(before + 1);
+        vi.advanceTimersByTime(1500);
+        expect(process.listenerCount("exit")).toBe(before);
+      }
+    } finally {
+      vi.useRealTimers();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("starts the desk's LibreOffice dialogs in the hand-off folder, where its locks are cleared (DSK10-1)", () => {
     const p = fs.mkdtempSync(path.join(os.tmpdir(), "ember-lo-work-"));
     const handOff = path.join(p, "Ana & Bo's <docs>", "Ember");
@@ -223,8 +262,11 @@ describe("desk", () => {
     expect(xcu).not.toMatch(/&(?!amp;|lt;|gt;)/);
     // The desk's recipe gives it the desk's hand-off folder.
     const runtime = path.join(p, "runtime");
-    deskRecipe(app("libreoffice-calc", "LibreOffice Calc", "libreoffice --calc %U"), { handOff: "/home/ana/Ember", env: { XDG_RUNTIME_DIR: runtime } }, p);
-    expect(fs.readFileSync(path.join(runtime, "libreoffice", "user", "registrymodifications.xcu"), "utf8")).toContain("<prop oor:name=\"WritePath\" oor:op=\"fuse\"><value>file:///home/ana/Ember</value></prop>");
+    // (/home/ana/Ember, or on Windows that folder on the current drive.)
+    const deskHandOff = path.resolve("/home/ana/Ember");
+    deskRecipe(app("libreoffice-calc", "LibreOffice Calc", "libreoffice --calc %U"), { handOff: deskHandOff, env: { XDG_RUNTIME_DIR: runtime } }, p);
+    expect(fs.readFileSync(path.join(runtime, "libreoffice", "user", "registrymodifications.xcu"), "utf8"))
+      .toContain(`<prop oor:name="WritePath" oor:op="fuse"><value>${pathToFileURL(deskHandOff).href}</value></prop>`);
     expect(removeTree(p)).toBe(true);
   });
 
@@ -309,7 +351,7 @@ describe("desk", () => {
     const send = e.decide({ taskId: "t", kind: "click", app: "Mail", window: "w", element: { role: "push button", name: "Send" }, onDesk: true });
     expect(send).toMatchObject({ verdict: "confirm", risky: true });
     // Nothing of the user's is borrowed there: the question says where instead (DK7-2).
-    expect(send.prompt).toBe("Click “Send” push button in Mail on my desk?");
+    expect(send.prompt).toBe("Click the “Send” button in Mail on my desk?");
     expect(e.decide({ taskId: "t", kind: "keys", app: "gedit", window: "w", value: "ctrl+w", onDesk: true }).prompt).toBe("Press Ctrl+W in gedit on my desk?");
     expect(e.decide({ taskId: "t", kind: "text", app: "x", window: "w", element: { role: "password text", name: "" }, value: "x", onDesk: true }).verdict).toBe("deny");
   });

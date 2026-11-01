@@ -1,0 +1,1200 @@
+/**
+ * The command window's controller (app/main/commands/window.ts; \u00a73.9-\u00a73.10, R1, R7): who it takes messages from, when
+ * the approve chord's guard (cardReady) holds, when Allow counts, the announcement's countdown and its Stop, one card at
+ * a time, and each run's tab (output, typing, Stop, Close). Plain Node with fakes for the window and ipcMain.
+ */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { COMMANDS_IPC } from "../../app/shared/commands";
+import { COMMANDS_EXTRA_IPC, type AnswerMsg, type OutputMsg, type Snapshot, type WindowView } from "../../app/renderer/command/model";
+import { ANNOUNCE_SCREEN_READER_MS, MAX_TABS, WAITING_MS, awaitsTyping, cardSha256, placeOnDisplay, createCommandWindowController, createCommandWindowPort, outcomeOf, typedPieces, validCard } from "../../app/main/commands/window";
+import { statusLine } from "../../app/renderer/command/copy";
+import type { BrowserWindowLike, IpcLike, WebContentsLike } from "../../app/main/targets/types";
+import type { CommandCard, RunExit, RunningCommand } from "../../app/main/commands/types";
+import type { Logger } from "../../app/main/logger";
+
+type Handler = (event: { sender: WebContentsLike }, ...args: unknown[]) => unknown;
+
+class FakeIpc implements IpcLike {
+  ons = new Map<string, Handler[]>();
+  handles = new Map<string, Handler>();
+  on(channel: string, fn: Handler) { this.ons.set(channel, [...(this.ons.get(channel) ?? []), fn]); }
+  handle(channel: string, fn: Handler) {
+    if (this.handles.has(channel)) throw new Error(`second handler for ${channel}`);
+    this.handles.set(channel, fn);
+  }
+  send(channel: string, sender: WebContentsLike, ...args: unknown[]) { for (const fn of this.ons.get(channel) ?? []) fn({ sender }, ...args); }
+  invoke(channel: string, sender: WebContentsLike, ...args: unknown[]) { return this.handles.get(channel)!({ sender }, ...args); }
+}
+
+class FakeContents implements WebContentsLike {
+  sent: { channel: string; args: unknown[] }[] = [];
+  constructor(readonly id: number) {}
+  send(channel: string, ...args: unknown[]) { this.sent.push({ channel, args }); }
+  states(): WindowView[] { return this.sent.filter(s => s.channel === COMMANDS_IPC.state).map(s => s.args[0] as WindowView); }
+  last(): WindowView { const s = this.states(); return s[s.length - 1]; }
+  outputs(): OutputMsg[] { return this.sent.filter(s => s.channel === COMMANDS_IPC.output).map(s => s.args[0] as OutputMsg); }
+}
+
+let nextId = 100;
+class FakeWindow implements BrowserWindowLike {
+  webContents = new FakeContents(nextId++);
+  visible = false; minimized = false; destroyed = false; onTop = false; focused = false;
+  calls: string[] = [];
+  private handlers = new Map<string, (() => void)[]>();
+  show() { this.visible = true; this.calls.push("show"); }
+  showInactive() { this.visible = true; this.minimized = false; this.calls.push("showInactive"); }
+  hide() { this.visible = false; this.calls.push("hide"); }
+  focus() { this.focused = true; this.calls.push("focus"); }
+  close() { this.destroyed = true; this.visible = false; this.calls.push("close"); this.emit("closed"); }
+  moveTop() { this.calls.push("moveTop"); }
+  isVisible() { return this.visible; }
+  isMinimized() { return this.minimized; }
+  isDestroyed() { return this.destroyed; }
+  isAlwaysOnTop() { return this.onTop; }
+  isFocused() { return this.focused; }
+  setAlwaysOnTop(flag: boolean) { this.onTop = flag; this.calls.push(`top:${flag}`); }
+  setBounds() { /* not used */ }
+  setContentProtection() { /* windows.ts sets it */ }
+  on(event: string, fn: () => void) { this.handlers.set(event, [...(this.handlers.get(event) ?? []), fn]); }
+  emit(event: string) { for (const fn of this.handlers.get(event) ?? []) fn(); }
+  flashFrame(flag: boolean) { this.calls.push(`flash:${flag}`); }
+  placeNearUser() { this.calls.push("place"); }
+  setOnAllWorkspaces(on: boolean) { this.calls.push(`workspaces:${on}`); }
+  /** createCommandWindow's guard on the window's close button (review #262). */
+  guard: (() => boolean) | null = null;
+  setCloseGuard(fn: () => boolean) { this.guard = fn; }
+  /** The user's close button: the guard may keep the window open. */
+  requestClose() { if (this.guard?.() === true) { this.calls.push("close-kept"); return; } this.close(); }
+  /** createCommandWindow tells the controller its page crashed; the window stays and the page loads again (S2). */
+  gone: (() => void) | null = null;
+  onPageGone(fn: () => void) { this.gone = fn; }
+  crash() { this.gone?.(); }
+}
+
+const logs: { level: string; msg: string; fields?: unknown }[] = [];
+const log: Logger = {
+  debug: (msg, fields) => logs.push({ level: "debug", msg, fields }),
+  info: (msg, fields) => logs.push({ level: "info", msg, fields }),
+  warn: (msg, fields) => logs.push({ level: "warn", msg, fields }),
+  error: (msg, fields) => logs.push({ level: "error", msg, fields }),
+  child: () => log,
+  file: "",
+};
+
+/** A card whose sha256 is the hash of its own target, shell, folder and command (unless a test sets another). */
+const card = (over: Partial<CommandCard> = {}): CommandCard => {
+  const c: CommandCard = {
+    runId: "0123456789abcdef", target: "ssh:build-01", targetLabel: "build-01", login: "deploy", shell: "bash", cwd: "/home/deploy/src/app",
+    command: "rm -r build", sha256: "", taskId: "t1", taskTitle: "Clean the build", mode: "ask", says: ["Deletes build and everything in it."],
+    unasked: true, armMs: 600, ...over,
+  };
+  return { ...c, sha256: over.sha256 ?? cardSha256(c) };
+};
+const SHA = card().sha256;
+
+class FakeRun implements RunningCommand {
+  inputs: Uint8Array[] = [];
+  stops: string[] = [];
+  private fns: ((c: Uint8Array) => void)[] = [];
+  private end!: (e: RunExit) => void;
+  readonly done = new Promise<RunExit>(r => { this.end = r; });
+  constructor(readonly runId: string, readonly interactive = true) {}
+  onOutput(fn: (c: Uint8Array) => void) { this.fns.push(fn); return () => { this.fns = this.fns.filter(f => f !== fn); }; }
+  emit(text: string) { for (const f of this.fns) f(new TextEncoder().encode(text)); }
+  get listeners() { return this.fns.length; }
+  input(bytes: Uint8Array) { this.inputs.push(bytes); }
+  typedLines() { return []; }
+  forgetTyped() { /* not used */ }
+  stop(why: "user" | "task" | "killswitch" | "timeout") { this.stops.push(why); }
+  finish(e: Partial<RunExit> = {}) { this.end({ code: 0, signal: null, ended: "exit", ms: 3200, ...e }); }
+}
+
+function setup(o: { keyHint?: () => string | null; screenReader?: () => boolean; stopKey?: () => string | null } = {}) {
+  const ipc = new FakeIpc();
+  const windows: FakeWindow[] = [];
+  const ctl = createCommandWindowController({
+    create: () => { const w = new FakeWindow(); windows.push(w); return w; },
+    ipc, log, os: "linux", keyHint: o.keyHint ?? (() => "Ctrl+Alt+Y allow · Ctrl+Alt+N not now"),
+    ...(o.screenReader ? { screenReader: o.screenReader } : {}),
+    ...(o.stopKey ? { stopKey: o.stopKey } : {}),
+  });
+  const win = () => windows[windows.length - 1];
+  const page = () => win().webContents;
+  /** The page says the card's whole command is (or isn't) in view. */
+  const seen = (n: number, inView = true, isSeen = true) => ipc.send(COMMANDS_IPC.cardSeen, page(), { n, inView, seen: isSeen });
+  const answers: AnswerMsg[] = [];
+  ctl.onAnswer(a => { answers.push(a); });
+  return { ipc, ctl, windows, win, page, seen, answers };
+}
+
+beforeEach(() => { vi.useFakeTimers(); logs.length = 0; });
+afterEach(() => { vi.useRealTimers(); });
+
+describe("the command window's sender checks", () => {
+  it("takes every page message only from its own window's page (critique integration-5)", async () => {
+    const { ipc, ctl, page, seen, answers } = setup();
+    const stranger = new FakeContents(9999);
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    ctl.showCard(1, card());
+    vi.advanceTimersByTime(1000);
+    // From another page: nothing happens.
+    ipc.send(COMMANDS_IPC.cardSeen, stranger, { n: 1, inView: true, seen: true });
+    expect(ctl.cardReady(1)).toBe(false);
+    ipc.send(COMMANDS_IPC.answer, stranger, { n: 1, answer: "once", sha256: SHA });
+    ipc.send(COMMANDS_IPC.input, stranger, { runId: run.runId, data: "secret\r" });
+    ipc.send(COMMANDS_IPC.stop, stranger, { runId: run.runId });
+    ipc.send(COMMANDS_EXTRA_IPC.size, stranger, { cols: 80, rows: 24 });
+    expect(ipc.invoke(COMMANDS_IPC.state, stranger)).toBeNull();
+    expect(answers).toEqual([]);
+    expect(run.inputs).toEqual([]);
+    expect(run.stops).toEqual([]);
+    expect(ctl.termSize()).toEqual({ cols: 100, rows: 30 });
+    expect(logs.filter(l => l.msg === "commands.ipc_refused").map(l => (l.fields as { channel: string }).channel).sort())
+      .toEqual([COMMANDS_IPC.answer, COMMANDS_IPC.cardSeen, COMMANDS_IPC.input, COMMANDS_EXTRA_IPC.size, COMMANDS_IPC.state, COMMANDS_IPC.stop].sort());
+    // From its own page: each one counts.
+    seen(1);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(answers).toEqual([{ n: 1, answer: "once", sha256: SHA }]);
+    expect(ctl.owns(page())).toBe(true);
+    expect(ctl.owns(stranger)).toBe(false);
+  });
+
+  it("owns no sender before its window exists or after it closed", () => {
+    const { ctl, win } = setup();
+    expect(ctl.owns(new FakeContents(100))).toBe(false);
+    ctl.show();
+    const contents = win().webContents;
+    expect(ctl.owns(contents)).toBe(true);
+    win().close();
+    expect(ctl.owns(contents)).toBe(false);
+  });
+
+  it("takes only well-formed messages: odd types and sizes are dropped", () => {
+    const { ipc, ctl, page, answers } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    for (const bad of [null, "x", 1, { n: "1", answer: "deny", sha256: SHA }, { n: 1, answer: "always", sha256: SHA }, { n: 1, answer: "deny", sha256: "x" }]) {
+      ipc.send(COMMANDS_IPC.answer, page(), bad);
+    }
+    ipc.send(COMMANDS_IPC.input, page(), { runId: "nope", data: "x" });
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: 5 });
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "x".repeat(64 * 1024 + 1) });
+    expect(answers).toEqual([]);
+    expect(run.inputs).toEqual([]);
+  });
+
+  it("registers one invoke handler (the page's pull) and listens on its own channels only, once a window exists", () => {
+    const { ipc, ctl } = setup();
+    expect(ipc.handles.size + ipc.ons.size).toBe(0);
+    ctl.show();
+    ctl.show();
+    expect([...ipc.handles.keys()]).toEqual([COMMANDS_IPC.state]);
+    for (const ch of ipc.ons.keys()) expect(ch).toMatch(/^commands:/);
+  });
+});
+
+describe("cardReady (the approve chord's guard, R7)", () => {
+  function ready() {
+    const s = setup();
+    s.ctl.showCard(7, card());
+    s.seen(7);
+    return s;
+  }
+
+  it("holds while the card is up, on top, not minimised and its whole command is in view", () => {
+    const { ctl, win } = ready();
+    expect(win().onTop).toBe(true);
+    expect(ctl.cardReady(7)).toBe(true);
+  });
+
+  it("fails for another question, a hidden or minimised window, or one neither on top nor focused", () => {
+    const { ctl, win } = ready();
+    expect(ctl.cardReady(8)).toBe(false);
+    win().minimized = true;
+    expect(ctl.cardReady(7)).toBe(false);
+    win().minimized = false;
+    win().visible = false;
+    expect(ctl.cardReady(7)).toBe(false);
+    win().visible = true;
+    win().onTop = false;
+    expect(ctl.cardReady(7)).toBe(false);
+    win().focused = true;
+    expect(ctl.cardReady(7)).toBe(true);
+  });
+
+  it("fails until the page says the whole command is in view, and again when it no longer is", () => {
+    const { ctl, seen } = setup();
+    ctl.showCard(3, card());
+    expect(ctl.cardReady(3)).toBe(false);
+    seen(3, false, true);
+    expect(ctl.cardReady(3)).toBe(false);
+    seen(3, true, true);
+    expect(ctl.cardReady(3)).toBe(true);
+    seen(3, false, true);
+    expect(ctl.cardReady(3)).toBe(false);
+  });
+
+  it("never takes 'in view' without 'seen', and 'seen' sticks for the card", () => {
+    const { ctl, seen } = setup();
+    ctl.showCard(3, card());
+    seen(3, true, false);
+    expect(ctl.cardReady(3)).toBe(false);
+    seen(3, false, true);
+    seen(3, true, false);
+    expect(ctl.cardReady(3)).toBe(true);
+  });
+
+  it("forgets the page's report when the card changes, hides, or the window closes", () => {
+    const { ctl, seen, win } = setup();
+    ctl.showCard(3, card());
+    seen(3);
+    ctl.showCard(4, card({ command: "rm -r dist" }));
+    expect(ctl.cardReady(3)).toBe(false);
+    expect(ctl.cardReady(4)).toBe(false);
+    seen(4);
+    expect(ctl.cardReady(4)).toBe(true);
+    ctl.hideCard(4);
+    expect(ctl.cardReady(4)).toBe(false);
+    ctl.showCard(5, card());
+    seen(5);
+    win().close();
+    expect(ctl.cardReady(5)).toBe(false);
+  });
+});
+
+describe("Allow", () => {
+  it("counts only once the card is armed and its whole command was seen, with the card's own hash", () => {
+    const { ipc, ctl, page, seen, answers } = setup();
+    ctl.showCard(1, card({ armMs: 1500 }));
+    const allow = (over: Record<string, unknown> = {}) => ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA, ...over });
+    allow();
+    seen(1);
+    allow();
+    expect(answers).toEqual([]);
+    vi.advanceTimersByTime(1500);
+    allow({ sha256: "b".repeat(64) });
+    allow({ n: 2 });
+    expect(answers).toEqual([]);
+    allow();
+    expect(answers).toEqual([{ n: 1, answer: "once", sha256: SHA }]);
+    expect(logs.some(l => l.msg === "commands.allow_too_early")).toBe(true);
+  });
+
+  it("needs the page to have seen the whole command, even after the arm time", () => {
+    const { ipc, ctl, page, seen, answers } = setup();
+    ctl.showCard(1, card());
+    vi.advanceTimersByTime(5000);
+    seen(1, false, false);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(answers).toEqual([]);
+  });
+
+  it("takes Not now at any time for the card on screen", () => {
+    const { ipc, ctl, page, answers } = setup();
+    ctl.showCard(1, card());
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "deny", sha256: SHA });
+    expect(answers).toEqual([{ n: 1, answer: "deny", sha256: SHA }]);
+  });
+
+  it("is never taken for a card that isn't on screen", () => {
+    const { ipc, ctl, page, seen, answers } = setup();
+    ctl.showCard(1, card());
+    seen(1);
+    vi.advanceTimersByTime(1000);
+    ctl.hideCard(1);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(answers).toEqual([]);
+  });
+});
+
+describe("one card at a time", () => {
+  it("shows the newest question and drops the old one's state", () => {
+    const { ctl, page } = setup();
+    ctl.showCard(1, card());
+    ctl.showCard(2, card({ command: "git push --force" }));
+    expect(page().last().card).toMatchObject({ n: 2, command: "git push --force" });
+    ctl.hideCard(1);
+    expect(page().last().card?.n).toBe(2);
+    ctl.hideCard(2);
+    expect(page().last().card).toBeNull();
+  });
+
+  it("refuses a malformed card: nothing shows, so nothing can be allowed", () => {
+    const { ctl, windows } = setup();
+    ctl.showCard(1, { ...card(), sha256: "nope" });
+    ctl.showCard(2, { ...card(), says: "Deletes" as unknown as string[] });
+    ctl.showCard(-1, card());
+    expect(windows).toHaveLength(0);
+    expect(ctl.cardReady(1)).toBe(false);
+    expect(validCard(card())).toBe(true);
+    expect(validCard({ ...card(), runId: "0123" })).toBe(false);
+    expect(validCard({ ...card(), command: "" })).toBe(false);
+    // A target id Ember doesn't know, or no label for it: never shown, even with a hash of its own fields.
+    expect(validCard(card({ target: "ftp:build-01" as CommandCard["target"] }))).toBe(false);
+    expect(validCard(card({ target: "ssh:Build-01" as CommandCard["target"] }))).toBe(false);
+    expect(validCard(card({ targetLabel: "" }))).toBe(false);
+    expect(validCard(card({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }))).toBe(true);
+  });
+
+  it("never shows a card whose hash isn't of the very target, shell, folder and command it shows (R-cmd-1)", async () => {
+    const { ctl, windows } = setup();
+    const good = card();
+    // The hash of what an approval binds to, exactly as the design writes it.
+    expect(good.sha256).toBe(createHash("sha256").update("ssh:build-01\0bash\0/home/deploy/src/app\0rm -r build", "utf8").digest("hex"));
+    for (const changed of [{ command: "rm -r /" }, { cwd: "/" }, { shell: "sh" as const }, { target: "local" as const }, { command: "rm -r build " }]) {
+      const forged = { ...good, ...changed };
+      expect(validCard(forged), JSON.stringify(changed)).toBe(false);
+      ctl.showCard(1, forged);
+    }
+    expect(windows).toHaveLength(0);
+    expect(ctl.cardReady(1)).toBe(false);
+    await expect(ctl.announce({ ...good, command: "rm -r /" }, 4000, new AbortController().signal)).resolves.toBe(false);
+  });
+
+  it("shows the same question again as it was: its arm time and what the page saw stay", () => {
+    const { ipc, ctl, page, seen, answers } = setup();
+    ctl.showCard(1, card());
+    seen(1);
+    vi.advanceTimersByTime(1000);
+    ctl.showCard(1, card());
+    expect(ctl.cardReady(1)).toBe(true);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(answers).toEqual([{ n: 1, answer: "once", sha256: SHA }]);
+  });
+
+  it("brings the window up without taking the keyboard, on top while the card shows, and lets it go after", () => {
+    const { ctl, win } = setup();
+    ctl.showCard(1, card());
+    expect(win().calls).toEqual(["place", "top:true", "workspaces:true", "showInactive", "moveTop"]);
+    expect(win().focused).toBe(false);
+    ctl.hideCard(1);
+    expect(win().onTop).toBe(false);
+    // Nothing else in it: it goes away again.
+    expect(win().visible).toBe(false);
+  });
+
+  it("shows the key hint only while a card is up", () => {
+    const { ctl, page } = setup();
+    ctl.show();
+    expect(page().last().keyHint).toBeNull();
+    ctl.showCard(1, card());
+    expect(page().last().keyHint).toBe("Ctrl+Alt+Y allow · Ctrl+Alt+N not now");
+    const quiet = setup({ keyHint: () => null });
+    quiet.ctl.showCard(1, card());
+    expect(quiet.page().last().keyHint).toBeNull();
+  });
+});
+
+describe("announcing (D4.4, \u00a73.9.2)", () => {
+  it("resolves true when the time runs out, showing the countdown meanwhile", async () => {
+    const { ctl, page, win } = setup();
+    const p = ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).toMatchObject({ card: { runId: "0123456789abcdef" }, endsAt: Date.now() + 4000 });
+    expect(win().onTop).toBe(true);
+    vi.advanceTimersByTime(3999);
+    let settled = false;
+    void p.then(() => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    vi.advanceTimersByTime(1);
+    await expect(p).resolves.toBe(true);
+    expect(page().last().announce).toBeNull();
+  });
+
+  it("resolves false on the page's Stop, on cancelAnnounce, on the signal and when the window closes", async () => {
+    const a = setup();
+    const p1 = a.ctl.announce(card(), 4000, new AbortController().signal);
+    a.ipc.send(COMMANDS_IPC.stop, a.page(), { runId: "0123456789abcdef" });
+    await expect(p1).resolves.toBe(false);
+
+    const b = setup();
+    const p2 = b.ctl.announce(card(), 4000, new AbortController().signal);
+    b.ctl.cancelAnnounce("0123456789abcdef");
+    await expect(p2).resolves.toBe(false);
+
+    const c = setup();
+    const ac = new AbortController();
+    const p3 = c.ctl.announce(card(), 4000, ac.signal);
+    ac.abort();
+    await expect(p3).resolves.toBe(false);
+    const done = new AbortController();
+    done.abort();
+    await expect(c.ctl.announce(card(), 4000, done.signal)).resolves.toBe(false);
+
+    const d = setup();
+    const p4 = d.ctl.announce(card(), 4000, new AbortController().signal);
+    d.win().close();
+    await expect(p4).resolves.toBe(false);
+
+    const e = setup();
+    const p5 = e.ctl.announce(card(), 4000, new AbortController().signal);
+    e.ctl.dispose();
+    await expect(p5).resolves.toBe(false);
+  });
+
+  it("ends every waiting announcement when the window is closed, without opening it again", async () => {
+    const { ctl, windows } = setup();
+    const first = ctl.announce(card(), 4000, new AbortController().signal);
+    const second = ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    windows[0].close();
+    await expect(first).resolves.toBe(false);
+    await expect(second).resolves.toBe(false);
+    expect(windows).toHaveLength(1);
+    const third = ctl.announce(card(), 4000, new AbortController().signal);
+    const fourth = ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    ctl.dispose();
+    await expect(third).resolves.toBe(false);
+    await expect(fourth).resolves.toBe(false);
+    expect(windows).toHaveLength(2);
+  });
+
+  it("counts down one announcement at a time, each for its whole time once shown", async () => {
+    const { ctl, page } = setup();
+    const first = ctl.announce(card(), 4000, new AbortController().signal);
+    const second = ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    expect(page().last().announce?.card.runId).toBe("0123456789abcdef");
+    vi.advanceTimersByTime(4000);
+    await expect(first).resolves.toBe(true);
+    expect(page().last().announce).toMatchObject({ card: { runId: "fedcba9876543210" }, endsAt: Date.now() + 4000 });
+    ctl.cancelAnnounce("fedcba9876543210");
+    await expect(second).resolves.toBe(false);
+  });
+
+  it("doesn't let a command run when there is no window to count down in", async () => {
+    const ctl = createCommandWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux", keyHint: () => null });
+    await expect(ctl.announce(card(), 4000, new AbortController().signal)).resolves.toBe(false);
+    ctl.showCard(1, card());
+    expect(ctl.cardReady(1)).toBe(false);
+    expect(logs.some(l => l.msg === "commands.window_failed")).toBe(true);
+  });
+
+  it("refuses to announce a malformed card", async () => {
+    const { ctl } = setup();
+    await expect(ctl.announce({ ...card(), runId: "x" }, 4000, new AbortController().signal)).resolves.toBe(false);
+  });
+});
+
+describe("a run's tab", () => {
+  it("shows the header, Running…, then the status line from how it ended", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef", true);
+    ctl.attach(card(), run);
+    expect(page().last().tabs[0]).toMatchObject({
+      runId: run.runId, header: "On build-01 as deploy · bash · in /home/deploy/src/app", status: "Running…", interactive: true, ended: false,
+      title: "Clean the build", typing: "Type here to answer the command; paste with Ctrl+V. Ember never sees what you type.", outcome: "running",
+    });
+    run.finish({ code: 2, ms: 1100 });
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0]).toMatchObject({ status: "Ended with exit code 2 after 1.1\u00a0s.", interactive: false, ended: true, typing: "", outcome: "failed" });
+  });
+
+  it("sends output in batches with its byte offsets, and a reloading page gets the rest whole", () => {
+    const { ipc, ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("hello ");
+    run.emit("world\r\n");
+    expect(page().outputs()).toEqual([]);
+    vi.advanceTimersByTime(20);
+    const out = page().outputs();
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ runId: run.runId, at: 0 });
+    expect(new TextDecoder().decode(out[0].bytes)).toBe("hello world\r\n");
+    run.emit("more");
+    const snap = ipc.invoke(COMMANDS_IPC.state, page()) as Snapshot;
+    expect(snap.state.tabs).toHaveLength(1);
+    expect(snap.replay).toHaveLength(1);
+    expect(new TextDecoder().decode(snap.replay[0].bytes)).toBe("hello world\r\nmore");
+    // What was pending went out with the pull, at its own offset.
+    expect(page().outputs().at(-1)).toMatchObject({ at: 13 });
+  });
+
+  it("keeps only the newest 256 KiB of a run for a reloading page", () => {
+    const { ipc, ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    for (let i = 0; i < 40; i++) run.emit("x".repeat(10_000));
+    const snap = ipc.invoke(COMMANDS_IPC.state, page()) as Snapshot;
+    expect(snap.replay[0].bytes.length).toBe(256 * 1024);
+    expect(snap.replay[0].at).toBe(400_000 - 256 * 1024);
+  });
+
+  it("passes typing only to a live run that takes it, in pieces of at most 4 KiB, and never logs it", async () => {
+    const { ipc, ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef", true);
+    const pipe = new FakeRun("fedcba9876543210", false);
+    ctl.attach(card(), run);
+    ctl.attach(card({ runId: pipe.runId }), pipe);
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "hunter2\r" });
+    ipc.send(COMMANDS_IPC.input, page(), { runId: pipe.runId, data: "hunter2\r" });
+    expect(run.inputs.map(b => new TextDecoder().decode(b))).toEqual(["hunter2\r"]);
+    expect(pipe.inputs).toEqual([]);
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "é".repeat(5000) });
+    expect(run.inputs.slice(1).map(b => b.length)).toEqual([4096, 4096, 1808]);
+    run.finish();
+    await vi.runAllTimersAsync();
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "late" });
+    expect(run.inputs).toHaveLength(4);
+    expect(JSON.stringify(logs)).not.toContain("hunter2");
+    expect(typedPieces("ab", 1).map(b => [...b])).toEqual([[97], [98]]);
+    expect(typedPieces("€", 1).map(b => b.length)).toEqual([3]);
+  });
+
+  it("names on the status line what a run left running, once its runner has looked (§3.13)", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef") as FakeRun & { stragglers: Promise<string[]> };
+    let looked!: (names: string[]) => void;
+    run.stragglers = new Promise(r => { looked = r; });
+    ctl.attach(card(), run);
+    run.finish({ ended: "stopped-user", code: null, ms: 12_000 });
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
+    looked(["sleep", "\u202emalware"]);
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays. 2 programs it started are still running: sleep, ⟨RLO⟩malware. Ask Ember to stop them, or end them yourself.");
+    // A run that says nothing (a remote's) keeps its line as it was.
+    const quiet = new FakeRun("00000000000000aa");
+    ctl.attach(card({ runId: quiet.runId }), quiet);
+    quiet.finish();
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("Finished in 3.2\u00a0s.");
+  });
+
+  it("stops a live run from its Stop and closes only a finished tab", async () => {
+    const { ipc, ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    ipc.send(COMMANDS_IPC.close, page(), { runId: run.runId });
+    expect(page().last().tabs).toHaveLength(1);
+    ipc.send(COMMANDS_IPC.stop, page(), { runId: run.runId });
+    expect(run.stops).toEqual(["user"]);
+    run.finish({ ended: "stopped-user", code: null, ms: 12_000 });
+    await vi.runAllTimersAsync();
+    expect(page().last().tabs[0].status).toBe("You stopped it after 12\u00a0s. What it already changed stays.");
+    ipc.send(COMMANDS_IPC.close, page(), { runId: run.runId });
+    expect(page().last().tabs).toHaveLength(0);
+    expect(run.listeners).toBe(0);
+  });
+
+  it("keeps the newest 20 tabs, dropping finished ones first and never one still running", async () => {
+    const { ctl, page } = setup();
+    const runs: FakeRun[] = [];
+    for (let i = 0; i < MAX_TABS + 3; i++) {
+      const id = i.toString(16).padStart(16, "0");
+      const r = new FakeRun(id);
+      runs.push(r);
+      ctl.attach(card({ runId: id }), r);
+      if (i >= 2) { r.finish(); await vi.runAllTimersAsync(); }
+    }
+    const ids = page().last().tabs.map(t => t.runId);
+    expect(ids).toHaveLength(MAX_TABS);
+    // The two runs still going stay; the oldest finished ones went.
+    expect(ids).toContain(runs[0].runId);
+    expect(ids).toContain(runs[1].runId);
+    expect(ids[0]).toBe(runs[runs.length - 1].runId);
+  });
+
+  it("shows a note while running (a distro starting) and the size the page said fits", () => {
+    const { ipc, ctl, page } = setup();
+    ctl.show();
+    ipc.send(COMMANDS_EXTRA_IPC.size, page(), { cols: 132, rows: 40 });
+    ipc.send(COMMANDS_EXTRA_IPC.size, page(), { cols: 5, rows: 40 });
+    expect(ctl.termSize()).toEqual({ cols: 132, rows: 40 });
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)" }), run);
+    expect(page().last().tabs[0]).toMatchObject({ cols: 132, rows: 40, header: "In Ubuntu (WSL) · bash · in /home/deploy/src/app" });
+    ctl.note(run.runId, "Starting Ubuntu…");
+    expect(page().last().tabs[0].status).toBe("Starting Ubuntu…");
+    ctl.note(run.runId, null);
+    expect(page().last().tabs[0].status).toBe("Running…");
+  });
+
+  it("shows a task's pending line (a distro starting) before its run has a tab, until the tab comes or it is cleared", () => {
+    const { ctl, windows, win, page } = setup();
+    ctl.pending("t1", "Starting Ubuntu…");
+    // It brings the window up without taking the keyboard, and not on top (no card is asking).
+    expect(windows).toHaveLength(1);
+    expect(win().calls).toEqual(["place", "showInactive"]);
+    expect(page().last().pending).toEqual([{ taskId: "t1", text: "Starting Ubuntu…" }]);
+    ctl.pending("t2", "Starting Debian…");
+    expect(page().last().pending?.map(p => p.taskId)).toEqual(["t1", "t2"]);
+    // The task's run gets its tab: its line gives way; the other task's stays.
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card({ target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", taskId: "t1" }), run);
+    expect(page().last().pending).toEqual([{ taskId: "t2", text: "Starting Debian…" }]);
+    expect(page().last().tabs).toHaveLength(1);
+    ctl.pending("t2", null);
+    expect(page().last().pending).toEqual([]);
+  });
+
+  it("hides the window again when a cleared pending line leaves nothing to show", () => {
+    const { ctl, win, page } = setup();
+    ctl.pending("t1", "Starting Ubuntu…");
+    const sent = page().states().length;
+    ctl.pending("t1", "Starting Ubuntu…");
+    expect(page().states()).toHaveLength(sent);
+    ctl.pending("t1", null);
+    expect(win().visible).toBe(false);
+    expect(win().calls.at(-1)).toBe("hide");
+    // Clearing a line that isn't there changes nothing.
+    ctl.pending("t9", null);
+    expect(page().states()).toHaveLength(sent + 1);
+  });
+
+  it("takes a pending line as one short line with every invisible character shown, and ignores what isn't one", () => {
+    const { ctl, windows, page } = setup();
+    ctl.pending("", "Starting Ubuntu…");
+    ctl.pending("t1", "");
+    ctl.pending(42 as unknown as string, "Starting Ubuntu…");
+    expect(windows).toHaveLength(0);
+    ctl.pending("t1", "Starting Ubu\u202entu…\n" + "x".repeat(400));
+    const line = page().last().pending![0].text;
+    expect(line.startsWith("Starting Ubu⟨RLO⟩ntu… x")).toBe(true);
+    expect([...line].length).toBeLessThanOrEqual(201);
+    for (let k = 2; k <= 12; k++) ctl.pending(`t${k}`, "Starting Ubuntu…");
+    expect(page().last().pending).toHaveLength(8);
+    ctl.dispose();
+    ctl.pending("t1", "Starting Ubuntu…");
+    expect(windows[0].destroyed).toBe(true);
+  });
+
+  it("stops a run it can't show rather than let it run unseen (R1): a malformed card, no window, or after dispose", () => {
+    const bad = setup();
+    const r1 = new FakeRun("0123456789abcdef");
+    bad.ctl.attach({ ...card(), command: "rm -r /" }, r1);
+    expect(r1.stops).toEqual(["task"]);
+    expect(bad.windows).toHaveLength(0);
+
+    const none = createCommandWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux", keyHint: () => null });
+    const r2 = new FakeRun("0123456789abcdef");
+    none.attach(card(), r2);
+    expect(r2.stops).toEqual(["task"]);
+
+    const gone = setup();
+    gone.ctl.dispose();
+    const r3 = new FakeRun("0123456789abcdef");
+    gone.ctl.attach(card(), r3);
+    expect(r3.stops).toEqual(["task"]);
+    expect(logs.filter(l => l.msg === "commands.run_unshown").map(l => (l.fields as { why: string }).why)).toEqual(["card", "window", "disposed"]);
+
+    const ok = setup();
+    const r4 = new FakeRun("0123456789abcdef");
+    ok.ctl.attach(card({ mode: "run" }), r4);
+    expect(r4.stops).toEqual([]);
+  });
+
+  it("shows a remote's reason and the names it reports with every character visible, and cut short (§7.2)", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.finish({ ended: "refused-remote", code: null, error: "policy says no\u202e.ti dewolla\n" + "x".repeat(5000) });
+    await vi.runAllTimersAsync();
+    const status = page().last().tabs[0].status;
+    expect(status.startsWith("build-01 refused it: policy says no⟨RLO⟩.ti dewolla x")).toBe(true);
+    expect(status).not.toMatch(/[\u202e\n]/);
+    expect([...status].length).toBeLessThan(400);
+    const names = statusLine({ code: 0, signal: null, ended: "exit", ms: 1000, stragglers: ["ma\u200bke", "y".repeat(500)] } as RunExit, { label: "build-01", os: "linux" });
+    expect(names).toBe(`Finished in 1\u00a0s. 2 programs it started are still running: ma⟨ZWSP⟩ke, ${"y".repeat(64)}…. Ask Ember to stop them, or end them yourself.`);
+  });
+
+  it("names how a run ended for its tab's symbol", () => {
+    expect(outcomeOf({ code: 0, signal: null, ended: "exit", ms: 1 })).toBe("done");
+    expect(outcomeOf({ code: 1, signal: null, ended: "exit", ms: 1 })).toBe("failed");
+    expect(outcomeOf({ code: null, signal: null, ended: "killswitch", ms: 1 })).toBe("stopped");
+    expect(outcomeOf({ code: null, signal: null, ended: "lost", ms: 1 })).toBe("failed");
+    expect(outcomeOf(null)).toBe("failed");
+  });
+});
+
+describe("the window's life", () => {
+  it("makes no window until something needs one (commands off: nothing new on screen)", () => {
+    const { windows, ctl } = setup();
+    expect(windows).toHaveLength(0);
+    expect(ctl.cardReady(1)).toBe(false);
+    ctl.hideCard(1);
+    ctl.cancelAnnounce("0123456789abcdef");
+    expect(windows).toHaveLength(0);
+  });
+
+  it("makes a new window after the user closed it, and the new page can pull the state", () => {
+    const { ipc, ctl, windows, page } = setup();
+    ctl.showCard(1, card());
+    windows[0].close();
+    ctl.show();
+    expect(windows).toHaveLength(2);
+    expect(windows[1].calls).toEqual(["show", "moveTop", "focus"]);
+    const snap = ipc.invoke(COMMANDS_IPC.state, page()) as Snapshot;
+    expect(snap.state.card?.n).toBe(1);
+  });
+
+  it("closes the window and stops taking messages once disposed", () => {
+    const { ipc, ctl, win, page, answers } = setup();
+    ctl.showCard(1, card());
+    const contents = page();
+    ctl.dispose();
+    expect(win().destroyed).toBe(true);
+    ipc.send(COMMANDS_IPC.answer, contents, { n: 1, answer: "deny", sha256: SHA });
+    expect(answers).toEqual([]);
+    ctl.showCard(2, card());
+    expect(ctl.cardReady(2)).toBe(false);
+  });
+
+  it("takes the approve chord's guard back while its crashed page is blank, until the page is back and in view (cross-review S2)", () => {
+    const { ipc, ctl, win, page, seen } = setup();
+    ctl.showCard(7, card());
+    seen(7);
+    expect(ctl.cardReady(7)).toBe(true);
+    win().crash();
+    // The window is still up and on top, with nothing on it.
+    expect(win().visible && win().onTop && !win().destroyed).toBe(true);
+    expect(ctl.cardReady(7)).toBe(false);
+    // A report the gone page sent before it went counts for nothing.
+    seen(7);
+    expect(ctl.cardReady(7)).toBe(false);
+    // The page loads again and pulls the state: the card is there, but not in view until the page measures it again.
+    expect((ipc.invoke(COMMANDS_IPC.state, page()) as Snapshot).state.card?.n).toBe(7);
+    expect(ctl.cardReady(7)).toBe(false);
+    // "Seen" stuck for the card through the crash.
+    seen(7, true, false);
+    expect(ctl.cardReady(7)).toBe(true);
+    expect(logs.some(l => l.msg === "commands.page_gone")).toBe(true);
+  });
+
+  it("ends a countdown as not run when the page crashes, and counts down the next only once the page is back (cross-review S2)", async () => {
+    const { ipc, ctl, win, page } = setup();
+    const first = ctl.announce(card(), 4000, new AbortController().signal);
+    const waiting = ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    vi.advanceTimersByTime(1000);
+    win().crash();
+    await expect(first).resolves.toBe(false);
+    await expect(waiting).resolves.toBe(false);
+    // One that comes while the page is blank waits for it, however long that takes, and runs nothing meanwhile.
+    const next = ctl.announce(card({ runId: "00000000000000aa" }), 4000, new AbortController().signal);
+    let settled = false;
+    void next.then(() => { settled = true; });
+    vi.advanceTimersByTime(60_000);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    // The page is back: the countdown starts now, for its whole time.
+    const snap = ipc.invoke(COMMANDS_IPC.state, page()) as Snapshot;
+    expect(snap.state.announce).toMatchObject({ card: { runId: "00000000000000aa" }, endsAt: Date.now() + 4000 });
+    vi.advanceTimersByTime(3999);
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    vi.advanceTimersByTime(1);
+    await expect(next).resolves.toBe(true);
+  });
+
+  it("ends a countdown waiting for the page if it crashes again; a new window counts down as before (cross-review S2)", async () => {
+    const { ctl, windows, win, page } = setup();
+    ctl.show();
+    win().crash();
+    const waiting = ctl.announce(card(), 4000, new AbortController().signal);
+    win().crash();
+    await expect(waiting).resolves.toBe(false);
+    // An old window's page going says nothing about the new window's.
+    const old = windows[0];
+    old.close();
+    const p = ctl.announce(card(), 4000, new AbortController().signal);
+    expect(windows).toHaveLength(2);
+    expect(page().last().announce).toMatchObject({ endsAt: Date.now() + 4000 });
+    old.crash();
+    vi.advanceTimersByTime(4000);
+    await expect(p).resolves.toBe(true);
+  });
+
+  it("tells the flow which countdowns ended because the window couldn't show them to the end, not by the user's Stop (cross-review S2)", async () => {
+    // Its page crashed (the one counting down and the one waiting), the window closed, Ember closed it, or none could be made.
+    const a = setup();
+    const crashed = a.ctl.announce(card(), 4000, new AbortController().signal);
+    const queued = a.ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    a.win().crash();
+    await expect(Promise.all([crashed, queued])).resolves.toEqual([false, false]);
+    expect(a.ctl.announceGone("0123456789abcdef")).toBe(true);
+    expect(a.ctl.announceGone("fedcba9876543210")).toBe(true);
+    // Asked once: the answer is forgotten then.
+    expect(a.ctl.announceGone("0123456789abcdef")).toBe(false);
+    const b = setup();
+    const closed = b.ctl.announce(card(), 4000, new AbortController().signal);
+    b.win().close();
+    await expect(closed).resolves.toBe(false);
+    expect(b.ctl.announceGone("0123456789abcdef")).toBe(true);
+    const c = setup();
+    const disposed = c.ctl.announce(card(), 4000, new AbortController().signal);
+    c.ctl.dispose();
+    await expect(disposed).resolves.toBe(false);
+    expect(c.ctl.announceGone("0123456789abcdef")).toBe(true);
+    const none = createCommandWindowController({ create: () => { throw new Error("no display"); }, ipc: new FakeIpc(), log, os: "linux", keyHint: () => null });
+    await expect(none.announce(card(), 4000, new AbortController().signal)).resolves.toBe(false);
+    expect(none.announceGone("0123456789abcdef")).toBe(true);
+
+    // More waiting than announceGone keeps: the one that was showing is still reported, not dropped as the oldest.
+    const many = setup();
+    const ids = ["0123456789abcdef", ...Array.from({ length: 32 }, (_, i) => (i + 1).toString(16).padStart(16, "0"))];
+    const burst = ids.map(runId => many.ctl.announce(card({ runId }), 4000, new AbortController().signal));
+    many.win().crash();
+    // Asked on this turn, before the cap drops the oldest: the one that was showing is still "couldn't show it".
+    expect(many.ctl.announceGone(ids[0])).toBe(true);
+    expect(many.ctl.announceGone(ids[32])).toBe(true);
+    await expect(Promise.all(burst)).resolves.toEqual(ids.map(() => false));
+
+    // The page's Stop, the bubble's Stop or the stop chord, the task's stop, Stop and close, and a countdown that ran: not gone.
+    const d = setup();
+    const ac = new AbortController();
+    const stops = [
+      d.ctl.announce(card(), 4000, new AbortController().signal),
+      d.ctl.announce(card({ runId: "fedcba9876543210" }), 4000, new AbortController().signal),
+      d.ctl.announce(card({ runId: "00000000000000aa" }), 4000, ac.signal),
+    ];
+    d.ipc.send(COMMANDS_IPC.stop, d.page(), { runId: "0123456789abcdef" });
+    d.ctl.cancelAnnounce("fedcba9876543210");
+    ac.abort();
+    await expect(Promise.all(stops)).resolves.toEqual([false, false, false]);
+    const ran = d.ctl.announce(card({ runId: "00000000000000bb" }), 4000, new AbortController().signal);
+    vi.advanceTimersByTime(4000);
+    await expect(ran).resolves.toBe(true);
+    d.ctl.attach(card({ runId: "00000000000000cc", mode: "run" }), new FakeRun("00000000000000cc"));
+    const closing = d.ctl.announce(card({ runId: "00000000000000dd" }), 4000, new AbortController().signal);
+    d.win().requestClose();
+    d.ipc.send(COMMANDS_EXTRA_IPC.closeWindow, d.page(), { stop: true });
+    await expect(closing).resolves.toBe(false);
+    expect(d.win().destroyed).toBe(true);
+    for (const id of ["0123456789abcdef", "fedcba9876543210", "00000000000000aa", "00000000000000bb", "00000000000000dd"]) {
+      expect(d.ctl.announceGone(id)).toBe(false);
+    }
+  });
+
+  it("has the contract's factory return the same controller", () => {
+    const ipc = new FakeIpc();
+    const port = createCommandWindowPort({ create: () => new FakeWindow(), ipc, log, os: "win32", keyHint: () => null });
+    for (const k of ["showCard", "hideCard", "cardReady", "announce", "cancelAnnounce", "attach", "show", "owns", "dispose"]) {
+      expect(typeof (port as unknown as Record<string, unknown>)[k]).toBe("function");
+    }
+  });
+});
+
+describe("the command window and a screen reader (review #43)", () => {
+  it("tells the page whether a screen reader is running, so the terminal's output is read to it", () => {
+    let on = false;
+    const { ctl, page } = setup({ screenReader: () => on });
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(page().last().screenReader).toBe(false);
+    on = true;
+    ctl.note("0123456789abcdef", "Starting Ubuntu…");
+    expect(page().last().screenReader).toBe(true);
+  });
+
+  it("says no screen reader when it isn't told, or when asking fails", () => {
+    const a = setup();
+    a.ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(a.page().last().screenReader).toBe(false);
+    const b = setup({ screenReader: () => { throw new Error("no a11y"); } });
+    b.ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(b.page().last().screenReader).toBe(false);
+  });
+});
+
+describe("the keyboard's way to the window from a waiting command's bubble (review #263)", () => {
+  it("is Alt+Tab on Linux and Windows; none on macOS, where Command+Tab doesn't list the panel", () => {
+    expect(setup().ctl.typingRoute()).toBe("Or press Alt+Tab to go there.");
+    for (const [os, want] of [["win32", "Or press Alt+Tab to go there."], ["darwin", null]] as const) {
+      const ctl = createCommandWindowController({ create: () => new FakeWindow(), ipc: new FakeIpc(), log, os, keyHint: () => null });
+      expect(ctl.typingRoute(), os).toBe(want);
+    }
+  });
+});
+
+describe("the announcement's time and keys (reviews #46, #269)", () => {
+  it("gives the countdown more time while a screen reader runs", () => {
+    let on = false;
+    const { ctl } = setup({ screenReader: () => on });
+    expect(ctl.announceMs(4000)).toBe(4000);
+    on = true;
+    expect(ctl.announceMs(4000)).toBe(ANNOUNCE_SCREEN_READER_MS);
+    expect(ANNOUNCE_SCREEN_READER_MS).toBe(15_000);
+    expect(ctl.announceMs(20_000)).toBe(20_000);
+  });
+
+  it("names the stop chord with the countdown", async () => {
+    const { ctl, page } = setup();
+    void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).not.toBeNull();
+    expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+  });
+
+  it("names the stop chord only while Ember holds it, as the bubble and the spoken words do (cross-review X0)", async () => {
+    let key: string | null = null;
+    const { ctl, page } = setup({ stopKey: () => key });
+    void ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(page().last().announce).not.toBeNull();
+    expect(page().last().announceKeys).toBeUndefined();
+    // Held again (the 60 s retry got it back): named at the next state.
+    key = "Ctrl+Alt+X";
+    void ctl.announce(card({ mode: "announce", runId: "fedcba9876543210" }), 4000, new AbortController().signal);
+    expect(page().last().announceKeys).toBe("Or press Ctrl+Alt+X to stop everything.");
+    // A check that fails names none.
+    const failing = setup({ stopKey: () => { throw new Error("x"); } });
+    void failing.ctl.announce(card({ mode: "announce" }), 4000, new AbortController().signal);
+    expect(failing.page().last().announceKeys).toBeUndefined();
+  });
+});
+
+describe("an answer the card's buttons sent that wasn't taken (review #271)", () => {
+  it("brings the card's buttons back: the state says so with a new retry count", () => {
+    const ipc = new FakeIpc();
+    const windows: FakeWindow[] = [];
+    const ctl = createCommandWindowController({ create: () => { const w = new FakeWindow(); windows.push(w); return w; }, ipc, log, os: "linux", keyHint: () => null });
+    let take = false;
+    ctl.onAnswer(() => take);
+    ctl.showCard(1, card());
+    const page = () => windows[0].webContents;
+    ipc.send(COMMANDS_IPC.cardSeen, page(), { n: 1, inView: true, seen: true });
+    vi.advanceTimersByTime(1000);
+    expect(page().last().card?.retry ?? 0).toBe(0);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().last().card?.retry).toBe(1);
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "deny", sha256: SHA });
+    expect(page().last().card?.retry).toBe(2);
+    take = true;
+    const pushes = page().states().length;
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().states().length).toBe(pushes);
+  });
+
+  it("brings them back after an Allow that came too early too", () => {
+    const { ipc, ctl, page } = setup();
+    ctl.showCard(1, card());
+    ipc.send(COMMANDS_IPC.answer, page(), { n: 1, answer: "once", sha256: SHA });
+    expect(page().last().card?.retry).toBe(1);
+  });
+});
+
+describe("a run the remote's own check sent back for the user's OK (review #274)", () => {
+  it("says it didn't run and waits for the OK, then gives way to the run the user allowed", async () => {
+    const { ctl, page } = setup();
+    const first = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), first);
+    first.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true, error: "build-01's own check wants the user's yes first" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs).toHaveLength(1);
+    expect(page().last().tabs[0]).toMatchObject({ outcome: "stopped", status: "Not run: build-01's own check asks for your OK first." });
+    // The retry: a new run of the same command for the same task takes its place.
+    ctl.attach(card({ runId: "fedcba9876543210" }), new FakeRun("fedcba9876543210"));
+    expect(page().last().tabs.map(t => t.runId)).toEqual(["fedcba9876543210"]);
+  });
+
+  it("says the run didn't happen once no OK is coming: a no, a stopped task, or the remote refusing the retry too", async () => {
+    const { ctl, page } = setup();
+    const ask = async (runId: string, command: string) => {
+      const run = new FakeRun(runId);
+      ctl.attach(card({ runId, command }), run);
+      run.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true, error: "needs a yes" });
+      await vi.advanceTimersByTimeAsync(0);
+      return () => page().last().tabs.find(t => t.runId === runId);
+    };
+    // Not now, or the question left to expire.
+    const no = await ask("1111111111111111", "rm -r a");
+    ctl.reaskEnded("1111111111111111", "no");
+    expect(no()).toMatchObject({ outcome: "stopped", status: "Not run: you didn't allow it." });
+    // The same command again later is a run of its own: the answered tab stays.
+    ctl.attach(card({ runId: "4444444444444444", command: "rm -r a" }), new FakeRun("4444444444444444"));
+    expect(no()).toBeDefined();
+    const stopped = await ask("2222222222222222", "rm -r b");
+    ctl.reaskEnded("2222222222222222", "stopped");
+    expect(stopped()).toMatchObject({ outcome: "stopped", status: "Not run: the task was stopped." });
+    // The retry the user allowed was sent back again: that is the remote's refusal, said as one.
+    const again = await ask("3333333333333333", "rm -r c");
+    ctl.reaskEnded("3333333333333333", "refused");
+    expect(again()).toMatchObject({ outcome: "failed", status: "build-01 refused it: needs a yes." });
+    // A run that isn't waiting for an OK is left as it is.
+    const pushes = page().states().length;
+    ctl.reaskEnded("4444444444444444", "no");
+    ctl.reaskEnded("ffffffffffffffff", "no");
+    expect(page().states().length).toBe(pushes);
+  });
+
+  it("keeps a refusal that needs no OK, and a waiting tab when another command comes", async () => {
+    const { ctl, page } = setup();
+    const refused = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), refused);
+    refused.finish({ ended: "refused-remote", code: null, ms: 40, error: "its policy turns commands off" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs[0].outcome).toBe("failed");
+    const waiting = new FakeRun("1111111111111111");
+    ctl.attach(card({ runId: "1111111111111111", command: "rm -r dist" }), waiting);
+    waiting.finish({ ended: "refused-remote", code: null, ms: 40, needsConfirm: true });
+    await vi.advanceTimersByTimeAsync(0);
+    ctl.attach(card({ runId: "2222222222222222", command: "ls" }), new FakeRun("2222222222222222"));
+    expect(page().last().tabs.map(t => t.runId)).toEqual(["2222222222222222", "1111111111111111", "0123456789abcdef"]);
+  });
+});
+
+describe("where a command runs, and what kind it is, on the card and the tab (review #275)", () => {
+  it("names the computer on a tab that isn't this computer's", () => {
+    const { ctl, page } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    ctl.attach(card({ runId: "1111111111111111", target: "local", targetLabel: "This computer", login: undefined }), new FakeRun("1111111111111111"));
+    ctl.attach(card({ runId: "2222222222222222", target: "wsl:Ubuntu", targetLabel: "Ubuntu (WSL)", login: undefined }), new FakeRun("2222222222222222"));
+    expect(page().last().tabs.map(t => t.where ?? null)).toEqual(["Ubuntu (WSL)", null, "build-01"]);
+  });
+
+  it("takes a card's danger classes, and refuses a card with ones Ember doesn't know", () => {
+    expect(validCard(card({ classes: ["destroy", "publish"] }))).toBe(true);
+    expect(validCard(card({ classes: ["nuke" as never] }))).toBe(false);
+    expect(validCard({ ...card(), classes: "destroy" })).toBe(false);
+  });
+});
+
+describe("closing the window while a command runs (review #262)", () => {
+  it("keeps the window and asks first; Stop and close stops every running command and closes it", () => {
+    const { ipc, ctl, win, page } = setup();
+    const a = new FakeRun("0123456789abcdef");
+    const b = new FakeRun("1111111111111111");
+    ctl.attach(card(), a);
+    ctl.attach(card({ runId: "1111111111111111", command: "make" }), b);
+    win().requestClose();
+    expect(win().destroyed).toBe(false);
+    expect(win().calls).toContain("close-kept");
+    expect(page().last().closing).toEqual({ running: 2 });
+    expect(win().calls.slice(-3)).toEqual(expect.arrayContaining(["show", "focus"]));
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, page(), { stop: true });
+    expect(a.stops).toEqual(["user"]);
+    expect(b.stops).toEqual(["user"]);
+    expect(win().destroyed).toBe(true);
+  });
+
+  it("Keep it open takes the question away and stops nothing; a second close while it asks stops and closes", () => {
+    const { ipc, ctl, win, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    win().requestClose();
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, page(), { stop: false });
+    expect(page().last().closing ?? null).toBeNull();
+    expect(run.stops).toEqual([]);
+    expect(win().destroyed).toBe(false);
+    win().requestClose();
+    win().requestClose();
+    expect(run.stops).toEqual(["user"]);
+    expect(win().destroyed).toBe(true);
+  });
+
+  it("closes at once when nothing runs, and never holds the window when Ember closes it itself", async () => {
+    const a = setup();
+    const done = new FakeRun("0123456789abcdef");
+    a.ctl.attach(card(), done);
+    done.finish();
+    await vi.advanceTimersByTimeAsync(0);
+    a.win().requestClose();
+    expect(a.win().destroyed).toBe(true);
+    const b = setup();
+    const run = new FakeRun("0123456789abcdef");
+    b.ctl.attach(card(), run);
+    b.ctl.dispose();
+    expect(b.win().destroyed).toBe(true);
+    expect(b.win().guard?.() ?? false).toBe(false);
+  });
+
+  it("takes the answer only from its own page", () => {
+    const { ipc, ctl, win } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    win().requestClose();
+    ipc.send(COMMANDS_EXTRA_IPC.closeWindow, new FakeContents(9999), { stop: true });
+    expect(run.stops).toEqual([]);
+    expect(win().destroyed).toBe(false);
+  });
+});
+
+describe("a command waiting for the user to type (review #263)", () => {
+  it("knows a prompt from ordinary output", () => {
+    for (const t of ["[sudo] password for ana: ", "Username for 'https://github.com': ", "Password:", "Proceed ([y]/n)? ",
+      "Are you sure you want to continue connecting (yes/no/[fingerprint])? ", "Enter passphrase (empty for no passphrase): ", "\x1b[1mPassword:\x1b[0m ", "Overwrite x? [y/N] "]) {
+      expect(awaitsTyping(`some output\n${t}`), t).toBe(true);
+    }
+    for (const t of ["Downloading 45%", "Compiling src/foo.ts", "done.\n", "", "Building...", "line\n\n", "x".repeat(300) + ":"]) expect(awaitsTyping(t), t).toBe(false);
+  });
+
+  it("raises the window on every run, without taking the keyboard", () => {
+    const { ctl, win } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    win().calls.length = 0;
+    ctl.attach(card({ runId: "1111111111111111" }), new FakeRun("1111111111111111"));
+    expect(win().calls).toContain("moveTop");
+    expect(win().calls).not.toContain("focus");
+    expect(win().calls).not.toContain("show");
+  });
+
+  it("says so on the tab, raises and flashes the window, and tells who listens; typing clears it", () => {
+    const { ipc, ctl, win, page } = setup();
+    const heard: [string, boolean][] = [];
+    ctl.onWaiting((runId, waiting) => heard.push([runId, waiting]));
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("Cloning into 'private'...\nUsername for 'https://github.com': ");
+    vi.advanceTimersByTime(WAITING_MS - 100);
+    expect(page().last().tabs[0].waiting ?? false).toBe(false);
+    win().calls.length = 0;
+    vi.advanceTimersByTime(200);
+    expect(page().last().tabs[0]).toMatchObject({ waiting: true, status: "Waiting for you to type in this window." });
+    expect(win().calls).toEqual(expect.arrayContaining(["moveTop", "flash:true"]));
+    expect(heard).toEqual([["0123456789abcdef", true]]);
+    ipc.send(COMMANDS_IPC.input, page(), { runId: run.runId, data: "ana\r" });
+    expect(page().last().tabs[0].waiting ?? false).toBe(false);
+    expect(page().last().tabs[0].status).toBe("Running…");
+    expect(win().calls).toContain("flash:false");
+    expect(heard).toEqual([["0123456789abcdef", true], ["0123456789abcdef", false]]);
+  });
+
+  it("doesn't wait on a run that can't take typing, or on output that isn't a prompt", () => {
+    const { ctl, page } = setup();
+    const piped = new FakeRun("0123456789abcdef", false);
+    ctl.attach(card(), piped);
+    piped.emit("Password: ");
+    const busy = new FakeRun("1111111111111111");
+    ctl.attach(card({ runId: "1111111111111111" }), busy);
+    busy.emit("Downloading 45%");
+    vi.advanceTimersByTime(WAITING_MS * 3);
+    expect(page().last().tabs.map(t => t.waiting ?? false)).toEqual([false, false]);
+  });
+
+  it("says a run that hit its time limit while waiting was waiting for the user", async () => {
+    const { ctl, page } = setup();
+    const run = new FakeRun("0123456789abcdef");
+    ctl.attach(card(), run);
+    run.emit("Password: ");
+    vi.advanceTimersByTime(WAITING_MS + 10);
+    run.finish({ ended: "timeout", code: null, ms: 120_000 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page().last().tabs[0].status).toBe("Stopped after 2\u00a0min: it was waiting for you to type, and took too long.");
+  });
+});
+
+describe("where the window comes up (review #272)", () => {
+  it("moves a window whose centre is off the user's display to the middle of it, shrunk to fit; leaves one already there", () => {
+    const area = { x: 1920, y: 0, width: 1600, height: 900 };
+    expect(placeOnDisplay({ x: 580, y: 300, width: 760, height: 480 }, area)).toEqual({ x: 2340, y: 210, width: 760, height: 480 });
+    expect(placeOnDisplay({ x: 2000, y: 100, width: 760, height: 480 }, area)).toBeNull();
+    expect(placeOnDisplay({ x: -3000, y: 0, width: 2000, height: 1200 }, { x: 0, y: 0, width: 1280, height: 720 })).toEqual({ x: 0, y: 0, width: 1280, height: 720 });
+    // Negative coordinates are real displays (left of the primary on Windows and macOS).
+    expect(placeOnDisplay({ x: 100, y: 100, width: 760, height: 480 }, { x: -1600, y: -200, width: 1600, height: 900 })).toEqual({ x: -1180, y: 10, width: 760, height: 480 });
+  });
+
+  it("brings a card to the user's display and every workspace, and lets go of the workspaces when it goes", () => {
+    const { ctl, win } = setup();
+    ctl.showCard(1, card());
+    expect(win().calls).toEqual(expect.arrayContaining(["place", "workspaces:true"]));
+    win().calls.length = 0;
+    ctl.hideCard(1);
+    expect(win().calls).toContain("workspaces:false");
+  });
+
+  it("places a window that was hidden when a run shows, without putting it on every workspace", () => {
+    const { ctl, win } = setup();
+    ctl.attach(card(), new FakeRun("0123456789abcdef"));
+    expect(win().calls).toContain("place");
+    expect(win().calls).not.toContain("workspaces:true");
+  });
+});

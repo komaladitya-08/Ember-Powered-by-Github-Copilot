@@ -1,8 +1,11 @@
 /**
- * Accessibility windows on the X11 screen: which top-level window an AT-SPI
+ * Accessibility windows on screen: which top-level window an accessibility
  * frame is, how many physical pixels one of its reported pixels is (HiDPI
- * apps report logical pixels: GDK_SCALE=2 halves every coordinate), and
- * which windows stacked above it hide parts of it.
+ * apps on X11 report logical pixels: GDK_SCALE=2 halves every coordinate), and
+ * which windows stacked above it hide parts of it. Pure geometry over the window
+ * system's stack (X11, or the Windows and macOS backends with the same shape, whose
+ * accessibility helpers report the stack's own units, so the scale found there is 1);
+ * coordinates may be negative off Linux.
  */
 
 import { scaleBounds, type AxNode, type AxWindow, type Bounds, type ShellOverlay } from "./sidecar";
@@ -109,6 +112,27 @@ export function coveringRects(stack: StackedWindow[], index: number, rect: Bound
     if (r) out.push(r);
   }
   return out;
+}
+
+/**
+ * The target app's own popups (processes in `same`; menus, lists, tooltips, a completion or autofill panel) stacked
+ * above `index` over `rect`: coveringRects leaves them in the window's picture, so what they show is checked for
+ * secret fields too (Perception.popupMasks). Never Ember's own (process `own`).
+ */
+export function samePopups(stack: StackedWindow[], index: number, rect: Bounds, same: (number | null | undefined)[], own?: number): StackedWindow[] {
+  return stack.slice(index + 1).filter(s => s.overrideRedirect && s.pid != null && s.pid !== own && same.includes(s.pid) && !!intersect(s, rect));
+}
+
+/**
+ * Is accessibility window `w` (as its app reports it, `k` physical pixels per pixel) the popup `p` of the stack: the
+ * same process, place and size, within a few pixels of rounding?
+ */
+export function isPopupOf(w: Pick<AxWindow, "pid" | "bounds">, p: StackedWindow, k: number): boolean {
+  if (w.pid == null || w.pid !== p.pid || !w.bounds) return false;
+  return [1, k].some(s => {
+    const b = scaleBounds(w.bounds!, s), slack = 4 + 2 * s;
+    return Math.abs(b.x - p.x) <= slack && Math.abs(b.y - p.y) <= slack && Math.abs(b.width - p.width) <= slack && Math.abs(b.height - p.height) <= slack;
+  });
 }
 
 /**

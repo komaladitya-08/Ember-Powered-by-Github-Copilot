@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-written: what plist writers other than Apple's emit, and XML's corners. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd" [
+  <!ENTITY unused "never read">
+]>
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Fish &amp; Chips &lt;Deluxe&gt; &quot;Pro&quot; &apos;24 &#169; &#x2713;</string>
+  <key>CData</key>
+  <string><![CDATA[a <b> & c]]> and more</string>
+  <!-- a comment between a key and its value's neighbour -->
+  <key>Negative</key>
+  <integer>-42</integer>
+  <key>Hex</key>
+  <integer>0x1F</integer>
+  <key>Real</key>
+  <real>2.5</real>
+  <key>Empty</key>
+  <string/>
+  <key>EmptyTagPair</key>
+  <string></string>
+  <key>EmptyArray</key>
+  <array/>
+  <key>EmptyDict</key>
+  <dict/>
+  <key>Date</key>
+  <date>2024-05-06T07:08:09Z</date>
+  <key>Data</key>
+  <data>
+    AAEC
+    /v8=
+  </data>
+  <key>__proto__</key>
+  <string>stays a key</string>
+  <key>Nested</key>
+  <array>
+    <true/>
+    <false/>
+    <dict>
+      <key>Deep</key>
+      <array><integer>1</integer><integer>2</integer></array>
+    </dict>
+  </array>
+</dict>
+</plist>

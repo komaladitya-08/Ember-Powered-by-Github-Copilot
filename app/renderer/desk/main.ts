@@ -2,12 +2,14 @@
 
 import type { DeskViewApi } from "../../shared/desk";
 import { wheelSteps, type WheelState } from "./wheel";
+import { modeNews, screenName } from "./a11y";
 
 declare global { interface Window { emberDesk: DeskViewApi } }
 
 const api = window.emberDesk;
 const img = document.getElementById("screen") as HTMLImageElement;
 const control = document.getElementById("control") as HTMLButtonElement;
+const live = document.getElementById("live")!;
 let deskSize = { width: 1280, height: 800 };
 let inControl = false;
 /** Mouse buttons pressed on the desk picture (MouseEvent.button). */
@@ -21,11 +23,19 @@ api.onFrame(f => {
   document.getElementById("title")!.textContent = f.title;
 });
 api.onMode(m => {
+  const was = inControl;
   inControl = m.control;
   if (!m.control) pressed.clear();
   document.body.classList.toggle("control", m.control);
   control.textContent = m.control ? "Hand back" : "Take over";
+  // Taken over, the picture has every key: its name says so and how to hand back, and so does a live announcement.
+  // Otherwise it takes no keys, so it is no stop for Tab.
+  img.alt = screenName(m.control);
+  img.tabIndex = m.control ? 0 : -1;
+  const news = modeNews(m.control, was);
+  if (news) live.textContent = news;
   if (m.control) img.focus();
+  else if (document.activeElement === img) control.focus();
 });
 control.addEventListener("click", () => (inControl ? api.handBack() : api.takeOver()));
 document.getElementById("hide")!.addEventListener("click", () => api.hide());
@@ -42,7 +52,7 @@ function toDesk(e: MouseEvent): { x: number; y: number } {
 /** Losing the keyboard (or being hidden) with keys or buttons down would leave them down on the desk. */
 const letGo = () => { pressed.clear(); if (inControl) api.release(); };
 
-img.tabIndex = 0;
+img.tabIndex = -1;
 img.addEventListener("mousemove", e => { if (inControl) api.input({ type: "move", ...toDesk(e) }); });
 img.addEventListener("mousedown", e => {
   if (!inControl) return;

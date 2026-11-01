@@ -8,18 +8,19 @@
   <link rel="stylesheet" href="../shared/ember.css">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="loading">
   <main class="home">
     <header class="hero">
       <canvas id="buddy" width="132" height="132" aria-label="Your Ember character"></canvas>
       <div class="hero-text">
         <h1>Ember</h1>
         <p id="tagline" role="status">Starting…</p>
+        <p class="sr" id="home-live" role="status"></p>
       </div>
     </header>
 
     <nav class="jump after-setup" id="jump" aria-label="Settings sections">
-      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Privacy</a><a href="#access-h">Comfort</a><a href="#activity-h">Activity</a><a href="#checks-h">Setup</a><a href="#about-h">About</a>
+      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
     </nav>
 
     <p id="managed" class="managed" hidden></p>
@@ -28,11 +29,12 @@
     <section id="welcome" class="welcome" aria-labelledby="welcome-h" hidden>
       <h2 id="welcome-h">Before Ember starts</h2>
       <ul class="terms">
-        <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. Windows on your never-look list and password prompts are never read.</li>
+        <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already. <span id="permissions-note" hidden></span></li>
         <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
-        <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</li>
-        <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every action it took (kept <span id="retention">30</span> days) in <code>~/.config/ember</code>. What you ask and what Ember answers is kept only while it runs. It sends no usage statistics.</li>
-        <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” below.</li>
+        <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span data-key-held="stop"><span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</span><span data-key-taken="stop" hidden>Stop everything, in Ember's handle menu and in settings, stops everything at once.</span></li>
+        <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (<span id="retention">kept 30 days</span>), in <code id="data-dir">~/.config/ember</code>. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.</li>
+        <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.</li>
+        <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
       </ul>
     </section>
 
@@ -41,17 +43,14 @@
       <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
       <div class="group">
         <div class="pick-row">
-          <label for="size">Size <output id="size-out" for="size">60 px</output></label>
+          <label for="size">Size <span id="size-out" class="size-out" aria-hidden="true">60 px</span></label>
           <input type="range" id="size" min="36" max="110" step="2" value="60" aria-valuetext="60 pixels">
         </div>
         <label class="switch-row login-row after-setup"><input type="checkbox" id="login" role="switch"><span>Start Ember when I log in</span></label>
       </div>
-      <div class="start-row" id="start-row" hidden>
-        <label class="switch-row" id="agree-row"><input type="checkbox" id="agree"><span>I've read how Ember works and I agree</span></label>
-        <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
-        <p class="hint" id="start-hint">Agree first, then start.</p>
-      </div>
-      <p class="hint after-setup">Press <span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the bottom-right corner.</p>
+      <p class="hint after-setup" id="settings-taken" data-key-taken="settings" hidden>Open Ember again from your apps any time to come back here, or click Ember's handle.</p>
+      <p class="hint after-setup" id="autostart-note" hidden></p>
+      <p class="hint after-setup">Press <span class="chord" data-shortcut="settings"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the <span id="handle-corner">bottom-right corner</span>.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="copilot-h">
@@ -68,18 +67,19 @@
         <div class="models" id="models" hidden>
           <label for="m-conductor">Conversation model</label>
           <select id="m-conductor"></select>
-          <label for="m-worker">Model for tasks (needs vision)</label>
+          <label for="m-worker">Model for tasks (must understand images)</label>
           <select id="m-worker"></select>
           <p class="hint models-hint">A new choice applies from your next message; tasks already running keep theirs.</p>
         </div>
         <p class="usage" id="usage"></p>
       </div>
-      <p class="hint">Ask Ember anything with <span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
+      <p class="hint" data-key-held="ask">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
+      <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember…, under Comfort &amp; access, or from Ember's handle.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="conversation-h">
       <h2 id="conversation-h" tabindex="-1">Conversation</h2>
-      <ol class="conversation" id="conversation" aria-labelledby="conversation-h"></ol>
+      <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="Nothing yet. Press Ctrl+Alt+Space and ask Ember something."></ol>
       <p class="hint">Kept only while Ember runs: closing Ember forgets it. Signing out forgets it too.</p>
     </section>
 
@@ -87,16 +87,20 @@
       <h2 id="voice-h" tabindex="-1">Voice</h2>
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
-        <div id="consent" class="consent" hidden>
-          <p>Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only). GNOME shows a microphone icon while Ember listens. <span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</p>
-          <div class="agent-actions"><button type="button" id="consent-yes" class="btn">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
+        <div id="consent" class="consent" role="group" aria-label="Before Ember listens" hidden>
+          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
+          <div class="agent-actions"><button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
         <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
         <p class="sr" id="voice-live" role="status"></p>
-        <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button></div>
+        <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
-        <label class="switch-row"><input type="checkbox" id="speak" role="switch"><span>Speak replies, questions and results out loud</span></label>
+        <div class="choice">
+          <label for="speak">Speak replies, questions and results out loud</label>
+          <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
+        </div>
       </div>
+      <p class="hint" id="speak-note" role="status" hidden></p>
       <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
     </section>
 
@@ -119,6 +123,38 @@
       </div>
     </section>
 
+    <section class="after-setup" id="computers" aria-labelledby="computers-h" hidden>
+      <h2 id="computers-h" tabindex="-1">Computers</h2>
+      <div class="stack">
+        <p class="intro" id="computers-intro">Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.</p>
+        <div class="group" id="wsl-switch">
+          <label class="switch-row" id="wsl-row" hidden><input type="checkbox" id="wsl-on" role="switch"><span>Let Ember work in WSL</span></label>
+        </div>
+        <ul class="plain-list targets" id="computers-list" aria-labelledby="computers-h"></ul>
+        <div class="group" id="computers-switches">
+          <label class="switch-row" id="offer-row" hidden><input type="checkbox" id="offer-ssh" role="switch"><span>Offer to bring Ember along when I connect with SSH</span></label>
+        </div>
+        <form class="add-row" id="host-form" autocomplete="off" hidden>
+          <label for="host-add" class="sr">SSH host</label>
+          <input id="host-add" type="text" maxlength="255" spellcheck="false" placeholder="Host name or user@host" aria-describedby="computers-msg">
+          <button type="submit" class="btn quiet">Connect</button>
+        </form>
+        <p class="hint" id="computers-managed" hidden></p>
+        <p class="hint" id="computers-msg" role="status"></p>
+      </div>
+    </section>
+
+    <section class="after-setup" id="commands" aria-labelledby="commands-h" hidden>
+      <h2 id="commands-h" tabindex="-1">Commands</h2>
+      <div class="stack">
+        <p class="intro">Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.</p>
+        <div class="group" id="commands-list"></div>
+        <p class="hint" id="commands-managed" hidden></p>
+        <p class="hint"><button type="button" id="open-commands" class="link">Open the command window</button></p>
+        <p class="hint" id="commands-msg" role="status"></p>
+      </div>
+    </section>
+
     <section class="after-setup" aria-labelledby="access-h">
       <h2 id="access-h" tabindex="-1">Comfort &amp; access</h2>
       <div class="stack">
@@ -126,16 +162,33 @@
         <div class="group">
           <p class="presence-line" id="presence-text" role="status"></p>
           <div class="agent-actions" id="presence-actions">
+            <button type="button" id="p-ask" class="btn quiet">Ask Ember…</button>
+            <button type="button" id="p-stop" class="btn quiet">Stop everything</button>
             <button type="button" id="p-hide" class="btn quiet">Hide Ember</button>
             <button type="button" id="p-follow" class="btn quiet">Stay put</button>
             <button type="button" id="p-quit" class="btn quiet">Quit Ember</button>
           </div>
+          <label class="switch-row"><span>Handle position</span><select id="handle-position">
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+          </select></label>
         </div>
+        <p class="hint">Ember's handle and its task cards sit in this corner of your main screen. “Move to the other side” in the handle's menu switches it too.</p>
+        <h3 class="sub">Text</h3>
+        <div class="group">
+          <label class="switch-row"><span>Text size</span><select id="text-size">
+            <option value="default">Default</option>
+            <option value="large">Large</option>
+            <option value="larger">Larger</option>
+          </select></label>
+        </div>
+        <p class="hint">Changes the text in this window, Ember's bubble, task cards and handle, the ask box, the desk window's bar on Linux, the command window, and Ember's password and consent cards.</p>
         <h3 class="sub">Motion and keys</h3>
         <div class="group">
           <label class="switch-row"><input type="checkbox" id="reduce-motion" role="switch"><span>Calm mode: no hops, bounces or fidgets</span></label>
+          <label class="switch-row"><input type="checkbox" id="more-time" role="switch"><span>More time to read and answer: messages stay ten times as long, and questions wait 20 minutes</span></label>
         </div>
-        <p class="hint">When Ember asks “May I?”, press <span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results.</p>
+        <p class="hint"><span data-question-keys="both">When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; you don't need the mouse.</span><span data-question-keys="allow" hidden>When Ember asks “May I?”, press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow; another app has the key for Not now, so answer that in its bubble.</span><span data-question-keys="deny" hidden>When Ember asks “May I?”, press <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now; another app has the key for Allow, so answer that in its bubble.</span><span data-question-keys="none" hidden>When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.</span> With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.</p>
       </div>
     </section>
 
@@ -143,7 +196,7 @@
       <details class="fold" id="activity-fold" aria-labelledby="activity-h">
         <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
         <ol class="activity" id="activity"></ol>
-        <p class="hint">Every decision and action is also in <code>~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
+        <p class="hint">Every decision and action is also in <code id="audit-dir">~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
       </details>
     </section>
 
@@ -151,6 +204,7 @@
       <details class="fold" id="checks-fold" aria-labelledby="checks-h">
         <summary><h2 id="checks-h">Setup check</h2><span class="fold-note" id="checks-note"></span></summary>
         <ul class="checks" id="checks"></ul>
+        <p class="sr" id="checks-msg" role="status"></p>
       </details>
     </section>
 
@@ -160,6 +214,12 @@
         <dl class="facts" id="facts"></dl>
       </details>
     </section>
+
+    <div class="start-row" id="start-row" hidden>
+      <label class="switch-row" id="agree-row"><input type="checkbox" id="agree"><span>I've read how Ember works and I agree</span></label>
+      <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
+      <p class="hint" id="start-hint">Agree first, then start.</p>
+    </div>
   </main>
   <script src="main.js"></script>
 </body>

@@ -13,6 +13,7 @@
   "scripts": {
     "build": "node scripts/build-app.mjs",
     "dev": "node scripts/build-app.mjs && electron .",
+    "dev:mac": "node scripts/build-app.mjs && open -n -W node_modules/electron/dist/Electron.app --args \"$PWD\"",
     "start": "electron .",
     "build:lab": "node scripts/build-demo.mjs character-lab",
     "typecheck": "tsc --noEmit",
@@ -21,10 +22,12 @@
     "test:smoke": "node test/smoke/launch.mjs",
     "check:symvers": "scripts/check-symvers.sh node_modules",
     "rebuild:el8": "scripts/rebuild-el8.sh",
-    "test:integration": "EMBER_INTEGRATION=1 vitest run",
+    "test:integration": "node scripts/run-integration.mjs",
     "test:sidecar": "python3 -B sidecar/atspi/test_ember_atspi.py",
-    "package": "npm run build && node scripts/package/stage.mjs && scripts/package/rpm.sh && scripts/package/appimage.sh",
-    "package:rpm": "npm run build && node scripts/package/stage.mjs && scripts/package/rpm.sh",
+    "package": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && scripts/package/rpm.sh && scripts/package/appimage.sh",
+    "package:rpm": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && scripts/package/rpm.sh",
+    "package:win": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
+    "package:mac": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "doctor": "node scripts/build-app.mjs && electron . --doctor",
     "eval": "node eval/run.mjs"
   },
@@ -33,23 +36,30 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "1.0.21",
+    "@xterm/xterm": "5.5.0",
     "koffi": "3.2.1",
     "sharp": "0.35.5",
     "sherpa-onnx": "1.13.8",
-    "zod": "4.3.6"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
     "@eslint/js": "10.0.1",
     "@types/node": "24.19.0",
-    "electron": "44.5.0",
+    "electron": "44.9.3",
     "esbuild": "0.28.2",
     "eslint": "10.11.0",
     "globals": "17.12.0",
     "playwright-core": "1.56.1",
+    "resedit": "3.1.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.71.0",
-    "vitest": "5.0.2"
+    "vitest": "5.0.5"
+  },
+  "overrides": {
+    "@github/copilot-sdk": {
+      "zod": "$zod"
+    }
   },
   "packageManager": "npm@11.6.2"
 }

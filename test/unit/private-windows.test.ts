@@ -35,8 +35,9 @@ describe("private windows", () => {
   });
 });
 
-// The sidecar's window choice, with a stand-in pyatspi (runs without a desktop).
-const python = ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0);
+// The sidecar's window choice, with a stand-in pyatspi (runs without a desktop). Linux only, as the AT-SPI sidecar is:
+// elsewhere a bare python3 may be a stand-in (Windows's Store alias, macOS's prompt to install the developer tools).
+const python = process.platform === "linux" ? ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0) : undefined;
 describe.skipIf(!python)("sidecar find_window", () => {
   const run = (params: object) => {
     const script = `

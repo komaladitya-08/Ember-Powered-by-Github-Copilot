@@ -10,10 +10,13 @@
 
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
-import type { OverlayApi, OverlayFrame, OverlayInit, EmberState, Rect, TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { foldCount, foldedLine, stackOrder, underWay } from "./stack";
+import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
+import { shortWhere, whereText } from "../handle/badge";
+import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
+import { handleCorner, type HandleSide } from "../../shared/handle-place";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -31,6 +34,8 @@ const canvas = document.getElementById("stage") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const bubble = new ReasoningBubble(document.getElementById("bubble-host")!);
 bubble.setVisible(false);
+// All of a question's whole text has been in view here (review #116): main lets its Allow work from then on.
+bubble.onWholeSeen = n => api.bubbleAction(wholeSeenAction(n));
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
@@ -42,6 +47,10 @@ const reducedMotionQuery = matchMedia("(prefers-reduced-motion: reduce)");
 let character: Character = characters.cinder;
 let settings: Settings | null = null;
 let bounds: Rect = { x: 0, y: 0, width: window.innerWidth, height: window.innerHeight };
+/** This overlay's display. */
+let displayId = -1;
+/** This display's work area (global DIP; the taskbar or Dock is outside it), when main says. */
+let workArea: Rect | null = null;
 let viewport = { width: window.innerWidth, height: window.innerHeight };
 let frame: OverlayFrame | null = null;
 /** `avoid`: windows the bubble should keep off (global DIP), when main sends them. */
@@ -79,25 +88,35 @@ function applyReducedMotion(): void {
   // Calm mode also stills the CSS pulses (the bubble's dot, the status dot, the focus glow).
   document.documentElement.classList.toggle("calm", settings?.reduceMotion === true);
 }
-reducedMotionQuery.addEventListener("change", applyReducedMotion);
+reducedMotionQuery.addEventListener("change", () => {
+  applyReducedMotion();
+  // Ember's follow spring is in the main process, which read the preference once: it is told of the change.
+  api.setReducedMotion?.(reducedMotionQuery.matches);
+});
 
 function applySettings(s: Settings): void {
   settings = s;
   character = characters[s.character] ?? characters.cinder;
   bubble.setSpeaker("Ember");
   applyReducedMotion();
+  // Handle position changed while the handle is on another display (else its pill says the side): the cards follow.
+  if (homeSide() !== placedSide) placeTasks();
   requestDraw();
 }
 
 api.onInit((i: OverlayInit) => {
   bounds = i.bounds;
+  displayId = i.displayId;
+  workArea = i.workArea ?? null;
   // The handle's place, when the main process says (`handle`, global DIP; null = on another display).
-  // Otherwise it is where it always is: the bottom-right corner, 200×56, 12 px in.
+  // Otherwise it is where Handle position puts it: the bottom-right (or bottom-left) corner, 200×56, 12 px in.
   const given = (i as OverlayInit & { handle?: Rect | null }).handle;
+  const pill = { width: 200, height: 56 };
   handleRect = given === undefined
-    ? { x: i.bounds.width - 212, y: i.bounds.height - 68, width: 200, height: 56 }
+    ? { ...handleCorner(i.settings?.handlePosition, pill, { x: 0, y: 0, width: i.bounds.width, height: i.bounds.height }), ...pill }
     : given && { x: given.x - i.bounds.x, y: given.y - i.bounds.y, width: given.width, height: given.height };
   placeTasks();
+  placeStatus();
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
@@ -124,13 +143,16 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   if (s.talking || s.bubble.visible) rig.wake();
   const b = s.bubble;
   bubble.setMood(b.mood);
+  showWhere(b.where, b.title);
   bubble.setTitle(b.title);
   // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
   bubble.setThought(b.streaming ? plainStream(b.thought) : b.thought);
   bubble.setStreaming(b.streaming);
   bubble.setStep(b.step);
   bubble.setExpanded(b.expanded === true);
-  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, onClick: () => api.bubbleAction(a.id) })) : null);
+  // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
+  bubble.setWhole(b.whole ?? null);
+  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => api.bubbleAction(a.id) })) : null);
   const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;
   if (f) {
@@ -148,11 +170,50 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   } else if (statusText.textContent && !statusClear) {
     statusClear = setTimeout(() => { statusClear = null; if (statusEl.hidden) statusText.textContent = ""; }, 250);
   }
-  // Cards sit at a fixed place, so their buttons are measured only when the cards change.
-  if (renderTasks(s.tasks)) measureTasks();
-  else if (keepOffKey(s) !== avoidKey) measureTasks();
+  placeStatus();
+  // Cards sit at a fixed place, so their buttons are measured only when the cards change (or change corner).
+  const changed = renderTasks(s.tasks);
+  if (!cornerTasks() && (changed || keepOffKey(s) !== avoidKey)) measureTasks();
   requestDraw();
 });
+
+/**
+ * The status pill keeps off the control Ember works on: at the top, or at the bottom (above the taskbar or Dock)
+ * while the control's ring is under it at the top (an address bar, a ribbon's tabs).
+ */
+let statusAt = "";
+function placeStatus(): void {
+  if (statusEl.hidden) return;
+  const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  // Measured only when something it depends on changed (a streaming answer sends many states).
+  const key = JSON.stringify([statusEl.textContent, f, viewport, bounds, workArea, handleRect]);
+  if (key === statusAt) return;
+  statusAt = key;
+  const bottom = pillBottom(bounds, workArea, handleRect);
+  const low = !!f && pillSpot({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height },
+    { width: statusEl.offsetWidth, height: statusEl.offsetHeight }, viewport, bottom) === "bottom";
+  statusEl.classList.toggle("low", low);
+  statusEl.style.bottom = low ? `${bottom}px` : "";
+}
+
+// ── Where a task acts (§2.4): a badge before the bubble's title, "on build-01"; nothing for this computer ──
+const bubbleHead = document.querySelector<HTMLElement>("#bubble-host .eb-head");
+const whereBadge = Object.assign(document.createElement("span"), { className: "where", hidden: true });
+let whereShown = "";
+/** Puts (or takes away) the badge before the title; when only it changed, the bubble is told its size changed. */
+function showWhere(where: string | undefined, title: string): void {
+  // Screen readers hear it whole too (the badge alone is only for the eye, shortened from the middle when long).
+  bubble.setWhere(whereText(where) ?? undefined);
+  const w = shortWhere(where) ?? "";
+  if (w === whereShown || !bubbleHead) return;
+  whereShown = w;
+  whereBadge.textContent = w;
+  whereBadge.hidden = !w;
+  if (!whereBadge.isConnected) bubbleHead.insertBefore(whereBadge, bubbleHead.querySelector(".eb-title"));
+  // The bubble re-measures on a change it makes itself: setting the title anew marks it changed.
+  bubble.setTitle("");
+  bubble.setTitle(title);
+}
 
 // ── Task cards: stacked just above the handle; kept (not rebuilt) across updates, so a click is never lost to a re-render ──
 // Tasks under way sit nearest the handle; when the stack would run off the top of the screen, the oldest ended
@@ -166,17 +227,54 @@ let tasksRoom = Infinity;
 
 /** The handle's pill is drawn this far inside its window (.handle's inset in handle/styles.css). */
 const PILL_INSET = 4;
+/** The cards are in the other bottom corner from the handle's: the ring round the control Ember works on was under them in their own. */
+let cardsAway = false;
+/** The handle's side the cards were last placed for (Handle position: bottom right or bottom left). */
+let placedSide: HandleSide = "right";
+/** The handle's side in this overlay: where its pill is, or Handle position while it is on another display. */
+const homeSide = (): HandleSide => handleSide(handleRect, viewport.width, settings?.handlePosition);
 
 function placeTasks(): void {
-  const h = handleRect;
-  // Lined up with the pill as it shows (its right edge, a card's gap above it), not with its window.
-  const bottom = h ? Math.max(8, viewport.height - (h.y + PILL_INSET) + CARD_GAP) : 80;
-  tasksEl.style.right = `${h ? Math.max(8, viewport.width - (h.x + h.width - PILL_INSET)) : 12}px`;
+  const home = homeSide();
+  // The handle went to the other side: its cards start in its corner again.
+  if (home !== placedSide) { placedSide = home; cardsAway = false; }
+  const side: HandleSide = cardsAway ? (home === "left" ? "right" : "left") : home;
+  // Lined up with the pill as it shows (its outer edge, a card's gap above it), not with its window.
+  const { inset, bottom } = stackPlace(handleRect, viewport, PILL_INSET, CARD_GAP);
+  tasksEl.classList.toggle("left", side === "left");
+  tasksEl.style.right = side === "left" ? "auto" : `${inset}px`;
+  tasksEl.style.left = side === "left" ? `${inset}px` : "auto";
   tasksEl.style.bottom = `${bottom}px`;
   tasksRoom = Math.max(80, viewport.height - bottom - TOP_ROOM);
   tasksEl.style.maxHeight = `${tasksRoom}px`;
   fitTasks();
   measureTasks();
+}
+
+/**
+ * The cards make way for the control Ember works on (a chat button or a wizard's Next in the handle's corner): while
+ * its ring is under them, they go to the other bottom corner, so the user sees what Ember clicks or asks about.
+ * True when they moved (and were measured where they are now).
+ */
+let cornerAt = "";
+function cornerTasks(): boolean {
+  const f = state?.focus && state.focus.width > 2 && state.focus.height > 2 ? state.focus : null;
+  const home = homeSide();
+  // Measured only when something it depends on changed (a streaming answer sends many states).
+  const key = JSON.stringify([f, tasksKey, viewport, handleRect, home]);
+  if (key === cornerAt) return false;
+  cornerAt = key;
+  let away = false;
+  if (f && tasksEl.children.length) {
+    const r = tasksEl.getBoundingClientRect();
+    // Where the stack is in its own corner (it may be in the other one now: the same distance in, mirrored).
+    const own = { x: cardsAway ? viewport.width - r.x - r.width : r.x, y: r.y, width: r.width, height: r.height };
+    away = cardsCorner({ x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height }, own, viewport.width, home) !== home;
+  }
+  if (away === cardsAway) return false;
+  cardsAway = away;
+  placeTasks();
+  return true;
 }
 
 let lastCards = "null";
@@ -212,9 +310,8 @@ function measureTasks(): void {
   reportInteractive();
 }
 
-interface CardEls { li: HTMLLIElement; state: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number }
-/** A card's state in words, for screen readers (its symbol says it to the eye). */
-const STATE_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
+/** `said`: the detail Ember last sent; `stopAt`: when its Stop was pressed (0: not pressed, or it works again). */
+interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number }
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
 const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();
@@ -276,10 +373,100 @@ function fitTasks(): void {
   if (scrolls && !was) tasksEl.scrollTop = tasksEl.scrollHeight;
 }
 
+/** The card's detail: what Ember last said, or "Stopping…" from the moment its Stop is pressed. */
+function showDetail(c: CardEls): void {
+  const detail = c.stopAt ? TASK_STOPPING : c.said;
+  if (c.detail.textContent !== detail) c.detail.textContent = detail;
+  c.detail.hidden = !detail;
+}
+
+/** A Stop being carried out takes no second press (it says so to screen readers too). */
+function showStopping(c: CardEls): void {
+  c.li.toggleAttribute("data-stopping", c.stopAt > 0);
+  for (const b of c.actions.querySelectorAll<HTMLButtonElement>("button.stop")) {
+    if (c.stopAt) b.setAttribute("aria-disabled", "true"); else b.removeAttribute("aria-disabled");
+  }
+}
+
+/**
+ * Stop was pressed: the card says so at once, before the task has wound down (a press that shows nothing gets
+ * pressed again, or the user reaches for the kill switch). If Ember never says it is stopping, Stop works again.
+ */
+function pressedStop(c: CardEls): void {
+  const at = performance.now();
+  c.stopAt = at;
+  showDetail(c);
+  showStopping(c);
+  setTimeout(() => {
+    if (c.stopAt !== at || stopPending(at, performance.now(), c.said)) return;
+    c.stopAt = 0;
+    showDetail(c);
+    showStopping(c);
+    fitTasks();
+    measureTasks();
+  }, STOP_ACK_MS + 50);
+  // The detail's height may have changed: the buttons are measured where they are now.
+  fitTasks();
+  measureTasks();
+}
+
+// ── Cards that move or go: a card moved in the stack (a task that ended goes to the top) slides there, and one that
+// went fades where it was, so the user sees where the card they were reading went. Not in Calm mode or with the
+// desktop's reduced motion: then they move at once. ──
+
+/** How long a card slides to its new place, and how long one that went takes to fade. */
+const SLIDE_MS = 150;
+const MORE_KEY = "+more";
+
+/** The cards shown now, with the "+N more" line, by id. */
+function shownCards(): Map<string, HTMLLIElement> {
+  const els = new Map<string, HTMLLIElement>();
+  for (const [id, c] of cards) if (c.li.isConnected && !c.li.hidden) els.set(id, c.li);
+  if (more.li.isConnected && !more.li.hidden) els.set(MORE_KEY, more.li);
+  return els;
+}
+
+/** Each shown card's top edge, where it is drawn now (a card still sliding counts where it is on its way). */
+const cardTops = (): Map<string, number> => new Map([...shownCards()].map(([id, li]) => [id, li.getBoundingClientRect().top]));
+
+/** Cards that moved since `before` (their tops then) start where they were and slide into place. */
+function slideCards(before: Map<string, number>): void {
+  const els = shownCards();
+  // A slide still under way ends where it was going: the new place is measured without it.
+  for (const li of els.values()) { li.style.transition = ""; li.style.transform = ""; }
+  const moved = slides(before, cardTops());
+  if (!moved.size) return;
+  for (const [id, dy] of moved) Object.assign(els.get(id)!.style, { transition: "none", transform: `translateY(${dy}px)` });
+  void tasksEl.offsetHeight; // drawn where they were first
+  for (const id of moved.keys()) Object.assign(els.get(id)!.style, { transition: `transform ${SLIDE_MS}ms ease`, transform: "" });
+  // Their buttons are measured again where they come to rest.
+  setTimeout(() => {
+    for (const id of moved.keys()) if (!els.get(id)!.style.transform) els.get(id)!.style.transition = "";
+    measureTasks();
+  }, SLIDE_MS + 30);
+}
+
+/** A card that went fades out where it was: a copy of it, which takes no clicks and is read by no one. */
+function fadeCard(li: HTMLLIElement): void {
+  if (!li.isConnected || li.hidden) return;
+  const r = li.getBoundingClientRect();
+  const ghost = li.cloneNode(true) as HTMLLIElement;
+  ghost.removeAttribute("data-fresh");
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.classList.add("gone");
+  Object.assign(ghost.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, transform: "", transition: `opacity ${SLIDE_MS}ms ease` });
+  document.body.append(ghost);
+  void ghost.offsetWidth; // shown before it fades
+  ghost.style.opacity = "0";
+  setTimeout(() => ghost.remove(), SLIDE_MS + 100);
+}
+
 function renderTasks(tasks: TaskCard[]): boolean {
   const key = JSON.stringify(tasks);
   if (key === tasksKey) return false;
   tasksKey = key;
+  const calm = reducedMotionQuery.matches || settings?.reduceMotion === true;
+  const before = calm ? null : cardTops();
   stacked = stackOrder(tasks);
   const items = stacked.map(t => {
     let c = cards.get(t.id);
@@ -290,24 +477,31 @@ function renderTasks(tasks: TaskCard[]): boolean {
       li.dataset.fresh = "";
       setTimeout(() => { delete li.dataset.fresh; }, 400);
       const state = Object.assign(document.createElement("span"), { className: "sr" });
+      const where = Object.assign(document.createElement("span"), { className: "where", hidden: true });
       const title = document.createElement("b");
-      const detail = document.createElement("span");
+      const detail = Object.assign(document.createElement("span"), { className: "detail" });
       const actions = document.createElement("div");
       actions.className = "task-actions";
       actions.hidden = true;
-      li.append(state, title, detail, actions);
-      c = { li, state, title, detail, actions, actionsKey: "", armedAt: 0 };
+      li.append(state, where, title, detail, actions);
+      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0 };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
     if (c.state.textContent !== STATE_WORD[t.status]) c.state.textContent = STATE_WORD[t.status];
+    const where = whereText(t.where) ?? "";
+    if (c.where.textContent !== where) c.where.textContent = where;
+    c.where.hidden = !where;
     if (c.title.textContent !== t.title) c.title.textContent = t.title;
-    if (c.detail.textContent !== t.detail) c.detail.textContent = t.detail;
-    c.detail.hidden = !t.detail;
+    c.said = t.detail;
+    // A pressed Stop keeps saying so until Ember does (or the task has ended, or the press didn't land).
+    if (c.stopAt && (!underWay(t) || !stopPending(c.stopAt, performance.now(), t.detail))) c.stopAt = 0;
+    showDetail(c);
     const list = t.actions ?? [];
     const actionsKey = JSON.stringify([list, t.title]);
     if (actionsKey !== c.actionsKey) {
       c.actionsKey = actionsKey;
+      c.stopAt = 0;
       // New buttons take no press for a moment: the pointer may be resting where a card just appeared (the ask box
       // closed over it), and a Stop there must be a deliberate click.
       c.armedAt = performance.now() + TASK_ARM_MS;
@@ -318,19 +512,27 @@ function renderTasks(tasks: TaskCard[]): boolean {
         b.textContent = a.label;
         b.setAttribute("aria-label", `${a.label}: ${t.title}`);
         const card = c!;
-        onPress(b, () => { if (performance.now() >= card.armedAt) api.bubbleAction(a.id); });
+        const stop = /:stop$/.test(a.id);
+        if (stop) b.className = "stop";
+        onPress(b, () => {
+          if (performance.now() < card.armedAt || (stop && card.stopAt)) return;
+          if (stop) pressedStop(card);
+          api.bubbleAction(a.id);
+        });
         return b;
       }));
     }
+    showStopping(c);
     return c.li;
   });
   const ids = new Set(tasks.map(t => t.id));
-  for (const id of [...cards.keys()]) if (!ids.has(id)) cards.delete(id);
+  for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); }
   // The "+N more" line heads the stack whenever there are ended cards that could fold.
   const all = stacked.some(t => !underWay(t)) ? [more.li, ...items] : items;
   const same = all.length === tasksEl.children.length && all.every((li, i) => tasksEl.children[i] === li);
   if (!same) tasksEl.replaceChildren(...all);
   fitTasks();
+  if (before) slideCards(before);
   return true;
 }
 
@@ -351,6 +553,7 @@ function isHere(f: OverlayFrame | null): f is OverlayFrame {
 function fit(): void {
   viewport = { width: window.innerWidth, height: window.innerHeight };
   placeTasks();
+  placeStatus();
   interactiveDirty = true;
   requestDraw();
 }
@@ -409,7 +612,8 @@ function draw(now: number): void {
 
   const fr = frame;
   const here = isHere(fr);
-  const showBubble = here && !!state?.bubble.visible;
+  // Ember's body is drawn on each display it straddles; its bubble only on the one it is on.
+  const showBubble = here && bubbleHere(fr, displayId, bounds) && !!state?.bubble.visible;
   if (here) {
     const lx = fr.ember.x - bounds.x, ly = fr.ember.y - bounds.y;
     const moving = !drawnAt || moved(fr.ember, drawnAt.ember, 0.05);
@@ -461,7 +665,8 @@ function draw(now: number): void {
     // itself (no room beside one as wide as the screen), a click there is meant for the control.
     const body = { x: Math.round(lx - size * 0.45), y: Math.round(ly - size * 0.55), width: Math.round(size * 0.9), height: Math.round(size * 1.05) };
     const onTarget = !!f && overlaps(body, { x: f.x - bounds.x, y: f.y - bounds.y, width: f.width, height: f.height });
-    setBody((f || (showBubble && asks)) && !onTarget ? body : null);
+    // (Asking near a display's edge: the body catches clicks on both sides of the seam, where it is drawn.)
+    setBody((f || (!!state?.bubble.visible && asks)) && !onTarget ? body : null);
 
     const urgent = moving || looking || rig.motion === "brisk";
     const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;

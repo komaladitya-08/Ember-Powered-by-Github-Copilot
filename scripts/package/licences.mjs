@@ -1,6 +1,7 @@
 // What the RPM's License: tag must cover: the licence of every package Ember bundles (its package.json),
-// and of the libraries a package declares it bundles inside it (sharp-libvips lists them in its README.md).
-// stage.mjs stops before staging anything if one of them is missing from packaging/rpm/ember.spec.
+// and of the libraries a package declares it bundles inside it (sharp-libvips lists them in its README.md, and so
+// do sharp's Windows builds, which carry libvips themselves). The tag is the one list of licences Ember ships under
+// on every target: stage.mjs stops before staging anything if one of them is missing from packaging/rpm/ember.spec.
 
 /** The SPDX ids in a licence expression: "(MIT OR Apache-2.0) AND Zlib" → ["MIT", "Apache-2.0", "Zlib"]. */
 export const spdxIds = expr => String(expr ?? "").split(/[()\s]+/).filter(t => t && !/^(AND|OR|WITH)$/.test(t));
@@ -9,16 +10,20 @@ export const spdxIds = expr => String(expr ?? "").split(/[()\s]+/).filter(t => t
 export const specLicenceIds = spec => spdxIds(/^License:\s*(.+)$/m.exec(spec)?.[1]);
 
 /**
- * Libraries bundled inside a package, as the licensing table in its README.md names them ("| library | terms |"),
- * with the SPDX ids their terms come to. A library the table names that isn't listed here stops staging: an
- * update bundled something new, so check its licence, then add it here and to the spec.
+ * Libraries bundled inside a package, with the SPDX ids their terms come to. `libraries`: as the licensing table in
+ * its README.md names them ("| library | terms |"); a library the table names that isn't listed here stops staging:
+ * an update bundled something new, so check its licence, then add it here and to the spec. `embedded`: libraries
+ * built into the package's binaries that no table lists, found by reading the binary (LICENCE_TEXTS pins the
+ * version they were read from).
  */
 export const BUNDLED_LIBRARIES = [
   {
-    package: /^@img\/sharp-libvips-/,
-    // From the "Licensing" table of @img/sharp-libvips-linux-x64's README.md. The LGPLv3 entries are used under
-    // the "any later version" clause of LGPLv2/2.1 (so LGPL-3.0-or-later); aom's AOMedia Patent License 1.0 is a
-    // patent grant beside its BSD-2-Clause copyright licence; fontconfig's licence is HPND-sell-variant.
+    // sharp-libvips-<platform> (Linux, macOS) and sharp-win32-<arch> (Windows: no separate libvips package).
+    package: /^@img\/sharp-(libvips-|win32-)/,
+    // From the "Licensing" table of @img/sharp-libvips-linux-x64's README.md (@img/sharp-win32-x64 0.35.5 has the
+    // same table). The LGPLv3 entries are used under the "any later version" clause of LGPLv2/2.1 (so
+    // LGPL-3.0-or-later); aom's AOMedia Patent License 1.0 is a patent grant beside its BSD-2-Clause copyright
+    // licence; fontconfig's licence is HPND-sell-variant.
     libraries: {
       aom: ["BSD-2-Clause"], cairo: ["MPL-1.1"], cgif: ["MIT"], expat: ["MIT"], fontconfig: ["HPND-sell-variant"],
       freetype: ["FTL"], fribidi: ["LGPL-3.0-or-later"], glib: ["LGPL-3.0-or-later"], harfbuzz: ["MIT"],
@@ -29,7 +34,40 @@ export const BUNDLED_LIBRARIES = [
       pango: ["LGPL-3.0-or-later"], pixman: ["MIT"], "proxy-libintl": ["LGPL-3.0-or-later"], "zlib-ng": ["Zlib"],
     },
   },
+  {
+    // sherpa-onnx-wasm-nodejs.wasm 1.13.8, as the names and messages in it show (packaging/licences/sherpa-onnx.txt).
+    // eSpeak NG is part of its text-to-speech, which Ember never calls, but it is in the object code Ember ships.
+    package: /^sherpa-onnx$/,
+    embedded: {
+      "ONNX Runtime": ["MIT"], ONNX: ["Apache-2.0"], Abseil: ["Apache-2.0"], FlatBuffers: ["Apache-2.0"],
+      "Protocol Buffers": ["BSD-3-Clause"], RE2: ["BSD-3-Clause"], "kaldi-decoder": ["Apache-2.0"], kaldifst: ["Apache-2.0"],
+      OpenFst: ["Apache-2.0"], "simple-sentencepiece": ["Apache-2.0"], "piper-phonemize": ["MIT"], "eSpeak NG": ["GPL-3.0-or-later"],
+    },
+  },
 ];
+
+/**
+ * Licence texts Ember supplies for bundled packages that ship no licence file of their own, as paths from the
+ * repository root: a text checked in under packaging/licences/, or the same project's file in another bundled package.
+ * stage.mjs puts them in THIRD_PARTY_NOTICES, and stops before staging anything for any other package without a
+ * licence file. `version`: the text also says what that release holds (sherpa-onnx's WebAssembly), so another release
+ * must be checked again before it ships.
+ */
+export const LICENCE_TEXTS = [
+  { package: /^@github\/copilot-sdk(-(linux|win32|darwin)-(x64|arm64))?$/, texts: ["packaging/licences/github-copilot-sdk.txt"] },
+  { package: /^@koromix\/koffi-(linux|win32|darwin)-(x64|arm64)$/, texts: ["node_modules/koffi/LICENSE.txt"] },
+  { package: /^sherpa-onnx$/, version: "1.13.8", texts: ["packaging/licences/sherpa-onnx.txt", "packaging/licences/espeak-ng-COPYING.txt"] },
+];
+
+/** The licence texts Ember supplies for a package that ships none (LICENCE_TEXTS), or why staging must stop. */
+export function suppliedLicence(name, version) {
+  const entry = LICENCE_TEXTS.find(e => e.package.test(name));
+  if (!entry) return { error: `${name} ${version} ships no licence file: add its licence text under packaging/licences/ and to LICENCE_TEXTS in scripts/package/licences.mjs` };
+  if (entry.version && entry.version !== version) {
+    return { error: `${name} ${version}: packaging/licences/ describes ${entry.version}; check what its WebAssembly holds, then update that text and LICENCE_TEXTS in scripts/package/licences.mjs` };
+  }
+  return { texts: [...entry.texts] };
+}
 
 /** The rows of a README's two-column licensing table: [library, terms]. */
 export function readmeLibraries(readme) {
@@ -53,6 +91,10 @@ export function uncoveredLicences(packages, specIds) {
     for (const id of ids.length ? ids : ["(none)"]) if (!specIds.includes(id)) missing.push(`${p.name} (${id})`);
     const bundled = BUNDLED_LIBRARIES.find(b => b.package.test(p.name));
     if (!bundled) continue;
+    for (const [library, known] of Object.entries(bundled.embedded ?? {})) {
+      for (const id of known) if (!specIds.includes(id)) missing.push(`${p.name}'s ${library} (${id})`);
+    }
+    if (!bundled.libraries) continue;
     const libraries = readmeLibraries(p.readme);
     if (!libraries.length) { missing.push(`${p.name} (no licensing table in its README.md to check the libraries it bundles)`); continue; }
     for (const [library, terms] of libraries) {

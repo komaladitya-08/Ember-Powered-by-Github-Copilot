@@ -7,11 +7,22 @@
  * Labels come from the screen, so they are normalised before matching:
  * look-alike letters, invisible characters and typographic apostrophes can't
  * hide a "Delete" from the risky-word check.
+ *
+ * Keys are read with the OS's key conventions (KEYS in app/shared/shortcuts.ts:
+ * "mod" is Ctrl on Linux and Windows, Cmd on macOS) and windows with its
+ * vocabulary (./vocabulary.ts). Every default is Linux's, so a caller that
+ * passes neither gets exactly the answers it got before the port.
  */
 
 import { isNeverLook, isSecretLabel, isSheetCell } from "../perception/elements";
 import { parseCombo } from "../hands/borrow";
 import { friendlyApp } from "../../shared/apps";
+import { roleWord } from "../../shared/role-words";
+import { visibleText } from "../../shared/visible-text";
+import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
+import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
+import { targetRules } from "./target-rules";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -147,6 +158,12 @@ export interface Decision {
   about?: string;
   /** For the first action in an app: the question about the step alone (the app may be allowed for this task already). */
   stepPrompt?: string;
+  /**
+   * The whole of the text a task types, when the question shows only its two ends (over 160 characters): the user
+   * approves all of it, so the worker's question carries it (Question.detail) and the bubble shows it whole in a block
+   * that scrolls, taking Allow only once all of it has been in view. Shown as the question shows typed text (typedUnits).
+   */
+  detail?: string;
 }
 
 export type Grant = "observe" | "act";
@@ -165,6 +182,12 @@ export interface PolicyInputs {
   isTerminalApp?: (name: string) => boolean;
   /** Ember's own process (default: this one): a task never acts in Ember's own windows. */
   ownPid?: number;
+  /** How keys are named and which are the OS's own (default KEYS.linux): "cmd+s" is a shortcut on macOS, the logo key on Linux. */
+  keys?: KeyConventions;
+  /** Which OS's vocabulary judges windows and labels (default "linux"). */
+  os?: OS;
+  /** Is this window an authentication or security prompt (default: isSecurityWindow with `os`)? */
+  isSecurityWindow?: (w: { app?: string; title?: string; name?: string }) => boolean;
 }
 
 /** Latin look-alikes from Cyrillic and Greek, enough to keep "Dеlete" (Cyrillic е) from passing as harmless. */
@@ -179,6 +202,15 @@ const CONFUSABLES: Record<string, string> = {
  * braille blank, Khmer's invisible vowels, the combining grapheme joiner) that would split a word or a number unseen.
  */
 const INVISIBLE = /[\p{Cf}\u00ad\u115f\u1160\u180e\u2800\u3164\uffa0]|\u034f|\u17b4|\u17b5|\u180b|\u180c|\u180d|\u180f/gu;
+
+/**
+ * A window's app as the vocabulary's lists of apps match it: trimmed, without the characters that show nothing. macOS
+ * reports an app by its name in the user's language, which Apple writes with soft hyphens in places (German System
+ * Settings is "System" + U+00AD + "einstellungen"), and a name in a list would miss it (cross-review X15).
+ */
+export function appNameOf(app: string): string {
+  return app.replace(INVISIBLE, "").trim();
+}
 
 /** What a label says, ready for matching: compatibility forms folded, invisible characters gone, look-alikes mapped. */
 export function normalizeLabel(s: string): string {
@@ -392,18 +424,16 @@ const LONE_AGREE = /^\s*(yes,?\s*)?(confirm|approve)\s*[.!]?\s*$/;
 /** Fields Ember never fills: secrets and payment details (an expiry date only beside a card: the screen reader's list has those). */
 const SECRET_FIELD = /\b(password|passphrase|passcode|pin|card ?number|credit ?card|cvv|cvc|security code|iban|routing number|account number|one-time code|otp|2fa|recovery code|secret)\b/;
 /**
- * Titles of authentication prompts, by how such a title starts: never words that turn up in ordinary
- * titles too ("firewall-notes.txt", a page about sudo), so those windows are read and used as usual.
+ * Is this an authentication or security prompt (polkit, sudo, keyring…)? Ember stays out of those. By `os`'s
+ * vocabulary (./vocabulary.ts): its prompts' programs and titles, and the window classes its backend reports as the
+ * app. On Linux GNOME Shell counts too: it draws its own password prompts (polkit, keyring) in its own window, and
+ * while it has the keyboard Ember treats it as one (it never acts in the shell anyway).
  */
-const SECURITY_TITLE = /^\s*(authenticat(e|ion)\b.*\b(required|request)\b|authenticate\s*$|(password|passphrase|pin) (required|request(ed)?)\b|enter (the |your |a )?(password|passphrase|pin)\b|unlock\b.*\b(keyring|private key|password|passphrase)\b|\[sudo\]|sudo password\b)/;
-/** Programs that only ask for passwords (polkit agents, the keyring's and GnuPG's prompts), and the firewall's settings. */
-const SECURITY_APP = /polkit|gcr-prompter|pinentry|ssh-askpass|ksshaskpass|^firewall-config$|(^|\s)gnome-shell(\s|$)/i;
-
-/** Is this an authentication or security prompt (polkit, sudo, keyring…)? Ember stays out of those. */
-export function isSecurityWindow(w: { app?: string; title?: string; name?: string }): boolean {
-  // GNOME Shell draws its own password prompts (polkit, keyring) in its own window: while it has the
-  // keyboard, Ember treats it as one (it never acts in the shell anyway).
-  return SECURITY_APP.test((w.app ?? "").trim()) || SECURITY_TITLE.test(normalizeLabel(w.title ?? w.name ?? ""));
+export function isSecurityWindow(w: { app?: string; title?: string; name?: string }, os: OS = "linux"): boolean {
+  const app = appNameOf(w.app ?? "");
+  if (SECURITY_APP[os]?.test(app)) return true;
+  if (SECURITY_TITLE[os]?.test(normalizeLabel(w.title ?? w.name ?? ""))) return true;
+  return SECURITY_CLASS[os].includes(app.toLowerCase());
 }
 
 /**
@@ -483,12 +513,26 @@ const securitySetting = (s: string) => saysWord(WEAKENS, s) || securityTalk(s);
 
 /** Words risky only as the whole label: Korean "바꾸기" is GTK's Replace button, but also part of "이름 바꾸기" (Rename). */
 const RISKY_WHOLE = new RegExp(`^\\s*(${foldLabel(["바꾸기"].join("|"))})\\s*([(（][^)）]*[)）])?\\s*$`, "u");
-export const isRiskyLabel = (s: string) => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s)) || RISKY_WHOLE.test(foldLabel(s)) || formatsDisk(s);
+/** One value per OS, made the first time that OS asks (the vocabularies and key tables are fixed for a run). */
+function perOS<T>(make: (os: OS) => T): (os: OS) => T {
+  const made = new Map<OS, T>();
+  return os => {
+    if (!made.has(os)) made.set(os, make(os));
+    return made.get(os)!;
+  };
+}
+/** Whole words or phrases (regular-expression source), or null for none. */
+const wordsOf = (list: readonly string[]) => (list.length ? new RegExp(`\\b(${list.join("|")})\\b`) : null);
+/** RISKY_EXTRA[os] (the OS's own words for what can't be undone), as one expression. */
+const riskyExtra = perOS(os => wordsOf(RISKY_EXTRA[os]));
+/** Is this label risky (RISKY, the languages' lists, a disk's formatting, and on `os` its own words: RISKY_EXTRA)? */
+export const isRiskyLabel = (s: string, os: OS = "linux") => RISKY.test(normalizeLabel(s)) || RISKY_INTL.test(foldLabel(s)) || RISKY_WHOLE.test(foldLabel(s)) || formatsDisk(s)
+  || (riskyExtra(os)?.test(normalizeLabel(s)) ?? false);
 /** Is activating this control hard to undo or visible to others: a risky label, or one that posts or acts on others (RISKY_ACT) on a button, link or menu item? */
-export const isRiskyControl = (role: string, name: string) => isRiskyLabel(name) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
+export const isRiskyControl = (role: string, name: string, os: OS = "linux") => isRiskyLabel(name, os) || (ACTING_CONTROL.test(role) && isRiskyActLabel(name));
 
-/** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper). */
-const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone)$/;
+/** Ember's own windows by app or title (settings, the overlay and its bubble, Ask Ember, the desk's view, the microphone helper, the command window). */
+const EMBER_WINDOW = /^(ember|ember overlay|ask ember|ember's desk|ember microphone|ember commands)$/;
 /**
  * Is this one of Ember's own windows: its process's, an app called Ember, or (when its process isn't known) a window
  * titled like one? A task never acts in them: they answer Ember's questions and hold its settings. Another program's
@@ -506,7 +550,7 @@ const ACTIVATING_ROLES = /button|link|menu item|check box|radio|toggle|switch|ta
 /** Keys that activate the focused control (with Shift too, and the Ctrl+M / Ctrl+J line-feed equivalents), as keyFamily spells them. */
 const ACTIVATE_KEY = /^((shift|ctrl|alt)\+)?(return|space)$|^ctrl\+(m|j)$/;
 /** Is `keys` a key that activates whatever has focus (Enter, Space and their keypad twins)? */
-export const isActivatingKey = (keys: string) => { const k = canonicalKeys(keys); return !!k && ACTIVATE_KEY.test(keyFamily(k)); };
+export const isActivatingKey = (keys: string, kc: KeyConventions = KEYS.linux) => { const k = canonicalKeys(keys, kc); return !!k && ACTIVATE_KEY.test(keyFamily(k)); };
 /** Keypad and ISO twins act like the main keys (KP_Delete deletes, KP_Enter submits): judged as those. */
 const KEY_TWINS: Record<string, string> = {
   kp_delete: "delete", kp_decimal: "delete", kp_enter: "return", iso_enter: "return", linefeed: "return", enter: "return",
@@ -525,23 +569,26 @@ export function keyFamily(k: string): string {
 const MNEMONIC_KEY = /^alt\+(shift\+)?[a-z0-9]$/;
 /** A modifier by its side-less name: Control_R is Ctrl as much as Control_L (apps see the same ControlMask). */
 const MODIFIER_NAMES: Record<string, string> = { control: "ctrl", ctrl: "ctrl", alt: "alt", shift: "shift", super: "super", meta: "super", hyper: "super", mod4: "super" };
-const modifierName = (m: string) => MODIFIER_NAMES[m.toLowerCase().replace(/_[lr]$/, "")] ?? m.toLowerCase();
-const MODIFIER_ORDER = ["ctrl", "alt", "shift", "super"];
-/** Other names people (and models) give the logo key. */
-const LOGO_KEY = /^\s*(win|windows|cmd|command|logo|mod4)\s*$/i;
+/** The logo key's names (Super, Meta, Hyper, Mod4) are `kc`'s logo token: "super" on Linux and Windows, "cmd" on macOS (⌘). */
+const modifierName = (m: string, kc: KeyConventions) => {
+  const name = MODIFIER_NAMES[m.toLowerCase().replace(/_[lr]$/, "")] ?? m.toLowerCase();
+  return name === "super" ? kc.logoToken : name;
+};
 
 /**
- * One spelling for a key combination, the way Ember's keyboard will press it (parseCombo): modifiers
- * in a fixed order (ctrl, alt, shift, super) and the key's own name in lower case, so "Alt + Ctrl + Del"
- * is "ctrl+alt+delete" and "Super_L" is "super_l". null when Ember's keyboard wouldn't understand it.
+ * One spelling for a key combination, the way Ember's keyboard will press it (parseCombo): modifiers in `kc`'s fixed
+ * order (ctrl, alt, shift, super on Linux and Windows; ctrl, alt, shift, cmd on macOS) and the key's own name in lower
+ * case, so "Alt + Ctrl + Del" is "ctrl+alt+delete" and "Super_L" is "super_l". The logo key's other names ("win",
+ * "logo"; on Linux and Windows also "cmd") are its logo token. null when Ember's keyboard wouldn't understand it.
  */
-export function canonicalKeys(keys: string): string | null {
+export function canonicalKeys(keys: string, kc: KeyConventions = KEYS.linux): string | null {
   try {
-    const { modifiers, key } = parseCombo(keys.split("+").map(t => (LOGO_KEY.test(t) ? "super" : t)).join("+"));
+    const { modifiers, key } = parseCombo(keys.split("+").map(t => (kc.logoAliases.test(t) ? kc.logoToken : t)).join("+"), kc);
     if (/\s/.test(key)) return null;
     // Keys by number ("0x74", "U0074", "U+0074"): X takes them too, so any key hides behind them. Never pressed.
     if (/^(0x[0-9a-f]+|u\+?[0-9a-f]{2,8})$/i.test(key)) return null;
-    const mods = [...new Set(modifiers.map(modifierName))].sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b));
+    const order = kc.modifierOrder;
+    const mods = [...new Set(modifiers.map(m => modifierName(m, kc)))].sort((a, b) => order.indexOf(a) - order.indexOf(b));
     return [...mods, key.toLowerCase()].join("+");
   } catch {
     return null;
@@ -549,42 +596,139 @@ export function canonicalKeys(keys: string): string | null {
 }
 
 /** @deprecated canonicalKeys (kept for callers that want a string either way). */
-export function normalizeKeys(keys: string): string {
-  return canonicalKeys(keys) ?? keys.toLowerCase().replace(/\s+/g, "");
+export function normalizeKeys(keys: string, kc: KeyConventions = KEYS.linux): string {
+  return canonicalKeys(keys, kc) ?? keys.toLowerCase().replace(/\s+/g, "");
 }
+
+/** The modifiers of a canonical combination (`k` from canonicalKeys), its key counting as one when it is a modifier key. */
+function modifiersOf(k: string, kc: KeyConventions): Set<string> {
+  const parts = k.split("+");
+  const key = parts.pop()!;
+  const mods = new Set(parts);
+  if (/^(control|shift|alt|super|meta|hyper)_[lr]$/.test(key)) mods.add(modifierName(key, kc));
+  return mods;
+}
+/** The modifiers of each of Ember's own shortcuts on an OS (SHORTCUTS[os] chords). */
+const chordModifiers = perOS(os => Object.values(SHORTCUTS[os]).map(d => d.chord.split("+").slice(0, -1)));
+/**
+ * Is `k` in the family of one of Ember's own shortcuts: do its modifiers include all of that shortcut's (Windows: any
+ * Win+Alt combination; macOS: any Control+Shift+Command one, with Option too)? On macOS the backend presses the key
+ * that types a letter on the layout in use while the shortcuts are bound to fixed keys, so on another layout a task's
+ * letter can land on Ember's Allow: refusing the whole family fails closed whichever way the layouts line up.
+ */
+function shortcutFamily(k: string, kc: KeyConventions): boolean {
+  const mods = modifiersOf(k, kc);
+  return chordModifiers(kc.os).some(chord => chord.every(m => mods.has(m)));
+}
+
+/**
+ * The keys the Ctrl+Alt rules below can judge by name (as keyFamily spells them): an ASCII letter or digit, and the named
+ * keys whose keysym sits on its own physical key in every layout: moving and editing keys, function keys, ASCII
+ * punctuation (X's names for it) and the modifier and lock keys. Anything else ("cyrillic_ie", "gbreve", "é") Ember's
+ * keyboard may press on whichever physical key another layout group puts it (ğ is on E on a us,tr(f) keyboard).
+ */
+const NAMED_BY_LATIN = new RegExp(`^([a-z0-9]|f\\d{1,2}|${[
+  "up", "down", "left", "right", "home", "end", "prior", "next", "insert", "delete", "backspace", "tab", "return", "escape",
+  "space", "menu", "pause", "break", "begin", "clear", "cancel", "help", "undo", "redo", "find",
+  "minus", "plus", "equal", "comma", "period", "slash", "backslash", "semicolon", "apostrophe", "grave", "bracketleft",
+  "bracketright", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "parenleft", "parenright",
+  "asterisk", "colon", "less", "greater", "question", "at", "asciicircum", "underscore", "braceleft", "bar", "braceright",
+  "asciitilde", "(control|shift|alt)_[lr]", "caps_lock", "num_lock", "scroll_lock", "shift_lock",
+].join("|")})$`);
 
 /**
  * Keys only the user presses (`k` from canonicalKeys): the logo key with anything, power, media and
  * screenshot keys, virtual consoles, the run dialog, terminals, locking and logging out, switching
  * workspaces, and Ember's own shortcuts (Ctrl+Alt+Y/N/A/X/Space/E/M/End), so a task can never answer
- * its own question or stop, hide or reconfigure Ember. Shift doesn't change that.
+ * its own question or stop, hide or reconfigure Ember. Shift doesn't change that. Off Linux also every combination in
+ * the family of Ember's own shortcuts there (shortcutFamily) and the OS's own (kc.systemKeys: the app switcher, the
+ * task manager, Spotlight, screenshots). On macOS ⌘ is the primary modifier, so the logo-key rule isn't applied there.
+ * On Linux also Ctrl+Alt with a key those rules can't judge by its name (NAMED_BY_LATIN).
  */
-export function isSystemKey(k: string): boolean {
+export function isSystemKey(k: string, kc: KeyConventions = KEYS.linux): boolean {
   const parts = keyFamily(k).split("+");
   const key = parts[parts.length - 1];
   const mods = new Set(parts.slice(0, -1));
-  if (mods.has("super") || /^(super|meta|hyper)(_[lr])?$/.test(key)) return true;
+  if (kc.logoToken === "super" && (mods.has("super") || /^(super|meta|hyper)(_[lr])?$/.test(key))) return true;
   if (/^xf86/.test(key) || /^(print|sys_req|sysrq)$/.test(key)) return true;
   const ctrlAlt = mods.has("ctrl") && mods.has("alt");
   if (ctrlAlt && /^f\d{1,2}$/.test(key)) return true;
   if (mods.has("alt") && !mods.has("ctrl") && /^f[12]$/.test(key)) return true;
-  return ctrlAlt && /^(backspace|delete|tab|t|l|up|down|left|right|y|n|a|x|space|e|m|end)$/.test(key);
+  if (ctrlAlt && /^(backspace|delete|tab|t|l|up|down|left|right|y|n|a|x|space|e|m|end)$/.test(key)) return true;
+  // Linux: the Ctrl+Alt rules above already cover Ember's own shortcuts, and nothing is added there but Ctrl+Alt with a
+  // key they can't judge by name, which Ember's keyboard may press on another layout group's physical key
+  // (Ctrl+Alt+Cyrillic_ie is Ctrl+Alt+T on a us,ru keyboard, Ctrl+Alt+gbreve Ctrl+Alt+E on a us,tr(f) one). Ctrl or Alt
+  // alone reach no system key but F1 and F2 (above), so those are judged as any other key.
+  if (kc.os === "linux") return ctrlAlt && !NAMED_BY_LATIN.test(key);
+  return shortcutFamily(k, kc) || kc.systemKeys.includes(keyFamily(k));
 }
 
-const canonicalSet = (list: string[]) => new Set(list.map(k => canonicalKeys(k) ?? k));
+/*
+ * The key tables, written with "mod" for the primary modifier (Ctrl on Linux and Windows, Cmd on macOS), each entry
+ * canonicalised for the OS. The Linux lists are the ones Ember had before the port with "ctrl" spelled "mod" (a test
+ * compares the Linux tables with a frozen copy of them).
+ */
 /** Shortcuts that only move, select, copy, paste, undo, format, search or zoom: fine on Ember's desk. */
-const SAFE_COMBOS = canonicalSet(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+z", "ctrl+y", "ctrl+shift+z", "ctrl+b", "ctrl+i", "ctrl+u",
-  "ctrl+f", "ctrl+g", "ctrl+h", "ctrl+s", "ctrl+shift+s", "ctrl+n", "ctrl+t", "ctrl+l", "ctrl+o", "ctrl+home", "ctrl+end", "ctrl+left", "ctrl+right",
-  "ctrl+up", "ctrl+down", "ctrl+shift+left", "ctrl+shift+right", "ctrl+shift+home", "ctrl+shift+end", "ctrl+backspace", "ctrl+plus", "ctrl+minus",
-  "ctrl+equal", "ctrl+0", "ctrl+tab", "ctrl+shift+tab", "ctrl+prior", "ctrl+next", "ctrl+pageup", "ctrl+pagedown"]);
+const SAFE_TEMPLATES = ["mod+a", "mod+c", "mod+x", "mod+v", "mod+z", "mod+y", "mod+shift+z", "mod+b", "mod+i", "mod+u",
+  "mod+f", "mod+g", "mod+h", "mod+s", "mod+shift+s", "mod+n", "mod+t", "mod+l", "mod+o", "mod+home", "mod+end", "mod+left", "mod+right",
+  "mod+up", "mod+down", "mod+shift+left", "mod+shift+right", "mod+shift+home", "mod+shift+end", "mod+backspace", "mod+plus", "mod+minus",
+  "mod+equal", "mod+0", "mod+tab", "mod+shift+tab", "mod+prior", "mod+next", "mod+pageup", "mod+pagedown"];
+/** macOS also moves by word with Option and to a document's start or end with ⌘↑ and ⌘↓ (Shift selects as it goes). */
+const SAFE_EXTRA: Partial<Record<OS, readonly string[]>> = {
+  darwin: ["alt+left", "alt+right", "alt+shift+left", "alt+shift+right", "cmd+up", "cmd+down", "cmd+shift+up", "cmd+shift+down"],
+};
 /** Shortcuts that delete, send, close or quit, whatever has focus. */
-const DESTRUCTIVE_KEYS = canonicalSet(["delete", "shift+delete", "ctrl+delete", "ctrl+shift+delete", "ctrl+return", "alt+return", "ctrl+shift+return",
-  "alt+f4", "ctrl+q", "ctrl+w", "ctrl+shift+w", "ctrl+shift+q"]);
+const DESTRUCTIVE_TEMPLATES = ["delete", "shift+delete", "mod+delete", "mod+shift+delete", "mod+return", "alt+return", "mod+shift+return",
+  "alt+f4", "mod+q", "mod+w", "mod+shift+w", "mod+shift+q"];
+/** macOS: ⌘⌫ deletes (in Finder it moves to the Trash), ⌥⇧⌘⌫ empties the Trash, ⌥⌘W and ⌥⌘Q close or quit everything. */
+const DESTRUCTIVE_EXTRA: Partial<Record<OS, readonly string[]>> = {
+  darwin: ["cmd+backspace", "shift+cmd+backspace", "alt+shift+cmd+backspace", "alt+cmd+w", "alt+cmd+q", "cmd+q", "cmd+w"],
+};
 /** Keys that paste whatever the clipboard holds. */
-const PASTE_KEYS = canonicalSet(["ctrl+v", "ctrl+shift+v", "shift+insert"]);
+const PASTE_TEMPLATES = ["mod+v", "mod+shift+v", "shift+insert"];
+/** macOS: Paste and Match Style. */
+const PASTE_EXTRA: Partial<Record<OS, readonly string[]>> = { darwin: ["alt+shift+cmd+v"] };
+
+/** An OS's key tables, and the expressions that name its primary modifier (canonical spellings, as keyFamily gives them). */
+export interface KeyTables {
+  /** Shortcuts that only move, select, copy, paste, undo, format, search or zoom. */
+  readonly safe: ReadonlySet<string>;
+  /** Shortcuts that delete, send, close or quit, whatever has focus. */
+  readonly destructive: ReadonlySet<string>;
+  /** Keys that paste whatever the clipboard holds. */
+  readonly paste: ReadonlySet<string>;
+  /** Keys that take away what is selected: Delete and Backspace (with Shift or the primary too), Cut (pastes are `paste`). */
+  readonly removes: RegExp;
+  /** Keys besides typing that replace a selection: Cut, Shift+Delete, the primary with Backspace or Delete. */
+  readonly replaces: RegExp;
+  /** Cut ("ctrl+x"; macOS "cmd+x"). */
+  readonly cut: string;
+}
+const keyTablesMade = new WeakMap<KeyConventions, KeyTables>();
+/** The key tables for `kc`, made once per conventions object. */
+export function keyTables(kc: KeyConventions = KEYS.linux): KeyTables {
+  const known = keyTablesMade.get(kc);
+  if (known) return known;
+  const canon = (entry: string) => { const e = entry.replace(/\bmod\b/g, kc.primary); return canonicalKeys(e, kc) ?? e; };
+  const set = (list: readonly string[], extra: Partial<Record<OS, readonly string[]>>) => new Set([...list, ...(extra[kc.os] ?? [])].map(canon));
+  // The primary modifier, and it with Shift in the OS's order ("ctrl+shift" on Linux, "shift+cmd" on macOS), as patterns.
+  const p = kc.primary, ps = canon("mod+shift+x").replace(/\+x$/, "").replace(/\+/g, "\\+");
+  const t: KeyTables = {
+    safe: set(SAFE_TEMPLATES, SAFE_EXTRA),
+    destructive: set(DESTRUCTIVE_TEMPLATES, DESTRUCTIVE_EXTRA),
+    paste: set(PASTE_TEMPLATES, PASTE_EXTRA),
+    removes: new RegExp(`^((shift|${p}|${ps})\\+)?(delete|backspace)$|^${p}\\+x$`),
+    replaces: new RegExp(`^(${p}\\+x|shift\\+delete|(${p}|${ps})\\+(backspace|delete))$`),
+    cut: canon("mod+x"),
+  };
+  keyTablesMade.set(kc, t);
+  return t;
+}
+/** A shortcut: a combination with Ctrl, Alt, the logo key or ⌘ (no Linux combination has "cmd"). */
+const SHORTCUT = /(^|\+)(ctrl|alt|super|cmd)\+/;
 /** The letter or digit a key types (lower case), " " for the space bar, or null for any other key or shortcut. */
-export function typedChar(keys: string): string | null {
-  const k = keyFamily(canonicalKeys(keys) ?? "");
+export function typedChar(keys: string, kc: KeyConventions = KEYS.linux): string | null {
+  const k = keyFamily(canonicalKeys(keys, kc) ?? "");
   const m = /^(shift\+)?([a-z0-9])$/.exec(k);
   return m ? m[2] : /^(shift\+)?space$/.test(k) ? " " : null;
 }
@@ -593,25 +737,27 @@ const TYPES_NOTHING = /^(shift\+)?(escape|up|down|left|right|home|end|prior|next
 /** Keys that move the caret (a Ctrl+A selection ends there). */
 export const MOVES_CARET = /(^|\+)(up|down|left|right|home|end|prior|next)$/;
 /**
- * Does this key type a character (a letter, digit, symbol or Space, with or without Shift)? Shortcuts with Ctrl, Alt or
- * Super, and keys that edit, move or switch (Enter, Tab, Backspace, Delete, arrows, F-keys) don't; neither does
+ * Does this key type a character (a letter, digit, symbol or Space, with or without Shift)? Shortcuts with Ctrl, Alt,
+ * Super or ⌘, and keys that edit, move or switch (Enter, Tab, Backspace, Delete, arrows, F-keys) don't; neither does
  * anything Ember's keyboard wouldn't understand as a key (it may be text).
  */
-export function typesCharacter(keys: string): boolean {
-  const k = canonicalKeys(keys);
+export function typesCharacter(keys: string, kc: KeyConventions = KEYS.linux): boolean {
+  const k = canonicalKeys(keys, kc);
   if (k === null) return true;
   const f = keyFamily(k);
-  return !/(^|\+)(ctrl|alt|super)\+/.test(f) && !TYPES_NOTHING.test(f) && !/^(shift\+)?(return|tab|backspace|delete)$/.test(f);
+  return !SHORTCUT.test(f) && !TYPES_NOTHING.test(f) && !/^(shift\+)?(return|tab|backspace|delete)$/.test(f);
 }
 /**
  * Does this key replace (or delete) what is selected? Any key that types (letters, digits, symbols, Space, Enter, Tab),
- * Backspace, Delete, Ctrl+X, the paste keys, and Ctrl+Backspace and Ctrl+Delete (which delete the selection in GTK).
+ * Backspace, Delete, Cut, the paste keys, and the primary modifier with Backspace or Delete (Ctrl+Backspace and
+ * Ctrl+Delete delete the selection in GTK; so does ⌘⌫ on macOS).
  */
-export function replacesSelection(keys: string): boolean {
-  const k = keyFamily(canonicalKeys(keys) ?? "");
+export function replacesSelection(keys: string, kc: KeyConventions = KEYS.linux): boolean {
+  const k = keyFamily(canonicalKeys(keys, kc) ?? "");
   if (!k) return false;
-  if (PASTE_KEYS.has(k) || /^(ctrl\+x|shift\+delete|ctrl\+(shift\+)?(backspace|delete))$/.test(k)) return true;
-  return !/(^|\+)(ctrl|alt|super)\+/.test(k) && !TYPES_NOTHING.test(k);
+  const t = keyTables(kc);
+  if (t.paste.has(k) || t.replaces.test(k)) return true;
+  return !SHORTCUT.test(k) && !TYPES_NOTHING.test(k);
 }
 
 /** Whole words or phrases (written with their accents, folded like RISKY_WORDS) anywhere in a text. */
@@ -624,33 +770,66 @@ const plainText = (s: string) => foldLabel(normalizeLabel(s));
  */
 const RUNS_PROGRAM = /\b(allow(ed)? execut(ing|e)|execut(able|e) as (a )?program|run as (a )?program|run in (a )?terminal|launch as (a )?program|make (it |the file |file )?executable|trust and launch)\b/;
 const TRUST_AND_LAUNCH = anyOf(["vertrauen und starten", "faire confiance et lancer", "confiar y ejecutar", "dai fiducia e lancia", "confiar e iniciar"]);
-/** By its words: running with a program or a terminal ("Datei als Programm ausführen", "Lancer dans un terminal", "Esegui nel terminale"). */
+/**
+ * By its words: running with a program or a terminal ("Datei als Programm ausführen", "Lancer dans un terminal", "Esegui nel
+ * terminale", "Разрешить выполнение файла как программы", "Kör i terminal"), in the languages of RISKY_WORDS (Nautilus
+ * 3.28's own words where it has them), written with their accents (folded when matched). RUN_ANYWHERE and
+ * PROGRAM_ANYWHERE are the scripts without spaces between words, matched anywhere in the label.
+ */
 const RUN_WORDS = ["run", "execute", "executing", "execution", "launch", "ausführen", "ausführung", "exécuter", "exécution", "lancer", "ejecutar",
-  "ejecución", "eseguire", "esegui", "esecuzione", "executar", "execução"];
+  "ejecución", "eseguire", "esegui", "esecuzione", "executar", "execução",
+  "uitvoeren", "uit te voeren", "uitvoering", "uruchom", "uruchomić", "uruchamianie", "uruchomienie", "wykonywanie", "wykonywania", "wykonać",
+  "запустить", "запуск", "запуска", "выполнение", "выполнения", "выполнить", "выполнять", "исполнение", "kör", "köra", "körning", "kør", "køre",
+  "kørsel", "kjør", "kjøre", "kjøring", "suorita", "suorittaa", "suorittaminen", "suoritus", "spustit", "spouštění", "spuštění", "spouštět",
+  "çalıştır", "çalıştırma", "çalıştırılması", "çalıştırılmasına"];
+const RUN_ANYWHERE = ["実行", "执行", "執行", "运行", "運行", "실행"];
 const RUN_WORD = anyOf(RUN_WORDS);
-const PROGRAM_WORD = anyOf(["programs?", "programm", "programmes?", "programas?", "programma", "terminal", "terminale"]);
+const RUN_SOMEWHERE = new RegExp(foldLabel(RUN_ANYWHERE.join("|")), "u");
+const PROGRAM_WORD = anyOf(["programs?", "programm", "programmes?", "programas?", "programma", "terminal", "terminale", "programu", "programem",
+  "terminalu", "terminalvenster", "программа", "программы", "программу", "программой", "терминал", "терминале", "programmet", "terminalen",
+  "ohjelma", "ohjelmana", "ohjelmaa", "pääte", "päätteessä", "terminálu", "terminál", "uçbirim", "uçbirimde"]);
+const PROGRAM_SOMEWHERE = new RegExp(foldLabel(["プログラム", "端末", "程序", "程式", "终端", "終端", "프로그램", "터미널"].join("|")), "u");
 /** A check box that is only "Execute" ("Ausführen:", "Exécution :"), or says the file is executable ("Is executable", "Ausführbar"). */
-const RUN_ONLY = new RegExp(`^\\s*(${foldLabel(RUN_WORDS.join("|"))})\\s*:?\\s*$`, "u");
-const EXECUTABLE_WORD = anyOf(["executables?", "ausführbar(e[nrs]?)?", "exécutables?", "ejecutables?", "eseguibil[ei]", "executáve(l|is)"]);
+const RUN_ONLY = new RegExp(`^\\s*(${foldLabel([...RUN_WORDS, ...RUN_ANYWHERE].join("|"))})\\s*[:：]?\\s*$`, "u");
+const EXECUTABLE_WORD = anyOf(["executables?", "ausführbar(e[nrs]?)?", "exécutables?", "ejecutables?", "eseguibil[ei]", "executáve(l|is)",
+  "uitvoerbaar", "uitvoerbare", "wykonywaln(y|ym|ego|a|e|ą|ych)", "исполняем(ый|ым|ого|ая|ое|ые|ых)", "körbar[at]?", "kørbare?", "kjørbare?",
+  "suoritettava[na]?", "spustiteln(ý|ým|ého|á|é)", "çalıştırılabilir"]);
+const EXECUTABLE_SOMEWHERE = new RegExp(foldLabel(["実行可能", "可执行", "可執行", "실행 가능"].join("|")), "u");
 const TOGGLE_ROLES = /check box|toggle|switch/;
 /**
  * The file manager's "Do you want to run …, or display its contents?" question (and its autorun one), as Nautilus
- * versions word it: its "Run" runs the file.
+ * versions word it, in the languages of RISKY_WORDS: its "Run" runs the file.
  */
 const RUN_FILE_DIALOG = anyOf(["do you want to run", "display its contents", "would you like to run it", "inhalt anzeigen",
   "automatisch ausgeführt werden soll", "afficher son contenu", "souhaitez-vous le lancer", "(ver|mostrar) su contenido", "quiere ejecutarlo",
-  "il suo contenuto", "visualizzarne il contenuto", "eseguirlo", "(exibir|mostrar) (o )?seu conteúdo", "gostaria de executá-lo"]);
-/** That dialog's "Run" ("Ausführen", "Lancer", "Ejecutar", "Esegui", "Executar"). */
-const RUN_ANSWER = /^(run|execute|launch|ausfuhren|lancer|ejecutar|esegui|executar)\b/;
-/** Does activating this control make a file executable or run one? */
-function runsProgram(role: string, name: string, dialog?: { name: string; text: string }): boolean {
-  const label = plainText(name);
-  if (RUNS_PROGRAM.test(label) || TRUST_AND_LAUNCH.test(label)) return true;
-  if (ACTIVATING_ROLES.test(role) && RUN_WORD.test(label) && PROGRAM_WORD.test(label)) return true;
+  "il suo contenuto", "visualizzarne il contenuto", "eseguirlo", "(exibir|mostrar) (o )?seu conteúdo", "gostaria de executá-lo",
+  "inhoud ervan tonen", "wyświetlić jego zawartość", "показать его содержимое", "visa dess innehåll", "vise dens indhold", "vise innholdet",
+  "näyttää sen sisällön", "zobrazit jeho obsah", "içeriğini görüntülemek"]);
+const RUN_FILE_DIALOG_SOMEWHERE = new RegExp(foldLabel(["内容を表示", "显示它的内容", "顯示它的內容", "내용을 표시"].join("|")), "u");
+/** That dialog's "Run" ("Ausführen", "Lancer", "Ejecutar", "Esegui", "Executar", "Запустить", "Kör", "実行する"), starting the label. */
+const RUN_ANSWER = new RegExp(`^(${foldLabel(["run", "execute", "launch", "ausführen", "lancer", "ejecutar", "esegui", "executar", "uitvoeren", "uruchom",
+  "запустить", "kör", "kør", "kjør", "suorita", "spustit", "çalıştır"].join("|"))})(?=$|[^\\p{L}\\p{N}])|^(${foldLabel(RUN_ANYWHERE.join("|"))})`, "u");
+/** RUNS_PROGRAM_EXTRA[os] and RUN_FILE_DIALOG_EXTRA[os] (./vocabulary.ts) as expressions, or null where the OS adds none. */
+const runsProgramExtra = perOS(os => (RUNS_PROGRAM_EXTRA[os].length ? anyOf([...RUNS_PROGRAM_EXTRA[os]]) : null));
+const runFileDialogExtra = perOS(os => (RUN_FILE_DIALOG_EXTRA[os].length ? anyOf([...RUN_FILE_DIALOG_EXTRA[os]]) : null));
+/** RUN_ANSWER_EXTRA[os] (./vocabulary.ts) as a whole word starting the label, as RUN_ANSWER is, or null where the OS adds none. */
+const runAnswerExtra = perOS(os => (RUN_ANSWER_EXTRA[os].length ? new RegExp(`^(${foldLabel(RUN_ANSWER_EXTRA[os].join("|"))})(?=$|[^\\p{L}\\p{N}])`, "u") : null));
+/** A text in both forms the checks below read: with look-alikes mapped (plainText), and as written (Cyrillic stays Cyrillic). */
+const bothForms = (s: string) => { const a = plainText(s), b = foldLabel(s); return a === b ? [a] : [a, b]; };
+/** Does activating this control make a file executable or run one (by `os`'s words too)? */
+function runsProgram(role: string, name: string, dialog: { name: string; text: string } | undefined, os: OS): boolean {
+  const labels = bothForms(name);
+  const has = (re: RegExp | null) => !!re && labels.some(l => re.test(l));
+  if (has(RUNS_PROGRAM) || has(TRUST_AND_LAUNCH) || has(runsProgramExtra(os))) return true;
+  if (ACTIVATING_ROLES.test(role) && labels.some(l => (RUN_WORD.test(l) || RUN_SOMEWHERE.test(l)) && (PROGRAM_WORD.test(l) || PROGRAM_SOMEWHERE.test(l)))) return true;
   // The file's execute bit, by a check box on its Permissions page.
-  if (TOGGLE_ROLES.test(role) && (RUN_ONLY.test(label) || EXECUTABLE_WORD.test(label))) return true;
-  const asks = plainText(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
-  return RUN_ANSWER.test(label) && (RUN_FILE_DIALOG.test(asks) || EXECUTABLE_WORD.test(asks));
+  if (TOGGLE_ROLES.test(role) && (has(RUN_ONLY) || has(EXECUTABLE_WORD) || has(EXECUTABLE_SOMEWHERE))) return true;
+  const asks = bothForms(`${dialog?.name ?? ""} ${dialog?.text ?? ""}`);
+  const said = (re: RegExp | null) => !!re && asks.some(a => re.test(a));
+  const osRunDialog = said(runFileDialogExtra(os));
+  // The OS's own answers (Gatekeeper's "Open") run the file only in its own dialogs.
+  const runDialog = said(RUN_FILE_DIALOG) || said(RUN_FILE_DIALOG_SOMEWHERE) || said(EXECUTABLE_WORD) || said(EXECUTABLE_SOMEWHERE) || osRunDialog;
+  return (has(RUN_ANSWER) && runDialog) || (osRunDialog && has(runAnswerExtra(os)));
 }
 /** "Paste" menu items and buttons, in the languages of RISKY_WORDS (GTK's and the browsers' own words). */
 const PASTE_WORDS = ["paste", "einfügen", "coller", "pegar", "incolla", "colar", "plakken", "wklej", "вставить", "вставь", "klistra in", "indsæt",
@@ -664,12 +843,12 @@ const appList = (apps: string[]) => (apps.length > 1 ? `${apps.slice(0, -1).join
 
 /** Dialogs (Save As, Properties) go with their program's windows: not another place for text to go. */
 const DIALOG_WINDOW = /^(dialog|alert|file chooser|color chooser|font chooser)$/;
-/** Apps whose window shows one page, message or chat after another, its title saying which: there another title is another place. */
-const TABBED_APP = /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|thunderbird|evolution|geary|claws|mail|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram/i;
+/** Apps whose window shows one page, message or chat after another, its title saying which: there another title is another place (TABBED_APP). */
+const tabbed = (app: string, os: OS) => TABBED_APP[os]?.test(app) ?? false;
 /** A window's title with each path in it as its file's name ("/tmp/x/notes.txt - Mousepad" → "notes.txt - Mousepad"). */
 const shortTitle = (t: string) => t.replace(/(^|[\s*•(])(?:~|\.{1,2})?(?:\/[^/\s]+)+\/([^/\s]+)/g, "$1$2");
 /** Did the task read `s` somewhere other than where `r` acts: another app, another window, or (in a browser or mail client) another tab or message? */
-function elsewhere(s: ReadSource, r: ActionRequest): boolean {
+function elsewhere(s: ReadSource, r: ActionRequest, os: OS): boolean {
   if (s.described || s.app.trim().toLowerCase() !== r.app.trim().toLowerCase()) return true;
   const w = r.windowId ?? {};
   if (s.pid != null && s.pid === w.pid && (DIALOG_WINDOW.test(s.role ?? "") || DIALOG_WINDOW.test(w.role ?? ""))) return false;
@@ -677,7 +856,7 @@ function elsewhere(s: ReadSource, r: ActionRequest): boolean {
   if (known && (s.pid !== w.pid || s.path !== w.path)) return true;
   if (s.window.trim() === r.window.trim()) return false;
   // The same window under another title (or one Ember can't tell apart but by its title).
-  return !known || TABBED_APP.test(r.app);
+  return !known || tabbed(r.app, os);
 }
 /** Letters and digits in a row that make a run of text recognisably from somewhere (shorter ones are everyday coincidences). */
 const RUN = 12;
@@ -734,6 +913,8 @@ function runsIn(runs: Runs, text: string): Set<string> {
   }
   return found;
 }
+// What a command carries from elsewhere in its task is judged as typing is (commands/carried.ts, critique integration-17).
+export { runsIn, runsOf, type Runs };
 
 /** Text around the place a number may continue through: enough for any number written out. */
 const NUMBER_CONTEXT = 40;
@@ -790,9 +971,9 @@ const afterTyped = (runs: Runs, all: string | undefined, text: string) => {
  * window's other fields before (`typedHere`): a number or an address split over several fields is one text too.
  * Null when nothing is typed.
  */
-function enteringRuns(r: ActionRequest): Runs | null {
+function enteringRuns(r: ActionRequest, kc: KeyConventions): Runs | null {
   const text = r.kind === "text" || r.kind === "cursor_text";
-  const now = text ? r.value ?? "" : r.kind === "keys" ? typedChar(r.value ?? "") ?? "" : "";
+  const now = text ? r.value ?? "" : r.kind === "keys" ? typedChar(r.value ?? "", kc) ?? "" : "";
   if (!now) return null;
   let runs: Runs;
   if (text ? (r.mode ?? "replace") === "replace" : r.afterSelectAll) runs = runsOf(now);
@@ -1284,8 +1465,147 @@ function offered(asked: string): string {
 }
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
-const quote = (s: string, max = 60) => `“${s.length > max ? s.slice(0, max - 1) + "…" : s}”`;
+/**
+ * Double quote marks other than the keyboard's straight one: Ember's own “ and ”, the other quotation marks, and the
+ * marks drawn like them (Unicode's look-alikes of " in other scripts and widths: primes, the modifier letters ʺ and ˮ,
+ * the double acute accents, the Hebrew gershayim, the ditto mark; and the quotation mark ornaments).
+ */
+const OTHER_QUOTES = "“”„‟″‴‶‷⁗〝〞〟＂«»❝❞❠ʺ˝ˮ˵˶״⹂〃\u{1CD3}\u{1F676}-\u{1F678}";
+/**
+ * Single quote marks and the marks drawn like them (the keyboard's ' and `, apostrophes, primes, the modifier letters,
+ * the acute and grave accents and Greek's, the Armenian, Hebrew and N'Ko apostrophes, the single guillemets, the
+ * ornaments, the saltillo, the full-width forms). One reads as no quote of Ember's; two side by side read as its ” or
+ * “ (’’, ‘‘, ′′), and ‹‹ as «.
+ */
+const SINGLE_QUOTES = "'`\u00b4\u02b9\u02bb\u02bc\u02bd\u02c8\u02ca\u02cb\u0374\u0384\u055a\u055b\u055d\u05f3\u07f4\u07f5\u1fbd\u1fbf\u1fef\u1ffd\u1ffe\u2018\u2019\u201a\u201b\u2032\u2035\u2039\u203a\u275b\u275c\u275f\ua78b\ua78c\uff07\uff40";
+/** Spaces narrower than the plain one, which leave two quote marks reading as one (’ ’ as ”). */
+const NARROW_SPACES = "\u2006\u2008\u2009\u200a\u202f\u205f";
+/** Every quote mark, single or double, straight or not. */
+const ANY_QUOTE = `"${OTHER_QUOTES}${SINGLE_QUOTES}`;
+/**
+ * A combining mark with no letter or digit under it (after a space, a quote mark, a line break or nothing): drawn on
+ * its own, it is a quote mark of its own (a double acute over a space is ˝, a comma above beside ’ makes ”).
+ */
+const ORPHAN_MARKS = new RegExp(`(?<=^|[\\s⏎⇥${ANY_QUOTE}])\\p{M}+`, "gu");
+/**
+ * Quote marks in a name read from the screen: a double one, or single ones side by side (a narrow space may stand
+ * between), each become one apostrophe. One single mark alone (Don’t) is left as it is.
+ */
+const NAME_QUOTES = new RegExp(`["${OTHER_QUOTES}](?:[${NARROW_SPACES}]?[${ANY_QUOTE}])*|[${SINGLE_QUOTES}](?:[${NARROW_SPACES}]?[${ANY_QUOTE}])+`, "gu");
+/**
+ * What may stand between Ember's own quote marks: a quote mark of any kind, or single ones side by side, become one
+ * apostrophe, so a name can't close Ember's quote and write the rest of its sentence ("Close” button in Firefox?
+ * Nothing is sent. Delete", "Close’’ button…"); line breaks become spaces, and format characters (direction overrides,
+ * zero-width marks) go, since they reorder or hide what follows them, and so do combining marks with no letter under
+ * them, which draw a quote mark of their own (ORPHAN_MARKS).
+ */
+const quotable = (s: string) => s.replace(/\p{Cf}/gu, "").replace(/[\r\n\u{2028}\u{2029}]+/gu, " ").replace(ORPHAN_MARKS, "").replace(NAME_QUOTES, "'");
+const quote = (s: string, max = 60) => { const t = [...quotable(s)]; return `“${t.length > max ? t.slice(0, max - 1).join("") + "…" : t.join("")}”`; };
+/** How much typed text a question shows whole; longer text shows its start and its end, and how long it is. */
+const TYPED_SHOWN = 160;
+const TYPED_HEAD = 110;
+const TYPED_TAIL = 40;
+/** A double quote mark other than the keyboard's straight one (OTHER_QUOTES). */
+const MARKED_QUOTE = new RegExp(`[${OTHER_QUOTES}]`, "u");
+/**
+ * Single quote marks side by side in typed text, a narrow space or a straight double quote among them (’’, ‘ ‘, ’"):
+ * read together as Ember's ” or “. Shown as one unit, marked, unless they are all the keyboard's own (KEYBOARD_QUOTES).
+ */
+const QUOTE_PAIR = `[${SINGLE_QUOTES}"](?:[${NARROW_SPACES}]?[${SINGLE_QUOTES}"])+`;
+/** Quote marks side by side that are all the keyboard's own (' ` "): shown as they are, as a straight " is. */
+const KEYBOARD_QUOTES = new RegExp(`^[${NARROW_SPACES}'\`"]+$`, "u");
+/** Typed text holds quote marks that can read as Ember's own: a double one, or single ones side by side. */
+const HOLDS_QUOTES = new RegExp(`["${OTHER_QUOTES}]|${QUOTE_PAIR}`, "u");
+/** A pictograph with the presentation selector (❤️, ☺︎) or the skin tone (👍🏽) written after it. */
+const PICTOGRAPH = String.raw`\p{Extended_Pictographic}(?:\u{FE0E}|\u{FE0F}|[\u{1F3FB}-\u{1F3FF}])?`;
+/**
+ * An emoji written as several characters, some of which show nothing by themselves: the subdivision flags (England,
+ * Scotland, Wales: 🏴 and tag letters), a keycap (1️⃣), pictographs joined by ZWJ (👨‍👩‍👧, ❤️‍🔥), a pictograph with its
+ * selector or skin tone.
+ */
+const EMOJI = new RegExp(String.raw`\u{1F3F4}\u{E0067}\u{E0062}(?:\u{E0065}\u{E006E}\u{E0067}|\u{E0073}\u{E0063}\u{E0074}|\u{E0077}\u{E006C}\u{E0073})\u{E007F}|[0-9#*]\u{FE0F}?\u{20E3}|${PICTOGRAPH}(?:\u{200D}${PICTOGRAPH})*`, "gu");
+/** A letter or mark of the scripts that write ZWJ and ZWNJ inside their words (Persian and Arabic, the Indian scripts). */
+const JOINED_SCRIPT = /(?=[\p{L}\p{M}])[\p{scx=Arabic}\p{scx=Syriac}\p{scx=Devanagari}\p{scx=Bengali}\p{scx=Gurmukhi}\p{scx=Gujarati}\p{scx=Oriya}\p{scx=Tamil}\p{scx=Telugu}\p{scx=Kannada}\p{scx=Malayalam}\p{scx=Sinhala}]/u;
+/**
+ * What typed text shows as one unit: an emoji written as several characters, quote marks side by side (QUOTE_PAIR), a
+ * combining mark with no letter under it (ORPHAN_MARKS).
+ */
+const TYPED_UNIT = new RegExp(`(${EMOJI.source})|(${QUOTE_PAIR})|${ORPHAN_MARKS.source}`, "gu");
+/**
+ * Each character of text a task types, as its question shows it (review #116 and its follow-up): the user approves
+ * what will be typed, so it shows as it is, straight double quotes included (a formula's =IF(A1="x";1;0)), and so do
+ * emoji (an emoji written as several characters is one unit), spaces of every width, and the joiners Persian and the
+ * Indian scripts write inside their words. A line break shows as ⏎ and a tab as ⇥, so the text stays on its line.
+ * Marked in ⟨ ⟩, as the command card marks them, so the text can't close Ember's quote and write the rest of its
+ * sentence: every other double quote mark (Ember's own “ and ” among them), single quote marks side by side as one unit
+ * (⟨’’⟩, unless they are all the keyboard's own: O''Brien), a combining mark with no letter under it (⟨U+030B⟩), and,
+ * outside those emoji and words, the characters that show nothing or reorder what follows (⟨ZWSP⟩, ⟨ZWJ⟩, ⟨RLO⟩), which
+ * are typed too.
+ */
+function typedUnits(s: string): string[] {
+  const text = s.replace(/\r\n?|[\n\u2028\u2029]/g, "⏎").replace(/\t/g, "⇥");
+  const units: string[] = [];
+  let from = 0;
+  for (const m of text.matchAll(TYPED_UNIT)) {
+    const [unit, emoji, pair] = m;
+    if (pair !== undefined && KEYBOARD_QUOTES.test(pair)) continue;
+    units.push(...markedUnits(text.slice(from, m.index)));
+    if (emoji !== undefined) units.push(emoji);
+    else if (pair !== undefined) units.push(`⟨${pair}⟩`);
+    // A combining mark with no letter under it, each one marked (by name where the command card has one).
+    else for (const c of unit) units.push(visibleText(c).find(v => v.kind !== "plain" && v.kind !== "mixed")?.text ?? `⟨U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}⟩`);
+    from = m.index + unit.length;
+  }
+  units.push(...markedUnits(text.slice(from)));
+  return units;
+}
+/** typedUnits for text holding none of TYPED_UNIT's units. */
+function markedUnits(s: string): string[] {
+  const chars = [...s];
+  const units: string[] = [];
+  let k = 0;
+  // visibleText gives each character it marks a segment of its own.
+  for (const seg of visibleText(s)) {
+    if (seg.kind === "plain" || seg.kind === "mixed") {
+      for (const c of seg.text) { units.push(MARKED_QUOTE.test(c) ? `⟨${c}⟩` : c); k++; }
+      continue;
+    }
+    const c = chars[k];
+    const inWord = (c === "\u200c" || c === "\u200d") && JOINED_SCRIPT.test(chars[k - 1] ?? "") && JOINED_SCRIPT.test(chars[k + 1] ?? "");
+    units.push(seg.kind === "nbsp" || inWord ? c : seg.text);
+    k++;
+  }
+  return units;
+}
+/**
+ * Text a task types, quoted: the user approves all of it, so a long one shows both ends and its length ("… (180
+ * characters)"). One that holds quote marks that can read as Ember's own (a double one, single ones side by side) says
+ * how long it is too, right after Ember's closing mark: where the text really ends, whatever a straight quote inside it
+ * seems to close. One apostrophe alone (I’m, it's) can't, and adds nothing.
+ */
+const quoteTyped = (s: string) => {
+  const t = typedUnits(s), n = [...s].length;
+  const length = `(${n} character${n === 1 ? "" : "s"})`;
+  if (t.length > TYPED_SHOWN) return `“${t.slice(0, TYPED_HEAD).join("")}…${t.slice(-TYPED_TAIL).join("")}” ${length}`;
+  return HOLDS_QUOTES.test(s) ? `“${t.join("")}” ${length}` : `“${t.join("")}”`;
+};
 const visible = (s: string) => s.replace(/\n/g, "⏎").replace(/\t/g, "⇥");
+/**
+ * Text a task types, all of it, as its question shows typed text (typedUnits, without Ember's quote marks): for a
+ * question that lists typed text cut short in its own words (fill_cells' cells), whose card shows each one whole.
+ */
+export const typedShown = (s: string): string => typedUnits(s).join("");
+/** Text a task types that its question shows only in part (over TYPED_SHOWN characters): all of it, shown as quoted. */
+const typedInFull = (r: ActionRequest): string | undefined => {
+  if (r.kind !== "text" && r.kind !== "cursor_text") return undefined;
+  const t = typedUnits(r.value ?? "");
+  return t.length > TYPED_SHOWN ? t.join("") : undefined;
+};
+/** `d` with the whole of the text its question cut (Decision.detail), when it cut some. */
+const withDetail = (r: ActionRequest, d: Decision): Decision => {
+  const detail = typedInFull(r);
+  return detail === undefined ? d : { ...d, detail };
+};
 
 /** Keys as the rest of Ember writes them: "Ctrl+S", "Enter", "Esc", "keypad Delete". */
 const KEY_LABELS: Record<string, string> = {
@@ -1295,19 +1615,30 @@ const KEY_LABELS: Record<string, string> = {
   parenleft: "(", parenright: ")", quotedbl: "\"", colon: ":", numbersign: "#", dollar: "$", ampersand: "&", at: "@", underscore: "_",
   percent: "%", question: "?", exclam: "!", less: "<", greater: ">",
 };
-const keyWord = (p: string): string => KEY_LABELS[p] ?? (p.length === 1 ? p.toUpperCase() : p.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "));
-/** A key combination for the user to read, built from its canonical form (never the model's own spelling); null if Ember can't press it. */
-export function keyLabel(keys: string): string | null {
-  const k = canonicalKeys(keys);
+const keyWord = (p: string, labels: Readonly<Record<string, string>>): string => labels[p] ?? (p.length === 1 ? p.toUpperCase() : p.split("_").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" "));
+/** KEY_LABELS with `kc`'s names for the modifiers ("Command", "Option" on macOS; Linux's are KEY_LABELS' own). */
+const keyLabelsMade = new WeakMap<KeyConventions, Readonly<Record<string, string>>>();
+const keyLabelsOf = (kc: KeyConventions) => {
+  let labels = keyLabelsMade.get(kc);
+  if (!labels) { labels = { ...KEY_LABELS, ...kc.labels }; keyLabelsMade.set(kc, labels); }
+  return labels;
+};
+/**
+ * A key combination for the user to read, built from its canonical form (never the model's own spelling), with `kc`'s
+ * names for the modifiers ("Ctrl+S"; "Command+S" on macOS); null if Ember can't press it.
+ */
+export function keyLabel(keys: string, kc: KeyConventions = KEYS.linux): string | null {
+  const k = canonicalKeys(keys, kc);
   if (!k) return null;
-  return k.split("+").map(p => (/^kp_./.test(p) ? `keypad ${keyWord(p.slice(3))}` : keyWord(p))).join("+");
+  const labels = keyLabelsOf(kc);
+  return k.split("+").map(p => (/^kp_./.test(p) ? `keypad ${keyWord(p.slice(3), labels)}` : keyWord(p, labels))).join("+");
 }
 
 /**
  * The plain question for a request, without what its decision adds (a note on carried text, on text replaced): for one
  * question about several requests (fill_cells), whose notes are what each decision's prompt adds to this.
  */
-export const plainQuestion = (r: ActionRequest): string => describe(r);
+export const plainQuestion = (r: ActionRequest, kc: KeyConventions = KEYS.linux): string => describe(r, true, kc);
 
 /**
  * The question, built from the request. On Ember's desk nothing of the user's is borrowed: the question says "on my
@@ -1316,30 +1647,36 @@ export const plainQuestion = (r: ActionRequest): string => describe(r);
 /** What an element without a name is called in a question: "the text area", not "the text" ("replace the text in the text"). */
 const UNNAMED: Record<string, string> = { text: "text area", "document text": "document", paragraph: "paragraph", entry: "text field", "password text": "password field", "table cell": "row", "list item": "row", "tree item": "row" };
 
-function describe(r: ActionRequest, withApp = true): string {
+function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.linux): string {
   const cell = !!r.element && isSheetCell(r.element);
-  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on ${quote(r.place.name, 40)} ${r.place.role}`;
-  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `${quote(r.element.name)} ${r.element.role}` : `the ${UNNAMED[r.element.role] ?? r.element.role}${r.element.withheld ? "" : place}`;
+  // Controls are called by the plain words the activity list uses ("the “Save” button", not "“Save” push button").
+  const place = !r.place ? "" : "at" in r.place ? ` at the ${r.place.at} of the window` : ` on the ${quote(r.place.name, 40)} ${roleWord(r.place.role)}`;
+  const el = !r.element ? "" : cell ? `cell ${r.element.name}` : r.element.name ? `the ${quote(r.element.name)} ${roleWord(r.element.role)}` : `the ${UNNAMED[r.element.role] ?? roleWord(r.element.role)}${r.element.withheld ? "" : place}`;
   const desk = r.onDesk ? " on my desk" : "";
   const where = r.app && withApp ? ` in ${friendlyApp(r.app)}` : "";
   const current = r.currentText ?? "";
   const replacing = r.mode === "replace" && current.length > 0;
-  const value = quote(visible(r.value ?? ""));
+  const value = quoteTyped(r.value ?? "");
   // What typing does: "type “42” into cell B5", "replace “1200” in cell B2 with “84000”", "replace the text in … with …".
   const typing = !replacing ? `type ${value} into ${el}` : cell ? `replace ${quote(visible(current), 30)} in ${el} with ${value}` : `replace ${r.element?.name ? "the text in" : "everything in"} ${el}${where} with ${value}`;
   const typed = `${typing}${replacing && !cell ? "" : where}${desk}?`;
   switch (r.kind) {
     case "click": return `Click ${el}${where}${desk}?`;
-    case "toggle": return `Switch ${el}${where}${desk}?`;
+    // Which way it goes, in words that fit the control: "Turn on the “Night Light” switch", "Tick the “Bold” checkbox".
+    case "toggle": {
+      const box = r.element?.role === "check box";
+      const verb = r.value === "on" ? (box ? "Tick" : "Turn on") : r.value === "off" ? (box ? "Untick" : "Turn off") : "Flip";
+      return `${verb} ${el}${where}${desk}?`;
+    }
     case "text": return `${typed.charAt(0).toUpperCase()}${typed.slice(1)}`;
     case "select": return `Choose ${quote(r.value ?? "")} in ${el}${where}${desk}?`;
-    case "value": return `Set ${el} to ${r.value}${where}${desk}?`;
+    case "value": return `Set ${el} to ${quote(r.value ?? "", 40)}${where}${desk}?`;
     case "setting": return `Change the setting ${quote(r.value ?? "")}?`;
     case "open_app": return `Open ${quote(r.value ?? "")}?`;
     case "cursor_click": return r.onDesk ? `Click ${el}${where}${desk}?` : `Borrow your mouse to click ${el}${where}?`;
     case "cursor_text": return r.onDesk ? `${typed.charAt(0).toUpperCase()}${typed.slice(1)}` : `Borrow your ${cell ? "keyboard" : "mouse and keyboard"} to ${typed}`;
     case "keys": {
-      const key = keyLabel(r.value ?? "") ?? quote(r.value ?? "", 30);
+      const key = keyLabel(r.value ?? "", kc) ?? quote(r.value ?? "", 30);
       return `${r.onDesk ? "Press" : "Borrow your keyboard to press"} ${key}${r.element ? ` on ${el}` : ""}${where}${desk}?`;
     }
     case "scroll": return `${r.onDesk ? "Scroll" : "Borrow your mouse to scroll"} ${el} ${r.value ?? ""}${where}${desk}?`;
@@ -1351,8 +1688,13 @@ function describe(r: ActionRequest, withApp = true): string {
 type Risk = { reason: string; about?: string; note?: string };
 /** Fields whose own text is all that Ctrl+A selects in them (in a paragraph or a section it selects the whole document or page). */
 const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|terminal)$/;
-const SELECTS_MORE: Risk = { reason: "everything is selected (Ctrl+A), so this replaces it all", note: "Everything there is selected, so this replaces it all." };
-const KEYS_SELECT_MORE: Risk = { reason: "replacing with the keyboard selects everything (Ctrl+A), which here may be the whole document", note: "To replace it I select everything with Ctrl+A, which here may be the whole document." };
+/** Select All as the user's keyboard names it ("Ctrl+A"; "Command+A" on macOS), for the reasons and notes below. */
+const selectAllLabel = (kc: KeyConventions) => keyLabel(kc.edit.selectAll, kc) ?? kc.edit.selectAll;
+const SELECTS_MORE = (kc: KeyConventions): Risk => ({ reason: `everything is selected (${selectAllLabel(kc)}), so this replaces it all`, note: "Everything there is selected, so this replaces it all." });
+const KEYS_SELECT_MORE = (kc: KeyConventions): Risk => ({
+  reason: `replacing with the keyboard selects everything (${selectAllLabel(kc)}), which here may be the whole document`,
+  note: `To replace it I select everything with ${selectAllLabel(kc)}, which here may be the whole document.`,
+});
 const SELECTED_MORE: Risk = { reason: "text is selected there, and in a document it may run on past what Ember can see, so this may replace a lot", note: "Text there is selected, and it may run on past what I can see, so this may replace a lot." };
 const MAY_BE_SELECTED: Risk = { reason: "nothing says it has the keyboard in a window with an editable document, where text may be selected, so this may replace a lot", note: "I can't tell what has the keyboard there, and text there may be selected, so this may replace a lot." };
 /** "all 120 characters", or "all the characters" for text read only in part (the screen reader tells the first 200). */
@@ -1363,15 +1705,14 @@ const howMany = (n: number) => (n >= 200 ? "all the characters" : `all ${n} char
  */
 const EMBEDDED = /\ufffc/;
 const HOLDS_MORE: Risk = { reason: "the field holds more than Ember can read (paragraphs or pictures in it), so this may replace a lot of it", note: "It holds more than I can read, so this may replace a lot." };
-/** Keys that take away what is selected: Delete and Backspace (with Shift or Ctrl too), Ctrl+X (pastes are PASTE_KEYS). */
-const REMOVES = /^((shift|ctrl|ctrl\+shift)\+)?(delete|backspace)$|^ctrl\+x$/;
 /**
  * What a key (`k`, as keyFamily spells it) does to the rows, items or cells selected in a list, a table, a file view or
  * a sheet: everything (`all`, after Ctrl+A or Select All), or what Shift and a movement key selected.
  */
-function takesSelected(k: string, all: boolean): Risk {
+function takesSelected(k: string, all: boolean, kc: KeyConventions): Risk {
+  const t = keyTables(kc);
   const what = all ? "everything there is selected" : "several things there may be selected";
-  const does = k === "ctrl+x" ? "this cuts it all" : PASTE_KEYS.has(k) ? "a paste may replace it all" : /(delete|backspace)$/.test(k) ? "this key may delete it all" : "typing may replace it all";
+  const does = k === t.cut ? "this cuts it all" : t.paste.has(k) ? "a paste may replace it all" : /(delete|backspace)$/.test(k) ? "this key may delete it all" : "typing may replace it all";
   return { reason: `${what}, and ${does}`, note: `${what.charAt(0).toUpperCase()}${what.slice(1)}, and ${does}.` };
 }
 
@@ -1388,25 +1729,26 @@ function takesSelected(k: string, all: boolean): Risk {
  * cells: a letter there types over nothing, it is the app's shortcut (a list's type-ahead); but a key that takes them
  * away (Delete, Backspace, Ctrl+X), a paste, and typing in a sheet may take them all (takesSelected), on the desk too.
  */
-function replacedBySelection(r: ActionRequest, role: string, k = ""): Risk | null {
+function replacedBySelection(r: ActionRequest, role: string, k: string, kc: KeyConventions): Risk | null {
   const sel = r.selection ?? "";
   if (!sel && !r.afterSelectAll && !r.afterSelecting && !r.selectionBeyond) return null;
   if (r.element && !TEXT_FIELD.test(role) && !r.selectionBeyond) {
     if (!r.afterSelectAll && !r.afterSelecting) return null;
-    return REMOVES.test(k) || PASTE_KEYS.has(k) || isSheetCell(r.element) ? takesSelected(k, !!r.afterSelectAll) : null;
+    const t = keyTables(kc);
+    return t.removes.test(k) || t.paste.has(k) || isSheetCell(r.element) ? takesSelected(k, !!r.afterSelectAll, kc) : null;
   }
   if (!r.afterSelectAll && !sel && !r.afterSelecting && r.selectionBeyond === "unknown") return MAY_BE_SELECTED;
   const embedded = EMBEDDED.test(sel) || ((r.afterSelectAll || r.afterSelecting) && EMBEDDED.test(r.currentText ?? ""));
-  if (!HOLDS_ALL_TEXT.test(role) || r.selectionBeyond || embedded) return r.afterSelectAll ? SELECTS_MORE : SELECTED_MORE;
+  if (!HOLDS_ALL_TEXT.test(role) || r.selectionBeyond || embedded) return r.afterSelectAll ? SELECTS_MORE(kc) : SELECTED_MORE;
   const current = r.currentText;
   // The field's text as read is its first 200 characters; the selection read is its first 500.
   const replaced = r.afterSelectAll ? (current === undefined || sel.length > current.length ? sel || current : current) : sel || current;
-  if (replaced === undefined) return SELECTS_MORE;
+  if (replaced === undefined) return SELECTS_MORE(kc);
   // All of it is what this task typed there itself: replacing it takes nothing of the user's.
   if ((replaced.length <= 80 && !replaced.includes("\n")) || (r.ownText && replaced === current)) return null;
   if (r.afterSelectAll || sel === current) {
     return {
-      reason: `everything is selected${r.afterSelectAll ? " (Ctrl+A)" : ""}, so this replaces ${howMany(replaced.length)} already there`,
+      reason: `everything is selected${r.afterSelectAll ? ` (${selectAllLabel(kc)})` : ""}, so this replaces ${howMany(replaced.length)} already there`,
       note: `Everything there is selected, so this replaces ${howMany(replaced.length)}.`,
     };
   }
@@ -1451,11 +1793,11 @@ const LEAD_IN = /^([^\p{L}\p{N}]*(yes|ok|okay|sure|please|go ahead|and|click|tap
  * file's name only by its real extension. What it says isn't the user's request either: it never marks a step as not
  * asked for (PolicyEngine.judge).
  */
-function riskyContent(name: string, acts = false): boolean {
+function riskyContent(name: string, acts: boolean, os: OS): boolean {
   const label = plainText(name).trim();
   if (acts) {
     if (FILE_NAME.test(label) && !MONEY.test(name)) return false;
-    return isRiskyControl("push button", name) || isRiskyActLabel(label.replace(LEAD_IN, "")) || isRiskyActLabel(label.replace(LEAD_GROUP, "").replace(LEAD_IN, ""))
+    return isRiskyControl("push button", name, os) || isRiskyActLabel(label.replace(LEAD_IN, "")) || isRiskyActLabel(label.replace(LEAD_GROUP, "").replace(LEAD_IN, ""))
       || PHRASES.some(([re]) => new RegExp(re.source).test(foldLabel(name))) || formatsDisk(name);
   }
   if (/\.[a-z0-9]{1,5}$/.test(label)) return false;
@@ -1500,11 +1842,7 @@ export function reachesOut(text: string): boolean {
 const REACHES_OUT: Risk = { reason: "this formula can fetch from the internet or read other files", note: "This formula can fetch from the internet or read other files." };
 /** Where Enter is a line break typed: text fields, a page's editable text, a combo box's own text. */
 const TEXT_FIELD = /^(entry|text|paragraph|section|document text|document web|document frame|spin button|combo box|heading|block quote|static)$/;
-/** LibreOffice: Enter in its fields and its documents' text never sends. */
-const OFFICE_APP = /soffice|libreoffice/i;
 const ENTER_IN_FIELD: Risk = { reason: "Enter in a text field can send or submit what is in it", note: "Enter there may send or submit it." };
-/** Web browsers and the apps built on a web engine (Electron), and chat apps: where Ember can't tell, a field there is a page's. */
-const WEB_APP = /firefox|chrom(e|ium)|epiphany|^web$|falkon|midori|opera|brave|vivaldi|konqueror|librewolf|seamonkey|electron|slack|teams|discord|element|mattermost|rocket\.?chat|signal|telegram|whatsapp/i;
 /** Titles of file dialogs (open, save, export, attach). */
 const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|export|export as|open|open files?|select files?|choose files?|insert (file|image|picture)|upload|attach)\b/i;
 /**
@@ -1514,11 +1852,13 @@ const FILE_DIALOG_TITLE = /^\s*(save|save as|save a copy|save file|save image|ex
  * (LibreOffice's, a text editor's lines: gedit's, Mousepad's), a spin button, a spreadsheet's cell (Enter enters what
  * was typed), or a formula being typed.
  */
-function enterMaySend(r: ActionRequest, role: string): boolean {
+function enterMaySend(r: ActionRequest, role: string, os: OS): boolean {
   if (!TEXT_FIELD.test(role) || role === "spin button" || r.formula !== undefined || (r.element && isSheetCell(r.element))) return false;
   if (!r.inPage && (r.windowId?.role === "file chooser" || (DIALOG_WINDOW.test(r.windowId?.role ?? "") && FILE_DIALOG_TITLE.test(r.window)))) return false;
-  if (r.inPage ?? WEB_APP.test(r.app)) return true;
-  return TABBED_APP.test(r.app) && !r.multiLine && !OFFICE_APP.test(r.app);
+  // Web browsers, apps built on a web engine (Electron) and chat apps (WEB_APP): where Ember can't tell, a field there is
+  // a page's. An office suite's (OFFICE_APP: LibreOffice) fields and documents' text never send.
+  if (r.inPage ?? WEB_APP[os]?.test(r.app) ?? false) return true;
+  return tabbed(r.app, os) && !r.multiLine && !(OFFICE_APP[os]?.test(r.app) ?? false);
 }
 /**
  * A dialog about a file someone else is using or has changed since it was opened (LibreOffice's "Document in Use",
@@ -1573,18 +1913,98 @@ const FIND_REPLACE = new RegExp(`^\\s*(${foldLabel(["find", "suchen", "recherche
 const opensDialog = (role: string, name: string) => (/^(menu item|check menu item|radio menu item)$/.test(role) && OPENS_DIALOG.test(name)
   && !ENDS_SESSION.test(foldLabel(name)) && !ENDS_SESSION.test(plainText(name))) || FIND_REPLACE.test(plainText(name));
 
+/**
+ * Is `r` text going into one of `rules`' boxes that run what is typed there (File Explorer's address box), when it is
+ * the text refused there? The policy reads its OS's TYPING_REFUSED (./vocabulary.ts).
+ */
+export function refusesTyping(rules: readonly TypingRefusal[], r: Pick<ActionRequest, "app" | "element" | "value">): boolean {
+  const app = r.app.trim(), field = (r.element?.name ?? "").trim(), text = (r.value ?? "").trim();
+  return rules.some(t => t.app.test(app) && t.field.test(field) && (!t.text || t.text.test(text)));
+}
+
+/** Controls that carry a command (a context menu's items, Open with's submenu, a ribbon's or command bar's buttons). */
+const COMMAND_ROLES = /^(menu|menu item|push button|toggle button|link)$/;
+/** Enter, also with Ctrl or Shift, opens the focused item (Alt+Enter only shows its Properties). */
+const OPEN_KEY = /^(ctrl\+)?(shift\+)?return$/;
+/** The views that hold those items (File Explorer's and the desktop's are lists): Enter there opens what is selected. */
+const ITEM_VIEW_ROLES = /^(list|table)$/;
+/** Keys that move the keyboard off what is selected, or add the focused item to it (Ctrl and an arrow, Ctrl+Space). */
+const SPLITS_SELECTION = /^ctrl\+(up|down|left|right|home|end|prior|next|space)$/;
+/** In an open menu a plain letter picks the item with that access key (as riskOf's menu rule says). */
+const MENU_LETTER = /^(shift\+)?[a-z0-9]$/;
+/** Arrow keys that open a submenu (Right; Left where menus run right to left): Open with's entries run the item. */
+const SUBMENU_KEY = /^(right|left)$/;
+/** A name that shows a file type (an extension after its last dot: "invoice.pdf", "Budget v1.2"). */
+const SHOWS_TYPE = /\.[\p{L}\p{N}]{1,10}$/u;
+/**
+ * A rule's commands as one expression on a folded label: the whole label (as written: an app's name may hold "(TM)"),
+ * an access key ("(O)") or "…" ("...") after it.
+ */
+const commandsOf = (rule: OpensPrograms) => {
+  const labels = rule.commands.map(c => foldLabel(c).replace(/[.*+?^$()|[\]{}\\]/g, "\\$&"));
+  return new RegExp(`^\\s*(${labels.join("|")})\\s*(\\(\\w\\))?\\s*(\\.\\.\\.)?\\s*$`, "u");
+};
+const commandExpressions = new WeakMap<OpensPrograms, RegExp>();
+
+/**
+ * Does `r` open a program or script in an app that runs what it opens with no dialog (`rules`: OPENS_PROGRAMS[os],
+ * File Explorer on Windows)? "item": an item named like one (an icon, a list's or grid's item), opened by a click that
+ * does more than select it (its own action, a double click), by the borrowed mouse (a single click opens where Explorer
+ * is set to open items that way, which Ember can't tell) or by Enter. "selection": Enter opens every item selected, not
+ * only the focused one it is judged by, so Enter where the selection may hold others (on the view itself, or after keys
+ * selected several there: Ctrl+A, Shift and an arrow), and the keys that move the keyboard off the selection or add the
+ * focused item to it (Ctrl and an arrow, Ctrl+Space). "command": a command that opens or runs whatever is selected
+ * (Open, Run as administrator), clicked, pressed with Enter or Space, opened as a submenu with an arrow (Open with), or
+ * picked in its menu by a letter (Open's "O"): what is selected isn't known. Selecting an item by accessibility, moving with the arrows, and reading stay allowed.
+ * Where the app hides file types (`hidesTypes`), an item opened whose name shows no type is "untyped" (it may be a
+ * program: refused) and one whose name shows another type is "unsure" (asked about, saying so), unless it is a place
+ * (`places`, `placeNames`: File Explorer's navigation pane, Finder's sidebar).
+ */
+export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequest, "kind" | "app" | "element" | "value" | "clickSelects" | "afterSelectAll" | "afterSelecting">,
+  kc: KeyConventions = KEYS.linux): "item" | "untyped" | "unsure" | "selection" | "command" | null {
+  const rule = r.element && rules.find(x => x.app.test(r.app.trim()));
+  if (!rule || !r.element) return null;
+  const { role, name } = r.element;
+  const key = r.kind === "keys" ? keyFamily(canonicalKeys(r.value ?? "", kc) ?? "") : "";
+  const item = CONTENT_ROLES.test(role);
+  const openKey = rule.openKey ?? OPEN_KEY;
+  const splits = rule.splitsSelection === undefined ? SPLITS_SELECTION : rule.splitsSelection;
+  if (item || ITEM_VIEW_ROLES.test(role)) {
+    if (splits?.test(key) || (openKey.test(key) && (!item || r.afterSelectAll || r.afterSelecting))) return "selection";
+    const opens = (r.kind === "click" && !r.clickSelects) || r.kind === "cursor_click" || openKey.test(key);
+    if (!item || !opens) return null;
+    const shown = normalizeLabel(name).trim();
+    if (rule.item.test(shown)) return "item";
+    if (!rule.hidesTypes || rule.places?.test(role) || (rule.placeNames?.roles.test(role) && rule.placeNames.names.has(placeName(name)))) return null;
+    return SHOWS_TYPE.test(shown) ? "unsure" : "untyped";
+  }
+  if (/menu/.test(role) && MENU_LETTER.test(key)) return "command";
+  // Clicked, pressed with Enter or Space, or (Open with's submenu) opened with an arrow, where its entries run the item
+  // with the app they name (a script with its interpreter).
+  if (!(rule.commandRoles ?? COMMAND_ROLES).test(role) || !(r.kind === "click" || r.kind === "cursor_click" || ACTIVATE_KEY.test(key) || SUBMENU_KEY.test(key))) return null;
+  let commands = commandExpressions.get(rule);
+  if (!commands) commandExpressions.set(rule, commands = commandsOf(rule));
+  // As written too: plainText maps Cyrillic and Greek look-alikes to Latin ("Открыть" would never match its own label).
+  return bothForms(name).some(l => commands.test(l)) ? "command" : null;
+}
+
 export class PolicyEngine {
   private recent = new Map<string, number[]>();
 
   constructor(private o: PolicyInputs) {}
 
+  /** The OS's key conventions (Linux's unless given). */
+  private get keys(): KeyConventions { return this.o.keys ?? KEYS.linux; }
+  /** The OS whose vocabulary judges windows and labels (Linux unless given). */
+  private get os(): OS { return this.o.os ?? "linux"; }
+
   decide(r: ActionRequest): Decision {
-    return this.judge(r, true);
+    return withDetail(r, this.judge(r, true));
   }
 
   /** The same decision again, for a request already counted (the element under a key changed once its window was in front). */
   recheck(r: ActionRequest): Decision {
-    return this.judge(r, false);
+    return withDetail(r, this.judge(r, false));
   }
 
   private judge(r: ActionRequest, count: boolean): Decision {
@@ -1638,10 +2058,11 @@ export class PolicyEngine {
     // Sort, whose OK only applies its controls' formatting), and a "Delete 500 files?" (or "Deactivate account") window.
     // A settings dialog's OK (Tools ▸ Options, Macro Security, a mail filter's) applies the app's own settings.
     const told = r.dialog ? `${r.dialog.name} ${r.dialog.text}` : "";
-    const questions = !!r.dialog && (!!r.dialog.alert || isRiskyLabel(told) || isRiskyActLabel(told) || (told.includes("?") && told.length <= 300));
+    const os = this.os, kc = this.keys;
+    const questions = !!r.dialog && (!!r.dialog.alert || isRiskyLabel(told, os) || isRiskyActLabel(told) || (told.includes("?") && told.length <= 300));
     const dialogAsks = !!r.dialog && (questions || !formattingDialog(r.dialog));
     const applies = !!r.dialog && !r.dialog.alert && APPLY.test(foldLabel(name));
-    const agrees = (isAffirmative(name) || applies) && (dialogAsks || isRiskyLabel(r.window) || isRiskyActLabel(r.window));
+    const agrees = (isAffirmative(name) || applies) && (dialogAsks || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     const asks = r.dialog ? `${name} ${r.dialog.name} ${r.dialog.text}` : `${name} ${r.window}`;
     // A setting about the user's security or privacy, by its own words or its dialog's (Macro Security, Options –
     // Security, a proxy's), or one that says it weakens a protection ("Low (not recommended)", "Allow all"): asked
@@ -1653,6 +2074,9 @@ export class PolicyEngine {
     const secureTitle = !!r.dialog && securityTalk(r.dialog.name);
     const secureField = secureTitle || securityTalk(name);
     const secure = (what: string): Risk => ({ reason: SECURITY_SETTING, about: securityTalk(what) || !r.dialog ? what : `${what} ${r.dialog.name}`.trim() });
+    // The system's own Settings app (SETTINGS_APP): every setting changed there is asked about, whatever its label says.
+    const systemSettings = SETTINGS_APP[os]?.test(appNameOf(r.app)) ?? false;
+    const system = (what: string): Risk => ({ reason: "this changes a system setting, which may weaken the computer's protection", about: what });
     // A dialog about a file someone else is using or has changed (LibreOffice's "Document in Use", "Document Has Been
     // Changed by Others"): going ahead anyway ("Open", "Save Anyway") is asked; backing off (Cancel, read-only) isn't.
     const conflict = ACTIVATING_ROLES.test(role) && FILE_CONFLICT.test(plainText(`${told} ${r.window}`)) && !BACKS_OFF.test(plainText(name));
@@ -1669,12 +2093,12 @@ export class PolicyEngine {
     const content = CONTENT_ROLES.test(role);
     const selects = !!r.clickSelects && (r.kind === "click" || r.kind === "cursor_click");
     const clicked = (r.kind === "click" || r.kind === "cursor_click") && !/^(check box|radio button|switch|check menu item|radio menu item)$/.test(role) && isRiskyActLabel(name);
-    const riskyNamed = (content ? riskyContent(name, !selects) : isRiskyControl(role, name) || clicked)
+    const riskyNamed = (content ? riskyContent(name, !selects, os) : isRiskyControl(role, name, os) || clicked)
       || (ACTIVATING_ROLES.test(role) && formatsDisk(name, `${r.app} ${dialogTitle} ${r.dialog?.name ?? ""} ${r.dialog?.text ?? ""}`));
     // A menu item that opens a dialog does nothing yet ("Find and Replace…"): the dialog's own button is asked about.
     const named = riskyNamed && !opensDialog(role, name);
     // A lone "Confirm" or "Approve" agrees to what its dialog (or the window's title) says, as "OK" does: it is judged by that.
-    const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window) || isRiskyActLabel(r.window));
+    const lone = LONE_AGREE.test(normalizeLabel(name)) && (!!r.dialog || isRiskyLabel(r.window, os) || isRiskyActLabel(r.window));
     // A dialog asked about only as one that may hold the app's settings: its title says which.
     const settings = !!r.dialog && !questions && !lone && !!r.dialog.name.trim();
     const answer: Risk | false = (agrees || lone) && (settings ? {
@@ -1682,7 +2106,7 @@ export class PolicyEngine {
       // Checked against the request by its title: the page's other words (a Cryptography section) don't make it off-task.
       about: secureTitle ? asks : `${name} ${r.dialog!.name}`, note: `It applies what is set in ${quote(r.dialog!.name.replace(/\s+/g, " ").trim(), 70)}.`,
     } : {
-      reason: r.dialog && !isRiskyLabel(lone ? says : asks) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo",
+      reason: r.dialog && !isRiskyLabel(lone ? says : asks, os) ? "this answers a dialog, and Ember can't be sure what it agrees to" : "this answers a dialog about something hard to undo",
       about: lone ? (r.dialog ? `${r.dialog.name} ${r.dialog.text}` : r.window) : asks, note,
     });
     const goesAhead: Risk = { reason: "this answers a dialog about a file someone else is using or has changed", note };
@@ -1692,16 +2116,19 @@ export class PolicyEngine {
         // Its name was withheld (it may say what a secret field holds): what it does can't be shown, so it is asked.
         if (r.element?.withheld) return WITHHELD;
         if (SETTING_ROLES.test(role) && (securitySetting(name) || secureDialog)) return secure(name);
+        if (SETTING_ROLES.test(role) && systemSettings) return system(name);
         if (answer) return answer;
         if (conflict) return goesAhead;
         return null;
       case "select": {
         const value = r.value ?? "";
-        if (isRiskyLabel(value)) return { reason: "this choice may be hard to undo or visible to others", about: value };
-        return securitySetting(value) || securitySetting(name) || secureDialog ? secure(securityTalk(value) ? value : `${value} ${name}`) : null;
+        if (isRiskyLabel(value, os)) return { reason: "this choice may be hard to undo or visible to others", about: value };
+        if (securitySetting(value) || securitySetting(name) || secureDialog) return secure(securityTalk(value) ? value : `${value} ${name}`);
+        return systemSettings ? system(`${value} ${name}`) : null;
       }
       case "value":
-        return r.element && (securitySetting(name) || secureDialog) ? secure(name) : null;
+        if (!r.element) return null;
+        return securitySetting(name) || secureDialog ? secure(name) : systemSettings ? system(name) : null;
       case "text": case "cursor_text": {
         // A formula that fetches from the internet or reads another file runs as it goes into the sheet: asked every time.
         if ((takesFormula(r.element) && reachesOut(r.value ?? "")) || (r.formula !== undefined && reachesOut(r.formula))) return REACHES_OUT;
@@ -1718,12 +2145,13 @@ export class PolicyEngine {
         if (r.mode === "replace" && EMBEDDED.test(current)) return HOLDS_MORE;
         // With the keyboard, "replace" is Ctrl+A and Delete: in a paragraph that selects the whole document or page.
         // A spreadsheet's cell is typed over once selected: no Ctrl+A there.
-        if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role) && !(r.element && isSheetCell(r.element))) return KEYS_SELECT_MORE;
+        if (r.kind === "cursor_text" && r.mode === "replace" && !HOLDS_ALL_TEXT.test(role) && !(r.element && isSheetCell(r.element))) return KEYS_SELECT_MORE(kc);
         return null;
       }
       case "keys": {
         // Keypad twins are judged as the keys they act like (KP_Delete deletes, Ctrl+KP_Enter sends).
-        const k = keyFamily(canonicalKeys(r.value ?? "") ?? "");
+        const k = keyFamily(canonicalKeys(r.value ?? "", kc) ?? "");
+        const t = keyTables(kc);
         // A formula typed key by key that reaches outside the sheet: every key that goes on with it, or enters it, is
         // asked about (Escape drops it, Backspace takes from it).
         if (r.formula !== undefined && reachesOut(r.formula) && !/^(escape|backspace)$/.test(k)) return REACHES_OUT;
@@ -1733,11 +2161,12 @@ export class PolicyEngine {
         // list), by its own name or the dialog's title.)
         const keyed = (TEXT_FIELD.test(role) ? secureField : SETTING_ROLES.test(role) ? secureDialog : secureTitle) || (SETTING_ROLES.test(role) && securitySetting(name));
         if (keyed && !/^(shift\+)?(tab|escape)$/.test(k)) return secure(name);
+        if (systemSettings && SETTING_ROLES.test(role) && !/^(shift\+)?(tab|escape)$/.test(k)) return system(name);
         // A key that types, Backspace, Delete, Ctrl+X or a paste replaces what is selected (after Ctrl+A, everything, as
         // type_text's "replace"): judged by the real selection where the screen reader tells it.
-        const replaces = replacesSelection(k) ? replacedBySelection(r, role, k) : null;
+        const replaces = replacesSelection(k, kc) ? replacedBySelection(r, role, k, kc) : null;
         if (replaces) return replaces;
-        if (DESTRUCTIVE_KEYS.has(k)) return { reason: "this shortcut can delete, send or close things" };
+        if (t.destructive.has(k)) return { reason: "this shortcut can delete, send or close things" };
         if (ACTIVATE_KEY.test(k)) {
           // Enter or Space on a focused button is a click on that button; on a row, cell, icon or list item it opens or
           // does what the item does (judged as a click on it that does something of its own: riskyContent).
@@ -1749,14 +2178,14 @@ export class PolicyEngine {
           if (!r.element) return { reason: "Ember can't tell what this key will activate", note: "I can't tell what it will activate." };
           // Enter in a text field is a typed line break (as type_text's is): where it may send a chat message or submit a
           // form, it is asked about (enterMaySend).
-          if (!/space$/.test(k) && enterMaySend(r, role)) return ENTER_IN_FIELD;
+          if (!/space$/.test(k) && enterMaySend(r, role, os)) return ENTER_IN_FIELD;
           return null;
         }
         if (MNEMONIC_KEY.test(k)) return { reason: "this shortcut presses whichever button has that letter, and Ember can't tell which" };
         // In an open menu a plain letter picks the item with that underlined letter.
         if (/menu/.test(role) && /^(shift\+)?[a-z0-9]$/.test(k)) return { reason: "in an open menu a letter picks whichever item has that letter, and Ember can't tell which" };
-        // Any other shortcut with Ctrl or Alt: unknown to Ember unless it only moves, edits or saves.
-        if (/(^|\+)(ctrl|alt)\+/.test(k) && !SAFE_COMBOS.has(k)) return { reason: "Ember can't tell what this shortcut does in this app" };
+        // Any other shortcut with Ctrl, Alt or ⌘: unknown to Ember unless it only moves, edits or saves.
+        if (SHORTCUT.test(k) && !t.safe.has(k)) return { reason: "Ember can't tell what this shortcut does in this app" };
         return null;
       }
       default:
@@ -1773,14 +2202,15 @@ export class PolicyEngine {
    */
   private withCarried(r: ActionRequest, risk: Risk | null): Risk | null {
     const sources = r.readFrom ?? [];
-    const others = sources.filter(s => elsewhere(s, r));
+    const os = this.os, kc = this.keys;
+    const others = sources.filter(s => elsewhere(s, r, os));
     if (!others.length) return risk;
-    const pastes = r.kind === "keys" ? PASTE_KEYS.has(keyFamily(canonicalKeys(r.value ?? "") ?? ""))
+    const pastes = r.kind === "keys" ? keyTables(kc).paste.has(keyFamily(canonicalKeys(r.value ?? "", kc) ?? ""))
       : (r.kind === "click" || r.kind === "cursor_click") && isPasteLabel(r.element?.name ?? "");
-    const runs = pastes ? null : enteringRuns(r);
+    const runs = pastes ? null : enteringRuns(r, kc);
     if (!pastes && !runs) return risk;
     // Runs the user said, or the window typed into holds already, aren't carried from anywhere.
-    const own = runs ? runsIn(runs, [r.goal ?? "", ...sources.filter(s => !elsewhere(s, r)).map(s => s.text ?? s.window)].join("\n")) : new Set<string>();
+    const own = runs ? runsIn(runs, [r.goal ?? "", ...sources.filter(s => !elsewhere(s, r, os)).map(s => s.text ?? s.window)].join("\n")) : new Set<string>();
     const from = runs ? others.filter(s => [...runsIn(runs, s.text ?? s.window)].some(g => !own.has(g))) : others;
     if (!from.length) return risk;
     const read = [...new Map(from.filter(s => !s.listed && !s.described).map(s => [`${s.app}\n${s.window}`, s])).values()];
@@ -1803,30 +2233,58 @@ export class PolicyEngine {
   }
 
   private decideBase(r: ActionRequest, count = true): Decision {
-    const plain = describe(r);
+    const os = this.os, kc = this.keys;
+    const plain = describe(r, true, kc);
     const win = { app: r.app, name: r.window };
     const never = (reason: string): Decision => ({ tier: "never", verdict: "deny", reason, prompt: plain });
 
+    // The never-rules for other targets' windows (WSLg apps: policy/target-rules.ts) come first.
+    const extra = targetRules(r, os);
+    if (extra) return extra;
     if ((r.app || r.window) && isNeverLook(win, this.o.neverLook())) return never("this app is on the user's never-look list");
     if (r.kind === "open_app" && r.value && isNeverLook({ app: r.value, name: r.value }, this.o.neverLook())) return never("this app is on the user's never-look list");
-    if (isSecurityWindow({ app: r.app, title: r.window })) return never("authentication and security windows are for the user only");
+    const securityWindow = this.o.isSecurityWindow ?? (w => isSecurityWindow(w, os));
+    if (securityWindow({ app: r.app, title: r.window })) return never("authentication and security windows are for the user only");
     // Ember's own windows: a task could answer its own (or another task's) question, or change consent or the never-look list.
     if (r.kind !== "read" && isEmberWindow({ app: r.app, name: r.window, pid: r.windowId?.pid }, this.o.ownPid)) return never("Ember's own windows are for the user only");
     if (r.element?.role === "password text") return never("password fields are for the user only");
-    if (r.element?.role === "terminal") return never("Ember doesn't run commands, so it never types into terminals");
-    if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't run commands, so it never opens terminals");
+    if (r.element?.role === "terminal") return never("Ember doesn't type into terminal windows; it runs commands in its own command window when Commands is on");
+    if (r.kind === "open_app" && this.o.isTerminalApp?.(r.app || r.value || "")) return never("Ember doesn't open terminal windows; it runs commands in its own command window when Commands is on");
     // Not their menus or settings either: Paste puts the clipboard into the shell, a profile's command runs.
-    if (r.kind !== "read" && r.app && this.o.isTerminalApp?.(r.app)) return never("Ember doesn't run commands, so it never acts in terminals or apps with a shell built in");
-    if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog)) {
+    if (r.kind !== "read" && r.app && this.o.isTerminalApp?.(r.app)) return never("Ember doesn't act in terminal windows or apps with a shell built in; it runs commands in its own command window when Commands is on");
+    // A remote desktop's or a WSLg app's window (Windows): its program says nothing of what runs inside, so no grant covers it.
+    if (r.kind !== "read" && r.kind !== "open_app" && isRemoteSurface(r.app, os)) return never(REMOTE_SURFACE_REASON);
+    // Windows' Run dialog runs what its box holds on OK or Enter (READ_ONLY_WINDOW; none on Linux): not a window known to
+    // be another one with its title (a folder named "Run").
+    const windowRole = r.windowId?.role;
+    if (r.kind !== "read" && READ_ONLY_WINDOW[os].some(w => w.app.test(r.app.trim()) && w.title.test(r.window.trim()) && !(windowRole !== undefined && w.otherRole?.test(windowRole)))) {
+      return never("Ember doesn't run programs, so it never acts in the Run dialog");
+    }
+    // File Explorer and Finder run a program or script they open with no dialog (OPENS_PROGRAMS; none on Linux).
+    const opens = r.kind !== "read" ? opensProgram(OPENS_PROGRAMS[os], r, kc) : null;
+    const manager = os === "darwin" ? "Finder" : "File Explorer";
+    if (opens === "item") return never(`Ember doesn't run programs, so it never opens programs or scripts from ${manager}`);
+    if (opens === "selection") {
+      return never(`Ember doesn't run programs, and ${os === "darwin" ? "opening in Finder" : "Enter in File Explorer"} opens every item selected, so it never opens a selection it can't name or moves the keyboard off one`);
+    }
+    if (opens === "command") return never(`Ember doesn't run programs, and ${manager}'s ${os === "darwin" ? "Open commands" : "Open and Run as commands"} may start one, so it never uses them`);
+    if (opens === "untyped") {
+      return never(`Ember doesn't run programs, and ${manager} hides file types, so it never opens an item whose name shows none (it may be a program): open a folder by its path instead`);
+    }
+    if (r.kind !== "read" && r.element && runsProgram(r.element.role, r.element.name, r.dialog, os)) {
       return never("Ember doesn't run programs, so it never makes files executable or runs them");
     }
     if ((r.kind === "text" || r.kind === "cursor_text" || r.kind === "select" || r.kind === "value" || r.kind === "keys") && r.element && (r.element.secret || isSecretField(r.element.name))) {
       return never("this looks like a password or payment field");
     }
+    // A box that runs what is typed into it (File Explorer's address box starts "cmd" with Enter): no program's name.
+    if ((r.kind === "text" || r.kind === "cursor_text") && r.element && refusesTyping(TYPING_REFUSED[os], r)) {
+      return never("Ember doesn't run programs, so it never types a program's name where it would start");
+    }
     if (r.kind === "keys") {
-      const k = canonicalKeys(r.value ?? "");
+      const k = canonicalKeys(r.value ?? "", kc);
       if (!k) return never("Ember's keyboard doesn't know that key combination");
-      if (isSystemKey(k)) return never("desktop shortcuts (the logo key, terminals, the run dialog, switching sessions) and Ember's own shortcuts are for the user only");
+      if (isSystemKey(k, kc)) return never("desktop shortcuts (the logo key, terminals, the run dialog, switching sessions) and Ember's own shortcuts are for the user only");
     }
 
     if (r.kind === "read") return { tier: "read", verdict: "allow", reason: "reading is allowed", prompt: plain };
@@ -1834,7 +2292,13 @@ export class PolicyEngine {
 
     if (count && !this.withinRate(r.taskId)) return { tier: "confirm", verdict: "deny", reason: "too many actions in a minute; slow down and check the result", prompt: plain };
 
-    const risk = this.withCarried(r, this.riskOf(r));
+    // An item whose type the file manager may hide (it shows "invoice.pdf" for invoice.pdf.exe): asked about, saying so.
+    const own = this.riskOf(r);
+    const hidden: Risk | null = opens === "unsure" ? {
+      reason: `${os === "darwin" ? "Finder" : "File Explorer"} hides file types, so this item may be a program, and opening one starts it`,
+      note: `It could be a program: ${os === "darwin" ? "Finder" : "File Explorer"} hides file types, and opening a program starts it.`,
+    } : null;
+    const risk = this.withCarried(r, own && hidden ? { ...own, note: [own.note, hidden.note].filter(Boolean).join(" ") } : own ?? hidden);
     const prompt = risk?.note ? `${plain} ${risk.note}` : plain;
     if (r.onDesk) {
       // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
@@ -1858,7 +2322,7 @@ export class PolicyEngine {
     if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${app}`, prompt };
     return {
       tier: "reversible", verdict: "confirm", reason: `first action in ${app}`,
-      prompt: `Let me work in ${app}? First step: ${lowerFirst(describe(r, false)).replace(/\?$/, ".")}`,
+      prompt: `Let me work in ${app}? First step: ${lowerFirst(describe(r, false, kc)).replace(/\?$/, ".")}`,
       stepPrompt: prompt,
       needsGrant: true,
     };

@@ -190,7 +190,8 @@ describe("apps", () => {
     expect(findApp(apps, "files")?.id).toBe("thunar");
     expect(findApp(apps, "bulk rename")?.id).toBe("thunar-bulk-rename");
   });
-  it("reaches an app's name and GenericName even when other apps' ids hold the query (live: XFCE settings dialogs)", () => {
+  // Linux only: the .desktop catalogue (XDG_DATA_DIRS is a ":" list, which a Windows path breaks) is Linux's.
+  it.skipIf(process.platform !== "linux")("reaches an app's name and GenericName even when other apps' ids hold the query (live: XFCE settings dialogs)", () => {
     // The real XFCE 4.20 files, cut to the keys findApp reads, read back through listApps as on the desk.
     const files: Record<string, string> = {
       "org.xfce.mousepad": "Name=Mousepad\nGenericName=Text Editor\nCategories=Utility;TextEditor;GTK;",
@@ -437,8 +438,31 @@ describe("review round 4: how tasks end", () => {
     const key = manager(fails("Authentication failed with provider at http://llm.corp/v1 (HTTP 401). Check your COPILOT_PROVIDER_API_KEY."), { provider: true });
     const b = key.tm.start("Turn on Night Light");
     await vi.waitFor(() => expect(b.status).toBe("failed"));
-    expect(b.result?.summary).toBe("Your organisation's AI endpoint refused the request. Ask your administrator to check Ember's endpoint settings.");
+    expect(b.result?.summary).toBe("Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.");
     expect(key.cards.at(-1)?.[0].detail).toBe(b.result?.summary);
+  });
+
+  it("a task whose model is gone points to settings by this OS's own shortcut", async () => {
+    const fails = () => fakeWorker(async () => { throw new Error("model_not_supported: the requested model is not available"); });
+    const mac = manager(fails, { settingsKey: "⌃⇧⌘E" });
+    const a = mac.tm.start("Turn on Dark Mode");
+    await vi.waitFor(() => expect(a.status).toBe("failed"));
+    expect(a.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (⌃⇧⌘E).");
+    // Without one (Linux), today's wording.
+    const linux = manager(fails);
+    const b = linux.tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(b.status).toBe("failed"));
+    expect(b.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (Ctrl+Alt+E).");
+    // While another app holds it (main asks when the task fails), none is named (cross-review X5).
+    let held: string | null = null;
+    const taken = manager(fails, { settingsKey: () => held });
+    const c = taken.tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(c.status).toBe("failed"));
+    expect(c.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in Ember's settings.");
+    held = "Win+Alt+E";
+    const d = taken.tm.start("Turn on Dark Mode");
+    await vi.waitFor(() => expect(d.status).toBe("failed"));
+    expect(d.result?.summary).toBe("The model I'm set to use isn't available. Pick another one in settings (Win+Alt+E).");
   });
 
   it("says when a finished card goes, and whether the user closed it", async () => {

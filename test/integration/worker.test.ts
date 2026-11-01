@@ -192,8 +192,8 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     await worker.dispose();
     expect(result).toEqual({ success: true, summary: "Clicked the pad and saved." });
     expect(asked).toEqual([
-      "Borrow your mouse to click “Sketch pad” panel in gtk3_bench.py?\nYour task: Click the sketch pad, then save with ctrl+s",
-      "Borrow your keyboard to press Ctrl+S on “Save” push button in gtk3_bench.py?\nYour task: Click the sketch pad, then save with ctrl+s",
+      "Borrow your mouse to click the “Sketch pad” panel in gtk3_bench.py?\nYour task: Click the sketch pad, then save with ctrl+s",
+      "Borrow your keyboard to press Ctrl+S on the “Save” button in gtk3_bench.py?\nYour task: Click the sketch pad, then save with ctrl+s",
     ]);
     await new Promise(r => setTimeout(r, 300));
     const mine = events.slice(before);
@@ -247,7 +247,7 @@ describe.skipIf(!available && !required)("worker operating a real GTK window", (
     expect(result).toEqual({ success: true, summary: "Night Light is on, the name is filled in and saved. I left the password for you." });
     // One question: the first action in this app. "Allow" covers the rest of the task.
     expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatch(/^Let me work in gtk3_bench\.py\? First step: switch/);
+    expect(asked[0]).toMatch(/^Let me work in gtk3_bench\.py\? First step: turn on the “Night Light” switch\./);
     // What really happened in the app.
     await new Promise(r => setTimeout(r, 300));
     expect(events).toEqual(expect.arrayContaining([

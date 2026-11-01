@@ -334,10 +334,10 @@ describe.skipIf(!available && !required)("Electron windows through the real side
     const id = (re: RegExp) => Number(/\[(\d+)\]/.exec(screen.split("\n").find(l => re.test(l)) ?? "")?.[1]);
     const chose = await call("choose_option", { id: id(/\] combo box "Category"/), option: "Meals" });
     expect(chose.textResultForLlm).toMatch(/^Done\. Now: combo box "Category".*selected="Meals"/);
-    expect(asked).toEqual([expect.stringMatching(/^Let me work in .*First step: choose “Meals” in “Category” combo box/)]);
+    expect(asked).toEqual([expect.stringMatching(/^Let me work in .*First step: choose “Meals” in the “Category” drop-down/)]);
     const typed = await call("type_text", { id: id(/\] entry "Description"/), text: "Train to Lyon", mode: "replace" });
     expect(typed.resultType).toBe("denied");
-    expect(asked.slice(1)).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Train to Lyon” into “Description” entry/)]);
+    expect(asked.slice(1)).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Train to Lyon” into the “Description” text field/)]);
     await worker.dispose();
 
     // What the page itself heard.

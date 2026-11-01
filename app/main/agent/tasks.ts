@@ -1,20 +1,21 @@
 /**
  * TaskManager: runs workers in the background while the user keeps working.
  * Plain TypeScript (no model decides scheduling): at most `maxRunning` tasks
- * run at once, the rest queue; two tasks never act in the same window at the
- * same moment (window leases); finished worker sessions are deleted after
- * ten minutes (or at once when Ember stops); results wait for the conductor
+ * act at once, the rest queue (guides have a limit of their own beside them); two tasks never act in the same window at the
+ * same moment (window leases); a finished worker's session is deleted as soon
+ * as it ends (nothing resumes it, and it holds what the task read); results wait for the conductor
  * to pick them up. Every finished card can be closed; a failure stays longer so
  * the user can read it, then it goes on its own too.
  */
 
 import crypto from "node:crypto";
-import type { TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 import type { Logger } from "../logger";
 import type { WindowTarget } from "../perception";
 import type { Worker, WorkerResult, TaskSpec } from "./worker";
-import type { AuditLog } from "../policy/audit";
+import type { AuditEntry, AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
+import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -29,12 +30,22 @@ export interface Task {
   started: number;
   finished: number | null;
   mode?: "do" | "guide";
+  /** The target it acts on, fixed for its life (absent: this computer). */
+  targetId?: TargetId;
+  /** Where it acts when not on this computer ("on build-01", "in Ubuntu (WSL)"): its card's badge (§2.4). */
+  where?: string;
 }
+
+/**
+ * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
+ * nothing more.
+ */
+export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId">;
 
 export interface TaskManagerDeps {
   log: Logger;
   /** Builds the worker for a task (with its own presenter and tools). */
-  makeWorker: (spec: TaskSpec, progress: (text: string) => void) => Worker;
+  makeWorker: (spec: TaskSpec, progress: (text: string) => void) => WorkerLike;
   /** Deletes a worker's Copilot session (conversation and files). */
   deleteSession: (sessionId: string) => Promise<void>;
   /** The window the user is in right now. */
@@ -45,10 +56,16 @@ export interface TaskManagerDeps {
   onRemoved?: (task: Task, byUser: boolean) => void;
   /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
   provider?: boolean;
+  /**
+   * How this OS's settings shortcut is written ("Ctrl+Alt+E" on Linux), for a task's error that points to settings: or
+   * the one Ember holds when the task fails, null while another app holds it (none is named then, cross-review X5).
+   */
+  settingsKey?: string | (() => string | null);
   /** The audit log gets each task's request and outcome. */
   audit?: AuditLog;
+  /** How many tasks that act run at once (default 2); guides don't count towards it (they have the same limit of their own). */
   maxRunning?: number;
-  /** How long a finished worker session is kept for follow-up questions. */
+  /** How long a finished worker's session is kept before it is deleted (default 0: at once; no follow-up resumes it). */
   keepMs?: number;
   /** How long finished cards stay on screen. */
   cardMs?: number;
@@ -61,6 +78,9 @@ export const titleOf = (goal: string) => {
   const t = goal.trim().replace(/\s+/g, " ");
   return t.length > 40 ? t.slice(0, 39) + "…" : t;
 };
+
+/** A finished task's words on its card: at most 400 characters (finish_task's limit; the fallback, the worker's last answer, has none). */
+const detailOf = (summary: string) => (summary.length > 400 ? summary.slice(0, 399).trimEnd() + "…" : summary);
 
 /** How a finished task went, in the user's words: "stopped", never "cancelled". */
 export const statusWord = (s: TaskStatus) => (s === "cancelled" ? "stopped" : s);
@@ -76,7 +96,7 @@ export function taskOutcome(t: Pick<Task, "title" | "status" | "result">): strin
 export class TaskManager {
   private tasks = new Map<string, Task>();
   private queue: { task: Task; spec: TaskSpec }[] = [];
-  private running = new Map<string, { worker: Worker; abort: AbortController }>();
+  private running = new Map<string, { worker: WorkerLike; abort: AbortController }>();
   private leases = new Map<string, { owner: string; waiters: (() => void)[] }>();
   private unreported: Task[] = [];
   private n = 0;
@@ -87,24 +107,30 @@ export class TaskManager {
   private closed = false;
   /** Why every task was stopped when the user didn't stop them (Copilot stopped under them): they end as failed. */
   private cutOff: string | null = null;
+  /** Running tasks told to stop that are still winding down: their cards say so at once (a press that shows nothing gets pressed again). */
+  private stopping = new Set<string>();
 
   constructor(private d: TaskManagerDeps) {}
 
   /**
    * `userWords`: what the user said in the turn that started it (risky steps are checked against those); `agreed`:
    * Ember's questions they answered then (TaskSpec.agreed); `screen`: what the conversation read on the screen in that
-   * turn (text from it typed into a window is asked about).
+   * turn (text from it typed into a window is asked about). `targetId`: the target the host bound the task to (§2.3;
+   * absent: this computer), and `where` its card's badge when that isn't this computer. `commandWords`: TaskSpec's.
    */
-  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide"; userWords?: string; agreed?: Agreement[]; screen?: string } = {}): Task {
+  start(goal: string, opts: { target?: WindowTarget & { app?: string }; mode?: "do" | "guide"; userWords?: string; agreed?: Agreement[]; screen?: string; targetId?: TargetId; where?: string; commandWords?: string } = {}): Task {
     const id = `${++this.n}-${crypto.randomUUID().slice(0, 8)}`;
-    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null };
+    const task: Task = { id, goal, title: titleOf(goal), status: "queued", detail: "Waiting to start", result: null, started: Date.now(), finished: null,
+      ...(opts.targetId ? { targetId: opts.targetId } : {}), ...(opts.where ? { where: opts.where } : {}) };
     this.tasks.set(id, task);
     const target = opts.target ?? this.d.currentWindow() ?? {};
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
-      ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}) } });
+      ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
+      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
-    this.d.audit?.write({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title });
+    this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
+      ...(opts.targetId && opts.targetId !== "local" ? { target: opts.targetId } : {}) });
     this.pump();
     this.publish();
     return task;
@@ -126,7 +152,11 @@ export class TaskManager {
       else this.finish(task, "cancelled", { success: false, summary: "Stopped before it started." });
       return;
     }
-    this.running.get(id)?.abort.abort();
+    const r = this.running.get(id);
+    if (!r) return;
+    r.abort.abort();
+    this.stopping.add(id);
+    this.publish();
   }
 
   /** Stops every task. `failed`: why, when it wasn't the user (they end as failed with that, not as stopped). */
@@ -136,16 +166,19 @@ export class TaskManager {
     for (const id of [...this.running.keys()]) this.cancel(id);
   }
 
-  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. `userWords`, `screen`, `agreed`: as for start(). */
-  async steer(id: string, text: string, userWords?: string, screen?: string, agreed?: Agreement[]): Promise<boolean> {
+  /** The user's new instruction for a task: a running one is told now, a waiting one starts with it. `userWords`, `screen`, `agreed`, `commandWords`: as for start(). */
+  async steer(id: string, text: string, userWords?: string, screen?: string, agreed?: Agreement[], commandWords?: string): Promise<boolean> {
     const r = this.running.get(id);
-    if (r) return r.worker.steer(text, userWords, screen, agreed);
+    if (r) return commandWords === undefined ? r.worker.steer(text, userWords, screen, agreed) : r.worker.steer(text, userWords, screen, agreed, commandWords);
     const q = this.queue.find(x => x.task.id === id);
     if (!q) return false;
     const words = q.spec.userWords !== undefined ? { userWords: userWords ? `${q.spec.userWords}\n${userWords}` : q.spec.userWords } : {};
     const seen = screen ? { screen: q.spec.screen ? `${q.spec.screen}\n${screen}` : screen } : {};
     const yes = agreed?.length ? { agreed: [...(q.spec.agreed ?? []), ...agreed] } : {};
-    q.spec = { ...q.spec, goal: `${q.spec.goal}\n(The user then added: ${text.replace(/</g, "‹")})`, ...words, ...seen, ...yes };
+    // Words left out for commands (V1) stay left out: the spec keeps its own command words once either side has them.
+    const heard = commandWords !== undefined || q.spec.commandWords !== undefined
+      ? { commandWords: [q.spec.commandWords ?? q.spec.userWords ?? "", commandWords ?? userWords ?? ""].filter(w => w.trim()).join("\n") } : {};
+    q.spec = { ...q.spec, goal: `${q.spec.goal}\n(The user then added: ${text.replace(/</g, "‹")})`, ...words, ...seen, ...yes, ...heard };
     return true;
   }
 
@@ -207,11 +240,19 @@ export class TaskManager {
     };
   }
 
+  /**
+   * Starts what may start now, in order: at most `maxRunning` tasks that act, and beside them at most `maxRunning`
+   * guides (a guide only points and waits for the user's clicks, so it never waits behind tasks that may run for minutes).
+   */
   private pump(): void {
     const max = this.d.maxRunning ?? 2;
-    while (this.running.size < max && this.queue.length) {
-      const { task, spec } = this.queue.shift()!;
-      const run = this.run(task, spec);
+    const running = (guide: boolean) => [...this.running.keys()].filter(id => (this.tasks.get(id)?.mode === "guide") === guide).length;
+    for (let i = 0; i < this.queue.length;) {
+      const { task, spec } = this.queue[i];
+      if (running(spec.mode === "guide") >= max) { i++; continue; }
+      this.queue.splice(i, 1);
+      // run() ends every task on screen whatever happens (review #79); anything left over is logged, never unhandled.
+      const run = this.run(task, spec).catch(err => this.d.log.error("task.run_failed", { id: task.id, err }));
       this.runs.add(run);
       void run.finally(() => this.runs.delete(run));
     }
@@ -219,7 +260,17 @@ export class TaskManager {
 
   private async run(task: Task, spec: TaskSpec): Promise<void> {
     const abort = new AbortController();
-    const worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    let worker: WorkerLike;
+    try {
+      worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+    } catch (err) {
+      // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
+      // Stop that does nothing, and what queued behind it gets its turn.
+      this.d.log.error("task.error", { id: task.id, err });
+      this.finish(task, "failed", { success: false, summary: "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." });
+      this.pump();
+      return;
+    }
     task.mode = spec.mode ?? "do";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
@@ -232,40 +283,67 @@ export class TaskManager {
     } catch (err) {
       this.d.log.error("task.error", { id: task.id, err });
       // One plain sentence for the card, the bubble, speech and the conversation (the log keeps the raw error).
-      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider }) };
+      const key = this.d.settingsKey;
+      let settingsKey: string | null | undefined = null;
+      try { settingsKey = typeof key === "function" ? key() : key; } catch { /* named none: it may be taken */ }
+      result = { success: false, summary: friendlyError(err instanceof Error ? err.message : String(err), undefined, { provider: this.d.provider, settingsKey }) };
     }
     this.running.delete(task.id);
-    if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
-    // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
-    else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
-    const sessionId = worker.sessionId;
-    await worker.dispose();
-    if (sessionId) {
-      const timer = setTimeout(() => {
-        this.toDelete.delete(sessionId);
-        void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
-      }, this.d.keepMs ?? 10 * 60_000);
-      timer.unref?.();
-      this.toDelete.set(sessionId, timer);
+    try {
+      if (abort.signal.aborted && this.cutOff) this.finish(task, "failed", { success: false, summary: this.cutOff });
+      // Stopped by the user (Stop, taking the mouse back, "Not now"): calm, not a failure.
+      else this.finish(task, abort.signal.aborted || result.stopped ? "cancelled" : result.success ? "done" : "failed", result);
+    } finally {
+      // Whatever a listener did, the worker lets go and the queue moves on (review #79).
+      try {
+        const sessionId = worker.sessionId;
+        await worker.dispose();
+        if (sessionId) {
+          const timer = setTimeout(() => {
+            this.toDelete.delete(sessionId);
+            void this.d.deleteSession(sessionId).catch(err => this.d.log.warn("task.delete_failed", { sessionId, err }));
+          }, this.d.keepMs ?? 0);
+          timer.unref?.();
+          this.toDelete.set(sessionId, timer);
+        }
+      } finally {
+        this.pump();
+      }
     }
-    this.pump();
   }
 
   private finish(task: Task, status: TaskStatus, result: WorkerResult): void {
+    this.stopping.delete(task.id);
     task.status = status;
     task.result = result;
-    task.detail = result.summary;
+    // The card shows a card's worth; the whole summary goes to the conversation (task.result).
+    task.detail = detailOf(result.summary);
     task.finished = Date.now();
     this.unreported.push(task);
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
-    this.d.audit?.write({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    // The card first: the screen shows how it went even when its record or a listener fails (review #79).
     this.publish();
-    this.d.onFinished?.(task);
     // Finished cards stay on screen briefly, then go; a failure stays longer so it can be read (and closed sooner).
     const timer = setTimeout(() => {
       if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
     }, status === "failed" ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
     timer.unref?.();
+    this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
+    this.d.onFinished?.(task);
+  }
+
+  /**
+   * A task's request or outcome in the audit log. It records what the queue did and never decides it: a write that
+   * fails (a full disk, an unwritable audit file) is logged and the queue goes on as if it had worked, so a task the
+   * user was told failed can't run later, and a finished one doesn't stay "Working…" (review #79). Steps in the
+   * user's apps fail closed in the worker instead.
+   */
+  private record(e: AuditEntry): void {
+    try {
+      this.d.audit?.write(e);
+    } catch (err) {
+      this.d.log.warn("task.audit_failed", { id: e.task, phase: e.phase, err });
+    }
   }
 
   private publish(): void {
@@ -273,11 +351,12 @@ export class TaskManager {
     const cards: TaskCard[] = [...this.tasks.values()].map(t => ({
       id: t.id,
       title: t.title,
-      status: t.status === "queued" ? "waiting" : t.status === "cancelled" ? "stopped" : t.status,
-      detail: t.detail,
+      status: t.status === "cancelled" ? "stopped" : t.status,
+      detail: t.status === "running" && this.stopping.has(t.id) ? TASK_STOPPING : t.detail,
       actions: t.status === "running" || t.status === "queued"
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
         : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
+      ...(t.where ? { where: t.where } : {}),
     }));
     this.d.setCards(cards);
   }

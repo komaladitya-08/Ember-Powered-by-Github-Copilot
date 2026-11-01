@@ -1,0 +1,44 @@
+Ember's organisation policy: notes for policy.example.json
+==========================================================
+
+Copy policy.example.json to /etc/ember/policy.json and change what you need. The file must belong to root and be
+writable only by root. Ember reads it again every 10 seconds: when it changes, Ember stops everything and asks to be
+restarted, and the restart reads the new policy whole. The setup check (ember doctor) shows whether it is in force.
+
+A policy can only make Ember stricter than having no policy at all. If the file can't be read, isn't valid JSON or has
+a key or value Ember doesn't know, Ember locks down (no actions, no listening) until it is fixed. JSON has no comments:
+a "comment" key is a mistake too, so keep notes outside the file. An Ember older than these keys reads "commands",
+"ssh", "features.wsl" and "features.ssh" as mistakes and locks down: update Ember before deploying a policy that uses
+them.
+
+Important: a policy without "commands" turns commands off on this computer, in WSL and over SSH, because the
+administrator never agreed to them. The example turns them on for each kind of computer; set any of them to "ask"
+(every command asks first) or "off".
+
+Every key is optional:
+
+  "features"            true or false for each: "voice" (listening for "Hey Ember"), "speak" (replies out loud),
+                        "actions" (acting in apps at all; false also turns commands off), "cursor" (borrowing the
+                        mouse and keyboard), "desk" (Ember's private desk), "screenImages" (screenshots sent to the
+                        model), "wsl" (WSL apps and the WSL computer), "ssh" (connecting to other computers)
+  "neverLook"           apps and windows Ember never reads, captures or acts in (added to each user's list)
+  "confirmEveryAction"  true: a click before every action, every time
+  "allowGrants"         false: no "Always in this app"
+  "maxActionsPerMinute" 1 to 40, lower than Ember's own limit
+  "models"              "allowed" (only these model ids), "conductor" and "worker" (pin the models used)
+  "provider"            the organisation's own model endpoint instead of GitHub sign-in: "type" ("openai", "azure"
+                        or "anthropic"), "baseUrl", and "apiKeyFile" (a file only Ember's users can read)
+  "auditRetentionDays"  how long the audit log is kept (default 30)
+  "commands"            "local", "wsl" and "ssh": "on" (allowed; each user still turns them on), "ask" or "off"
+  "ssh"                 "allowedHosts" (patterns of the only computers Ember may connect to: * matches any run of
+                        characters, ? one character; ["*"] allows every computer, [] none), "desktop" (false:
+                        commands only on remotes), "requireConsoleConsent" (on a remote: a person at its screen must
+                        allow Ember first), "runtimeMirror" (an https:// mirror of nodejs.org/dist for remotes) and
+                        "commandGraceSeconds" (3 to 120)
+
+The example leaves "allowedHosts" out, so Ember may connect to every computer. To limit SSH to some, add a list:
+
+  "ssh": { "allowedHosts": ["build-*.example.com", "deploy@db-01.example.com:22"], "desktop": true }
+
+Ember's developer guide (docs/DEVELOPING.md, "For administrators") and docs/COMMANDS-WSL-SSH.md section 6 explain
+each key in full, including how the policy of a computer Ember connects to applies there.

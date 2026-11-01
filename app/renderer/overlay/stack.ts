@@ -1,9 +1,31 @@
 /** The task cards' stack above the handle: their order and what folds away when they don't fit (pure, so it is unit-tested). */
 
-import type { TaskCard } from "../../shared/overlay";
+import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
 
-/** A task still under way: its card has Stop. */
-export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "waiting";
+/** A task still under way (running, in line, or waiting for the user): its card has Stop. */
+export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "queued" || t.status === "waiting";
+
+/** A card's state in words, for screen readers (its symbol says it to the eye): a task in line doesn't need the user. */
+export const STATE_WORD: Record<TaskCard["status"], string> = {
+  running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: ",
+};
+
+/**
+ * What the handle says while tasks run and nothing else is to be said ("Working on 2 tasks…"), so it never says
+ * Ready under a card that says Working; null when no task is running or in line.
+ */
+export function busyLine(tasks: readonly TaskCard[]): string | null {
+  const n = tasks.filter(t => t.status === "running" || t.status === "queued").length;
+  return n === 0 ? null : `Working on ${n === 1 ? "1 task" : `${n} tasks`}…`;
+}
+
+/**
+ * The handle's line when nothing else is to be said: `idle` (what main says: "Ready", or why Ember can't answer yet,
+ * such as "Waiting for tasks"), with the tasks' count in place of Ready only, so the reason is never hidden.
+ */
+export function idleLine(idle: string | undefined, tasks: readonly TaskCard[]): string | null {
+  return idle && idle !== "Ready" ? idle : busyLine(tasks) ?? idle ?? null;
+}
 
 /**
  * The cards from the top of the stack down: the tasks that ended (oldest first), then those under way, so
@@ -38,4 +60,29 @@ export function foldedLine(folded: readonly TaskCard[]): { title: string; detail
     detail: "Ended earlier",
     close: folded.flatMap(t => (t.actions ?? []).filter(a => /:dismiss$/.test(a.id)).map(a => a.id)),
   };
+}
+
+/** How long a pressed Stop shows as stopping with no word from Ember that it is (then the press didn't land: Stop works again). */
+export const STOP_ACK_MS = 3000;
+
+/**
+ * Whether a card whose Stop was pressed at `pressedAt` still shows as stopping (its detail "Stopping…", its Stop
+ * taking no second press): while Ember says it is stopping (`detail`), and for a few seconds before it has said so.
+ */
+export function stopPending(pressedAt: number, now: number, detail: string): boolean {
+  return detail === TASK_STOPPING || now - pressedAt < STOP_ACK_MS;
+}
+
+/**
+ * How far each card moved between two layouts (`before` and `after`: each card's top edge by id), so it slides from
+ * where it was instead of jumping there (a task that ended goes to the top of the stack). A new card fades in
+ * instead, and one that barely moved (under a pixel) stays put.
+ */
+export function slides(before: ReadonlyMap<string, number>, after: ReadonlyMap<string, number>): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const [id, top] of after) {
+    const was = before.get(id);
+    if (was !== undefined && Math.abs(was - top) >= 1) out.set(id, was - top);
+  }
+  return out;
 }

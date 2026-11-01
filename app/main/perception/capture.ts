@@ -1,17 +1,24 @@
 /**
- * Screenshots for the model: captured straight from X11 (fast, includes
- * composited windows), with Ember's overlay hidden, never-look windows blacked
- * out, downscaled to at most 1280 px on its longer side (JPEG), and a record
- * of how image pixels map back to screen pixels.
+ * Screenshots for the model: captured straight from the window system (X11's
+ * XGetImage on Linux: fast, includes composited windows; GDI on Windows;
+ * desktopCapturer on macOS, which answers asynchronously), with Ember's overlay
+ * hidden, never-look windows blacked out, downscaled to at most 1280 px on its
+ * longer side (JPEG), and a record of how image pixels map back to screen units.
+ * Ember shows again the moment the pixels are in, and a synchronous capture
+ * stays synchronous (no extra wait on Linux).
  */
 
 import { createRequire } from "node:module";
 import type Sharp from "sharp";
-import type { X11 } from "../x11";
+import type { PerceptionWindows, X11Image } from "../platform/types";
+import { MARK_FONT } from "./marks";
 import type { Bounds } from "./sidecar";
 
 export interface Capture {
-  /** What was captured, in screen (physical) pixels: the requested rectangle, clipped to the screen. */
+  /**
+   * What was captured, in screen units (physical pixels on Linux and Windows, points on macOS): the requested
+   * rectangle, clipped to the screen. It may start left of or above (0, 0) on Windows and macOS.
+   */
   rect: Bounds;
   /** Encoded image. */
   data: Buffer;
@@ -47,6 +54,16 @@ const sharp: typeof Sharp = ((...args: Parameters<typeof Sharp>) => {
   return sharpModule(...args);
 }) as typeof Sharp;
 
+/**
+ * Draws one mark's text (marks.ts's font, size and weight) on a small picture and drops it: the first text sharp draws
+ * builds fontconfig's cache, which text-warm.ts has paid before the first screenshot with marks. sharp draws on
+ * libuv's threads.
+ */
+export async function warmText(): Promise<void> {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"><text x="2" y="12" font-family="${MARK_FONT}" font-size="11" font-weight="700">1</text></svg>`;
+  await sharp({ create: { width: 24, height: 16, channels: 3, background: "#ffffff" } }).composite([{ input: Buffer.from(svg) }]).png().toBuffer();
+}
+
 export function bgraToRgba(bgra: Buffer): Buffer {
   const out = Buffer.allocUnsafe(bgra.length);
   for (let i = 0; i < bgra.length; i += 4) {
@@ -58,25 +75,37 @@ export function bgraToRgba(bgra: Buffer): Buffer {
   return out;
 }
 
+/**
+ * Paints `r` (image pixels, clipped to the image) opaque black. A rectangle wholly outside the image changes nothing:
+ * masks come for every private window on screen, and one to the left of the picture would otherwise give `fill` a
+ * negative end on the top rows (a RangeError instead of a picture).
+ */
 export function maskRect(rgba: Buffer, width: number, height: number, r: Bounds): void {
   const x0 = Math.max(0, Math.floor(r.x)), y0 = Math.max(0, Math.floor(r.y));
   const x1 = Math.min(width, Math.ceil(r.x + r.width)), y1 = Math.min(height, Math.ceil(r.y + r.height));
+  if (!(x1 > x0 && y1 > y0)) return;
   for (let y = y0; y < y1; y++) rgba.fill(0, (y * width + x0) * 4, (y * width + x1) * 4);
   for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) rgba[(y * width + x) * 4 + 3] = 255;
 }
 
-export async function captureRect(x11: X11, rect: Bounds, opts: CaptureOptions = {}): Promise<Capture | null> {
+/**
+ * Captures `rect` (screen units) with Ember hidden, blacks out the masks and encodes it; null when nothing could be
+ * captured or `maskAfter` can't tell what to black out (fail closed).
+ */
+export async function captureRect(x11: Pick<PerceptionWindows, "capture">, rect: Bounds, opts: CaptureOptions = {}): Promise<Capture | null> {
   const show = opts.hideOverlay ? await opts.hideOverlay() : null;
-  let img;
+  let img: X11Image | null;
   try {
-    img = x11.capture(Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height));
+    const r = x11.capture(Math.round(rect.x), Math.round(rect.y), Math.round(rect.width), Math.round(rect.height));
+    // An asynchronous capture (macOS) keeps Ember hidden until its pixels are in; a synchronous one isn't awaited.
+    img = isPromiseLike(r) ? await r : r;
   } finally {
     show?.();
   }
   if (!img) return null;
   const after = opts.maskAfter ? await opts.maskAfter() : [];
   if (after === null) return null;
-  // x11.capture clips the rectangle to the screen: image pixel (0,0) is screen pixel (img.x, img.y).
+  // capture() clips the rectangle to the screen: image pixel (0,0) is screen pixel (img.x, img.y), negative or not.
   const origin: Bounds = { x: img.x, y: img.y, width: img.width, height: img.height };
   const rgba = bgraToRgba(img.bgra);
   for (const m of [...opts.mask ?? [], ...after]) {
@@ -93,6 +122,11 @@ export async function captureRect(x11: X11, rect: Bounds, opts: CaptureOptions =
   const format = opts.format ?? "jpeg";
   const data = format === "png" ? await pipeline.png().toBuffer() : await pipeline.jpeg({ quality: 78 }).toBuffer();
   return { rect: origin, data, mimeType: format === "png" ? "image/png" : "image/jpeg", width, height, scale };
+}
+
+/** Is this capture's answer still to come? (Duck-typed: X11's synchronous image is a plain object without `then`.) */
+function isPromiseLike<T>(v: T | PromiseLike<T>): v is PromiseLike<T> {
+  return typeof (v as { then?: unknown } | null)?.then === "function";
 }
 
 /** Screen point for an image point in a capture. */

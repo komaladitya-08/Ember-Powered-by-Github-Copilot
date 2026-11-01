@@ -18,7 +18,7 @@ const electron = vi.hoisted(() => {
     webContents = Object.assign(new Emitter(), { send: vi.fn(), postMessage: vi.fn() });
     destroyed = false;
     constructor(o: { title: string }) { this.title = o.title; windows.push(this); }
-    loadFile() { return Promise.resolve(); }
+    loadURL() { return Promise.resolve(); }
     isDestroyed() { return this.destroyed; }
     destroy() { this.destroyed = true; }
   }
@@ -76,6 +76,22 @@ beforeEach(() => { electron.procs.length = 0; electron.windows.length = 0; elect
 afterEach(() => { vi.useRealTimers(); for (const s of services) s.stop(); fs.rmSync(root, { recursive: true, force: true }); });
 
 describe("VoiceService", () => {
+  it("says it can tell the user from the speakers only while the voice process hears the speakers' stream (review #252)", async () => {
+    const { v } = service();
+    expect(v.rejectsSpeakers).toBe(false);
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    expect(v.rejectsSpeakers).toBe(false);
+    proc.emit("message", { type: "monitor", on: true });
+    expect(v.rejectsSpeakers).toBe(true);
+    proc.emit("message", { type: "monitor", on: false, reason: "parec stopped (exit 1)" });
+    expect(v.rejectsSpeakers).toBe(false);
+    proc.emit("message", { type: "monitor", on: true });
+    v.stop();
+    expect(v.rejectsSpeakers).toBe(false);
+  });
+
   it("opens the follow-up window only after Ember has finished speaking its answer", async () => {
     const { v } = service();
     await v.setWanted(true);
@@ -133,6 +149,79 @@ describe("VoiceService", () => {
     vi.advanceTimersByTime(1100);
     proc.emit("message", { type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" });
     expect(events).toEqual([{ type: "utterance", text: "Make the text bigger.", ms: 120, window: "wake" }]);
+  });
+
+  it("kills a voice process stopped before it had started, once it starts (Electron's kill() does nothing until then) (review #256)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [early] = electron.procs; // no pid yet: not spawned
+    v.setMuted(true); // a mute double-press, within the spawn's latency
+    expect(early.kill).toHaveBeenCalledTimes(1);
+    early.emit("spawn");
+    expect(early.kill).toHaveBeenCalledTimes(2);
+    // One already running is killed once, as before.
+    v.setMuted(false);
+    await flush();
+    const running = Object.assign(electron.procs[1], { pid: 4242 });
+    v.setMuted(true);
+    running.emit("spawn");
+    expect(running.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("knows whether it can tell its own voice from the user's: listening, with the speakers' stream on (review #251)", async () => {
+    const { v } = service();
+    expect(v.rejectsSpeakers).toBe(false); // not listening
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    expect(v.rejectsSpeakers).toBe(false); // no speakers' stream (Windows, macOS, Linux without parec)
+    proc.emit("message", { type: "monitor", on: true });
+    expect(v.rejectsSpeakers).toBe(true);
+    proc.emit("message", { type: "monitor", on: false, reason: "parec stopped (exit 1)" });
+    expect(v.rejectsSpeakers).toBe(false);
+    proc.emit("message", { type: "monitor", on: true });
+    v.setMuted(true);
+    expect(v.rejectsSpeakers).toBe(false);
+  });
+
+  it("never says the wake or stop phrase while it listens without the speakers' stream (its own voice would trigger them) (review #251)", async () => {
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    v.speak("Say 'Ember, stop' to cancel.");
+    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say the stop phrase to cancel.");
+    proc.emit("message", { type: "monitor", on: true });
+    v.speak("Say 'Ember, stop' to cancel.");
+    expect(mic.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, "Say 'Ember, stop' to cancel.");
+  });
+
+  it("stops listening and speaking while the screen is locked, and listens again once it's unlocked (review #81)", async () => {
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    v.setLocked(true);
+    expect(mic.webContents.send).toHaveBeenCalledWith(VOICE.hush);
+    expect(proc.kill).toHaveBeenCalled();
+    expect(mic.destroyed).toBe(true);
+    expect(states.at(-1)).toEqual({ s: "off", detail: "Not listening while the screen is locked." });
+    v.setMuted(false); // nothing starts while it's locked
+    await v.setWanted(true);
+    await flush();
+    expect(electron.procs).toHaveLength(1);
+    v.setLocked(false);
+    await flush();
+    expect(electron.procs).toHaveLength(2);
+    // Locked and unlocked while listening is off: nothing starts.
+    await v.setWanted(false);
+    v.setLocked(true);
+    v.setLocked(false);
+    await flush();
+    expect(electron.procs).toHaveLength(2);
+    expect(states.at(-1)?.s).toBe("off");
   });
 
   it("ignores a replaced voice process", async () => {
@@ -217,8 +306,8 @@ describe("VoiceService keeps listening going", () => {
     }
     electron.procs[4].emit("message", { type: "ready", loadMs: 900 });
     expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
-    // A minute of listening later, a new failure starts the backoff over.
-    await vi.advanceTimersByTimeAsync(61_000);
+    // A minute of listening later (the process says it's alive every second), a new failure starts the backoff over.
+    for (let i = 0; i < 61; i++) { await vi.advanceTimersByTimeAsync(1000); electron.procs[4].emit("message", { type: "alive" }); }
     electron.procs[4].emit("exit", 1);
     expect(states.at(-1)?.detail).toMatch(/Trying again in 1 s/);
   });
@@ -284,6 +373,144 @@ describe("VoiceService keeps listening going", () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(electron.procs).toHaveLength(2);
     expect(states.at(-1)?.s).toBe("muted");
+  });
+
+  it("logs the recognizers' failures on some audio and keeps listening (review #253)", async () => {
+    const { v, states, events } = service();
+    const warn = vi.spyOn(log, "warn");
+    try {
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+      electron.procs[0].emit("message", { type: "engine-error", message: "the speech recognizer failed (92691224)", count: 1 });
+      expect(warn).toHaveBeenCalledWith("voice.engine_error", { message: "the speech recognizer failed (92691224)", count: 1 });
+      expect(events).toEqual([]);
+      expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+      expect(electron.procs[0].kill).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("starts the voice process again when its recognizers are broken (they kept failing), with the backoff (review #253)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    electron.procs[0].emit("message", { type: "ready", loadMs: 900 });
+    electron.procs[0].emit("message", { type: "engine-broken", message: "the speech recognizer failed (93407216)" });
+    expect(electron.procs[0].kill).toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The speech recognizer kept failing. Trying again in 1 s…" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(electron.procs).toHaveLength(2);
+    electron.procs[1].emit("message", { type: "ready", loadMs: 900 });
+    electron.procs[1].emit("message", { type: "engine-broken", message: "the speech recognizer failed (93407216)" });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The speech recognizer kept failing. Trying again in 5 s…" });
+  });
+
+  it("starts again when the voice process stops saying it's alive (frozen, or suspended by security software) (review #257)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    // Alive every second: listening goes on.
+    for (let i = 0; i < 60; i++) { await vi.advanceTimersByTimeAsync(1000); proc.emit("message", { type: "alive" }); }
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+    // Then nothing: after 15 s it's taken for stuck.
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(proc.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(proc.kill).toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The voice process stopped responding. Trying again in 1 s…" });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(electron.procs).toHaveLength(2);
+  });
+
+  it("doesn't take its own sleep for a frozen voice process (the computer slept) (review #257)", async () => {
+    vi.useFakeTimers();
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.setSystemTime(Date.now() + 120_000); // main's timers didn't run meanwhile either
+    await vi.advanceTimersByTimeAsync(1000);
+    proc.emit("message", { type: "alive" });
+    await vi.advanceTimersByTimeAsync(5000);
+    proc.emit("message", { type: "alive" });
+    expect(proc.kill).not.toHaveBeenCalled();
+  });
+
+  it("says when the microphone sends only silence (muted, or the wrong input), and keeps listening for it to come back (review #255)", async () => {
+    const { v, states } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    proc.emit("message", { type: "silent", on: true });
+    expect(states.at(-1)).toEqual({ s: "error", detail: "The microphone is sending only silence. Check that the right microphone is chosen, and not muted, in the sound settings." });
+    expect(proc.kill).not.toHaveBeenCalled();
+    proc.emit("message", { type: "silent", on: false });
+    expect(states.at(-1)).toEqual({ s: "waiting", detail: undefined });
+  });
+
+  it("a model folder that won't load is forgotten, and the download is offered again (review #254)", async () => {
+    vi.useFakeTimers();
+    const { v, states } = service();
+    await v.setWanted(true);
+    expect(v.modelsReady).toBe(true);
+    electron.procs[0].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(electron.procs).toHaveLength(1);
+    expect(electron.procs[0].kill).toHaveBeenCalled();
+    expect(states.at(-1)).toEqual({ s: "needs-models", detail: "The speech models look damaged. Download them again." });
+    expect(v.modelsReady).toBe(false); // so settings shows the download button
+    expect(fs.readdirSync(root).filter(f => f.endsWith(".ok"))).toEqual([]);
+  });
+
+  it("never changes models that came with Ember when they turn out damaged: the download goes to the user's own folder (review #254)", async () => {
+    vi.useFakeTimers();
+    const bundled = modelsRoot(true);
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "ember-voice-user-"));
+    const userRoot = path.join(root, "models"); // not there yet, as before a first download
+    const states: { s: MicState; detail?: string }[] = [];
+    const v = new VoiceService({ log, modelsRoot: bundled, bundled: { userRoot }, monitor: false, onEvent: () => undefined, onState: (s, detail) => states.push({ s, detail }) });
+    services.push(v);
+    try {
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+      expect(fs.readdirSync(bundled).filter(f => f.endsWith(".ok"))).toHaveLength(VOICE_MODELS.length); // its markers stay
+      expect(states.at(-1)).toEqual({ s: "needs-models", detail: "The speech models look damaged. Download them again." });
+      expect(v.modelsReady).toBe(false); // so settings shows the download button
+      electron.net.fetch.mockRejectedValue(new Error("net::ERR_INTERNET_DISCONNECTED"));
+      await expect(v.downloadModels(() => undefined)).rejects.toThrow();
+      expect(fs.existsSync(userRoot)).toBe(true); // the download went there, not into the app
+      expect(fs.readdirSync(bundled).filter(f => !f.endsWith(".ok")).sort()).toEqual(VOICE_MODELS.map(m => m.target).sort());
+    } finally {
+      fs.rmSync(bundled, { recursive: true, force: true });
+    }
+  });
+
+  it("uses models already in the user's own folder when the ones that came with Ember are damaged (review #254)", async () => {
+    vi.useFakeTimers();
+    const bundled = modelsRoot(true);
+    root = modelsRoot(true); // downloaded earlier
+    const states: { s: MicState; detail?: string }[] = [];
+    const v = new VoiceService({ log, modelsRoot: bundled, bundled: { userRoot: root }, monitor: false, onEvent: () => undefined, onState: (s, detail) => states.push({ s, detail }) });
+    services.push(v);
+    try {
+      await v.setWanted(true);
+      electron.procs[0].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(electron.procs).toHaveLength(2);
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ models: { kws: expect.stringContaining(root) } });
+      // Those fail too: they are the user's own, so they're forgotten.
+      electron.procs[1].emit("message", { type: "error", message: "The speech models couldn't be loaded.", models: true });
+      expect(states.at(-1)).toEqual({ s: "needs-models", detail: "The speech models look damaged. Download them again." });
+      expect(modelsReady(root)).toBe(false);
+      expect(modelsReady(bundled)).toBe(true);
+    } finally {
+      fs.rmSync(bundled, { recursive: true, force: true });
+    }
   });
 
   it("a model that won't load is an error to show, not a restart loop", async () => {

@@ -7,6 +7,9 @@ const MARKABLE = new Set(["push button", "toggle button", "check box", "radio bu
   "spin button", "slider", "menu item", "menu", "link", "page tab", "list item", "check menu item", "radio menu item",
   "tree item", "icon", "table cell"]);
 
+/** The marks' font: capture.ts warmText draws with it too, so fontconfig has settled it before the first marks. */
+export const MARK_FONT = "DejaVu Sans, sans-serif";
+
 const esc = (s: string) => s.replace(/[<>&"]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!);
 
 /** Less of an element than this (px across) showing is a sliver: no mark (it would sit on whatever lies beside it). */
@@ -28,7 +31,7 @@ export function marksSvg(nodes: AxNode[], origin: Bounds, scale: number, width: 
     parts.push(
       `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="none" stroke="#ff7a1a" stroke-width="2"/>`,
       `<rect x="${x.toFixed(1)}" y="${Math.max(0, y - 14).toFixed(1)}" width="${tw}" height="14" fill="#ff7a1a"/>`,
-      `<text x="${(x + 3).toFixed(1)}" y="${(Math.max(0, y - 14) + 11).toFixed(1)}" font-family="DejaVu Sans, sans-serif" font-size="11" font-weight="700" fill="#1a0f0b">${esc(label)}</text>`,
+      `<text x="${(x + 3).toFixed(1)}" y="${(Math.max(0, y - 14) + 11).toFixed(1)}" font-family="${MARK_FONT}" font-size="11" font-weight="700" fill="#1a0f0b">${esc(label)}</text>`,
     );
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${parts.join("")}</svg>`;

@@ -1,26 +1,37 @@
 /**
  * Perception: what is on the user's screen, as text (always) and as an image
  * (for workers, on request). Text comes from the accessibility tree via the
- * sidecar; images come straight from X11 with Ember hidden and private
- * windows and secret fields blacked out. Every position handed out is in
- * physical X pixels, also for HiDPI apps that report logical ones (see windows.ts).
+ * sidecar; images come straight from the window system (X11 on Linux) with Ember
+ * hidden and private windows and secret fields blacked out. Every position handed
+ * out is in the window system's native units (physical pixels on Linux and Windows,
+ * points on macOS), also for HiDPI apps that report logical ones (see windows.ts).
+ * Plain Node: the window system, the OS's words and its security-window vocabulary
+ * come in through PerceptionOptions, and each defaults to today's Linux behaviour.
  */
 
 import { friendlyApp } from "../../shared/apps";
-import { isSecurityWindow } from "../policy/policy";
+import { PLATFORM_WORDS, type PlatformWords } from "../../shared/words";
+import { isSecurityWindow as linuxSecurityWindow } from "../policy/policy";
 import { captureRect, type Capture } from "./capture";
 import { marksSvg } from "./marks";
 import { focusedElement, insideSecrets, isNeverLook, isSecretNode, secretIds, serializeElements, inferLabels, quoteUntrusted, screenWord, withheldIds } from "./elements";
-import { scaleBounds, type AtspiSidecar, type AxNode, type AxWindow, type Bounds, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
-import { coveringRects, elementScales, matchFrame, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
-import type { StackedWindow, X11, X11Window } from "../x11";
+import { scaleBounds, type AxNode, type AxWindow, type Bounds, type FocusBefore, type OtherWindow, type PointElement, type ReadWindowResult } from "./sidecar";
+import { coveringRects, elementScales, isPopupOf, matchFrame, OVERLAY_TITLE, samePopups, scaleNodes, shellCovers, uncoveredArea, type FrameMatch } from "./windows";
+import type { OS, PerceptionWindows, PrivacyVocabulary, StackedWindow, X11Window } from "../platform/types";
 import type { Logger } from "../logger";
+import type { PerceptionSidecar } from "./ports";
+import type { TargetId } from "../../shared/targets";
 
+/** What Perception is given (main.ts, and the desk's own Perception in desk/place.ts). */
 export interface PerceptionOptions {
-  sidecar: AtspiSidecar;
-  x11: X11 | null;
+  sidecar: PerceptionSidecar;
+  /**
+   * The window system: X11 on Linux (or the desk's remote X11), the Windows or macOS backend elsewhere; null without
+   * one. The field keeps its old name so the desk and the tests keep compiling.
+   */
+  x11: (PerceptionWindows & ScreenAccess) | null;
   neverLook: () => string[];
-  /** Full screen in physical pixels (all displays). */
+  /** Full screen in native units (all displays): physical pixels on Linux and Windows, points on macOS. */
   screenBounds: () => Bounds;
   hideOverlay?: () => Promise<() => void>;
   log: Logger;
@@ -29,7 +40,32 @@ export interface PerceptionOptions {
    * (handle, desk view, ask box) hide what lies under them; the click-through overlay doesn't.
    */
   ownPid?: number;
+  /** The OS's words for why there is no screenshot (default: Linux's, today's text). */
+  words?: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
+  /** Authentication and security windows on this OS (default: policy.ts's Linux vocabulary, today's check). */
+  isSecurityWindow?: PrivacyVocabulary["isSecurityWindow"];
+  /**
+   * Is this app a remote surface (policy/remote-surface.ts; Windows: a remote desktop's or a WSLg app's window)? Those
+   * are blacked out of every screenshot. Absent on Linux and macOS, which capture as before.
+   */
+  isRemoteSurface?: (app: string) => boolean;
+  /** How a screenshot is taken (default captureRect; the remote agent passes its own, which needs no sharp). */
+  capture?: typeof captureRect;
+  /**
+   * The first time in a run a picture is refused because the OS refused Ember the screen (macOS without Screen
+   * Recording): Ember says so itself, with a way to the setting (main.ts). The worker's text says so every time.
+   */
+  onNoScreenAccess?: () => void;
+  /** The OS Ember runs on, for the log (perception.popup_unmatched); main.ts passes it. */
+  os?: OS;
 }
+
+/**
+ * What a window system may add for Perception: macOS's window system says whether Ember has the Screen Recording
+ * permission (DarwinWindowSystem.screenRecording), so a missing one is named instead of "off screen". Absent on Linux,
+ * Windows and the desk, which need no permission to capture.
+ */
+export interface ScreenAccess { screenRecording?(): boolean }
 
 /**
  * A window to read. `pid` with `path` (from an earlier read) names exactly one
@@ -48,6 +84,8 @@ export interface QuickContext {
    * are in it). Only when the window isn't private, the focus isn't a secret field, and the app told no selection.
    */
   takesSelection?: boolean;
+  /** The target whose screen it was read on (absent: this computer's, "local"); a task starts there only on that target. */
+  targetId?: TargetId;
 }
 
 export interface Seen {
@@ -57,8 +95,11 @@ export interface Seen {
   blocked: boolean;
   /** The app didn't answer in time, even when asked again (busy or hung): `nodes` are partial, or there is no window. */
   busy: boolean;
-  /** Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is nested deeper than a read goes. */
-  truncated: "nodes" | "time" | "depth" | null;
+  /**
+   * Cut short: "nodes" at the element limit, "time" when reading took too long, "depth" when something on screen is
+   * nested deeper than a read goes, "loading" when a web page shows but the browser hasn't handed over what it holds.
+   */
+  truncated: "nodes" | "time" | "depth" | "loading" | null;
   /** The app's other windows the user is in or must answer first (an Open dialog); private ones left out. */
   others: OtherWindow[];
   ms: number;
@@ -77,6 +118,8 @@ export interface Perceived extends Seen {
 const BUSY_RETRY_MS = 300;
 /** Secret fields whose position is checked again once the picture is taken (they can scroll meanwhile). */
 const MAX_SECRET_RECHECK = 24;
+/** Popups accessibility doesn't list that are logged in a run (perception.popup_unmatched). */
+const UNMATCHED_POPUPS_LOGGED = 32;
 /** Workers see every element a read returns (the sidecar's MAX_NODES), so every id they may need is there. */
 const WORKER_LINES = 400;
 
@@ -85,16 +128,29 @@ export class Perception {
   private hidden: { count: number; restore: Promise<() => void> } | null = null;
   /** Scale per app (by pid): it rarely changes, and finding it takes a walk over the X window tree. */
   private scales = new Map<string, { k: number; until: number }>();
+  /** This OS's security-window check (one argument only: a second one would pick another OS's vocabulary). */
+  private readonly isSecurity: PrivacyVocabulary["isSecurityWindow"];
+  private readonly words: Pick<PlatformWords, "shellUnchecked" | "overviewOpen" | "noScreenAccess">;
+  /** onNoScreenAccess was called (once a run). */
+  private toldNoScreenAccess = false;
+  /** The popups accessibility didn't list that were logged (app and size), a few at most. */
+  private unmatchedPopups = new Set<string>();
 
-  constructor(private o: PerceptionOptions) {}
+  constructor(private o: PerceptionOptions) {
+    this.isSecurity = o.isSecurityWindow ?? (w => linuxSecurityWindow(w));
+    this.words = o.words ?? PLATFORM_WORDS.linux;
+  }
 
-  /** The focused window's accessibility tree (empty when blocked or unreadable). */
-  async focused(stack?: StackedWindow[] | null): Promise<Seen> {
-    const x11Window = this.o.x11?.activeWindow() ?? null;
+  /**
+   * The focused window's accessibility tree (empty when blocked or unreadable). `active`: the window the user is in, as
+   * the caller took it (undefined: asked now); `before`: what had the keyboard in it then (FocusBefore).
+   */
+  async focused(stack?: StackedWindow[] | null, active?: ReturnType<PerceptionWindows["activeWindow"]>, before?: FocusBefore): Promise<Seen> {
+    const x11Window = active !== undefined ? active : this.o.x11?.activeWindow() ?? null;
     if (x11Window && x11Window.pid === this.ownPid) {
       return { window: null, x11Window: null, nodes: [], blocked: false, busy: false, truncated: null, others: [], ms: 0, axScale: 1, ember: true };
     }
-    return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window, stack);
+    return this.read(x11Window ? { pid: x11Window.pid ?? undefined, title: x11Window.title } : {}, x11Window, stack, before ? { focusBefore: before } : {});
   }
 
   /** Ember's own process: its windows (the ask box, settings, the overlay) are never read or listed. */
@@ -104,7 +160,7 @@ export class Perception {
 
   /** On the never-look list, or a password or authentication prompt (polkit, keyring…): Ember looks away (M8.3). */
   private isPrivate(app: string, title: string, list: string[]): boolean {
-    return isNeverLook({ app, name: title }, list) || isSecurityWindow({ app, title });
+    return isNeverLook({ app, name: title }, list) || this.isSecurity({ app, title });
   }
 
   /**
@@ -112,8 +168,9 @@ export class Perception {
    * X11 windows when the caller has them (undefined: looked up when needed). `keep: false`: a quick
    * look whose ids aren't acted on, which keeps the ids of the reads that are (AtspiSidecar.readWindow). `cells`: the
    * spreadsheet cells ("C62") the cell with the keyboard is expected in, asked first when a read doesn't come to it.
+   * `focusBefore`: the ask box's quick look, where the box has the keyboard by now (FocusBefore).
    */
-  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean; cells?: string[] } = {}): Promise<Seen> {
+  async read(target: WindowTarget, x11Window: (X11Window & { wmClass?: string }) | null = null, stack?: StackedWindow[] | null, o: { keep?: boolean; cells?: string[]; focusBefore?: FocusBefore } = {}): Promise<Seen> {
     const t0 = Date.now();
     const params = target.pid != null && target.path ? { pid: target.pid, path: target.path }
       : target.pid != null || target.title ? { ...(target.pid != null ? { pid: target.pid } : {}), ...(target.title ? { title: target.title } : {}) }
@@ -124,7 +181,7 @@ export class Perception {
     // "electron"): those processes aren't read at all.
     if (list.length && stack === undefined) stack = this.stackNow();
     const skipPids = list.length && stack ? [...new Set(stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid!))] : [];
-    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}), ...(o.cells?.length ? { cells: o.cells } : {}) })
+    const ask = () => params ? this.o.sidecar.readWindow({ ...params, ownPid: this.ownPid, ...(list.length ? { neverLook: list, skipPids } : {}), ...(o.keep === false ? { keep: false } : {}), ...(o.cells?.length ? { cells: o.cells } : {}), ...(o.focusBefore ? { focusBefore: o.focusBefore } : {}) })
       : Promise.resolve<ReadWindowResult>({ window: null, nodes: [], ms: 0 });
     let res = await ask();
     if (res.busy) {
@@ -158,7 +215,8 @@ export class Perception {
     const nodes = await this.withSecrets(scaleNodes(res.nodes, each ?? 1));
     return {
       window: { ...window, bounds: frame }, x11Window, nodes, blocked, busy: !!res.busy,
-      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
+      truncated: res.slow ? "time" : !res.truncated ? null : res.cut?.includes("loading") ? "loading"
+        : res.cut?.length && !res.cut.includes("nodes") ? "depth" : "nodes",
       others: (res.others ?? []).filter(w => !this.isPrivate(window.app, w.name, list)),
       ms: Date.now() - t0, axScale: k,
     };
@@ -270,43 +328,29 @@ export class Perception {
    * Taken the moment the user calls Ember (before the ask box or anything else
    * takes focus): which window they're in, what has focus, and any selected
    * text, so "make this bold" knows what "this" is. Short; untrusted.
+   * `active`: the window the user was in, taken before the ask box took the keyboard where it opens before the screen
+   * is read (Windows, macOS: review #78); undefined: the window active now. `before`: what had the keyboard in it then,
+   * which nothing there says by now (FocusBefore, cross-review P1).
    */
-  async quickContext(): Promise<QuickContext | null> {
+  async quickContext(active?: ReturnType<PerceptionWindows["activeWindow"]>, before?: FocusBefore): Promise<QuickContext | null> {
     let seen: Seen;
     try {
-      seen = await this.focused();
+      seen = await this.focused(undefined, active, before);
     } catch {
       return null;
     }
-    const pid = seen.window?.pid ?? seen.x11Window?.pid ?? undefined;
-    // A private window: only its process (a task started there is refused), never its title.
-    if (seen.blocked) return { target: { pid }, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
-    const title = seen.window?.name || seen.x11Window?.title || "";
-    if (!title) return null;
-    const app = seen.window?.app ?? "";
-    const target = { pid, title, app, ...(seen.window?.path ? { path: seen.window.path } : {}) };
-    const focus = focusedElement(seen.nodes);
-    const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
-    const secret = !!focus && isSecretNode(focus, label);
-    const lines = [`App: ${quoteUntrusted(app || "unknown", 60)}, window: ${quoteUntrusted(title, 100)}.`];
-    if (focus) lines.push(`Focused: ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 60)}` : ""}${secret ? " (a secret field; its contents are not shown)" : ""}.`);
-    if (focus && !secret) {
-      if (focus.selection) lines.push(`Selected text: ${quoteUntrusted(focus.selection, 300)}.`);
-      else if (focus.text) lines.push(`Its text begins: ${quoteUntrusted(focus.text, 120)}.`);
-    }
     // Every window, not just the focused one: "what apps are open" is answered from this context, without a read.
     // X11's list is used here because it is immediate: the sidecar answers one request at a time, and the focused
-    // read already took its turn.
-    const open = this.x11WindowLines();
-    if (open.length) lines.push("", "Open windows:", ...open);
-    return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>`, takesSelection: !secret && !focus?.selection };
+    // read already took its turn. (Listed only when the context will say it: not for a private or untitled window.)
+    const title = seen.window?.name || seen.x11Window?.title || "";
+    return quickContextText(seen, seen.blocked || !title ? [] : openWindowLines(this.x11Windows()));
   }
 
   /**
-   * Every app's top-level window as model-readable lines, Ember's own and private ones left out. `activeId`: the X11
-   * window the user is in, marked as focused.
+   * Every app's top-level window as open-window entries, Ember's own and private ones left out, each line said once.
+   * `activeId`: the X11 window the user is in, marked as focused.
    */
-  private x11WindowLines(activeId?: number): string[] {
+  private x11Windows(activeId?: number): OpenWindow[] {
     let wins: (X11Window & { wmClass: string; wmClassName?: string })[];
     try {
       wins = this.o.x11?.clientWindows() ?? [];
@@ -317,16 +361,19 @@ export class Perception {
     const list = this.o.neverLook().filter(i => i.trim());
     const out = wins.filter(w => w.pid !== this.ownPid
       && !isNeverLook({ app: w.wmClass, name: w.title }, list)
-      && !isSecurityWindow({ app: w.wmClass, title: w.title })
+      && !this.isSecurity({ app: w.wmClass, title: w.title })
       // Each part of WM_CLASS on its own as well: some programs are known by one exact name ("firewall-config"),
-      // which accessibility gives and the two parts joined don't match.
-      && !w.wmClass.split(/\s+/).concat(w.wmClassName ?? []).some(part => part && isSecurityWindow({ app: part })))
-      .map(w => {
+      // which accessibility gives and the two parts joined don't match. On Windows wmClassName is the window class
+      // ("Credential Dialog Xaml Host").
+      && !w.wmClass.split(/\s+/).concat(w.wmClassName ?? []).some(part => part && this.isSecurity({ app: part })))
+      .map((w): OpenWindow => {
         // The class part of WM_CLASS ("VirtualBox Manager"); the last word of both, where only they are known.
         const cls = w.wmClassName ?? w.wmClass.split(/\s+/).filter(Boolean).at(-1) ?? "";
-        return `- ${quoteUntrusted(friendlyApp(cls) || "unknown app", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}${w.id === activeId ? " (focused by the user)" : ""}`;
+        return { app: friendlyApp(cls) || "unknown app", title: w.title, active: w.id === activeId };
       });
-    return [...new Set(out)];
+    // Windows that read alike (two "Untitled" documents of one app) are listed once.
+    const said = new Set<string>();
+    return out.filter(w => { const line = openWindowLine(w); if (said.has(line)) return false; said.add(line); return true; });
   }
 
   /**
@@ -354,20 +401,8 @@ export class Perception {
       this.o.log.warn("perception.describe_failed", { err });
       return "Ember could not read the screen right now (the accessibility service did not answer).";
     }
-    // Everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
-    if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
-    const open = await this.openWindows(seen.x11Window?.id);
-    if (seen.ember) return `${EMBERS_OWN}${open}`;
-    const title = seen.window?.name || seen.x11Window?.title || "";
-    if (!seen.window) {
-      if (seen.busy) return `${BUSY_APP}${open}`;
-      const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
-      return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}${open}`;
-    }
-    const focus = focusedElement(seen.nodes);
-    const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
-    const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
-    return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${open}`;
+    // (Nothing more is listed for a private window.)
+    return describeText(seen, seen.blocked ? "" : await this.openWindows(seen.x11Window?.id));
   }
 
   /**
@@ -377,22 +412,16 @@ export class Perception {
    * context gave. `activeId`: the X11 window the user is in.
    */
   private async openWindows(activeId?: number): Promise<string> {
-    let lines: string[];
-    if (this.o.x11) {
-      lines = this.x11WindowLines(activeId);
-    } else {
-      let wins: AxWindow[];
-      try {
-        wins = await this.windows();
-      } catch (err) {
-        this.o.log.warn("perception.list_windows_failed", { err });
-        return "";
-      }
-      // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
-      lines = wins.map(w => `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.name || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
+    if (this.o.x11) return openWindowsBlock(this.x11Windows(activeId));
+    let wins: AxWindow[];
+    try {
+      wins = await this.windows();
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+      return "";
     }
-    if (!lines.length) return "";
-    return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${lines.join("\n")}\n</screen>`;
+    // Titles reach the model: text typed elsewhere may carry them, so they stay quoted and untrusted.
+    return openWindowsBlock(wins.map(w => ({ app: w.app, title: w.name, active: w.active, ...(w.busy ? { busy: true } : {}) })));
   }
 
   /**
@@ -404,24 +433,33 @@ export class Perception {
     // One fresh look at the window stack serves the scale, what covers the window, and the private windows.
     const stack = opts.image ? this.stackNow() : undefined;
     const seen = opts.target ? await this.read(opts.target, null, stack) : await this.focused(stack);
-    const text = seen.blocked
-      ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
-      : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, maxLines: WORKER_LINES, header: othersLine(seen) }) + notes(seen)
-      : seen.busy ? BUSY_APP
-      : seen.ember ? EMBERS_OWN
-      : "The focused window exposes no accessibility information; use the screenshot.";
+    const text = perceivedText(seen);
     if (!opts.image || seen.blocked) return { ...seen, text, capture: null };
     const noShot = (why: string): Perceived => ({ ...seen, text: `${text}\n(No screenshot: ${why}.)`, capture: null });
     const x11 = this.o.x11;
     if (!x11) return noShot("screenshots aren't available on this display");
+    // A window's picture needs the window: one that closed, never matched or whose app is hung (no window read), or one
+    // of Ember's own, gets no picture, never one of the whole screen, which no secret-field check has looked through.
+    // Not found, the text says only that (not "use the screenshot").
+    if (opts.scope === "window" && !seen.window && !seen.x11Window) {
+      if (seen.ember) return noShot("Ember takes no pictures of its own windows");
+      if (seen.busy) return noShot("the app isn't answering");
+      return { ...seen, text: WINDOW_NOT_FOUND, capture: null };
+    }
+    // macOS gives no picture without Screen Recording (never allowed, or taken back): say that, not "off screen".
+    if (this.noScreenAccess(x11)) return noShot(this.screenRefused());
     // While a password prompt has focus anywhere on screen, no screenshots at all.
     const active = x11.focusWindow() ?? x11.activeWindow();
-    if (active && isSecurityWindow({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    if (active && this.isSecurity({ app: active.wmClass, title: active.title })) return noShot("a password prompt is open, so Ember looks away until it's done");
+    // Windows and macOS say themselves when an authentication surface is up (UAC's secure desktop, a credential
+    // prompt, macOS's SecurityAgent or secure keyboard entry); Linux has no such check (GNOME Shell's come next), but in
+    // a Wayland session, where XWayland shows Ember only X11 apps, the check is always on.
+    if (this.platformDialog()) return noShot(this.platformDialogWords());
     // GNOME Shell draws its own dialogs (polkit, keyring) and notifications: no X11 window shows where they are.
     const shell = await this.shellOverlays();
-    if (shell.unchecked) return noShot("GNOME Shell didn't answer in time, so Ember can't tell whether a system dialog (a password prompt) is open; try again in a moment");
-    if (shell.dialog) return noShot("a system dialog is open, so Ember looks away until it's done");
-    if (shell.overview) return noShot("the Activities overview or the window switcher is open (it shows every window), so Ember looks away until it's closed");
+    if (shell.unchecked) return noShot(this.words.shellUnchecked);
+    if (shell.dialog) return noShot(SYSTEM_DIALOG);
+    if (shell.overview) return noShot(this.words.overviewOpen);
     const windowScope = opts.scope === "window" && !!(seen.window || seen.x11Window);
     let rect = this.o.screenBounds();
     // A window: blacked out wherever other windows lie on top of it (the stacking order says which).
@@ -431,18 +469,37 @@ export class Perception {
       return at ? coveringRects(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : null;
     };
     let covers: Bounds[] = [];
+    // The app's own popups over the window are in its picture: their secret fields are blacked out, and so is a popup
+    // that can't be looked through (one that opens while the picture is taken, too).
+    let popups: { masks: Bounds[]; hidden: boolean } = { masks: [], hidden: false };
+    const popupsSeen = new Set<number>();
+    const popupsOver = (s: StackedWindow[] | null): StackedWindow[] => {
+      const at = s && this.locate(seen, s);
+      return at ? samePopups(s!, at.index, at.rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own) : [];
+    };
     if (windowScope) {
       const at = stack && this.locate(seen, stack);
       if (!at) return noShot("Ember couldn't find the window on screen, so it can't tell what covers it");
       rect = at.rect;
       covers = coveringRects(stack!, at.index, rect, [seen.window?.pid ?? seen.x11Window?.pid, at.pid], own);
       if (uncoveredArea(rect, covers) <= 0.01 * rect.width * rect.height) return noShot("the window is covered by other windows");
+      const over = popupsOver(stack!);
+      for (const p of over) popupsSeen.add(p.id);
+      if (over.length) popups = await this.popupMasks(over, seen.axScale);
     }
     const mask = await this.privateWindows(stack);
     if (mask === null) {
       // Can't tell where private windows are, so no screenshot (fail closed).
       this.o.log.warn("perception.capture_declined", { reason: "private windows could not be listed" });
       return noShot("Ember couldn't check for private windows");
+    }
+    // Ember's own windows (the command and prompt windows, settings, the ask box, the handle) never reach a model as
+    // pixels (critique integration-4): the whole screen's picture blacks out every one of them; a window's picture, those
+    // stacked over it (its covers hold them already). The overlay is hidden for the capture, and covers nothing.
+    const mine = this.ownWindows(stack, windowScope);
+    if (mine === null) {
+      this.o.log.warn("perception.capture_declined", { reason: "Ember's own windows could not be listed" });
+      return noShot("Ember couldn't check where its own windows are");
     }
     const secrets = seen.nodes.filter(n => n.secret && n.bounds);
     const k = seen.axScale;
@@ -456,12 +513,19 @@ export class Perception {
       const known = new Set(secrets.map(n => rectKey(n.bounds!)));
       unread = more.filter(f => !physical(f.bounds, k).some(b => known.has(rectKey(b))));
     }
-    const blacked = [...mask, ...covers, ...shell.masks];
+    const blacked = [...mask, ...covers, ...mine, ...shell.masks, ...popups.masks];
     let coveredAfter = false;
-    const capture = await captureRect(x11, rect, {
+    let dialogAfter = false;
+    const capture = await (this.o.capture ?? captureRect)(x11, rect, {
       mask: [...blacked, ...secrets.map(n => pad(n.bounds!)), ...unread.flatMap(f => physical(f.bounds, k).map(pad))],
       // Windows can move or open, and fields scroll, while the picture is taken: black out where they are afterwards too.
       maskAfter: async () => {
+        // A system dialog may have come up while the picture was taken (macOS's capture takes 100-300 ms): then the
+        // picture may show it, so there is none. Always false on Linux, which has no such check.
+        if (this.platformDialog()) {
+          dialogAfter = true;
+          return null;
+        }
         const now = this.stackNow();
         const priv = await this.privateWindows(now);
         if (priv === null) return null;
@@ -476,20 +540,82 @@ export class Perception {
           blacked.push(...lateRects);
         }
         blacked.push(...priv);
-        if (!windowScope) return [...priv, ...fields];
+        if (!windowScope) {
+          // Ember's own windows where they are now (one may have opened or moved while the picture was taken).
+          const ownNow = this.ownWindows(now, false);
+          if (ownNow === null) return null;
+          blacked.push(...ownNow);
+          return [...priv, ...fields, ...ownNow];
+        }
         const after = covering(now);
         if (after === null) return null; // the window is gone from the stack: no picture
         coveredAfter = after.length > 0;
-        blacked.push(...after);
-        return [...priv, ...fields, ...after];
+        // A popup of the app's that opened meanwhile wasn't looked through: blacked out whole.
+        const opened = popupsOver(now).filter(p => !popupsSeen.has(p.id)).map(p => ({ x: p.x, y: p.y, width: p.width, height: p.height }));
+        if (opened.length) popups.hidden = true;
+        blacked.push(...after, ...opened);
+        return [...priv, ...fields, ...after, ...opened];
       },
       hideOverlay: this.o.hideOverlay ? () => this.hideOverlay() : undefined,
       // No marks on what is blacked out (an element under another window can't be clicked either).
       overlaySvg: (scale, w, h, origin) => seen.nodes.length ? marksSvg(seen.nodes.filter(n => !n.bounds || !blacked.some(b => holds(b, n.bounds!))), origin, scale, w, h) : null,
     });
-    if (!capture) return noShot("the window is off screen, or the screen couldn't be captured safely");
+    if (!capture) {
+      return noShot(dialogAfter ? this.platformDialogWords()
+        : this.noScreenAccess(x11) ? this.screenRefused()
+        : "the window is off screen, or the screen couldn't be captured safely");
+    }
     const note = covers.length || coveredAfter ? "\n(Screenshot: parts covered by other windows are hidden.)" : "";
-    return { ...seen, text: text + note, capture };
+    const unchecked = popups.hidden ? "\n(Screenshot: a popup Ember couldn't check for password fields is hidden.)" : "";
+    return { ...seen, text: text + note + unchecked, capture };
+  }
+
+  /**
+   * What to black out of the app's own popups over its window (`popups`, from the stack): each one accessibility lists
+   * as a window of the app is looked through for secret fields like a window (secret_fields), and those are blacked
+   * out; one that can't be looked through whole (the scan is cut short, its app is busy, the call fails) is blacked out
+   * whole (`hidden` then). One accessibility doesn't list as a window (a macOS menu, a Windows menu's shadow) can't be
+   * looked through and is left as before: blacking it out would hide every open menu. Those are logged
+   * (perception.popup_unmatched, with the OS, once a run for each app and size), so CI and the field show which popups
+   * go unscanned. `k`: the app's scale.
+   */
+  private async popupMasks(popups: StackedWindow[], k: number): Promise<{ masks: Bounds[]; hidden: boolean }> {
+    let listed: AxWindow[] = [];
+    try {
+      listed = (await this.o.sidecar.listWindows({ ownPid: this.ownPid })).windows;
+    } catch (err) {
+      this.o.log.warn("perception.list_windows_failed", { err });
+    }
+    const masks: Bounds[] = [];
+    let hidden = false;
+    for (const p of popups) {
+      const w = listed.find(l => l.path && isPopupOf(l, p, k));
+      if (!w) {
+        this.popupUnmatched(p);
+        continue;
+      }
+      const whole = { x: p.x, y: p.y, width: p.width, height: p.height };
+      try {
+        const r = await this.o.sidecar.secretFields({ pid: w.pid!, path: w.path! });
+        if (r.complete) {
+          masks.push(...r.fields.flatMap(f => physical(f.bounds, k).map(pad)));
+          continue;
+        }
+      } catch (err) {
+        this.o.log.warn("perception.secret_scan_failed", { err });
+      }
+      masks.push(whole);
+      hidden = true;
+    }
+    return { masks, hidden };
+  }
+
+  /** Logs a popup of the app's that accessibility doesn't list as a window, so it went unscanned (see popupMasks). */
+  private popupUnmatched(p: StackedWindow): void {
+    const key = `${p.wmClass} ${p.width}x${p.height}`;
+    if (this.unmatchedPopups.has(key) || this.unmatchedPopups.size >= UNMATCHED_POPUPS_LOGGED) return;
+    this.unmatchedPopups.add(key);
+    this.o.log.info("perception.popup_unmatched", { app: p.wmClass, width: p.width, height: p.height, ...(this.o.os ? { os: this.o.os } : {}) });
   }
 
   /**
@@ -502,6 +628,19 @@ export class Perception {
       return physical(now?.bounds ?? n.bounds!, k).map(pad);
     }));
     return places.flat();
+  }
+
+  /**
+   * The frames of Ember's own windows in `stack` (every one but the overlay, which is hidden for captures and lets clicks
+   * through); `windowScope`: a window's picture, which shows only what lies over it, already among its covers (so none
+   * here: an Ember window under it can't show). null when the stack can't be read for a picture of the whole screen
+   * (no picture then: fail closed).
+   */
+  private ownWindows(stack: StackedWindow[] | null | undefined, windowScope: boolean): Bounds[] | null {
+    if (windowScope) return [];
+    if (!stack) return null;
+    const own = this.ownPid;
+    return stack.filter(w => w.pid === own && w.title !== OVERLAY_TITLE).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
   }
 
   /**
@@ -525,6 +664,32 @@ export class Perception {
     }
   }
 
+  /** Why there is no picture when the OS refused Ember the screen; the first time in a run, Ember is told (onNoScreenAccess). */
+  private screenRefused(): string {
+    if (!this.toldNoScreenAccess) {
+      this.toldNoScreenAccess = true;
+      try {
+        this.o.onNoScreenAccess?.();
+      } catch (err) {
+        this.o.log.warn("perception.no_screen_access_notice_failed", { err });
+      }
+    }
+    return this.words.noScreenAccess ?? NO_SCREEN_ACCESS;
+  }
+
+  /**
+   * Has the OS refused Ember the screen (macOS without Screen Recording)? False where there is no such permission, and
+   * when the check fails: the capture then asks again itself and gives no picture without it (fail closed).
+   */
+  private noScreenAccess(ws: ScreenAccess): boolean {
+    try {
+      return ws.screenRecording?.() === false;
+    } catch (err) {
+      this.o.log.warn("perception.screen_access_check_failed", { err });
+      return false;
+    }
+  }
+
   /**
    * GNOME Shell's dialogs and notifications now (a shell too busy to be looked through counts as a dialog;
    * best effort otherwise: nothing is known when the check fails, without GNOME Shell for one).
@@ -539,9 +704,47 @@ export class Perception {
     }
   }
 
-  /** Is a GNOME Shell system dialog (a polkit or keyring password prompt, most likely) on screen, or may one be? */
+  /**
+   * Is a system dialog (a password prompt, most likely) on screen, or may one be? GNOME Shell's (polkit, keyring), or
+   * the one the window system reports on Windows and macOS.
+   */
   async systemDialogOpen(): Promise<boolean> {
-    return (await this.shellOverlays()).dialog;
+    return (await this.shellOverlays()).dialog || this.platformDialog();
+  }
+
+  /**
+   * Why the window system's check is on when it isn't a dialog (macOS: secure keyboard entry in a named app, review
+   * #236), as a clause; null when it is a dialog, nothing, or the words can't be read. Words only: the check decides.
+   */
+  async systemDialogReason(): Promise<string | null> {
+    try {
+      return this.o.x11?.systemDialogReason?.() ?? null;
+    } catch {
+      return null; // no words: the dialog's own are used
+    }
+  }
+
+  /** The no-screenshot note for the window system's check: its own reason when it gives one, else the dialog's. */
+  private platformDialogWords(): string {
+    try {
+      return this.o.x11?.systemDialogReason?.() ?? SYSTEM_DIALOG;
+    } catch {
+      return SYSTEM_DIALOG;
+    }
+  }
+
+  /**
+   * The window system's own answer (Windows: the secure desktop or a credential prompt; macOS: SecurityAgent or secure
+   * keyboard entry; Linux: a Wayland session). False where it has none (Linux on Xorg, the desk) or there is no window
+   * system; true when the check throws (fail closed).
+   */
+  private platformDialog(): boolean {
+    try {
+      return this.o.x11?.systemDialogOpen?.() ?? false;
+    } catch (err) {
+      this.o.log.warn("perception.system_dialog_check_failed", { err });
+      return true;
+    }
   }
 
   /** Hides Ember for a capture. Concurrent captures share one hide; the last one to finish shows Ember again. */
@@ -576,8 +779,8 @@ export class Perception {
     const privatePids = new Set(list.length && stack ? stack.filter(s => s.pid != null && isNeverLook({ app: s.wmClass, name: "" }, list)).map(s => s.pid) : []);
     return windows.flatMap(w => {
       const m = stack && w.bounds ? matchFrame(w, stack) : null;
-      if (isNeverLook(w, list) || isSecurityWindow(w) || (w.pid != null && privatePids.has(w.pid))
-        || (m && (isNeverLook({ app: m.window.wmClass, name: m.window.title }, list) || isSecurityWindow({ app: m.window.wmClass, title: m.window.title })))) return [];
+      if (isNeverLook(w, list) || this.isSecurity(w) || (w.pid != null && privatePids.has(w.pid))
+        || (m && (isNeverLook({ app: m.window.wmClass, name: m.window.title }, list) || this.isSecurity({ app: m.window.wmClass, title: m.window.title })))) return [];
       const k = w.bounds && stack ? this.frameScale(w, stack, m) : 1;
       return [k !== 1 ? { ...w, bounds: scaleBounds(w.bounds!, k) } : w];
     });
@@ -588,11 +791,13 @@ export class Perception {
    * frames, title bars included. Both sources are used: X11 sees every top-level window (even apps
    * that expose nothing over accessibility, e.g. started before it was turned on), AT-SPI knows
    * app names. null means neither could be listed: the caller must not capture (fail closed)
-   * while anything is on the never-look list.
+   * while anything is on the never-look list. Remote surfaces (Windows) are blacked out too, always.
    */
   async privateWindows(stack?: StackedWindow[] | null): Promise<Bounds[] | null> {
+    const remote = this.remoteSurfaces(stack);
+    if (remote === null) return null;
     const list = this.o.neverLook();
-    if (!list.some(i => i.trim())) return [];
+    if (!list.some(i => i.trim())) return remote;
     const frame = (w: StackedWindow): Bounds => ({ x: w.x, y: w.y, width: w.width, height: w.height });
     let s: StackedWindow[] | null = null;
     let x11: Bounds[] | null = null;
@@ -615,12 +820,110 @@ export class Perception {
       this.o.log.warn("perception.atspi_windows_failed", { err });
     }
     if (x11 === null && atspi === null) return null;
-    return [...(x11 ?? []), ...(atspi ?? [])];
+    return [...remote, ...(x11 ?? []), ...(atspi ?? [])];
+  }
+
+  /**
+   * The whole frames of the remote surfaces on screen (Windows: a remote desktop's or a WSLg app's window), from the
+   * stack, which sees every top-level window: what they show can't be checked against the never-look list or for a
+   * password prompt. [] without the check; null when the stack can't be read (no picture then). A window is one by its
+   * whole app name (Windows' program, macOS's "Screen Sharing") or by either part of Linux's WM_CLASS ("remmina
+   * Org.remmina.Remmina"), as the security-window check reads them.
+   */
+  private remoteSurfaces(stack?: StackedWindow[] | null): Bounds[] | null {
+    const remote = this.o.isRemoteSurface;
+    if (!remote) return [];
+    const s = stack ?? this.stackNow();
+    const isRemote = (app: string) => remote(app) || app.split(/\s+/).some(part => !!part && part !== app && remote(part));
+    return s && s.filter(w => isRemote(w.wmClass)).map(w => ({ x: w.x, y: w.y, width: w.width, height: w.height }));
   }
 }
 
+const SYSTEM_DIALOG = "a system dialog is open, so Ember looks away until it's done";
+/** Why there is no screenshot when the OS refuses the screen and its words don't say more (macOS's do). */
+const NO_SCREEN_ACCESS = "Ember isn't allowed to capture the screen";
 const BUSY_APP = "The app is busy and didn't answer (it may be loading something). Try again in a moment.";
+const WINDOW_NOT_FOUND = "That window can't be found (it may have closed, or its app isn't answering).";
 const EMBERS_OWN = "The user is in one of Ember's own windows (the ask box or settings), not in an app; Ember doesn't read its own windows. If they mean an app, ask them to switch to it.";
+
+/** One open window as the "Open windows" lists say it: its app (as the user knows it), its title, and how it is. */
+export interface OpenWindow { app: string; title: string; active: boolean; busy?: boolean }
+
+/** An open window's line: app and title quoted (screen text, untrusted), then whether the user is in it or it is busy. */
+function openWindowLine(w: OpenWindow): string {
+  return `- ${quoteUntrusted(w.app || "(unknown app)", 60)}: ${quoteUntrusted(w.title || "(untitled)", 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`;
+}
+
+/**
+ * The open windows' lines for quickContextText (one per window, in order). Pure: the PC builds a remote's context
+ * from its structured list with it (§5.5), so every string from there is quoted by Ember's own code.
+ */
+export function openWindowLines(lines: OpenWindow[]): string[] {
+  return lines.map(openWindowLine);
+}
+
+/**
+ * The open windows as describe() appends them: an untrusted <screen> block ("" for none). Pure (§5.5): the same text for
+ * this screen's windows and a remote's.
+ */
+export function openWindowsBlock(lines: OpenWindow[]): string {
+  if (!lines.length) return "";
+  return `\n<screen source="open-windows" untrusted="true">\nOpen windows:\n${openWindowLines(lines).join("\n")}\n</screen>`;
+}
+
+/** What a worker's perceive_window says about what was read (before any screenshot note). Pure (§5.5). */
+export function perceivedText(seen: Seen): string {
+  return seen.blocked
+    ? "This window is private (on the user's never-look list, or a password prompt). Do not interact with it."
+    : seen.window ? serializeElements(seen.window, seen.nodes, { withBounds: true, maxLines: WORKER_LINES, header: othersLine(seen) }) + notes(seen)
+    : seen.busy ? BUSY_APP
+    : seen.ember ? EMBERS_OWN
+    : "The focused window exposes no accessibility information; use the screenshot.";
+}
+
+/**
+ * describe_screen's text for what was read, with `openBlock` (openWindowsBlock's text, or "") after it. Pure (§5.5):
+ * everything read from the screen (titles, names, text) stays inside the untrusted <screen> wrapper, quoted.
+ */
+export function describeText(seen: Seen, openBlock: string): string {
+  if (seen.blocked) return `The user is in a private window (on their "never look at" list, or a password prompt). Do not read or describe it.`;
+  if (seen.ember) return `${EMBERS_OWN}${openBlock}`;
+  const title = seen.window?.name || seen.x11Window?.title || "";
+  if (!seen.window) {
+    if (seen.busy) return `${BUSY_APP}${openBlock}`;
+    const named = title ? `\n<screen source="window-title" untrusted="true">\nWindow: ${quoteUntrusted(title, 100)}\n</screen>` : "";
+    return `The focused window does not expose accessibility information, so its contents can't be read as text.${named}${openBlock}`;
+  }
+  const focus = focusedElement(seen.nodes);
+  const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
+  const focusLine = focus ? `Focused element: [${focus.id}] ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 80)}` : ""}.` : "No element has keyboard focus.";
+  return `The user's focused window, read through accessibility:\n${serializeElements(seen.window, seen.nodes, { maxLines: 120, header: [focusLine, ...othersLine(seen)] })}${notes(seen)}${openBlock}`;
+}
+
+/**
+ * The quick context for what was read (the window the user is in, what has focus, its selection or text), with
+ * `openLines` (openWindowLines's lines) as its list of open windows; null for a window with no title. Pure (§5.5).
+ */
+export function quickContextText(seen: Seen, openLines: string[]): QuickContext | null {
+  const pid = seen.window?.pid ?? seen.x11Window?.pid ?? undefined;
+  // A private window: only its process (a task started there is refused), never its title.
+  if (seen.blocked) return { target: { pid }, text: `<context untrusted="true">The user is in a private window (on their never-look list, or a password prompt).</context>` };
+  const title = seen.window?.name || seen.x11Window?.title || "";
+  if (!title) return null;
+  const app = seen.window?.app ?? "";
+  const target = { pid, title, app, ...(seen.window?.path ? { path: seen.window.path } : {}) };
+  const focus = focusedElement(seen.nodes);
+  const label = focus ? focus.name || inferLabels(seen.nodes).get(focus.id) || "" : "";
+  const secret = !!focus && isSecretNode(focus, label);
+  const lines = [`App: ${quoteUntrusted(app || "unknown", 60)}, window: ${quoteUntrusted(title, 100)}.`];
+  if (focus) lines.push(`Focused: ${screenWord(focus.role)}${label ? ` ${quoteUntrusted(label, 60)}` : ""}${secret ? " (a secret field; its contents are not shown)" : ""}.`);
+  if (focus && !secret) {
+    if (focus.selection) lines.push(`Selected text: ${quoteUntrusted(focus.selection, 300)}.`);
+    else if (focus.text) lines.push(`Its text begins: ${quoteUntrusted(focus.text, 120)}.`);
+  }
+  if (openLines.length) lines.push("", "Open windows:", ...openLines);
+  return { target, text: `<context source="focused-window" untrusted="true">\n${lines.join("\n")}\n</context>`, takesSelection: !secret && !focus?.selection };
+}
 
 const rectKey = (b: Bounds) => `${b.x},${b.y},${b.width},${b.height}`;
 
@@ -653,5 +956,6 @@ function notes(seen: Seen): string {
   if (seen.truncated === "nodes") out.push(`(The window has more elements than Ember reads at once; only the first ${seen.nodes.length} are listed. Scroll to the part you need, open it, or work in a smaller window, then look again.)`);
   if (seen.truncated === "time") out.push("(Reading the window took too long, so only part of it is listed. Scroll to the part you need or close what you don't need, then look again.)");
   if (seen.truncated === "depth") out.push("(Part of the window is nested too deeply for Ember to read, so elements there are missing from this list. Use the screenshot for that part.)");
+  if (seen.truncated === "loading") out.push("(The page is still loading, so its content isn't listed yet. Try again in a moment.)");
   return out.length ? `\n${out.join("\n")}` : "";
 }

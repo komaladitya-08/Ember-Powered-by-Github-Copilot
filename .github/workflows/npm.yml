@@ -1,0 +1,111 @@
+name: npm
+
+# Publishes the npm launcher (packages/npm, `ember-copilot`) once a release's files are on GitHub Releases
+# (docs/DEVELOPING.md §15, step 4). It runs after ci.yml finishes on a v* tag, when ci's release job has published
+# the release, and by hand (Actions › npm › Run workflow) for a release that already exists, such as one published
+# before this workflow did. The launcher's version must be the tag's: it downloads that release's files.
+#
+# Authentication: npm Trusted Publishing (OIDC, no token) first; npm 11.5.1 or later tries it whenever the job has
+# id-token: write. The NPM_TOKEN secret is the fallback, needed for the very first publish (a trusted publisher can
+# only be set on a package that exists). With neither, the job says so and skips: a release never fails because of npm.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag to publish the launcher for (v<version>; its GitHub release must exist)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-${{ github.event.workflow_run.head_branch || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish ember-copilot to npm
+    # A tag push's ci run that passed (its release job published the release), or a manual run.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          # The tagged commit for a release; the branch it was run on for a manual run (whose launcher must still have
+          # the tag's version).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.6.2
+      - name: The tag, the launcher's version, and the release's files
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.workflow_run.head_branch || inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::$TAG isn't a v<version> tag"; exit 1
+          fi
+          v="${TAG#v}"
+          name=$(node -p 'require("./packages/npm/package.json").name')
+          have=$(node -p 'require("./packages/npm/package.json").version')
+          if [ "$have" != "$v" ]; then
+            echo "::error::packages/npm/package.json's version is $have, which isn't the tag's $v"; exit 1
+          fi
+          assets=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$assets"
+          for f in SHA256SUMS "Ember-$v-win-x64.zip" "Ember-$v-mac-arm64.zip" "Ember-$v-mac-x64.zip" "Ember-$v-x86_64.AppImage"; do
+            grep -qxF "$f" <<<"$assets" || { echo "::error::the $TAG release has no $f"; exit 1; }
+          done
+          if [ "$(npm view "$name@$v" version 2>/dev/null || true)" = "$v" ]; then
+            echo "::notice::$name@$v is already on npm; nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: The package's files
+        if: steps.check.outputs.skip == 'false'
+        working-directory: packages/npm
+        run: npm pack --dry-run
+      - name: npm publish --access public --provenance (trusted publishing, else NPM_TOKEN)
+        if: steps.check.outputs.skip == 'false'
+        working-directory: packages/npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ -n "$NPM_TOKEN" ]; then
+            # Only the fallback: npm uses trusted publishing instead when it is set up for this workflow.
+            npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN" --location=user
+            echo "NPM_TOKEN is set: trusted publishing first, the token if that isn't set up"
+          else
+            echo "NPM_TOKEN isn't set: trusted publishing only"
+          fi
+          if npm publish --access public --provenance; then
+            echo "::notice::published ${{ steps.check.outputs.name }}@${{ steps.check.outputs.version }}"
+            exit 0
+          fi
+          if [ -z "$NPM_TOKEN" ]; then
+            echo "::warning::not published to npm: no NPM_TOKEN secret, and trusted publishing isn't set up for ${{ steps.check.outputs.name }} (docs/DEVELOPING.md §15). The GitHub release is unaffected."
+            exit 0
+          fi
+          echo "::error::npm publish failed with NPM_TOKEN and trusted publishing"
+          exit 1

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -11,6 +11,17 @@ describe("chipLabel", () => {
   it("calls an error a Problem", () => {
     expect(chipLabel("error", false)).toBe("Problem");
     expect(Object.values(BUBBLE_LABEL)).not.toContain("Stuck");
+  });
+});
+
+describe("titleRepeatsChip (review #21)", () => {
+  it("says a title is the chip's own word again, so the header doesn't read 'Thinking  Thinking…'", () => {
+    expect(titleRepeatsChip("Thinking…", chipLabel("thinking", true))).toBe(true);
+    expect(titleRepeatsChip("Listening…", chipLabel("listening", true))).toBe(true);
+    expect(titleRepeatsChip("showing you", chipLabel("guiding", false))).toBe(true);
+    expect(titleRepeatsChip("Checking the clock", chipLabel("thinking", true))).toBe(false);
+    expect(titleRepeatsChip("Ember", chipLabel("idle", false))).toBe(false);
+    expect(titleRepeatsChip("", chipLabel("idle", false))).toBe(false);
   });
 });
 
@@ -33,6 +44,47 @@ describe("announcement", () => {
     expect(announcement(view({ mood: "attention", title: "May I?", thought: "Type “Hi Ana” into Thunderbird?" }), "Cinder"))
       .toBe("Cinder needs you: May I? Type “Hi Ana” into Thunderbird?");
     expect(announcement(view({ mood: "error", title: "Something went wrong", thought: "The model is busy." })))
+      .toBe("Ember has a problem: Something went wrong. The model is busy.");
+  });
+});
+
+describe("announcement: where it is, when not this computer (review #13)", () => {
+  const view = (v: Partial<BubbleView>): BubbleView => ({ visible: true, mood: "idle", title: "Ember", thought: "", streaming: false, ...v });
+
+  it("names the computer a question, a problem or an answer comes from", () => {
+    expect(announcement(view({ mood: "attention", title: "May I?", thought: "Click “Save” in gedit?", where: "on build-01" })))
+      .toBe("Ember needs you, on build-01: May I? Click “Save” in gedit?");
+    expect(announcement(view({ mood: "error", title: "Check disk", thought: "It didn't finish.", where: "in Ubuntu (WSL)" })))
+      .toBe("Ember has a problem, in Ubuntu (WSL): Check disk. It didn't finish.");
+    expect(announcement(view({ mood: "done", title: "Check disk", thought: "12 GB free.", where: "on build-01" }))).toBe("Ember says, on build-01: 12 GB free.");
+    expect(announcement(view({ mood: "attention", title: "May I?", thought: "Click “Save”?", where: "  " }))).toBe("Ember needs you: May I? Click “Save”?");
+  });
+});
+
+describe("announcement: how to answer a question (review #52)", () => {
+  const view = (v: Partial<BubbleView>): BubbleView => ({ visible: true, mood: "attention", title: "May I?", thought: "Click “Save” in gedit?", streaming: false, ...v });
+
+  it("reads a question's key hint after it, as its step row shows it", () => {
+    expect(announcement(view({ step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now" })))
+      .toBe("Ember needs you: May I? Click “Save” in gedit? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+    expect(announcement(view({ title: "May I run a command?", thought: "On build-01: Deletes build", step: "The command is in Ember's command window: press Alt+Tab to go there." })))
+      .toBe("Ember needs you: May I run a command? On build-01: Deletes build. The command is in Ember's command window: press Alt+Tab to go there.");
+    // A guide's step (what it points at) is never read out: it says what it shows.
+    expect(announcement(view({ mood: "guiding", title: "Ember", thought: "Open the File menu.", step: "Pointing at it" }))).toBe("Ember says: Open the File menu.");
+  });
+
+  it("reads under an answer cut short where the keyboard finds it whole (review #47)", () => {
+    expect(announcement(view({ mood: "idle", title: "Ember", thought: "You have three options…", step: "Or press Ctrl+Alt+E and go to Conversation." })))
+      .toBe("Ember says: You have three options… Or press Ctrl+Alt+E and go to Conversation.");
+    expect(announcement(view({ mood: "idle", title: "Ember", thought: "Done.", step: null }))).toBe("Ember says: Done.");
+  });
+
+  it("reads a problem's keyboard route after it, as it is seen under its buttons (review #47)", () => {
+    expect(announcement(view({ mood: "error", title: "Can't connect to build-01", thought: "The connection was refused.", step: "Or press Ctrl+Alt+E and go to Computers." })))
+      .toBe("Ember has a problem: Can't connect to build-01. The connection was refused. Or press Ctrl+Alt+E and go to Computers.");
+    expect(announcement(view({ mood: "error", title: "Lost build-01", thought: "The connection dropped", step: "Or press Ctrl+Alt+E and go to Computers", where: "on build-01" })))
+      .toBe("Ember has a problem, on build-01: Lost build-01. The connection dropped. Or press Ctrl+Alt+E and go to Computers.");
+    expect(announcement(view({ mood: "error", title: "Something went wrong", thought: "The model is busy.", step: null })))
       .toBe("Ember has a problem: Something went wrong. The model is busy.");
   });
 });
@@ -85,6 +137,20 @@ describe("bubblePosition", () => {
         }
       }
     }
+  });
+
+  it("an answer opened in full that fits nowhere clear goes beside Ember over the cards, never over Ember (review #25)", () => {
+    const view = { width: 1280, height: 720 };
+    const size = 64;
+    const c = { x: 1100, y: 360 };
+    const anchor = { x: c.x, y: c.y + size * 0.4 };
+    const cards = { x: 920, y: 520, width: 348, height: 124 };
+    const handle = { x: 1068, y: 652, width: 200, height: 56 };
+    const box = { width: 410, height: 391 };
+    const p = bubblePosition(anchor, box, view, size, [cards, handle]);
+    const e = emberBox(c, size);
+    expect(p.x < e.right && p.x + box.width > e.left && p.y < e.bottom && p.y + box.height > e.top, JSON.stringify(p)).toBe(false);
+    expect(bubbleFit(anchor, box, view, size, [cards, handle], () => box.height)).toBeNull();
   });
 
   describe("keeping off the handle and the task cards", () => {
@@ -210,6 +276,27 @@ describe("bubble styles", () => {
     expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*visibility: hidden/);
     expect(BUBBLE_CSS).toMatch(/\.eb-thought span::after \{[^}]*display: none/);
     expect(BUBBLE_CSS).toMatch(/html\.calm \.eb-dot, html\.calm \.eb-thought span::after \{ animation: none !important; \}/);
+  });
+
+  it("lets a question's or a problem's title wrap onto a second line rather than lose its end (review #16)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\) \.eb-title \{[^}]*white-space: normal;[^}]*-webkit-line-clamp: 2;/);
+    // A title hidden because it repeats the chip stays hidden in those moods too (it comes after, as specific).
+    const wrap = BUBBLE_CSS.indexOf('.ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-title {');
+    expect(BUBBLE_CSS.indexOf(".ember-bubble .eb-title[hidden] { display: none; }")).toBeGreaterThan(wrap);
+  });
+
+  it("puts a problem's or an answer's keyboard route quietly under its buttons, as a question's key hint (review #47)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\], \[data-mood="idle"\]\) \.eb-step \{ order: 1;/);
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\], \[data-mood="idle"\]\) \.eb-step-arrow \{ display: none; \}/);
+  });
+
+  it("shows all of a problem as of a question: up to ten lines, then it scrolls (review #17)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble:is\(\[data-mood="attention"\], \[data-mood="error"\]\):not\(\[data-streaming="true"\]\) \.eb-thought \{[^}]*max-height: 10lh; overflow-y: auto;[^}]*pointer-events: auto;/);
+    expect(thoughtScrolls({ mood: "error", expanded: false, streaming: false })).toBe(true);
+    expect(thoughtScrolls({ mood: "attention", expanded: false, streaming: false })).toBe(true);
+    expect(thoughtScrolls({ mood: "idle", expanded: true, streaming: false })).toBe(true);
+    expect(thoughtScrolls({ mood: "idle", expanded: false, streaming: false })).toBe(false);
+    expect(thoughtScrolls({ mood: "error", expanded: false, streaming: true })).toBe(false);
   });
 
   it("shows the last line of a long answer opened with Read all (no overflow fade over its scroll box)", () => {

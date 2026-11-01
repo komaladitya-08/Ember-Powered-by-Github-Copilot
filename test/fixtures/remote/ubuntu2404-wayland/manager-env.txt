@@ -1,0 +1,1 @@
+as 9 "LANG=en_GB.UTF-8" "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin" "WAYLAND_DISPLAY=wayland-0" "DISPLAY=:0" "XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.5NPAX2" "XDG_SESSION_TYPE=wayland" "XDG_CURRENT_DESKTOP=ubuntu:GNOME" "XDG_SESSION_DESKTOP=ubuntu" "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"

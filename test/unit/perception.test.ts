@@ -12,7 +12,11 @@ import { inspectEnvironment } from "../../app/main/environment";
 const labels = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/secret-labels.json"), "utf8")) as { secret: string[]; plain: string[] };
 /** Options chosen in secret drop-downs, and whether they are what the user put in them (the sidecar's self-test reads the same table). */
 const chosen = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/chosen-options.json"), "utf8")) as { secret: [string, string][]; plain: [string, string][] };
-const python = ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0);
+/**
+ * A Python for the AT-SPI sidecar's own lists, on Linux only: the sidecar is Linux's, and elsewhere a bare python3 may
+ * be a stand-in (Windows's Store alias, macOS's prompt to install the developer tools).
+ */
+const python = process.platform === "linux" ? ["python3", "/usr/libexec/platform-python"].find(p => spawnSync(p, ["-c", "1"]).status === 0) : undefined;
 
 const node = (id: number, role: string, name: string, bounds: AxNode["bounds"], extra: Partial<AxNode> = {}): AxNode => ({
   id, parent: 0, depth: 1, role, name, states: ["enabled", "sensitive", "showing", "visible"], bounds, ...extra,
@@ -325,6 +329,24 @@ print(json.dumps([e.SECRET_WORDS, e.SECRET_ANYWHERE]))
       node(60, "entry", "", at(100, 260), { text: "revealed" }), node(61, "check box", "Show password", at(100, 288, 120, 20)),
     ];
     expect([...secretIds(nodes)].sort((a, b) => a - b)).toEqual([50, 60]);
+  });
+  it("knows a revealed password by its Show password toggle in every listed language (review #3)", () => {
+    // An unlabelled field whose password was revealed before Ember looked, beside the toggle that hides it again.
+    const toggles = ["비밀번호 표시", "비밀번호 보기", "Vis adgangskode", "Skjul adgangskode", "Vis passord", "Jelszó megjelenítése",
+      "Jelszó elrejtése", "Afișează parola", "Afişează parola", "Arată parola", "Ascunde parola", "Εμφάνιση κωδικού", "Απόκρυψη κωδικού",
+      "Hiện mật khẩu", "Ẩn mật khẩu", "Tampilkan kata sandi", "Sembunyikan kata sandi", "إظهار كلمة المرور", "إخفاء كلمة المرور",
+      "הצג סיסמה", "הסתר סיסמה", "แสดงรหัสผ่าน", "ซ่อนรหัสผ่าน", "Show password", "Passwort anzeigen", "Afficher le mot de passe",
+      "パスワードを表示", "显示密码", "Показать пароль"];
+    for (const toggle of toggles) {
+      const nodes = [
+        node(1, "entry", "", { x: 100, y: 20, width: 200, height: 24 }, { text: "hunter2" }),
+        node(2, "push button", toggle, { x: 305, y: 20, width: 24, height: 24 }),
+      ];
+      expect(secretIds(nodes).has(1), toggle).toBe(true);
+    }
+    // Showing results beside a search field stays what it was.
+    const search = [node(1, "entry", "", { x: 100, y: 20, width: 200, height: 24 }, { text: "cats" }), node(2, "push button", "Vis alle", { x: 305, y: 20, width: 60, height: 24 })];
+    expect(secretIds(search).has(1)).toBe(false);
   });
   it("finds a secret field's label above it, and a revealed password by its Show toggle", () => {
     const at = (x: number, y: number, w = 150, h = 24) => ({ x, y, width: w, height: h });

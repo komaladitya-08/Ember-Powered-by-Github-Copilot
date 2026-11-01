@@ -14,7 +14,11 @@ export interface StopPart {
   stop: () => void | Promise<unknown>;
 }
 
-export type StopSource = "hotkey" | "voice" | "menu";
+/**
+ * Who pulled it: Ember's shortcut, "Ember, stop", the handle's menu, settings' Stop everything, Stop on a remote's
+ * notice by someone at that screen, or the administrator's policy changing while Ember ran.
+ */
+export type StopSource = "hotkey" | "voice" | "menu" | "settings" | "remote-console" | "policy";
 
 export class KillSwitch {
   constructor(private parts: () => StopPart[], private log: Logger, private audit?: () => AuditLog | null) {}
@@ -41,4 +45,27 @@ export class KillSwitch {
     try { this.audit?.()?.write({ event: "stop", source, ms }); } catch { /* the stop matters more than its record */ }
     return { ms, late };
   }
+}
+
+/** The parts the bubble names when they are late, in plain words (the overlay's own motion is never named). */
+const PART_WORDS: Readonly<Record<string, string | null>> = {
+  borrow: "the borrowed mouse", speech: "speaking", listening: "listening", agent: "tasks", targets: "commands", desk: "Ember's desk", motion: null,
+};
+
+/** "a", "a and b", "a, b and c". */
+const listed = (xs: readonly string[]) => (xs.length <= 1 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+
+/**
+ * What the "Stopped" bubble says when parts were still winding down after the kill switch's wait (`late`, from pull()),
+ * or null when everything stopped in time: the parts in plain words, and with commands the computers they may still be
+ * stopping on (`computers`: the ones connected over SSH).
+ */
+export function stillStoppingWords(late: readonly string[], computers: readonly string[] = []): string | null {
+  const words: string[] = [];
+  for (const part of late) {
+    const w = part in PART_WORDS ? PART_WORDS[part] : "another part of Ember";
+    if (w && !words.includes(w)) words.push(w);
+    if (part === "targets") for (const c of computers) if (!words.includes(c)) words.push(c);
+  }
+  return words.length ? `I've told everything to stop. Still stopping: ${listed(words)}…` : null;
 }

@@ -1,0 +1,10 @@
+Id=2
+User=1000
+Seat=seat0
+Display=:0
+Remote=no
+Type=x11
+Class=user
+Active=yes
+State=active
+LockedHint=yes

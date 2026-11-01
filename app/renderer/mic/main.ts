@@ -10,6 +10,7 @@
 
 import type { MicApi } from "../../shared/voice";
 import { Capture } from "./capture";
+import { speechWatch, type WatchedUtterance } from "./speech-watch";
 
 declare global { interface Window { emberMic: MicApi } }
 
@@ -59,16 +60,31 @@ function setSaying(u: SpeechSynthesisUtterance | null): void {
   api.speaking(!!u);
 }
 
+/**
+ * Whether replies are heard at all: with no voice on the computer an utterance never starts, and main shows that in
+ * settings (review #101). The wait is longer than a cold speech-dispatcher takes to start.
+ */
+const watch = speechWatch({
+  timeoutMs: 8000,
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: t => clearTimeout(t as ReturnType<typeof setTimeout>),
+  report: ok => api.speech(ok),
+});
+let watching: WatchedUtterance | null = null;
+
 api.onSpeak(text => {
+  watching?.cancelled();
   speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = navigator.language || "en-US";
   u.rate = 1.05;
-  u.onstart = () => setSaying(u);
+  const w = watching = watch.utterance();
+  u.onstart = () => { w.started(); setSaying(u); };
   // A reply replaced by the next one ends after the next has started: only the current one counts.
-  u.onend = u.onerror = () => { if (saying === u) setSaying(null); };
+  u.onend = () => { if (saying === u) setSaying(null); };
+  u.onerror = e => { w.failed(e.error); if (saying === u) setSaying(null); };
   speechSynthesis.speak(u);
 });
-api.onHush(() => { speechSynthesis.cancel(); setSaying(null); });
+api.onHush(() => { watching?.cancelled(); speechSynthesis.cancel(); setSaying(null); });
 
 window.addEventListener("beforeunload", () => capture?.stop());

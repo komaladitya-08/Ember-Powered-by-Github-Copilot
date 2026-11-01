@@ -11,6 +11,7 @@ const api: OverlayApi = {
   setInteractive: rects => ipcRenderer.send(OVERLAY.interactive, rects),
   bubbleAction: id => ipcRenderer.send(OVERLAY.bubbleAction, id),
   setCards: rect => ipcRenderer.send(OVERLAY.cards, rect),
+  setReducedMotion: on => ipcRenderer.send(OVERLAY.motion, on),
 };
 
 contextBridge.exposeInMainWorld("emberOverlay", api);

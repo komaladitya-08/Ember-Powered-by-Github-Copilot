@@ -5,7 +5,7 @@ import path from "node:path";
 import { chooseModels, mayUseRuntimeDefault } from "../../app/main/agent/models";
 import { isUsableToken, resolveToken, TokenStore, startDeviceFlow, pollDeviceFlow, type SecretBox } from "../../app/main/agent/auth";
 import { hardenedSessionConfig, BUILTIN_AGENTS } from "../../app/main/agent/session-config";
-import { explainStartError } from "../../app/main/agent/host";
+import { explainSignInError, explainStartError } from "../../app/main/agent/host";
 import { locateRuntime } from "../../app/main/agent/runtime";
 
 describe("the runtime's default model (Copilot Free lists none)", () => {
@@ -51,7 +51,7 @@ describe("auth", () => {
     const store = new TokenStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-tok-")), "token"), box);
     const gh = async () => "gho_fromcli";
     expect(await resolveToken(store, {}, gh)).toEqual({ token: "gho_fromcli", source: "github-cli" });
-    expect(await resolveToken(store, { GH_TOKEN: "gho_fromenv" }, gh)).toEqual({ token: "gho_fromenv", source: "environment" });
+    expect(await resolveToken(store, { GH_TOKEN: "gho_fromenv" }, gh)).toEqual({ token: "gho_fromenv", source: "environment", name: "GH_TOKEN" });
     store.save("gho_stored");
     expect(fs.readFileSync((store as unknown as { file: string }).file, "utf8")).not.toContain("gho_stored");
     expect(await resolveToken(store, { GH_TOKEN: "gho_fromenv" }, gh)).toEqual({ token: "gho_stored", source: "stored" });
@@ -79,6 +79,15 @@ describe("auth", () => {
     expect(token).toBe("gho_done");
     expect(waits).toEqual([5000, 5000, 10000]);
     expect(calls[0]).toContain("/login/device/code");
+  });
+
+  it("takes an error in GitHub's answer for a refusal, never a code of \"undefined\"", async () => {
+    for (const reply of [{ error: "device_flow_disabled", error_description: "Device Flow must be explicitly enabled for this App" }, {}]) {
+      const fetch = async () => ({ ok: true, status: 200, json: async () => reply });
+      const err = await startDeviceFlow(fetch, "client-id").catch((e: unknown) => e);
+      expect(String(err)).toMatch(/refused the sign-in request \(400\)/);
+      expect(explainSignInError(err)).toMatch(/^GitHub didn't accept Ember's sign-in request/);
+    }
   });
 
   it("explains denial and expiry", async () => {
@@ -110,8 +119,12 @@ describe("startup errors", () => {
 });
 
 describe("runtime", () => {
-  it("finds the bundled Copilot runtime in node_modules", () => {
-    expect(locateRuntime({ appPath: process.cwd(), env: {} }).exists).toBe(true);
+  // npm installs only this machine's package (@github/copilot-sdk-win32-x64…); each OS's paths name it (runtimeId and
+  // runtimeExe, as main passes them). Linux is linux-x64 only, the default. TODO(port): macOS (darwin-<arch>,
+  // copilot-runtime) once its CI job has shown the path.
+  const ownRuntime = process.platform === "win32" ? { runtimeId: `win32-${process.arch}`, exe: "copilot-runtime.exe" } : null;
+  it.skipIf(process.platform === "linux" ? process.arch !== "x64" : !ownRuntime)("finds the bundled Copilot runtime in node_modules", () => {
+    expect(locateRuntime({ appPath: process.cwd(), env: {}, ...ownRuntime }).exists).toBe(true);
   });
   it("honours EMBER_COPILOT_RUNTIME", () => {
     const fake = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "ember-rt-")), "copilot-runtime");
@@ -272,6 +285,28 @@ describe("the user's own words (review round 5)", () => {
     release();
     await new Promise(r => setTimeout(r, 50));
     expect(specs[1]).toMatchObject({ goal: "tidy the drafts\n(The user then added: delete them)", userWords: "tidy my drafts\nand delete the drafts" });
+  });
+
+  it("words heard where Ember can't tell the user from its speakers stay out of a waiting task's command words (review #252)", async () => {
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const specs: { goal: string; userWords?: string; commandWords?: string }[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as never;
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, maxRunning: 1,
+      makeWorker: spec => { specs.push(spec); return { run: async () => { await gate; return { success: true, summary: "ok" }; }, dispose: async () => undefined, sessionId: spec.id } as never; },
+    });
+    tm.start("first", { userWords: "do the first thing" });
+    const heard = tm.start("tidy the drafts", { userWords: "tidy my drafts", commandWords: "" });
+    expect(await tm.steer(heard.id, "delete them", "and delete the drafts")).toBe(true);
+    const typed = tm.start("clean up", { userWords: "clean up build/" });
+    expect(await tm.steer(typed.id, "and dist", "and dist/ too", undefined, undefined, "")).toBe(true);
+    release();
+    await vi.waitFor(() => expect(specs).toHaveLength(3));
+    expect(specs[1]).toMatchObject({ userWords: "tidy my drafts\nand delete the drafts", commandWords: "and delete the drafts" });
+    expect(specs[2]).toMatchObject({ userWords: "clean up build/\nand dist/ too", commandWords: "clean up build/" });
+    expect(specs[0].commandWords).toBeUndefined();
   });
 });
 

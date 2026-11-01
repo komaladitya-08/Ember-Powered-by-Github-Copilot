@@ -1,0 +1,41 @@
+/**
+ * Command output that reads like instructions to Ember (design §3.11 step 7, critique security-7). A match marks the
+ * task tainted, after which every command asks (§3.8.2 rule 7). Best effort (L26): static patterns can't read intent,
+ * so the classifier and the verbatim card stay the guard for anything dangerous. Pure; run on the shaped text after
+ * secret removal and before the output is cut to size, so nothing hides in the middle.
+ */
+
+/** One pattern and the reason recorded when it matches (the audit's `rule`). */
+interface TaintRule { re: RegExp; why: string }
+
+const RULES: readonly TaintRule[] = [
+  // Text addressed to an assistant or agent.
+  { re: /(ignore|disregard) (all |any )?(previous|prior|above) (instructions|directions)/i, why: "output.ignore-instructions" },
+  { re: /\b(you are|you're) (now )?(an? )?(ai|assistant|agent)\b/i, why: "output.you-are-an-assistant" },
+  // A chat transcript's role label: first on its line, so "Operating System: Ubuntu" (hostnamectl, docker info) and
+  // "refactor: assistant: …" don't count. Only a report's heading is left out: inxi's "System:", then two spaces or
+  // an indented next line, then two or more "Key: value" fields ("System:    Host: x Kernel: y"). "System: Note: …"
+  // and a label alone on its line before ordinary text are a transcript's.
+  { re: /^[ \t]*(assistant|Assistant|ASSISTANT|system|System|SYSTEM)[ \t]*:(?!(?:[ \t]{2,}|[ \t]*\r?\n[ \t]+)[A-Za-z][\w/.()-]{0,24}:[ \t]+[^\n]*?\S[ \t]+[A-Za-z][\w/.()-]{0,24}:[ \t]*\S)/m, why: "output.role-label" },
+  { re: /<\/?(system|instructions?|prompt)>/i, why: "output.role-tag" },
+  { re: /\bas an ai\b/i, why: "output.as-an-ai" },
+  // Download-and-run text. Each is anchored at the pipe and looks back along its line for the download: read from
+  // the download forward, a line repeating "curl " with no pipe was rescanned from every "curl" in it.
+  { re: /\|(?<=curl[^\n|]*\|)\s*(sudo\s+)?(ba|z|da)?sh\b/i, why: "output.curl-pipe-shell" },
+  { re: /\|(?<=wget[^\n|]*\|)\s*(sudo\s+)?(ba|z)?sh\b/i, why: "output.wget-pipe-shell" },
+  { re: /\|(?<=\b(iwr|irm|invoke-webrequest|invoke-restmethod)\b[^\n|]*\|)\s*(iex|invoke-expression)\b/i, why: "output.iwr-pipe-iex" },
+  { re: /\|(?<=base64\s+-d[^\n|]*\|)\s*(ba|z)?sh\b/i, why: "output.base64-pipe-shell" },
+  // A request to run, paste or type something, addressed to Ember or the assistant. "The agent" alone is a build
+  // agent, ssh-agent or a user agent in ordinary logs ("The agent will run the job"): only an AI agent counts there.
+  { re: /\b(ember|assistant|ai agent)\s*[,:]\s*(please\s+)?(now\s+)?(run|execute|paste|type|enter)\b/i, why: "output.addressed-request" },
+  { re: /\bif you('re| are) (an? )?(ai|llm|language model|assistant|agent|ember)\b[^\n]{0,80}\b(run|execute|paste|type)\b/i, why: "output.addressed-request" },
+  { re: /\b(the |an? )?(ai (assistant|agent)|assistant)\s+(should|must|needs to|has to|is to|will)\s+(now\s+)?(run|execute|paste|type)\b/i, why: "output.addressed-request" },
+  { re: /\bember\b[^\n]{0,40}\b(should|must|please|needs to)\b[^\n]{0,20}\b(run|execute|paste|type)\b/i, why: "output.addressed-request" },
+  { re: /\b(note|message|instructions?) (to|for) (the )?(ai|assistant|agent|ember)\b/i, why: "output.addressed-request" },
+];
+
+/** The reason the shaped output reads like instructions to Ember (§3.11 step 7), or null. */
+export function outputTaint(text: string): string | null {
+  for (const r of RULES) if (r.re.test(text)) return r.why;
+  return null;
+}

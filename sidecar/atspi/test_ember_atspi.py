@@ -8,8 +8,11 @@ pyatspi, no pytest. Python 3.6 compatible (RHEL 8's platform-python).
 
 import json
 import os
+import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import types
 import unittest
@@ -480,6 +483,24 @@ class Reading(unittest.TestCase):
         budget = e.Budget()
         e.walk(root, 0, [], e.MAX_DEPTH, e.MAX_NODES, None, None, budget)
         self.assertFalse(budget.cut)
+
+    def test_a_page_not_handed_over_yet_makes_a_read_say_it_is_loading(self):
+        # A very big page, or the first read after a Chromium app turns accessibility on: its document shows with
+        # neither contents nor size until the browser has built its tree. The read says the page is still loading.
+        menu = Acc("menu bar", "", bounds=(0, 0, 800, 24), kids=[Acc("menu", "File", bounds=(0, 0, 40, 24))])
+        loading = Acc("document web", "Big page", bounds=(0, 30, 0, 0))
+        budget, nodes = e.Budget(), []
+        e.walk(Acc("frame", "Big page - Browser", bounds=(0, 0, 800, 600), kids=[menu, loading]), 0, nodes, e.MAX_DEPTH,
+               e.MAX_NODES, None, None, budget)
+        self.assertEqual((budget.cut, budget.why), (True, ["loading"]))
+        self.assertFalse(budget.busy)
+        # A page that has its size, or anything in it, is read as before: empty is empty.
+        for doc in (Acc("document web", "Blank", bounds=(0, 30, 800, 570)),
+                    Acc("document web", "Tiny", bounds=(0, 30, 0, 0), kids=[Acc("link", "Home", bounds=(10, 40, 40, 16))])):
+            budget = e.Budget()
+            e.walk(Acc("frame", "Browser", bounds=(0, 0, 800, 600), kids=[doc]), 0, [], e.MAX_DEPTH, e.MAX_NODES, None,
+                   None, budget)
+            self.assertFalse(budget.cut, doc.name)
 
     def test_what_shows_too_deep_down_makes_a_read_incomplete(self):
         def nested(levels, leaf):
@@ -1940,6 +1961,27 @@ class Windows(unittest.TestCase):
         self.assertTrue(e.read_window({"pid": 20, "neverLook": ["keepassxc"], "skipPids": [20]})["blocked"])
         self.assertNotIn("blocked", e.read_window({"pid": 20, "neverLook": ["keepassxc"]}))
 
+    def test_never_look_entries_that_are_everyday_words_match_a_title_only_where_a_word_starts_with_them(self):
+        # "seahorse" names GNOME's Passwords and Keys, "keeper" a password manager: a page titled with a longer word is read.
+        defaults = {"neverLook": ["keepassxc", "seahorse", "keeper", "bitwarden"]}
+        page = {"app": "Firefox", "name": "Housekeeper wanted - Mozilla Firefox", "pid": 30}
+        self.assertFalse(e.never_looked(page, defaults))
+        self.assertFalse(e.never_looked(dict(page, name="Goalkeeper gloves - Mozilla Firefox"), defaults))
+        # The password managers' own windows stay private, by their program, and Keeper's web vault by its title,
+        # whoever put the word on the list (cross-review S3).
+        self.assertTrue(e.never_looked({"app": "seahorse", "name": "Passwords and Keys", "pid": 31}, defaults))
+        self.assertTrue(e.never_looked({"app": "keeperpasswordmanager", "name": "Keeper", "pid": 32}, defaults))
+        vault = dict(page, name="My Vault | Keeper - Mozilla Firefox")
+        self.assertTrue(e.never_looked(vault, defaults))
+        self.assertTrue(e.never_looked(vault, {"neverLook": ["Keeper"]}))
+        self.assertTrue(e.never_looked(dict(page, name="keepersecurity.com/vault"), {"neverLook": ["Keeper"]}))
+        self.assertTrue(e.never_looked(dict(page, name="Seahorse facts - Mozilla Firefox"), defaults))
+        # The other entries, and the user's own, still match the title anywhere.
+        self.assertTrue(e.never_looked(dict(page, name="Bitwarden - Mozilla Firefox"), defaults))
+        self.assertTrue(e.never_looked(dict(page, name="Seahorse facts"), {"neverLook": ["seahorse facts"]}))
+        self.assertTrue(e.never_looked(dict(page, name="Online banking"), {"neverLook": ["bank"]}))
+        self.assertEqual(sorted(e.NEVER_LOOK_APP_ONLY), ["keeper", "seahorse", "strongbox"])
+
     def test_the_apps_other_windows_are_named(self):
         dialog = Acc("file chooser", "Open File", states=("showing", "active", "modal"))
         self.mail.wins.append(dialog)
@@ -2985,6 +3027,285 @@ class Links(unittest.TestCase):
         ctrl.close()
         second.close()
         holder.wait(timeout=5)
+
+
+class InsideWsl(unittest.TestCase):
+    """EMBER_ATSPI_FIND_BUS=1: finding the session bus inside a WSL distro, the process's names, status, the
+    watchdog. Every addition is behind the variable: without it the sidecar answers as it always did."""
+
+    def setUp(self):
+        self.saved = (e.FIND_BUS, dict(e.BUS))
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp)
+
+    def tearDown(self):
+        e.FIND_BUS = self.saved[0]
+        e.BUS.clear()
+        e.BUS.update(self.saved[1])
+
+    def proc(self, pid, environ=None, stat_parent=1, exe=None, cmdline=None, comm=None):
+        """A /proc/<pid> entry in the temporary folder."""
+        d = os.path.join(self.tmp, str(pid))
+        os.makedirs(d)
+        with open(os.path.join(d, "stat"), "w") as f:
+            f.write("%d (some (odd) name) S %d 1 1\n" % (pid, stat_parent))
+        if environ is not None:
+            with open(os.path.join(d, "environ"), "wb") as f:
+                f.write(b"\0".join(environ) + b"\0")
+        if exe is not None:
+            os.symlink(exe, os.path.join(d, "exe"))
+        if cmdline is not None:
+            with open(os.path.join(d, "cmdline"), "wb") as f:
+                f.write(b"\0".join(cmdline) + b"\0")
+        if comm is not None:
+            with open(os.path.join(d, "comm"), "w") as f:
+                f.write(comm + "\n")
+        return d
+
+    def test_nothing_changes_without_the_variable(self):
+        e.FIND_BUS = False
+        app = Windows.AppNode(10, [Acc("frame", "notes.txt - gedit", states=("showing", "active"), kids=[Acc("panel", bounds=(26, 23, 800, 600))])])
+        saved = FAKE.__dict__.get("Registry")
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: Acc("desktop frame", "main", kids=[app]))
+        try:
+            e.new_request()
+            wins = e.list_windows({})["windows"]
+        finally:
+            FAKE.Registry = saved
+        self.assertEqual(sorted(wins[0]), ["active", "app", "bounds", "name", "path", "pid", "role"])
+        self.assertEqual(sorted(e.status({})), ["apps", "python", "toolkitAccessibility", "version"])
+        self.assertIn("unknown method", e.handle('{"id": 1, "method": "find_bus", "params": {}}')["error"]["message"])
+
+    def test_windows_carry_their_process_names_and_children_inside_wsl(self):
+        e.FIND_BUS = True
+        frame = Acc("frame", "notes.txt - gedit", states=("showing", "active"), bounds=(0, 0, 852, 646),
+                    kids=[Acc("panel", bounds=(26, 23, 800, 40)), Acc("filler", bounds=(26, 63, 800, 560)), Acc("label", bounds=(-2147483648, -2147483648, 0, 0))])
+        app = Windows.AppNode(os.getpid(), [frame])
+        saved = FAKE.__dict__.get("Registry")
+        FAKE.Registry = types.SimpleNamespace(getDesktop=lambda i: Acc("desktop frame", "main", kids=[app]))
+        try:
+            e.new_request()
+            w = e.list_windows({})["windows"][0]
+        finally:
+            FAKE.Registry = saved
+        self.assertEqual(w["children"], [{"x": 26, "y": 23, "width": 800, "height": 40}, {"x": 26, "y": 63, "width": 800, "height": 560}])
+        self.assertEqual(w["program"], os.path.basename(os.readlink("/proc/self/exe"))[:64])
+        self.assertIn("comm", w)
+
+    def test_process_names_from_proc(self):
+        self.proc(700, exe="/usr/bin/python3.10", cmdline=[b"/usr/bin/python3", b"/usr/bin/terminator", b"--maximise"], comm="terminator")
+        self.assertEqual(e.process_names(700, proc=self.tmp), {"program": "python3.10", "argv0": "python3", "argv1": "terminator", "comm": "terminator"})
+        self.proc(701, exe="/usr/libexec/gnome-terminal-server (deleted)", cmdline=[b"/usr/libexec/gnome-terminal-server"], comm="gnome-terminal-server")
+        self.assertEqual(e.process_names(701, proc=self.tmp), {"program": "gnome-terminal-server", "argv0": "gnome-terminal-server", "comm": "gnome-terminal-"})
+        self.assertEqual(e.process_names(702, proc=self.tmp), {})
+        long_name = "x" * 100
+        self.proc(703, exe="/opt/" + long_name, cmdline=[("/opt/" + long_name).encode()])
+        self.assertEqual(len(e.process_names(703, proc=self.tmp)["program"]), 64)
+
+    def test_bus_candidates_from_environs_runtime_sockets_and_x11(self):
+        me = 500
+        self.proc(500, [b"DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/mine"])  # this sidecar: skipped
+        self.proc(501, [b"DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/probe"], stat_parent=500)  # its probe: skipped
+        self.proc(600, [b"HOME=/home/ana", b"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"])
+        self.proc(601, [b"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"])  # the same bus: once
+        self.proc(602, [b"EMBER_RUN_ID=0123456789abcdef", b"DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/cmd"])  # Ember's command: skipped
+        self.proc(603, [b"DBUS_SESSION_BUS_ADDRESS=tcp:host=10.0.0.1,port=1234"])  # not a local bus: skipped
+        self.proc(604, [b"DBUS_SESSION_BUS_ADDRESS=unix:abstract=/tmp/dbus-X,guid=ab"])
+        self.proc(605, [b"DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/other-user"])  # another user's: skipped
+        uids = {"605": 0}
+        got = e.bus_candidates(environ={"DBUS_SESSION_BUS_ADDRESS": "unix:path=/run/user/1000/bus"}, proc=self.tmp, uid=1000,
+                               skip=e.own_tree(self.tmp, me), uid_of=lambda p: uids.get(os.path.basename(p), 1000),
+                               is_socket=lambda p: p == "/mnt/wslg/runtime-dir/bus",
+                               x11=lambda: {"_DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/x", "AT_SPI_BUS": "unix:path=/tmp/a11y,guid=1"})
+        self.assertEqual(got, [
+            {"source": "env", "session": "unix:path=/run/user/1000/bus", "a11y": None},
+            {"source": "proc", "session": "unix:abstract=/tmp/dbus-X,guid=ab", "a11y": None},
+            {"source": "runtime", "session": "unix:path=/mnt/wslg/runtime-dir/bus", "a11y": None},
+            {"source": "x11", "session": "unix:path=/tmp/x", "a11y": "unix:path=/tmp/a11y,guid=1"},
+        ])
+
+    def test_own_tree_follows_children(self):
+        self.proc(10)
+        self.proc(11, stat_parent=10)
+        self.proc(12, stat_parent=11)
+        self.proc(13, stat_parent=1)
+        self.assertEqual(e.own_tree(self.tmp, 10), {10, 11, 12})
+
+    def test_titles_match_as_ember_compares_them(self):
+        self.assertTrue(e.title_matches("Café   menu", ["Café menu"]))
+        long_title = "A" * 120
+        self.assertTrue(e.title_matches(long_title + " - gedit", [long_title]))
+        self.assertFalse(e.title_matches("notes - gedit", ["notes"]))  # a short title is never a prefix
+        self.assertFalse(e.title_matches("", [""]))
+
+    def test_find_bus_scores_candidates_by_the_windows_wslg_shows(self):
+        e.FIND_BUS = True
+        cands = [{"source": "env", "session": "unix:path=/a", "a11y": None}, {"source": "proc", "session": "unix:path=/b", "a11y": None},
+                 {"source": "x11", "session": None, "a11y": "unix:path=/c"}]
+        answers = {"unix:path=/a": {"apps": [["Desktop"]], "a11y": "unix:path=/a11y-a"},
+                   "unix:path=/b": {"apps": [["notes.txt - gedit"], ["Calculator", "x"], ["xeyes"]], "a11y": "unix:path=/a11y-b"},
+                   None: {"apps": [["notes.txt - gedit"]]}}
+        looked, chosen = [], []
+
+        def look(spec, timeout):
+            looked.append(spec)
+            self.assertLessEqual(timeout, e.PROBE_TIMEOUT_S)
+            return answers.get(spec["session"])
+
+        def choose(c):
+            chosen.append(c)
+            e.BUS.update(source=c["source"], session=c["session"], a11y=c["a11y"], chosen=True)
+            return True
+        out = e.find_bus({"titles": ["notes.txt - gedit", " Calculator ", 5]}, candidates=cands, look=look, choose=choose)
+        self.assertEqual(out, {"bus": "proc", "score": 2, "scores": [["env", 0], ["proc", 2], ["x11", 1]]})
+        self.assertEqual(chosen, [{"source": "proc", "session": "unix:path=/b", "a11y": "unix:path=/a11y-b"}])
+        self.assertEqual([s["kind"] for s in looked], ["bus", "bus", "bus"])
+        # Asked again with the bus in use: kept while nothing fits better, else start over.
+        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=look, choose=choose)["score"], 1)
+        # (A tie keeps the bus in use.)
+        answers[None] = {"apps": [["notes.txt - gedit"], ["xeyes"]]}
+        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit", "xeyes"]}, candidates=cands, look=look, choose=choose),
+                         {"bus": "proc", "score": 2, "scores": [["env", 0], ["proc", 2], ["x11", 2]]})
+        answers[None] = {"apps": [["notes.txt - gedit"], ["xeyes"], ["Files"]]}
+        self.assertEqual(e.find_bus({"titles": ["notes.txt - gedit", "xeyes", "Files"]}, candidates=cands, look=look, choose=choose),
+                         {"bus": "x11", "score": 3, "restart": True, "scores": [["env", 0], ["proc", 2], ["x11", 3]]})
+        self.assertEqual(len(chosen), 1)
+
+    def test_find_bus_looks_stay_within_its_budget(self):
+        # Every look gets what is left of the budget (3 s at most): eight slow candidates never make Ember wait past it.
+        clock = [100.0]
+        given = []
+
+        def look(spec, timeout):
+            given.append(timeout)
+            clock[0] += timeout  # each look takes all the time it is given
+            return None
+        cands = [{"source": "proc", "session": "unix:path=/b%d" % i, "a11y": None} for i in range(8)]
+        saved = e.time.monotonic
+        e.time.monotonic = lambda: clock[0]
+        try:
+            out = e.rank(cands, ["x"], look, budget=7.0)
+        finally:
+            e.time.monotonic = saved
+        self.assertEqual(given, [3.0, 3.0, 1.0])
+        self.assertEqual(len(out), 3)
+        self.assertLessEqual(clock[0] - 100.0, 7.0)
+
+    def test_find_bus_says_none_when_no_candidate_shows_the_windows(self):
+        e.FIND_BUS = True
+        e.BUS.update(source=None, session=None, a11y=None, chosen=False)
+        cands = [{"source": "env", "session": "unix:path=/a", "a11y": None}]
+        out = e.find_bus({"titles": ["notes.txt - gedit"]}, candidates=cands, look=lambda s, t: {"apps": [["Other"]]}, choose=lambda c: self.fail("chosen"))
+        self.assertEqual(out, {"bus": "none", "candidates": 1, "scores": [["env", 0]]})
+        self.assertEqual(e.BUS["source"], "none")
+        # A look that failed or timed out scores nothing.
+        self.assertEqual(e.find_bus({"titles": ["x"]}, candidates=cands, look=lambda s, t: None, choose=lambda c: self.fail("chosen"))["bus"], "none")
+        # Every request but ping, status and find_bus says so.
+        self.assertEqual(e.handle('{"id": 1, "method": "list_windows"}')["error"]["message"], "no session bus")
+        self.assertIn("result", e.handle('{"id": 2, "method": "ping"}'))
+
+    def test_status_inside_wsl(self):
+        e.FIND_BUS = True
+        e.BUS.update(source=None, session=None, a11y=None, chosen=False)
+        st = e.status({})
+        self.assertEqual(st["uid"], os.getuid())
+        self.assertEqual(st["bus"], "none")
+        self.assertEqual(st["wslg"], os.path.isdir("/mnt/wslg"))
+        self.assertIs(st["pyatspi"], True)  # (the stand-in is imported)
+        self.assertIsNone(st["toolkitAccessibility"])  # gi isn't imported before a bus is chosen
+
+    def test_the_watchdog_sees_stdin_hang_up_and_the_parent_change(self):
+        r, w = os.pipe()
+        self.addCleanup(os.close, r)
+        self.assertFalse(e.stdin_hung_up(r))
+        self.assertIsNone(e.watch_once(r, 77, getppid=lambda: 77))
+        self.assertEqual(e.watch_once(r, 77, getppid=lambda: 1), "parent")
+        os.write(w, b'{"id": 1}\n')
+        os.close(w)
+        self.assertTrue(e.stdin_hung_up(r))
+        self.assertEqual(e.stdin_state(r), (True, True))
+        # What was sent is answered first (the main loop then sees the end of its input itself); one stuck ends later.
+        self.assertEqual(e.watch_once(r, 77, getppid=lambda: 77), "draining")
+        self.assertEqual(e.watch_once(r, 77, getppid=lambda: 77, waited=e.HUP_GRACE_S), "stdin")
+        os.read(r, 100)
+        self.assertEqual(e.stdin_state(r), (True, False))
+        a, b = socket.socketpair()
+        self.addCleanup(a.close)
+        self.assertFalse(e.stdin_hung_up(a.fileno()))
+        b.shutdown(socket.SHUT_WR)
+        b.close()
+        self.assertTrue(e.stdin_hung_up(a.fileno()))
+
+    def run_inside(self, *requests, env=None):
+        """The real script with EMBER_ATSPI_FIND_BUS=1 (and the stand-in pyatspi), as a protocol client sees it."""
+        stub = STUB.replace("import ember_atspi as e", "import os\nos.environ['EMBER_ATSPI_FIND_BUS'] = '1'\nimport ember_atspi as e")
+        p = subprocess.Popen([sys.executable, "-c", stub], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env=dict(os.environ, **(env or {})))
+        data = "".join(json.dumps(r) + "\n" for r in requests).encode("utf-8")
+        out, _ = p.communicate(data, timeout=20)
+        return [json.loads(line) for line in out.decode("utf-8").splitlines()]
+
+    def test_the_script_inside_wsl_answers_status_and_nothing_else_without_a_bus(self):
+        out = self.run_inside({"id": 1, "method": "status"}, {"id": 2, "method": "list_windows"}, {"id": 3, "method": "ping"})
+        self.assertEqual(out[0]["result"]["uid"], os.getuid())
+        self.assertEqual(out[0]["result"]["bus"], "none")
+        self.assertEqual(out[1]["error"]["message"], "no session bus")
+        self.assertEqual(out[2]["result"], {"version": e.VERSION})
+
+    def test_the_script_inside_wsl_ends_when_its_parent_goes(self):
+        stub = STUB.replace("import ember_atspi as e", "import os\nos.environ['EMBER_ATSPI_FIND_BUS'] = '1'\nimport ember_atspi as e")
+        # A child of a short-lived shell: once the shell has gone, the parent changes and the watchdog ends it.
+        p = subprocess.Popen(["sh", "-c", 'exec 3<&0; "$0" -c "$1" <&3 & echo $!; sleep 0.2', sys.executable, stub],
+                             stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+        pid = int(p.stdout.readline())
+        p.wait(timeout=5)
+        p.stdout.close()
+
+        def alive():
+            try:
+                with open("/proc/%d/stat" % pid) as f:
+                    return f.read().rsplit(")", 1)[1].split()[0] not in ("Z", "X")
+            except OSError:
+                return False
+        deadline = time.time() + 5
+        while time.time() < deadline and alive():
+            time.sleep(0.1)
+        ended = not alive()
+        p.stdin.close()
+        self.assertTrue(ended)
+
+    def test_the_holder_runs_isolated_inside_wsl_only(self):
+        started = []
+
+        class Proc(object):
+            def poll(self):
+                return None
+
+        def popen(args, **kw):
+            started.append(args)
+            return Proc()
+        saved = e.subprocess.Popen
+        e.subprocess.Popen = popen
+        try:
+            for inside in (False, True):
+                e.FIND_BUS = inside
+                e.drop_holder()
+                self.assertIsNotNone(e.holder())
+                e.drop_holder()
+        finally:
+            e.subprocess.Popen = saved
+        self.assertEqual(started[0][1:3], [e.HOLDER_SCRIPT, "--hold"])
+        self.assertEqual(started[1][1:4], ["-I", e.HOLDER_SCRIPT, "--hold"])
+
+    def test_a_probe_child_answers_one_line_and_ends(self):
+        # No bus there: an empty answer (or an error), quickly, never a hang.
+        t0 = time.time()
+        found = e.probe({"kind": "bus", "session": "unix:path=%s/none" % self.tmp, "a11y": None}, timeout=10)
+        self.assertTrue(found is None or "apps" in found or "error" in found)
+        self.assertIsNone(e.probe({"kind": "bus", "session": None, "a11y": None}, timeout=0.001))
+        self.assertLess(time.time() - t0, 10)
+        self.assertEqual(e.score({"apps": [["a"], ["b", "notes"]]}, ["notes"]), 1)
+        self.assertEqual(e.score({"error": "x"}, ["notes"]), 0)
 
 
 if __name__ == "__main__":

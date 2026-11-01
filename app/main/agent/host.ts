@@ -12,39 +12,47 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
-import { BubbleOwner, Presenter, type PresenterEvent } from "./presenter";
-import { chooseModels, mayUseRuntimeDefault, type ModelLike } from "./models";
+import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
+import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
 import type { SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
-import { TaskManager, statusWord, taskOutcome, titleOf, type Task } from "./tasks";
-import { Worker, type WorkerDeps } from "./worker";
+import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
+import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
 import type { Confirmer } from "./confirm";
-import type { Perception, WindowTarget } from "../perception";
-import type { AtspiSidecar, Bounds } from "../perception/sidecar";
+import type { WindowTarget } from "../perception";
+import type { Bounds } from "../perception/sidecar";
+import type { PerceptionPort, SidecarPort } from "../perception/ports";
+import type { DesktopUse } from "../targets/hands";
+import type { TargetHands, TargetsForAgent } from "../targets/types";
 import { isRiskyLabel, type Agreement, type PolicyEngine } from "../policy/policy";
+import { terminalRequest } from "../policy/vocabulary";
 import type { AuditLog } from "../policy/audit";
+import { PLATFORM_WORDS } from "../../shared/words";
+import type { TargetBinding, PromptCaps } from "../targets/types";
+import type { TargetId } from "../../shared/targets";
+import { whereWords } from "../commands/flow";
+import { NO_CAPS } from "./persona";
+import type { SignInWith } from "./github-app";
+import { SessionToolsTimeoutError } from "./session-config";
+import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 
-/** A terminal named as a thing to work in: not GNOME Shell's extensions, nor an app that only has "console" in its name. */
-const TERMINAL = String.raw`(?:(?:gnome|kde|xfce)[- ])?(?:terminal|console(?![- ]companion))|command[- ]line|command prompt|shell(?![- ]extensions?\b)`
-  // Or one word saying which terminal or shell ("the Linux terminal", "a bash shell", "a new terminal"; not GNOME's Shell).
-  + String.raw`|(?!gnome\s)[\w.-]+\s+(?:terminal|shell(?![- ]extensions?\b))`;
-/**
- * Did the user name the terminal (or a shell) as the way to do this: as what they open or use ("open the terminal",
- * "use the command line"), or where it's done ("run it in a terminal")? Not a word about it ("the terminal font").
- */
-const ASKS_TERMINAL = new RegExp(String.raw`\b(?:open|use|launch|start|run|type(?:\s+(?:in|into))?|work\s+in)\s+(?:up\s+)?(?:(?:a|an|the|my|your)\s+)?(?:new\s+)?(?:${TERMINAL})\b|\b(?:in|into|from|via|using|with|through|on)\s+(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "i");
-/** Or said not to use it ("in Files, not in the terminal", "without opening a terminal"). */
-const REFUSES_TERMINAL = new RegExp(String.raw`\b(?:not|never|without|instead\s+of|rather\s+than|don['’]?t)\s+(?:(?:use|using|open|opening)\s+)?(?:(?:in|into|from|via|using|with|through|on)\s+)?(?:(?:a|an|the|my|your)\s+)?(?:${TERMINAL})\b`, "gi");
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
-const NAMES_TERMINAL = /\b(?:terminal|shell|command[- ]line|command prompt|console)\b/i;
+
+/** The worker for a task its target can't take (the targets runtime said why): it ends at once with that, and no session is made. */
+const refusedWorker = (_spec: TaskSpec, why: string): WorkerLike => ({
+  run: async () => ({ success: false, summary: why }),
+  steer: async () => false,
+  dispose: async () => undefined,
+  sessionId: null,
+});
 
 /** What workers need to see and act (absent when there is no desktop). */
 export interface Hands {
-  perception: Perception;
-  sidecar: AtspiSidecar;
+  perception: PerceptionPort;
+  sidecar: SidecarPort;
   policy: PolicyEngine;
   audit: AuditLog;
   confirmer: Confirmer;
@@ -59,6 +67,23 @@ export interface Hands {
   cursor?: WorkerDeps["cursor"];
   /** The user's clipboard, for pasting text the keyboard can't type. */
   clipboard?: WorkerDeps["clipboard"];
+  /**
+   * Whether this screen is locked now (screen-lock.ts lockedOutHands): a task's steps on it that aren't reads (opening
+   * an app, changing a desktop setting) refuse meanwhile too (cross-review X9).
+   */
+  screenLocked?: () => boolean;
+}
+
+/**
+ * Today's hands as a target's (§2.6), for a host built without a targets runtime (tests, the eval): this computer's
+ * screen, no commands, grants by the app's name in lower case and window leases by the window's own key. Hands that say
+ * the screen is locked refuse its app openings and setting changes meanwhile (cross-review X9).
+ */
+export function localTargetHands(hands: Hands, sys: WorkerSystem): TargetHands {
+  return {
+    ...hands, system: hands.screenLocked ? lockedOutSystem(sys, hands.screenLocked) : sys, commands: null, grantKey: app => app.toLowerCase(), leaseKey: key => key,
+    binding: { id: "local", kind: "local", label: "This computer", screenOs: sys.os, shellOs: sys.os, desktop: "screen" },
+  };
 }
 
 export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
@@ -66,9 +91,10 @@ export type AgentPhase = "signed-out" | "starting" | "ready" | "error";
 /**
  * Why Ember can't use Copilot (phase "error"): the network or GitHub out of reach, the sign-in refused, no Copilot for
  * this account (no seat, or an organisation's policy), no model it may use, the runtime itself, or Copilot not
- * answering. What the user reads (the bubble's title, the handle) says that, not always "can't reach".
+ * answering, or the administrator's policy locking Ember down (`policy`: nothing connects). What the user reads (the
+ * bubble's title, the handle) says that, not always "can't reach".
  */
-export type AgentReason = "network" | "sign-in" | "no-access" | "models" | "runtime" | "not-answering" | "other";
+export type AgentReason = "network" | "sign-in" | "no-access" | "models" | "runtime" | "not-answering" | "policy" | "other";
 
 export interface AgentStatus {
   phase: AgentPhase;
@@ -80,11 +106,14 @@ export interface AgentStatus {
   login?: string;
   /** Where the sign-in came from: Ember's own, the environment, or the GitHub CLI. */
   source?: string;
-  models: { id: string; name: string; vision: boolean }[];
+  /** How this build signs in (HostOptions.signInWith): the settings window labels its button by it. */
+  signInWith?: SignInWith;
+  /** `cost`: the premium-request multiplier, when Copilot gives one (the settings window marks the costly ones). */
+  models: { id: string; name: string; vision: boolean; cost?: number }[];
   conductorModel: string | null;
   workerModel: string | null;
   usage: { calls: number; inputTokens: number; outputTokens: number };
-  /** Copilot stopped answering and Ember reconnects once the tasks running are done (reconnecting now would stop them). */
+  /** Copilot stopped answering, and Ember reconnects once the tasks that are running finish (reconnecting now would stop them). */
   waitingForTasks?: boolean;
 }
 
@@ -97,9 +126,16 @@ export interface HostOptions {
   settings: SettingsStore;
   log: Logger;
   setState: (patch: Partial<EmberState>) => void;
+  /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
+  readTime?: () => number;
   onStatus: (s: AgentStatus) => void;
   /** Text description of the user's screen, for the conductor's describe_screen tool. */
   describeScreen?: () => Promise<string>;
+  /**
+   * Whether this computer's screen is locked now: describe_screen then doesn't read it (describeScreen isn't called) and
+   * answers LOCKED_DESCRIBE, a refusal the turn's tasks don't carry as screen text (cross-review X9).
+   */
+  screenLocked?: () => boolean;
   hands?: Hands;
   onAnswer?: (text: string) => void;
   onTurnEnd?: (aborted: boolean) => void;
@@ -116,8 +152,20 @@ export interface HostOptions {
   provider?: ProviderConfig;
   /** Admin lockdown (/etc/ember/policy.json). */
   admin?: () => AdminPolicy;
+  /**
+   * Why no model service may be connected now (the administrator's policy locks Ember down: admin.ts
+   * modelServiceRefusal), or null: while it says why, no runtime client starts, whatever sign-in or endpoint is given.
+   */
+  refuseConnect?: () => string | null;
+  /** The policy changed while Ember ran (admin.ts heldUntilRestart): the notice offers Restart Ember, not settings. */
+  policyHeld?: () => boolean;
   /** Is the computer online? A failed start while offline is retried instead of blamed on the sign-in. */
   isOnline?: () => boolean;
+  /**
+   * Why there is no sign-in when that has a reason the user should hear (macOS's login keychain refused Ember's saved
+   * one after an update, review #241): the signed-out status says it instead of the bare "not connected". null: no reason.
+   */
+  signedOutWhy?: () => string | null;
   /**
    * Can GitHub be reached right now (see gitHubReachable)? Copilot says "not authenticated" both for a
    * sign-in it refuses and for a GitHub it can't reach (a VPN not up yet, a proxy, a captive portal):
@@ -132,6 +180,11 @@ export interface HostOptions {
   resolveProxy?: (url: string) => Promise<string>;
   /** How often the runtime's health is checked (ms). */
   healthMs?: number;
+  /**
+   * The OS's keys, words, apps, settings and security vocabulary (main passes its SystemPlatform), for workers, the
+   * conversation's prompt and words, and which requests name the terminal. Default: Linux's (LINUX_WORKER_SYSTEM).
+   */
+  system?: WorkerSystem;
   /** How long a request the runtime took may wait for its turn to begin (ms; TURN_START_MS, see TurnWatch). */
   turnStartMs?: number;
   /** How long a turn under way may hear nothing before Ember says it's still waiting (ms; TURN_SLOW_MS). */
@@ -140,6 +193,37 @@ export interface HostOptions {
   turnSilentMs?: number;
   /** Whether this user's inotify instances are all in use (inotifyUsedUp; tests pass their own). */
   inotifyUsedUp?: () => boolean;
+  /** Where tasks act (§2): the targets runtime's view for the host (absent: this computer only, as before). */
+  targets?: TargetsForAgent;
+  /** The audit log and Confirmer tasks use when there are no `hands` (no window system: commands-only targets, §2.6). */
+  taskBase?: { audit: AuditLog; confirmer: Confirmer };
+  /** Ember's own pids now (app.getAppMetrics() and its helpers'), for commands on this computer (D4.5, live). */
+  emberPids?: () => number[];
+  /** A task announced a command the user asked for (D4.4): main speaks it when replies are spoken. */
+  onAnnounce?: (text: string) => void;
+  /**
+   * How this build signs in (github-app.ts): with Ember's own GitHub App (default, "Sign in with GitHub"), or, while it
+   * has none, through the GitHub CLI: the signed-out line then says so, and the status tells the settings window.
+   */
+  signInWith?: SignInWith;
+  /**
+   * How a spoken announcement says to cancel it (main's cancelWords: the kill phrase only where Ember can tell its own
+   * voice from the user's, review #251). Default: the stop shortcut, as said aloud.
+   */
+  cancelWords?: () => string;
+  /**
+   * The settings shortcut as Ember holds it now (main: hasKey), or null while another app holds it: the bubbles name it
+   * only then (Read all's route, the errors that send the user to settings, a task's "No model is available" result;
+   * cross-review X5). Default: the OS's table.
+   */
+  settingsKey?: () => string | null;
+  /** The stop chord as Ember holds it now, or null: an announcement names it only then (cross-review X0). As settingsKey. */
+  stopKey?: () => string | null;
+  /**
+   * How much the bubble's type is scaled now (the user's text size: page-prefs' textScale): an answer that needs more
+   * than the bubble's six lines at that size offers Read all (cross-review X2). Default 1.
+   */
+  textScale?: () => number;
 }
 
 /** A quick look at whether GitHub answers at all, through `fetch` (main passes Electron's net.fetch, which uses the system proxy). */
@@ -164,6 +248,29 @@ function hostOf(url: string): string | null {
   try { return new URL(url).hostname.replace(/^\[|\]$/g, "") || null; } catch { return null; }
 }
 
+/**
+ * A command runner's status line ("Starting Ubuntu…": WA's WSL runner while a stopped distro boots, `status()` and
+ * `onStatus()`) given to `show` while it says something; nothing for a runner without one. Returns the unsubscribe.
+ */
+function followStatus(runner: unknown, show: (text: string) => void): () => void {
+  const r = runner as { status?: () => string | null; onStatus?: (fn: (text: string | null) => void) => () => void } | null | undefined;
+  if (!r || typeof r.onStatus !== "function") return () => undefined;
+  const say = (text: string | null) => {
+    if (typeof text !== "string" || !text.trim()) return;
+    try { show(text.slice(0, 200)); } catch { /* a status is only a note */ }
+  };
+  try {
+    const off = r.onStatus(say);
+    say(typeof r.status === "function" ? r.status() : null);
+    return () => { try { off(); } catch { /* already gone */ } };
+  } catch {
+    return () => undefined;
+  }
+}
+
+/** show_me where Ember can't see this screen (no window system): today's words for a session without a desktop. */
+const NO_GUIDE = "Ember can't point at things in this session (no desktop access). Explain the steps in words instead.";
+
 /** What a task cut off by a runtime that stopped says (it didn't finish, and the user didn't stop it). */
 export const CUT_OFF = "Copilot stopped unexpectedly; the task didn't finish.";
 /** The same when the runtime was reconnected because it stopped answering the conversation (it didn't stop). */
@@ -171,12 +278,14 @@ export const CUT_OFF_STALLED = "Copilot didn't answer; the task didn't finish.";
 
 const NETWORK = /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|getaddrinfo|network is unreachable|fetch failed|socket hang up|net::ERR_(INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|NAME_RESOLUTION_FAILED|CONNECTION_\w+|ADDRESS_UNREACHABLE|NETWORK_\w+|TIMED_OUT|PROXY_\w+|TUNNEL_CONNECTION_FAILED|EMPTY_RESPONSE)/i;
 const SIGNED_OUT = "Not connected to Copilot: sign in with GitHub below.";
+/** The same without Ember's own GitHub App: the sign-in is the GitHub CLI's (S1). */
+const SIGNED_OUT_CLI = "Not connected to Copilot. Signing in needs a GitHub account with Copilot and the GitHub CLI: see below.";
 /** A hung runtime is given this long to answer a health check, a stop or a delete. */
 const RUNTIME_WAIT_MS = 5000;
 /** The conversation's request was taken but its turn never began (TurnWatch). */
 const NOT_ANSWERING = "Copilot isn't answering. I'm reconnecting; ask me again in a moment.";
 /** The same while tasks are at work: Copilot is reconnected once they're done. */
-const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks running are done; ask me again then.";
+const NOT_ANSWERING_AFTER_TASKS = "Copilot isn't answering. I'll reconnect when the tasks that are running finish; ask me again then.";
 /** The same, with this user's inotify instances used up (the runtime can't begin a turn then). */
 const NO_WATCHERS = "Copilot can't work right now: this computer has run out of file watchers. Close a few apps, then ask me again.";
 const NO_WATCHERS_WHY = "Copilot isn't answering: the system's limit on file watchers (fs.inotify.max_user_instances) is used up. Close some apps, or ask IT to raise the limit.";
@@ -187,7 +296,7 @@ const NO_WATCHERS_DETAIL = `${NO_WATCHERS_WHY} Reconnecting…`;
  */
 const NO_ANSWER_DETAIL = "Copilot didn't answer in time. Reconnecting…";
 /** A reconnect put off while tasks are at work (the runtime still works for them): what settings show meanwhile. */
-const AFTER_TASKS = "Reconnecting when the tasks running are done…";
+const AFTER_TASKS = "Reconnecting when the tasks that are running finish…";
 
 /**
  * This user's inotify instances in use and the limit (fs.inotify.max_user_instances: 128 on RHEL 8, and every app
@@ -232,18 +341,54 @@ function proxyNote(p?: { url: string | null; socks?: string }): string {
   return "";
 }
 
+/**
+ * A problem on Copilot's or GitHub's side that passes (review #137): a 5xx, a rate limit, a request or the runtime's
+ * own start that timed out ("Timeout waiting for CLI server to start", SessionToolsTimeoutError). A start that fails
+ * with one is retried with the offline backoff, and asking retries at once, as offline.
+ */
+const TRANSIENT = /\b50[0234]\b|bad gateway|service unavailable|gateway time-?out|internal server error|overloaded|\b429\b|too many requests|rate.?limit|timed? ?out|timeout/i;
+/** One of those: a TRANSIENT message, or the conversation's tools not reported in time (its message says neither). */
+const transient = (err: unknown, msg: string) => err instanceof SessionToolsTimeoutError || TRANSIENT.test(msg);
+/** What settings show for one, while the retry waits. */
+const TRANSIENT_DETAIL = "Copilot had a problem on its side while Ember connected. Ember will try again in a moment.";
+
 /** A start's error that names no model Ember may use (thrown by doStart itself): shown as it is. */
 const NO_MODEL = /^(None of the models|Copilot lists no models)/;
 
-/** Why a start failed, in the order explainStartError judges it. */
-export function startErrorReason(err: unknown, ctx: { online?: boolean } = {}): AgentReason {
+/**
+ * The runtime can't start: starting it failed ("spawn … ENOENT"), the SDK didn't find it, or a file error names the
+ * runtime's own path (`runtime`). Any other file error is about a file of Ember's (fileTrouble).
+ */
+function runtimeMissing(msg: string, runtime?: string): boolean {
+  return /not found at|spawn /i.test(msg) || (!!runtime && /\b(ENOENT|EACCES|EPERM)\b/.test(msg) && msg.includes(runtime));
+}
+
+/** A file Ember needs couldn't be used (not the runtime's): why, in a sentence naming the file; null for other errors. */
+function fileTrouble(msg: string): string | null {
+  const code = /\b(ENOENT|EACCES|EPERM|EBUSY|ENOSPC|EDQUOT|EROFS)\b/.exec(msg)?.[1];
+  if (!code) return null;
+  const file = /'([^']+)'/.exec(msg)?.[1];
+  const it = file ?? "one of its files";
+  switch (code) {
+    case "ENOSPC": case "EDQUOT": return `Ember couldn't save ${it}: the disk (or your storage quota) is full. Free some space, then press Check again.`;
+    case "EROFS": return `Ember couldn't save ${it}: the disk is read-only. Ask IT to check Ember's data folder, then press Check again.`;
+    case "EACCES": case "EPERM": return `Ember isn't allowed to use ${it}. Check that its folder belongs to you, then press Check again.`;
+    case "EBUSY": return `${file ?? "One of Ember's files"} is in use by another program. Close it, then press Check again.`;
+    default: return `Ember couldn't find ${it}. Press Check again; if it keeps happening, restart Ember.`;
+  }
+}
+
+/** Why a start failed, in the order explainStartError judges it. `runtime`: the runtime's path (a file error naming it is its). */
+export function startErrorReason(err: unknown, ctx: { online?: boolean; runtime?: string } = {}): AgentReason {
   const msg = err instanceof Error ? err.message : String(err);
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return "runtime";
+  if (runtimeMissing(msg, ctx.runtime)) return "runtime";
+  if (fileTrouble(msg)) return "other";
   if (NO_MODEL.test(msg)) return "models";
   if (ctx.online === false || NETWORK.test(msg) || /certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "network";
   if (/client not connected|connection (is |got |was )?disposed|connection (closed|lost)|pending response rejected/i.test(msg)) return "runtime";
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic|\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "no-access";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) return "sign-in";
+  if (transient(err, msg)) return "not-answering";
   return "other";
 }
 
@@ -256,6 +401,7 @@ export const NOTICE_TITLE: Record<AgentReason | "signed-out", string> = {
   models: "No Copilot model I can use",
   runtime: "Copilot isn't running",
   "not-answering": "Copilot isn't answering",
+  policy: "Your organisation's policy stops me",
   other: "Copilot isn't working right now",
 };
 
@@ -271,14 +417,21 @@ export function idleWord(s: Pick<AgentStatus, "phase" | "reason" | "waitingForTa
     case "no-access": return "No Copilot access";
     case "models": return "No model";
     case "not-answering": return "Reconnecting…";
+    case "policy": return "Locked down";
     default: return "Copilot problem";
   }
 }
 
-export function explainStartError(err: unknown, ctx: { source?: string; online?: boolean; proxy?: { url: string | null; socks?: string } } = {}): string {
+/**
+ * Why a start failed, in one plain sentence for the settings window. `reinstall`: how this OS says to install Ember
+ * again (default Linux's "Reinstall Ember (sudo dnf reinstall ember).").
+ */
+export function explainStartError(err: unknown, ctx: { source?: string; sourceName?: string; online?: boolean; proxy?: { url: string | null; socks?: string }; reinstall?: string; runtime?: string } = {}): string {
   const msg = err instanceof Error ? err.message : String(err);
   const from = ctx.source && SOURCE_TEXT[ctx.source] ? ` (${SOURCE_TEXT[ctx.source]})` : "";
-  if (/not found at|ENOENT|EACCES|spawn /i.test(msg)) return "Ember's Copilot runtime is missing or can't start. Reinstall Ember (sudo dnf reinstall ember).";
+  if (runtimeMissing(msg, ctx.runtime)) return `Ember's Copilot runtime is missing or can't start. ${ctx.reinstall ?? PLATFORM_WORDS.linux.reinstall}`;
+  const files = fileTrouble(msg);
+  if (files) return files;
   if (NO_MODEL.test(msg)) return msg;
   if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. It will try again when the network is back.";
   if (/certificate|self.signed|issuer|ERR_CERT_/i.test(msg)) return "Ember can't verify GitHub's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate for Ember.";
@@ -286,9 +439,28 @@ export function explainStartError(err: unknown, ctx: { source?: string; online?:
   if (/copilot (cli )?policy|disabled by (your )?organi[sz]ation|organi[sz]ation polic/i.test(msg)) return "Copilot is turned off for your account by an organisation policy. Ask your GitHub admin to enable the Copilot CLI policy.";
   if (/\bseat\b|subscription|no copilot access|\b(status|HTTP|code)\s*40[23]\b/i.test(msg)) return "This GitHub account has no Copilot access. Check your Copilot subscription or seat.";
   if (/not authenticated|unauthori[sz]ed|bad credentials|\b(status|HTTP|code)\s*401\b/i.test(msg)) {
+    // A token from the environment comes before every other sign-in: only taking it out of Ember's environment (or
+    // fixing it) gets past it for good. (Ember tried the other sign-ins it found before saying this: main.)
+    if (ctx.source === "environment" && ctx.sourceName && /^[A-Z_]+$/.test(ctx.sourceName)) {
+      return `Copilot didn't accept the GitHub token in ${ctx.sourceName} (set in Ember's environment). It may have expired, lack the Copilot permission, or belong to an account without Copilot. Replace it or remove ${ctx.sourceName}, then restart Ember; or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
+    }
     return `Copilot didn't accept the GitHub sign-in Ember found${from}. It may have expired, or this account may not have Copilot. Sign in again, or run “gh auth login” in a terminal and press Check again.${proxyNote(ctx.proxy)}`;
   }
+  if (transient(err, msg)) return TRANSIENT_DETAIL;
   return msg;
+}
+
+/**
+ * Why a sign-in (the device flow) failed, in one plain sentence for the settings window. Nothing retries a sign-in, so
+ * unlike a start's error it never promises one; a reply that wasn't GitHub's (a proxy's error page) isn't shown raw.
+ */
+export function explainSignInError(err: unknown, ctx: { online?: boolean; reinstall?: string } = {}): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/^(The sign-in code expired|Sign-in was cancelled)/.test(msg)) return msg;
+  if (/refused the sign-in request \(4\d\d\)/.test(msg)) return "GitHub didn't accept Ember's sign-in request. Make sure Ember is up to date, or run “gh auth login” in a terminal and press Check again.";
+  if (ctx.online === false || NETWORK.test(msg)) return "Ember can't reach GitHub right now. Check the network, then sign in again.";
+  if (/refused the sign-in request \(5\d\d\)|is not valid JSON|Unexpected token|JSON/i.test(msg) || TRANSIENT.test(msg)) return "GitHub's sign-in page didn't answer properly (a proxy or a problem on GitHub's side). Try signing in again in a moment.";
+  return explainStartError(err, ctx);
 }
 
 /** How long main's own bubble holds off everything else at most, if main doesn't give it back sooner. */
@@ -313,7 +485,15 @@ const MAX_QUEUED = 20;
  * One request of the user's: where they were when they called Ember, what they said, and what the conversation
  * read on the screen in its turn (the context sent with it, describe_screen's answers).
  */
-interface UserRequest { target: (WindowTarget & { app?: string }) | null; words: string; screen: string[] }
+interface UserRequest {
+  target: (WindowTarget & { app?: string }) | null;
+  words: string;
+  screen: string[];
+  /** The target the context was read on (QuickContext.targetId; absent: this computer). */
+  targetId?: TargetId;
+  /** Heard where Ember can't tell the user from its speakers: never the user's own words for commands (OWNER V1). */
+  voiceUnchecked?: boolean;
+}
 /** Words that only answer ("yes please", "both of them", "the first one", "go ahead"), besides names and numbers. */
 const ANSWER_WORD = /^(yes|yeah|yep|yup|sure|ok|okay|please|go|ahead|do|it|that|this|them|those|these|both|all|of|the|a|an|first|second|third|last|one|ones|and|or|either|neither|none|no|nope|thanks|thank|you|correct|right|exactly|fine|sounds|good|great|perfect|alright|absolutely|definitely|indeed|just|only|too|also|same|again)$/i;
 /** The words of what someone said ("don't" is one). */
@@ -350,16 +530,15 @@ export class AgentHost {
   private client: CopilotClient | null = null;
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
-  private status: AgentStatus = {
-    phase: "signed-out", detail: SIGNED_OUT, models: [], conductorModel: null, workerModel: null,
-    usage: { calls: 0, inputTokens: 0, outputTokens: 0 },
-  };
+  private status: AgentStatus;
   /** Bumped by every start() and stop(): an older start gives up at its next step. */
   private gen = 0;
   /** Starts and stops run one after another. */
   private chain: Promise<void> = Promise.resolve();
   private token: string | null = null;
   private source: string | undefined;
+  /** The environment variable the token came from (source "environment"). */
+  private sourceName: string | undefined;
   private health: ReturnType<typeof setInterval> | null = null;
   private retry: ReturnType<typeof setTimeout> | null = null;
   /** When the runtime died lately (five in ten minutes: Ember stops trying). */
@@ -395,9 +574,23 @@ export class AgentHost {
   private quitting = false;
   /** How the tasks of a connection that went away ended, for the next conductor (it resumes the conversation). */
   private carried: string[] = [];
+  /**
+   * "Commands are off" with Open settings (review #40: once per run): its presenter, once offered. It counts as offered
+   * once it has reached the screen, or while it waits to.
+   */
+  private commandsHint: Presenter | null = null;
+  /**
+   * A request asked for a terminal or a command while commands are off by the user's switch: the hint is offered when
+   * its turn ends, behind the answer (asked before the request, it would be covered by "Thinking…" and run out unseen).
+   */
+  private hintOwed = false;
+  /** A refused sign-in is being checked with Copilot (checkSignIn): one check at a time. */
+  private checkingSignIn = false;
   /** The system proxy given to the runtime at the last start (or a SOCKS one it couldn't use). */
   private proxy: { url: string | null; socks?: string } | undefined;
   private readonly transcript: TranscriptEntry[] = [];
+  /** The user's lines in the transcript that were heard where Ember can't tell the user from its speakers (V1). */
+  private readonly voiceUnchecked = new WeakSet<TranscriptEntry>();
   /**
    * Lines of the user's words a task was refused for because they named the terminal, and the request whose turn
    * refused it: a later turn (the user answering how else) isn't held to them again.
@@ -413,23 +606,85 @@ export class AgentHost {
   private readonly results = new WeakMap<TranscriptEntry, string>();
   /** The conversation's presenter (kept across restarts, so a restart can tidy its bubble). */
   private readonly presenter: Presenter;
+  /** Bubbles of Ember's own that are no turn's or task's (the targets runtime's), written through the shared bubble. */
+  private readonly noticeBoard: Presenter;
+  /** The targets runtime's offers, on a board of their own (cross-review X3: see offers). */
+  private readonly offerBoard: Presenter;
   /** Each running task's presenter (the kill switch silences them). */
   private readonly taskPresenters = new Map<string, Presenter>();
   /** Tasks the kill switch stopped: they finish without a bubble of their own (the kill switch said it). */
   private readonly stoppedByAll = new Set<string>();
+  /** Why tasks stopped with their computer (its connection dropped, someone there pressed Stop): said instead of "Stopped.". */
+  private readonly stoppedWhy = new Map<string, string>();
   /** Tasks the conversation's latest turn started (its reply announces them: "On it…"). */
   private readonly announced = new Set<string>();
   /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
   private readonly outcomes = new Map<string, Presenter>();
+  /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
+  private readonly taskBindings = new Map<string, TargetBinding>();
+  /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
+  private readonly taskDesktop = new Map<string, () => boolean>();
+  /** Each running task's hold on its command runner's status line (followStatus), let go when it finishes. */
+  private readonly taskStatus = new Map<string, () => void>();
+  /**
+   * What the conversation's prompt promised when it was created (§3.15): kept for its resumes (the system message is
+   * kept with it), and compared with now on every request.
+   */
+  private convoCaps: PromptCaps | null = null;
   private readonly stateFile: string;
 
+  /** The OS's keys, words, apps, settings and security vocabulary (Linux's unless main passes its own). */
+  private get sys(): WorkerSystem { return this.o.system ?? LINUX_WORKER_SYSTEM; }
+
+  /** The Confirmer tasks ask with: the hands', or without them (no window system) the task base's (§2.6). */
+  private get confirmer(): Confirmer | undefined { return this.o.hands?.confirmer ?? this.o.taskBase?.confirmer; }
+
+  /** The signed-out line for how this build signs in. */
+  private get signedOut(): string { return this.o.signInWith === "github-cli" ? SIGNED_OUT_CLI : SIGNED_OUT; }
+
+  /**
+   * What every presenter's bubbles follow: this OS's shortcuts, those Ember holds now (a bubble names a shortcut only
+   * while it works, cross-review X0, X5), the user's More time to read and answer, and their text size.
+   */
+  private get bubbleOptions(): PresenterOptions {
+    const o = this.o;
+    return {
+      shortcuts: this.sys.shortcuts, ...(o.readTime ? { readTime: o.readTime } : {}), ...(o.textScale ? { textScale: o.textScale } : {}),
+      ...(o.settingsKey ? { settingsKey: o.settingsKey } : {}), ...(o.stopKey ? { stopKey: o.stopKey } : {}),
+    };
+  }
+
   constructor(private o: HostOptions) {
+    this.status = {
+      phase: "signed-out", detail: this.signedOut, models: [], conductorModel: null, workerModel: null,
+      usage: { calls: 0, inputTokens: 0, outputTokens: 0 }, ...(o.signInWith ? { signInWith: o.signInWith } : {}),
+    };
     this.stateFile = path.join(o.userData, "agent.json");
     // A question with buttons holds the bubble; what it held off shows once it's answered.
-    const c = o.hands?.confirmer;
+    const c = this.confirmer;
     this.owner = new BubbleOwner(c ? { up: () => c.waiting, answered: () => c.settled().then(() => this.dropAnnouncement()) } : undefined);
     this.presenter = new Presenter(o.setState, undefined, () => "Ember", this.owner, text => this.remember("ember", text), !!o.provider,
-      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text) });
+      { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
+    this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
+    this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
+  }
+
+  /**
+   * Where the targets runtime's bubbles go (a connection, an offer, a loss): through the shared bubble, so the
+   * conversation's and the tasks' bubbles wait behind them as behind a question, and no presenter's timer hides them.
+   */
+  get notices(): NoticeBoard {
+    return this.noticeBoard;
+  }
+
+  /**
+   * Where the targets runtime's offers go ("You're connected to web-07", "I can work in WSL", offer_connect's Connect):
+   * the shared bubble too, but not the notices' writer, which keeps one bubble at a time. An offer nobody asked for
+   * then waits behind a held notice ("Lost build-01", "Can't connect") instead of replacing it for good, and one the
+   * user asked for covers it, which comes back after (cross-review X3).
+   */
+  get offers(): NoticeBoard {
+    return this.offerBoard;
   }
 
   /**
@@ -440,6 +695,8 @@ export class AgentHost {
    * takes none of their context.
    */
   private conversationEvent(e: PresenterEvent): void {
+    // Copilot refused the sign-in mid-session (revoked, expired, the seat removed): it is asked whether it still holds.
+    if (e.type === "session.error" && (e.data?.errorType === "authentication" || e.data?.statusCode === 401)) void this.checkSignIn(this.gen);
     if (e.type !== "user.message" || (e as { agentId?: string }).agentId) return;
     const said = typeof e.data?.content === "string" ? e.data.content.trimEnd() : "";
     const i = this.queued.findIndex(r => said.endsWith(r.words.trim()));
@@ -464,6 +721,50 @@ export class AgentHost {
     if (p.waiting ? bare : !task) p.drop();
   }
 
+  /**
+   * A turn or a task failed on a refused sign-in (review #138): Copilot is asked whether the sign-in still holds. If it
+   * doesn't (the token was revoked or expired, or the account lost Copilot), Ember leaves Ready for the sign-in error:
+   * the handle says "Sign-in refused", settings offer Sign in and Check again, a question says why instead of failing
+   * the same way again, and the bubble gets its Open settings button. A passing 401 changes nothing.
+   */
+  private async checkSignIn(gen: number): Promise<void> {
+    const client = this.client;
+    if (this.o.provider || this.checkingSignIn || gen !== this.gen || this.status.phase !== "ready" || !client) return;
+    this.checkingSignIn = true;
+    try {
+      const auth = await within(client.getAuthStatus(), 10_000);
+      if (gen !== this.gen || this.status.phase !== "ready" || auth === "timeout" || auth.isAuthenticated) return;
+      this.o.log.warn("agent.sign_in_refused", { source: this.source });
+      const detail = explainStartError(new Error("not authenticated"), { source: this.source, sourceName: this.sourceName, proxy: this.proxy });
+      this.setStatus({ phase: "error", reason: "sign-in", detail });
+      this.presenter.notice({ title: NOTICE_TITLE["sign-in"], text: SIGN_IN_REFUSED, actions: [{ id: "ui:settings", label: "Open settings" }] });
+    } catch (err) {
+      this.o.log.warn("agent.sign_in_check_failed", { err });
+    } finally {
+      this.checkingSignIn = false;
+    }
+  }
+
+  /**
+   * Commands are off only by the user's switch (caps.commandsOffered) and the user asked for a terminal or a command, or
+   * the answer said where to turn them on: once per run, after the answer, a bubble says commands are off, with Open
+   * settings (review #40). Never where the administrator turned commands off, or once they're on.
+   */
+  private hintCommands(): void {
+    const h = this.commandsHint;
+    if (h && (h.shownAt !== null || h.visible)) return;
+    let caps: PromptCaps | undefined;
+    try { caps = this.o.targets?.caps(); } catch { return; }
+    if (!caps?.commandsOffered || caps.commands) return;
+    // Its own presenter: the bubble shows once the conversation's answer has gone (it doesn't cut the answer short), and
+    // stays as long as the user's More time to read and answer says, as every bubble does.
+    const p = this.commandsHint = new Presenter(this.o.setState, undefined, () => "Ember", this.owner, undefined, !!this.o.provider, this.bubbleOptions);
+    p.outcome({
+      title: "Commands are off", text: "Ember can run commands for you in its own command window once you turn them on in its settings (Commands).",
+      emotion: "neutral", gesture: "rest", mood: "idle", actions: [{ id: "ui:settings", label: "Open settings" }],
+    });
+  }
+
   /** Changes with every Stop: main takes it before a slow step (reading the screen) and passes it to ask(). */
   get stopEpoch(): number {
     return this.stops;
@@ -473,9 +774,11 @@ export class AgentHost {
    * Main writes the bubble itself next ("Listening…", the kill switch's message): no presenter's timer hides
    * it, and neither the conversation nor a task replaces it until main gives it back (releaseBubble), the user
    * asks something, or 30 seconds pass. A task's work shows on its card meanwhile. The answer or result it
-   * covers doesn't run out of time underneath (main may put it back: a wake that was another word).
+   * covers doesn't run out of time underneath (main may put it back: a wake that was another word). `ms`: main's own
+   * notice gives the bubble back itself after this long (ten times its usual time with More time to read and answer):
+   * held that long, and the 30 seconds count from then (cross-review X4).
    */
-  claimBubble(o: { pin?: boolean } = {}): void {
+  claimBubble(o: { pin?: boolean; ms?: number } = {}): void {
     this.owner.claim(this.mainBubble);
     this.presenter.letGo();
     if (this.mainHold) clearTimeout(this.mainHold);
@@ -484,7 +787,7 @@ export class AgentHost {
     // answer goes another way (releasePin).
     this.pinned = !!o.pin;
     if (o.pin) return;
-    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS);
+    this.mainHold = setTimeout(() => this.releaseBubble(null), MAIN_HOLD_MS + Math.max(0, o.ms ?? 0));
     this.mainHold.unref?.();
   }
 
@@ -550,10 +853,14 @@ export class AgentHost {
    * `agreed`: Ember's questions in those turns that the user's reply agreed to or answered ("I can delete the old
    * installers. Shall I?" "Sure, go ahead."), the reply within ten minutes; a task's result asking ("Want me to send
    * it?") counts for the reply right after it only. A risky step one of them names is still asked about (PolicyEngine).
+   *
+   * `commandWords`: the same words without those heard where Ember can't tell the user from its speakers (OWNER V1:
+   * a call or a video can say "delete the build folder"), present only when some were left out. Commands hear these.
    */
-  private userWordsOf(r: UserRequest | null): { words?: string; agreed?: Agreement[] } {
+  private userWordsOf(r: UserRequest | null): { words?: string; agreed?: Agreement[]; commandWords?: string } {
     if (!r) return {};
     const said = [r.words];
+    const typed = r.voiceUnchecked ? [] : [r.words];
     const agreed: Agreement[] = [];
     const log = this.transcript;
     const apart = (a: TranscriptEntry, b: TranscriptEntry) => Date.parse(a.t) - Date.parse(b.t);
@@ -568,11 +875,12 @@ export class AgentHost {
       while (k >= 0 && log[k].who === "ember") k--;
       const before = log[k];
       if (!before || before.who !== "you" || apart(log[at], before) > 10 * 60_000) break;
-      if (isRiskyLabel(reply) || !(asked || onlyAnswers(reply))) break;
+      if (isRiskyLabel(reply, this.sys.os) || !(asked || onlyAnswers(reply))) break;
       said.unshift(/[.!?]\s*$/.test(before.text) ? before.text.trim() : `${before.text.trim()}.`);
+      if (!this.voiceUnchecked.has(before)) typed.unshift(said[0]);
       at = k;
     }
-    return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}) };
+    return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}), ...(typed.length < said.length ? { commandWords: typed.join("\n") } : {}) };
   }
 
   private remember(who: TranscriptEntry["who"], text: string): TranscriptEntry {
@@ -617,9 +925,11 @@ export class AgentHost {
    *
    * `how`: "auto" for Ember's own start at launch. After the user signed out, a GitHub CLI or
    * environment sign-in found then isn't used until they sign in again ("user", the default).
+   * `name`: the environment variable a token from the environment came from (a refusal names it).
    */
-  start(token: string | null, source?: string, how: "user" | "auto" = "user"): Promise<AgentPhase> {
+  start(token: string | null, source?: string, how: "user" | "auto" = "user", name?: string): Promise<AgentPhase> {
     this.quitting = false;
+    this.sourceName = source === "environment" ? name : undefined;
     const automatic = source === "environment" || source === "github-cli";
     if (token && how === "user") this.setSignedOut(false);
     else if (token && automatic && readAgentState(this.stateFile).signedOut) token = null;
@@ -669,8 +979,14 @@ export class AgentHost {
   private async doStart(token: string | null, gen: number): Promise<void> {
     await this.doStop();
     if (gen !== this.gen) return;
+    // The administrator's policy locks Ember down: nothing connects, so nothing Ember reads goes anywhere.
+    const refused = this.o.refuseConnect?.() ?? null;
+    if (refused) {
+      this.setStatus({ phase: "error", reason: "policy", detail: refused, login: undefined, source: undefined });
+      return;
+    }
     if (!token && !this.o.provider) {
-      this.setStatus({ phase: "signed-out", detail: SIGNED_OUT, login: undefined, source: undefined });
+      this.setStatus({ phase: "signed-out", detail: this.o.signedOutWhy?.() ?? this.signedOut, login: undefined, source: undefined });
       return;
     }
     this.setStatus({ phase: "starting", detail: "Connecting to Copilot…", source: this.source });
@@ -753,33 +1069,49 @@ export class AgentHost {
       }
       if (runtimeDefault) this.o.log.info("agent.runtime_default_model");
       this.models = models;
-      // Sessions of tasks from an earlier run (Ember quit or restarted before their 10 minutes were up).
+      // Sessions of tasks from an earlier run (Ember crashed or was killed before it could delete them).
       // Housekeeping must not hold up the first answer: sweep alongside the session setup, not before it.
       void this.sweepTaskSessions(client);
 
       const hands = this.o.hands;
+      // Without a window system tasks still run where a target takes them (commands; SSH and WSL targets: §2.6), and
+      // only then: with none (commands off, no other computer), the tools are today's (no TaskManager; start_task and
+      // show_me say there is no desktop), as the prompt is. Once one can, the next request reconnects first (ask).
+      const targets = this.o.targets;
       this.status = { ...this.status, conductorModel: choice.conductor, workerModel: choice.worker };
       const workerVision = () => this.models.find(m => m.id === this.status.workerModel)?.capabilities?.supports?.vision === true
         && this.o.admin?.().features.screenImages !== false;
-      this.tasks = hands ? new TaskManager({
+      this.tasks = hands || (targets && this.targetsTakeTasks()) ? new TaskManager({
         log: this.o.log.child("tasks"),
-        currentWindow: hands.currentWindow,
+        currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
         deleteSession: id => client.deleteSession(id),
-        audit: hands.audit,
+        audit: hands?.audit ?? this.o.taskBase?.audit,
+        settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         onFinished: task => {
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
-          const summary = task.result?.summary ?? "";
-          const text = taskOutcome(task);
-          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal);
+          // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
+          const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
+          this.stoppedWhy.delete(task.id);
+          const summary = why ?? task.result?.summary ?? "";
+          // A task failed on a refused sign-in: is it still signed in (checkSignIn)?
+          if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
+          const text = why ? `${task.title}: ${why}` : taskOutcome(task);
+          const binding = this.taskBindings.get(task.id);
+          this.taskBindings.delete(task.id);
+          this.taskDesktop.delete(task.id);
+          this.taskStatus.get(task.id)?.();
+          this.taskStatus.delete(task.id);
+          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding);
           this.taskPresenters.delete(task.id);
           const said = this.remember("task", text);
           if (summary) this.results.set(said, summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
           if ((this.stoppedByAll.delete(task.id) && task.status === "cancelled") || this.quitting) { presenter.quiet(); return; }
-          this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text });
+          // A task on another computer says where when it is spoken or notified ("On build-01: done. …", §6).
+          this.o.onTaskFinished?.({ title: task.title, status: task.status, summary, text: binding?.kind === "ssh" ? `On ${binding.label}: ${text}` : text });
           this.dropAnnouncement(task.id);
           // Shown when nothing else holds the bubble (an answer, a question, "Listening…"), then it goes on its own.
           const o = OUTCOME[task.status === "done" || task.status === "cancelled" ? task.status : "failed"];
@@ -793,27 +1125,42 @@ export class AgentHost {
           if (byUser && p?.waiting) p.drop();
         },
         provider: !!this.o.provider,
-        makeWorker: (spec, progress) => new Worker({
-          client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision(), provider: this.o.provider,
-          workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
-          perception: hands.perception, sidecar: hands.sidecar, policy: hands.policy, confirmer: hands.confirmer, audit: hands.audit,
-          settings: this.o.settings,
-          presenter: this.taskPresenter(spec.id, spec.goal),
-          lease: (key, owner, signal) => this.tasks!.lease(key, owner, signal),
-          flyTo: hands.flyTo,
-          cursor: hands.cursor,
-          clipboard: hands.clipboard,
-          pointer: hands.pointer,
-          activationKey: hands.activationKey,
-          desk: hands.desk,
-          onDesk: hands.onDesk,
-          onProgress: progress,
-          onUsage: (i, o) => this.recordUsage(i, o),
-          limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
-          inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
-        }, spec),
+        makeWorker: (spec, progress) => {
+          // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
+          // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
+          // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
+          const id = spec.targetId ?? "local";
+          const got = targets ? targets.handsFor(id)
+            : hands && id === "local" ? { ok: true as const, hands: localTargetHands(hands, this.sys) }
+            : { ok: false as const, why: id === "local" ? "Ember can't work on this computer's screen here." : "Ember can't work on that computer here." };
+          if (!got.ok) return refusedWorker(spec, got.why);
+          const h = got.hands;
+          const usedDesktop = (h as TargetHands & Partial<DesktopUse>).usedDesktop;
+          if (typeof usedDesktop === "function") this.taskDesktop.set(spec.id, () => usedDesktop.call(h));
+          const presenter = this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0);
+          // "Starting Ubuntu…" while a stopped distro boots for the task's first command: that happens while its facts are
+          // read, before any run (or command window tab) exists, so the task's bubble says it.
+          this.taskStatus.get(spec.id)?.();
+          this.taskStatus.set(spec.id, followStatus(h.commands?.runner, text => presenter.progress(text)));
+          return new Worker({
+            client, log: this.o.log.child(`task-${spec.id}`), model: this.status.workerModel, runtimeDefault, vision: workerVision() && h.binding.desktop === "screen",
+            provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
+            perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
+            settings: this.o.settings, presenter,
+            lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
+            flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
+            desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
+            limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
+            inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
+            system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
+            ...(this.o.emberPids ? { emberPids: this.o.emberPids } : {}),
+            ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
+          }, spec);
+        },
       }) : null;
       const tasks = this.tasks;
+      // What the conversation's prompt may promise is fixed when it is created and kept for its resumes (§3.15).
+      const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         stateFile: this.stateFile,
@@ -821,13 +1168,28 @@ export class AgentHost {
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
         model: choice.conductor, provider: this.o.provider,
         // What the conversation reads on the screen goes with the tasks it starts in that turn (their goals may carry it).
-        describeScreen: this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.o.describeScreen!(); turn?.screen.push(seen); return seen; } : undefined,
+        describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); if (seen.read) turn?.screen.push(seen.text); return seen.text; }
+          : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.describeThisScreen(); if (seen.read) turn?.screen.push(seen.text); return seen.text; } : undefined,
+        caps,
+        ...(targets ? {
+          listComputers: () => targets.describeTargets(),
+          // Only a host the user's own words named, and only a button for them to click (the model never connects).
+          offerConnect: (name: string) => targets.offerConnect(name, this.userWordsOf(this.turn).words ?? ""),
+        } : {}),
         onUsage: (i, o) => this.recordUsage(i, o),
-        onAnswer: this.o.onAnswer,
-        onTurnEnd: this.o.onTurnEnd,
+        // An answer that tells the user where to turn commands on gets the button for it (once per run).
+        onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
+        onTurnEnd: aborted => {
+          // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
+          if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
+          this.o.onTurnEnd?.(aborted);
+        },
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
         turnSilentMs: this.o.turnSilentMs,
+        words: this.sys.words,
+        shortcuts: this.sys.shortcuts,
+        ...(this.o.settingsKey ? { settingsKey: this.o.settingsKey } : {}),
         // A turn under way that went silent (a model request that never answers) is ended, and Ember says Copilot
         // didn't answer; the requests waiting behind it go with it. Only the conversation's request is given up on:
         // the tasks go on (each one's own watch decides its fate).
@@ -856,7 +1218,7 @@ export class AgentHost {
           if (why === "silent") this.lost(gen, reason, NO_ANSWER, NO_ANSWER_DETAIL, asked, CUT_OFF_STALLED);
           else this.lost(gen, reason, full ? NO_WATCHERS : NOT_ANSWERING, full ? NO_WATCHERS_DETAIL : undefined, asked, CUT_OFF_STALLED);
         },
-        startTask: tasks ? goal => {
+        startTask: tasks ? (goal, choice) => {
           // With actions turned off by the administrator, Ember can still answer and guide, never act.
           if (this.o.admin?.().features.actions === false) return "Your organisation has turned off Ember acting in apps. Tell the user, and offer to show them how (show_me) instead.";
           // Risky steps are checked against what the user said in this turn's request (and the one it answers), not the
@@ -864,26 +1226,60 @@ export class AgentHost {
           // it goes with this task.
           const r = this.turn;
           const said = this.userWordsOf(r);
+          // The task's computer (§2.3): the one the user's own words name, the model's choice only when their words name it
+          // too, else the one Ember is set to. Its hands are asked for now: a computer that can't take the task refuses it
+          // here, before anything is queued (§2.6).
+          let bound: TargetHands | null = null;
+          if (targets) {
+            const b = targets.bind({ userWords: said.words ?? "", ...(choice !== undefined ? { choice } : {}) });
+            if (!b.ok) return b.why;
+            const got = targets.handsFor(b.binding.id);
+            if (!got.ok) return got.why;
+            bound = got.hands;
+          }
           // The method the user named is part of the task: never let a goal turn "in the terminal" into another app. Earlier
           // words it was refused for in an earlier turn no longer count: what the user said since answers Ember's "how else?"
           // ("yes, use Files instead"). In the turn that refused them they still do, and the user's own words always do.
-          if (r && said.words) {
+          // Where the task's computer runs commands, the terminal the user asked for is Ember's command window (§3.15).
+          const commands = bound?.commands ?? null;
+          if (r && said.words && !(commands && commands.capability().state !== "off")) {
             const key = refusedKey;
             const earlier = said.words.slice(0, said.words.length - r.words.length).split("\n").filter(l => l.trim());
             const held = [...earlier.filter(l => { const by = this.terminalRefused.get(key(l)); return !by || by === r; }), r.words].join("\n");
-            if (ASKS_TERMINAL.test(held.replace(REFUSES_TERMINAL, " ")) && !NAMES_TERMINAL.test(goal)) {
+            const terminal = terminalRequest(this.sys.os, this.wslOn());
+            if (terminal.asks.test(held.replace(terminal.refuses, " ")) && !terminal.names.test(goal)) {
               for (const l of said.words.split("\n")) this.terminalRefused.set(key(l), r);
               while (this.terminalRefused.size > 60) this.terminalRefused.delete(this.terminalRefused.keys().next().value!);
               return "The user asked to use the terminal. Ember doesn't act in terminals, and must not do the task in another app instead. Tell the user plainly that Ember can't use the terminal, and offer to guide them through it (show_me) or ask how else they want it done.";
             }
           }
-          const t = tasks.start(goal, { target: r?.target ?? undefined, userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined });
+          const binding = bound?.binding;
+          const where = binding ? whereWords(binding) : undefined;
+          const t = tasks.start(goal, {
+            target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
+            ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}),
+            ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
+          });
+          if (binding) this.taskBindings.set(t.id, binding);
           this.announced.add(t.id);
-          return `Task ${t.id} started: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
+          return `Task ${t.id} started${where ? ` ${where}` : ""}: "${t.title}". It runs in the background and shows a card beside Ember. Tell the user you're on it, in a few words.`;
         } : undefined,
         showMe: tasks ? async goal => {
-          // Nothing is promised that can't be done: a window Ember can't read is one it can't point into.
-          const target = this.turn?.target ?? undefined;
+          // Ember points only on this screen, never at another computer's (§2.6), and only where it can see this screen:
+          // a computer that can't take the guide refuses it here, before anything is queued.
+          if (targets) {
+            const b = targets.bind({ userWords: this.userWordsOf(this.turn).words ?? "" });
+            if (!b.ok) return b.why;
+            if (b.binding.kind === "ssh") return "Ember can't point at things on another computer's screen. Explain the steps in words instead.";
+            if (b.binding.desktop !== "screen") return NO_GUIDE;
+            const got = targets.handsFor(b.binding.id);
+            if (!got.ok) return got.why;
+            if (got.hands.binding.desktop !== "screen") return NO_GUIDE;
+          }
+          // Nothing is promised that can't be done: a window Ember can't read is one it can't point into. A window read on
+          // another computer is never one to point into here (G14): the guide then finds its own on this screen.
+          const read = this.turn;
+          const target = read?.targetId?.startsWith("ssh:") ? {} : read?.target ?? undefined;
           const stops = this.stops;
           const why = await this.cantGuide(target);
           // Stop, or a restart or sign-out, came while the window was read: nothing starts (as the conductor refuses after Stop).
@@ -891,18 +1287,23 @@ export class AgentHost {
           if (why) return `Ember can't guide here: ${why} Don't tell the user to follow Ember's pointer; explain the steps in words instead, briefly.`;
           const t = tasks.start(goal, { target, mode: "guide" });
           this.announced.add(t.id);
+          // Guides have a limit of their own: this one waits for one before it to end (nothing points yet, so no "follow me").
+          if (t.status === "queued") return `Guide ${t.id} is waiting: other guides are still showing the user something, and this one starts when one of them ends. Tell the user that, in a few words; don't tell them to follow Ember's pointer yet.`;
           return `Guide ${t.id} started: Ember will point at each step and wait for the user to click. Tell the user to follow Ember, in a few words.`;
         } : undefined,
         takeReports: () => [...this.carried.splice(0), ...(tasks?.takeReports().map(report) ?? [])],
+        // Taken for a request that couldn't be sent (the runtime died): kept for the next conductor after the reconnect.
+        returnReports: reports => { this.carried.unshift(...reports); },
         tasks: tasks ? {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
-          steer: (id, text) => { const said = this.userWordsOf(this.turn); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed); },
+          steer: (id, text) => { const said = this.userWordsOf(this.turn); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords); },
         } : undefined,
       });
       await this.conductor.start();
       this.conversation = this.conductor.sessionId;
+      this.convoCaps = caps;
       this.conversationLogin = login;
       if (gen !== this.gen) return;
 
@@ -914,7 +1315,7 @@ export class AgentHost {
         defaultModel: runtimeDefault,
         login,
         source: this.source,
-        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true })),
+        models: models.map(m => ({ id: m.id, name: m.name ?? m.id, vision: m.capabilities?.supports?.vision === true, ...(m.billing?.multiplier !== undefined ? { cost: costOf(m) } : {}) })),
         conductorModel: choice.conductor,
         workerModel: choice.worker,
       });
@@ -928,12 +1329,14 @@ export class AgentHost {
       const online = this.o.isOnline?.();
       const offline = online === false || unreachable || NETWORK.test(String(err));
       this.o.log.error("agent.start_failed", { err, online, unreachable });
-      const ctx = { source: this.source, online: offline ? false : online, proxy: this.proxy };
-      this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason: startErrorReason(err, ctx) });
+      const ctx = { source: this.source, sourceName: this.sourceName, online: offline ? false : online, proxy: this.proxy, reinstall: this.sys.words.reinstall, runtime: this.o.runtimePath };
+      const reason = startErrorReason(err, ctx);
+      this.setStatus({ phase: "error", detail: explainStartError(err, ctx), reason });
       await this.doStop();
-      // Offline (e.g. started at login before the network or the VPN): try again later rather than blaming the
-      // sign-in. Not if a newer start or stop came meanwhile: a stale retry would restart a working connection.
-      if (offline && gen === this.gen) this.retryLater();
+      // Offline (e.g. started at login before the network or the VPN), or a problem on Copilot's side that passes (a
+      // 5xx, a rate limit, a timeout): try again later rather than blaming the sign-in. Not if a newer start or stop
+      // came meanwhile: a stale retry would restart a working connection.
+      if ((offline || reason === "not-answering") && gen === this.gen) this.retryLater();
     }
   }
 
@@ -1068,11 +1471,92 @@ export class AgentHost {
   }
 
   /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
-  private taskPresenter(id: string, goal: string): Presenter {
+  private taskPresenter(id: string, goal: string, binding?: TargetBinding, othersNamed = false): Presenter {
     const title = titleOf(goal);
-    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, { task: id });
+    // Its bubbles say where it acts when that isn't this computer (§2.4), and on this computer too when the user's words
+    // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are, naming the
+    // place as its bubble's badge does ("In Ubuntu (WSL): …", follow-up F-wording).
+    const where = binding ? whereWords(binding) ?? (othersNamed ? "on this computer" : undefined) : undefined;
+    const place = where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ` : "";
+    const announce = this.o.onAnnounce;
+    const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
+      task: id, ...this.bubbleOptions, ...(where ? { where } : {}),
+      ...(announce ? { onAnnounce: (text: string) => announce(`${place}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
+    });
     this.taskPresenters.set(id, p);
     return p;
+  }
+
+  /**
+   * The window a task starts in (§2.6, G14): the turn's context only when it was read on the task's own target; for a
+   * task on this computer without one, this screen's current window (as before targets existed); otherwise none (an
+   * empty target, so another computer's task never starts in this screen's window, and the reverse).
+   */
+  private contextFor(r: UserRequest | null, binding: TargetBinding | undefined): (WindowTarget & { app?: string }) | undefined {
+    if (!binding) return r?.target ?? undefined;
+    if (r?.target) return (r.targetId ?? "local") === binding.id ? r.target : {};
+    return binding.id === "local" ? undefined : {};
+  }
+
+  /**
+   * describe_screen with targets (§2.6): the screen of the computer the user's words name (or the model's choice, when
+   * their words name it too), else the active one's; this screen's through main, another computer's through its agent.
+   * `read`: it is screen text (the turn's tasks then know it was read); a refusal isn't.
+   */
+  private async describeTarget(choice?: string): Promise<{ text: string; read: boolean }> {
+    const targets = this.o.targets!;
+    const b = targets.bind({ userWords: this.userWordsOf(this.turn).words ?? "", ...(choice !== undefined ? { choice } : {}) });
+    if (!b.ok) return { text: b.why, read: false };
+    const remote = targets.describeScreen(b.binding.id);
+    if (remote) return { text: await remote, read: true };
+    if (this.o.describeScreen) return this.describeThisScreen();
+    return { text: `Ember can't read the screen in this session (${this.sys.words.noScreen}). Tell the user.`, read: false };
+  }
+
+  /**
+   * describe_screen of this computer's screen (a local or WSL target's), through main. While the screen is locked it
+   * reads nothing and answers LOCKED_DESCRIBE: a turn still running when the screen locks would otherwise read the
+   * focused window and the open windows for the model, and the refusal is Ember's own words, not screen text that the
+   * turn's tasks carry as read (cross-review X9).
+   */
+  private async describeThisScreen(): Promise<{ text: string; read: boolean }> {
+    if (this.o.screenLocked?.()) return { text: LOCKED_DESCRIBE, read: false };
+    return { text: await this.o.describeScreen!(), read: true };
+  }
+
+  /**
+   * Some computer can take a task without this screen's hands (§2.6): commands on (or awaiting their card) somewhere, or
+   * another computer Ember knows. False without a targets runtime, and when it can't say.
+   */
+  private targetsTakeTasks(): boolean {
+    try {
+      const c = this.o.targets?.caps();
+      return !!c && (c.commands || c.targets);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Windows with WSL turned on (the user's switch, and the administrator allows it): the terminal words then differ (§3.15). */
+  private wslOn(): boolean {
+    if (this.sys.os !== "win32" || !this.o.targets || this.o.admin?.().features.wsl === false) return false;
+    return this.o.settings.get().targets?.wsl.on === true;
+  }
+
+  /**
+   * The trusted line before each request's context (§2.6): where Ember is set to work and what commands can do now
+   * (built by the targets runtime from local data), and what changed about commands since the conversation began (its
+   * prompt is kept as it was created). "" without a targets runtime.
+   */
+  private trustedLine(): string {
+    const targets = this.o.targets;
+    if (!targets) return "";
+    const was = this.convoCaps ?? NO_CAPS;
+    const now = targets.caps();
+    const since = was.commands === now.commands ? ""
+      : now.commands ? "(Since this conversation began, the user turned on commands: tasks can now run commands in Ember's command window.)"
+      : "(Since this conversation began, commands were turned off: tasks can't run commands now. Say so if the user asks for one.)";
+    return [targets.activeLine().trim(), since].filter(Boolean).join(" ");
   }
 
   /**
@@ -1089,6 +1573,15 @@ export class AgentHost {
     if (seen.blocked) return "that window is private (a password prompt, or on the never-look list).";
     if (!seen.window) return seen.busy ? "the window doesn't answer right now." : "Ember can't read that window (it exposes no accessibility information).";
     return null;
+  }
+
+  /**
+   * Nothing a reconnect would cut off: no start under way, no answer or guide step, no request waiting for its turn,
+   * no task running or queued. A sign-in due for renewal waits for this before it is renewed and Copilot reconnected
+   * with it (review #138, cross-review X11).
+   */
+  get idle(): boolean {
+    return this.starting === 0 && !this.presenter.atWork && !this.queued.length && !this.tasksAtWork();
   }
 
   /** Tasks running or waiting to run. */
@@ -1108,7 +1601,8 @@ export class AgentHost {
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
    * before reading the screen); a Stop since then drops the request instead of sending it.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string } | null, epoch = this.stopEpoch): Promise<void> {
+  /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked). */
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<void> {
     if (epoch !== this.stopEpoch) return;
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
@@ -1120,6 +1614,13 @@ export class AgentHost {
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
+    // No window system, and no computer could take a task when the conversation's tools were made, but one can now (the
+    // user turned commands on, or added a computer): Copilot is reconnected first, so the conversation (resumed as it
+    // was) has the task tools. Never while a turn or a task is under way (the reconnect would cut it off).
+    if (this.status.phase === "ready" && !this.tasks && !this.o.hands && this.targetsTakeTasks() && !this.presenter.busy && !this.queued.length) {
+      this.o.log.info("agent.tasks_available");
+      void this.launch(this.token, this.source);
+    }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
       this.presenter.userPrompt(text);
@@ -1131,26 +1632,41 @@ export class AgentHost {
       const signedOut = this.status.phase === "signed-out";
       const why = signedOut ? "Connect your GitHub account in settings, then ask me again." : this.status.detail;
       const title = this.status.phase === "starting" ? "I'm still connecting to Copilot" : NOTICE_TITLE[signedOut ? "signed-out" : this.status.reason ?? "other"];
-      this.presenter.notice({ title, text: why, actions: [{ id: "ui:settings", label: "Open settings" }] });
+      const restart = this.status.reason === "policy" && !!this.o.policyHeld?.();
+      // Not signed in: signing in is what to do next (as the greeting says it), not a problem. Settings is offered only
+      // where it can help: not while Ember waits for the network or reconnects by itself.
+      const selfMending = !signedOut && (this.status.phase === "starting" || this.status.reason === "network" || this.status.reason === "not-answering");
+      const actions = restart ? [{ id: "ui:restart", label: "Restart Ember" }] : selfMending ? [] : [{ id: "ui:settings", label: "Open settings" }];
+      this.presenter.notice({ title, text: why, actions, ...(signedOut ? { mood: "attention" as const } : {}) });
       this.unreachable = why;
       // The conversation section keeps what was asked, and why it went unanswered.
-      this.remember("you", text);
+      const asked = this.remember("you", text);
+      if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
       this.remember("problem", `${title}: ${why}`);
       return;
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
-    this.remember("you", text);
+    const asked = this.remember("you", text);
+    if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
     // Its turn may start only after the one running now: it takes this context then (see conversationEvent).
-    const request: UserRequest = { target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [] };
+    const request: UserRequest = {
+      target: context?.target ?? null, words: text, screen: context?.text ? [context.text] : [], ...(context?.targetId ? { targetId: context.targetId } : {}),
+      ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}),
+    };
     // Asked again: words a task was refused for earlier hold again (also when Ember asks something before the task).
     for (const l of text.split("\n")) this.terminalRefused.delete(refusedKey(l));
+    // A terminal or a command asked for while commands are off by the user's switch: Ember offers the switch (once),
+    // when this request's turn ends (hintCommands checks then whether commands are off by the user's switch).
+    const terminal = terminalRequest(this.sys.os, this.wslOn());
+    if (terminal.asks.test(text.replace(terminal.refuses, " ")) || /\b(?:run|execute|type)\s+(?:(?:a|an|the|this|that|these|those|some)\s+)?commands?\b/i.test(text)) this.hintOwed = true;
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
-      await this.conductor.ask(text, context?.text);
+      await this.conductor.ask(text, context?.text, this.trustedLine());
     } catch (err) {
-      // Never sent: no turn of its own will come.
+      // Never sent: no turn of its own will come (nor its hint).
+      this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
       if (err instanceof ConnectionLost) this.lost(gen, "send failed");
       else throw err;
@@ -1167,11 +1683,39 @@ export class AgentHost {
     this.queued = [];
     this.claimBubble();
     this.presenter.quiet();
+    // (A connection's bubble too: the kill switch stops its reconnects, so "I'll try to reconnect" doesn't come back.)
+    this.noticeBoard.quiet();
+    this.offerBoard.quiet();
+    // (And the "Commands are off" hint waiting behind the answer: offered again later if it never showed.)
+    this.hintOwed = false;
+    this.commandsHint?.quiet();
     for (const p of this.taskPresenters.values()) p.quiet();
     for (const t of this.tasks?.list() ?? []) if (t.status === "running" || t.status === "queued") this.stoppedByAll.add(t.id);
     this.tasks?.cancelAll();
-    this.o.hands?.confirmer.cancelAll();
+    this.confirmer?.cancelAll();
     await this.conductor?.abort();
+  }
+
+  /**
+   * Stops every task bound to `target` (a queued one ends before it starts, a running one is aborted, with its question
+   * if it asked one): someone at that computer pressed Stop, or its connection went (§5.3.9, §5.1.11). With `only:
+   * "desktop"` (its screen locked or its session went inactive, §5.3.4 step 8), only the running tasks that used its
+   * desktop: one running only commands there goes on (its command window is on this PC), and a queued one hasn't used
+   * it; a running task that can't say counts as one that did. Tasks on other computers go on. `why`: what each stopped
+   * task's result says instead of "Stopped." ("build-01's connection dropped, so I stopped this."). Returns how many it
+   * stopped.
+   */
+  cancelTasksOn(target: TargetId, only?: "desktop", why?: string): number {
+    let n = 0;
+    for (const t of this.tasks?.list() ?? []) {
+      if ((t.targetId ?? "local") !== target || (t.status !== "running" && t.status !== "queued")) continue;
+      if (only === "desktop" && (t.status === "queued" || this.taskDesktop.get(t.id)?.() === false)) continue;
+      if (why) this.stoppedWhy.set(t.id, why);
+      this.tasks?.cancel(t.id);
+      n++;
+    }
+    if (n) this.o.log.info("agent.target_tasks_stopped", { kind: target.split(":")[0], n, ...(only ? { only } : {}) });
+    return n;
   }
 
   /**
@@ -1183,7 +1727,7 @@ export class AgentHost {
     // (The start that follows sign-out replaces this connection anyway: the tasks ending here don't reconnect it.)
     this.reconnectAfterTasks = null;
     this.tasks?.cancelAll();
-    this.o.hands?.confirmer.cancelAll();
+    this.confirmer?.cancelAll();
     await this.tasks?.drain(2500);
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
@@ -1200,6 +1744,7 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversation = null;
+    this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);
       else forgetSavedConversation(this.stateFile);
@@ -1218,7 +1763,7 @@ export class AgentHost {
     // Nothing keeps acting or asking once the brain goes away (sign-out, restart, quit). Cut off by a runtime
     // that stopped (or stopped answering), tasks end as failed.
     this.tasks?.cancelAll(cutOff ?? undefined);
-    this.o.hands?.confirmer.cancelAll();
+    this.confirmer?.cancelAll();
     // First, while the runtime surely still runs (quitting doesn't wait long).
     if (forget) await this.forgetCurrent(2000);
     await this.tasks?.drain(2500);

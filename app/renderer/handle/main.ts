@@ -1,11 +1,16 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { announcement, onPress, plainStream } from "@ember/bubble";
-import type { BubbleState, HandleApi, TaskCard } from "../../shared/overlay";
+import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
+import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
+import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
+import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
+import { idleLine as tasksLine } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
+import { idleLine, micBadge } from "../../shared/mic";
+import { HandleLive } from "./live";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -62,7 +67,7 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
 }
 
 /** The task row's state in words, for screen readers (its symbol says it to the eye). */
-const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
+const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 
 const thoughtEl = $("thought");
 let wasStreaming = false;
@@ -71,47 +76,139 @@ let wasStreaming = false;
  * in the card's live region, as the overlay's bubble does (with one, the bubble does it and the pill says nothing).
  */
 let announced = "";
-let announcedStatus = "";
+/** What it last said that from (only the news once a question's whole text has all been shown: wholeReadNews). */
+let announcedView: BubbleView | null = null;
+/** The status line and the microphone's news, each said once (live.ts): in the card, and the microphone's in the pill. */
+const live = new HandleLive();
 /**
  * Reads out what changed: the bubble's words, and the status line ("Using your mouse: move it to take over", "I only
- * caught the first part…"), which the card shows even under a bubble. Both at once go out together (one live update).
+ * caught the first part…"), which the card shows even under a bubble, and news about the microphone. All at once go
+ * out together (one live update).
  */
-function announce(b: BubbleState, status: string | null): void {
+function announce(b: BubbleState, status: string | null, micNews: string | null): void {
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const text = announcement({ visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming }, name);
-    if (text && text !== announced) { announced = text; parts.push(text); }
+    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}) };
+    const text = announcement(view, name);
+    // The same question, its whole text now all shown: only that news, not the question and its text again.
+    if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }
   }
-  if ((status ?? "") !== announcedStatus) {
-    announcedStatus = status ?? "";
-    if (status) parts.push(status);
-  }
+  parts.push(...live.news(status, micNews));
   if (parts.length) $("live").textContent = parts.join(" ");
 }
+// ── A question's whole text (review #116): all of a long typed text under its sentence, as the bubble shows it, and
+// its Allow waiting until all of it has been in view on the card (packages/bubble/src/whole.ts judges it) ──
+const wholeEl = $("whole");
+const wholeHintEl = $("whole-hint");
+let whole: WholeView | null = null;
+/** The whole text as main sends it (null: none): shown from its start; each approve-key press since, a page on. */
+function showWhole(next: WholeText | null): void {
+  const r = wholeNext(whole, next);
+  whole = r.view;
+  wholeEl.hidden = !whole;
+  if (!whole) { wholeEl.textContent = ""; paintWhole(); return; }
+  if (r.fresh) { wholeEl.textContent = whole.text; wholeEl.scrollTop = 0; }
+  if (r.pages) wholeEl.scrollTop += r.pages * wholePage(wholeEl.clientHeight, parseFloat(getComputedStyle(wholeEl).lineHeight));
+  paintWhole();
+  // Seen here and main doesn't say so yet (just now, or a word that was lost): told (again).
+  if (wholeUnreported(whole, next)) api.bubbleAction(wholeSeenAction(whole.n));
+}
+/** The read hint, and Allow taking no press, while the whole text hasn't all been in view. */
+function paintWhole(): void {
+  const unread = !!whole && !whole.seen;
+  wholeHintEl.hidden = !unread;
+  wholeHintEl.textContent = unread ? WHOLE_READ_HINT : "";
+  for (const el of $("actions").querySelectorAll<HTMLElement>("button")) {
+    if (unread && el.dataset.whole === "wait") el.setAttribute("aria-disabled", "true"); else el.removeAttribute("aria-disabled");
+  }
+}
+/** A length in a computed style, in CSS px (0 for none or auto). */
+const px = (v: string): number => parseFloat(v) || 0;
+/** The words' rows shown now (the name, the bold line, the words, a whole text's block, its hint, the step). */
+const wordRows = (): HTMLElement[] => [...$("handle").querySelector<HTMLElement>(".text")!.children]
+  .filter((el): el is HTMLElement => el instanceof HTMLElement && getComputedStyle(el).display !== "none");
+/**
+ * The words have the room a whole text needs to count as seen (fit.ts): the question's sentence beside it, and nothing
+ * running into the buttons. A card too small for that (its limits, the work area) never takes the block's end as read.
+ */
+function wordsClear(): boolean {
+  const handleEl = $("handle");
+  const end = handleEl.getBoundingClientRect().bottom - px(getComputedStyle(handleEl).paddingBottom);
+  return cardClear({
+    sentence: { clientHeight: thoughtEl.clientHeight, scrollHeight: thoughtEl.scrollHeight, lineHeight: px(getComputedStyle(thoughtEl).lineHeight) },
+    wordsEnd: end, rowsEnd: wordRows().map(el => el.getBoundingClientRect().bottom),
+  });
+}
+/** Measured (a layout read) while it waits to be read: main told the first time all of it is in view on the shown card. */
+function judgeWhole(): void {
+  if (!whole || whole.seen) return;
+  const r = wholeEl.getBoundingClientRect();
+  const shown = fallback && document.visibilityState === "visible" && wordsClear();
+  const { view, report } = wholeJudged(whole, wholeInView(
+    { scrollTop: wholeEl.scrollTop, scrollHeight: wholeEl.scrollHeight, clientHeight: wholeEl.clientHeight, top: r.top, bottom: r.bottom, viewportHeight: window.innerHeight },
+    { shown, fontsLoaded: document.fonts.status === "loaded" },
+  ));
+  whole = view;
+  if (!report) return;
+  paintWhole();
+  api.bubbleAction(wholeSeenAction(view.n));
+}
+wholeEl.addEventListener("scroll", judgeWhole, { passive: true });
+window.addEventListener("resize", judgeWhole);
+document.fonts.addEventListener("loadingdone", judgeWhole);
+
+/** The picker's target beside Ember's name (§8.1): nothing for this computer. The corner card gives its own (cardBadge). */
+let badgeKey = "";
+function renderTarget(s: EmberState, given?: TargetBadge | null): void {
+  const badge = given !== undefined ? given : targetBadge(s.target);
+  const key = badge ? `${badge.state}|${badge.text}` : "";
+  if (key === badgeKey) return;
+  badgeKey = key;
+  const el = $("target");
+  el.hidden = !badge;
+  if (!badge) return;
+  el.dataset.state = badge.state;
+  el.title = badge.label;
+  el.setAttribute("aria-label", badge.label);
+  $("target-text").textContent = badge.text;
+}
+
 api.onState(s => {
+  if (!fallback) renderTarget(s);
   if (s.emotion !== emotion) { emotion = s.emotion; rig.setEmotion(s.emotion); }
   rig.setTalking(s.talking);
   busy = s.talking || s.bubble.streaming;
   const b = s.bubble;
+  // The microphone: a shape and words for its state (never colour alone), whenever listening is on.
   const mic = $("mic");
-  const micShown = s.mic === "waiting" || s.mic === "active" || s.mic === "muted" || s.mic === "error";
-  mic.hidden = !micShown;
+  const micState = micBadge(s.mic);
+  mic.hidden = !micState;
   mic.dataset.state = s.mic ?? "off";
-  mic.title = s.mic === "active" ? "Hearing you" : s.mic === "waiting" ? "Listening for “Hey Ember”" : s.mic === "muted" ? "Microphone off" : s.mic === "error" ? "Microphone problem" : "";
+  mic.dataset.glyph = micState?.glyph ?? "";
+  mic.title = micState?.label ?? "";
+  mic.setAttribute("aria-label", micState?.label ?? "Microphone");
+  const micNews = live.micNews(s.mic);
+  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work; while tasks run, their count in place of Ready.
+  const idle = tasksLine(idleLine(s.idle, s.mic), s.tasks) ?? "Ready";
   if (!fallback) {
+    if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || s.idle || "Ready");
+    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
     return;
   }
-  announce(b, s.status ?? null);
+  announce(b, s.status ?? null, micNews);
   // The card: a short label or title in bold, the words under it, then the question's buttons and the running task.
   const task = cardTask(s.tasks, b.visible ? b : undefined);
-  const text = cardText(b, name, s.status ?? s.idle ?? null, task?.title);
+  // Beside Ember's name: where the bubble's task acts (its question is about that computer), else the picker's choice.
+  renderTarget(s, cardBadge({ where: b.visible ? b.where : undefined, task: b.visible && !!b.task }, s.target));
+  const text = cardText(b, name, s.status ?? idle, task?.title);
   if ($("line").textContent !== text.line) $("line").textContent = text.line;
   const thought = b.streaming ? plainStream(text.thought) : text.thought;
   if (thoughtEl.textContent !== thought) thoughtEl.textContent = thought;
+  showWhole(b.visible ? b.whole ?? null : null);
+  keepLines();
   // While it streams, the newest lines show; once done, it reads (and scrolls) from the start.
   if (b.streaming) thoughtEl.scrollTop = thoughtEl.scrollHeight;
   else if (wasStreaming) thoughtEl.scrollTop = 0;
@@ -133,18 +230,67 @@ api.onState(s => {
   document.body.classList.toggle("asking", actions.length > 0);
   $("actions").hidden = actions.length === 0;
   buttons($("actions"), actions, a => a.label);
+  // Allow (never Not now) waits for the question's whole text to have all been in view; main refuses it before, too.
+  [...$("actions").querySelectorAll<HTMLElement>("button")].forEach((el, i) => { el.dataset.whole = actions[i] && waitsForWhole(actions[i].id, b.whole) ? "wait" : ""; });
+  paintWhole();
 
   $("task").hidden = !task;
   if (task) {
     $("task").dataset.status = task.status;
     $("task-state").textContent = TASK_WORD[task.status];
-    $("task-title").textContent = task.title;
+    const at = whereText(task.where);
+    $("task-title").textContent = at ? `${task.title} (${at})` : task.title;
     $("task-detail").textContent = task.detail;
     $("task").title = `${task.title}${task.detail ? `: ${task.detail}` : ""}`;
   }
   buttons($("task-actions"), task?.actions ?? [], a => `${a.label}: ${task?.title ?? ""}`);
   requestAnimationFrame(fitCard);
+  // Judged once laid out (and again when the card is fitted to it: resize).
+  if (whole && !whole.seen) requestAnimationFrame(judgeWhole);
 });
+
+/**
+ * Under a question with a whole text, the sentence keeps its first three lines (all, when it has fewer) and the block
+ * its first three, however little room is left (styles.css --lines-kept): the block gives way first, from the lines it
+ * shows unsqueezed (--lines-shown, up to its seven). Otherwise none.
+ */
+function keepLines(): void {
+  const set = (el: HTMLElement, name: string, n: number) => { if (el.style.getPropertyValue(name) !== String(n)) el.style.setProperty(name, String(n)); };
+  for (const el of [thoughtEl, wholeEl]) {
+    const cs = getComputedStyle(el);
+    const content = el.scrollHeight - px(cs.paddingTop) - px(cs.paddingBottom);
+    set(el, "--lines-kept", whole ? linesKept(content, px(cs.lineHeight), 3) : 0);
+    if (el === wholeEl) set(el, "--lines-shown", whole ? linesKept(content, px(cs.lineHeight), 7) : 7);
+  }
+}
+
+/**
+ * What the card needs to show all it holds, measured as if nothing were squeezed (fit.ts): each row of words at its own
+ * height (the words and a whole text's block at all of theirs, the block up to its own most), then the question's
+ * buttons and the task row with the gaps the stylesheet leaves under them (read, so the two can never drift apart).
+ */
+function cardMeasure(): CardMeasure {
+  const handleEl = $("handle");
+  const hs = getComputedStyle(handleEl);
+  const ts = getComputedStyle(handleEl.querySelector<HTMLElement>(".text")!);
+  const rows = wordRows().map((el): CardRow => {
+    const cs = getComputedStyle(el);
+    let natural = el.offsetHeight;
+    if (el === thoughtEl) natural = el.scrollHeight;
+    else if (el === wholeEl) {
+      const most = parseFloat(cs.maxHeight);
+      natural = Number.isFinite(most) ? Math.min(el.scrollHeight, most + px(cs.paddingTop) + px(cs.paddingBottom)) : el.scrollHeight;
+    }
+    return { natural, marginTop: px(cs.marginTop), marginBottom: px(cs.marginBottom) };
+  });
+  const below = ["actions", "task"].map(id => $(id)).filter(el => !el.hidden)
+    .map((el): CardRow => ({ natural: el.offsetHeight, marginTop: 0, marginBottom: px(getComputedStyle(el).marginBottom) }));
+  return {
+    top: { padTop: px(hs.paddingTop), padBottom: px(hs.paddingBottom), min: px(hs.minHeight), face: $("menu").offsetHeight },
+    text: { padTop: px(ts.paddingTop), gap: px(ts.rowGap), rows },
+    below,
+  };
+}
 
 /**
  * Asks the main process for a card as tall as what it shows (no empty gap under a short question,
@@ -154,15 +300,7 @@ let askedHeight = 0;
 function fitCard(): void {
   const fit = (api as HandleApi & { fit?: (height: number) => void }).fit;
   if (!fallback || typeof fit !== "function") return;
-  const handleEl = $("handle");
-  const extra = thoughtEl.scrollHeight - thoughtEl.clientHeight;
-  let h = handleEl.offsetHeight + Math.max(0, extra);
-  for (const id of ["actions", "task"]) {
-    const el = $(id);
-    // Its own height and the gap the stylesheet leaves under it (read, so the two can never drift apart again).
-    if (!el.hidden) h += el.offsetHeight + parseFloat(getComputedStyle(el).marginBottom);
-  }
-  h = Math.ceil(h);
+  const h = cardNeed(cardMeasure());
   if (Math.abs(h - askedHeight) < 4) return;
   askedHeight = h;
   fit(h);

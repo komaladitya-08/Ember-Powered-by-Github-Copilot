@@ -154,6 +154,37 @@ describe("CursorBorrow and the keyboard layout", () => {
   });
 });
 
+describe("digit shortcuts on layouts that type digits with Shift (French, Belgian, Czech)", () => {
+  /** French AZERTY's digit row: "&" alone and "1" with Shift on keycode 10, "à" and "0" on keycode 19. */
+  const french: KeyLayout = (() => {
+    const keys: KeyLevels = new Map([[10, [ch("&"), ch("1")]], [19, [0xe0 /* agrave */, ch("0")]], [24, [ch("a"), ch("A")]], [37, [CONTROL_L, CONTROL_L]], [50, [SHIFT_L, SHIFT_L]], [64, [0xffe9, 0xffe9]]]);
+    return { typing: keys, shortcuts: keys, shift: 50 };
+  })();
+  const frenchX = () => {
+    const f = fakeX();
+    f.x.layout = () => french;
+    f.x.keysymOf = name => ({ Control_L: CONTROL_L, Shift_L: SHIFT_L, Alt_L: 0xffe9, Super_L: 0xffeb, 1: ch("1"), 0: ch("0") } as Record<string, number>)[name] ?? 0;
+    return f;
+  };
+
+  it("presses Ctrl, Alt or Super with the digit's key and no Shift, as a user of the layout does (review #63)", async () => {
+    const { s, x } = frenchX();
+    const b = new CursorBorrow(x);
+    await b.borrow(async hand => { await hand.keys("ctrl+1"); await hand.keys("alt+0"); }, fast);
+    expect(keysPressed(s.log)).toEqual(["sym ffe3 down", "code 10 down", "code 10 up", "sym ffe3 up", "sym ffe9 down", "code 19 down", "code 19 up", "sym ffe9 up"]);
+  });
+
+  it("keeps Shift for a digit alone, and when the combination asks for it", async () => {
+    const { s, x } = frenchX();
+    const b = new CursorBorrow(x);
+    await b.borrow(async hand => { await hand.keys("1"); await hand.keys("ctrl+shift+1"); }, fast);
+    expect(keysPressed(s.log)).toEqual([
+      "sym ffe1 down", "code 10 down", "code 10 up", "sym ffe1 up",
+      "sym ffe3 down", "sym ffe1 down", "code 10 down", "code 10 up", "sym ffe1 up", "sym ffe3 up",
+    ]);
+  });
+});
+
 describe("shortcut keys on the layout in use", () => {
   it("takes the active group first, then another group's first two levels, never a third level", () => {
     expect(shortcutStroke(ch("a"), layout(1))).toEqual({ code: 38, shift: false }); // from us, with ru active
