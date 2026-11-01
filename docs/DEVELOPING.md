@@ -290,6 +290,27 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
 | All 4 cores kept busy by other work: listening / Piper (1 thread) / Piper WebAssembly | 0.237 / — / 0.56 | 0.071 / 0.14 |
 | Kokoro int8 (`kokoro-int8-multi-lang-v1_0`) | — | 1.14–1.27 (2–4 threads) |
 
+**How long a spoken answer takes.** Each spoken request logs one `voice.latency` line, with times only, never words.
+- `asrMs` is what transcribing the request took.
+- The other fields count from when its transcript arrived:
+  - `sentMs`: the request handed to Copilot, after the screen read of up to 3 s;
+  - `firstTokenMs`: the answer's first words;
+  - `firstChunkMs`: its first piece handed to the voice;
+  - `firstAudioMs`: Ember's first sound.
+- A step that didn't happen is left out: a stop, or speaking off.
+
+A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
+report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).
+
+**What Ember costs at rest.** On Linux, after `npm run build` and `node scripts/voice/prepare.mjs`, run
+`dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs`.
+- It starts the built app with a throwaway data folder, consent and voice on, and silence for a microphone (`--sound`
+  plays a tone instead).
+- It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
+- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
+- On 4 vCPUs at 2.1 GHz it measured 741 MB and 35 % of one core. The setup page was open (no sign-in) and cost 10.6 %;
+  the speech process cost 1.1 % in silence.
+
 ### Connecting Copilot
 
 Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's own GitHub App (the device flow:
