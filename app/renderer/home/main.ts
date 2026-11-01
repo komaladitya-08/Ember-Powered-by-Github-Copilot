@@ -7,7 +7,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { handleCornerText } from "./copy";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
@@ -984,12 +984,14 @@ function renderVoice(v: VoiceStatus): void {
   voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;
-  // Listening turned off by the organisation: nothing to download it for.
-  dl.hidden = v.modelsReady || v.state === "downloading" || managed.has("wakeWord");
-  dl.textContent = `Download speech models (${Math.round(v.modelsBytes / 1e6)} MB)`;
+  // Listening turned off by the organisation: nothing to download it for. Otherwise it fetches what's missing (all of
+  // them on first use; later just Ember's voice or Voice Match, should one be missing or damaged).
+  const downloading = v.state === "downloading" || !!v.downloading;
+  dl.hidden = !v.modelsMissing.length || downloading || managed.has("wakeWord");
+  dl.textContent = modelsDownloadLabel(v.modelsMissing, v.modelsBytes);
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
-  ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
@@ -1008,7 +1010,9 @@ let matchCancelled = false;
 /** Draws Voice Match (match-copy.ts matchView) and returns what screen readers should hear, if anything. */
 function renderMatch(): string | null {
   const m = voice?.match;
-  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord") });
+  // Voice Match's model alone missing: its size, for the note that says to download it.
+  const speakerBytes = voice?.modelsMissing.length === 1 && voice.modelsMissing[0] === "speaker" ? voice.modelsBytes : null;
+  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes });
   const group = $("match");
   // The control that has focus, if this draw hides or disables it: focus moves on (as after Download and the consent buttons).
   const had = document.activeElement instanceof HTMLElement && group.contains(document.activeElement) ? document.activeElement : null;

@@ -43,6 +43,17 @@ describe("Voice Match's states", () => {
     expect(matchView(enrolling(0, "failed"), shown).prompt).toBe("Ember couldn't hear that clearly. Say it again: “Ember, what's the weather like”");
   });
 
+  it("without its model: off with a note (a kept voiceprint isn't used, so every voice is heard), nothing to switch on or teach", () => {
+    const kept = matchView({ enrolled: true, on: false, model: false, wanted: true, enrolling: null }, { ...shown, speakerBytes: 26_534_365 });
+    expect(kept).toMatchObject({ checked: false, disabled: true, forgetHidden: false, focus: ["voice-download", "wake"] });
+    expect(kept.teach.hidden).toBe(true);
+    expect(kept.text).toMatch(/^Off for now: Voice Match's model is missing or was damaged, so Ember answers anyone .*Download it above \(27 MB\)/);
+    const fresh = matchView({ enrolled: false, on: false, model: false, enrolling: null }, shown);
+    expect(fresh).toMatchObject({ disabled: true, text: "Voice Match needs its own model, which isn't on this computer. Download it above, then teach Ember your voice." });
+    // Its model back: as before.
+    expect(matchView({ ...onNow, model: true, wanted: true }, shown).text).toBe(MATCH_TEXT.on);
+  });
+
   it("taught and on, or taught and off: Teach again and Forget are offered", () => {
     const on = matchView(onNow, shown);
     expect(on).toMatchObject({ checked: true, disabled: false, text: MATCH_TEXT.on, forgetHidden: false, cancelHidden: true });
@@ -59,7 +70,7 @@ describe("Voice Match's states", () => {
     }
     expect(matchView(undefined, shown).hidden).toBe(true);
     // main.ts asks with the listening switch's own condition and the organisation's wakeWord key (admin.ts managedKeys).
-    expect(main).toMatch(/matchView\(m, \{ listening: voiceSettings\.wakeWord && voiceSettings\.consent, managed: managed\.has\("wakeWord"\) \}\)/);
+    expect(main).toMatch(/matchView\(m, \{ listening: voiceSettings\.wakeWord && voiceSettings\.consent, managed: managed\.has\("wakeWord"\), speakerBytes \}\)/);
   });
 });
 

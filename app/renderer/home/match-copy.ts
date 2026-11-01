@@ -41,8 +41,23 @@ export interface MatchView {
   focus: string[];
 }
 
-export function matchText(m: VoiceMatchStatus): string {
+/**
+ * Voice Match without its model (missing, or damaged): why it's off (a kept voiceprint isn't used meanwhile, so Ember
+ * hears every voice rather than none), or why it can't be taught yet. `bytes`: the model's size, when it alone is missing.
+ */
+export function matchNoModelText(wanted: boolean, bytes: number | null = null): string {
+  const size = bytes ? ` (${Math.max(1, Math.round(bytes / 1e6))} MB)` : "";
+  return wanted
+    ? `Off for now: Voice Match's model is missing or was damaged, so Ember answers anyone who says its name. Download it above${size} and Ember answers only you again.`
+    : `Voice Match needs its own model, which isn't on this computer. Download it above${size}, then teach Ember your voice.`;
+}
+
+/** Voice Match can't run: its model isn't in (a status from before this field says it is). */
+const noModel = (m: VoiceMatchStatus) => m.model === false && !m.enrolling;
+
+export function matchText(m: VoiceMatchStatus, speakerBytes: number | null = null): string {
   if (m.enrolling) return `Say each phrase as you would ask Ember (${m.enrolling.got} of ${m.enrolling.of} heard).`;
+  if (noModel(m)) return matchNoModelText(!!m.wanted, speakerBytes);
   return !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
 }
 
@@ -50,23 +65,26 @@ export function matchPrompt(e: NonNullable<VoiceMatchStatus["enrolling"]>): stri
   return `${e.again ? MATCH_TEXT.again[e.again] : MATCH_TEXT.say} “${e.phrase}”`;
 }
 
-export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boolean; managed: boolean }): MatchView {
+/** `speakerBytes`: Voice Match's model's size, when it alone is missing (said in the note about it). */
+export function matchView(m: VoiceMatchStatus | undefined, o: { listening: boolean; managed: boolean; speakerBytes?: number | null }): MatchView {
   const hidden = !m || o.managed || !o.listening;
   const e = m?.enrolling ?? null;
   const busy = !!e;
+  // Its model missing or damaged: off until the download brings it back; nothing to switch on or teach meanwhile.
+  const blocked = !!m && noModel(m);
   return {
     hidden,
     busy,
     checked: !!m && (m.on || busy),
-    disabled: busy,
-    text: m ? matchText(m) : "",
+    disabled: busy || blocked,
+    text: m ? matchText(m, o.speakerBytes ?? null) : "",
     prompt: e ? matchPrompt(e) : "",
     progress: e ? { value: e.got, max: e.of, text: `${e.got} of ${e.of} heard` } : null,
-    teach: { hidden: busy, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach },
+    teach: { hidden: busy || blocked, label: m?.enrolled ? MATCH_TEXT.teachAgain : MATCH_TEXT.teach },
     cancelHidden: !busy,
     forgetHidden: busy || !m?.enrolled,
     // Teaching: Cancel is the one button there. Otherwise Teach; with the whole group gone, the listening switch.
-    focus: hidden ? ["wake"] : busy ? ["match-cancel"] : ["match-teach", "match-on", "wake"],
+    focus: hidden ? ["wake"] : busy ? ["match-cancel"] : blocked ? ["voice-download", "wake"] : ["match-teach", "match-on", "wake"],
   };
 }
 

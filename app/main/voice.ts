@@ -15,7 +15,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { ensureModels, forgetModels, modelPaths, modelReady, modelsReady, VOICE_MODELS_BYTES, type Downloader, type ModelsProgress } from "../voice/models";
+import { ensureModels, forgetModels, LISTENING_MODELS, modelPaths, modelReady, modelsBytes, VOICE_MODELS, VOICE_MODELS_BYTES, type Downloader, type ModelFile, type ModelId, type ModelsProgress } from "../voice/models";
+import type { ModelPaths } from "../voice/sherpa";
 import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage } from "../voice/tts-process";
@@ -55,8 +56,9 @@ export interface VoiceOptions {
   /** The speech models' folder. */
   modelsRoot: string;
   /**
-   * `modelsRoot` came with Ember (inside the app, or installed beside it), so Ember never changes it: should its models
-   * turn out damaged, the user's own models folder (`userRoot`) is used, and downloaded to, instead (review #254).
+   * `modelsRoot` came with Ember (inside the app, or installed beside it), so Ember never changes it: a model it lacks
+   * (Ember's voice, Voice Match: listening needs only LISTENING_MODELS) or whose copy there turns out damaged is taken
+   * from the user's own models folder (`userRoot`) instead, and downloaded there (review #254).
    */
   bundled?: { userRoot: string };
   /** Speaker-output rejection (needs parec). */
@@ -76,6 +78,8 @@ export interface VoiceOptions {
   voiceprint?: () => string | null;
   /** Enrolment's progress (Voice Match); at "done", `print` is the voiceprint to keep. */
   onEnrol?: (e: EnrolProgress) => void;
+  /** Which models are in changed (a download finished, one turned out damaged): settings shows it. */
+  onModels?: () => void;
 }
 
 /** What settings shows of enrolment: phrases kept so far, and whether the last must be said again (and why). */
@@ -136,9 +140,13 @@ export class VoiceService {
   private readyAt = 0;
   /** Whether the ready voice process still answers: what it last sent, checked every second (review #257). */
   private alive: { watch: FrameWatchdog; timer: NodeJS.Timeout } | null = null;
-  /** Where the models are: modelsRoot, or the user's own folder once those that came with Ember turned out damaged. */
-  private modelsRoot: string;
-  private bundled: boolean;
+  /**
+   * Where the models are looked for: the folder that came with Ember (`bundledRoot`, null without one), less those of
+   * its models that turned out damaged (`notBundled`), then the user's own (`userRoot`), where downloads go.
+   */
+  private bundledRoot: string | null;
+  private notBundled = new Set<ModelId>();
+  private userRoot: string;
   /** Ember's own voice: its process (started on the first reply), whether it has loaded, and how often it failed. */
   private tts: { proc: UtilityProcess; ready: boolean } | null = null;
   private ttsFailures = 0;
@@ -151,8 +159,8 @@ export class VoiceService {
   private enrolling = false;
 
   constructor(private o: VoiceOptions) {
-    this.modelsRoot = o.modelsRoot;
-    this.bundled = !!o.bundled;
+    this.bundledRoot = o.bundled ? o.modelsRoot : null;
+    this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
       if (!this.mic || e.sender !== this.mic.webContents) return;
       if (s.state === "error") { this.o.log.error("voice.mic_error", { message: s.message }); this.setState("error", micHelp(s.message, this.o.micHint)); this.teardown(); }
@@ -194,8 +202,41 @@ export class VoiceService {
     return !!this.proc && this.monitorOn && (this.state === "waiting" || this.state === "active");
   }
 
+  /** Listening can start: the wake word, voice activity and speech recognition models are in (LISTENING_MODELS). */
   get modelsReady(): boolean {
-    return modelsReady(this.modelsRoot);
+    return LISTENING_MODELS.every(id => this.rootOf(id) !== null);
+  }
+
+  /** The models that aren't in (or turned out damaged): what the download fetches. */
+  get missingModels(): ModelFile[] {
+    return VOICE_MODELS.filter(m => this.rootOf(m.id) === null);
+  }
+
+  /** Voice Match can run: its voiceprint model is in. Without it, a kept voiceprint isn't used (every voice is heard). */
+  get matchReady(): boolean {
+    return this.rootOf("speaker") !== null;
+  }
+
+  /** A download is under way (listening may be running meanwhile, when only Ember's voice or Voice Match is fetched). */
+  get isDownloading(): boolean {
+    return !!this.downloading;
+  }
+
+  /** Which folder model `id` is used from: the one that came with Ember, else the user's own; null when in neither. */
+  private rootOf(id: ModelId): string | null {
+    if (this.bundledRoot && !this.notBundled.has(id) && modelReady(this.bundledRoot, id)) return this.bundledRoot;
+    return modelReady(this.userRoot, id) ? this.userRoot : null;
+  }
+
+  /** Each model's path, from the folder it is used from (the user's own for one that isn't in anywhere). */
+  private paths(): ModelPaths {
+    const at = (id: ModelId) => modelPaths(this.rootOf(id) ?? this.userRoot)[id];
+    return { kws: at("kws"), vad: at("vad"), asr: at("asr"), tts: at("tts"), speaker: at("speaker") };
+  }
+
+  /** The owner's voiceprint for the voice process: none while its model isn't in (Voice Match is off then, not deaf). */
+  private voiceprint(): string | null {
+    return this.matchReady ? this.o.voiceprint?.() ?? null : null;
   }
 
   /** Lets the mic window (and only it) use the microphone, audio only. */
@@ -233,22 +274,38 @@ export class VoiceService {
     if (this.wanted && !this.muted) this.setState("off", LOCKED_TEXT);
   }
 
-  /** Rejects if the download fails; the state has then already gone back (with what went wrong as its detail). */
+  /**
+   * Downloads the models that aren't in (to the user's own folder): all of them on first use, or only what is missing
+   * or was damaged (Ember's voice, Voice Match). Listening that already runs carries on meanwhile. Rejects if the
+   * download fails; the state has then already gone back (with what went wrong as its detail).
+   */
   async downloadModels(progress: ModelsProgress): Promise<void> {
-    if (!this.downloading && !this.modelsReady) {
-      this.setState("downloading");
-      this.downloading = ensureModels(this.modelsRoot, electronDownloader, progress)
-        .then(() => { this.o.log.info("voice.models_ready", { bytes: VOICE_MODELS_BYTES }); })
+    const missing = this.missingModels;
+    if (!this.downloading && missing.length) {
+      // Only what listening needs shows as "Downloading…": while just Ember's voice or Voice Match comes, listening (or
+      // muting, or being off) carries on as it was, and settings shows the download's own progress (isDownloading).
+      if (!this.modelsReady) this.setState("downloading");
+      const ids = missing.map(m => m.id);
+      this.downloading = ensureModels(this.userRoot, electronDownloader, progress, ids)
+        .then(() => {
+          this.o.log.info("voice.models_ready", { models: ids, bytes: modelsBytes(missing) });
+          for (const id of ids) this.notBundled.delete(id); // (the user's own copy is used: it verified)
+          if (ids.includes("tts")) this.ttsFailures = 0;
+        })
         .catch((err: unknown) => {
           // Never left on "Downloading…": back to what it was, saying why (the download button offers a retry).
           const message = err instanceof Error ? err.message : String(err);
           this.o.log.warn("voice.download_failed", { message });
-          this.setState(!this.wanted ? "off" : this.muted ? "muted" : "needs-models", `Couldn't download the speech models. ${downloadHelp(message)}`);
+          const detail = `Couldn't download the speech models. ${downloadHelp(message, modelsBytes(missing))}`;
+          this.setState(this.state !== "downloading" ? this.state : !this.wanted ? "off" : this.muted ? "muted" : "needs-models", detail);
           throw err;
         })
-        .finally(() => { this.downloading = null; });
+        .finally(() => { this.downloading = null; this.o.onModels?.(); });
+      this.o.onModels?.(); // (settings hides the button and shows the download's progress)
     }
     await this.downloading;
+    // Voice Match's model came in while listening: a kept voiceprint is used from now on.
+    if (this.proc) this.setVoiceprint(this.o.voiceprint?.() ?? null);
     if (this.wanted) await this.start();
     else if (this.state === "downloading") this.setState("off");
   }
@@ -283,7 +340,7 @@ export class VoiceService {
    * listening (enrolment needs the microphone) or its voiceprint model isn't there.
    */
   enrol(): boolean {
-    if (!this.proc || !this.readyAt || !modelReady(this.modelsRoot, "speaker")) return false;
+    if (!this.proc || !this.readyAt || !this.matchReady) return false;
     this.enrolling = true;
     this.proc.postMessage({ type: "enrol" });
     return true;
@@ -295,9 +352,12 @@ export class VoiceService {
     this.proc?.postMessage({ type: "enrol-cancel" });
   }
 
-  /** Voice Match turned on (the owner's voiceprint) or off (null): the voice process checks requests from now on, or doesn't. */
+  /**
+   * Voice Match turned on (the owner's voiceprint) or off (null): the voice process checks requests from now on, or
+   * doesn't. Without its model, it stays off.
+   */
   setVoiceprint(print: string | null): void {
-    this.proc?.postMessage({ type: "voiceprint", print });
+    this.proc?.postMessage({ type: "voiceprint", print: this.matchReady ? print : null });
   }
 
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
@@ -345,7 +405,7 @@ export class VoiceService {
 
   /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't kept failing. */
   private get neuralVoice(): boolean {
-    return !!this.o.neuralVoice && this.ttsFailures < VOICE_FAILURES && modelReady(this.modelsRoot, "tts");
+    return !!this.o.neuralVoice && this.ttsFailures < VOICE_FAILURES && this.rootOf("tts") !== null;
   }
 
   /** The page that speaks now: the mic window while listening, otherwise one that only speaks (listening is off). */
@@ -382,7 +442,7 @@ export class VoiceService {
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
     });
-    proc.postMessage({ type: "init", model: modelPaths(this.modelsRoot).tts });
+    proc.postMessage({ type: "init", model: this.paths().tts });
     return proc;
   }
 
@@ -435,20 +495,16 @@ export class VoiceService {
       if (m.type === "error") {
         this.o.log.error("voice.error", { message: m.message, models: !!m.models });
         this.teardown();
-        // Models that won't load are damaged: they count as missing from now, and settings offers the download again.
+        // A model that won't load is damaged: it (alone, when the process says which; otherwise the ones listening
+        // loads) counts as missing from now, and settings offers the download again, of that one.
         if (m.models) {
-          // Models that came with Ember are never changed (they may be inside the signed app, and an update replaces
-          // them): the user's own folder is used from now on, and the download goes there.
-          if (this.bundled && this.o.bundled) {
-            this.o.log.warn("voice.bundled_models_damaged", { root: this.modelsRoot });
-            this.bundled = false;
-            this.modelsRoot = this.o.bundled.userRoot;
-            if (this.modelsReady) void this.start();
-            else this.setState("needs-models", "The speech models look damaged. Download them again.");
+          if (!this.forgetDamaged(m.model ? [m.model] : LISTENING_MODELS)) {
+            this.setState("error", "The speech models look damaged, and Ember can't replace them: it isn't allowed to change its models folder.");
             return;
           }
-          if (forgetModels(this.modelsRoot)) this.setState("needs-models", "The speech models look damaged. Download them again.");
-          else this.setState("error", "The speech models look damaged, and Ember can't replace them: it isn't allowed to change its models folder.");
+          this.o.onModels?.();
+          if (this.modelsReady) void this.start(); // the user's own copy is there: it's tried
+          else this.setState("needs-models", "The speech models look damaged. Download them again.");
           return;
         }
         this.setState("error", m.message);
@@ -484,7 +540,7 @@ export class VoiceService {
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: modelPaths(this.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.o.voiceprint?.() ?? null }, [port1]);
+    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint() }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;
@@ -496,6 +552,23 @@ export class VoiceService {
     await mic.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))).catch(() => undefined);
     if (mic.isDestroyed() || this.mic !== mic) return;
     mic.webContents.postMessage(VOICE.port, null, [port2]);
+  }
+
+  /**
+   * The models `ids` turned out damaged. One that came with Ember is never changed (it may be inside the signed app,
+   * and an update replaces it): the user's own copy is used from now on, and the download goes there. One of the
+   * user's own is forgotten (its marker goes), the others are left as they are. False when that couldn't be done.
+   */
+  private forgetDamaged(ids: readonly ModelId[]): boolean {
+    const own: ModelId[] = [];
+    for (const id of ids) {
+      const root = this.rootOf(id);
+      if (root !== null && root === this.bundledRoot) {
+        this.o.log.warn("voice.bundled_model_damaged", { root, model: id });
+        this.notBundled.add(id);
+      } else own.push(id);
+    }
+    return !own.length || forgetModels(this.userRoot, own);
   }
 
   /** Listening broke (the voice process or the mic page died, or no sound arrives): start again after 1 s, 5 s, then every 30 s, saying so meanwhile. */
@@ -597,7 +670,7 @@ function hiddenWindow(title: string): BrowserWindow {
 }
 
 /** What went wrong with the speech models' download, in plain words (a proxy's certificate, no network, a full disk…). */
-export function downloadHelp(message: string): string {
+export function downloadHelp(message: string, bytes = VOICE_MODELS_BYTES): string {
   if (/ERR_CERT_|certificate|self.signed|issuer|SSL|TLS/i.test(message)) {
     return "Ember can't verify the download site's certificate. If your organisation's network inspects secure traffic, ask IT to add its certificate, or to allow github.com.";
   }
@@ -606,7 +679,7 @@ export function downloadHelp(message: string): string {
     return "Ember can't reach the download site (github.com) right now. Check the network or proxy, then try again.";
   }
   if (/HTTP 4\d\d/i.test(message)) return "The download site refused the request. Try again later; if it keeps happening, ask IT whether github.com downloads are blocked.";
-  if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(VOICE_MODELS_BYTES / 1e6)} MB).`;
+  if (/ENOSPC|no space left/i.test(message)) return `There isn't enough free disk space for the speech models (about ${Math.round(bytes / 1e6)} MB).`;
   if (/EACCES|EPERM|EROFS|permission denied|read-only/i.test(message)) return "Ember can't write the speech models to its data folder (permission denied).";
   if (/checksum mismatch/i.test(message)) return "The download arrived damaged or changed, so it wasn't used. Try again; if it keeps happening, something on the network may be altering downloads.";
   if (/\btar\b/i.test(message)) return "The download couldn't be unpacked. Try again.";
