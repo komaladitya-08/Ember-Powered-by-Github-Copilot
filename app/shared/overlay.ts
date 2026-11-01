@@ -1,5 +1,6 @@
 /** Messages between the main process and the overlay / handle renderers. */
 
+import type { PlanStep, TaskHand, ViewBlock } from "./view";
 import type { Emotion, Gesture } from "@ember/characters";
 import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
@@ -100,6 +101,12 @@ export interface TaskCard {
   actions?: { id: string; label: string }[];
   /** Where the task acts, when not on this computer. */
   where?: string;
+  /** How it works now (while it works): its card says so under its title (docs/DESIGN.md "Two bodies"). */
+  hand?: TaskHand;
+  /** Its plan, as it last reported it (report_progress): the card lists the steps. */
+  plan?: PlanStep[];
+  /** What it found or made, as its worker showed it (finish_task's view, from app/shared/view.ts's catalog). */
+  view?: ViewBlock[];
 }
 
 /** A running task's card detail from the moment its Stop is pressed until it has wound down. */

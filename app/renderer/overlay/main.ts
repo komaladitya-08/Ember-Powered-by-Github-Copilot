@@ -8,6 +8,8 @@
  * while it dozes, and not at all while it is hidden or on another display.
  */
 
+import { planItems, viewNodes } from "./view";
+import { HAND_WORDS } from "../../shared/view";
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
@@ -311,7 +313,11 @@ function measureTasks(): void {
 }
 
 /** `said`: the detail Ember last sent; `stopAt`: when its Stop was pressed (0: not pressed, or it works again). */
-interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number }
+interface CardEls {
+  li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number;
+  /** How it works now ("In the background"), its plan, and its result view (docs/DESIGN.md "Two bodies"), each redrawn only when it changed. */
+  hand: HTMLElement; plan: HTMLOListElement; view: HTMLDivElement; planKey: string; viewKey: string;
+}
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
 const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();
@@ -479,12 +485,15 @@ function renderTasks(tasks: TaskCard[]): boolean {
       const state = Object.assign(document.createElement("span"), { className: "sr" });
       const where = Object.assign(document.createElement("span"), { className: "where", hidden: true });
       const title = document.createElement("b");
+      const hand = Object.assign(document.createElement("span"), { className: "hand", hidden: true });
       const detail = Object.assign(document.createElement("span"), { className: "detail" });
+      const plan = Object.assign(document.createElement("ol"), { className: "plan", hidden: true });
+      const view = Object.assign(document.createElement("div"), { className: "view", hidden: true });
       const actions = document.createElement("div");
       actions.className = "task-actions";
       actions.hidden = true;
-      li.append(state, where, title, detail, actions);
-      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0 };
+      li.append(state, where, title, hand, detail, plan, view, actions);
+      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0, hand, plan, view, planKey: "", viewKey: "" };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
@@ -493,6 +502,15 @@ function renderTasks(tasks: TaskCard[]): boolean {
     if (c.where.textContent !== where) c.where.textContent = where;
     c.where.hidden = !where;
     if (c.title.textContent !== t.title) c.title.textContent = t.title;
+    const hand = t.hand ? HAND_WORDS[t.hand] : "";
+    if (c.hand.textContent !== hand) c.hand.textContent = hand;
+    c.hand.hidden = !hand;
+    c.li.toggleAttribute("data-cursor", t.hand === "cursor");
+    const planKey = JSON.stringify(t.plan ?? []);
+    if (planKey !== c.planKey) { c.planKey = planKey; c.plan.replaceChildren(...planItems(t.plan ?? [])); c.plan.hidden = !t.plan?.length; }
+    const viewKey = JSON.stringify(t.view ?? []);
+    if (viewKey !== c.viewKey) { c.viewKey = viewKey; c.view.replaceChildren(...viewNodes(t.view ?? [])); c.view.hidden = !t.view?.length; }
+    c.li.classList.toggle("has-view", !!t.view?.length);
     c.said = t.detail;
     // A pressed Stop keeps saying so until Ember does (or the task has ended, or the press didn't land).
     if (c.stopAt && (!underWay(t) || !stopPending(c.stopAt, performance.now(), t.detail))) c.stopAt = 0;

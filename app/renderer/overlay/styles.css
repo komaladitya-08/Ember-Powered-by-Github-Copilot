@@ -54,6 +54,39 @@ body { font: var(--type-callout); color: var(--label); }
 /* A long result is kept to four lines, so one card never folds the others away (the whole text stays for screen
    readers, and goes to the conversation). */
 .task .detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+/* How a task works now (docs/DESIGN.md "Two bodies"): in the background, on Ember's desk, or with your mouse and
+   keyboard, which is said in the accent so a task at your cursor is told apart at a glance. */
+.task .hand { font: var(--type-caption); letter-spacing: 0.01em; color: var(--label-2); }
+.task[data-cursor] .hand { color: var(--accent); font-weight: 600; }
+/* Its plan: a dot per step (filled when done, the accent for the step under way, a ring for the ones to come), with the
+   state's word for screen readers (never colour alone: the step under way is also set in weight 600). */
+.plan { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; font: var(--type-footnote); min-width: 0; }
+.plan[hidden] { display: none; }
+.plan li { position: relative; padding-left: 16px; color: var(--label-2); min-width: 0; overflow-wrap: anywhere; }
+.plan li::before { content: ""; position: absolute; left: 2px; top: 0.45em; width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-3); }
+.plan li[data-state="done"] { color: var(--label-3); }
+.plan li[data-state="done"]::before { background: var(--green); box-shadow: none; }
+.plan li[data-state="now"] { color: var(--label); font-weight: 600; }
+.plan li[data-state="now"]::before { background: var(--accent); box-shadow: none; }
+/* What it found or made (app/shared/view.ts's catalog, drawn as text by view.ts): flat rows on the glass, no glass on
+   glass, kept to a card's height so one result never folds the others away (the whole of it goes to the
+   conversation as words). */
+.view { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; box-shadow: inset 0 1px 0 var(--separator); max-height: calc(240px * var(--text-scale)); overflow: hidden; font: var(--type-footnote); color: var(--label); min-width: 0; }
+.view[hidden] { display: none; }
+.view p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.view ul, .view ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.view li { overflow-wrap: anywhere; }
+.view dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+.view dt { color: var(--label-2); overflow-wrap: anywhere; }
+.view dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.view table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+.view th { text-align: left; font-weight: 600; color: var(--label-2); }
+.view th, .view td { padding: 3px 6px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
+.view tbody tr { box-shadow: inset 0 1px 0 var(--separator); }
+.view .file code { font-family: var(--ember-mono); font-size: inherit; overflow-wrap: anywhere; }
+.view .file-label { font: inherit; color: var(--label-2); }
+/* A card with a result is a little wider, so a small table reads (main.ts measures the stack where it is). */
+.tasks:has(.has-view) { width: 320px; }
 /* Where a task acts when it isn't this computer (§2.4): a small capsule before the title, on the bubble and the cards. */
 .where {
   display: inline-block; max-width: 136px; margin-right: 6px; padding: 0 6px; border-radius: var(--r-capsule); vertical-align: 1px;
@@ -124,6 +157,9 @@ html.calm .focus::after, html.calm .status i { animation: none; }
 @media (forced-colors: active) {
   .task-actions button { border: 1px solid ButtonText; }
   .where { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .plan li::before { forced-color-adjust: none; box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .plan li[data-state="done"]::before, .plan li[data-state="now"]::before { background: CanvasText; }
+  .view { border-top: 1px solid CanvasText; box-shadow: none; }
 }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type

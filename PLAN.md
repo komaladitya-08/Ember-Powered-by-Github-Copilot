@@ -534,6 +534,10 @@ Long-term memory, beyond the plan above: docs/MEMORY.md has the design and steps
 `app/main/memory/`) and 2 (remember, recall and forget in conversation, behind its own consent, off by default) are
 built.
 
+Ember's two bodies (docs/DESIGN.md "Two bodies"): background tasks live on their cards in the corner, with how they work, their
+plan and a checked generative view of their result; the cursor's bubble is the conversation, guides and borrowing. Next:
+a background task's questions on its card.
+
 ---
 
 ## 10. Progress

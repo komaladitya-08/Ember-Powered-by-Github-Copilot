@@ -197,6 +197,10 @@ Name these patterns when you design something new. Vague direction such as "make
 
 - **How symbols are drawn.** Draw them as black data-URI SVG masks through the `--sym-*` tokens, or `--icon` for page icons: `background: <colour>; -webkit-mask: var(--sym) center / Npx no-repeat;`. No icon fonts, emoji or `<img>` icons. The working symbol is static; nothing spins.
 - **Task state.** It is `data-status="running|queued|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Waiting its turn: ", "Needs you: " …). Show selection with a ring plus a check.
+- **Generative views on cards.** A task's result `view` comes only from app/shared/view.ts's catalog, checked by
+  `ViewSchema`, and is drawn by app/renderer/overlay/view.ts with `textContent` alone. It has no links, buttons,
+  images or markup. A new block kind needs all of these: the type, the schema, the drawing, `viewText`, the
+  forced-colours rule and a test.
 - **Failed tasks.** A failed task's card stays longer so it can be read: 60 s (TaskManager's `failureCardMs`), against 15 s (`cardMs`) for done and stopped cards. Then it leaves on its own. Close, Close all or Stop everything removes it sooner.
 
 ## Motion and performance

@@ -340,6 +340,12 @@ export interface PresenterOptions {
    * Given as the task's id, its bubbles carry it (the corner card pairs them with that task's row).
    */
   task?: boolean | string;
+  /**
+   * A task that works in the background (docs/DESIGN.md "Two bodies"): its work and its result show on its card in
+   * the corner, never in the bubble beside the cursor, except while it uses the user's mouse and keyboard
+   * (`foreground`) or guides them. Its questions and announcements still come to the cursor: they need the user now.
+   */
+  corner?: boolean;
   /** Every event of the session it shows, before it's shown (the host follows which request's turn is running). */
   onEvent?: (e: PresenterEvent) => void;
   /** Something went wrong and the bubble says so (the conversation section keeps it). */
@@ -519,6 +525,21 @@ export class Presenter {
   kind: Claim = "progress";
   /** Its task works on Ember's desk now: its steps don't say "your keyboard" or "your mouse" (stepOf). */
   onDesk = false;
+  /** A cornered task's work shows in the corner only (PresenterOptions.corner). */
+  private readonly corner: boolean;
+  private front = false;
+  /**
+   * Its task uses the user's mouse and keyboard now: its work shows beside the cursor as well as on its card. Back in
+   * the background, the bubble it had there goes (the card carries on).
+   */
+  get foreground(): boolean { return this.front; }
+  set foreground(on: boolean) {
+    if (on === this.front) return;
+    this.front = on;
+    if (!on && this.corner && !this.guiding && this.visible && this.kind === "progress") this.hide();
+  }
+  /** Its work shows only on its card now: a cornered task working in the background (not guiding). */
+  private get inCorner(): boolean { return this.corner && !this.front && !this.guiding; }
   /** How this presenter's own work claims the bubble. */
   private readonly work: Claim;
   /** Shared by every presenter writing the same bubble. */
@@ -565,6 +586,7 @@ export class Presenter {
     opts: PresenterOptions = {},
   ) {
     this.work = opts.task ? "progress" : "reply";
+    this.corner = !!opts.task && opts.corner === true;
     this.owner = BubbleOwner.of(owner);
     this.onEvent = opts.onEvent;
     this.onProblem = opts.onProblem;
@@ -593,6 +615,8 @@ export class Presenter {
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
     if (this.silent) return false;
+    // A task in the background: its work is on its card in the corner; the cursor's bubble isn't touched.
+    if (claim === "progress" && this.inCorner) { this.unseen = false; return false; }
     if (!patch.bubble) {
       // Just the face (talking stops): only while this presenter's bubble is the one on screen.
       if (this.owner.current === this && !this.unseen) this.push(patch);
@@ -942,6 +966,14 @@ export class Presenter {
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
   outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"]; actions?: BubbleState["actions"] }): void {
     if (this.silent) return;
+    // A task that worked in the background ends on its card (it shows the result there, a while longer).
+    if (this.inCorner) {
+      this.cancelHide();
+      this.answering = false;
+      if (this.owner.current === this && !this.unseen) this.hide();
+      else this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } };
+      return;
+    }
     this.cancelHide();
     this.answering = false;
     this.guiding = false;
