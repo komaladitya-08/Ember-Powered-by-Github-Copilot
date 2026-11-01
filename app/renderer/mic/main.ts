@@ -80,7 +80,10 @@ const player = new Player(() => new AudioContext({ latencyHint: "interactive" })
   if (on) api.speech(true);
   update();
 });
-api.onAudio(a => player.chunk(a.id, a.samples, a.rate));
+api.onAudio(a => {
+  const seconds = player.chunk(a.id, a.samples, a.rate);
+  if (seconds) api.played({ id: a.id, seconds: Math.round(seconds * 100) / 100 });
+});
 api.onAudioDone(id => player.done(id));
 
 /**

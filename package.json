@@ -20,6 +20,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:smoke": "node test/smoke/launch.mjs",
+    "test:voice": "node test/smoke/voice.mjs",
     "check:symvers": "scripts/check-symvers.sh node_modules",
     "rebuild:el8": "scripts/rebuild-el8.sh",
     "test:integration": "node scripts/run-integration.mjs",
