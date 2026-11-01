@@ -1991,6 +1991,8 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
+      // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
+      cornerTasks: true,
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),

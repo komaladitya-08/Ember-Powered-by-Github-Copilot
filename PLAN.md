@@ -527,6 +527,11 @@ SSH every desktop step is asked, and the remote checks every step again under it
    - **Later:** a root-owned remote package for hardened hosts (L24); a JPEG encoder on remotes (L16); approval
      fatigue on remotes and after output taint (every step or command asks), revisited with SX's view.
 
+
+Ember's two bodies (docs/DESIGN.md "Two bodies"): background tasks live on their cards in the corner, with how they work, their
+plan and a checked generative view of their result; the cursor's bubble is the conversation, guides and borrowing. Next:
+a background task's questions on its card.
+
 ---
 
 ## 10. Progress

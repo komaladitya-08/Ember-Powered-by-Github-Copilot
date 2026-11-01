@@ -146,7 +146,15 @@ cache (test/temp-folder.ts).
 ### Asking Ember to do things
 
 Ask for something in an app ("turn on Night Light", "put my name in this form and save") and Ember starts a task in the
-background, with a card just above Ember's handle (in its corner). It works through the app's accessibility interface, so
+background, with a card just above Ember's handle (in its corner). The card is where the task lives:
+- under its title, it says how the task works now ("In the background", "On my desk", or "Using your mouse and
+  keyboard");
+- it lists the task's plan as the task goes;
+- when the task ends, it shows what it found or made: a list, a few facts, a small table or a saved file, kept for a
+  minute.
+
+The bubble beside your cursor stays for your conversation, for guides, and for a task while it uses your mouse; a
+task in the background doesn't speak there, but its questions still do. It works through the app's accessibility interface, so
 your mouse and keyboard stay yours. Before its first action in an app it asks **Allow / Always in this app / Not now**;
 answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now), so you never need the mouse (the
 question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good

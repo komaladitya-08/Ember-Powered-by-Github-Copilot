@@ -15,6 +15,8 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
+import { PlanSchema, ViewSchema } from "./view-schema";
+import { VIEW_LIMITS, planSteps, type PlanStep, type TaskHand, type ViewBlock } from "../../shared/view";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
@@ -101,6 +103,8 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
+  /** Its plan, or how it works now, changed: its card shows them (docs/DESIGN.md "Two bodies"). */
+  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void;
   /** Ember's desk (tier 2), started on first use. */
   desk?: () => Promise<DeskPlace>;
   /** The worker moved to (or left) the desk: show or hide the mini-view. */
@@ -199,6 +203,8 @@ export interface WorkerResult {
   stopped?: boolean;
   /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
   declined?: boolean;
+  /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
+  view?: ViewBlock[];
 }
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
@@ -992,6 +998,7 @@ export class Worker {
     if (place === this.place) return;
     const previous = this.place;
     this.place = place;
+    this.d.onUpdate?.({ hand: place ? "desk" : "background" });
     this.known = new Map();
     this.labels = new Map();
     this.window = { app: "", name: "" };
@@ -1260,13 +1267,27 @@ export class Worker {
       this.tool("wait_for_click", "Wait until the user clicks the element you pointed at (or it changes, e.g. a switch turns on, or the window changes).",
         z.object({ id, timeoutSeconds: z.number().int().min(5).max(300).optional() }),
         async a => this.waitForClick(a.id, (a.timeoutSeconds ?? 90) * 1000)),
-      this.tool("report_progress", "Tell the user briefly how the task is going (shown on Ember's task card).", z.object({ text: z.string().max(200) }),
-        async a => { this.d.onProgress(a.text); this.d.presenter.progress(a.text); return done("Shown."); }),
-      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false.",
-        z.object({ success: z.boolean(), summary: z.string().max(400) }),
+      this.tool("report_progress", "Tell the user briefly how the task is going (shown on Ember's task card). With a task of several steps, also give its plan (short steps, in order) and which step you're on now (0 is the first); send the plan again when it changes.",
+        z.object({
+          text: z.string().max(200),
+          plan: PlanSchema.optional().describe("The task's steps, a few words each, in order (up to 8)"),
+          now: z.number().int().min(0).max(VIEW_LIMITS.plan).optional().describe("The step under way now, counting from 0 (the plan's length: all done)"),
+        }),
+        async a => {
+          if (a.plan) this.d.onUpdate?.({ plan: planSteps(a.plan, a.now ?? 0) });
+          this.d.onProgress(a.text);
+          this.d.presenter.progress(a.text);
+          return done("Shown.");
+        }),
+      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a file you saved), also give it as `view`, drawn on the task's card; the summary still says it in words.",
+        z.object({
+          success: z.boolean(),
+          summary: z.string().max(400),
+          view: ViewSchema.optional().describe("Up to 6 blocks: text, list (items), facts (label and value rows), table (up to 3 columns and 6 rows), file (a path). Only what the task found or made; words only, no links"),
+        }),
         async a => {
           // A cancelled guide step never gets here: it already ended the task (left() in waitForClick).
-          this.result = { success: a.success, summary: a.summary };
+          this.result = { success: a.success, summary: a.summary, ...(a.view ? { view: a.view } : {}) };
           this.ended.abort();
           this.fly(null);
           // The task is over: end the turn, so a model that keeps going can't act any more.
@@ -3249,9 +3270,18 @@ export class Worker {
     });
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor
+    // While it uses the user's mouse and keyboard, the task is Ember beside the cursor: its bubble, not only its card.
+    this.d.presenter.foreground = true;
+    this.d.onUpdate?.({ hand: "cursor" });
     // The status goes back to normal as soon as the mouse is back (a paste may still be waited for after that).
     let borrowing = true;
-    const borrowOver = () => { if (borrowing) { borrowing = false; c.setBorrowing("off"); } };
+    const borrowOver = () => {
+      if (!borrowing) return;
+      borrowing = false;
+      c.setBorrowing("off");
+      this.d.presenter.foreground = false;
+      this.d.onUpdate?.({ hand: this.place ? "desk" : "background" });
+    };
     try {
       await borrowed;
       borrowOver();

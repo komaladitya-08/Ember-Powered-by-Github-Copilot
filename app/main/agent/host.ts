@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
+import { viewText } from "../../shared/view";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
@@ -122,6 +123,12 @@ export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "p
 
 export interface HostOptions {
   userData: string;
+  /**
+   * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
+   * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
+   * work and result also come to the bubble, as before.
+   */
+  cornerTasks?: boolean;
   runtimePath: string;
   settings: SettingsStore;
   log: Logger;
@@ -480,7 +487,8 @@ const OUTCOME = {
   failed: { emotion: "sad", gesture: "facepalm", mood: "error", empty: "It didn't finish." },
 } as const;
 /** A finished task, as the conductor hears about it. */
-const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}`;
+/** A finished task as the next turn hears it (in <task_results>): its summary, and what its card showed, as words. */
+const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.result?.view?.length ? `\n${viewText(t.result.view)}` : ""}`;
 /** Requests sent while the conversation was busy, kept at most (the runtime runs them one turn at a time). */
 const MAX_QUEUED = 20;
 
@@ -1106,9 +1114,11 @@ export class AgentHost {
           this.taskDesktop.delete(task.id);
           this.taskStatus.get(task.id)?.();
           this.taskStatus.delete(task.id);
-          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding);
+          const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding, false, task.mode !== "guide");
           this.taskPresenters.delete(task.id);
-          const said = this.remember("task", text);
+          // What it showed on its card goes to the conversation too, as words (and to the next turn's task results).
+          const view = task.result?.view?.length ? viewText(task.result.view) : "";
+          const said = this.remember("task", view ? `${text}\n${view}` : text);
           if (summary) this.results.set(said, summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).
           // Quitting: nothing more is shown or said.
@@ -1128,7 +1138,7 @@ export class AgentHost {
           if (byUser && p?.waiting) p.drop();
         },
         provider: !!this.o.provider,
-        makeWorker: (spec, progress) => {
+        makeWorker: (spec, progress, update) => {
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
           // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
@@ -1140,7 +1150,7 @@ export class AgentHost {
           const h = got.hands;
           const usedDesktop = (h as TargetHands & Partial<DesktopUse>).usedDesktop;
           if (typeof usedDesktop === "function") this.taskDesktop.set(spec.id, () => usedDesktop.call(h));
-          const presenter = this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0);
+          const presenter = this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0, spec.mode !== "guide");
           // "Starting Ubuntu…" while a stopped distro boots for the task's first command: that happens while its facts are
           // read, before any run (or command window tab) exists, so the task's bubble says it.
           this.taskStatus.get(spec.id)?.();
@@ -1153,7 +1163,7 @@ export class AgentHost {
             reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
-            desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
+            desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onUsage: (i, o) => this.recordUsage(i, o),
             limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
             inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
             system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
@@ -1477,7 +1487,8 @@ export class AgentHost {
   }
 
   /** A task's own presenter: its bubble is titled as its card is and names the task, and gives way to an answer being read. */
-  private taskPresenter(id: string, goal: string, binding?: TargetBinding, othersNamed = false): Presenter {
+  /** `corner`: a task that does the work, shown on its card in the corner while it works in the background ("Two bodies"). */
+  private taskPresenter(id: string, goal: string, binding?: TargetBinding, othersNamed = false, corner = false): Presenter {
     const title = titleOf(goal);
     // Its bubbles say where it acts when that isn't this computer (§2.4), and on this computer too when the user's words
     // also named another one (D4.4's wrong-target guard); an announced command is spoken when replies are, naming the
@@ -1486,7 +1497,7 @@ export class AgentHost {
     const place = where ? `${where.charAt(0).toUpperCase()}${where.slice(1)}: ` : "";
     const announce = this.o.onAnnounce;
     const p = new Presenter(this.o.setState, undefined, () => title, this.owner, undefined, !!this.o.provider, {
-      task: id, ...this.bubbleOptions, ...(where ? { where } : {}),
+      task: id, corner: corner && this.o.cornerTasks === true, ...this.bubbleOptions, ...(where ? { where } : {}),
       ...(announce ? { onAnnounce: (text: string) => announce(`${place}${text.trim()} ${this.o.cancelWords?.() ?? `Press ${this.sys.shortcuts.stop.say} to cancel.`}`) } : {}),
     });
     this.taskPresenters.set(id, p);

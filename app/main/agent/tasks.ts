@@ -17,6 +17,7 @@ import type { AuditEntry, AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
+import type { PlanStep, TaskHand } from "../../shared/view";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 
@@ -34,6 +35,9 @@ export interface Task {
   targetId?: TargetId;
   /** Where it acts when not on this computer ("on build-01", "in Ubuntu (WSL)"): its card's badge (§2.4). */
   where?: string;
+  /** How it works now, and its plan (its worker's onUpdate): shown on its card while it works. */
+  hand?: TaskHand;
+  plan?: PlanStep[];
 }
 
 /**
@@ -45,7 +49,7 @@ export type WorkerLike = Pick<Worker, "run" | "steer" | "dispose" | "sessionId">
 export interface TaskManagerDeps {
   log: Logger;
   /** Builds the worker for a task (with its own presenter and tools). */
-  makeWorker: (spec: TaskSpec, progress: (text: string) => void) => WorkerLike;
+  makeWorker: (spec: TaskSpec, progress: (text: string) => void, update?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void) => WorkerLike;
   /** Deletes a worker's Copilot session (conversation and files). */
   deleteSession: (sessionId: string) => Promise<void>;
   /** The window the user is in right now. */
@@ -262,7 +266,11 @@ export class TaskManager {
     const abort = new AbortController();
     let worker: WorkerLike;
     try {
-      worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); });
+      worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); }, u => {
+        if (u.plan) task.plan = u.plan;
+        if (u.hand) task.hand = u.hand;
+        this.publish();
+      });
     } catch (err) {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
@@ -272,6 +280,8 @@ export class TaskManager {
       return;
     }
     task.mode = spec.mode ?? "do";
+    // A task that does the work starts in the background (a guide is Ember beside the cursor, pointing).
+    if (task.mode === "do") task.hand ??= "background";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
     task.detail = "Working…";
@@ -323,10 +333,11 @@ export class TaskManager {
     this.d.log.info("task.finished", { id: task.id, status, ms: task.finished - task.started });
     // The card first: the screen shows how it went even when its record or a listener fails (review #79).
     this.publish();
-    // Finished cards stay on screen briefly, then go; a failure stays longer so it can be read (and closed sooner).
+    // Finished cards stay on screen briefly, then go; a failure, or a result shown as a view, stays longer so it can be
+    // read (and closed sooner).
     const timer = setTimeout(() => {
       if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
-    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
+    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : result.view?.length ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
     timer.unref?.();
     this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
@@ -357,6 +368,10 @@ export class TaskManager {
         ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
         : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
       ...(t.where ? { where: t.where } : {}),
+      // While it works: how, and its plan. Once it ended: what it found or made, and its plan (each step as it got).
+      ...(t.hand && (t.status === "running" || t.status === "queued") ? { hand: t.hand } : {}),
+      ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan } : {}),
+      ...(t.result?.view?.length && (t.status === "done" || t.status === "failed") ? { view: t.result.view } : {}),
     }));
     this.d.setCards(cards);
   }

@@ -76,6 +76,47 @@ They share one emotion rig, so switching never changes behaviour.
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
 
+## Two bodies: the corner and the cursor
+
+Ember is two places at once, each for one kind of work.
+
+- **The corner** (the handle, and the task cards above it) is the orchestrator. Every task that does the work
+  autonomously lives there, one card each:
+  - in the background, through an app's accessibility, commands, WSL or another computer;
+  - on Ember's desk.
+
+  A card shows:
+  - how the task works now, under its title: "In the background", "On my desk", or "Using your mouse and keyboard"
+    in the accent;
+  - its current step;
+  - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come;
+  - when it ends, what it found or made, as a **view**.
+
+  A card with a view stays a minute, like a failure, and the stack widens from 270 to 320px to hold it.
+- **The cursor** (the character beside the pointer, and its bubble) is the assistant with you. It holds:
+  - the conversation: what you asked, and the answer;
+  - guides ("show me");
+  - a task while it uses your mouse and keyboard (tier 3). Its work shows in the bubble as well as on its card, and
+    the bubble goes once the mouse is yours again.
+
+  A task in the background never writes the cursor's bubble (`PresenterOptions.corner`, turned on by main's
+  `cornerTasks`). Its progress and result stay on its card, and the conversation keeps its result as words.
+- **What needs you now still comes to the cursor.** Questions and approvals (the Confirmer) and announced commands
+  appear in the bubble, which names the task. Moving a background task's questions onto its card, with the same
+  arming, the same allow and deny keys and the same one-at-a-time rule, is the next step.
+- **Generative UI** (`app/shared/view.ts`): a task's view is built only from a fixed catalog of blocks:
+  - `text`;
+  - `list`, of up to 8 items;
+  - `facts`, label and value rows;
+  - `table`, up to 3 columns and 6 rows;
+  - `file`, a path, set in the mono face.
+
+  `finish_task`'s `view` is checked against `ViewSchema` (app/main/agent/view-schema.ts), and anything outside the
+  catalog fails the call. app/renderer/overlay/view.ts draws it with `textContent` only: no markup, links, buttons or
+  images, because every string may carry what the worker read on the screen. The card keeps the view to 240px
+  (scaled with the text), flat on the glass with `--separator` rules. Without a compositor, the corner card shows the
+  task's words only.
+
 ## Design system (`app/renderer/shared/ember.css`)
 
 Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
