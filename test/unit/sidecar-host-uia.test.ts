@@ -193,6 +193,17 @@ fs.writeFileSync(bridge, BRIDGE);
 const providers: UiaProvider[] = [];
 afterEach(() => { for (const p of providers.splice(0)) p.stop(); });
 
+/**
+ * The host's environment with each override replacing every inherited spelling of its name. Windows names are
+ * case-insensitive and the provider takes the first match, so an inherited SYSTEMROOT=C:\WINDOWS (as some
+ * Windows 11 installs have it) would otherwise win over a test's SystemRoot.
+ */
+function hostEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const names = new Set(Object.keys(overrides).map(k => k.toLowerCase()));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([k]) => !names.has(k.toLowerCase())));
+  return { ...inherited, ...overrides };
+}
+
 function provider(env: NodeJS.ProcessEnv = {}, more: Partial<ConstructorParameters<typeof UiaProvider>[0]> = {}) {
   const log = path.join(dir, `log-${Math.random().toString(36).slice(2)}.jsonl`);
   const spawned: { command: string; args: string[]; options: Record<string, unknown> }[] = [];
@@ -201,7 +212,7 @@ function provider(env: NodeJS.ProcessEnv = {}, more: Partial<ConstructorParamete
     spawned.push({ command, args, options });
     return realSpawn(process.execPath, [bridge, ...args], options as never);
   }) as never;
-  const p = new UiaProvider({ script: "C:\\Ember\\sidecar\\uia\\ember_uia.ps1", env: { ...process.env, FAKE_BRIDGE_LOG: log, ...env }, spawn, deadlineMs: 100, graceMs: 300, backoffMs: [500], startMs: 3000, ...more });
+  const p = new UiaProvider({ script: "C:\\Ember\\sidecar\\uia\\ember_uia.ps1", env: hostEnv({ FAKE_BRIDGE_LOG: log, ...env }), spawn, deadlineMs: 100, graceMs: 300, backoffMs: [500], startMs: 3000, ...more });
   providers.push(p);
   const lines = () => (fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n").map(l => JSON.parse(l)) : []);
   return { p, spawned, lines };
