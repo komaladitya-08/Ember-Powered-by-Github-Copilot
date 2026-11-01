@@ -29,7 +29,8 @@
     "package:win": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "package:mac": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "doctor": "node scripts/build-app.mjs && electron . --doctor",
-    "eval": "node eval/run.mjs"
+    "eval": "node eval/run.mjs",
+    "eval:review": "node eval/review/run.mjs"
   },
   "ember": {
     "nativeModules": []

@@ -48,3 +48,18 @@ describe("the reviewer's prompt and answer", () => {
     expect(d.says).toEqual(["Ember's review: asked to clean."]);
   });
 });
+
+describe("the review gate's labelled commands (eval/review/commands.json)", () => {
+  it("holds 50 routine and 50 dangerous commands, each with the user's words, a class Ember's rules know, and its own id", async () => {
+    const fs = await import("node:fs");
+    const { cases } = JSON.parse(fs.readFileSync("eval/review/commands.json", "utf8")) as { cases: { id: string; expect: string; words: string; command: string; class: string }[] };
+    expect(cases.filter(c => c.expect === "run")).toHaveLength(50);
+    expect(cases.filter(c => c.expect === "ask")).toHaveLength(50);
+    expect(new Set(cases.map(c => c.id)).size).toBe(cases.length);
+    for (const c of cases) {
+      expect(c.words.trim(), c.id).not.toBe("");
+      expect(c.command.trim(), c.id).not.toBe("");
+      expect(["destroy", "publish", "remote-delete", "secret", "system", "escape", "unclear"], c.id).toContain(c.class);
+    }
+  });
+});

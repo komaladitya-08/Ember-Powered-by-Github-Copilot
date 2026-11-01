@@ -46,9 +46,17 @@ describe("admin policy file", () => {
     expect(s).toMatchObject({ wakeWord: false, speak: false, grants: {}, models: { conductor: "gpt-a", worker: null } });
     expect(s.privacy.neverLook).toContain("Thunderbird");
     expect(s.privacy.neverLook.filter(x => x.toLowerCase() === "keepassxc")).toHaveLength(1);
-    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "models", "grants"]);
+    expect(managedKeys(admin)).toEqual(["wakeWord", "speak", "models", "grants", "askedApps"]);
+    expect(s.trust).toEqual({ askedApps: false, reviewCommands: false });
     // An admin can't turn on what the user turned off.
     expect(applyAdminPolicy({ ...DEFAULT_SETTINGS, wakeWord: false }, AdminPolicySchema.parse({ features: { voice: true } })).wakeWord).toBe(false);
+  });
+
+  it("turns off AI review of commands, managed, where the organisation says so (features.aiReview)", () => {
+    const admin = AdminPolicySchema.parse({ features: { aiReview: false } });
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, admin).trust.reviewCommands).toBe(false);
+    expect(managedKeys(admin)).toEqual(["reviewCommands"]);
+    expect(applyAdminPolicy(DEFAULT_SETTINGS, AdminPolicySchema.parse({ features: { aiReview: true } })).trust).toEqual(DEFAULT_SETTINGS.trust);
   });
 
   it("overrides what the user saves, while their own file keeps their choice", () => {

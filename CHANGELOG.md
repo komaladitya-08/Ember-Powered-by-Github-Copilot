@@ -19,7 +19,7 @@ the work in your real apps where you can watch, without taking over your mouse. 
   the app you were in when you asked, or one your request names (Settings › **Apps & privacy** › **Don't ask before
   working in an app I asked for help with**, on by default); and every time before sending, deleting, paying and the
   like. A command that would ask is first reviewed by Copilot against your request (**Ask only about dangerous
-  commands**, on by default): a routine one runs in the command window with its **Stop** countdown instead; secrets,
+  commands**, off by default for now): a routine one runs in the command window with its **Stop** countdown instead; secrets,
   system changes, root and anything a page or a command's output tried to steer always ask. It never types into password, payment or terminal fields. The
   stop shortcut, "Ember, stop" and **Stop everything** stop everything at once.
 - **Questions show what will be typed**: text Ember is about to type shows as it will be typed, real double quotes

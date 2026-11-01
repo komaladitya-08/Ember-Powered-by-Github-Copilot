@@ -819,11 +819,16 @@ let privacyKey = "";
 let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
 // ───── When Ember asks first ─────
-$("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: true }), askedApps: (e.target as HTMLInputElement).checked } }); });
-$("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: true }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
+$("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), askedApps: (e.target as HTMLInputElement).checked } }); });
+$("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
 function renderTrust(s: Settings): void {
-  ($("trust-apps") as HTMLInputElement).checked = s.trust.askedApps;
-  ($("trust-commands") as HTMLInputElement).checked = s.trust.reviewCommands;
+  for (const [id, key] of [["trust-apps", "askedApps"], ["trust-commands", "reviewCommands"]] as const) {
+    const input = $(id) as HTMLInputElement;
+    input.checked = s.trust[key];
+    input.disabled = managed.has(key);
+    input.closest(".switch-row")?.classList.toggle("locked", managed.has(key));
+    input.title = managed.has(key) ? "Managed by your organisation" : "";
+  }
 }
 
 function renderPrivacy(s: Settings): void {

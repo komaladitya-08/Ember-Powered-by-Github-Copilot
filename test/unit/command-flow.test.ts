@@ -2001,6 +2001,7 @@ describe("AI review of commands that would ask (review.ts)", () => {
     expect(h.asked).toEqual([]);
     expect(h.announced.map(a => a.text)).toEqual(["Removes the build folder in the project."]);
     expect(h.windowAnnounce[0].card.says).toContain("Ember's review: the user asked to clean the build.");
+    expect(h.windowAnnounce[0].card.reviewed).toBe(true);
     expect(r.seen[0]).toMatchObject({ userWords: "clean up my project", command: "rm -r build" });
   });
 

@@ -11,7 +11,7 @@
 
 import type { CommandCard } from "../../main/commands/types";
 import {
-  ALLOW_LABEL, ANNOUNCE_HEADING, ANSWER_RETRY_HINT, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
+  ALLOW_LABEL, ANNOUNCE_HEADING, REVIEWED_HEADING, ANSWER_RETRY_HINT, CLOSE_LABEL, COPIED_LABEL, COPY_OUTPUT_LABEL, EMPTY_TEXT, LEGEND_MIXED, LEGEND_RTL, LEGEND_TOKENS,
   KEEP_OPEN_LABEL, NOT_NOW_LABEL, STOP_AND_CLOSE_LABEL, STOP_LABEL, askHeading, cardLines, closeHeading, closeLine, countdownText, headerLine, isRiskyCard,
   tabLabel,
 } from "./copy";
@@ -244,7 +244,7 @@ function buildAnnounce(card: CommandCard, endsAt: number, keys: string): Announc
   root.setAttribute("aria-labelledby", "announce-h");
   const where = headerNode(headerLine(card));
   root.append(where.node);
-  const h = el("h1", "heading", ANNOUNCE_HEADING);
+  const h = el("h1", "heading", card.reviewed ? REVIEWED_HEADING : ANNOUNCE_HEADING);
   h.id = "announce-h";
   root.append(h);
   const { block, legend } = commandBlock(card.command, "The command, every character shown", "announce-cmd");

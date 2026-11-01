@@ -280,7 +280,8 @@ when the command may carry text Ember read in another app.
 
 ### 2.5a When Copilot reviewed it
 
-With **Ask only about dangerous commands** on (Settings › **Apps & privacy**, the default), a command that would ask
+With **Ask only about dangerous commands** on (Settings › **Apps & privacy**; off by default while the reviewer is
+evaluated), a command that would ask
 only because of what it does (it deletes, publishes, downloads and runs something, or Ember can't tell exactly what it
 does) is first shown to Copilot, in a conversation of its own with no tools: your own words for the task, the command,
 where and in which folder it runs, the model's reason and what Ember's checks found. Never a command's output or your
