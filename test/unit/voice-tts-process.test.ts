@@ -15,6 +15,9 @@ const fake = vi.hoisted(() => ({
   backend: "native" as "native" | "wasm",
   cost: { vits: 0.05, kokoro: 0.3 } as Record<string, number>,
   failKokoro: false,
+  /** The providers tried (the real list depends on the OS: CoreML first on macOS) and each one's speed-up. */
+  providers: ["cpu"] as string[],
+  speedup: { cpu: 1, coreml: 1 } as Record<string, number>,
   made: [] as { kind: string; provider: string; numThreads: number }[],
   clock: 0,
 }));
@@ -23,6 +26,7 @@ vi.mock("../../app/voice/runtime", async importOriginal => {
   const real = await importOriginal<typeof import("../../app/voice/runtime")>();
   return {
     ...real,
+    providers: () => fake.providers,
     sherpaRuntime: (o: { prefer?: string } = {}): Partial<Sherpa> => {
       const backend = o.prefer === "wasm" ? "wasm" : fake.backend;
       return {
@@ -34,7 +38,7 @@ vi.mock("../../app/voice/runtime", async importOriginal => {
             sampleRate: spec.kind === "kokoro" ? 24_000 : 22_050, numSpeakers: 1, free() {},
             generate: ({ text }) => {
               const seconds = text.length / 15, rate = spec.kind === "kokoro" ? 24_000 : 22_050;
-              fake.clock += seconds * fake.cost[spec.kind] * 1000;
+              fake.clock += (seconds * fake.cost[spec.kind] * 1000) / fake.speedup[run.provider];
               return { samples: new Float32Array(Math.round(seconds * rate)), sampleRate: rate };
             },
           };
@@ -66,6 +70,7 @@ async function speechProcess() {
 
 beforeEach(() => {
   fake.backend = "native"; fake.cost = { vits: 0.05, kokoro: 0.3 }; fake.failKokoro = false; fake.made = []; fake.clock = 0;
+  fake.providers = ["cpu"]; fake.speedup = { cpu: 1, coreml: 1 };
   vi.spyOn(performance, "now").mockImplementation(() => fake.clock);
 });
 afterEach(() => { vi.restoreAllMocks(); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); dirs = []; });
@@ -85,6 +90,20 @@ describe("Ember's voice process", () => {
     p.init({ natural: folder("kokoro-en-v0_19", ["model.onnx", "voices.bin", "tokens.txt"]) });
     expect(p.sent().find(m => m.type === "ready")).toMatchObject({ rate: 24_000, voice: { voice: "kokoro", backend: "native", rtf: 0.3 } });
     expect(fake.made.map(m => m.kind)).toEqual(["kokoro"]);
+  });
+
+  it("times CoreML against the CPU (macOS) and keeps the faster, saying what each took", async () => {
+    fake.providers = ["coreml", "cpu"];
+    fake.speedup = { coreml: 2, cpu: 1 };
+    let p = await speechProcess();
+    p.init();
+    let ready = p.sent().find(m => m.type === "ready")!;
+    expect(ready.voice).toMatchObject({ voice: "piper", provider: "coreml", tried: [{ provider: "coreml" }, { provider: "cpu" }] });
+    fake.speedup = { coreml: 0.5, cpu: 1 };
+    p = await speechProcess();
+    p.init();
+    ready = p.sent().find(m => m.type === "ready")!;
+    expect(ready.voice).toMatchObject({ provider: "cpu" });
   });
 
   it("falls back to the Piper voice when Kokoro is too slow here, or doesn't load, saying why", async () => {

@@ -62,7 +62,8 @@ function service(ready = true, o: Partial<Pick<VoiceOptions, "neuralVoice" | "na
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
-  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), ...o } as VoiceOptions);
+  // Speech runs on WebAssembly unless a test says otherwise (on Windows and macOS the service would default to the addon).
+  const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: e => events.push(e), onState: (s, detail) => states.push({ s, detail }), native: false, ...o } as VoiceOptions);
   services.push(v);
   return { v, states, events };
 }

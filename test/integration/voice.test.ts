@@ -29,6 +29,18 @@ const runtime: RuntimeOptions | undefined = addonFile ? { prefer: "native", addo
 // Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
 describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
   let backend: ReturnType<typeof sherpaBackend>;
+  /**
+   * The recognizers the speakers' stream is tested on. Speaker rejection runs only on Linux (it needs parec), which runs
+   * WebAssembly: where the picked build is the native addon (Windows, macOS), those tests run on a WebAssembly backend,
+   * the build that runs them in Ember. (The addon's spotter decides a hair differently on a phrase at its threshold:
+   * on Windows, "Ember, stop" from the speakers came out as "ember_stop" on one stream and the bare name on the other.)
+   */
+  let speakersBackend: ReturnType<typeof sherpaBackend> | null = null;
+  const forSpeakers = () => {
+    if (backend.info.backend === "wasm") return backend;
+    speakersBackend ??= sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true, runtime: { prefer: "wasm" } });
+    return speakersBackend;
+  };
   beforeAll(() => {
     const t0 = performance.now();
     backend = sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true, runtime });
@@ -42,7 +54,8 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const events: VoiceEvent[] = [];
     const at: number[] = [];
     let t = 0;
-    const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") { events.push(e); at.push(t); } }, { now: () => t });
+    const b = opts.monitor ? forSpeakers() : backend;
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") { events.push(e); at.push(t); } }, { now: () => t });
     if (opts.followUp) engine.followUp(8000);
     const tail = new Float32Array(16000 * 2);
     const all = new Float32Array(samples.length + tail.length);
@@ -56,7 +69,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
       cpu += performance.now() - t0;
       t += 32;
     }
-    backend.resetVad();
+    b.resetVad();
     return { events, at, rtf: cpu / (all.length / 16) };
   };
 
@@ -157,11 +170,15 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
   const trimmed = (name: string) => { const s = read(name); let a = 0, b = s.length; while (a < b && Math.abs(s[a]) < 0.01) a++; while (b > a && Math.abs(s[b - 1]) < 0.01) b--; return s.subarray(a, b); };
   /** A quiet room's noise (white, 0.001 RMS) added, from a fixed seed. */
   const inRoom = (s: Float32Array) => { let seed = 5; return s.map(x => x + ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * 0.001 / 0.2887); };
-  /** One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms). */
-  const session = () => {
+  /**
+   * One engine fed in turns (`hear`), with the speakers' stream when given, and what it said (`at`: when, in ms).
+   * `speakers`: the session feeds the speakers' stream (it runs on forSpeakers()).
+   */
+  const session = (o: { speakers?: boolean } = {}) => {
     const events: (VoiceEvent & { at: number })[] = [];
     let t = 0;
-    const engine = new VoiceEngine(backend, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
+    const b = o.speakers ? forSpeakers() : backend;
+    const engine = new VoiceEngine(b, e => { if (e.type !== "speech") events.push({ ...e, at: t }); }, { now: () => t });
     const hear = (mic: Float32Array, o: { speakers?: Float32Array; onFrame?: (frame: number) => void } = {}) => {
       for (let i = 0, k = 0; i + 512 <= mic.length; i += 512, k++) {
         o.onFrame?.(k);
@@ -170,7 +187,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
         t += 32;
       }
     };
-    return { engine, events, hear, end: () => backend.resetVad() };
+    return { engine, events, hear, end: () => b.resetVad() };
   };
   const sent = (events: VoiceEvent[]) => events.flatMap(e => (e.type === "utterance" ? [e] : []));
 
@@ -238,7 +255,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const speakers = cat(answer, silence(4)), voice = new Float32Array(speakers.length);
     voice.set(wake, from);
     const mic = inRoom(voice.map((x, i) => x + speakers[i] * 0.1));
-    const s = session();
+    const s = session({ speakers: true });
     let hushAt = -1;
     s.engine.selfSpeaking(true);
     s.hear(mic, {
@@ -293,7 +310,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const talk = cat(trimmed("chat"), trimmed("remember"));
     const playing = (n: number) => new Float32Array(n).map((_, i) => talk[i % talk.length] * 0.5);
     const first = cat(silence(3), read("wake_pause").subarray(0, at(1.52)), silence(1));
-    const s = session();
+    const s = session({ speakers: true });
     s.hear(inRoom(first), { speakers: playing(first.length) });
     expect(s.engine.listening).toBe(true);
     s.engine.selfSpeaking(true);
@@ -321,7 +338,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     const mic = new Float32Array(speakers.length);
     for (let i = 0; i < answer.length; i++) mic[i + lag] = answer[i] * 0.3; // the echo
     mic.set(reply, answer.length + lag);
-    const s = session(), endFrame = Math.ceil(answer.length / 512);
+    const s = session({ speakers: true }), endFrame = Math.ceil(answer.length / 512);
     s.engine.selfSpeaking(true);
     s.hear(inRoom(mic), { speakers, onFrame: k => { if (k === endFrame) { s.engine.selfSpeaking(false); s.engine.followUp(8000); } } });
     s.end();
