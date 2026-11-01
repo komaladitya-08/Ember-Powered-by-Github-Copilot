@@ -81,6 +81,17 @@
       <h2 id="conversation-h" tabindex="-1">Conversation</h2>
       <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="Nothing yet. Press Ctrl+Alt+Space and ask Ember something."></ol>
       <p class="hint">Kept only while Ember runs: closing Ember forgets it. Signing out forgets it too.</p>
+      <h3 class="sub" id="memory-h">Memory</h3>
+      <div class="group">
+        <label class="switch-row"><input type="checkbox" id="memory-on" role="switch" aria-describedby="memory-hint"><span>Remember what I tell you</span></label>
+        <div id="memory-consent" class="consent" role="group" aria-label="Before Ember remembers" hidden>
+          <p id="memory-consent-text"></p>
+          <div class="agent-actions"><button type="button" id="memory-yes" class="btn" aria-describedby="memory-consent-text">I agree, remember</button><button type="button" id="memory-no" class="btn quiet">Not now</button></div>
+        </div>
+      </div>
+      <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
+      <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
+      <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
     </section>
 
     <section class="after-setup" aria-labelledby="voice-h">

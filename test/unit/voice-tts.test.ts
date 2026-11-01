@@ -57,6 +57,30 @@ describe("SpeechStream", () => {
     expect(said.join(" ")).toBe("Done. See the guide.");
   });
 
+  it("starts speaking at the first clause of a long first sentence, before Copilot has written the rest", () => {
+    const s = new SpeechStream();
+    expect(s.push("I opened the quarterly report")).toEqual([]);
+    expect(s.push(", checked the totals and")).toEqual(["I opened the quarterly report,"]);
+    expect(s.push(" fixed two cells. Anything else?")).toEqual(["checked the totals and fixed two cells."]);
+    expect(s.finish()).toEqual(["Anything else?"]);
+  });
+
+  it("waits for the sentence when the first clause is too short to say alone", () => {
+    expect(new SpeechStream().push("Sure, I can open that for you")).toEqual([]);
+  });
+
+  it("never cuts the first clause inside a code span, a link or a list", () => {
+    expect(new SpeechStream().push("Run `npm test --watch, then check the output, and")).toEqual([]);
+    expect(new SpeechStream().push("Open [the guide to builds, tests and more](https://exa")).toEqual([]);
+    expect(new SpeechStream().push("- Open the settings window first, then")).toEqual([]);
+  });
+
+  it("speaks only from the sentences once the first part is said", () => {
+    const s = new SpeechStream();
+    s.push("I opened the quarterly report, checked it");
+    expect(s.push(" and more, then again")).toEqual([]);
+  });
+
   it("says a whole answer that wasn't streamed", () => {
     expect(new SpeechStream().finish("Hello there.")).toEqual(["Hello there."]);
   });

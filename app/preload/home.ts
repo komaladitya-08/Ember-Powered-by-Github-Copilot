@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import { IPC, type EmberHomeApi, type Presence, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
+import type { MemoryItem } from "../main/memory/service";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
 import type { EmberTargetsApi } from "../renderer/home/computers-copy";
 
@@ -27,6 +28,10 @@ const api: EmberHomeApi = {
   enrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchEnrol),
   cancelEnrolVoice: () => ipcRenderer.invoke(IPC.voiceMatchCancel),
   forgetVoice: () => ipcRenderer.invoke(IPC.voiceMatchForget),
+  memory: () => ipcRenderer.invoke(IPC.memoryList),
+  onMemory: fn => listen<MemoryItem[]>(IPC.memoryChanged, fn),
+  forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
+  forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
   onVoiceProgress: fn => listen<{ done: number; total: number; phase?: "unpacking" }>(IPC.voiceProgress, fn),
   activity: () => ipcRenderer.invoke(IPC.activity),
   retrySignIn: () => ipcRenderer.invoke(IPC.agentRetry),
