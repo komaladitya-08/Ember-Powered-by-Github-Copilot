@@ -8,6 +8,7 @@ The detail lives in the docs. Read the one for the area you are changing:
 - `docs/COMMANDS-WSL-SSH.md` is what users and administrators see of commands, WSL and SSH; README.md and CHANGELOG.md say what ships.
 - `docs/DESIGN.md` covers the characters, the rig, the bubble, motion and the design system.
 - `docs/RESEARCH.md` holds the background evidence.
+- `docs/CONVERSATION.md` is the proposed conversational voice mode (PLAN.md §9 item 9): measured voice latency and the ranked changes.
 
 Topic rules in `.claude/rules/` load when you open matching files:
 - `design-system.md`: renderers, windows, the bubble, the characters and the icon.
