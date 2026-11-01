@@ -80,6 +80,8 @@ export interface VoiceOptions {
   onState: (s: MicState, detail?: string) => void;
   /** A reply was heard (true), or no voice spoke (false): the speaking page tells it when that changes (review #101). */
   onSpeech?: (ok: boolean) => void;
+  /** Ember started (true) or stopped (false) making sound, as the page that speaks tells it (turn-latency.ts). */
+  onSelfSpeaking?: (on: boolean) => void;
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
   /**
@@ -219,7 +221,7 @@ export class VoiceService {
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
-      if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); }
+      if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); this.o.onSelfSpeaking?.(!!on); }
       this.proc?.postMessage({ type: "self-speaking", on: !!on });
       this.speakingUntil = on ? Date.now() + SPEAKING_MAX_MS : 0;
       if (this.speaker && e.sender === this.speaker.wc) {
