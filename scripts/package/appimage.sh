@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds dist/package/Ember-<version>-x86_64.AppImage from the folder stage.mjs made, with
-# pinned (SHA-256 checked) appimagetool and runtime. The speech models aren't included
-# (Ember downloads them when "Hey Ember" is turned on). usage: scripts/package/appimage.sh
+# pinned (SHA-256 checked) appimagetool and runtime. The speech models go inside it when they were staged (in
+# ember/resources/voice-models, where Ember looks before downloading anything). usage: scripts/package/appimage.sh
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 version=$(node -p "require('$root/package.json').version")
@@ -28,6 +28,7 @@ chmod +x "$cache/appimagetool"
 app=$(mktemp -d)
 trap 'rm -rf "$app"' EXIT
 cp -a "$stage/ember" "$app/ember"
+[ -d "$stage/voice-models" ] && cp -a "$stage/voice-models" "$app/ember/resources/voice-models"
 # As the RPM installs it, its Ask Ember action included (an edit of every Exec line would undo that): AppRun runs ember/ember.
 cp "$root/packaging/ember.desktop" "$app/ember.desktop"
 node "$root/scripts/package/icon.mjs" "$root/assets/ember.svg" "$app/ember.png" 256

@@ -144,7 +144,13 @@ describe("the RPM", () => {
   it("lists its libraries explicitly and keeps optional parts optional", () => {
     expect(spec).toMatch(/^AutoReqProv:\s+no$/m);
     for (const dep of ["gtk3", "nss", "libXtst", "python3-pyatspi", "platform-python"]) expect(spec).toMatch(new RegExp(`^Requires:.*\\b${dep}\\b`, "m"));
-    for (const dep of ["xorg-x11-server-Xvfb", "speech-dispatcher", "gnome-shell-extension-top-icons", "ember-voice-models"]) expect(spec).toMatch(new RegExp(`^Recommends:.*\\b${dep}\\b`, "m"));
+    for (const dep of ["xorg-x11-server-Xvfb", "speech-dispatcher", "gnome-shell-extension-top-icons"]) expect(spec).toMatch(new RegExp(`^Recommends:.*\\b${dep}\\b`, "m"));
+  });
+  it("carries the speech models in the one RPM, replacing 0.1.0's separate models package on upgrade", () => {
+    expect(spec).not.toMatch(/^%package/m);
+    expect(spec).toMatch(/^Provides:\s+ember-voice-models = %\{version\}-%\{release\}$/m);
+    expect(spec).toMatch(/^Obsoletes:\s+ember-voice-models < %\{version\}-%\{release\}$/m);
+    expect(spec).toMatch(/^%\{_datadir\}\/ember\/voice-models$/m);
   });
   it("ships an example policy that takes the current keys, so copying it as-is turns nothing off (review #208, #37)", () => {
     const example = fs.readFileSync(path.resolve("packaging/policy.example.json"), "utf8");
@@ -623,9 +629,14 @@ describe("staging in CI", () => {
   const commands = lines.filter(l => !/^\s*#/.test(l));
   it("stages every target with every file required, now that the accessibility host and the bridge exist", () => {
     const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
-    expect(job).toMatch(/^\s+node scripts\/package\/stage\.mjs$/m);
+    expect(job).toMatch(/^\s+node scripts\/package\/stage\.mjs --with-runtimes$/m);
     expect(job).not.toContain("--allow-missing");
-    expect(commands.filter(l => /stage\.mjs/.test(l))).toHaveLength(4); // package, windows, macos, macos-x64
+    const stages = commands.filter(l => /node scripts\/package\/stage\.mjs/.test(l));
+    expect(stages).toHaveLength(4); // package, windows, macos, macos-x64
+    // Every package carries what Ember runs, so a network-restricted PC downloads nothing: the Node runtimes for SSH
+    // remotes everywhere, the speech models inside the Windows and macOS apps (Linux's RPM and AppImage carry them).
+    expect(stages.every(l => l.includes("--with-runtimes"))).toBe(true);
+    expect(stages.filter(l => l.includes("--with-models"))).toHaveLength(3);
     expect(commands.join("\n")).not.toMatch(/--allow-missing-sidecar|run-integration\.mjs --allow-missing/);
   });
   it("runs every named integration file, so a renamed one fails instead of skipping", () => {
@@ -637,21 +648,21 @@ describe("staging in CI", () => {
     const uses = lines.flatMap((l, i) => (/--allow-missing/.test(l) && !/^\s*#/.test(l) ? [i] : []));
     for (const i of uses) expect(lines.slice(Math.max(0, i - 12), i).join("\n"), lines[i]).toMatch(/TODO\(port\): drop --allow-missing/);
   });
-  it("builds the speech models package, then upgrades, verifies and removes both RPMs, keeping the admin's policy (review #207)", () => {
+  it("builds the RPM with its speech models, then upgrades, verifies and removes it, keeping the admin's policy (review #207)", () => {
     const job = ci.slice(ci.indexOf("\n  package:"), ci.indexOf("\n  eval:"));
     const at = (s: string) => { const i = job.indexOf(s); expect(i, s).toBeGreaterThan(0); return i; };
-    // The real models, verified, before staging: rpm.sh then builds ember-voice-models too.
+    // The real models, verified, before staging: the RPM must carry them.
     expect(at("node scripts/voice/prepare.mjs")).toBeLessThan(at("node scripts/package/stage.mjs"));
-    expect(at("dist/package/ember-voice-models-")).toBeGreaterThan(at("scripts/package/rpm.sh"));
+    expect(at("EMBER_RPM_MODELS=required scripts/package/rpm.sh")).toBeGreaterThan(at("node scripts/package/stage.mjs"));
     const life = job.slice(at("RPM lifecycle"));
-    const order = ["dnf -y install ./dist/package/ember-voice-models-", "rpm -V ember ember-voice-models", "/etc/ember/policy.json",
-      "EMBER_RPM_RELEASE=2 scripts/package/rpm.sh", "dnf -y upgrade", "rpm -V ember ember-voice-models", "rpm -e ember ember-voice-models"];
+    const order = ["test -f /usr/share/ember/voice-models/silero_vad.onnx", "rpm -V ember", "/etc/ember/policy.json",
+      "EMBER_RPM_RELEASE=2 EMBER_RPM_MODELS=required scripts/package/rpm.sh", "dnf -y upgrade", "rpm -V ember", "rpm -e ember"];
     let from = 0;
     for (const s of order) { const i = life.indexOf(s, from); expect(i, s).toBeGreaterThanOrEqual(from); from = i + s.length; }
     for (const gone of ["/opt/ember", "/usr/share/ember", "/usr/bin/ember", "/usr/share/applications/ember.desktop"]) expect(life.slice(life.indexOf("rpm -e"))).toContain(gone);
     expect(life.slice(life.indexOf("rpm -e"))).toMatch(/cmp packaging\/policy\.example\.json \/etc\/ember\/policy\.json/);
     // The packages kept for download are Release 1's.
-    expect(life).toContain("rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm");
+    expect(life).toContain("rm -f ./dist/package/ember-$v-2.*.rpm");
     expect(at("RPM lifecycle")).toBeLessThan(at("actions/upload-artifact"));
   });
   it("checks the installed desktop entry and its Ask Ember action (D-45b)", () => {

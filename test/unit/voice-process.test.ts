@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { VoiceBackend } from "../../app/voice/engine";
 
-const sherpa = vi.hoisted(() => ({ make: null as null | ((o: { onError?: (err: unknown) => void }) => VoiceBackend), ModelLoadError: class extends Error {} }));
+const sherpa = vi.hoisted(() => ({ make: null as null | ((o: { onError?: (err: unknown) => void; runtime?: { prefer?: string } }) => VoiceBackend), ModelLoadError: class extends Error {} }));
 vi.mock("../../app/voice/sherpa", () => ({ sherpaBackend: (_models: unknown, o: { onError?: (err: unknown) => void }) => sherpa.make!(o), ModelLoadError: sherpa.ModelLoadError }));
 
 /** A backend that hears nothing, unless `spot` is told otherwise. */
@@ -16,7 +16,7 @@ function quiet(over: Partial<VoiceBackend> = {}): VoiceBackend {
 }
 
 /** A fresh voice process on a fake parent port; `backend` stands in for the recognizers (it may throw, as loading can). */
-async function voiceProcess(backend: (o: { onError?: (err: unknown) => void }) => VoiceBackend) {
+async function voiceProcess(backend: (o: { onError?: (err: unknown) => void; runtime?: { prefer?: string } }) => VoiceBackend) {
   vi.resetModules();
   const parent = Object.assign(new EventEmitter(), { postMessage: vi.fn() });
   (process as unknown as { parentPort: unknown }).parentPort = parent;
@@ -24,7 +24,7 @@ async function voiceProcess(backend: (o: { onError?: (err: unknown) => void }) =
   await import("../../app/voice/process");
   const port = Object.assign(new EventEmitter(), { start: vi.fn() });
   return {
-    init: () => parent.emit("message", { data: { type: "init", models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false }, ports: [port] }),
+    init: (o: { wasm?: boolean } = {}) => parent.emit("message", { data: { type: "init", models: { kws: "k", vad: "v", asr: "a" }, monitor: false, dev: false, ...o }, ports: [port] }),
     frame: (f = new Float32Array(512).fill(0.01)) => port.emit("message", { data: f }),
     sent: () => parent.postMessage.mock.calls.map(c => c[0] as { type: string }),
   };
@@ -91,7 +91,15 @@ describe("the voice process", () => {
   it("tells main when a model file is missing or damaged, so it can offer the download again (review #254)", async () => {
     const p = await voiceProcess(() => { throw new sherpa.ModelLoadError("The speech recognition model couldn't be loaded."); });
     p.init();
-    expect(p.sent()).toEqual([{ type: "error", message: "The speech recognition model couldn't be loaded.", models: true }]);
+    expect(p.sent()).toEqual([{ type: "error", message: "The speech recognition model couldn't be loaded.", models: true, model: "asr" }]);
+  });
+
+  it("names the damaged model, so main forgets only that one", async () => {
+    for (const [what, model] of [["wake word model", "kws"], ["voice activity model", "vad"]]) {
+      const p = await voiceProcess(() => { throw new sherpa.ModelLoadError(`The ${what} couldn't be loaded.`); });
+      p.init();
+      expect(p.sent()[0]).toEqual({ type: "error", message: `The ${what} couldn't be loaded.`, models: true, model });
+    }
   });
 
   it("says it's alive every second once started, so main can tell a frozen process from a quiet room (review #257)", async () => {
@@ -119,5 +127,16 @@ describe("the voice process", () => {
     const p = await voiceProcess(() => { throw new Error("Cannot find module 'sherpa-onnx'"); });
     p.init();
     expect(p.sent()).toEqual([{ type: "error", message: "Cannot find module 'sherpa-onnx'" }]);
+  });
+
+  it("tells main which build runs the recognizers, and runs WebAssembly when told to (a process before died loading natively)", async () => {
+    const info = { backend: "native", detail: "sherpa-onnx 1.13.8", provider: "cpu", threads: 2, tried: [{ provider: "cpu" }] };
+    const asked: (string | undefined)[] = [];
+    let p = await voiceProcess(o => { asked.push(o.runtime?.prefer); return Object.assign(quiet(), { info }); });
+    p.init();
+    expect(p.sent()[0]).toMatchObject({ type: "ready", backend: info });
+    p = await voiceProcess(o => { asked.push(o.runtime?.prefer); return Object.assign(quiet(), { info: { ...info, backend: "wasm" } }); });
+    p.init({ wasm: true });
+    expect(asked).toEqual([undefined, "wasm"]);
   });
 });

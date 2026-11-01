@@ -1443,6 +1443,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
           neverLook: () => settings.get().privacy.neverLook, grants: () => settings.get().grants,
           rateLimit: admin().policy.maxActionsPerMinute, actionsAllowed: () => admin().policy.features.actions !== false,
           confirmEveryAction: () => admin().policy.confirmEveryAction, allowGrants: () => admin().policy.allowGrants,
+          trustAskedApps: () => settings.get().trust.askedApps,
           isTerminalApp: name => isTerminalWindowApp(name, deps.sys.apps, deps.os), keys: deps.sys.keys, os: deps.os,
           isSecurityWindow: deps.sys.privacy.isSecurityWindow,
         }),

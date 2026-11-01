@@ -10,9 +10,14 @@ export const TARGETS = ["linux-x64", "win32-x64", "win32-arm64", "darwin-arm64",
 
 /**
  * Packages published once per platform (npm installs only the host's). Every one of them that isn't the target's
- * own build is left out of the package: another OS's binaries, musl builds, sharp's wasm fallback.
+ * own build is left out of the package: another OS's binaries, musl builds, sharp's wasm fallback. sherpa-onnx-*:
+ * sherpa-onnx's native addon (app/voice/runtime.ts), for Windows and macOS only; Linux has none (it needs glibc 2.32,
+ * RHEL 8 has 2.28: Linux packages run speech on sherpa-onnx's WebAssembly, which isn't in this family).
  */
-export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-"];
+export const PLATFORM_FAMILIES = ["@github/copilot-sdk-", "@img/sharp-", "@koromix/koffi-", "sherpa-onnx-"];
+
+/** sherpa-onnx's native addon package for a Windows or macOS target (npm calls Windows "win"). */
+const sherpaNative = (platform, arch) => `sherpa-onnx-${platform === "win32" ? "win" : platform}-${arch}`;
 
 /**
  * The remote agent's parts for SSH targets (scripts/package/remote-parts.mjs): dist/remote-parts/ is staged as this
@@ -26,8 +31,20 @@ const NEVER_BUNDLED = name => name === "tslib" || name.startsWith("@emnapi/");
 /** The Copilot runtime's helpers for its own built-in tools, pruned on every target (see stage.mjs). */
 const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
 
+/**
+ * onnxruntime-web's builds Voice Match doesn't use (WebGPU, WebGL, browser bundles and their source maps: about 100 MB),
+ * pruned on every target: the voiceprint worker needs only its Node build and that build's WebAssembly.
+ */
+const ORT_UNUSED = ["lib", "docs", ...["dist/ort-wasm-simd-threaded.asyncify.mjs", "dist/ort-wasm-simd-threaded.asyncify.wasm", "dist/ort-wasm-simd-threaded.jsep.mjs", "dist/ort-wasm-simd-threaded.jsep.wasm", "dist/ort.all.bundle.min.mjs", "dist/ort.all.bundle.min.mjs.map", "dist/ort.all.js", "dist/ort.all.min.js", "dist/ort.all.min.js.map", "dist/ort.all.min.mjs", "dist/ort.all.min.mjs.map", "dist/ort.all.mjs", "dist/ort.bundle.min.mjs", "dist/ort.bundle.min.mjs.map", "dist/ort.js", "dist/ort.min.js", "dist/ort.min.js.map", "dist/ort.min.mjs", "dist/ort.min.mjs.map", "dist/ort.mjs", "dist/ort.node.min.js.map", "dist/ort.node.min.mjs", "dist/ort.node.min.mjs.map", "dist/ort.wasm.bundle.min.mjs", "dist/ort.wasm.bundle.min.mjs.map", "dist/ort.wasm.js", "dist/ort.wasm.min.js", "dist/ort.wasm.min.js.map", "dist/ort.wasm.min.mjs", "dist/ort.wasm.min.mjs.map", "dist/ort.wasm.mjs", "dist/ort.webgl.js", "dist/ort.webgl.min.js", "dist/ort.webgl.min.js.map", "dist/ort.webgl.min.mjs", "dist/ort.webgl.min.mjs.map", "dist/ort.webgl.mjs", "dist/ort.webgpu.bundle.min.mjs", "dist/ort.webgpu.bundle.min.mjs.map", "dist/ort.webgpu.js", "dist/ort.webgpu.min.js", "dist/ort.webgpu.min.js.map", "dist/ort.webgpu.min.mjs", "dist/ort.webgpu.min.mjs.map", "dist/ort.webgpu.mjs"]].map(f => `onnxruntime-web/${f}`);
+
+/**
+ * The Node runtimes a package carries for computers reached over SSH (stage.mjs --with-runtimes, runtimes.mjs): each
+ * target's archive in the format Ember sends it, .tar.xz for Linux (it has xz), .tar.gz for macOS (no xz program).
+ */
+export const RUNTIME_BUNDLE = { "linux-x64": "xz", "linux-arm64": "xz", "darwin-arm64": "gz", "darwin-x64": "gz" };
+
 /** Built files every target needs (relative to dist/app). A trailing "/" means a folder that must not be empty. */
-const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "preload/", "renderer/"];
+const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "voiceprint.cjs", "tts.cjs", "preload/", "renderer/"];
 
 /**
  * The SSH and command helpers Ember starts beside main.cjs, which fail only at first use when missing: the SSH link
@@ -50,7 +67,7 @@ export function layoutFor(platform, arch) {
   const copilot = `@github/copilot-sdk-${target}`;
   const koffi = `@koromix/koffi-${target}`;
   const koffiDir = `${koffi}/${platform}_${arch}`;
-  const tools = COPILOT_TOOLS.map(d => `${copilot}/${d}`);
+  const tools = [...COPILOT_TOOLS.map(d => `${copilot}/${d}`), ...ORT_UNUSED];
   if (platform === "linux") {
     return {
       platform, arch, target, label: target,
@@ -81,9 +98,10 @@ export function layoutFor(platform, arch) {
       resourcesDir: "resources", noticesDir: ".", electronNotices: [],
       fuseFile: "Ember.exe", remove: ["resources/default_app.asar"],
       // sharp's Windows builds carry libvips themselves (there is no @img/sharp-libvips-win32-* package).
-      platformPackages: [copilot, `@img/sharp-${target}`, koffi],
-      // koffi's import library and exports file are for linking against it, not for loading it.
-      prune: [`${koffiDir}/koffi.lib`, `${koffiDir}/koffi.exp`, ...tools],
+      platformPackages: [copilot, `@img/sharp-${target}`, koffi, sherpaNative(platform, arch)],
+      // koffi's import library and exports file are for linking against it, not for loading it. sherpa-onnx's C++ API
+      // library: its addon loads only the C API's (sherpa-onnx.node imports sherpa-onnx-c-api.dll and onnxruntime.dll).
+      prune: [`${koffiDir}/koffi.lib`, `${koffiDir}/koffi.exp`, `${sherpaNative(platform, arch)}/sherpa-onnx-cxx-api.dll`, ...tools],
       // The UI Automation bridge: compiled by Windows PowerShell 5.1 at run time, so it ships as source. The AT-SPI
       // sidecar is the helper Ember runs inside WSL distros to read WSLg's Linux apps (SSH/WSL design §4.3). SSH's
       // askpass helper is compiled the same way at first use, from resources\ssh (askpass-win.ts, §5.1.6).
@@ -121,9 +139,9 @@ export function layoutFor(platform, arch) {
     // The fuse wire is in the framework, not in the small launcher executable.
     fuseFile: "Contents/Frameworks/Electron Framework.framework/Electron Framework",
     remove: ["Contents/Resources/default_app.asar"],
-    platformPackages: [copilot, `@img/sharp-${target}`, `@img/sharp-libvips-${target}`, koffi],
-    // libvips's glib headers are for building against it.
-    prune: [`@img/sharp-libvips-${target}/lib/glib-2.0`, ...tools],
+    platformPackages: [copilot, `@img/sharp-${target}`, `@img/sharp-libvips-${target}`, koffi, sherpaNative(platform, arch)],
+    // libvips's glib headers are for building against it; sherpa-onnx's C++ API library, as on Windows.
+    prune: [`@img/sharp-libvips-${target}/lib/glib-2.0`, `${sherpaNative(platform, arch)}/libsherpa-onnx-cxx-api.dylib`, ...tools],
     sidecarFiles: [],
     requiredDist: [...COMMON_DIST, "ax-sidecar.cjs", ...POSIX_HELPERS],
     sidecarDist: ["ax-sidecar.cjs"],

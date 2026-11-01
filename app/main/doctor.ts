@@ -11,7 +11,7 @@ import { ADMIN_POLICY_FILE, type LoadedAdminPolicy } from "./admin";
 import type { HelperStatus, PlatformDoctorRow } from "./platform/types";
 import { FALLBACK_SHORTCUTS, SHORTCUTS, type OS, type ShortcutTable } from "../shared/shortcuts";
 import { PLATFORM_WORDS, type PlatformWords } from "../shared/words";
-import { VOICE_MODELS_BYTES } from "../voice/models";
+import { LISTENING_MODELS, VOICE_MODELS, modelsBytes, type ModelId } from "../voice/models";
 import { cliSteps, type SignInWith } from "./agent/github-app";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
@@ -36,7 +36,10 @@ export interface DoctorProbes {
   speechDispatcher: boolean;
   /** Microphone sources (null: pactl isn't installed; off Linux they aren't listed here). */
   microphones: string[] | null;
+  /** Where listening's models (wake word, voice activity, speech recognition) come from, or that they're missing. */
   voiceModels: "bundled" | "downloaded" | "missing";
+  /** The models in none of Ember's folders (default: all of them while `voiceModels` is "missing", else none). */
+  voiceModelsMissing?: ModelId[];
   runtime: boolean;
   /** How Ember will reach a model: an organisation endpoint, a GitHub sign-in, or nothing yet. */
   auth: { kind: "provider"; host: string } | { kind: "github"; source: string } | null;
@@ -207,10 +210,17 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : micOk
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
       : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${chord("ask")}) always works.` });
-  // The speech models RPM needs Ember's own RPM, so an AppImage is only told to download them.
+  // Missing only from a build packaged without them (Ember's own packages carry them): where they come from offline is
+  // the release's Ember-voice-models zip, unzipped where Ember looks (README: Computers without internet access).
+  // Listening needs only the wake word, voice activity and speech recognition; Ember's voice and Voice Match are
+  // optional (the system's voice speaks meanwhile, and Voice Match is off), so their absence is said, not warned of.
+  const missing = VOICE_MODELS.filter(m => (p.voiceModelsMissing ?? (p.voiceModels === "missing" ? VOICE_MODELS.map(x => x.id) : [])).includes(m.id));
+  const mb = (n: number) => `${Math.max(1, Math.round(n / 1e6))} MB`;
+  const optional = missing.filter(m => !LISTENING_MODELS.includes(m.id));
+  const without = optional.map(m => m.id === "tts" ? "Ember's own voice (replies use the system's voice)" : "Voice Match (Ember answers anyone)").join(" and ");
   out.push(p.voiceModels === "missing"
-    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux && !p.sandbox?.appImage ? ", or install ember-voice-models" : ""}.` }
-    : { id: "voice-models", status: "ok", label: "Speech models", detail: p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded." });
+    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${mb(modelsBytes(missing.length ? missing : VOICE_MODELS))}, once)${linux ? ", or unzip the release's Ember-voice-models zip into /usr/share/ember" : ""}.` }
+    : { id: "voice-models", status: "ok", label: "Speech models", detail: `${p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded."}${optional.length ? ` Without ${without} until ${optional.length > 1 ? "they're" : "it's"} downloaded in Ember's settings (${mb(modelsBytes(optional))}).` : ""}` });
   out.push(off
     ? p.speechDispatcher
       ? { id: "speech", status: "ok", label: "Speaking", detail: off.voices }

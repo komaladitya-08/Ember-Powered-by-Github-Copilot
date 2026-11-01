@@ -179,7 +179,7 @@ describe("docs/DEVELOPING.md", () => {
     const publish = section(read("docs/DEVELOPING.md"), "15. Publishing a release");
     // The files a release has (the README's Download and install steps), in §7's spelling with <v> for the version.
     const files = (v: string) => [
-      `ember-${v}-1.el8.x86_64.rpm`, `ember-voice-models-${v}-1.el8.noarch.rpm`, `Ember-${v}-x86_64.AppImage`,
+      `ember-${v}-1.el8.x86_64.rpm`, `Ember-${v}-x86_64.AppImage`, `Ember-voice-models-${v}.zip`,
       ...[layoutFor("win32", "x64"), layoutFor("darwin", "arm64"), layoutFor("darwin", "x64")].flatMap(l => artifactNames(l, v)),
     ];
     for (const f of files("<v>")) expect(flat(publish), f).toContain(`\`${f}\``);

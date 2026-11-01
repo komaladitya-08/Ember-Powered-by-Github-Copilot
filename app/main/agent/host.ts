@@ -138,6 +138,9 @@ export interface HostOptions {
   screenLocked?: () => boolean;
   hands?: Hands;
   onAnswer?: (text: string) => void;
+  /** The words of Ember's message as they stream, and the end of a message that wasn't the final answer (see Conductor). */
+  onAnswerDelta?: (delta: string) => void;
+  onAnswerEnd?: (text: string) => void;
   onTurnEnd?: (aborted: boolean) => void;
   /** A task finished (for a notification when the user isn't looking). `text`: one line saying how it went. */
   onTaskFinished?: (task: { title: string; status: string; summary: string; text: string }) => void;
@@ -1147,6 +1150,7 @@ export class AgentHost {
             provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
+            reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),
@@ -1179,6 +1183,8 @@ export class AgentHost {
         onUsage: (i, o) => this.recordUsage(i, o),
         // An answer that tells the user where to turn commands on gets the button for it (once per run).
         onAnswer: text => { this.o.onAnswer?.(text); if (/settings \(Commands\)|turn commands on|commands are off/i.test(text)) this.hintCommands(); },
+        onAnswerDelta: delta => this.o.onAnswerDelta?.(delta),
+        onAnswerEnd: text => this.o.onAnswerEnd?.(text),
         onTurnEnd: aborted => {
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }

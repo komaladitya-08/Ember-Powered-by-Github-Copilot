@@ -15,17 +15,19 @@ Summary:        A cursor companion that works visibly in your apps, powered by G
 # Ember and Electron are MIT; bundled are Chromium (BSD-3-Clause and others, with FFmpeg under
 # LGPL-2.1-or-later: LICENSES.chromium.html), sharp, detect-libc and sherpa-onnx (Apache-2.0; its
 # WebAssembly also holds ONNX Runtime and piper-phonemize (MIT), Protocol Buffers and RE2 (BSD-3-Clause),
-# and eSpeak NG (GPL-3.0-or-later), part of a text-to-speech Ember never calls), semver
+# and eSpeak NG (GPL-3.0-or-later), part of the text-to-speech that speaks Ember's voice), semver
 # (ISC), koffi, zod and the Copilot SDK and runtime (MIT), and libvips (LGPL-3.0-or-later) with the
 # libraries @img/sharp-libvips bundles: cairo (MPL-1.1), aom, libarchive and libimagequant (BSD-2-Clause;
 # aom also grants the AOMedia Patent License 1.0), highway and libwebp (BSD-3-Clause), mozjpeg (IJG,
 # BSD-3-Clause, Zlib), zlib-ng (Zlib), freetype (FTL), libpng (libpng-2.0), libtiff (libtiff), fontconfig
 # (HPND-sell-variant), and more under MIT and LGPL-3.0-or-later (its README.md, shipped as %%license).
 # The Inter typeface Ember's windows use is under the SIL Open Font License 1.1 (OFL-1.1).
+# This tag is the one list for every target: the Windows and macOS packages also carry sherpa-onnx's
+# native addon, with Eigen (MPL-2.0) in it (never in the RPM: it needs a newer glibc than RHEL 8's).
 # The texts are in /opt/ember: THIRD_PARTY_NOTICES, LICENSE, LICENSES.chromium.html. stage.mjs fails if
 # a bundled package's licence, or a library one declares it bundles, is missing here
 # (scripts/package/licences.mjs).
-License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
+License:        MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND LGPL-2.1-or-later AND LGPL-3.0-or-later AND GPL-3.0-or-later AND BSD-2-Clause AND MPL-1.1 AND MPL-2.0 AND Zlib AND IJG AND FTL AND libpng-2.0 AND libtiff AND HPND-sell-variant AND OFL-1.1
 URL:            https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot
 Source0:        ember-%{version}-staged.tar
 ExclusiveArch:  x86_64
@@ -37,31 +39,24 @@ Requires:       libX11, libXcomposite, libXdamage, libXext, libXfixes, libXrandr
 # Reading apps (the accessibility sidecar runs on the system Python).
 Requires:       platform-python, python3-pyatspi, python3-gobject, at-spi2-core, at-spi2-atk
 Requires:       glib2, desktop-file-utils
-# Nice to have: Ember's desk, speaking, the microphone list, tray icons, offline speech models.
+# Nice to have: Ember's desk, the system voice (only when Ember's own is missing), the microphone list and the
+# speakers' stream, tray icons. Weak: dnf installs what the computer's repositories have, and Ember works without them.
 Recommends:     xorg-x11-server-Xvfb, xorg-x11-xauth, dbus-daemon
 Recommends:     speech-dispatcher, speech-dispatcher-espeak-ng, pulseaudio-utils
 Recommends:     gnome-shell-extension-top-icons
-Recommends:     ember-voice-models
 Suggests:       metacity
+%if 0%{?with_models}
+# The speech models are in this package (one RPM installs everything Ember runs here); before 0.2 they were a
+# package of their own, which this one replaces on upgrade.
+Provides:       ember-voice-models = %{version}-%{release}
+Obsoletes:      ember-voice-models < %{version}-%{release}
+%endif
 
 %description
 Ember lives beside your mouse cursor on GNOME. Ask it something (Ctrl+Alt+Space
 or "Hey Ember") and it answers, shows you where things are, or does the job in
 your real applications while you keep working, asking before anything that
 matters. Run "ember doctor" to check this computer.
-
-%if 0%{?with_models}
-%package voice-models
-Summary:        Offline speech models for Ember ("Hey Ember")
-BuildArch:      noarch
-License:        Apache-2.0 AND MIT
-Requires:       ember = %{version}-%{release}
-
-%description voice-models
-The wake-word spotter, voice-activity detector and speech recogniser Ember uses
-for "Hey Ember". With this package Ember doesn't download them (about 126 MB).
-Everything runs on this computer.
-%endif
 
 %prep
 %setup -q -c -n ember-%{version}
@@ -128,7 +123,8 @@ done
 %dir %{_sysconfdir}/ember
 
 %if 0%{?with_models}
-%files voice-models
+# The wake-word spotter, voice-activity detector, speech recogniser, Ember's own voice and Voice Match's model
+# (about 142 MB): Ember never downloads them.
 %dir %{_datadir}/ember
 %{_datadir}/ember/voice-models
 %endif

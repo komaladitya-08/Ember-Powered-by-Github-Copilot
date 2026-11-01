@@ -17,6 +17,7 @@ import { appEnv } from "../../app/main/hands/system";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
+import { corpusDir, loadCorpus } from "./corpus";
 import type { Logger } from "../../app/main/logger";
 import type { Attempt, Outcome } from "./runner";
 import { LIVE_PASS_PCT } from "./exit";
@@ -235,17 +236,21 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
       note: "end of “Hey Ember” to the listening cue, with real compute time; at the pause the spotter decides at once, without waiting for its next chunk" });
     // Missed and false wakes: fixture clips, plus many synthesized renderings when the TTS voice is here.
     const positives: Float32Array[] = ["wake", "wake_pause", "dnd"].map(clip);
-    const negatives: Float32Array[] = ["amber", "remember", "chat", "bigger", "followup"].map(clip);
+    /** The bare name ("Ember, …"), a wake of its own (KEYWORDS): measured on its own, so "Hey Ember"'s figure stays comparable. */
+    const named: Float32Array[] = ["name_wake"].map(clip);
+    const negatives: Float32Array[] = ["amber", "remember", "chat", "bigger", "followup", "embers"].map(clip);
     const ttsDir = path.join(voiceDir, "vits-piper-en_US-amy-low");
-    let corpus = "3 positive and 5 negative test clips";
+    let corpus = "3 positive and 6 negative test clips";
     if (fs.existsSync(ttsDir)) {
       const tts = sherpa.createOfflineTts({ offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: `${ttsDir}/en_US-amy-low.onnx`, tokens: `${ttsDir}/tokens.txt`, dataDir: `${ttsDir}/espeak-ng-data` }, numThreads: 1, debug: 0 }, maxNumSentences: 1 });
       const lead = (s: Float32Array) => { const a = new Float32Array(s.length + 9600); a.set(s, 9600); return a; };
       const pos = ["Hey Ember, turn on night light.", "Hey Ember, what's on my screen?", "Hey Ember, make the text bigger.", "Hey Ember.", "Hey Ember, open the files app."];
-      const neg = ["I remember the September weather was nice.", "Let's meet at the station after lunch.", "Hey, remember to call Amber.", "December embers glow in the fireplace.", "Can you hand me the member list?"];
+      const namePos = ["Ember, turn on night light.", "Ember, what time is it?", "Ember, open the terminal."];
+      const neg = ["I remember the September weather was nice.", "Let's meet at the station after lunch.", "Hey, remember to call Amber.", "December embers glow in the fireplace.", "Can you hand me the member list?", "Number nine is my favourite."];
       // 3 speeds × 5 renderings × 5 phrases: with the test clips, enough for the gate's 95 % bound to get under 5 %.
       for (const speed of [0.9, 1.0, 1.15]) for (let r = 0; r < 5; r++) {
         for (const p of pos) positives.push(lead(tts.generate({ text: p, sid: 0, speed }).samples));
+        for (const p of namePos) named.push(lead(tts.generate({ text: p, sid: 0, speed }).samples));
         for (const p of neg) negatives.push(lead(tts.generate({ text: p, sid: 0, speed }).samples));
       }
       corpus = `${positives.length} positive and ${negatives.length} negative clips (test clips + synthesized renderings at 3 speeds)`;
@@ -263,8 +268,32 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
       status: missedWakesStatus(missed, positives.length),
       note: `${corpus}; synthesized speech (new renderings every run), not real voices`
         + (missedWakesStatus(missed, positives.length) === "not-measured" ? `; too few clips to tell: it passes when the 95 % upper bound is under 5 % (${MISSED_WAKES_MIN_CLIPS} clips with none missed)` : "") });
+    const namedMissed = named.filter(s => !kept(play(s).events)).length;
+    const [nlo, nhi] = wilson(namedMissed, named.length);
+    add({ id: "missed-name-wakes", name: "Missed wakes by the bare name", target: "< 5 %", blocking: false,
+      value: `${((namedMissed / named.length) * 100).toFixed(1)} % (${namedMissed}/${named.length}; 95 % CI ${(nlo * 100).toFixed(1)}–${(nhi * 100).toFixed(1)} %)`,
+      status: missedWakesStatus(namedMissed, named.length),
+      note: `“Ember, …” without “Hey”: ${named.length} clips (test clip + synthesized renderings at 3 speeds); this test voice's first “Ember” often comes out as “Amber” or “Number”, which the check rightly doesn't take` });
     add({ id: "false-wakes", name: "False wakes", target: "< 0.5 per hour (office-noise corpus)", blocking: false, value: `${falseWakes}/${negatives.length} non-wake clips${flickers ? ` (+${flickers} taken back at once)` : ""}`,
       status: "not-measured", note: "no office-noise corpus here; counted on near-miss phrases (“remember”, “embers”, “member”) instead" });
+    // Real voices (scripts/voice/record.mjs), when a corpus is here: the figures that count for release.
+    const real = corpusDir(voiceDir);
+    if (real) {
+      const clips = loadCorpus(real);
+      const speakers = new Set(clips.map(c => c.speaker)).size;
+      const rate = (n: number, of: number) => `${of ? ((n / of) * 100).toFixed(1) : "—"} % (${n}/${of}; 95 % CI ${of ? wilson(n, of).map(x => (x * 100).toFixed(1)).join("–") : "—"} %)`;
+      const runs = clips.map(c => ({ c, ev: play(c.samples).events }));
+      const of = (f: (r: (typeof runs)[number]) => boolean) => runs.filter(f);
+      const hey = of(r => r.c.wakes && !r.c.bare), bare = of(r => r.c.wakes && r.c.bare), neg = of(r => r.c.label === "negative"), stops = of(r => r.c.stops);
+      const note = `${speakers} real speaker${speakers === 1 ? "" : "s"}, recorded with scripts/voice/record.mjs`;
+      const heyMissed = hey.filter(r => !kept(r.ev)).length, bareMissed = bare.filter(r => !kept(r.ev)).length;
+      add({ id: "real-missed-wakes", name: "Missed wakes (real voices)", target: "< 5 %", blocking: false, value: rate(heyMissed, hey.length), status: missedWakesStatus(heyMissed, hey.length), note });
+      add({ id: "real-missed-name-wakes", name: "Missed wakes by the bare name (real voices)", target: "< 5 %", blocking: false, value: rate(bareMissed, bare.length), status: missedWakesStatus(bareMissed, bare.length), note });
+      const falseReal = neg.filter(r => kept(r.ev)).length;
+      add({ id: "real-false-wakes", name: "False wakes (real voices)", target: "0 on near-miss phrases", blocking: false, value: rate(falseReal, neg.length), status: neg.length ? (falseReal ? "fail" : "pass") : "not-measured", note });
+      const missedStops = stops.filter(r => !r.ev.some(e => e.type === "stop")).length;
+      add({ id: "real-missed-stops", name: "Missed stops (real voices)", target: "< 5 %", blocking: false, value: rate(missedStops, stops.length), status: missedWakesStatus(missedStops, stops.length), note });
+    }
     // Idle listening: a minute of quiet room noise.
     const noise = new Float32Array(16000 * 60);
     let seed = 7;
@@ -275,7 +304,7 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
       note: `${os.cpus()[0]?.model.trim() ?? "this CPU"}; spotter + VAD on a minute of room noise` });
     backend.free();
   } else {
-    for (const [id, name, target] of [["wake-latency", "Wake → listening", "< 300 ms"], ["missed-wakes", "Missed wakes", "< 5 %"], ["false-wakes", "False wakes", "< 0.5 per hour"], ["idle-cpu", "Idle listening CPU", "< 5 % of one core"]]) {
+    for (const [id, name, target] of [["wake-latency", "Wake → listening", "< 300 ms"], ["missed-wakes", "Missed wakes", "< 5 %"], ["missed-name-wakes", "Missed wakes by the bare name", "< 5 %"], ["false-wakes", "False wakes", "< 0.5 per hour"], ["idle-cpu", "Idle listening CPU", "< 5 % of one core"]]) {
       add({ id, name, target, blocking: false, value: "—", status: "not-measured", note: "speech models not downloaded (node scripts/voice/prepare.mjs)" });
     }
   }

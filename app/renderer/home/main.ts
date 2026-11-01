@@ -7,8 +7,9 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { SPEAK_NO_VOICE, setupBadge, setupView } from "./copy";
+import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { handleCornerText } from "./copy";
+import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
@@ -354,6 +355,8 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   if (!platform) useAppNames(p.os);
   platform = p;
   for (const patch of homePatches(p)) applyPatch(patch);
+  // The natural voice needs speech to run natively: Windows and macOS (app/voice/runtime.ts).
+  $("natural-row").hidden = p.os === "linux";
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
   // Keys read differently on this OS: the lines already shown are written again.
@@ -818,7 +821,22 @@ let privacyKey = "";
 /** After a Remove: which list, and where in it, focus goes once the list is redrawn. */
 let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
+// ───── When Ember asks first ─────
+$("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), askedApps: (e.target as HTMLInputElement).checked } }); });
+$("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
+function renderTrust(s: Settings): void {
+  for (const row of trustView(s.trust, managed)) {
+    const input = $(row.id) as HTMLInputElement;
+    input.checked = row.checked;
+    input.disabled = row.disabled;
+    (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", row.locked);
+    input.title = row.title;
+    input.setAttribute("aria-describedby", row.describedBy);
+  }
+}
+
 function renderPrivacy(s: Settings): void {
+  renderTrust(s);
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;
@@ -929,7 +947,7 @@ window.ember.onPresence(renderPresence);
 // ───── Voice ─────
 const VOICE_TEXT: Record<string, string> = {
   off: "Off", "needs-models": "Speech models aren't downloaded yet (a one-time download)", downloading: "Downloading speech models…",
-  starting: "Starting…", waiting: "Listening for “Hey Ember”", active: "Hearing you…", muted: micOffText(), error: "Not working",
+  starting: "Starting…", waiting: "Listening for “Ember”", active: "Hearing you…", muted: micOffText(), error: "Not working",
 };
 let voiceSettings: { wakeWord: boolean; consent: boolean } = { wakeWord: false, consent: false };
 let voice: VoiceStatus | null = null;
@@ -961,15 +979,21 @@ function renderVoice(v: VoiceStatus): void {
   renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
   $("voice-text").textContent = text;
-  if (v.state !== "downloading") voiceLive(text);
+  // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
+  const said = renderMatch();
+  if (said) voiceLive(said);
+  else if (v.state !== "downloading" && text !== voiceLine) voiceLive(text);
+  voiceLine = text;
   $("voice-dot").dataset.phase = v.state === "waiting" || v.state === "active" ? "ready" : v.state === "error" ? "error" : v.state === "off" || v.state === "muted" ? "" : "starting";
   const dl = $("voice-download") as HTMLButtonElement;
-  // Listening turned off by the organisation: nothing to download it for.
-  dl.hidden = v.modelsReady || v.state === "downloading" || managed.has("wakeWord");
-  dl.textContent = `Download speech models (${Math.round(v.modelsBytes / 1e6)} MB)`;
+  // Listening turned off by the organisation: nothing to download it for. Otherwise it fetches what's missing (all of
+  // them on first use; later just Ember's voice or Voice Match, should one be missing or damaged).
+  const downloading = v.state === "downloading" || !!v.downloading;
+  dl.hidden = !v.modelsMissing.length || downloading || managed.has("wakeWord");
+  dl.textContent = modelsDownloadLabel(v.modelsMissing, v.modelsBytes);
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
-  ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  ($("voice-progress") as HTMLProgressElement).hidden = !downloading;
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
@@ -980,10 +1004,62 @@ function renderVoice(v: VoiceStatus): void {
     window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
   }
 }
+/** The voice line last shown, so a status that doesn't change it isn't said again after a Voice Match prompt. */
+let voiceLine = "";
+/** Voice Match as last drawn, and whether the user pressed Cancel since (for what is said when teaching ends). */
+let shownMatch: VoiceStatus["match"];
+let matchCancelled = false;
+/** Draws Voice Match (match-copy.ts matchView) and returns what screen readers should hear, if anything. */
+function renderMatch(): string | null {
+  const m = voice?.match;
+  // Voice Match's model alone missing: its size, for the note that says to download it.
+  const speakerBytes = voice?.modelsMissing.length === 1 && voice.modelsMissing[0] === "speaker" ? voice.modelsBytes : null;
+  const view = matchView(m, { listening: voiceSettings.wakeWord && voiceSettings.consent, managed: managed.has("wakeWord"), speakerBytes });
+  const group = $("match");
+  // The control that has focus, if this draw hides or disables it: focus moves on (as after Download and the consent buttons).
+  const had = document.activeElement instanceof HTMLElement && group.contains(document.activeElement) ? document.activeElement : null;
+  group.hidden = view.hidden;
+  const sw = $("match-on") as HTMLInputElement;
+  sw.checked = view.checked;
+  sw.disabled = view.disabled;
+  $("match-text").textContent = view.text;
+  const prompt = $("match-prompt");
+  prompt.hidden = !view.prompt;
+  prompt.textContent = view.prompt;
+  const bar = $("match-progress") as HTMLProgressElement;
+  bar.hidden = !view.progress;
+  if (view.progress) { bar.max = view.progress.max; bar.value = view.progress.value; bar.setAttribute("aria-valuetext", view.progress.text); }
+  else bar.removeAttribute("aria-valuetext");
+  $("match-teach").hidden = view.teach.hidden;
+  $("match-teach").textContent = view.teach.label;
+  $("match-cancel").hidden = view.cancelHidden;
+  $("match-forget").hidden = view.forgetHidden;
+  if (had && (isHidden(had) || (had as HTMLInputElement).disabled)) focusFirst(view.focus);
+  const said = matchAnnouncement(shownMatch, m, matchCancelled);
+  if (!m?.enrolling) matchCancelled = false;
+  shownMatch = m && { ...m, enrolling: m.enrolling && { ...m.enrolling } };
+  return view.hidden ? null : said;
+}
+const startEnrol = () => {
+  // Ember not listening just now: said where the switch's description is, and to screen readers. Otherwise focus
+  // moves to Cancel once the first phrase is shown (renderMatch).
+  void window.ember.enrolVoice().then(ok => { if (!ok) { $("match-text").textContent = MATCH_TEXT.notListening; voiceLive(MATCH_TEXT.notListening); } });
+};
+$("match-on").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
+  if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false }), match: on } });
+});
+$("match-teach").addEventListener("click", startEnrol);
+// Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
+$("match-cancel").addEventListener("click", () => { matchCancelled = true; void window.ember.cancelEnrolVoice(); });
+$("match-forget").addEventListener("click", () => { void window.ember.forgetVoice(); focusFirst(["match-teach", "match-on", "wake"]); });
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
+  ($("natural") as HTMLInputElement).checked = s.voice.natural;
   if (voice) renderVoice(voice);
 }
 $("wake").addEventListener("change", e => {
@@ -994,12 +1070,16 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
+$("natural").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false }), natural: on } });
+});
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();

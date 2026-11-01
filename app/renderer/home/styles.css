@@ -198,6 +198,10 @@ html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138p
 /* Callouts: the consent note, organisation notices, the welcome. Neutral: colour is kept for actions. */
 .consent { padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .consent p { margin: 0 0 12px; }
+.match { display: grid; gap: 8px; }
+.match .hint { margin: 0; }
+.match-prompt { margin: 0; font-weight: 600; }
+#match-progress { width: 100%; }
 progress { width: 100%; height: 4px; border: 0; border-radius: var(--r-capsule); overflow: hidden; background: rgba(120, 120, 128, 0.36); -webkit-appearance: none; appearance: none; }
 progress::-webkit-progress-bar { background: rgba(120, 120, 128, 0.36); }
 progress::-webkit-progress-value { background: var(--accent); border-radius: var(--r-capsule); }

@@ -22,7 +22,7 @@ import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelSe
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
+import { IPC, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -42,7 +42,7 @@ import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
-import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
+import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
@@ -63,6 +63,9 @@ import { locateRuntime } from "./agent/runtime";
 import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDeviceFlow, pollDeviceGrant, type ResolvedToken, type SaveResult } from "./agent/auth";
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
+import { SpeechStream } from "../voice/tts";
+import { ENROL_PHRASES } from "../voice/voiceprint";
+import { voiceprintStore } from "./voiceprint-store";
 import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
@@ -130,6 +133,14 @@ useAppNames(platform.os);
 
 // Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
 for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(s);
+// Development only (test/voice-e2e): EMBER_TEST_MIC_WAV gives the microphone window a fake microphone that "hears"
+// that WAV file (once; a trailing %noloop is added unless the path has one), with no device prompt.
+const testMicWav = devEnv("EMBER_TEST_MIC_WAV");
+if (testMicWav) {
+  app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+  app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+  app.commandLine.appendSwitch("use-file-for-fake-audio-capture", testMicWav.includes("%") ? testMicWav : `${testMicWav}%noloop`);
+}
 
 // ~/.config/ember on Linux unless overridden (tests use a temp dir).
 app.setName("ember");
@@ -218,12 +229,14 @@ function readEnvironment(): EnvReport {
 
 /**
  * Speech models installed with Ember (the ember-voice-models package, which puts them in "/usr/share/ember/voice-models"
- * on Linux; sys.voice says where on each OS) are used in place of a download.
+ * on Linux; sys.voice says where on each OS) are used in place of a download: the first such folder with what listening
+ * needs. One it lacks (Ember's voice, Voice Match) comes from the user's own folder (`userRoot`), downloaded there.
  */
-function voiceModelsRoot(): { root: string; bundled: boolean } {
+function voiceModelsRoot(): { root: string; bundled: boolean; userRoot: string } {
+  const userRoot = path.join(userData, "models");
   const bundled = [devEnv("EMBER_VOICE_MODELS"), ...sys.voice.bundledModelDirs(process.resourcesPath ?? "")]
     .find((d): d is string => !!d && modelsReady(d));
-  return bundled ? { root: bundled, bundled: true } : { root: path.join(userData, "models"), bundled: false };
+  return bundled ? { root: bundled, bundled: true, userRoot } : { root: userRoot, bundled: false, userRoot };
 }
 
 /** How gh is run to find a GitHub CLI sign-in on this OS (its path, no console window on Windows). */
@@ -313,6 +326,7 @@ async function runDoctor(): Promise<void> {
       xtest: ws ? !!input && !blocked : null,
       speechDispatcher: probes.speechDispatcher, microphones: probes.microphones,
       voiceModels: models.bundled ? "bundled" : modelsReady(models.root) ? "downloaded" : "missing",
+      voiceModelsMissing: missingModels([models.root, models.userRoot]).map(m => m.id),
       runtime: runtime.exists, auth, signIn, admin, desk: probes.desk, sandbox: probes.sandbox, fileWatchers: probes.fileWatchers,
       // The SSH client, WSL, the command window's terminal and the remote parts (§8.8).
       extra: [...(probes.extra ?? []), ...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))],
@@ -910,6 +924,17 @@ function start(): void {
    * chose (review #55); never when the organisation turned speaking off.
    */
   const maySpeak = () => policy.features.speak !== false && !screenLock?.locked && speaksAloud(settings.get(), () => sys.a11y.screenReaderOn());
+  /**
+   * The answer being spoken as it streams: each message's first sentence cuts off whatever Ember was saying (as a new
+   * answer always did), the rest follow it.
+   */
+  const answerSpeech = new SpeechStream();
+  let answerSpoken = false;
+  const sayStreamed = (chunks: string[]) => {
+    if (!maySpeak()) return;
+    for (const c of chunks) { voice?.speak(c, { append: answerSpoken }); answerSpoken = true; }
+    if (!answerSpeech.started) answerSpoken = false;
+  };
 
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
@@ -1098,7 +1123,7 @@ function start(): void {
    */
   const CUT_NOTES = {
     wake: "I only caught the first part: say the rest after my answer.",
-    "follow-up": "I only caught the first part: say “Hey Ember” and the rest.",
+    "follow-up": "I only caught the first part: say “Ember” and the rest.",
   } as const;
   const isCutNote = (s: string | null) => s === CUT_NOTES.wake || s === CUT_NOTES["follow-up"];
   let shownForAnswer = false;
@@ -1135,8 +1160,20 @@ function start(): void {
   };
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
-    modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES, speechMissing: speechHeard === false,
+    modelsReady: voice?.modelsReady ?? false,
+    modelsMissing: (voice?.missingModels ?? VOICE_MODELS).map(m => m.id), modelsBytes: voice ? modelsBytes(voice.missingModels) : VOICE_MODELS_BYTES,
+    ...(voice?.isDownloading ? { downloading: true } : {}),
+    speechMissing: speechHeard === false,
+    // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
+    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling },
   });
+  /**
+   * Voice Match (app/voice/voiceprint.ts): the owner's voiceprint, kept apart from the settings (voiceprint-store.ts),
+   * is in use while the setting is on; `enrolling` is the teaching under way (settings shows the phrase to say).
+   */
+  const voiceprints = voiceprintStore(userData, VOICE_MODELS.find(m => m.id === "speaker")!.target);
+  const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
+  let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
   /** What Ember does with what it hears. */
@@ -1356,6 +1393,23 @@ function start(): void {
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
   ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
+  // Voice Match: teaching needs Ember listening (the microphone open); the voiceprint goes in when the phrases are in.
+  ipcMain.handle(IPC.voiceMatchEnrol, guard(() => {
+    if (policy.features.voice === false || !voice?.enrol()) return false;
+    enrolling = { got: 0, of: ENROL_PHRASES.length, phrase: ENROL_PHRASES[0] };
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+    return true;
+  }));
+  ipcMain.handle(IPC.voiceMatchCancel, guard(() => { voice?.cancelEnrol(); enrolling = null; broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }));
+  ipcMain.handle(IPC.voiceMatchForget, guard(() => {
+    voice?.cancelEnrol();
+    enrolling = null;
+    voiceprints.forget();
+    settings.update({ voice: { ...settings.get().voice, match: false } });
+    voice?.setVoiceprint(null);
+    log.info("voice.match_forgotten");
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+  }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -1821,6 +1875,7 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
+        trustAskedApps: () => settings.get().trust.askedApps,
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
@@ -1944,10 +1999,15 @@ function start(): void {
       describeScreen: () => seeing.describe(), screenLocked: () => screenLock?.locked ?? false, hands,
       // The keyring refused Ember's saved sign-in (macOS's keychain prompt after an update answered Deny): said so.
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
-      // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out.
-      onAnswer: text => { turnAnswer = text; if (maySpeak()) voice?.speak(spokenText(text)); },
+      // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
+      // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
+      onAnswerDelta: delta => sayStreamed(answerSpeech.push(delta)),
+      onAnswerEnd: text => sayStreamed(answerSpeech.finish(text)),
+      onAnswer: text => { turnAnswer = text; sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
+        answerSpeech.reset();
+        answerSpoken = false;
         if (lastAskByVoice && !aborted) voice?.followUp(8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";
@@ -2038,13 +2098,35 @@ function start(): void {
       log: log.child("voice"),
       modelsRoot: speechModels.root,
       // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
-      ...(speechModels.bundled ? { bundled: { userRoot: path.join(userData, "models") } } : {}),
+      ...(speechModels.bundled ? { bundled: { userRoot: speechModels.userRoot } } : {}),
       // Speaker rejection needs PulseAudio's monitor sources (Linux only); elsewhere the setting says so.
       monitor: settings.get().voice.speakerRejection && sys.voice.speakerMonitor,
       // Where the system that refused it lets the user allow it (the setup check has a button for it). Named without
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
+      // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
+      neuralVoice: true,
+      // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
+      naturalVoice: settings.get().voice.natural,
+      voiceprint: ownerPrint,
+      onEnrol: p => {
+        if (p.state === "done") {
+          try {
+            voiceprints.write(p.print);
+            settings.update({ voice: { ...settings.get().voice, match: true } });
+            voice?.setVoiceprint(p.print);
+            log.info("voice.match_enrolled", { phrases: p.got });
+          } catch (err) { log.warn("voice.match_not_saved", { err }); }
+          enrolling = null;
+        } else if (p.state === "cancelled") {
+          enrolling = null;
+        } else {
+          enrolling = { got: p.got, of: p.of, phrase: ENROL_PHRASES[Math.min(p.got, ENROL_PHRASES.length - 1)], ...(p.state === "again" && p.why ? { again: p.why as "short" | "unlike" | "failed" } : {}) };
+        }
+        broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+      },
+      onModels: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       onSpeech: ok => {
         if (speechHeard === ok) return;
         speechHeard = ok;
@@ -2072,6 +2154,15 @@ function start(): void {
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     let micConsent = settings.get().voice.consent;
+    // Voice Match turned on or off in settings: the voice process checks requests from now on, or doesn't.
+    let matchOn = settings.get().voice.match;
+    settings.onChange(next => {
+      if (next.voice.match === matchOn) return;
+      matchOn = next.voice.match;
+      voice?.setVoiceprint(ownerPrint());
+      broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+    });
+    settings.onChange(next => voice?.setNaturalVoice(next.voice.natural));
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));

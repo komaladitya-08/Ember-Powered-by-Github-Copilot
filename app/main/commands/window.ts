@@ -211,6 +211,7 @@ export function validCard(c: unknown): c is CommandCard {
     && ["ask", "announce", "run"].includes(c.mode as string) && Array.isArray(c.says) && c.says.length <= 64
     && c.says.every(l => str(l, 4000)) && typeof c.unasked === "boolean" && typeof c.armMs === "number" && Number.isFinite(c.armMs) && c.armMs >= 0
     && (c.classes === undefined || (Array.isArray(c.classes) && c.classes.length <= DANGER_CLASSES.length && c.classes.every(x => DANGER_CLASSES.includes(x as DangerClass))))
+    && (c.reviewed === undefined || typeof c.reviewed === "boolean")
     && cardSha256(c as unknown as CommandCard) === c.sha256;
 }
 

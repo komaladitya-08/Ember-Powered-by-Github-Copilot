@@ -88,25 +88,42 @@
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
         <div id="consent" class="consent" role="group" aria-label="Before Ember listens" hidden>
-          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for “Hey Ember” and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Hey Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
+          <p id="consent-text">Ember will keep the microphone open while it runs, listening only for its name (“Ember”, or “Hey Ember”) and “Ember, stop”. That listening happens on this computer: no audio leaves it, and nothing is recorded. After you say “Ember”, what you say next is turned into text on this computer, and only that text is sent to Copilot. After Ember answers, you have 8 seconds to follow up without saying “Hey Ember” again. <span id="speaker-note">To tell its own voice and your speakers apart from you, Ember also listens to what your speakers play (on this computer only), which keeps the sound output from going idle while Ember listens.</span> <span id="mic-indicator">GNOME shows a microphone icon while Ember listens.</span> <span data-key-held="mute"><span class="chord" data-shortcut="mute"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>M</kbd></span> turns the microphone off and on.</span><span data-key-taken="mute" hidden>Mute microphone, in Ember's handle menu, turns the microphone off and on.</span></p>
           <div class="agent-actions"><button type="button" id="consent-yes" class="btn" aria-describedby="consent-text">I agree, start listening</button><button type="button" id="consent-no" class="btn quiet">Not now</button></div>
         </div>
         <p class="agent-line"><i id="voice-dot" class="dot" aria-hidden="true"></i><span id="voice-text">Off</span></p>
         <p class="sr" id="voice-live" role="status"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
+        <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>
+          <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">Answer only my voice (Voice Match)</span></label>
+          <p class="hint" id="match-text"></p>
+          <p class="match-prompt" id="match-prompt" hidden></p>
+          <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet" aria-describedby="match-text">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button></div>
+        </div>
+        <div id="natural-row" hidden>
+          <label class="switch-row"><input type="checkbox" id="natural" role="switch" aria-describedby="natural-text"><span>Use a more natural voice</span></label>
+          <p class="hint" id="natural-text">Kokoro: downloads 350 MB once, and speaks only where this computer is fast enough for it (otherwise Ember's usual voice does).</p>
+        </div>
         <div class="choice">
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
         </div>
       </div>
       <p class="hint" id="speak-note" role="status" hidden></p>
-      <p class="hint">Say “Hey Ember, …” and your request, or “Ember, stop” to stop everything.</p>
+      <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="privacy-h">
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
       <div class="stack">
+        <h3 class="sub">When Ember asks first</h3>
+        <span id="trust-managed" hidden>Managed by your organisation</span>
+        <label class="switch-row"><input type="checkbox" id="trust-apps" role="switch" aria-describedby="trust-apps-hint"><span>Don't ask before working in an app I asked for help with</span></label>
+        <p class="hint" id="trust-apps-hint">The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.</p>
+        <label class="switch-row"><input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>Ask only about dangerous commands</span></label>
+        <p class="hint" id="trust-commands-hint">A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.</p>
         <h3 class="sub">Apps Ember may act in without asking first</h3>
         <p class="hint grants-off" id="grants-off" hidden>Not in effect: your organisation has Ember ask before every action, in these apps too.</p>
         <ul class="plain-list" id="grants" aria-label="Apps Ember may act in without asking"></ul>

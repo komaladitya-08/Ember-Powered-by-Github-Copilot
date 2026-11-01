@@ -7,5 +7,7 @@
   "chat": "Let's meet at the station after lunch.",
   "followup": "And turn on do not disturb too.",
   "dnd": "Hey Ember, turn on do not disturb.",
-  "bigger": "And make the text a bit bigger."
+  "bigger": "And make the text a bit bigger.",
+  "name_wake": "Ember, turn on night light.",
+  "embers": "The embers in the fireplace were still glowing."
 }

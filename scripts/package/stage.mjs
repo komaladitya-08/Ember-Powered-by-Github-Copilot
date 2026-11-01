@@ -20,10 +20,13 @@
 // Speech models ship beside the Linux app (an RPM sub-package); on Windows and macOS only with --with-models.
 // The remote agent's parts (dist/remote-parts, from remote-parts.mjs) go to resources/remote-parts; without them no
 // SSH target can be set up, so staging stops unless --allow-missing-remote-parts.
-// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models]
+// --with-runtimes: the Node runtimes Ember sends to computers reached over SSH go in resources/remote-parts/runtime (from
+// node scripts/package/runtimes.mjs, each checked against remote-runtime.json), so it never downloads one.
+// usage: node scripts/package/stage.mjs [--allow-missing-sidecar] [--allow-missing-remote-parts] [--with-models] [--with-runtimes]
 //   (after npm run build and node scripts/package/remote-parts.mjs)
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,13 +34,13 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { specLicenceIds, suppliedLicence, uncoveredLicences } from "./licences.mjs";
 import { EMBER_FUSES, flipFuses, fuseMismatches } from "./fuses.mjs";
-import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, selectPackages } from "./layout.mjs";
+import { layoutFor, npmInvocation, prodPackageDirs, REMOTE_PARTS_DIR, RUNTIME_BUNDLE, selectPackages } from "./layout.mjs";
 import { writeIco, writeIconset } from "./icon.mjs";
 import { exeResourceMismatches, readExeResources, rewriteExeResources } from "./exe-resources.mjs";
 import { finishMacBundle } from "./mac-bundle.mjs";
 import { stageParts } from "./remote-parts.mjs";
 
-const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models"];
+const FLAGS = ["--allow-missing-sidecar", "--allow-missing-remote-parts", "--with-models", "--with-runtimes"];
 const flags = process.argv.slice(2);
 const unknown = flags.filter(f => !FLAGS.includes(f));
 if (unknown.length) { console.error(`unknown option ${unknown[0]}\nusage: node scripts/package/stage.mjs [${FLAGS.join("] [")}]`); process.exit(2); }
@@ -205,6 +208,22 @@ if (fs.existsSync(path.join(partsSrc, "remote-parts.json"))) {
   console.warn("warning: dist/remote-parts isn't staged (--allow-missing-remote-parts): this package can't work on computers reached over SSH");
 } else {
   throw new Error("dist/remote-parts/remote-parts.json is missing: run node scripts/package/remote-parts.mjs after npm run build (--allow-missing-remote-parts stages without SSH)");
+}
+
+// 3c. The Node runtimes for SSH remotes (--with-runtimes): each pinned archive runtimes.mjs fetched, checked again here.
+if (flags.includes("--with-runtimes")) {
+  const runtime = JSON.parse(fs.readFileSync(path.join(root, "scripts/package/remote-runtime.json"), "utf8"));
+  const destRt = path.join(resources, REMOTE_PARTS_DIR, "runtime");
+  fs.mkdirSync(destRt, { recursive: true });
+  for (const [target, format] of Object.entries(RUNTIME_BUNDLE)) {
+    const e = runtime.targets[target][format];
+    const src = path.join(root, ".cache/remote-runtime", e.file);
+    const bytes = fs.existsSync(src) ? fs.readFileSync(src) : null;
+    if (!bytes || bytes.length !== e.bytes || crypto.createHash("sha256").update(bytes).digest("hex") !== e.sha256) {
+      throw new Error(`--with-runtimes: ${e.file} missing or not the one pinned (run node scripts/package/runtimes.mjs)`);
+    }
+    fs.writeFileSync(path.join(destRt, e.file), bytes);
+  }
 }
 
 // 4. Speech models (optional): only when every model is in place and verified (its marker holds the SHA-256 it's

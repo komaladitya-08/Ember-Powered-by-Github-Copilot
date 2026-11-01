@@ -2,7 +2,9 @@
  * Ember's ears. Everything here runs on this computer: audio never leaves it,
  * and nothing is kept, before the wake word.
  *
- * Always: keyword spotting for "hey ember" (wake) and "ember stop" (kill).
+ * Always: keyword spotting for "Ember" on its own, "hey ember" (wake) and "ember stop" (kill). The bare name is
+ * spotted inside "remember" and "September" too, so a wake by it shows only once the transcript check has heard the
+ * name start the phrase ("Ember, open the terminal"; not "the embers", not "I remember").
  * After a wake: voice activity detection finds the end of what was said, then
  * an offline recognizer transcribes the whole utterance at once (accurate,
  * punctuated). A short pre-roll means "Hey Ember, turn on Night Light" works
@@ -68,7 +70,8 @@ export type VoiceEvent =
   | { type: "speech"; on: boolean }
   /** `window`: a wake's request or a follow-up (which gets no follow-up of its own); `cut`: the speaker was still talking when the request reached its length limit. */
   | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean }
-  | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check"; heard?: string };
+  /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
+  | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 
 export interface EngineOptions {
   /** Audio kept before a wake so a one-breath command isn't cut (seconds). */
@@ -104,6 +107,23 @@ export function heardOtherWord(transcript: string): boolean {
   const t = transcript.toLowerCase();
   if (/\bember\b|\bembers\b/.test(t)) return false;
   return /\b(amber|ambers|remember|remembers|member|members|september|november|december|timber|number|chamber|hammer)\b/.test(t);
+}
+
+/** The spotter's label for the name said on its own ("Ember, turn on Night Light"), without "Hey" or "OK". */
+export const BARE_NAME = "ember";
+
+/**
+ * Was Ember called by its bare name: does the name start what was said (after a greeting or a filler, or after the end
+ * of a sentence said before it: the check hears 1.6 s of what came before)? "Ember, what time is it?", "Okay. Ember,
+ * open the terminal." and "Um, Ember?" are; "The embers are glowing", "I remember" and "tell Ember's team" aren't.
+ * The recognizer's spellings of the name that aren't words count ("Umber, open the terminal"); "Amber, …" and "Number,
+ * …" don't, though it writes a first "Ember" so too: "Amber" is someone else's name, and it writes "I remember the…"
+ * as "Number, the…" (measured: taking it woke Ember on 4 of 120 near-miss phrases).
+ */
+export function calledByName(transcript: string): boolean {
+  if (heardOtherWord(transcript)) return false;
+  // "Hey" as the recognizer writes it too ("Pay Ember", "Peyember"): the spotter may take the name of "Hey Ember" first.
+  return /^\W*(?:(?:\S+\s+){0,4}?\S*[.!?;:]\s+)?(?:(?:hey|hi|ok|okay|hay|pay|pey|they|a|oh|so|um|uh|well|and|yes|yeah|no|please)[\s,.!'"“”]+)*(?:hey|hay|pay|pey)?(?:ember|emmer|umber|anber|embre)\b(?!['’]?s\b)/i.test(transcript);
 }
 
 /** "Ember, stop" as the recognizer writes it ("Ember stopped the task.", "Embers, please stop", "Emmer, stop the task."). */
@@ -387,17 +407,22 @@ const LAG_MIN_CORRELATION = 0.5;
  * `checkAt`: when the wake's transcript check runs (null: none pending), for `keyword`; `afterQuestion`: a follow-up
  * to an answer that asked something ("Okay." is a yes then, not the end of the conversation); `bargeIn`: a wake said
  * while Ember spoke (what it heard first has Ember's own words around it); `held`: what it heard over Ember's voice
- * wasn't sent (see AFTER_HUSH_FRAMES).
+ * wasn't sent (see AFTER_HUSH_FRAMES); `announced` false: a wake by the bare name that isn't shown (no "wake" or
+ * "listening" event) until the whole of what was said, once the speaker paused, starts with the name (handleSegment).
  */
 type Mode =
   | { kind: "idle" }
-  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean };
+  | { kind: "listening"; until: number; ms: number; heardSpeech: boolean; first: boolean; reason: "wake" | "follow-up"; checkAt: number | null; keyword: string; afterQuestion?: boolean; bargeIn?: boolean; held?: boolean; announced?: boolean };
 
 /** A spotted stop (or "Hey Ember" while Ember speaks) being checked: see VoiceEngine.pendingStop. */
 type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?: boolean; again?: boolean; checked?: boolean; bargeIn?: boolean };
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
+  /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
+  requestAudio: Float32Array | null = null;
+  /** What was heard up to the wake just emitted (the pre-roll with the wake phrase), for Voice Match's first look. */
+  wakeAudio: Float32Array | null = null;
   private ring: Ring;
   private recent = new Ring(RECENT_SECONDS);
   private selfSpeakingUntil = 0;
@@ -616,7 +641,10 @@ export class VoiceEngine {
         // clearly heard another word ("Amber"). Mid-speech the spotter fires 0.45 s after the word, so it
         // checks at once (checking later took back more real wakes: of 90, 3 at once, 8 after 128 ms, 6 after
         // 256 ms); at a pause it fires sooner, and the check waits for what followed the word.
-        this.announceWake(w.keyword, this.o.verifyWake === false ? null : w.at + (this.o.checkAfterMs ?? (w.paused ? PAUSED_CHECK_MS : 0)));
+        // The bare name has no check here: what follows it decides (handleSegment), as a moment of audio after a name
+        // said out of silence is too little for the recognizer ("Emperor Tunnel Nine"), and "Hey, rem|ember to…" heard
+        // as it is spotted sounds like "Hey, Ember".
+        this.announceWake(w.keyword, this.o.verifyWake === false || w.keyword === BARE_NAME ? null : w.at + (this.o.checkAfterMs ?? (w.paused ? PAUSED_CHECK_MS : 0)));
         if (this.mode.kind === "listening" && this.mode.checkAt === null) this.replayPreRoll();
       }
     }
@@ -709,7 +737,10 @@ export class VoiceEngine {
 
   private saidBySpeakers(keyword: string, at: number): boolean {
     const window = this.o.rejectWindowMs ?? 400;
-    return this.monitorHits.some(h => h.keyword === keyword && Math.abs(h.at - at) <= window);
+    // The bare name is in every phrase: the microphone's may be the name of a phrase the speakers' stream spotted whole.
+    // Not the other way round: the speakers' "remember" (the name in another word) doesn't take back the user's "Hey Ember".
+    const same = (k: string) => k === keyword || keyword === BARE_NAME;
+    return this.monitorHits.some(h => same(h.keyword) && Math.abs(h.at - at) <= window);
   }
 
   /** The speakers can't have said what was spotted at `at`: their window has passed, or they were quiet all along. */
@@ -784,26 +815,33 @@ export class VoiceEngine {
       return true;
     }
     if (heard && heardOtherWord(heard)) return false;
+    // The bare name cuts in only where the recognizer heard the name itself (not "remember" or "September"); Ember's own
+    // words can come before it here, so it needn't start what was heard.
+    if (s.keyword === BARE_NAME && !/\b(ember|emmer)\b(?!['’]?s\b)/i.test(heard)) return false;
     s.bargeIn = true;
     this.selfSpeakingUntil = now;
     this.tailFrom = 0;
     this.tail = [];
-    this.announceWake(s.keyword, null);
+    // (The bare name shows at once here: the name was heard, and main must hush Ember on the wake.)
+    this.announceWake(s.keyword, null, true);
     if (this.mode.kind === "listening") this.mode.bargeIn = true;
     this.replayPreRoll();
     return false;
   }
 
-  private announceWake(keyword: string, checkAt: number | null): void {
-    this.emit({ type: "wake", keyword });
+  private announceWake(keyword: string, checkAt: number | null, show = false): void {
+    // The bare name shows once what was said with it starts with the name (see Mode.announced), unless nothing checks it.
+    const quiet = keyword === BARE_NAME && this.o.verifyWake !== false && !show;
+    this.wakeAudio = this.ring.read();
+    if (!quiet) this.emit({ type: "wake", keyword });
     this.resetListening();
     this.peak = 0;
     // The 1.5 s before the wake phrase (and what the pre-roll holds).
     const silence = Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO) ** 2, before = this.micLevels.slice(0, -WAKE_PHRASE_FRAMES);
     this.busyRoom = before.length >= BUSY_FRAMES && before.filter(e => e >= silence).length >= before.length * BUSY_SHARE;
     const ms = this.o.waitForSpeechMs ?? 6000;
-    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: true, reason: "wake", checkAt, keyword };
-    this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
+    this.mode = { kind: "listening", until: this.now() + ms, ms, heardSpeech: false, first: true, reason: "wake", checkAt, keyword, ...(quiet ? { announced: false } : {}) };
+    if (!quiet) this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
   }
 
   /** Replays what was said just before (and during) the wake word, so a one-breath request isn't cut. */
@@ -1044,14 +1082,34 @@ export class VoiceEngine {
   private handleSegment(clip: Clip | null, cut = false): void {
     if (this.mode.kind !== "listening" || !clip?.audio.length) return;
     const t0 = this.now();
+    const withBefore = (before: Float32Array) => {
+      const a = new Float32Array(before.length + clip.audio.length);
+      a.set(before);
+      a.set(clip.audio, before.length);
+      return a;
+    };
     let heard = this.transcribe(clip.audio);
     if (!/[a-z0-9]/i.test(heard) && clip.before?.length && clip.audio.length <= RETRY_MAX) {
       // The recognizer heard nothing in a short segment (its way with a lone word now and then): a second try, with
       // a moment of what came before it (measured on 159 short replies: 24 came back empty, 4 after a second try).
-      const again = new Float32Array(clip.before.length + clip.audio.length);
-      again.set(clip.before);
-      again.set(clip.audio, clip.before.length);
-      heard = this.transcribe(again);
+      heard = this.transcribe(withBefore(clip.before));
+    }
+    if (this.mode.announced === false && clip.before?.length && !calledByName(heard) && !(heard && isStop(stripWake(heard, true)))) {
+      // The bare name must start what was said, and the VAD's segment can start a little into it: "Ember, turn on…" was
+      // heard as "Remember, turn on…", "Ever turn on…" or "Amber turned on…" for 7 of 16 placements of the same clip.
+      // A second try with the moment before the segment (as above) hears the whole name.
+      const again = this.transcribe(withBefore(clip.before));
+      if (calledByName(again) || isStop(stripWake(again, true))) heard = again;
+    }
+    if (this.mode.announced === false) {
+      // The bare name, with all that was said with it: "Ember, stop" stops (the spotter takes the name, so the kill phrase
+      // isn't spotted after it); a phrase it doesn't start ("I remember…", "the embers…") was never a wake, and nothing
+      // was shown. Otherwise the wake shows now, and what was said is the request.
+      if (heard && isStop(stripWake(heard, true))) { this.emit({ type: "stop" }); this.endListening("stop"); return; }
+      if (!calledByName(heard)) { this.emit({ type: "rejected", keyword: BARE_NAME, reason: "check", heard }); this.endListening("rejected"); return; }
+      this.mode.announced = true;
+      this.emit({ type: "wake", keyword: BARE_NAME });
+      this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
     }
     const bargeIn = !!this.mode.bargeIn, stopped = (t: string) => isStop(t) || (bargeIn && heardStopWord(t));
     if (bargeIn && this.pendingStop?.bargeIn) this.pendingStop = null; // decided here, on what the window heard
@@ -1103,6 +1161,7 @@ export class VoiceEngine {
     const window = this.mode.reason;
     if (window === "wake") this.voice = this.peak;
     this.afterFollowUp = window === "follow-up";
+    this.requestAudio = clip.audio;
     this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}) });
     this.endListening("done");
   }
@@ -1126,12 +1185,13 @@ export class VoiceEngine {
 
   private endListening(reason: "timeout" | "done" | "stop" | "rejected"): void {
     const window = this.mode.kind === "listening" ? this.mode.reason : "wake";
+    const shown = this.mode.kind !== "listening" || this.mode.announced !== false;
     this.mode = { kind: "idle" };
     this.wasSpeaking = false;
     this.tail = [];
     this.tailFrom = 0;
     this.resetListening();
-    this.emit({ type: "listening", on: false, reason, window });
+    if (shown) this.emit({ type: "listening", on: false, reason, window });
   }
 }
 

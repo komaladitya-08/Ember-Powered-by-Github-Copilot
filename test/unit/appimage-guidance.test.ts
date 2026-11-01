@@ -36,11 +36,10 @@ describe("an AppImage's guidance", () => {
     expect(setup.detail).toContain(doctor.fix);
   });
 
-  it("doesn't offer the speech models RPM to an AppImage, which can't install it beside Ember's own RPM", () => {
+  it("offers the release's models zip for a Linux Ember packaged without them (no separate models RPM any more)", () => {
     const fix = (sandbox: DoctorProbes["sandbox"]) => row(doctorChecks(probes({ sandbox })), "voice-models").fix ?? "";
-    expect(fix({ userNamespaces: true, suidHelper: false, appImage: true })).not.toMatch(/ember-voice-models/);
-    expect(fix({ userNamespaces: true, suidHelper: false, appImage: true })).toMatch(/download them/);
-    expect(fix({ userNamespaces: true, suidHelper: false })).toMatch(/or install ember-voice-models/);
+    expect(fix({ userNamespaces: true, suidHelper: false, appImage: true })).toMatch(/download them.*Ember-voice-models zip into \/usr\/share\/ember/);
+    expect(fix({ userNamespaces: true, suidHelper: false })).not.toMatch(/ember-voice-models\b(?! zip)/);
   });
 
   it("is in the README: the AppImage still needs the packages the RPM brings for reading apps, and its own doctor", () => {
@@ -54,7 +53,7 @@ describe("an AppImage's guidance", () => {
   it("names every package the RPM recommends for voice, speaking and the desk in the README's optional line", () => {
     const spec = fs.readFileSync(path.resolve("packaging/rpm/ember.spec"), "utf8");
     const recommends = [...spec.matchAll(/^Recommends:\s*(.+)$/gm)].flatMap(m => m[1].split(/[,\s]+/)).filter(Boolean);
-    // Left out on purpose: the models RPM requires Ember's own RPM, and the tray extension shows icons Ember never makes.
+    // Left out on purpose: the tray extension shows icons Ember never makes.
     expect(fs.readFileSync(path.resolve("app/main/main.ts"), "utf8")).not.toMatch(/\bnew Tray\(/);
     const wanted = recommends.filter(p => p !== "ember-voice-models" && p !== "gnome-shell-extension-top-icons");
     // pulseaudio-utils: parec (speaker rejection, without which a spoken request never counts as yours) and pactl.

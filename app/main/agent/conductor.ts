@@ -53,6 +53,10 @@ export interface ConductorDeps {
   onUsage?: (inputTokens: number, outputTokens: number) => void;
   /** Ember's final answer text for a turn (for speaking it aloud). */
   onAnswer?: (text: string) => void;
+  /** The words of Ember's message as the model streams them (for speaking them as they come). */
+  onAnswerDelta?: (delta: string) => void;
+  /** A message that wasn't the final answer ended (words before tool calls): what it said, whole. */
+  onAnswerEnd?: (text: string) => void;
   /** A turn finished (for the voice follow-up window). */
   onTurnEnd?: (aborted: boolean) => void;
   /**
@@ -503,9 +507,14 @@ export class Conductor {
       }
       d.presenter.event(e as { type: string; data?: Record<string, unknown> });
       if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
+      if (e.type === "assistant.message_delta") {
+        const delta = String((e.data as { deltaContent?: unknown }).deltaContent ?? "");
+        if (delta) d.onAnswerDelta?.(delta);
+      }
       if (e.type === "assistant.message") {
         const data = e.data as { content?: string; toolRequests?: unknown[] };
         if (data.content && !(data.toolRequests?.length)) d.onAnswer?.(data.content);
+        else d.onAnswerEnd?.(data.content ?? "");
       }
       if (e.type === "session.error") {
         this.busy = false;

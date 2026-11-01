@@ -1,6 +1,7 @@
 #!/bin/bash
-# Builds dist/package/ember-<version>-<release><dist>.x86_64.rpm (and ember-voice-models-<version>-<release><dist>
-# .noarch.rpm when the speech models were staged) with rpmbuild, from the folder stage.mjs made. <release> is 1, or
+# Builds dist/package/ember-<version>-<release><dist>.x86_64.rpm with rpmbuild, from the folder stage.mjs made: the
+# speech models inside it when they were staged (EMBER_RPM_MODELS=required makes their absence an error, as for a
+# release). <release> is 1, or
 # EMBER_RPM_RELEASE (CI builds 2 to test an upgrade). <dist> is the build machine's %{?dist}: ".el8" on RHEL 8 and
 # its rebuilds (ember-0.1.0-1.el8.x86_64.rpm), as in CI.
 # Needs rpmbuild (dnf install rpm-build). usage: [EMBER_RPM_RELEASE=<n>] scripts/package/rpm.sh
@@ -26,6 +27,10 @@ cp "$root/packaging/rpm/ember.spec" "$top/SPECS/"
 
 models=0
 [ -d "$stage/voice-models" ] && models=1
+if [ "$models" = 0 ] && [ "${EMBER_RPM_MODELS:-}" = required ]; then
+  echo "no staged speech models (run node scripts/voice/prepare.mjs before stage.mjs): a release RPM carries them" >&2
+  exit 1
+fi
 rpmbuild -bb "$top/SPECS/ember.spec" \
   --define "_topdir $top" --define "ember_version $version" --define "ember_release $release" --define "with_models $models" \
   --define "_binary_payload w2T.xzdio" --quiet

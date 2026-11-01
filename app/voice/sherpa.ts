@@ -1,20 +1,25 @@
 /**
- * The real recognizers: sherpa-onnx compiled to WebAssembly (runs on RHEL 8's
- * glibc 2.28; the native addon needs 2.32). Keyword spotting with a 3.3M
- * zipformer, Silero VAD, and Moonshine tiny for transcription.
- * WebAssembly memory never shrinks, so every buffer here is bounded: a VAD
- * that hears speech for minutes (a TV, colleagues) would otherwise grow until
- * the process runs out of memory.
+ * The real recognizers, on sherpa-onnx: its native addon on Windows and macOS, its WebAssembly build elsewhere (it
+ * runs on RHEL 8's glibc 2.28; the Linux addon needs 2.32) and wherever the addon doesn't load (runtime.ts). Keyword
+ * spotting with a 3.3M zipformer, Silero VAD, and Moonshine v2 tiny for transcription.
+ * WebAssembly memory never shrinks, so every buffer here is bounded: a VAD that hears speech for minutes (a TV,
+ * colleagues) would otherwise grow until the process runs out of memory.
  */
 
-import { createRequire } from "node:module";
 import path from "node:path";
 import { MIN_TRANSCRIBE_SAMPLES, Ring, SAMPLE_RATE, type VoiceBackend } from "./engine";
+import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type KwsStream, type OfflineStream, type ProviderCache, type ProviderTry, type RuntimeOptions, type Sherpa } from "./runtime";
 
 export interface ModelPaths {
   kws: string;
   vad: string;
   asr: string;
+  /** Ember's voice (app/voice/tts.ts); the recognizers don't use it. */
+  tts: string;
+  /** The voiceprint model (Voice Match, app/voice/voiceprint.ts). */
+  speaker: string;
+  /** Ember's natural voice (Kokoro: optional, models.ts NATURAL_VOICE); the recognizers don't use it. */
+  natural: string;
 }
 
 /**
@@ -24,11 +29,16 @@ export interface ModelPaths {
  * talk, babble and music).
  * "Ember, stop" stays as it is: other spellings, boosts and thresholds didn't hear it better in the voices that
  * miss it (alan 14/30, ryan 8/30; amy 30/30); "Hey Ember, stop" and Ctrl+Alt+X are there for those.
+ * The bare name ("Ember, open the terminal") is two syllables, heard inside "remember" and "September" too (the
+ * engine's check takes those back before anything shows), and comes before "stop" in "Ember, stop" (the spotter takes
+ * the name first, and the check hears the stop). Its threshold, measured on 36 renderings of four "Ember, …" requests
+ * and 45 of five near-miss phrases: 0.2 spotted 30 and 16, 0.1 spotted 34 and 17.
  */
 export const KEYWORDS = [
   "▁HE Y ▁E M BER :2.0 #0.08 @hey_ember",
   "▁O K ▁E M BER :2.0 #0.08 @hey_ember",
   "▁E M BER ▁ST O P :2.0 #0.15 @ember_stop",
+  "▁E M BER :2.0 #0.1 @ember",
 ].join("\n");
 
 /** Silence fed to the spotter when the speaker pauses, so it decides without waiting for more audio. */
@@ -53,69 +63,137 @@ const VAD_MAX_SPEECH_SECONDS = 30;
 const CHECK_MAX_SAMPLES = 10 * SAMPLE_RATE;
 
 /**
+ * Moonshine v2 in the WebAssembly build throws on audio past about 9 s (measured: 9 s of fast talk transcribed, 9.5 s
+ * threw), so a longer request is transcribed in pieces of at most 7 s, each cut at its quietest tenth of a second
+ * between 4 and 7 s in (a pause between words, wherever the speaker took one), and the pieces' words are joined.
+ */
+const PIECE_MAX = 7 * SAMPLE_RATE;
+const PIECE_MIN = 4 * SAMPLE_RATE;
+const CUT_WINDOW = SAMPLE_RATE / 10;
+const CUT_STEP = SAMPLE_RATE / 100;
+
+/** `samples` in pieces the recognizer can take (see PIECE_MAX); audio no longer than that is one piece. */
+export function recognizerPieces(samples: Float32Array): Float32Array[] {
+  const out: Float32Array[] = [];
+  let from = 0;
+  while (samples.length - from > PIECE_MAX) {
+    let cut = from + PIECE_MAX, quietest = Infinity;
+    for (let at = from + PIECE_MIN; at + CUT_WINDOW <= from + PIECE_MAX; at += CUT_STEP) {
+      let e = 0;
+      for (let i = at; i < at + CUT_WINDOW; i++) e += samples[i] * samples[i];
+      if (e < quietest) { quietest = e; cut = at + CUT_WINDOW / 2; }
+    }
+    out.push(samples.subarray(from, cut));
+    from = cut;
+  }
+  out.push(samples.subarray(from));
+  return out;
+}
+
+/**
+ * The recognizer's words with a looping repeat taken out: on a short clip Moonshine v2 can repeat what it heard until
+ * its token limit ("pay embers pay embers pay embers pay em"), or say a whole sentence twice. A word said three times or
+ * more in a row, or a phrase of two words or more said twice or more, is kept once, along with a cut-off repeat at the
+ * very end. A word said twice ("very, very") stays.
+ */
+export function withoutRepeats(text: string): string {
+  const words = text.split(/\s+/).filter(Boolean);
+  const norm = (w: string) => w.toLowerCase().replace(/[^a-z0-9']/g, "");
+  const same = (a: number, b: number, k: number) => { for (let j = 0; j < k; j++) if (norm(words[a + j]) !== norm(words[b + j])) return false; return true; };
+  for (let k = 1; k <= words.length / 2; k++) {
+    for (let i = 0; i + 2 * k <= words.length; i++) {
+      if (!norm(words[i])) continue;
+      let n = 1;
+      while (i + (n + 1) * k <= words.length && same(i, i + n * k, k)) n++;
+      if (n < (k === 1 ? 3 : 2)) continue;
+      let end = i + n * k, j = 0;
+      while (end + j < words.length && j < k && norm(words[i + j]).startsWith(norm(words[end + j])) && (norm(words[end + j]) === norm(words[i + j]) || end + j === words.length - 1)) j++;
+      if (end + j === words.length) end += j;
+      words.splice(i + k, end - (i + k));
+    }
+  }
+  return words.join(" ");
+}
+
+/**
  * A speech model couldn't be loaded: one of its files is missing (an antivirus quarantined it), cut short or damaged.
  * Downloading the models again repairs it (review #254).
  */
 export class ModelLoadError extends Error {}
 
+/** Which build runs the recognizers, and how (the voice process logs it). */
+export interface BackendInfo {
+  backend: Sherpa["backend"];
+  /** The addon's and onnxruntime's versions, or why WebAssembly runs. */
+  detail: string;
+  /** The recognizer's execution provider and threads, and what each provider tried came to (CoreML against the CPU). */
+  provider: string;
+  threads: number;
+  tried: ProviderTry[];
+}
+
+/**
+ * The audio the recognizer is timed on when there is a provider to choose (macOS: CoreML or the CPU): 2 s of quiet
+ * noise, the length of a short request.
+ */
+function probeAudio(): Float32Array {
+  const out = new Float32Array(2 * SAMPLE_RATE);
+  let seed = 7;
+  for (let i = 0; i < out.length; i++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; out[i] = (seed / 0x7fffffff - 0.5) * 2e-3; }
+  return out;
+}
+
 /**
  * `monitor`: also spot the speakers' stream. `onError`: the recognizer failed on some audio (WebAssembly throws bare
- * numbers): that audio is heard as nothing, and the voice process carries on (review #253). Throws ModelLoadError when
- * a model can't be loaded.
+ * numbers): that audio is heard as nothing, and the voice process carries on (review #253). `runtime`: which build to
+ * use (runtime.ts; default: native on Windows and macOS when it loads). Throws ModelLoadError when a model can't be
+ * loaded.
  */
-/* eslint-disable @typescript-eslint/no-explicit-any -- sherpa-onnx ships untyped JS */
-export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void } = {}): VoiceBackend & { free(): void } {
-  const requireCjs = createRequire(__filename);
-  const sherpa = requireCjs("sherpa-onnx") as any;
-  // A damaged file throws a bare number out of WebAssembly; a missing one only gives an empty handle (and a recognizer
-  // that hears nothing, ever).
-  const load = (what: string, make: () => any): any => {
-    let made: any;
+export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void; keywords?: string; runtime?: RuntimeOptions; providerCache?: ProviderCache } = {}): VoiceBackend & { free(): void; info: BackendInfo } {
+  const sherpa = sherpaRuntime(opts.runtime);
+  // A damaged file throws (a bare number out of WebAssembly); a missing one only gives an empty handle there (and a
+  // recognizer that hears nothing, ever), which the runtime throws for too.
+  const load = <T>(what: string, make: () => T): T => {
     try {
-      made = make();
+      return make();
     } catch (err) {
       throw new ModelLoadError(`The ${what} couldn't be loaded.`, { cause: err });
     }
-    if (!made?.handle) throw new ModelLoadError(`The ${what} couldn't be loaded.`);
-    return made;
   };
+  // The spotter and the VADs run every frame, on the CPU (a single thread: their work is a few milliseconds a frame).
+  const cpu1 = { provider: "cpu", numThreads: 1 };
   const k = (f: string) => path.join(models.kws, f);
-  const kwsConfig = {
-    featConfig: { samplingRate: SAMPLE_RATE, featureDim: 80 },
-    modelConfig: {
-      transducer: {
-        encoder: k("encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
-        decoder: k("decoder-epoch-12-avg-2-chunk-16-left-64.onnx"),
-        joiner: k("joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
-      },
-      tokens: k("tokens.txt"), numThreads: 1, provider: "cpu", debug: 0,
-    },
-    maxActivePaths: 4, numTrailingBlanks: 1, keywordsScore: 1.0, keywordsThreshold: 0.25, keywords: KEYWORDS,
-  };
-  const kws = load("wake word model", () => sherpa.createKws(kwsConfig));
+  const kws = load("wake word model", () => sherpa.createKws({
+    encoder: k("encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
+    decoder: k("decoder-epoch-12-avg-2-chunk-16-left-64.onnx"),
+    joiner: k("joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
+    tokens: k("tokens.txt"),
+    maxActivePaths: 4, numTrailingBlanks: 1, keywordsScore: 1.0, keywordsThreshold: 0.25, keywords: opts.keywords ?? KEYWORDS,
+  }, cpu1));
   let micStream = kws.createStream();
-  let monStream: any = null;
+  let monStream: KwsStream | null = null;
   const vad = load("voice activity model", () => sherpa.createVad({
-    sileroVad: { model: models.vad, threshold: 0.5, minSilenceDuration: MIN_SILENCE, minSpeechDuration: 0.2, maxSpeechDuration: VAD_MAX_SPEECH_SECONDS, windowSize: 512 },
-    sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
-  }));
+    model: models.vad, threshold: 0.5, minSilenceDuration: MIN_SILENCE, minSpeechDuration: 0.2, maxSpeechDuration: VAD_MAX_SPEECH_SECONDS, windowSize: 512, bufferSizeInSeconds: 30,
+  }, cpu1));
   // The voice check for the idle spotter: a second Silero, eager (low threshold, a 64 ms onset), with its own state.
   // Its segments aren't needed: they're dropped as they come.
   const check = load("voice activity model", () => sherpa.createVad({
-    sileroVad: { model: models.vad, threshold: CHECK_THRESHOLD, minSilenceDuration: 0.25, minSpeechDuration: 0.064, maxSpeechDuration: 30, windowSize: 512 },
-    sampleRate: SAMPLE_RATE, numThreads: 1, provider: "cpu", debug: 0, bufferSizeInSeconds: 30,
-  }));
+    model: models.vad, threshold: CHECK_THRESHOLD, minSilenceDuration: 0.25, minSpeechDuration: 0.064, maxSpeechDuration: 30, windowSize: 512, bufferSizeInSeconds: 30,
+  }, cpu1));
   const a = (f: string) => path.join(models.asr, f);
-  const asr = load("speech recognition model", () => sherpa.createOfflineRecognizer({
-    featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
-    modelConfig: {
-      moonshine: { preprocessor: a("preprocess.onnx"), encoder: a("encode.int8.onnx"), uncachedDecoder: a("uncached_decode.int8.onnx"), cachedDecoder: a("cached_decode.int8.onnx") },
-      tokens: a("tokens.txt"), numThreads: 1, provider: "cpu", debug: 0,
-    },
-    decodingMethod: "greedy_search",
-  }));
+  // Moonshine runs once per request: natively on two threads (a 5 s request: about 0.1 s), and on macOS with CoreML
+  // when that comes out faster on this Mac (both are timed on a probe).
+  const asrThreads = threads(sherpa.backend, 2);
+  const probe = probeAudio();
+  const list = providers(sherpa.backend);
+  const chosen = load("speech recognition model", () => fastestProvider(list,
+    provider => sherpa.createMoonshine({ encoder: a("encoder_model.ort"), mergedDecoder: a("decoder_model_merged.ort"), tokens: a("tokens.txt") }, { provider, numThreads: asrThreads }),
+    r => { const s = r.createStream(); try { s.acceptWaveform(SAMPLE_RATE, probe); r.decode(s); r.getResult(s); } finally { s.free(); } },
+    { cache: { store: opts.providerCache ?? providerCache(), key: modelKey(a("encoder_model.ort"), list, asrThreads) } }));
+  const asr = chosen.made;
+  const info: BackendInfo = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: asrThreads, tried: chosen.tried };
 
-  const spotIn = (stream: any, frame: Float32Array): string[] => {
+  const spotIn = (stream: KwsStream, frame: Float32Array): string[] => {
     stream.acceptWaveform(SAMPLE_RATE, frame);
     const hits: string[] = [];
     while (kws.isReady(stream)) {
@@ -126,7 +204,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     return hits;
   };
   /** A new spotter stream: it misfires without some leading silence for context, so it's primed with half a second. */
-  const freshStream = (): any => {
+  const freshStream = (): KwsStream => {
     const s = kws.createStream();
     spotIn(s, new Float32Array(SAMPLE_RATE / 2));
     return s;
@@ -152,9 +230,11 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   let checkPending: Float32Array = new Float32Array(0);
   /**
    * What the listening VAD was fed lately (for the audio around a segment), how much since its reset, and how long it
-   * has heard speech; and what it heard before each segment it gave (while the segment is still about).
+   * has heard speech; and what it heard before each segment it gave (while the segment is still about). It holds the
+   * longest segment and then some: with only the last 2 s, a segment longer than about 1.5 s ("Ember, turn on night
+   * light.") had nothing before it, and Silero starts its segments up to a window into the first word.
    */
-  const recent = new Ring(2);
+  const recent = new Ring(VAD_MAX_SAMPLES / SAMPLE_RATE + 1);
   const before = new WeakMap<Float32Array, Float32Array>();
   let fed = 0, speechFrom = -1, checkSpeech = 0;
   const drain = (): Float32Array[] => {
@@ -162,7 +242,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     const out: Float32Array[] = [];
     const heard = recent.read();
     while (!vad.isEmpty()) {
-      const { samples, start } = vad.front() as { samples: Float32Array; start: number };
+      const { samples, start } = vad.front();
       vad.pop();
       // A segment that ended in silence gets the 0.3 s that followed it (already heard): Moonshine keeps its last word then.
       const since = fed - (start + samples.length);
@@ -235,20 +315,27 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
     resetVad: () => reset(),
     transcribe(samples) {
       if (samples.length < MIN_TRANSCRIBE_SAMPLES) return "";
-      let s: any = null;
-      try {
-        s = asr.createStream();
-        s.acceptWaveform(SAMPLE_RATE, samples);
-        asr.decode(s);
-        return String(asr.getResult(s).text ?? "").trim();
-      } catch (err) {
-        opts.onError?.(err);
-        return "";
-      } finally {
-        s?.free();
+      const words: string[] = [];
+      for (const piece of recognizerPieces(samples)) {
+        if (piece.length < MIN_TRANSCRIBE_SAMPLES) continue;
+        let s: OfflineStream | null = null;
+        try {
+          s = asr.createStream();
+          s.acceptWaveform(SAMPLE_RATE, piece);
+          asr.decode(s);
+          const text = withoutRepeats(String(asr.getResult(s).text ?? "").trim());
+          if (text) words.push(text);
+        } catch (err) {
+          opts.onError?.(err);
+          return "";
+        } finally {
+          s?.free();
+        }
       }
+      return words.join(" ");
     },
     before: seg => before.get(seg) ?? null,
+    info,
     free() {
       micStream.free(); monStream?.free(); kws.free(); vad.free(); check.free(); asr.free();
     },

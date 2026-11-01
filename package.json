@@ -20,6 +20,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:smoke": "node test/smoke/launch.mjs",
+    "test:voice": "node test/smoke/voice.mjs",
     "check:symvers": "scripts/check-symvers.sh node_modules",
     "rebuild:el8": "scripts/rebuild-el8.sh",
     "test:integration": "node scripts/run-integration.mjs",
@@ -29,7 +30,8 @@
     "package:win": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "package:mac": "npm run build && node scripts/package/remote-parts.mjs && node scripts/package/stage.mjs && node scripts/package/archive.mjs",
     "doctor": "node scripts/build-app.mjs && electron . --doctor",
-    "eval": "node eval/run.mjs"
+    "eval": "node eval/run.mjs",
+    "eval:review": "node eval/review/run.mjs"
   },
   "ember": {
     "nativeModules": []
@@ -38,9 +40,16 @@
     "@github/copilot-sdk": "1.0.21",
     "@xterm/xterm": "5.5.0",
     "koffi": "3.2.1",
+    "onnxruntime-web": "1.23.2",
     "sharp": "0.35.5",
     "sherpa-onnx": "1.13.8",
     "zod": "4.6.7"
+  },
+  "optionalDependencies": {
+    "sherpa-onnx-darwin-arm64": "1.13.8",
+    "sherpa-onnx-darwin-x64": "1.13.8",
+    "sherpa-onnx-win-arm64": "1.13.8",
+    "sherpa-onnx-win-x64": "1.13.8"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",

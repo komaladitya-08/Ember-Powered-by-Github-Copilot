@@ -113,6 +113,8 @@ export interface ActionRequest {
   onDesk?: boolean;
   /** What the user asked for, in their own words (for the task-alignment check). */
   goal?: string;
+  /** The app the user was in when they asked (TaskSpec.target.app): asking for help there is asking Ember to work in it. */
+  askedIn?: string;
   /**
    * Ember's questions the user answered with a yes or a choice ("I can delete the old installers. Shall I?" "Sure."): a
    * risky step one of them names isn't flagged as unasked, but it is asked about all the same. Never part of `goal`.
@@ -178,6 +180,11 @@ export interface PolicyInputs {
   actionsAllowed?: () => boolean;
   confirmEveryAction?: () => boolean;
   allowGrants?: () => boolean;
+  /**
+   * The user's "Don't ask before working in apps I asked for help with" (on by default): an ordinary step in the app the
+   * user was in when they asked, or in an app their own words name, needs no "Let me work in …?" (risky steps still ask).
+   */
+  trustAskedApps?: () => boolean;
   /** Is this app a terminal (Ember never opens or types into one)? */
   isTerminalApp?: (name: string) => boolean;
   /** Ember's own process (default: this one): a task never acts in Ember's own windows. */
@@ -1988,6 +1995,22 @@ export function opensProgram(rules: readonly OpensPrograms[], r: Pick<ActionRequ
   return bothForms(name).some(l => commands.test(l)) ? "command" : null;
 }
 
+/**
+ * Did the user ask for help in `r.app`: were they in it when they asked (the same program), or do their own words name
+ * it ("…in LibreOffice Calc", "open Firefox and…") by the name people know or the program's own (three letters at least,
+ * as a whole word)? Only the user's words count: never the conductor's goal, which may carry screen text.
+ */
+export function askedFor(r: Pick<ActionRequest, "app" | "askedIn" | "goal">): boolean {
+  const program = appNameOf(r.app).replace(/\.(desktop|exe)$/i, "").toLowerCase();
+  if (!program) return false;
+  if (r.askedIn && appNameOf(r.askedIn).replace(/\.(desktop|exe)$/i, "").toLowerCase() === program) return true;
+  const words = foldLabel(r.goal ?? "").toLowerCase();
+  if (!words) return false;
+  const names = new Set([program, friendlyApp(r.app).toLowerCase()].map(n => n.trim()).filter(n => n.length >= 3));
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [...names].some(n => new RegExp(`(^|[^\\p{L}\\p{N}])${escape(foldLabel(n).toLowerCase())}($|[^\\p{L}\\p{N}])`, "u").test(words));
+}
+
 export class PolicyEngine {
   private recent = new Map<string, number[]>();
 
@@ -2320,6 +2343,11 @@ export class PolicyEngine {
     // Grants are kept by the program's own name; questions and reasons use the name people know ("Settings", not "gnome-control-center").
     const app = r.app ? friendlyApp(r.app) : "this app";
     if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${app}`, prompt };
+    // The user asked for help in this app (they were in it, or named it): asking again whether Ember may work in it is
+    // pointless. Not where the organisation keeps users from letting Ember act without asking.
+    if ((this.o.trustAskedApps?.() ?? false) && (this.o.allowGrants?.() ?? true) && askedFor(r)) {
+      return { tier: "reversible", verdict: "allow", reason: `the user asked for help in ${app}`, prompt };
+    }
     return {
       tier: "reversible", verdict: "confirm", reason: `first action in ${app}`,
       prompt: `Let me work in ${app}? First step: ${lowerFirst(describe(r, false, kc)).replace(/\?$/, ".")}`,

@@ -2,12 +2,15 @@
 //   --tts-voice        also fetches a TTS voice (test-only; never shipped). With it the evaluation's missed-wakes gate
 //                      speaks enough renderings of "Hey Ember" (in memory, new ones every run) to be measured.
 //   --clips            also (with the TTS voice) synthesizes new test clips into <dir>/clips, a scratch folder.
+//   --voice <name>     the TTS voice: amy (the default, which the committed clips are in) or ryan, another speaker
+//                      (Voice Match's end-to-end test needs a voice that isn't the owner's); --clips then go into
+//                      <dir>/clips-<name> (amy's into <dir>/clips).
 //   --update-fixtures  as --clips, but into test/fixtures/voice, replacing the committed clips. The voice is random
 //                      on every run, so new clips must pass the voice tests before they're committed (git restore
 //                      test/fixtures/voice puts the old ones back); the committed clips keep the tests repeatable.
 // Downloads (Node's https, honouring HTTPS_PROXY/NO_PROXY) and unpacking (app/voice/untar.ts) are the app's own, so
 // no system curl, tar or bzip2 is needed on any OS.
-// usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--clips | --update-fixtures]   (default dir: .cache/voice)
+// usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--voice amy|ryan] [--clips | --update-fixtures]   (default dir: .cache/voice)
 import { build } from "esbuild";
 import fs from "node:fs";
 import path from "node:path";
@@ -15,17 +18,35 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const USAGE = "usage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--voice amy|ryan] [--clips | --update-fixtures]";
+// TTS voices to speak the test lines (test-only; not shipped). The evaluation looks for amy's in <dir>.
+const TTS_VOICES = {
+  amy: {
+    name: "TTS voice (test-only)", kind: "tar.bz2", target: "vits-piper-en_US-amy-low", model: "en_US-amy-low.onnx",
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2",
+    sha256: "c70f5284a09a7fd4ed203b39b2ff51cac1432b422b852eb647b481dade3cf639",
+  },
+  ryan: {
+    name: "Another TTS voice (test-only)", kind: "tar.bz2", target: "vits-piper-en_US-ryan-low", model: "en_US-ryan-low.onnx",
+    url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-low.tar.bz2",
+    sha256: "08d0522884652402b32d6995d9df776e85c7451a333fabe97e9e4635faf568ac",
+  },
+};
 const args = process.argv.slice(2);
-const FLAGS = ["--tts-voice", "--clips", "--update-fixtures"];
+const FLAGS = ["--tts-voice", "--clips", "--update-fixtures", "--voice"];
+const voiceAt = args.indexOf("--voice");
+const voiceName = voiceAt >= 0 ? args[voiceAt + 1] : "amy";
 const unknown = args.filter(a => a.startsWith("--") && !FLAGS.includes(a));
-if (unknown.length) {
-  console.error(`unknown option ${unknown.join(", ")}\nusage: node scripts/voice/prepare.mjs [dir] [--tts-voice] [--clips | --update-fixtures]`);
+if (unknown.length || !Object.hasOwn(TTS_VOICES, voiceName ?? "")) {
+  console.error(`${unknown.length ? `unknown option ${unknown.join(", ")}` : `unknown voice ${voiceName ?? "(none)"}`}\n${USAGE}`);
   process.exit(2);
 }
-const dir = path.resolve(args.find(a => !a.startsWith("--")) ?? path.join(root, ".cache/voice"));
+const dir = path.resolve(args.find((a, i) => !a.startsWith("--") && !(voiceAt >= 0 && i === voiceAt + 1)) ?? path.join(root, ".cache/voice"));
 const updateFixtures = args.includes("--update-fixtures");
+// The committed clips are amy's: another voice's would fail the voice tests' tuning.
+if (updateFixtures && voiceName !== "amy") { console.error(`--update-fixtures takes amy's voice only\n${USAGE}`); process.exit(2); }
 const makeClips = updateFixtures || args.includes("--clips");
-const ttsVoice = makeClips || args.includes("--tts-voice");
+const ttsVoice = makeClips || voiceAt >= 0 || args.includes("--tts-voice");
 const require = createRequire(import.meta.url);
 fs.mkdirSync(dir, { recursive: true });
 
@@ -44,12 +65,7 @@ if (!ttsVoice) {
   process.exit(0);
 }
 
-// A TTS voice to speak the test lines (test-only; not shipped). The evaluation looks for it here.
-const TTS_VOICE = {
-  name: "TTS voice (test-only)", kind: "tar.bz2", target: "vits-piper-en_US-amy-low",
-  url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low.tar.bz2",
-  sha256: "c70f5284a09a7fd4ed203b39b2ff51cac1432b422b852eb647b481dade3cf639",
-};
+const TTS_VOICE = TTS_VOICES[voiceName];
 const ttsDir = path.join(dir, TTS_VOICE.target);
 // Pinned and unpacked like the speech models: a failed download or unpack leaves nothing behind (a half-unpacked
 // voice would be skipped next time).
@@ -60,7 +76,7 @@ if (!makeClips) {
 }
 const sherpa = require("sherpa-onnx");
 const tts = sherpa.createOfflineTts({
-  offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: `${ttsDir}/en_US-amy-low.onnx`, tokens: `${ttsDir}/tokens.txt`, dataDir: `${ttsDir}/espeak-ng-data` }, numThreads: 1, debug: 0 },
+  offlineTtsModelConfig: { offlineTtsVitsModelConfig: { model: `${ttsDir}/${TTS_VOICE.model}`, tokens: `${ttsDir}/tokens.txt`, dataDir: `${ttsDir}/espeak-ng-data` }, numThreads: 1, debug: 0 },
   maxNumSentences: 1,
 });
 export const CLIPS = {
@@ -73,9 +89,11 @@ export const CLIPS = {
   followup: "And turn on do not disturb too.",
   dnd: "Hey Ember, turn on do not disturb.",
   bigger: "And make the text a bit bigger.",
+  name_wake: "Ember, turn on night light.",
+  embers: "The embers in the fireplace were still glowing.",
 };
 // Into a scratch folder unless the committed clips are to be replaced (--update-fixtures).
-const clips = updateFixtures ? path.join(root, "test/fixtures/voice") : path.join(dir, "clips");
+const clips = updateFixtures ? path.join(root, "test/fixtures/voice") : path.join(dir, voiceName === "amy" ? "clips" : `clips-${voiceName}`);
 fs.mkdirSync(clips, { recursive: true });
 for (const [name, text] of Object.entries(CLIPS)) {
   const parts = text.split("|").map(t => tts.generate({ text: t, sid: 0, speed: 1.0 }).samples);

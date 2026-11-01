@@ -77,11 +77,12 @@ describe("the speaking page (review #101)", () => {
   it("tells main that no voice speaks, that one does again, and nothing for a reply too long", async () => {
     vi.useFakeTimers();
     const spoken: Utterance[] = [];
-    let onSpeak: (text: string) => void = () => undefined;
-    const api: MicApi = { status: vi.fn(), speaking: vi.fn(), speech: vi.fn(), onSpeak: fn => { onSpeak = fn; }, onHush: () => undefined };
+    let speak: (r: { text: string }) => void = () => undefined;
+    const onSpeak = (text: string) => speak({ text });
+    const api: MicApi = { status: vi.fn(), speaking: vi.fn(), speech: vi.fn(), onSpeak: fn => { speak = fn; }, onHush: () => undefined, onAudio: () => undefined, onAudioDone: () => undefined, played: vi.fn() };
     vi.stubGlobal("window", { emberMic: api, addEventListener: () => undefined });
     vi.stubGlobal("SpeechSynthesisUtterance", Utterance);
-    vi.stubGlobal("speechSynthesis", { speak: (u: Utterance) => spoken.push(u), cancel: () => undefined });
+    vi.stubGlobal("speechSynthesis", { speak: (u: Utterance) => spoken.push(u), cancel: () => undefined, getVoices: () => [] });
     vi.resetModules();
     await import("../../app/renderer/mic/main");
 

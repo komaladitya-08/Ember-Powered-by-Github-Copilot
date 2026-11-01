@@ -51,10 +51,8 @@ true`), restart the apps that were already open, or log out and in, so Ember can
 are silent, settings shows a **Speaking** row and a note under **Speak**: run `sudo dnf install speech-dispatcher
 speech-dispatcher-espeak-ng`, then restart Ember.
 
-For “Hey Ember” without downloading the speech models on each computer, also install
-`ember-voice-models-0.1.0-1.el8.noarch.rpm` from the same release (to build it, run `node scripts/voice/prepare.mjs`
-before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (126 MB) when voice is
-turned on.
+The RPM carries Ember's speech models (142 MB in all: the wake word and speech recognition, 48 MB, which listening
+needs; Ember's own voice, 67 MB; and Voice Match, 27 MB), so nothing is downloaded when voice is turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
@@ -67,17 +65,19 @@ chmod +x Ember-0.1.0-x86_64.AppImage
 ./Ember-0.1.0-x86_64.AppImage doctor    # checks this computer, as ember doctor does
 ```
 
-The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM). Where user
+The AppImage downloads the speech models when voice is turned on (the models RPM needs Ember's RPM): 142 MB, of which
+listening needs 48 MB. Should Ember's voice (67 MB) or Voice Match (27 MB) be missing or damaged, Ember still listens,
+replies in the system's voice or answers anyone meanwhile, and settings offers just that one to download. Where user
 namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,
-with the new `ember-voice-models` RPM if you installed it); then start Ember again (it starts by itself at your next
+which also replaces the separate `ember-voice-models` RPM of 0.1.0); then start Ember again (it starts by itself at your next
 login when **Start Ember when I log in** is on). If Ember was running during an update (GNOME Software or automatic
 updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To remove
 Ember, first remove its helper from the computers you added over SSH (below). Then turn off
 **Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
-`sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete `~/.config/ember` (its
-settings, logs, audit log, speech models, sign-in and the Node.js it downloaded for other computers, in
+`sudo dnf remove ember` or delete the AppImage, and delete `~/.config/ember` (its
+settings, logs, audit log, speech models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in
 `remote/runtime`) and `~/Ember` (what it made on its desk).
 
 ## Install on Windows
@@ -117,7 +117,7 @@ To update, quit Ember and replace the `Ember` folder with the new one, in the sa
 `%LOCALAPPDATA%\ember`. To remove Ember, first remove its helper from the computers you added over SSH (below), then
 turn off **Start Ember when I log in** in its settings, quit it, and delete the `Ember` folder, `Ember.lnk` in
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember` (its settings, logs, audit log, speech
-models, sign-in and the Node.js it downloaded for other computers, in `remote\runtime`).
+models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in `remote\runtime`).
 
 ## Install on macOS
 
@@ -159,7 +159,7 @@ Storage"): choose **Always Allow**. If you choose **Deny**, Ember says it couldn
 in again from settings. To remove Ember, first remove its helper from the computers you added over SSH (below), then
 turn off **Start Ember when I log in** in its settings, quit it, remove it from each Privacy & Security list with
 **−**, and delete Ember.app from Applications and `~/Library/Application Support/ember` (its settings, logs, audit log,
-speech models, sign-in and the Node.js it downloaded for other computers, in `remote/runtime`).
+speech models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in `remote/runtime`).
 
 To check this Mac, run Ember's setup check through `open`, so that macOS judges Ember's own permissions (run from
 Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's instead):
@@ -168,6 +168,29 @@ Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Termin
 : > ~/ember-doctor.txt
 open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --doctor; cat ~/ember-doctor.txt
 ```
+
+## Computers without internet access
+
+Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's
+voice and Voice Match need no network. Ember's packages carry everything it runs: its speech models, and the Node.js
+runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256), so Ember downloads
+nothing from third parties. Only Copilot itself, and the review of commands, need the network: your organisation's
+model service, or GitHub Copilot's.
+
+What to install so nothing is downloaded:
+
+| Computer | Install |
+|---|---|
+| Windows | `Ember-0.1.0-win-x64.zip`: the speech models are inside it |
+| macOS | `Ember-0.1.0-mac-arm64.dmg` (or the .zip; mac-x64 for Intel): the speech models are inside it |
+| RHEL 8 | `ember-0.1.0-1.el8.x86_64.rpm`: the speech models are inside it; `dnf` takes the RPM's system packages (speech-dispatcher, AT-SPI…) from your distribution's repositories, so point it at your organisation's mirror |
+| AppImage | `Ember-0.1.0-x86_64.AppImage`: the speech models are inside it (it still needs the system packages above for reading apps) |
+
+`Ember-voice-models-0.1.0.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
+computer for every copy of Ember: unzip it so its `voice-models` folder lands in `%ProgramData%\Ember\voice-models`
+(Windows) or `/Library/Application Support/Ember/voice-models` (macOS).
+
+Ember checks each model against its SHA-256 and uses that folder without downloading anything; it never changes it.
 
 ## Sign in to Copilot
 
@@ -244,7 +267,7 @@ Orca, NVDA, JAWS, Narrator or VoiceOver on real computers yet; please
 and VoiceOver on a Mac. While one runs:
 
 - Ember speaks its questions and results itself, unless you choose otherwise in Settings › **Voice** › **Speak
-  replies, questions and results out loud**: **When a screen reader runs** (the default), **Always** or **Never**.
+  replies, questions and results out loud**: **When a screen reader runs**, **Always** (the default) or **Never**.
   When your organisation turns speaking off, Ember never speaks.
 - The bubble's words are read out as they change: a question with the keys that answer it ("Ctrl+Alt+Y allow;
   Ctrl+Alt+N not now") and all of a long text it would type (then "You can allow it once all of it has been shown.

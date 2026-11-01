@@ -45,6 +45,11 @@ export const AdminPolicySchema = z.object({
     wsl: z.boolean().optional(),
     /** SSH: connecting to other computers (on the PC); on a remote: letting Ember in at all. */
     ssh: z.boolean().optional(),
+    /**
+     * AI review of commands (commands/review.ts): false, every command the rules flag asks the user, and no command is
+     * sent to the model for review ("Ask only about dangerous commands" is off and managed).
+     */
+    aiReview: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -210,6 +215,10 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };
   }
   if (!admin.allowGrants) s.grants = {};
+  // No working in an asked-for app unasked where users may not let Ember act without asking (the policy engine holds to
+  // that too), and no AI review where the organisation turned it off.
+  if (!admin.allowGrants) s.trust = { ...s.trust, askedApps: false };
+  if (admin.features.aiReview === false) s.trust = { ...s.trust, reviewCommands: false };
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
@@ -222,7 +231,8 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.voice === false) keys.push("wakeWord");
   if (admin.features.speak === false) keys.push("speak");
   if (admin.models.conductor || admin.models.worker || admin.models.allowed) keys.push("models");
-  if (!admin.allowGrants) keys.push("grants");
+  if (!admin.allowGrants) keys.push("grants", "askedApps");
+  if (admin.features.aiReview === false) keys.push("reviewCommands");
   if (admin.provider) keys.push("provider");
   return keys;
 }

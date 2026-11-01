@@ -10,7 +10,9 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { VOICE_MODELS, VOICE_MODELS_BYTES, createHttpsDownloader, ensureModels, modelsReady, type Downloader } from "../../app/voice/models";
+import { LISTENING_MODELS, VOICE_MODELS, VOICE_MODELS_BYTES, createHttpsDownloader, ensureModels, forgetModels, missingModels, modelReady, modelsBytes, modelsReady, type Downloader, type ModelId } from "../../app/voice/models";
+import { modelsDownloadLabel } from "../../app/renderer/home/copy";
+import { matchNoModelText } from "../../app/renderer/home/match-copy";
 import { bzip2Compress, randomBytes, tarArchive, tarEntry } from "../fixtures/voice-archive/make";
 
 // app/main/voice.ts (for downloadHelp, the words the user sees) imports Electron, which isn't loaded here.
@@ -65,6 +67,93 @@ describe("ensureModels", () => {
   });
 });
 
+/** A models folder with `ids` in place and verified (default: all of them). */
+function withModels(root: string, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): string {
+  for (const m of VOICE_MODELS) {
+    if (!ids.includes(m.id)) continue;
+    if (m.kind === "file") fs.writeFileSync(path.join(root, m.target), "in place"); else fs.mkdirSync(path.join(root, m.target));
+    fs.writeFileSync(path.join(root, `.${m.target}.ok`), `${m.sha256}\n`);
+  }
+  return root;
+}
+const byId = (id: ModelId) => VOICE_MODELS.find(m => m.id === id)!;
+
+describe("which models are needed", () => {
+  it("listening needs only the wake word, voice activity and speech recognition", () => {
+    expect(LISTENING_MODELS).toEqual(["kws", "vad", "asr"]);
+    expect(modelsReady(withModels(tmpRoot(), ["kws", "vad", "asr"]))).toBe(true);
+    for (const gone of LISTENING_MODELS) expect(modelsReady(withModels(tmpRoot(), LISTENING_MODELS.filter(id => id !== gone)))).toBe(false);
+  });
+
+  it("is ready to listen without Ember's voice, without Voice Match, and without both", () => {
+    for (const ids of [["kws", "vad", "asr", "speaker"], ["kws", "vad", "asr", "tts"], ["kws", "vad", "asr"]] as ModelId[][]) {
+      const root = withModels(tmpRoot(), ids);
+      expect(modelsReady(root)).toBe(true);
+      expect(missingModels([root]).map(m => m.id)).toEqual(VOICE_MODELS.map(m => m.id).filter(id => !ids.includes(id)));
+    }
+  });
+
+  it("finds each model in any of the folders Ember looks in (a bundled folder without the optional ones, then the user's)", () => {
+    const bundled = withModels(tmpRoot(), ["kws", "vad", "asr"]);
+    const own = withModels(tmpRoot(), ["tts"]);
+    expect(missingModels([bundled, own]).map(m => m.id)).toEqual(["speaker"]);
+    expect(missingModels([bundled, own], ["tts"])).toEqual([]);
+    expect(modelsBytes(missingModels([bundled]))).toBe(byId("tts").bytes + byId("speaker").bytes);
+    expect(modelsBytes()).toBe(VOICE_MODELS_BYTES);
+  });
+
+  it("forgets only the damaged model (review #254)", () => {
+    const root = withModels(tmpRoot());
+    expect(forgetModels(root, ["tts"])).toBe(true);
+    expect(modelReady(root, "tts")).toBe(false);
+    expect(VOICE_MODELS.filter(m => modelReady(root, m.id)).map(m => m.id)).toEqual(["kws", "vad", "asr", "speaker"]);
+    expect(modelsReady(root)).toBe(true); // still listens
+    expect(forgetModels(root, ["asr"])).toBe(true);
+    expect(modelsReady(root)).toBe(false);
+    expect(modelReady(root, "speaker")).toBe(true);
+    expect(forgetModels(root)).toBe(true); // all of them, by default
+    expect(missingModels([root])).toHaveLength(VOICE_MODELS.length);
+  });
+});
+
+describe("ensureModels for some of them", () => {
+  it("fetches only the models asked for that aren't in place, and counts progress of those alone", async () => {
+    const root = withModels(tmpRoot(), ["kws", "vad", "asr", "tts"]);
+    const speaker = byId("speaker");
+    const real = speaker.sha256;
+    const content = Buffer.from("resnet");
+    speaker.sha256 = crypto.createHash("sha256").update(content).digest("hex");
+    try {
+      fs.writeFileSync(path.join(root, `.${speaker.target}.ok`), "stale\n"); // a damaged one, forgotten
+      const asked: string[] = [];
+      const seen: [number, number][] = [];
+      await ensureModels(root, async (url, dest, progress) => { asked.push(path.basename(url)); fs.writeFileSync(dest, content); progress(content.length); },
+        (done, total) => seen.push([done, total]), ["tts", "speaker"]);
+      expect(asked).toEqual([speaker.target]);
+      expect(seen.at(-1)).toEqual([speaker.bytes, speaker.bytes]);
+      expect(missingModels([root])).toEqual([]);
+    } finally {
+      speaker.sha256 = real;
+    }
+  });
+});
+
+describe("the download button and Voice Match's note", () => {
+  it("says what's missing and its size", () => {
+    const all = VOICE_MODELS.map(m => m.id);
+    expect(modelsDownloadLabel(all, VOICE_MODELS_BYTES)).toBe("Download speech models (142 MB)");
+    expect(modelsDownloadLabel(["asr", "tts"], byId("asr").bytes + byId("tts").bytes)).toBe("Download speech models (97 MB)");
+    expect(modelsDownloadLabel(["tts"], byId("tts").bytes)).toBe("Download Ember's voice (67 MB)");
+    expect(modelsDownloadLabel(["speaker"], byId("speaker").bytes)).toBe("Download Voice Match (27 MB)");
+    expect(modelsDownloadLabel(["tts", "speaker"], byId("tts").bytes + byId("speaker").bytes)).toBe("Download Ember's voice and Voice Match (94 MB)");
+  });
+
+  it("explains Voice Match without its model: off for now with a voiceprint kept, or not yet teachable", () => {
+    expect(matchNoModelText(true, byId("speaker").bytes)).toMatch(/^Off for now: .*Ember answers anyone.*Download it above \(27 MB\)/);
+    expect(matchNoModelText(false, null)).toBe("Voice Match needs its own model, which isn't on this computer. Download it above, then teach Ember your voice.");
+  });
+});
+
 describe("ensureModels with an archive", () => {
   // The wake-word model's entry, pointed at a small archive built here (restored after each test).
   const kws = VOICE_MODELS.find(m => m.id === "kws")!;
@@ -101,7 +190,7 @@ describe("ensureModels with an archive", () => {
     expect(fs.readFileSync(path.join(root, ".fake-kws.ok"), "utf8").trim()).toBe(kws.sha256);
     expect(leftovers(root)).toEqual([]);
     expect(modelsReady(root)).toBe(true);
-    expect(seen.at(-1)).toBe(VOICE_MODELS_BYTES);
+    expect(seen.at(-1)).toBe(kws.bytes); // progress is of what was fetched: the others were in place
   });
 
   it("keeps the last part of an archive's share for checking and unpacking it, saying so, instead of sitting at 100% (review #259)", async () => {
@@ -118,7 +207,7 @@ describe("ensureModels with an archive", () => {
     expect(before.filter(s => s.phase === "unpacking").length).toBeGreaterThanOrEqual(2);
     expect(before.findIndex(s => s.phase === "unpacking")).toBeGreaterThan(0); // after the download's own progress
     expect(seen.map(s => s.done)).toEqual([...seen.map(s => s.done)].sort((a, b) => a - b)); // it never goes back
-    expect(seen.at(-1)?.done).toBe(VOICE_MODELS_BYTES);
+    expect(seen.at(-1)?.done).toBe(kws.bytes);
   });
 
   it("replaces an older copy of the model whole, and clears a staging folder a crash left", async () => {

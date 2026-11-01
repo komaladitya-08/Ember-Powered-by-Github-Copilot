@@ -1,6 +1,9 @@
 /**
- * Speech models Ember downloads on first use (about 126 MB), each pinned to a
- * SHA-256, into the models folder of Ember's data folder (~/.config/ember/models
+ * Speech models Ember downloads on first use (about 142 MB in all), each pinned to a
+ * SHA-256. Listening needs only the wake word, voice activity and speech recognition
+ * (LISTENING_MODELS, about 48 MB); Ember's own voice (67 MB) and Voice Match (27 MB) are
+ * optional: without them replies are in the system's voice, and Voice Match is off. Each is
+ * downloaded into the models folder of Ember's data folder (~/.config/ember/models
  * on Linux). Nothing is used until it verifies. Archives are unpacked in-process
  * (untar.ts, bzip2.ts), so no system tar, bzip2 or curl is needed on any OS, into
  * a staging folder that is moved into place whole: a half-unpacked model is never
@@ -33,7 +36,10 @@ export interface ModelFile {
   license: string;
 }
 
-export const VOICE_MODELS: ModelFile[] = [
+/** One of the speech models (not the natural voice, which is optional and fetched on its own: NATURAL_VOICE). */
+export type SpeechModel = ModelFile & { id: Exclude<keyof ModelPaths, "natural"> };
+
+export const VOICE_MODELS: SpeechModel[] = [
   {
     id: "kws", name: "Wake word (keyword spotting, 3.3M zipformer)", kind: "tar.bz2", license: "Apache-2.0",
     url: `${RELEASES}/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2`,
@@ -47,14 +53,61 @@ export const VOICE_MODELS: ModelFile[] = [
     target: "silero_vad.onnx",
   },
   {
-    id: "asr", name: "Speech recognition (Moonshine tiny, English)", kind: "tar.bz2", license: "MIT",
-    url: `${RELEASES}/asr-models/sherpa-onnx-moonshine-tiny-en-int8.tar.bz2`,
-    sha256: "d5fe6ec4334fef36255b2a4010412cad4c007e33103fec62fb5d17cad88086f2", bytes: 107_600_538,
-    target: "sherpa-onnx-moonshine-tiny-en-int8",
+    // Moonshine v2 tiny (2026-02-27 export, quantized). Measured on 90 requests in nine synthesized voices: 10.5 % of
+    // words wrong (Moonshine tiny before it: 11.7 %), at 0.08 of real time on one WebAssembly thread (before: 0.12), a
+    // quarter of the download, and it hears "Ember" as itself more often, so fewer real wakes are taken back. Moonshine
+    // v2 base got 8.4 %, but with twice the CPU and 225 MB more memory, and it wrote "Amber" for the name more often.
+    // It runs only after a wake: listening for the name costs nothing more.
+    id: "asr", name: "Speech recognition (Moonshine v2 tiny, English)", kind: "tar.bz2", license: "MIT",
+    url: `${RELEASES}/asr-models/sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27.tar.bz2`,
+    sha256: "9ec31b342d8fa3240c3b81b8f82e1cf7e3ac467c93ca5a999b741d5887164f8d", bytes: 29_858_559,
+    target: "sherpa-onnx-moonshine-tiny-en-quantized-2026-02-27",
+  },
+  {
+    // Ember's own voice: a neural (VITS/Piper) voice trained on public-domain LibriVox recordings. It speaks at about
+    // 0.45 of real time on one WebAssembly thread, sentence by sentence, so a reply starts within half a second.
+    id: "tts", name: "Ember's voice (Piper neural voice “Kristin”, US English)", kind: "tar.bz2", license: "MIT (voice data: public domain)",
+    url: `${RELEASES}/tts-models/vits-piper-en_US-kristin-medium.tar.bz2`,
+    sha256: "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7", bytes: 67_259_230,
+    target: "vits-piper-en_US-kristin-medium",
+  },
+  {
+    // Voice Match (voiceprint.ts): WeSpeaker's ResNet34 speaker model, trained on VoxCeleb. (3D-Speaker's CAM++, smaller,
+    // comes out wrong in onnxruntime-web for most lengths of audio: measured against onnxruntime's own CPU build.)
+    id: "speaker", name: "Voice Match (WeSpeaker ResNet34 voiceprints)", kind: "file", license: "Apache-2.0",
+    url: `${RELEASES}/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx`,
+    sha256: "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94", bytes: 26_534_365,
+    target: "wespeaker_en_voxceleb_resnet34.onnx",
   },
 ];
 
-export const VOICE_MODELS_BYTES = VOICE_MODELS.reduce((n, m) => n + m.bytes, 0);
+export type ModelId = ModelFile["id"];
+
+/** What listening needs: the wake word, voice activity and speech recognition. The others (tts, speaker) are optional. */
+export const LISTENING_MODELS: readonly ModelId[] = ["kws", "vad", "asr"];
+
+/** The bytes of `models` (default: all of them). */
+export const modelsBytes = (models: readonly ModelFile[] = VOICE_MODELS): number => models.reduce((n, m) => n + m.bytes, 0);
+
+export const VOICE_MODELS_BYTES = modelsBytes();
+
+/**
+ * The natural voice: Kokoro v1.0 (82M, fp32, its af_heart voice in US English), more natural than the Piper voice but
+ * several times the work. It isn't one of the speech models (nothing waits for it, and no package carries it): on
+ * Windows and macOS, where speech runs natively, Ember fetches it once the user turns it on (Settings › Voice) and the
+ * Piper voice shows this computer is fast enough (VoiceService); the speech process uses it only if it is made at most
+ * at NATURAL_MAX_RTF of real time there. fp32, not kokoro-int8-*: onnxruntime's int8 kernels made it slower. On a
+ * 2.1 GHz Xeon (4 vCPUs), on 2 / 3 / 4 threads: this one at 0.52 / 0.41 / 0.38 of real time, kokoro-en v0.19 (fp32) at
+ * 0.74 / 0.53 / 0.48, kokoro-int8-multi-lang v1.0 at 1.1–1.3.
+ */
+export const NATURAL_VOICE: ModelFile = {
+  id: "natural", name: "Ember's natural voice (Kokoro v1.0, US English)", kind: "tar.bz2", license: "Apache-2.0",
+  url: `${RELEASES}/tts-models/kokoro-multi-lang-v1_0.tar.bz2`,
+  sha256: "60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4", bytes: 349_886_476,
+  target: "kokoro-multi-lang-v1_0",
+};
+
+const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];
 
 /** Downloads `url` to `dest`, reporting bytes so far. */
 export type Downloader = (url: string, dest: string, progress: (bytes: number) => void) => Promise<void>;
@@ -73,8 +126,8 @@ export type ModelsProgress = (done: number, total: number, phase?: "unpacking") 
 const DOWNLOAD_SHARE = 0.8;
 
 export function modelPaths(root: string): ModelPaths {
-  const p = (id: keyof ModelPaths) => path.join(root, VOICE_MODELS.find(m => m.id === id)!.target);
-  return { kws: p("kws"), vad: p("vad"), asr: p("asr") };
+  const p = (id: keyof ModelPaths) => path.join(root, ALL_MODELS.find(m => m.id === id)!.target);
+  return { kws: p("kws"), vad: p("vad"), asr: p("asr"), tts: p("tts"), speaker: p("speaker"), natural: p("natural") };
 }
 
 const marker = (root: string, m: ModelFile) => path.join(root, `.${m.target}.ok`);
@@ -88,18 +141,32 @@ function verified(root: string, m: ModelFile): boolean {
   }
 }
 
+/** One model (`id`) is in place and verified. */
+export function modelReady(root: string, id: ModelFile["id"]): boolean {
+  const m = ALL_MODELS.find(x => x.id === id);
+  return !!m && verified(root, m);
+}
+
+/** Listening can start from `root`: the models it needs (LISTENING_MODELS) are in place and verified. */
 export function modelsReady(root: string): boolean {
-  return VOICE_MODELS.every(m => verified(root, m));
+  return LISTENING_MODELS.every(id => modelReady(root, id));
+}
+
+/** Of `ids` (default: all), the models verified in none of `roots` (the folders Ember looks in, in order). */
+export function missingModels(roots: readonly string[], ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): ModelFile[] {
+  return VOICE_MODELS.filter(m => ids.includes(m.id) && !roots.some(r => verified(r, m)));
 }
 
 /**
- * The models in `root` turned out damaged (they wouldn't load): their markers go, so they count as missing and the
- * download fetches them again (review #254). False when a marker couldn't be removed (permission denied). Never used on
- * models that came with Ember: VoiceService turns to the user's own folder instead.
+ * The models `ids` (default: all) in `root` turned out damaged (they wouldn't load): their markers go, so they count as
+ * missing and the download fetches them again (review #254); the others are left as they are. False when a marker
+ * couldn't be removed (permission denied). Never used on models that came with Ember: VoiceService turns to the user's
+ * own folder for those instead.
  */
-export function forgetModels(root: string): boolean {
+export function forgetModels(root: string, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): boolean {
   let all = true;
   for (const m of VOICE_MODELS) {
+    if (!ids.includes(m.id)) continue;
     try {
       fs.rmSync(marker(root, m), { force: true });
     } catch {
@@ -190,25 +257,38 @@ export async function fetchModel(root: string, m: ModelDownload, download: Downl
 }
 
 /**
- * Makes every model present and verified; skips ones already in place. Progress counts an archive's download as
- * DOWNLOAD_SHARE of its share, and checking and unpacking it as the rest.
+ * Makes the models `ids` (default: all) present and verified in `root`; skips ones already in place. Progress is of
+ * what is fetched (the bytes of the models not yet in place), counting an archive's download as DOWNLOAD_SHARE of its
+ * share, and checking and unpacking it as the rest.
  */
-export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined): Promise<ModelPaths> {
+export async function ensureModels(root: string, download: Downloader, progress: ModelsProgress = () => undefined, ids: readonly ModelId[] = VOICE_MODELS.map(m => m.id)): Promise<ModelPaths> {
   fs.mkdirSync(root, { recursive: true });
+  const fetching = VOICE_MODELS.filter(m => ids.includes(m.id) && !verified(root, m));
+  const total = modelsBytes(fetching);
   let done = 0;
-  for (const m of VOICE_MODELS) {
-    if (verified(root, m)) { done += m.bytes; progress(done, VOICE_MODELS_BYTES); continue; }
+  for (const m of fetching) {
     fs.rmSync(marker(root, m), { force: true });
     const base = done, share = m.kind === "file" ? 1 : DOWNLOAD_SHARE;
     const downloaded = Math.floor(m.bytes * share);
     // (A file has nothing to unpack, and its check is quick.)
-    await fetchModel(root, m, download, bytes => progress(base + Math.min(downloaded, Math.floor(bytes * share)), VOICE_MODELS_BYTES),
-      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), VOICE_MODELS_BYTES, "unpacking"));
+    await fetchModel(root, m, download, bytes => progress(base + Math.min(downloaded, Math.floor(bytes * share)), total),
+      m.kind === "file" ? undefined : fraction => progress(base + downloaded + Math.floor((m.bytes - downloaded) * fraction * 0.99), total, "unpacking"));
     fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
     done += m.bytes;
-    progress(done, VOICE_MODELS_BYTES);
+    progress(done, total);
   }
   return modelPaths(root);
+}
+
+/** Fetches one optional model (NATURAL_VOICE) into `root` unless it is in place and verified; its folder. */
+export async function ensureModel(root: string, m: ModelFile, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<string> {
+  fs.mkdirSync(root, { recursive: true });
+  if (!verified(root, m)) {
+    fs.rmSync(marker(root, m), { force: true });
+    await fetchModel(root, m, download, progress);
+    fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
+  }
+  return path.join(root, m.target);
 }
 
 /** Retries after a transient failure (a stall, a dropped connection, HTTP 408, 429 or 5xx), as curl --retry 3 did. */

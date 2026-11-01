@@ -6,10 +6,10 @@ import { applyAdminPolicy, parseAdminPolicy } from "../../app/main/admin";
 import { speakChoice, speakSettings, speaksAloud } from "../../app/shared/speech";
 
 describe("speaking out loud", () => {
-  it("by default speaks only while a screen reader runs, as before", () => {
-    expect(speakChoice(DEFAULT_SETTINGS)).toBe("reader");
+  it("by default always speaks, with or without a screen reader (Ember is a voice assistant)", () => {
+    expect(speakChoice(DEFAULT_SETTINGS)).toBe("always");
     expect(speaksAloud(DEFAULT_SETTINGS, () => true)).toBe(true);
-    expect(speaksAloud(DEFAULT_SETTINGS, () => false)).toBe(false);
+    expect(speaksAloud(DEFAULT_SETTINGS, () => false)).toBe(true);
   });
 
   it("“Never” wins over a screen reader: one voice, the reader's (review #55)", () => {

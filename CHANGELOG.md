@@ -15,8 +15,12 @@ the work in your real apps where you can watch, without taking over your mouse. 
   Windows, the accessibility API on a Mac) and screenshots, and uses their controls in the background, so your mouse
   and keyboard stay yours. When an app can't be used that way, it asks to borrow the mouse, and gives it back the
   moment you move. "Show me how…" guides you to each control instead of doing it.
-- **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), and every
-  time before sending, deleting, paying and the like. It never types into password, payment or terminal fields. The
+- **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), but not in
+  the app you were in when you asked, or one your request names (Settings › **Apps & privacy** › **Don't ask before
+  working in an app I asked for help with**, on by default); and every time before sending, deleting, paying and the
+  like. A command that would ask is first reviewed by Copilot against your request (**Ask only about dangerous
+  commands**, off by default for now): a routine one runs in the command window with its **Stop** countdown instead; secrets,
+  system changes, root and anything a page or a command's output tried to steer always ask. It never types into password, payment or terminal fields. The
   stop shortcut, "Ember, stop" and **Stop everything** stop everything at once.
 - **Questions show what will be typed**: text Ember is about to type shows as it will be typed, real double quotes
   (a formula's `=IF(A1="x";1;0)`), emoji and spaces included, with a line break shown as ⏎ and a tab as ⇥. Other
@@ -37,11 +41,27 @@ the work in your real apps where you can watch, without taking over your mouse. 
   isn't in the middle of something, and as soon as the computer wakes if it ran out during sleep. Copilot switches to
   the renewed sign-in at once, and a renewed sign-in Ember couldn't save (a full or read-only disk) is still used until
   Ember quits. On a Mac, Ember keeps working while the Keychain asks to open or save the sign-in.
-- **Voice**: "Hey Ember", with speech recognition on this computer (the models download once, 126 MB, or come with
-  the `ember-voice-models` RPM); only the text of a request goes to Copilot. Ember can speak its replies, questions
-  and results with the system's voices: when a screen reader runs (the default), always or never (**Speak replies,
-  questions and results out loud** in Settings › **Voice**; an organisation that turns speaking off shows it as Never,
-  managed).
+- **Voice**: call Ember by its name ("Ember, open the terminal"; "Hey Ember" and "OK Ember" work too), with speech
+  recognition on this computer (Moonshine v2 tiny, punctuated; the models download once, 142 MB, or come with the
+  `ember-voice-models` RPM); only the text of a request goes to Copilot. The name heard inside another word
+  ("remember", "September", "the embers") shows nothing: a wake by the bare name shows once the recogniser has heard
+  the name start what was said. Ember speaks its replies, questions and results in its own natural neural voice (Piper
+  "Kristin", made on this computer), sentence by sentence while Copilot is still writing, so it starts talking within
+  about a second; until its voice is downloaded, or should it fail, the system's most natural voice speaks (a Natural
+  voice on Windows 11, a Premium or Enhanced one on a Mac). It speaks always (the default), when a screen reader runs,
+  or never (**Speak replies, questions and results out loud** in Settings › **Voice**; an organisation that turns
+  speaking off shows it as Never, managed).
+- **Faster speech on Windows and macOS**: listening and Ember's voice run on sherpa-onnx's native addon there, about
+  three times faster to hear a request and five times faster to speak than the WebAssembly build Linux uses, so a reply
+  starts in about a third of a second (measured on CI: 252 ms on Windows, 525 ms on a Mac, against 1.3–1.9 s). Should
+  the addon not load, speech runs on WebAssembly as before. Settings › **Voice** › **Use a more natural voice** (off by
+  default) downloads Kokoro (350 MB) and speaks with it where the computer is fast enough for it.
+- **Voice Match**: Settings › **Voice** › **Answer only my voice** teaches Ember your voice from four short phrases,
+  and from then on it answers only you: a request in another voice (someone else in the room, a call, a video) is
+  ignored. "Ember, stop" still works for anyone. Your voiceprint (256 numbers that describe how your voice sounds; it
+  can't be turned back into speech) stays on this computer, in `voiceprint.json` in Ember's data folder, readable by
+  you alone; **Forget my voice** deletes it. Measured on 40 real speakers (LibriSpeech), Ember turned away 3–4 % of
+  the owner's requests and took 2–3 % of other people's.
 - **Four characters**: Cinder, Wisp, Glassling and Glint share one rig of twelve emotions. Pick one in setup or
   settings, or ask Ember to switch.
 - **Ember's desk** (Linux): a private display where Ember uses a full mouse and keyboard out of your way, which you

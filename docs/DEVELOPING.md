@@ -88,6 +88,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `npm run test:integration` | Runs the real Copilot runtime against the offline mock model |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 | `npm run test:smoke` | Starts Ember (set up), checks the window appears, a second launch hands over, a third with `--ask` opens the ask box, and Ask Ember is in the jump list (Windows) or the Dock menu (macOS). Without a desktop: `xvfb-run -a npm run test:smoke` |
+| `npm run test:voice` | Voice end to end in the Electron app (Linux): Ember's mic window hears WAV files through Chromium's fake microphone (`EMBER_TEST_MIC_WAV`, development builds only) and the scripted model answers; checks from the log the wake, the request, the spoken reply reaching the page, self-speaking and the follow-up window, "Hey Ember, stop" during a reply, and Voice Match turning away another voice. Needs `npm run build`, `node scripts/voice/prepare.mjs` and `node scripts/voice/prepare.mjs --voice ryan --clips`; without a desktop: `xvfb-run -a npm run test:voice` (one scenario: `… test:voice -- stop`) |
 | `node test/smoke/launch.mjs --folder '<name>'` | The smoke test from a copy of the app in a folder of that name; checks the settings page loaded there (CI uses one with %, #, &, brackets and non-ASCII) |
 | `npm run build:lab` | Builds the character lab demo into `dist/ember-character-lab.html` |
 | `npm run rebuild:el8` | Rebuilds native modules for RHEL 8 and checks every binary (§6) |
@@ -99,7 +100,7 @@ with GNOME on Xorg. If `npm ci` reports that Electron failed to download, run
 | `EMBER_ATSPI_TEST=1 npm run test:integration -- test/integration/perception-electron.test.ts` | Reads Electron windows (Chromium's accessibility) through the sidecar and X11: window frames, scale 2, secret fields withheld and blacked out. Same needs as the line above (the test starts its windows with `ACCESSIBILITY_ENABLED=1`, as Chromium joins the accessibility bus only when asked); CI runs it with them on `rockylinux:8` |
 | `npm run test:integration -- test/integration/borrow-live.test.ts test/integration/desk-robust.test.ts` | Borrowing the mouse and keyboard on a private Xvfb (other keyboard layouts need `setxkbmap`; skipped without Xvfb), and Ember's desk when things go wrong (its display dying, Ember killed). Need only Xvfb (and `xauth`, `dbus-daemon` for the desk), no desktop session |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m6-tour.mjs out/` | Guide tour: Ember points, the user clicks; then a question about the selected text |
-| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone; `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
+| `node scripts/voice/prepare.mjs` | Downloads the speech models (verified) into `.cache/voice` (needed by the voice tests and tour). `--tts-voice` also fetches a test-only TTS voice (pinned by SHA-256), which the evaluation's missed-wakes gate needs; `--clips` synthesizes new test clips into `.cache/voice/clips`, leaving the committed ones alone (with `--voice ryan`, in another speaker's voice into `.cache/voice/clips-ryan`, for the voice end-to-end test's Voice Match); `--update-fixtures` writes them over `test/fixtures/voice` instead. The voice is random on every run, so check new clips with the voice tests before committing them (`git restore test/fixtures/voice` puts the old ones back) |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m5-tour.mjs out/` | Voice tour: a WAV file plays the microphone; the video gets the audio |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4b-tour.mjs out/` | Cursor-borrow tour: Ember borrows the mouse with permission, and lets go when the user moves it |
 | `DISPLAY=:55 scripts/demo/as-demo-user.sh env PATH="$PATH" node test/demo/m4-tour.mjs out/` | Task tour: Ember fills in a form in another window, asks once, refuses the password, turns on Do Not Disturb |
@@ -150,7 +151,7 @@ your mouse and keyboard stay yours. Before its first action in an app it asks **
 answer with a click, or with **Ctrl+Alt+Y** (allow) and **Ctrl+Alt+N** (not now), so you never need the mouse (the
 question shows the keys). **Always** is a click only: a global key could take an app's own shortcut and grant for good
 by accident. A hidden Ember shows itself to ask, and with **Speak replies, questions and results out loud** set to
-**Always**, or a screen reader running and it set to **When a screen reader runs** (the default), it says the question
+**Always** (the default), or a screen reader running and it set to **When a screen reader runs**, it says the question
 out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
 for them. Each task card has **Stop**; a failed card goes on its own after about a minute (the settings window's
@@ -202,8 +203,12 @@ text you selected), so you can say “make this bold” or “what does this mea
 ### Talking to Ember
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
-the speech models (126 MB, once; agreeing to the microphone note starts the download). Then say “Hey Ember, …” with your request. You can say it in
-one breath, or pause after “Hey Ember”. After Ember answers a “Hey Ember” request you have 8 seconds for
+the speech models (142 MB, once; agreeing to the microphone note starts the download). Then say “Ember, …” (or “Hey
+Ember, …”) with your request. You can say it in one breath, or pause after the name. Ember answers out loud in its own
+neural voice (it comes with the speech models; until then, the system's voice), sentence by sentence as the answer
+arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Match)** under it and say the four
+phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
+voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
@@ -215,6 +220,65 @@ output when you change it (`pactl`, from the same package), and keeps that outpu
 listens. A request ends
 when your voice stops, even with a TV or colleagues talking behind you, and is at most 10 s long (20 s in a
 quiet room); when a longer one is cut, Ember says it only caught the first part.
+
+### How speech runs (WebAssembly, or natively on Windows and macOS)
+
+Listening (the wake word, the two voice detectors and Moonshine) and Ember's voice run on sherpa-onnx 1.13.8, each in a
+utility process of its own (`app/voice/process.ts`, `app/voice/tts-process.ts`), through `app/voice/runtime.ts`:
+
+| | Linux | Windows, macOS |
+|---|---|---|
+| Build | WebAssembly (`sherpa-onnx`): one thread, no GPU, runs on RHEL 8's glibc 2.28 | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
+| Threads | 1 | Moonshine 2, the Piper voice 1 (a second thread made it slower on a busy computer), Kokoro up to 4, leaving a core free; the per-frame models 1 |
+| GPU | — | macOS: CoreML for Kokoro only, kept when it is faster than the CPU on that Mac (both are timed the first time it loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder). Moonshine and Piper run on the CPU: CoreML lost to it on CI's Macs, and compiling for it held up the first load by seconds (`EMBER_VOICE_PROVIDER=coreml` tries it for every model). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
+| Voice | Piper "Kristin" | Piper "Kristin", or Kokoro (below) |
+
+Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only the computer's own):
+`sherpa-onnx-node`'s JavaScript would bring `sherpa-onnx-linux-x64` too, which needs glibc 2.32 and would fail
+`npm run check:symvers`. No Linux package carries the addon (`scripts/package/layout.mjs`; CI checks the staged Linux
+folder has no `sherpa-onnx-*`). The log says which build each process runs: `voice.ready` and `voice.tts_ready`
+carry `backend` (`native` or `wasm`), `detail` (the addon's and onnxruntime's versions, or why WebAssembly runs),
+`provider`, `threads` and `tried` (each provider's probe time); `voice.tts_ready` also has the voice and its measured
+real-time factor (`rtf`).
+
+**Falling back.** A model the addon can't make throws, and WebAssembly is used as before. A damaged model file aborts
+the addon's onnxruntime instead (an uncaught C++ exception, which ends the process), so a voice or speech process that
+dies before it is ready is started again at once on WebAssembly (`voice.native_failed`, `voice.tts_native_failed`),
+which then says the models are damaged and Ember downloads them again; after that, the native build is tried again.
+`EMBER_VOICE_BACKEND=wasm` forces WebAssembly and `EMBER_VOICE_PROVIDER=cpu` turns CoreML off (both honoured by an
+installed Ember: neither loads code). `npx electron test/smoke/voice-backends.mjs` (after `npm run build` and
+`node scripts/voice/prepare.mjs`) starts both processes in Electron, has them hear a clip and speak a reply on the
+build Ember picks and then on WebAssembly, and prints each one's build, load time and latency; CI runs it on Windows
+and macOS, after `test/integration/voice.test.ts` (which runs on the picked build too; `EMBER_SHERPA_ADDON=<a
+sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux).
+
+**The natural voice (Kokoro).** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default;
+shown on Windows and macOS) lets Ember fetch Kokoro v1.0 (`kokoro-multi-lang-v1_0`, fp32, its `af_heart` voice in US
+English, Apache-2.0, 350 MB, pinned by SHA-256) into the user's models folder. It is fetched only where Ember's voice
+runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is about 3.5 times the work:
+`NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
+again with it once it has nothing to say. Each time it loads, Kokoro is timed on a sentence (on up to 4 threads, and
+against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
+voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). No package carries
+Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below). `node scripts/voice/bench.mjs
+--kokoro` times listening, the Piper voice and Kokoro on the computer it runs on (both builds, every thread count and
+provider Ember would try), as a table and as JSON.
+
+Measured in a Linux container (2.1 GHz Xeon, 4 vCPUs) with `sherpa-onnx-linux-x64`, the same addon as Windows' and
+macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/voice-backends.mjs`), and in Node
+(`test/integration/voice.test.ts`, the Piper/Kokoro benchmarks):
+
+| | WebAssembly | Native |
+|---|---|---|
+| Hearing "Hey Ember, turn on night light" (spotter, both detectors, Moonshine) | 0.149 of real time | 0.042 (2 threads) |
+| Voice process load | 1.6–3.0 s | 1.2–1.5 s |
+| The 25 real-model voice tests | 36 s | 21 s |
+| Piper "Kristin", real-time factor | 0.30–0.49 | 0.07–0.09 (1–2 threads) |
+| Piper, first audio of a reply | 1.34 s | 0.33 s |
+| Kokoro v1.0 fp32 (`kokoro-multi-lang-v1_0`) | several times real time | 0.52 / 0.41 / 0.38 (2 / 3 / 4 threads) |
+| Kokoro v0.19 fp32 (`kokoro-en-v0_19`) | — | 0.74 / 0.53 / 0.48 (2 / 3 / 4 threads) |
+| All 4 cores kept busy by other work: listening / Piper (1 thread) / Piper WebAssembly | 0.237 / — / 0.56 | 0.071 / 0.14 |
+| Kokoro int8 (`kokoro-int8-multi-lang-v1_0`) | — | 1.14–1.27 (2–4 threads) |
 
 ### Connecting Copilot
 
@@ -322,7 +386,8 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `features.screenImages` | Accessibility text only; no screenshots go to the model |
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
-| `allowGrants` | `false` removes "Always in this app" |
+| `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
+| `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
 | `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
@@ -352,6 +417,10 @@ Rules:
    `rockylinux:8` container (needs podman or docker).
 3. `scripts/check-symvers.sh` must pass. CI runs both steps on every pull request.
 
+A prebuilt binary that can't meet that may still ship for Windows and macOS only, as an optional dependency npm
+installs only there, left out of the Linux layout (`scripts/package/layout.mjs`): sherpa-onnx's native addon is one
+(§5, How speech runs). It isn't in `ember.nativeModules` (nothing is rebuilt), and Linux never installs it.
+
 ## 7. Packages
 
 ```bash
@@ -364,8 +433,8 @@ The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `roc
 
 | Output | What it is |
 |---|---|
-| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, speaking, microphone list, tray icons, speech models). `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
-| `ember-voice-models-<v>-1.el8.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
+| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, the system voice, microphone list, tray icons). It carries the speech models in `/usr/share/ember/voice-models` (a release must: `EMBER_RPM_MODELS=required`; they come from `node scripts/voice/prepare.mjs`), and replaces 0.1.0's separate `ember-voice-models` RPM on upgrade. `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
+| `Ember-voice-models-<v>.zip` | The same models for computers that can't download them, unzipped where Ember looks (`scripts/package/models-zip.mjs`; README: Computers without internet access) |
 | `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
 
 The RPM's example policy, `/usr/share/doc/ember/policy.example.json`, turns commands on for this computer, WSL and
@@ -388,7 +457,7 @@ belongs to a package. It uploads Release 1's packages only when asked (§13): **
 **packages** ticked (kept 3 days), and on a `v*` tag for the release (§15); at about 450 MB a run with the speech
 models, uploading them every time filled the account's artifact storage. Bundled licences ship in `/opt/ember/THIRD_PARTY_NOTICES` (and as `%license` files in the
 RPM); staging stops if the spec's `License:` tag doesn't cover a bundled package's licence or a library it bundles
-(sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly holds, eSpeak NG's GPL-3.0-or-later among them:
+(sharp-libvips's licensing table, and what sherpa-onnx's WebAssembly and its native addon hold, eSpeak NG's GPL-3.0-or-later among them:
 `scripts/package/licences.mjs`), or if a bundled package ships no licence file and `licences.mjs` supplies none (the
 texts are in `packaging/licences/`; sherpa-onnx's is pinned to 1.13.8, whose WebAssembly was checked). `sudo ember
 doctor` works (it adds `--no-sandbox` only for the setup check run as root).
@@ -526,7 +595,8 @@ accessibility helper, which takes a few seconds once per version of the helper (
 
 These work as in §5, from Command Prompt, PowerShell or Git Bash: `npm run dev`, `npm test`, `npm run lint`,
 `npm run typecheck`, `npm run build`, `npm run test:smoke` and `npm run doctor` (the setup check, printed in the
-terminal). CI runs the Copilot-runtime and voice integration suites on Linux only; on Windows it runs the suites in
+terminal). CI runs the Copilot-runtime integration suite on Linux only, and the voice suite on Linux (WebAssembly),
+Windows and macOS (the native addon, with `test/smoke/voice-backends.mjs`); on Windows it also runs the suites in
 §10.3. Linux only: `npm run test:sidecar`, `npm run rebuild:el8`, `npm run check:symvers`, `npm run package`, Ember's
 desk and the eval.
 
@@ -653,7 +723,9 @@ For Windows it:
   accessibility host, and the job host that runs commands, WSL's launcher and SSH; §11.5 says what Node mode allows);
 - adds `ember-doctor.cmd`: Ember.exe is a windowed program, which `cmd.exe` doesn't wait for, so the launcher runs
   `start "" /wait Ember.exe --doctor` and keeps its exit code;
-- bundles the speech models only with `--with-models` (otherwise Ember downloads them when “Hey Ember” is turned
+- carries the Node.js runtimes for SSH remotes with `--with-runtimes` (from `node scripts/package/runtimes.mjs`, each
+  checked against `remote-runtime.json`; release builds do), so Ember sends one without downloading it;
+- bundles the speech models only with `--with-models` (release builds do; otherwise Ember downloads them when “Hey Ember” is turned
   on);
 - refuses to stage without `dist/app/ax-sidecar.cjs` and the helper's files (`--allow-missing-sidecar` is for a local
   try only).
@@ -681,7 +753,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
 
-Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and 126 MB of speech
+Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and 142 MB of speech
 models would bloat it. Windows ignores the 0700 and 0600 modes Ember sets on Linux, so privacy rests on
 `%LOCALAPPDATA%`'s per-user permissions: don't point `EMBER_USER_DATA` at a shared folder. Saving settings tries again
 when an antivirus scan or a sync client holds the file.
@@ -814,7 +886,7 @@ Ember can't work.
 | Helper command line | Never: it is the facts for an allow-list | — |
 | Copilot | Not signed in, or the Copilot runtime is missing from the package | Sign in from Ember's settings (Win+Alt+E) or with `gh auth login`; reinstall if the runtime is missing |
 | Organisation policy | The registry policy can't be trusted, so Ember is locked down | Fix `PolicyJson` (§10.7) |
-| Speech models, Speaking | As on Linux; Ember speaks with Windows' own voices | — |
+| Speech models, Speaking | As on Linux; speech runs on sherpa-onnx's native addon (§5, How speech runs) | — |
 
 The settings window's setup check adds **Screen reading** (the helper's state, with **Unblock it**), **Display
 scaling** (the helper and Ember disagree on scaling, so a click may land in the wrong place on some monitors: set every
@@ -1304,7 +1376,7 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
    the only one with write access, downloads the four artifacts into one folder, and `scripts/package/release.mjs`
    checks that it holds exactly the eight files the README downloads: `ember-<v>-1.el8.x86_64.rpm`,
-   `ember-voice-models-<v>-1.el8.noarch.rpm`, `Ember-<v>-x86_64.AppImage`, `Ember-<v>-win-x64.zip`,
+   `Ember-<v>-x86_64.AppImage`, `Ember-voice-models-<v>.zip`, `Ember-<v>-win-x64.zip`,
    `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
    refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
    absolute at the tag and wrapped lines joined. The job then writes the checksums, one line per file (a hash, two

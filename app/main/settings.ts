@@ -80,8 +80,8 @@ export const SettingsSchema = z.object({
   character: z.enum(CHARACTERS).default("cinder"),
   /** Character size on screen, in px. */
   size: z.number().int().min(36).max(110).default(60),
-  /** Speak replies aloud (text always shows in the bubble). */
-  speak: z.boolean().default(false),
+  /** Speak replies aloud (text always shows in the bubble). On by default: Ember is a voice assistant (0.1.1). */
+  speak: z.boolean().default(true),
   /** Speak them while a screen reader runs, even with `speak` off; off with it, Ember never speaks (app/shared/speech.ts). */
   speakWithScreenReader: z.boolean().default(true),
   /** Listen for "Hey Ember". */
@@ -93,7 +93,14 @@ export const SettingsSchema = z.object({
     speakerRejection: z.boolean().default(true),
     /** The user turned the microphone off (its shortcut or the menu): it stays off across restarts. */
     muted: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false }),
+    /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
+    match: z.boolean().default(false),
+    /**
+     * Ember's natural voice (Kokoro, 320 MB, downloaded when this is turned on): Windows and macOS only, where speech
+     * runs natively, and only where this computer makes it fast enough (VoiceService, tts-process.ts).
+     */
+    natural: z.boolean().default(false),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),
@@ -144,6 +151,16 @@ export const SettingsSchema = z.object({
     /** This Ember install's id (§5.1.13): 32 hex digits the targets runtime makes at first use; "" until then. */
     pcId: z.string().regex(/^(?:[0-9a-f]{32})?$/).default(""),
   }).default({ active: "local", offerSsh: true, dismissedOffers: [], hosts: [], wsl: { on: false, consent: { version: 0, at: null } }, pcId: "" }),
+  /**
+   * How often Ember asks: `askedApps` (on by default), no "Let me work in …?" in an app the user asked for help in (they
+   * were in it, or named it; risky steps still ask); `reviewCommands` (off by default until the reviewer passes its
+   * evaluation, eval/src/review-gate.ts), a command that would ask is reviewed by the model first, and one it finds
+   * routine for the request runs with its Stop countdown instead (commands/review.ts).
+   */
+  trust: z.object({
+    askedApps: z.boolean().default(true),
+    reviewCommands: z.boolean().default(false),
+  }).default({ askedApps: true, reviewCommands: false }),
   /** Commands per target id (§3.9.3): off until the user turns them on with the commands card. */
   commands: z.partialRecord(z.string().refine(isTargetId), TargetCommands).default({}),
 });

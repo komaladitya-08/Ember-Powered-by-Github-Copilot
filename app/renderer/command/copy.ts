@@ -28,6 +28,8 @@ export function isRiskyCard(card: Pick<CommandCard, "classes">): boolean {
 }
 /** The announcement's heading: nothing runs yet, it starts when the countdown ends (review #269). */
 export const ANNOUNCE_HEADING = "About to run this, as you asked";
+/** The same for a command the AI review cleared (commands/review.ts): the user didn't ask for exactly this. */
+export const REVIEWED_HEADING = "About to run this: Ember checked it against your request";
 export const ALLOW_LABEL = "Allow";
 export const NOT_NOW_LABEL = "Not now";
 export const STOP_LABEL = "Stop";

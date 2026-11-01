@@ -128,6 +128,7 @@ function harness(o: {
   othersNamed?: (words: string) => string[]; placesNamed?: (words: string) => string[];
   readScript?: (path: string, cwd: string) => Promise<string | null>;
   spoken?: string;
+  review?: CommandFlowContext["review"];
 } = {}): Harness {
   const audit: Record<string, unknown>[] = [];
   const asked: Record<string, unknown>[] = [];
@@ -188,6 +189,7 @@ function harness(o: {
     state: o.state ?? { cwd: null, downloaded: new Set(), running: false },
     size: () => ({ cols: 100, rows: 30 }), emberPids: () => [4242],
     onDeclined: () => { declined++; },
+    ...(o.review ? { review: o.review } : {}),
   };
   return { ctx, audit, asked, starts, runs, attached, announced, ended, windowAnnounce, declined: () => declined, tainted, consented: () => consented, abort };
 }
@@ -1981,5 +1983,53 @@ describe("text a command carries from elsewhere (commands/carried.ts)", () => {
 
   it.runIf(!matcher)("without policy.ts's matcher, any source read counts", () => {
     expect(carriedText("ls", [page], "", "linux")).toEqual({ from: ["Firefox"] });
+  });
+});
+
+describe("AI review of commands that would ask (review.ts)", () => {
+  const reviewer = (verdict: { run: boolean; does: string; why: string } | null) => {
+    const seen: Parameters<NonNullable<CommandFlowContext["review"]>>[0][] = [];
+    return { seen, review: (async i => { seen.push(i); return verdict; }) as NonNullable<CommandFlowContext["review"]> };
+  };
+
+  it("runs a command the reviewer finds routine with its announcement (Stop countdown), not a question", async () => {
+    setCommandJudge(null);
+    const r = reviewer({ run: true, does: "removes the build folder in the project", why: "the user asked to clean the build" });
+    const h = harness({ binding: LOCAL, words: "clean up my project", review: r.review });
+    const ran = await call(h, { target: "this computer", command: "rm -r build" });
+    expect(ran.resultType).toBe("success");
+    expect(h.asked).toEqual([]);
+    expect(h.announced.map(a => a.text)).toEqual(["Removes the build folder in the project."]);
+    expect(h.windowAnnounce[0].card.says).toContain("Ember's review: the user asked to clean the build.");
+    expect(h.windowAnnounce[0].card.reviewed).toBe(true);
+    expect(r.seen[0]).toMatchObject({ userWords: "clean up my project", command: "rm -r build" });
+  });
+
+  it("asks when the reviewer finds it dangerous, or gives no answer, saying why when it did", async () => {
+    setCommandJudge(null);
+    const no = harness({ binding: LOCAL, words: "clean up my project", answers: ["deny"], review: reviewer({ run: false, does: "", why: "it deletes more than the project" }).review });
+    await call(no, { target: "this computer", command: "rm -r build" });
+    expect((no.asked[0].panel as { card: CommandCard }).card.says).toContain("Ember's review: it deletes more than the project.");
+    const none = harness({ binding: LOCAL, words: "clean up my project", answers: ["deny"], review: reviewer(null).review });
+    await call(none, { target: "this computer", command: "rm -r build" });
+    expect(none.asked).toHaveLength(1);
+  });
+
+  it("never reviews a hard ask: a secret, a steered task, every-command asking, no words of the user's, or an ordinary command", async () => {
+    setCommandJudge(null);
+    const cases: [Parameters<typeof harness>[0], string][] = [
+      [{ words: "show my ssh key" }, "cat ~/.ssh/id_rsa"],
+      [{ words: "clean up my project", tainted: () => true }, "rm -r build"],
+      [{ words: "clean up my project", askEvery: true }, "rm -r build"],
+      [{ words: "clean up my project", mode: "ask" }, "rm -r build"],
+      [{ words: "" }, "rm -r build"],
+      [{ words: "run the tests" }, "make test"],
+    ];
+    for (const [o, command] of cases) {
+      const r = reviewer({ run: true, does: "does it", why: "fine" });
+      const h = harness({ binding: LOCAL, answers: ["deny"], ...o, review: r.review });
+      await call(h, { target: "this computer", command });
+      expect(r.seen, command).toEqual([]);
+    }
   });
 });

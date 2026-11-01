@@ -108,7 +108,7 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
     },
     voice: {
       speakerMonitor: true,
-      // Speech models installed with Ember (the ember-voice-models package), then those in the AppImage's resources.
+      // Speech models installed with Ember's RPM (or unzipped there by IT), then those inside the AppImage.
       bundledModelDirs: resourcesPath => ["/usr/share/ember/voice-models", path.join(resourcesPath, "voice-models")],
     },
     privacy: { neverLookDefaults: NEVER_LOOK_DEFAULTS.linux, isSecurityWindow: w => isSecurityWindow(w) },
