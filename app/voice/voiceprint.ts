@@ -15,6 +15,12 @@ import { fbank } from "./fbank";
  * of others'; 0.7 turned away under 1 % and took 8–11 %; 0.78 turned away 7 % and took 1 %.
  */
 export const VOICE_MATCH_THRESHOLD = 0.75;
+/**
+ * Voice Match's first look, at the wake phrase (about a second of audio, so a looser threshold): a voice this far from
+ * the owner's is turned away before Ember shows it listens; the request is then checked at VOICE_MATCH_THRESHOLD.
+ * Measured on LibriSpeech dev-clean (40 speakers, 1 s clips): 0.55 turned away none of the owners' and 62 % of others'.
+ */
+export const WAKE_MATCH_THRESHOLD = 0.55;
 /** What enrolment asks the owner to say: short requests with the name, as they will talk to Ember. */
 export const ENROL_PHRASES = [
   "Ember, what's the weather like today?",

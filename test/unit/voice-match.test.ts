@@ -106,6 +106,55 @@ describe("VoiceGate", () => {
   });
 });
 
+describe("VoiceGate's first look, at the wake phrase", () => {
+  const wake: VoiceEvent = { type: "wake", keyword: "hey_ember" };
+  const on: VoiceEvent = { type: "listening", on: true, reason: "wake", window: "wake" };
+  const off: VoiceEvent = { type: "listening", on: false, reason: "stop", window: "wake" };
+
+  it("shows the owner's wake once it looked, with what came meanwhile, in order", async () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    g.event(wake, Float32Array.from([1, 0.2]));
+    g.event(on, null);
+    expect(sent).toEqual([]);
+    await flush();
+    expect(sent).toEqual([wake, on]);
+  });
+
+  it("turns another voice away before Ember shows it listens, and ends its window unseen", async () => {
+    const sent: VoiceEvent[] = [];
+    let cancelled = 0;
+    const g: VoiceGate = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined, undefined, () => { cancelled++; g.event(off, null); });
+    g.setOwner(owner);
+    g.event(wake, Float32Array.from([0, 1]));
+    g.event(on, null);
+    await flush();
+    expect(sent).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "voice", score: 0 }]);
+    expect(cancelled).toBe(1);
+    // The next window is heard as usual.
+    g.event({ type: "stop" }, null);
+    expect(sent.at(-1)).toEqual({ type: "stop" });
+  });
+
+  it("lets a stop through at once while it looks", () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    g.event(wake, Float32Array.from([0, 1]));
+    g.event({ type: "stop" }, null);
+    expect(sent).toEqual([{ type: "stop" }]);
+  });
+
+  it("doesn't look at a bare-name wake (it shows with its request, which is checked)", () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    g.event({ type: "wake", keyword: "ember" }, Float32Array.from([0, 1]));
+    expect(sent).toEqual([{ type: "wake", keyword: "ember" }]);
+  });
+});
+
 describe("Enrolment", () => {
   const phrase = (a: number, b: number) => { const s = new Float32Array(16_000 * 2); s[0] = a; s[1] = b; return s; };
 

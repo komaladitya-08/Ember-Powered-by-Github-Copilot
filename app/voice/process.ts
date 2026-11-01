@@ -94,7 +94,8 @@ function voiceprinter(): Printer {
   return made;
 }
 /** Requests go through Voice Match on their way to main. */
-const gate = new VoiceGate(voiceprinter, e => send(e), err => send({ type: "voice-match-error", message: err instanceof Error ? err.message : String(err) }));
+const gate = new VoiceGate(voiceprinter, e => send(e), err => send({ type: "voice-match-error", message: err instanceof Error ? err.message : String(err) }),
+  undefined, () => engine?.cancel());
 /** Enrolment under way: the microphone's speech goes to it (through the VAD) instead of the engine. */
 let enrolment: Enrolment | null = null;
 function enrolFrame(frame: Float32Array): void {
@@ -151,7 +152,7 @@ parent.on("message", e => {
       backend = sherpaBackend(m.models, { monitor: m.monitor, onError: failed });
       speakerModel = m.models.speaker;
       gate.setOwner(decodePrint(m.voiceprint));
-      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : null));
+      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : e.type === "wake" ? made.wakeAudio : null));
       engine = made;
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0 });

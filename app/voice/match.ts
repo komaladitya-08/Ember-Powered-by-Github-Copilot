@@ -4,8 +4,8 @@
  * phrases and makes their voiceprint. The model is behind Printer, so both are tested without it.
  */
 
-import type { VoiceEvent } from "./engine";
-import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
+import { BARE_NAME, type VoiceEvent } from "./engine";
+import { ENROL_MIN_SECONDS, ENROL_PHRASES, VOICE_MATCH_THRESHOLD, WAKE_MATCH_THRESHOLD, averagePrint, consistentPrints, similarity } from "./voiceprint";
 
 /** Makes a voiceprint (unit length) of 16 kHz audio. */
 export interface Printer {
@@ -23,12 +23,19 @@ export class VoiceGate {
   private owner: Float32Array | null = null;
   /** Requests waiting for their check finish in order (a later one never overtakes an earlier). */
   private queue: Promise<void> = Promise.resolve();
+  /** A wake being looked at (WAKE_MATCH_THRESHOLD): it and what followed it wait, but for a stop. */
+  private held: { e: VoiceEvent; audio: Float32Array | null }[] | null = null;
+  /** A turned-away wake's window is being cancelled: what it emits meanwhile goes nowhere. */
+  private dropping = false;
 
+  /** `cancelWindow`: ends the engine's listening window (a wake turned away at its first look); it emits synchronously. */
   constructor(
     private printer: () => Printer,
     private send: (e: VoiceEvent) => void,
     private onError: (err: unknown) => void,
     private threshold = VOICE_MATCH_THRESHOLD,
+    private cancelWindow?: () => void,
+    private wakeThreshold = WAKE_MATCH_THRESHOLD,
   ) {}
 
   /** The owner's voiceprint (null: Voice Match off, every voice is heard). */
@@ -46,7 +53,12 @@ export class VoiceGate {
    * window as main knows it for a wake taken back ("rejected"), so the bubble goes back to what it showed.
    */
   event(e: VoiceEvent, audio: Float32Array | null): void {
+    if (this.dropping) { if (e.type === "stop") this.send(e); return; }
+    if (this.held) { if (e.type === "stop") this.send(e); else this.held.push({ e, audio }); return; }
     const owner = this.owner;
+    // First look, at the wake phrase: a clearly other voice is turned away before main shows Ember listening. (The bare
+    // name shows with its request, which is checked as it comes.)
+    if (e.type === "wake" && owner && audio?.length && e.keyword !== BARE_NAME) { this.lookAtWake(e, audio, owner); return; }
     if (e.type !== "utterance" || !owner || !audio?.length) { this.send(e); return; }
     const check = this.printer().print(audio);
     this.queue = this.queue.then(async () => {
@@ -62,6 +74,30 @@ export class VoiceGate {
       if (score >= this.threshold) { this.send(e); return; }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
+    });
+  }
+
+  private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {
+    this.held = [];
+    const look = this.printer().print(audio).then(p => similarity(p, owner), (err: unknown) => {
+      // The model failed: the wake stands (its request is checked as it comes), and main is told.
+      this.onError(err);
+      return 1;
+    });
+    this.queue = this.queue.then(async () => {
+      const score = await look;
+      const held = this.held ?? [];
+      this.held = null;
+      if (score >= this.wakeThreshold) {
+        this.send(e);
+        for (const h of held) this.event(h.e, h.audio);
+        return;
+      }
+      // Main never saw this wake: nothing it held is sent, and the engine's window ends unseen.
+      this.send({ type: "rejected", keyword: e.keyword, reason: "voice", score: Math.round(score * 1000) / 1000 });
+      if (held.some(h => h.e.type === "listening" && !h.e.on)) return;
+      this.dropping = true;
+      try { this.cancelWindow?.(); } finally { this.dropping = false; }
     });
   }
 }

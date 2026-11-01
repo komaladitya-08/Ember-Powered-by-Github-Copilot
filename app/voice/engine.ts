@@ -421,6 +421,8 @@ export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
   /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
   requestAudio: Float32Array | null = null;
+  /** What was heard up to the wake just emitted (the pre-roll with the wake phrase), for Voice Match's first look. */
+  wakeAudio: Float32Array | null = null;
   private ring: Ring;
   private recent = new Ring(RECENT_SECONDS);
   private selfSpeakingUntil = 0;
@@ -830,6 +832,7 @@ export class VoiceEngine {
   private announceWake(keyword: string, checkAt: number | null, show = false): void {
     // The bare name shows once what was said with it starts with the name (see Mode.announced), unless nothing checks it.
     const quiet = keyword === BARE_NAME && this.o.verifyWake !== false && !show;
+    this.wakeAudio = this.ring.read();
     if (!quiet) this.emit({ type: "wake", keyword });
     this.resetListening();
     this.peak = 0;
