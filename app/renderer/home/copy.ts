@@ -199,14 +199,6 @@ export function modelsDownloadLabel(missing: readonly SpeechModelId[], bytes: nu
   return `Download ${parts.length ? parts.join(" and ") : "speech models"} (${mb})`;
 }
 
-/** Voice Match without its model: why it's off (a kept voiceprint isn't used meanwhile), or why it can't be taught yet. */
-export function matchNoModelText(wanted: boolean, bytes: number | null): string {
-  const size = bytes ? ` (${Math.max(1, Math.round(bytes / 1e6))} MB)` : "";
-  return wanted
-    ? `Off for now: Voice Match's model is missing or was damaged, so Ember answers anyone who says its name. Download it above${size} and Ember answers only you again.`
-    : `Voice Match needs its own model, which isn't on this computer. Download it above${size}, then teach Ember your voice.`;
-}
-
 export const SPEAK_NO_VOICE = "Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.";
 
 /** The voice line while the microphone is off; `muteLabel` is the mute shortcut Ember holds as this OS writes it ("": none). */

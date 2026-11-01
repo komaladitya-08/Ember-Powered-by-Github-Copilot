@@ -11,7 +11,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { LISTENING_MODELS, VOICE_MODELS, VOICE_MODELS_BYTES, createHttpsDownloader, ensureModels, forgetModels, missingModels, modelReady, modelsBytes, modelsReady, type Downloader, type ModelId } from "../../app/voice/models";
-import { matchNoModelText, modelsDownloadLabel } from "../../app/renderer/home/copy";
+import { modelsDownloadLabel } from "../../app/renderer/home/copy";
+import { matchNoModelText } from "../../app/renderer/home/match-copy";
 import { bzip2Compress, randomBytes, tarArchive, tarEntry } from "../fixtures/voice-archive/make";
 
 // app/main/voice.ts (for downloadHelp, the words the user sees) imports Electron, which isn't loaded here.
