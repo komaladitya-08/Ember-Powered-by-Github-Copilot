@@ -64,6 +64,22 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(events.find(e => e.type === "utterance")).toMatchObject({ text: expect.stringMatching(/^Turn on night ?light\.?$/i) });
   });
 
+  it("wakes on the bare name wherever the microphone's frames happen to start", () => {
+    // A real microphone's 32 ms frames fall anywhere against the speech: the VAD's segment then started up to a window
+    // into "Ember" and the check heard "Remember", "Ever" or "Amber" (7 of these 16 placements were turned away), until
+    // it was tried again with the moment before the segment (the voice end-to-end test found it).
+    const clip = read("name_wake");
+    const missed: string[] = [];
+    for (let off = 0; off < 512; off += 32) {
+      const audio = new Float32Array(off + clip.length);
+      audio.set(clip, off);
+      const { events } = play(audio);
+      const wake = events.find(e => e.type === "wake" || e.type === "rejected");
+      if (wake?.type !== "wake" || !events.some(e => e.type === "utterance" && /night ?light/i.test(e.text))) missed.push(`${off}: ${JSON.stringify(wake)}`);
+    }
+    expect(missed).toEqual([]);
+  });
+
   it("shows no wake for the name inside other words ('the embers', 'I remember')", () => {
     for (const clip of ["embers", "remember"]) {
       const { events } = play(clip);

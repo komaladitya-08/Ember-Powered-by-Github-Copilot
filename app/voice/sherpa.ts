@@ -214,9 +214,11 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   let checkPending: Float32Array = new Float32Array(0);
   /**
    * What the listening VAD was fed lately (for the audio around a segment), how much since its reset, and how long it
-   * has heard speech; and what it heard before each segment it gave (while the segment is still about).
+   * has heard speech; and what it heard before each segment it gave (while the segment is still about). It holds the
+   * longest segment and then some: with only the last 2 s, a segment longer than about 1.5 s ("Ember, turn on night
+   * light.") had nothing before it, and Silero starts its segments up to a window into the first word.
    */
-  const recent = new Ring(2);
+  const recent = new Ring(VAD_MAX_SAMPLES / SAMPLE_RATE + 1);
   const before = new WeakMap<Float32Array, Float32Array>();
   let fed = 0, speechFrom = -1, checkSpeech = 0;
   const drain = (): Float32Array[] => {
