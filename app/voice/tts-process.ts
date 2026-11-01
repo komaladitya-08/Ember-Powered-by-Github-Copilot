@@ -9,10 +9,9 @@
  * enough (timed when it loads); otherwise the Piper voice does.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { NATURAL_MAX_RTF, speechChunks } from "./tts";
-import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type SherpaBackend, type Tts, type TtsSpec } from "./runtime";
+import { kokoroSpec, kokoroSpeaker, piperSpec } from "./tts-spec";
+import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type SherpaBackend, type Tts } from "./runtime";
 
 type FromMain =
   /** `model`: the Piper voice's folder; `natural`: Kokoro's (when downloaded); `wasm`: run on WebAssembly (a process before this one died loading natively). */
@@ -41,8 +40,6 @@ export type TtsProcessMessage =
   | { type: "done"; id: number }
   | { type: "failed"; id: number; message: string };
 
-/** Kokoro's speaker (af_heart in kokoro-multi-lang v1.0's voices.bin; af_bella in kokoro-en v0.19's). */
-const KOKORO_SID: Record<string, number> = { "kokoro-int8-multi-lang-v1_0": 3, "kokoro-multi-lang-v1_0": 3, "kokoro-en-v0_19": 1, "kokoro-int8-en-v0_19": 1 };
 /** What a voice is timed on: a warm-up, then a sentence of about three seconds. */
 const WARM_UP = "Hello.";
 const PROBE = "I opened the terminal and ran the tests; all of them passed.";
@@ -56,22 +53,6 @@ let busy = false;
 
 const parent = process.parentPort;
 const send = (m: TtsProcessMessage) => parent.postMessage(m);
-
-/** A Piper voice's files in its folder: one .onnx, tokens.txt, espeak-ng-data. */
-export function piperSpec(dir: string): TtsSpec {
-  const onnx = fs.readdirSync(dir).find(f => f.endsWith(".onnx"));
-  if (!onnx) throw new Error(`no voice model in ${dir}`);
-  return { kind: "vits", model: path.join(dir, onnx), tokens: path.join(dir, "tokens.txt"), dataDir: path.join(dir, "espeak-ng-data"), noiseScale: 0.667, noiseScaleW: 0.8, lengthScale: 1.0 };
-}
-
-/** Kokoro's files in its folder: model(.int8).onnx, voices.bin, tokens.txt, espeak-ng-data, and v1.0's US English lexicon. */
-export function kokoroSpec(dir: string): TtsSpec {
-  const model = ["model.onnx", "model.int8.onnx"].find(f => fs.existsSync(path.join(dir, f)));
-  if (!model) throw new Error(`no voice model in ${dir}`);
-  const lexicon = path.join(dir, "lexicon-us-en.txt");
-  const multi = fs.existsSync(lexicon);
-  return { kind: "kokoro", model: path.join(dir, model), voices: path.join(dir, "voices.bin"), tokens: path.join(dir, "tokens.txt"), dataDir: path.join(dir, "espeak-ng-data"), lexicon: multi ? lexicon : "", lang: multi ? "en-us" : "", lengthScale: 1.0 };
-}
 
 /** Seconds `voice` takes to make a second of speech (after a warm-up: the first run sets up onnxruntime's buffers). */
 function realTimeFactor(voice: Tts, speaker: number): number {
@@ -90,8 +71,10 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   const list = providers(sherpa.backend);
   let natural: string | undefined;
   if (m.natural && sherpa.backend === "native") {
+    // Kokoro is the model a GPU helps: CoreML competes with the CPU for it on macOS.
+    const list = providers(sherpa.backend, process.platform, process.env, { gpu: true });
     try {
-      const speaker = KOKORO_SID[path.basename(m.natural)] ?? 0;
+      const speaker = kokoroSpeaker(m.natural);
       const n = threads(sherpa.backend, 4);
       const spec = kokoroSpec(m.natural);
       const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
@@ -107,7 +90,9 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   } else if (m.natural) {
     natural = `it needs the native build (${sherpa.detail})`;
   }
-  const n = threads(sherpa.backend, 2);
+  // One thread: on a computer kept busy by other apps, a second made it slower (all 4 cores busy: 0.16 of real time on
+  // two threads, 0.14 on one), and when idle it saved only about 30 ms a sentence (0.10 against 0.13).
+  const n = threads(sherpa.backend, 1);
   const spec = piperSpec(m.model);
   const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: 0, speed: 1.0 }),
     { cache: { store: providerCache(), key: modelKey(spec.model, list, n) } });

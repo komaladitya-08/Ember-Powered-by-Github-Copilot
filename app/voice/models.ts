@@ -92,18 +92,19 @@ export const modelsBytes = (models: readonly ModelFile[] = VOICE_MODELS): number
 export const VOICE_MODELS_BYTES = modelsBytes();
 
 /**
- * The natural voice: Kokoro (82M, US English, fp32), more natural than the Piper voice but about six times the work.
- * It isn't one of the speech models (nothing waits for it, and no package carries it): on Windows and macOS, where
- * speech runs natively, Ember fetches it in the background once the Piper voice shows this computer is fast enough
- * (VoiceService), and the speech process uses it only if it is made at most at NATURAL_MAX_RTF of real time there.
- * fp32, not kokoro-int8-*: onnxruntime's int8 kernels made it slower (on a 2.1 GHz Xeon, 4 vCPUs: int8 multi-lang
- * v1.0 at 1.1–1.3 of real time, this one at 0.48 on 4 threads).
+ * The natural voice: Kokoro v1.0 (82M, fp32, its af_heart voice in US English), more natural than the Piper voice but
+ * several times the work. It isn't one of the speech models (nothing waits for it, and no package carries it): on
+ * Windows and macOS, where speech runs natively, Ember fetches it once the user turns it on (Settings › Voice) and the
+ * Piper voice shows this computer is fast enough (VoiceService); the speech process uses it only if it is made at most
+ * at NATURAL_MAX_RTF of real time there. fp32, not kokoro-int8-*: onnxruntime's int8 kernels made it slower. On a
+ * 2.1 GHz Xeon (4 vCPUs), on 2 / 3 / 4 threads: this one at 0.52 / 0.41 / 0.38 of real time, kokoro-en v0.19 (fp32) at
+ * 0.74 / 0.53 / 0.48, kokoro-int8-multi-lang v1.0 at 1.1–1.3.
  */
 export const NATURAL_VOICE: ModelFile = {
-  id: "natural", name: "Ember's natural voice (Kokoro, US English)", kind: "tar.bz2", license: "Apache-2.0",
-  url: `${RELEASES}/tts-models/kokoro-en-v0_19.tar.bz2`,
-  sha256: "912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7", bytes: 319_625_534,
-  target: "kokoro-en-v0_19",
+  id: "natural", name: "Ember's natural voice (Kokoro v1.0, US English)", kind: "tar.bz2", license: "Apache-2.0",
+  url: `${RELEASES}/tts-models/kokoro-multi-lang-v1_0.tar.bz2`,
+  sha256: "60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4", bytes: 349_886_476,
+  target: "kokoro-multi-lang-v1_0",
 };
 
 const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];

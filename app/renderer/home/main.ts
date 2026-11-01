@@ -355,6 +355,8 @@ function renderPlatform(p: StatusPlatform | undefined): void {
   if (!platform) useAppNames(p.os);
   platform = p;
   for (const patch of homePatches(p)) applyPatch(patch);
+  // The natural voice needs speech to run natively: Windows and macOS (app/voice/runtime.ts).
+  $("natural-row").hidden = p.os === "linux";
   const muted = micOffText(p.shortcuts.mute.label);
   if (VOICE_TEXT.muted !== muted) { VOICE_TEXT.muted = muted; if (voice) renderVoice(voice); }
   // Keys read differently on this OS: the lines already shown are written again.
@@ -1047,7 +1049,7 @@ $("match-on").addEventListener("change", e => {
   const on = (e.target as HTMLInputElement).checked;
   // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
   if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
-  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false }), match: on } });
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false, natural: false }), match: on } });
 });
 $("match-teach").addEventListener("click", startEnrol);
 // Teach comes back (and takes focus) once main says teaching stopped; Forget hides itself, so focus goes to Teach now.
@@ -1057,6 +1059,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
+  ($("natural") as HTMLInputElement).checked = s.voice.natural;
   if (voice) renderVoice(voice);
 }
 $("wake").addEventListener("change", e => {
@@ -1067,12 +1070,16 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, match: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, natural: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();
 });
 $("consent-no").addEventListener("click", () => { $("consent").hidden = true; $("wake").focus(); });
+$("natural").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false }), natural: on } });
+});
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();

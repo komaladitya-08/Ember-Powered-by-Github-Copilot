@@ -228,8 +228,8 @@ utility process of its own (`app/voice/process.ts`, `app/voice/tts-process.ts`),
 | | Linux | Windows, macOS |
 |---|---|---|
 | Build | WebAssembly (`sherpa-onnx`): one thread, no GPU, runs on RHEL 8's glibc 2.28 | The native addon (`sherpa-onnx-win-<arch>`, `sherpa-onnx-darwin-<arch>`: the binaries `sherpa-onnx-node` loads), WebAssembly if it doesn't load |
-| Threads | 1 | Moonshine 2, Ember's voice 2 (Kokoro 4), leaving a core free; the per-frame models 1 |
-| GPU | — | macOS: CoreML for Moonshine and the voice, kept only when it is faster than the CPU on that Mac (both are timed the first time a model loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder: compiling for CoreML took seconds on CI's Macs). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
+| Threads | 1 | Moonshine 2, the Piper voice 1 (a second thread made it slower on a busy computer), Kokoro up to 4, leaving a core free; the per-frame models 1 |
+| GPU | — | macOS: CoreML for Kokoro only, kept when it is faster than the CPU on that Mac (both are timed the first time it loads, and the verdict is kept in `ember-voice-providers.json` in the user's temporary folder). Moonshine and Piper run on the CPU: CoreML lost to it on CI's Macs, and compiling for it held up the first load by seconds (`EMBER_VOICE_PROVIDER=coreml` tries it for every model). Windows: none: the prebuilt addon's `onnxruntime.dll` has no DirectML (it imports neither `DirectML.dll` nor `d3d12.dll`, and sherpa-onnx quietly uses the CPU when asked for it) |
 | Voice | Piper "Kristin" | Piper "Kristin", or Kokoro (below) |
 
 Ember depends on the platform packages directly (`optionalDependencies`, so npm installs only the computer's own):
@@ -251,13 +251,17 @@ build Ember picks and then on WebAssembly, and prints each one's build, load tim
 and macOS, after `test/integration/voice.test.ts` (which runs on the picked build too; `EMBER_SHERPA_ADDON=<a
 sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux).
 
-**The natural voice (Kokoro).** Where Ember's voice runs natively on the Piper voice at no more than 0.083 of real time
-(Kokoro is about six times the work: `NATURAL_COST` in `app/voice/tts.ts`), Ember downloads Kokoro (`kokoro-en-v0_19`,
-US English, Apache-2.0, 320 MB, pinned by SHA-256) in the background into the user's models folder
-(`voice.natural_fetching`, `voice.natural_ready`), and the speech process starts again with it once it has nothing to
-say. Each time it loads, Kokoro is timed on a sentence (on 4 threads): at more than 0.5 of real time (`NATURAL_MAX_RTF`)
-the Piper voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). No package
-carries Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below).
+**The natural voice (Kokoro).** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default;
+shown on Windows and macOS) lets Ember fetch Kokoro v1.0 (`kokoro-multi-lang-v1_0`, fp32, its `af_heart` voice in US
+English, Apache-2.0, 350 MB, pinned by SHA-256) into the user's models folder. It is fetched only where Ember's voice
+runs natively on the Piper voice at no more than 0.143 of real time (Kokoro is about 3.5 times the work:
+`NATURAL_COST` in `app/voice/tts.ts`; `voice.natural_fetching`, `voice.natural_ready`), and the speech process starts
+again with it once it has nothing to say. Each time it loads, Kokoro is timed on a sentence (on up to 4 threads, and
+against CoreML on macOS: the one model a GPU is tried for): at more than 0.5 of real time (`NATURAL_MAX_RTF`) the Piper
+voice speaks instead for the rest of the session, and `voice.tts_ready` says why (`natural`). No package carries
+Kokoro. The int8 Kokoro builds aren't used: onnxruntime made them slower on x86 (below). `node scripts/voice/bench.mjs
+--kokoro` times listening, the Piper voice and Kokoro on the computer it runs on (both builds, every thread count and
+provider Ember would try), as a table and as JSON.
 
 Measured in a Linux container (2.1 GHz Xeon, 4 vCPUs) with `sherpa-onnx-linux-x64`, the same addon as Windows' and
 macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/voice-backends.mjs`), and in Node
@@ -270,7 +274,9 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
 | The 25 real-model voice tests | 36 s | 21 s |
 | Piper "Kristin", real-time factor | 0.30–0.49 | 0.07–0.09 (1–2 threads) |
 | Piper, first audio of a reply | 1.34 s | 0.33 s |
-| Kokoro fp32 (`kokoro-en-v0_19`) | several times real time | 0.74 / 0.53 / 0.48 (2 / 3 / 4 threads) |
+| Kokoro v1.0 fp32 (`kokoro-multi-lang-v1_0`) | several times real time | 0.52 / 0.41 / 0.38 (2 / 3 / 4 threads) |
+| Kokoro v0.19 fp32 (`kokoro-en-v0_19`) | — | 0.74 / 0.53 / 0.48 (2 / 3 / 4 threads) |
+| All 4 cores kept busy by other work: listening / Piper (1 thread) / Piper WebAssembly | 0.237 / — / 0.56 | 0.071 / 0.14 |
 | Kokoro int8 (`kokoro-int8-multi-lang-v1_0`) | — | 1.14–1.27 (2–4 threads) |
 
 ### Connecting Copilot

@@ -38,10 +38,12 @@ describe("the native addon's package", () => {
 });
 
 describe("providers and threads", () => {
-  it("tries CoreML, then the CPU, on macOS; the CPU alone on Windows (no DirectML in the prebuilt addon) and in WebAssembly", () => {
-    expect(providers("native", "darwin", {})).toEqual(["coreml", "cpu"]);
-    expect(providers("native", "win32", {})).toEqual(["cpu"]);
-    expect(providers("wasm", "darwin", {})).toEqual(["cpu"]);
+  it("runs on the CPU everywhere, and times CoreML against it on macOS only for a model worth a GPU (Kokoro)", () => {
+    expect(providers("native", "darwin", {})).toEqual(["cpu"]);
+    expect(providers("native", "darwin", {}, { gpu: true })).toEqual(["coreml", "cpu"]);
+    // No DirectML in the prebuilt Windows addon; WebAssembly has the CPU alone.
+    expect(providers("native", "win32", {}, { gpu: true })).toEqual(["cpu"]);
+    expect(providers("wasm", "darwin", {}, { gpu: true })).toEqual(["cpu"]);
   });
 
   it("takes EMBER_VOICE_PROVIDER: cpu turns CoreML off; another provider is tried before the CPU", () => {

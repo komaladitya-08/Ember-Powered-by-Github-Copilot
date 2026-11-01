@@ -95,7 +95,12 @@ export const SettingsSchema = z.object({
     muted: z.boolean().default(false),
     /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
     match: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false, match: false }),
+    /**
+     * Ember's natural voice (Kokoro, 320 MB, downloaded when this is turned on): Windows and macOS only, where speech
+     * runs natively, and only where this computer makes it fast enough (VoiceService, tts-process.ts).
+     */
+    natural: z.boolean().default(false),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false, natural: false }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

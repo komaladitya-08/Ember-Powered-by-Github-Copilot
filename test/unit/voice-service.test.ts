@@ -805,6 +805,25 @@ describe("speech models", () => {
       }
     });
 
+    it("follows the setting: turned on, the speech process starts again with the natural voice once it has nothing to say; turned off, without it", async () => {
+      const { v } = service(true, { neuralVoice: true, naturalVoice: false, native: true, downloader: vi.fn() });
+      fs.mkdirSync(path.join(root, NATURAL_VOICE.target));
+      fs.writeFileSync(path.join(root, `.${NATURAL_VOICE.target}.ok`), `${NATURAL_VOICE.sha256}\n`);
+      v.speak("Hello.");
+      const [first] = electron.procs;
+      expect(posted(first, "init")[0]).toMatchObject({ natural: null });
+      v.setNaturalVoice(true);
+      expect(first.kill).not.toHaveBeenCalled(); // "Hello." is still being said
+      first.emit("message", { type: "done", id: 1 });
+      expect(first.kill).toHaveBeenCalled();
+      v.speak("Again.");
+      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
+      electron.procs[1].emit("message", { type: "done", id: 2 });
+      v.setNaturalVoice(false);
+      v.speak("Once more.");
+      expect(posted(electron.procs[2], "init")[0]).toMatchObject({ natural: null });
+    });
+
     it("lets the natural voice speak once it is in, unless it turned out too slow here", async () => {
       const { v } = service(true, { neuralVoice: true, naturalVoice: true, native: true, downloader: vi.fn() });
       fs.mkdirSync(path.join(root, NATURAL_VOICE.target));

@@ -77,8 +77,9 @@ export interface VoiceOptions {
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
   /**
-   * Fetch the natural voice (Kokoro, models.ts NATURAL_VOICE) in the background, and let it speak, where speech runs
-   * natively and the Piper voice shows this computer is fast enough for it.
+   * The user turned on the natural voice (Kokoro, models.ts NATURAL_VOICE): it is fetched in the background and
+   * speaks where speech runs natively and the Piper voice shows this computer is fast enough for it. Changed later
+   * with setNaturalVoice.
    */
   naturalVoice?: boolean;
   /**
@@ -179,10 +180,13 @@ export class VoiceService {
    * `switchVoice`: fetched, so the speech process starts again with it once it has nothing left to say.
    */
   private naturalFetch: Promise<void> | null = null;
+  /** The natural voice is wanted (the setting). */
+  private naturalWanted: boolean;
   private naturalOff = false;
   private switchVoice = false;
 
   constructor(private o: VoiceOptions) {
+    this.naturalWanted = !!o.naturalVoice;
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
     this.userRoot = o.bundled?.userRoot ?? o.modelsRoot;
     ipcMain.on(VOICE.status, (e, s: MicStatus) => {
@@ -411,6 +415,19 @@ export class VoiceService {
     this.voiceProcess().postMessage({ type: "say", id, text });
   }
 
+  /**
+   * The natural voice turned on or off (the setting): the speech process starts again once it has nothing left to say,
+   * with Kokoro (fetched first, where this computer is fast enough for it) or without.
+   */
+  setNaturalVoice(on: boolean): void {
+    if (on === this.naturalWanted) return;
+    this.naturalWanted = on;
+    this.naturalOff = false;
+    this.o.log.info("voice.natural_wanted", { on });
+    this.switchVoice = true;
+    this.switchWhenIdle();
+  }
+
   hush(): void {
     this.speakingUntil = 0;
     if (this.ttsId > this.ttsHushed) {
@@ -483,7 +500,7 @@ export class VoiceService {
       pending.send(VOICE.audioDone, m.id);
       this.switchWhenIdle();
     });
-    const natural = this.o.naturalVoice && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
+    const natural = this.naturalWanted && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
     proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : {}) });
     return proc;
   }
@@ -494,7 +511,7 @@ export class VoiceService {
    */
   private voiceReady(loadMs: number, rate: number, v: VoiceInfo | undefined): void {
     this.o.log.info("voice.tts_ready", { loadMs, rate, ...(v ? { voice: v.voice, backend: v.backend, detail: v.detail, provider: v.provider, threads: v.threads, rtf: v.rtf, tried: v.tried, natural: v.natural } : {}) });
-    if (!v || !this.o.naturalVoice || this.naturalFetch || this.naturalOff) return;
+    if (!v || !this.naturalWanted || this.naturalFetch || this.naturalOff) return;
     // Downloaded, but too slow here or it wouldn't load: the Piper voice speaks for the rest of the session.
     if (v.natural) { this.naturalOff = true; return; }
     if (v.backend !== "native" || v.voice !== "piper" || v.rtf === undefined) return;

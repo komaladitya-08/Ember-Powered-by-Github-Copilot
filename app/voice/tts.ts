@@ -15,10 +15,10 @@ import { spokenText } from "./spoken";
 export const NATURAL_MAX_RTF = 0.5;
 /**
  * About how much more work Kokoro is than the Piper voice, natively: Ember fetches Kokoro only where the Piper voice
- * runs at most NATURAL_MAX_RTF / NATURAL_COST of real time. Measured on a 2.1 GHz Xeon (4 vCPUs): Piper at 0.08 of real
- * time on 2 threads (in WebAssembly: 0.49), Kokoro fp32 at 0.48 on 4 threads and 0.53 on 3.
+ * runs at most NATURAL_MAX_RTF / NATURAL_COST of real time. Measured on a 2.1 GHz Xeon (4 vCPUs): Piper at 0.13 of real
+ * time on its one thread (in WebAssembly: 0.36–0.49), Kokoro v1.0 (fp32) at 0.41 on 3 threads and 0.38 on 4.
  */
-export const NATURAL_COST = 6;
+export const NATURAL_COST = 3.5;
 
 /** A first chunk longer than this is cut at its first comma (or semicolon, or dash) past FIRST_MIN: its sound comes sooner. */
 const FIRST_MAX = 90;

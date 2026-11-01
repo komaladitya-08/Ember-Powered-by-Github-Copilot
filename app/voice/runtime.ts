@@ -101,17 +101,19 @@ export function nativePackage(platform: string = process.platform, arch: string 
 }
 
 /**
- * The execution providers to try for a model, best first; the last is always "cpu". CoreML on macOS (onnxruntime's
- * macOS build has it). DirectML isn't in the prebuilt Windows addon (its onnxruntime.dll imports neither DirectML.dll
- * nor d3d12.dll, and sherpa-onnx quietly runs on the CPU when asked for it), so Windows runs on the CPU.
- * Per-frame models (the spotter and the VADs: a few milliseconds every 32 ms) always run on the CPU: handing so little
- * work to the GPU costs more than it saves.
+ * The execution providers to try for a model, best first; the last is always "cpu". `gpu`: a model worth a GPU (Kokoro,
+ * 82M parameters): on macOS, CoreML is timed against the CPU for it (onnxruntime's macOS build has CoreML). Everything
+ * else runs on the CPU: on CI's Macs CoreML lost to the CPU for Moonshine (48–67 ms against 25–41) and Piper (182
+ * against 97), and compiling for it held up the first load by seconds; the per-frame models (the spotter and the
+ * VADs) hand it too little work. DirectML isn't in the prebuilt Windows addon (its onnxruntime.dll imports neither
+ * DirectML.dll nor d3d12.dll, and sherpa-onnx quietly runs on the CPU when asked for it), so Windows runs on the CPU.
+ * EMBER_VOICE_PROVIDER names a provider to try first for every model ("cpu": the CPU alone).
  */
-export function providers(backend: SherpaBackend, platform: string = process.platform, env: NodeJS.ProcessEnv = process.env): string[] {
+export function providers(backend: SherpaBackend, platform: string = process.platform, env: NodeJS.ProcessEnv = process.env, o: { gpu?: boolean } = {}): string[] {
   if (backend === "wasm") return ["cpu"];
   const forced = env.EMBER_VOICE_PROVIDER?.trim().toLowerCase();
   if (forced) return forced === "cpu" ? ["cpu"] : [forced, "cpu"];
-  return platform === "darwin" ? ["coreml", "cpu"] : ["cpu"];
+  return platform === "darwin" && o.gpu ? ["coreml", "cpu"] : ["cpu"];
 }
 
 /** CPU threads for a model: WebAssembly has one; natively, up to `max`, leaving a core for everything else. */
