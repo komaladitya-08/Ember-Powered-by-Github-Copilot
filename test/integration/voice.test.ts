@@ -12,6 +12,8 @@ import { createRequire } from "node:module";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
+import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
+import { VOICE_MATCH_THRESHOLD, printFeatures, similarity, unit } from "../../app/voice/voiceprint";
 
 const dir = path.resolve(process.env.EMBER_VOICE_DIR ?? ".cache/voice");
 const clips = path.resolve("test/fixtures/voice");
@@ -314,5 +316,32 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     s.end();
     expect(sent(s.events)).toEqual([expect.objectContaining({ text: expect.stringMatching(/night ?light.*weather was nice/i), window: "wake" })]);
     expect(sent(s.events)[0]).not.toHaveProperty("cut");
+  });
+
+  it("teaches Voice Match a voice from four phrases, and lets a fifth in that voice through", async () => {
+    // The voiceprint model as the worker runs it (voiceprint-worker.ts), in this thread.
+    const ort = createRequire(import.meta.url)("onnxruntime-web");
+    ort.env.wasm.numThreads = 1;
+    ort.env.logLevel = "error";
+    const session = await ort.InferenceSession.create(modelPaths(path.join(dir, "models")).speaker, { executionProviders: ["wasm"] });
+    const printer: Printer = {
+      async print(samples) {
+        const { data, frames } = printFeatures(samples);
+        const out = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", data, [1, frames, 80]) });
+        return unit(out[session.outputNames[0]].data as Float32Array);
+      },
+    };
+    const states: EnrolState[] = [];
+    const enrol = new Enrolment(printer, st => states.push(st), 4);
+    for (const clip of ["wake", "dnd", "chat", "remember"]) await enrol.heard(read(clip));
+    const done = states.find(st => st.state === "done") as Extract<EnrolState, { state: "done" }> | undefined;
+    expect(done).toBeDefined();
+    expect(similarity(await printer.print(read("followup")), done!.print)).toBeGreaterThanOrEqual(VOICE_MATCH_THRESHOLD);
+    const sent: VoiceEvent[] = [];
+    const gate = new VoiceGate(() => printer, e => sent.push(e), () => undefined);
+    gate.setOwner(done!.print);
+    gate.event({ type: "utterance", text: "And turn on do not disturb too.", ms: 100, window: "follow-up" }, read("followup"));
+    await new Promise(r => setTimeout(r, 2000));
+    expect(sent.map(e => e.type)).toEqual(["utterance"]);
   });
 });

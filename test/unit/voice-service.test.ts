@@ -58,7 +58,7 @@ function modelsRoot(ready: boolean): string {
   return dir;
 }
 
-function service(ready = true, o: { neuralVoice?: boolean } = {}) {
+function service(ready = true, o: { neuralVoice?: boolean; voiceprint?: () => string | null; onEnrol?: (e: unknown) => void } = {}) {
   root = modelsRoot(ready);
   const states: { s: MicState; detail?: string }[] = [];
   const events: VoiceEvent[] = [];
@@ -639,6 +639,27 @@ describe("speech models", () => {
       expect(electron.procs).toHaveLength(0);
       const speech = electron.windows.find(w => w.title === "Ember speech")!;
       expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Hello." });
+    });
+  });
+
+  describe("Voice Match", () => {
+    it("starts the voice process with the owner's voiceprint, passes enrolment through, and switches the voiceprint", async () => {
+      const progress: unknown[] = [];
+      const { v } = service(true, { voiceprint: () => "PRINT", onEnrol: e => progress.push(e) });
+      expect(v.enrol()).toBe(false); // not listening yet: nothing to learn the voice through
+      await v.setWanted(true);
+      const [proc] = electron.procs;
+      expect(posted(proc, "init")[0]).toMatchObject({ voiceprint: "PRINT" });
+      expect(v.enrol()).toBe(false); // not ready yet
+      proc.emit("message", { type: "ready", loadMs: 900 });
+      expect(v.enrol()).toBe(true);
+      expect(posted(proc, "enrol")).toEqual([{ type: "enrol" }]);
+      proc.emit("message", { type: "enrol", state: "heard", got: 1, of: 4 });
+      expect(progress).toEqual([{ type: "enrol", state: "heard", got: 1, of: 4 }]);
+      v.cancelEnrol();
+      expect(posted(proc, "enrol-cancel")).toHaveLength(1);
+      v.setVoiceprint(null);
+      expect(posted(proc, "voiceprint")).toEqual([{ type: "voiceprint", print: null }]);
     });
   });
 });

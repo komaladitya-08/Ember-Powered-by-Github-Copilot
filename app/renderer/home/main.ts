@@ -970,6 +970,7 @@ function renderVoice(v: VoiceStatus): void {
   // One orange button per section: the download is the main thing only once "Hey Ember" is on.
   dl.classList.toggle("quiet", !(voiceSettings.wakeWord && voiceSettings.consent));
   ($("voice-progress") as HTMLProgressElement).hidden = v.state !== "downloading";
+  renderMatch();
   const missing = v.speechMissing === true;
   if (missing !== speechMissing) {
     speechMissing = missing;
@@ -980,6 +981,46 @@ function renderVoice(v: VoiceStatus): void {
     window.ember.getStatus().then(s => { if (JSON.stringify(s.environment.checks) !== shownChecks) renderChecks(s.environment); }, () => { /* shown at the next status */ });
   }
 }
+/** Voice Match's words in settings (renderMatch). */
+const MATCH_TEXT = {
+  none: "Ember answers anyone who says its name. Teach it your voice, and it answers only you. “Ember, stop” still works for anyone.",
+  on: "On: Ember answers only your voice. Your voiceprint stays on this computer; “Ember, stop” still works for anyone.",
+  off: "Off: Ember answers anyone who says its name. It keeps your voiceprint until you forget it.",
+  listening: "Turn on “Listen for “Hey Ember”” first: Ember learns your voice through the microphone.",
+  again: { short: "That was too short. Say it again:", unlike: "That didn't sound like the others (another voice, or noise). Say it again:", failed: "Ember couldn't hear that clearly. Say it again:" },
+} as const;
+function renderMatch(): void {
+  const m = voice?.match;
+  const listening = voiceSettings.wakeWord && voiceSettings.consent;
+  $("match").hidden = !m || managed.has("wakeWord") || !listening;
+  if (!m) return;
+  const busy = !!m.enrolling;
+  ($("match-on") as HTMLInputElement).checked = m.on || busy;
+  ($("match-on") as HTMLInputElement).disabled = busy;
+  $("match-text").textContent = busy ? `Say each phrase as you would ask Ember (${m.enrolling!.got} of ${m.enrolling!.of} heard).` : !m.enrolled ? MATCH_TEXT.none : m.on ? MATCH_TEXT.on : MATCH_TEXT.off;
+  const prompt = $("match-prompt");
+  prompt.hidden = !busy;
+  prompt.textContent = busy ? `${m.enrolling!.again ? MATCH_TEXT.again[m.enrolling!.again] : "Say:"} “${m.enrolling!.phrase}”` : "";
+  const bar = $("match-progress") as HTMLProgressElement;
+  bar.hidden = !busy;
+  if (busy) { bar.max = m.enrolling!.of; bar.value = m.enrolling!.got; }
+  $("match-teach").hidden = busy;
+  $("match-teach").textContent = m.enrolled ? "Teach Ember my voice again" : "Teach Ember my voice";
+  $("match-cancel").hidden = !busy;
+  $("match-forget").hidden = busy || !m.enrolled;
+}
+const startEnrol = () => {
+  void window.ember.enrolVoice().then(ok => { if (!ok) $("match-text").textContent = MATCH_TEXT.listening; else $("match-prompt").focus?.(); });
+};
+$("match-on").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  // Nothing to match yet: turning it on teaches Ember the voice first (it turns on once that's done).
+  if (on && !voice?.match?.enrolled) { (e.target as HTMLInputElement).checked = false; startEnrol(); return; }
+  void save({ voice: { ...(settings?.voice ?? { consent: true, speakerRejection: true, muted: false }), match: on } });
+});
+$("match-teach").addEventListener("click", startEnrol);
+$("match-cancel").addEventListener("click", () => { void window.ember.cancelEnrolVoice(); $("match-teach").focus(); });
+$("match-forget").addEventListener("click", () => { void window.ember.forgetVoice(); $("match-teach").focus(); });
 function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
@@ -994,7 +1035,7 @@ $("wake").addEventListener("change", e => {
 });
 $("consent-yes").addEventListener("click", () => {
   $("consent").hidden = true;
-  void save({ wakeWord: true, voice: { muted: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
+  void save({ wakeWord: true, voice: { muted: false, match: false, ...(settings?.voice ?? {}), consent: true, speakerRejection: true } });
   // Agreeing also fetches the speech models if they aren't here yet (one less step to find).
   if (!($("voice-download") as HTMLButtonElement).hidden) void window.ember.downloadVoice();
   $("wake").focus();

@@ -70,7 +70,8 @@ export type VoiceEvent =
   | { type: "speech"; on: boolean }
   /** `window`: a wake's request or a follow-up (which gets no follow-up of its own); `cut`: the speaker was still talking when the request reached its length limit. */
   | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean }
-  | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check"; heard?: string };
+  /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
+  | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 
 export interface EngineOptions {
   /** Audio kept before a wake so a one-breath command isn't cut (seconds). */
@@ -418,6 +419,8 @@ type PendingStop = { keyword: string; at: number; checkAt: number | null; spoke?
 
 export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
+  /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
+  requestAudio: Float32Array | null = null;
   private ring: Ring;
   private recent = new Ring(RECENT_SECONDS);
   private selfSpeakingUntil = 0;
@@ -1145,6 +1148,7 @@ export class VoiceEngine {
     const window = this.mode.reason;
     if (window === "wake") this.voice = this.peak;
     this.afterFollowUp = window === "follow-up";
+    this.requestAudio = clip.audio;
     this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}) });
     this.endListening("done");
   }

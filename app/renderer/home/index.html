@@ -95,6 +95,13 @@
         <p class="sr" id="voice-live" role="status"></p>
         <div class="agent-actions"><button type="button" id="voice-download" class="btn quiet" hidden>Download speech models</button><button type="button" id="voice-fix" class="btn quiet" hidden>Open Settings</button></div>
         <progress id="voice-progress" max="1" value="0" aria-label="Speech models downloaded" hidden></progress>
+        <div id="match" class="match" role="group" aria-labelledby="match-label" hidden>
+          <label class="switch-row"><input type="checkbox" id="match-on" role="switch" aria-describedby="match-text"><span id="match-label">Answer only my voice (Voice Match)</span></label>
+          <p class="hint" id="match-text"></p>
+          <p class="match-prompt" id="match-prompt" role="status" hidden></p>
+          <progress id="match-progress" max="4" value="0" aria-label="Phrases Ember has heard" hidden></progress>
+          <div class="agent-actions"><button type="button" id="match-teach" class="btn quiet">Teach Ember my voice</button><button type="button" id="match-cancel" class="btn quiet" hidden>Cancel</button><button type="button" id="match-forget" class="btn quiet" hidden>Forget my voice</button></div>
+        </div>
         <div class="choice">
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>

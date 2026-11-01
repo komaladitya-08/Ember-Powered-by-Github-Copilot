@@ -27,7 +27,15 @@ describe("the Linux layout", () => {
 
   it("keeps the glibc x64 builds and prunes what the old stage.mjs pruned", () => {
     expect(linux.platformPackages).toEqual(["@github/copilot-sdk-linux-x64", "@img/sharp-linux-x64", "@img/sharp-libvips-linux-x64", "@koromix/koffi-linux-x64"]);
-    expect(linux.prune).toEqual(["@koromix/koffi-linux-x64/musl_x64", ...["ripgrep", "tgrep", "plugins", "builtin-skills"].map(d => `@github/copilot-sdk-linux-x64/${d}`)]);
+    expect(linux.prune.filter(p => !p.startsWith("onnxruntime-web/"))).toEqual(["@koromix/koffi-linux-x64/musl_x64", ...["ripgrep", "tgrep", "plugins", "builtin-skills"].map(d => `@github/copilot-sdk-linux-x64/${d}`)]);
+  });
+
+  it("prunes onnxruntime-web to its Node build and that build's WebAssembly (Voice Match), on every target", () => {
+    const installed = fs.readdirSync(path.resolve("node_modules/onnxruntime-web/dist"));
+    for (const [platform, arch] of [["linux", "x64"], ["win32", "x64"], ["darwin", "arm64"]] as const) {
+      const pruned = new Set(layoutFor(platform, arch).prune.filter(p => p.startsWith("onnxruntime-web/dist/")).map(p => p.slice("onnxruntime-web/dist/".length)));
+      expect(installed.filter(f => !pruned.has(f)).sort(), platform).toEqual(["ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm", "ort.node.min.js"]);
+    }
   });
 
   it("leaves out the Windows and macOS accessibility host, so the RPM doesn't change when it is built", () => {

@@ -22,7 +22,7 @@ import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelSe
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, type Status, type SignInProgress, type AskContext } from "../shared/ipc";
+import { IPC, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -42,7 +42,7 @@ import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
 import { VoiceService, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
-import { VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
+import { VOICE_MODELS, VOICE_MODELS_BYTES, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
 import { AuditLog } from "./policy/audit";
 import { KillSwitch, stillStoppingWords } from "./agent/killswitch";
@@ -64,6 +64,8 @@ import { GrantKeeper, TokenStore, connectFirstAccepted, resolveToken, startDevic
 import { cliTimedOutMessage, cliWaitStart, githubClientId, mayOpenSignInPage, noSignInMessage, type SignInWith } from "./agent/github-app";
 import { cancelWords, endsWithQuestion, spokenText } from "../voice/spoken";
 import { SpeechStream } from "../voice/tts";
+import { ENROL_PHRASES } from "../voice/voiceprint";
+import { voiceprintStore } from "./voiceprint-store";
 import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
@@ -1148,7 +1150,15 @@ function start(): void {
   const voiceStatus = (detail?: string) => ({
     state: voice?.micState ?? "off", detail: detail ?? null,
     modelsReady: voice?.modelsReady ?? false, modelsBytes: VOICE_MODELS_BYTES, speechMissing: speechHeard === false,
+    match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint(), enrolling },
   });
+  /**
+   * Voice Match (app/voice/voiceprint.ts): the owner's voiceprint, kept apart from the settings (voiceprint-store.ts),
+   * is in use while the setting is on; `enrolling` is the teaching under way (settings shows the phrase to say).
+   */
+  const voiceprints = voiceprintStore(userData, VOICE_MODELS.find(m => m.id === "speaker")!.target);
+  const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
+  let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
   /** What Ember does with what it hears. */
@@ -1368,6 +1378,23 @@ function start(): void {
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
   ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
+  // Voice Match: teaching needs Ember listening (the microphone open); the voiceprint goes in when the phrases are in.
+  ipcMain.handle(IPC.voiceMatchEnrol, guard(() => {
+    if (policy.features.voice === false || !voice?.enrol()) return false;
+    enrolling = { got: 0, of: ENROL_PHRASES.length, phrase: ENROL_PHRASES[0] };
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+    return true;
+  }));
+  ipcMain.handle(IPC.voiceMatchCancel, guard(() => { voice?.cancelEnrol(); enrolling = null; broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }));
+  ipcMain.handle(IPC.voiceMatchForget, guard(() => {
+    voice?.cancelEnrol();
+    enrolling = null;
+    voiceprints.forget();
+    settings.update({ voice: { ...settings.get().voice, match: false } });
+    voice?.setVoiceprint(null);
+    log.info("voice.match_forgotten");
+    broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+  }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -2064,6 +2091,23 @@ function start(): void {
       onEvent: onVoice,
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
+      voiceprint: ownerPrint,
+      onEnrol: p => {
+        if (p.state === "done") {
+          try {
+            voiceprints.write(p.print);
+            settings.update({ voice: { ...settings.get().voice, match: true } });
+            voice?.setVoiceprint(p.print);
+            log.info("voice.match_enrolled", { phrases: p.got });
+          } catch (err) { log.warn("voice.match_not_saved", { err }); }
+          enrolling = null;
+        } else if (p.state === "cancelled") {
+          enrolling = null;
+        } else {
+          enrolling = { got: p.got, of: p.of, phrase: ENROL_PHRASES[Math.min(p.got, ENROL_PHRASES.length - 1)], ...(p.state === "again" && p.why ? { again: p.why as "short" | "unlike" | "failed" } : {}) };
+        }
+        broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+      },
       onSpeech: ok => {
         if (speechHeard === ok) return;
         speechHeard = ok;
@@ -2091,6 +2135,14 @@ function start(): void {
     void voice.setWanted(wantVoice());
     let wanted = wantVoice();
     let micConsent = settings.get().voice.consent;
+    // Voice Match turned on or off in settings: the voice process checks requests from now on, or doesn't.
+    let matchOn = settings.get().voice.match;
+    settings.onChange(next => {
+      if (next.voice.match === matchOn) return;
+      matchOn = next.voice.match;
+      voice?.setVoiceprint(ownerPrint());
+      broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
+    });
     settings.onChange(next => {
       // macOS asks for the microphone once listening is agreed to, so its prompt comes with that context.
       if (next.voice.consent && !micConsent) sys.lifecycle.askMicrophone?.().catch(err => log.warn("voice.mic_ask_failed", { err }));

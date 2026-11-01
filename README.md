@@ -46,7 +46,7 @@ speech-dispatcher-espeak-ng`, then restart Ember.
 
 For “Hey Ember” without downloading the speech models on each computer, also install
 `ember-voice-models-0.1.0-1.el8.noarch.rpm` from the same release (to build it, run `node scripts/voice/prepare.mjs`
-before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (115 MB) when voice is
+before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (142 MB) when voice is
 turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
@@ -70,7 +70,7 @@ updates included), it asks the next time it opens a window: choose **Restart Emb
 Ember, first remove its helper from the computers you added over SSH (below). Then turn off
 **Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
 `sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete `~/.config/ember` (its
-settings, logs, audit log, speech models, sign-in and the Node.js it downloaded for other computers, in
+settings, logs, audit log, speech models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in
 `remote/runtime`) and `~/Ember` (what it made on its desk).
 
 ## Install on Windows
@@ -110,7 +110,7 @@ To update, quit Ember and replace the `Ember` folder with the new one, in the sa
 `%LOCALAPPDATA%\ember`. To remove Ember, first remove its helper from the computers you added over SSH (below), then
 turn off **Start Ember when I log in** in its settings, quit it, and delete the `Ember` folder, `Ember.lnk` in
 `%APPDATA%\Microsoft\Windows\Start Menu\Programs`, and `%LOCALAPPDATA%\ember` (its settings, logs, audit log, speech
-models, sign-in and the Node.js it downloaded for other computers, in `remote\runtime`).
+models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in `remote\runtime`).
 
 ## Install on macOS
 
@@ -152,7 +152,7 @@ Storage"): choose **Always Allow**. If you choose **Deny**, Ember says it couldn
 in again from settings. To remove Ember, first remove its helper from the computers you added over SSH (below), then
 turn off **Start Ember when I log in** in its settings, quit it, remove it from each Privacy & Security list with
 **−**, and delete Ember.app from Applications and `~/Library/Application Support/ember` (its settings, logs, audit log,
-speech models, sign-in and the Node.js it downloaded for other computers, in `remote/runtime`).
+speech models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in `remote/runtime`).
 
 To check this Mac, run Ember's setup check through `open`, so that macOS judges Ember's own permissions (run from
 Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Terminal's instead):

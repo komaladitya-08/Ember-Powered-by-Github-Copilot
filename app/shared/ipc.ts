@@ -22,6 +22,10 @@ export const IPC = {
   voiceStatus: "voice:status",
   voiceDownload: "voice:download",
   voiceProgress: "voice:progress",
+  /** Voice Match: teach Ember the owner's voice, stop doing so, or forget the voiceprint. */
+  voiceMatchEnrol: "voice:match-enrol",
+  voiceMatchCancel: "voice:match-cancel",
+  voiceMatchForget: "voice:match-forget",
   askClose: "agent:ask-close",
   activity: "ember:activity",
   /** "Check again": look for a sign-in once more and reconnect. */
@@ -75,6 +79,15 @@ export interface VoiceStatus {
   modelsBytes: number;
   /** Ember tried to speak and no voice started: the computer has none (review #101). */
   speechMissing?: boolean;
+  /** Voice Match: whether a voiceprint is kept (`enrolled`) and in use (`on`), and enrolment's progress while it runs. */
+  match?: VoiceMatchStatus;
+}
+
+export interface VoiceMatchStatus {
+  enrolled: boolean;
+  on: boolean;
+  /** `got` of `of` phrases kept; `phrase`: the one to say now; `again`: the last wasn't kept, and why. */
+  enrolling: { got: number; of: number; phrase: string; again?: "short" | "unlike" | "failed" } | null;
 }
 
 /**
@@ -175,6 +188,10 @@ export interface EmberHomeApi {
   voiceStatus(): Promise<VoiceStatus>;
   onVoiceStatus(fn: (s: VoiceStatus) => void): () => void;
   downloadVoice(): Promise<void>;
+  /** Voice Match: starts teaching Ember the owner's voice (false: Ember isn't listening, so it can't), or stops; forgets the voiceprint. */
+  enrolVoice(): Promise<boolean>;
+  cancelEnrolVoice(): Promise<void>;
+  forgetVoice(): Promise<void>;
   /** `phase` "unpacking": the last download is in, and is being checked and unpacked. */
   onVoiceProgress(fn: (p: { done: number; total: number; phase?: "unpacking" }) => void): () => void;
   /** The newest audit entries, newest first. */

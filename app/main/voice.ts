@@ -72,7 +72,14 @@ export interface VoiceOptions {
   onSpeech?: (ok: boolean) => void;
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
+  /** Voice Match: the owner's voiceprint (base64, app/voice/voiceprint.ts) while it is on, else null. */
+  voiceprint?: () => string | null;
+  /** Enrolment's progress (Voice Match); at "done", `print` is the voiceprint to keep. */
+  onEnrol?: (e: EnrolProgress) => void;
 }
+
+/** What settings shows of enrolment: phrases kept so far, and whether the last must be said again (and why). */
+export type EnrolProgress = Extract<VoiceProcessMessage, { type: "enrol" }>;
 
 /** Downloads with Chromium's network stack (system proxy settings apply). A stalled connection fails, so "Downloading…" can't stay up forever. */
 export const electronDownloader: Downloader = async (url, dest, progress) => {
@@ -140,6 +147,8 @@ export class VoiceService {
   private ttsHushed = 0;
   /** Replies given to Ember's voice and not yet done: their words (for the system's voice, should it fail) and their page. */
   private ttsPending = new Map<number, { text: string; send: PageSend }>();
+  /** Enrolment (Voice Match) is under way in the voice process. */
+  private enrolling = false;
 
   constructor(private o: VoiceOptions) {
     this.modelsRoot = o.modelsRoot;
@@ -267,6 +276,28 @@ export class VoiceService {
   private dropFollowUp(): void {
     this.followUpMs = 0;
     this.openFollowUp();
+  }
+
+  /**
+   * Voice Match: starts enrolment (the owner's phrases; nothing heard meanwhile is a request). False when Ember isn't
+   * listening (enrolment needs the microphone) or its voiceprint model isn't there.
+   */
+  enrol(): boolean {
+    if (!this.proc || !this.readyAt || !modelReady(this.modelsRoot, "speaker")) return false;
+    this.enrolling = true;
+    this.proc.postMessage({ type: "enrol" });
+    return true;
+  }
+
+  cancelEnrol(): void {
+    if (!this.enrolling) return;
+    this.enrolling = false;
+    this.proc?.postMessage({ type: "enrol-cancel" });
+  }
+
+  /** Voice Match turned on (the owner's voiceprint) or off (null): the voice process checks requests from now on, or doesn't. */
+  setVoiceprint(print: string | null): void {
+    this.proc?.postMessage({ type: "voiceprint", print });
   }
 
   /** Stops listening for a request at once (the kill switch): a wake being checked, a waiting follow-up and a request already on its way are dropped. */
@@ -423,6 +454,8 @@ export class VoiceService {
         this.setState("error", m.message);
         return;
       }
+      if (m.type === "enrol") { this.enrolling = m.state !== "done" && m.state !== "cancelled"; this.o.onEnrol?.(m); return; }
+      if (m.type === "voice-match-error") { this.o.log.warn("voice.match_error", { message: m.message }); return; }
       if (m.type === "stats") { this.o.log.info("voice.cpu", { percent: Math.round((m.cpuMs / m.audioMs) * 1000) / 10, audioMs: m.audioMs, peak: m.peak }); return; }
       // The recognizers failed on some audio; the process carried on (it heard nothing in that audio).
       if (m.type === "engine-error") { this.o.log.warn("voice.engine_error", { message: m.message, count: m.count }); return; }
@@ -446,12 +479,12 @@ export class VoiceService {
       if (m.type === "utterance" && Date.now() - this.cancelledAt < CANCEL_GRACE_MS) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
       if (m.type === "wake") { this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
-      if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason });
+      if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: modelPaths(this.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged }, [port1]);
+    proc.postMessage({ type: "init", models: modelPaths(this.modelsRoot), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.o.voiceprint?.() ?? null }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;
@@ -513,6 +546,7 @@ export class VoiceService {
   }
 
   private teardown(): void {
+    this.enrolling = false;
     this.closeMic();
     this.dropFollowUp();
     this.stopWatchingAlive();

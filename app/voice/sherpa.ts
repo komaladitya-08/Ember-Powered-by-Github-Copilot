@@ -17,6 +17,8 @@ export interface ModelPaths {
   asr: string;
   /** Ember's voice (app/voice/tts.ts); the recognizers don't use it. */
   tts: string;
+  /** The voiceprint model (Voice Match, app/voice/voiceprint.ts). */
+  speaker: string;
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Speech models Ember downloads on first use (about 115 MB), each pinned to a
+ * Speech models Ember downloads on first use (about 142 MB), each pinned to a
  * SHA-256, into the models folder of Ember's data folder (~/.config/ember/models
  * on Linux). Nothing is used until it verifies. Archives are unpacked in-process
  * (untar.ts, bzip2.ts), so no system tar, bzip2 or curl is needed on any OS, into
@@ -65,6 +65,14 @@ export const VOICE_MODELS: ModelFile[] = [
     sha256: "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7", bytes: 67_259_230,
     target: "vits-piper-en_US-kristin-medium",
   },
+  {
+    // Voice Match (voiceprint.ts): WeSpeaker's ResNet34 speaker model, trained on VoxCeleb. (3D-Speaker's CAM++, smaller,
+    // comes out wrong in onnxruntime-web for most lengths of audio: measured against onnxruntime's own CPU build.)
+    id: "speaker", name: "Voice Match (WeSpeaker ResNet34 voiceprints)", kind: "file", license: "Apache-2.0",
+    url: `${RELEASES}/speaker-recongition-models/wespeaker_en_voxceleb_resnet34.onnx`,
+    sha256: "5ef208a9da1453335308a6b6f4e6dfbd7e183a38b604de0a57664f45d257fe94", bytes: 26_534_365,
+    target: "wespeaker_en_voxceleb_resnet34.onnx",
+  },
 ];
 
 export const VOICE_MODELS_BYTES = VOICE_MODELS.reduce((n, m) => n + m.bytes, 0);
@@ -87,7 +95,7 @@ const DOWNLOAD_SHARE = 0.8;
 
 export function modelPaths(root: string): ModelPaths {
   const p = (id: keyof ModelPaths) => path.join(root, VOICE_MODELS.find(m => m.id === id)!.target);
-  return { kws: p("kws"), vad: p("vad"), asr: p("asr"), tts: p("tts") };
+  return { kws: p("kws"), vad: p("vad"), asr: p("asr"), tts: p("tts"), speaker: p("speaker") };
 }
 
 const marker = (root: string, m: ModelFile) => path.join(root, `.${m.target}.ok`);

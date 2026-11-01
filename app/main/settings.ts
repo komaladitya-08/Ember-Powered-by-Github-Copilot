@@ -93,7 +93,9 @@ export const SettingsSchema = z.object({
     speakerRejection: z.boolean().default(true),
     /** The user turned the microphone off (its shortcut or the menu): it stays off across restarts. */
     muted: z.boolean().default(false),
-  }).default({ consent: false, speakerRejection: true, muted: false }),
+    /** Voice Match: answer only the owner's voice (its voiceprint is kept apart, in voiceprint.json: voiceprint-store.ts). */
+    match: z.boolean().default(false),
+  }).default({ consent: false, speakerRejection: true, muted: false, match: false }),
   /** What the user agreed to on first run (screen reading, what goes to Copilot, what stays here). */
   consent: z.object({
     version: z.number().int().min(0).default(0),

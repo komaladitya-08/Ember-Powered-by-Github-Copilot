@@ -59,8 +59,8 @@ Requires:       ember = %{version}-%{release}
 
 %description voice-models
 The wake-word spotter, voice-activity detector and speech recogniser Ember uses
-for "Ember" and "Hey Ember", and Ember's own neural voice. With this package
-Ember doesn't download them (about 115 MB).
+for "Ember" and "Hey Ember", Ember's own neural voice and Voice Match. With this package
+Ember doesn't download them (about 142 MB).
 Everything runs on this computer.
 %endif
 

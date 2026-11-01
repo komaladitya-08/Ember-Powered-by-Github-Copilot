@@ -1,6 +1,6 @@
 // Builds the Electron app into dist/app:
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
-//   desk-agent.cjs, voice.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
+//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
@@ -91,6 +91,17 @@ await Promise.all([
     format: "cjs",
     target: "node24",
     external: ["electron", "sherpa-onnx"],
+  }),
+  // Voice Match's voiceprint model, a worker thread of the voice process (onnxruntime-web stays external: it loads its
+  // WebAssembly from its own folder).
+  build({
+    ...common,
+    entryPoints: ["app/voice/voiceprint-worker.ts"],
+    outfile: "dist/app/voiceprint.cjs",
+    platform: "node",
+    format: "cjs",
+    target: "node24",
+    external: ["electron", "onnxruntime-web"],
   }),
   // Ember's voice (the neural voice's utility process; sherpa-onnx WASM stays external, as for voice.cjs).
   build({

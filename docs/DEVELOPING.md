@@ -202,10 +202,12 @@ text you selected), so you can say “make this bold” or “what does this mea
 ### Talking to Ember
 
 In settings, turn on **Listen for “Hey Ember”**, read and accept the microphone note, and download
-the speech models (115 MB, once; agreeing to the microphone note starts the download). Then say “Ember, …” (or “Hey
+the speech models (142 MB, once; agreeing to the microphone note starts the download). Then say “Ember, …” (or “Hey
 Ember, …”) with your request. You can say it in one breath, or pause after the name. Ember answers out loud in its own
 neural voice (it comes with the speech models; until then, the system's voice), sentence by sentence as the answer
-arrives. After Ember answers a “Hey Ember” request you have 8 seconds for
+arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Match)** under it and say the four
+phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
+voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
@@ -683,7 +685,7 @@ sets its AppUserModelId, `io.github.komaladitya08.ember`.
 | Start menu shortcut (packaged Ember) | `Ember.lnk` in the user's Start menu programs folder |
 | **Start Ember when I log in** | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `io.github.komaladitya08.ember` |
 
-Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and 115 MB of speech
+Ember keeps its data out of the roaming profile: Chromium's caches, Copilot's session state and 142 MB of speech
 models would bloat it. Windows ignores the 0700 and 0600 modes Ember sets on Linux, so privacy rests on
 `%LOCALAPPDATA%`'s per-user permissions: don't point `EMBER_USER_DATA` at a shared folder. Saving settings tries again
 when an antivirus scan or a sync client holds the file.
