@@ -11,6 +11,7 @@ paths:
   - "app/main/targets/**"
   - "app/main/wsl/**"
   - "app/main/remote/**"
+  - "app/main/memory/**"
   - "app/remote/**"
   - "app/askpass/**"
   - "app/main/screen-lock.ts"
@@ -143,6 +144,17 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 
   Typed text appears only as a character count. On Linux the journald copy (`journalctl -t ember-audit`, built by `journalLine()`) replaces goals, summaries, window titles, element names, chosen values, errors, folders and command text with their sizes; reasons, app names and shortcuts stay. Windows and macOS keep only the file.
 - **Tokens.** Store the GitHub token only with `safeStorage`, and never when its backend is `basic_text`. Accept `gho_`, `ghu_` and `github_pat_` tokens; refuse classic `ghp_` tokens.
+
+## Long-term memory
+
+docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Electron. Keep it that way.
+- **Every fact goes through `MemoryGraph.add()`**, which runs `memoryRefusal()` (guard.ts). A fact holding a secret is
+  refused whole, never stored redacted.
+- **Recalled facts reach a model only through `memoryBlock()`** (`<memory untrusted="true">`). Only `user`-sourced
+  facts may shape what Ember does. Policy never checks a risky step against memory.
+- **`memory.json` is 0600** and written whole through `memoryFile()`. A broken file is moved aside, never overwritten.
+- **Nothing is remembered until memory has its own consent** (docs/MEMORY.md §3). Wiring it in comes with the setting,
+  the first-use card and the admin key.
 
 ## Settings and admin policy
 
