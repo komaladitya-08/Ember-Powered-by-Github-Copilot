@@ -38,8 +38,9 @@ export class Player {
 
   constructor(private make: () => PlayerAudio, private speaking: (on: boolean) => void) {}
 
-  chunk(id: number, samples: Float32Array, rate: number): void {
-    if (id <= this.hushed || !samples.length) return;
+  /** Schedules a chunk of reply `id`; returns how long it plays (s), or 0 when it was dropped (its reply was hushed). */
+  chunk(id: number, samples: Float32Array, rate: number): number {
+    if (id <= this.hushed || !samples.length) return 0;
     this.open.add(id);
     const ctx = (this.ctx ??= this.make());
     if (ctx.state === "suspended") void ctx.resume().catch(() => undefined);
@@ -54,6 +55,7 @@ export class Player {
     this.nextAt = at + buffer.duration;
     this.playing.add(src);
     this.tell(true);
+    return buffer.duration;
   }
 
   /** Reply `id` has no more chunks. */

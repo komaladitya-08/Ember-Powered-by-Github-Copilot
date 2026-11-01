@@ -265,6 +265,51 @@ jobs:
             dist/package/Ember-voice-models-*.zip
           retention-days: 3
 
+  voice-e2e:
+    name: Voice end to end in the Electron app (rockylinux:8)
+    if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: rockylinux:8
+      # Lets Chromium use its user-namespace sandbox inside the container.
+      options: --security-opt seccomp=unconfined
+    steps:
+      - name: System packages (as el8; no sound server or sound card: the test's microphone is a WAV file)
+        run: |
+          dnf -y -q --nobest install git tar xz file binutils findutils which sudo gcc-c++ make python3 \
+            libX11-devel libXtst-devel libXt-devel \
+            gtk3 nss alsa-lib mesa-libgbm libdrm libxkbcommon at-spi2-core at-spi2-atk cups-libs \
+            libXtst libXrandr libXcomposite libXdamage \
+            xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
+          useradd -m ci
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install -g npm@11.6.2
+      - run: npm ci
+      - name: Rebuild native modules on glibc 2.28
+        run: scripts/rebuild-el8.sh --here
+      - run: npm run build
+      # Its own cache: it also holds a second test voice (ryan) and the clips made in it.
+      - name: Speech models and two test voices (cached; verified by SHA-256)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/voice
+          key: voice-e2e-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - name: Speech models, and clips in another voice than the committed ones' (for Voice Match)
+        run: |
+          node scripts/voice/prepare.mjs
+          node scripts/voice/prepare.mjs --voice ryan --clips
+      - name: "Wake word, request, spoken reply, follow-up, \"Hey Ember, stop\" and Voice Match, heard through Chromium's fake microphone, as a normal user (sandbox on)"
+        run: |
+          chown -R ci .
+          sudo -u ci env "PATH=$PATH" HOME=/home/ci xvfb-run -a npm run test:voice
+
   eval:
     name: Evaluation (task suite and release gates, rockylinux:8)
     if: github.event_name != 'workflow_dispatch' || inputs.only == 'all' || inputs.only == 'linux'
