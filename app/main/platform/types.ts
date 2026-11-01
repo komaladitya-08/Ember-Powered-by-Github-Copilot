@@ -550,7 +550,12 @@ export interface SystemPlatform {
   which(cmd: string): string | null;
   /** Spread into every execFile/spawn of a helper. win32: { windowsHide: true }; else {}. */
   readonly spawnDefaults: { windowsHide?: boolean };
-  /** Chromium switches appended before ready. linux: ["enable-speech-dispatcher"] (main.ts:72). */
+  /**
+   * Chromium switches appended before ready, each "name" or "name=value". linux: ["enable-speech-dispatcher"].
+   * win32: the video capture service in the browser process: the mic page's enumerateDevices() and its devicechange
+   * listener start it (Chromium lists cameras with microphones), and out of process it was a utility process of
+   * 19.5 MB private bytes kept for as long as Ember listens, though Ember never opens a camera.
+   */
   readonly chromiumSwitches: readonly string[];
   /** Inputs for inspectEnvironment. Cheap: getStatus calls it on every settings-window status request. */
   environment(ctx: EnvContext): EnvInputs;

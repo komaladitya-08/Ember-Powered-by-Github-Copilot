@@ -187,6 +187,22 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
   return askLabel ? `Nothing yet. Press ${askLabel} and ask Ember something.` : "Nothing yet. Use Ask Ember…, under Comfort & access, to ask Ember something.";
 }
 
+/**
+ * Memory's note, shown before it is first turned on (Settings › Conversation, docs/MEMORY.md §3): what Ember keeps,
+ * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory.
+ */
+export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It keeps this on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers. You can see and forget everything here, and signing out forgets it all.";
+
+/** The memory list while it is empty: `on`, memory is on. */
+export function memoryEmptyText(on: boolean): string {
+  return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";
+}
+
+/** A remembered fact's Forget button, for screen readers. */
+export function forgetMemoryLabel(text: string): string {
+  return `Forget: ${text}`;
+}
+
 /** Under "Speak replies" once Ember tried to speak and no voice started (review #101); the setup check says how to add one. */
 /**
  * The speech models' download button: what it fetches and its size. Listening's own models missing: "speech models"

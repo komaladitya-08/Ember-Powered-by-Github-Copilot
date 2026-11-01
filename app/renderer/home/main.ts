@@ -8,7 +8,8 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { handleCornerText } from "./copy";
+import { MEMORY_CONSENT_TEXT, forgetMemoryLabel, handleCornerText, memoryEmptyText } from "./copy";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -113,6 +114,12 @@ function sizeLabel(v: number): void {
 }
 
 let settings: Settings | null = null;
+/** Memory (Settings › Conversation): see the Memory part below. Declared here: applySettings shows its switch. */
+type MemoryRow = Awaited<ReturnType<EmberHomeApi["memory"]>>[number];
+const MEMORY_VERSION = FEATURE_CONSENT_VERSION.memory;
+let memoryRows: MemoryRow[] = [];
+/** After a Forget, focus goes to the row that took its place (or the list's last, or the switch). */
+let memoryFocus: number | null = null;
 function applySettings(s: Settings): void {
   const changed = settings?.character !== s.character;
   settings = s;
@@ -125,6 +132,7 @@ function applySettings(s: Settings): void {
     if (!on) c.rig.setEmotion("neutral");
   }
   if (!sliding && document.activeElement !== size) showSize(s.size);
+  applyMemorySettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -391,7 +399,7 @@ let confirmEvery = false;
 let adminNeverLook = new Set<string>();
 const FEATURE_TEXT: Record<string, string> = {
   voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
-  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", ...TARGET_FEATURE_TEXT,
+  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", memory: "remembering between runs", ...TARGET_FEATURE_TEXT,
 };
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
 let sendAsWritten: Node[] | null = null;
@@ -427,7 +435,7 @@ function renderAdmin(a: Status["admin"]): void {
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
   if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -436,6 +444,7 @@ function renderAdmin(a: Status["admin"]): void {
   privacyKey = "";
   if (settings) renderPrivacy(settings);
   if (voice) renderVoice(voice);
+  if (settings) applyMemorySettings(settings);
 }
 
 // ───── What Ember did ─────
@@ -723,6 +732,52 @@ function renderConversation(entries: Entry[]): void {
 }
 void window.ember.conversation().then(renderConversation);
 window.ember.onConversation(renderConversation);
+
+// ───── Memory (docs/MEMORY.md): kept between runs, only once the user turns it on and agrees to its note ─────
+$("memory-consent-text").textContent = MEMORY_CONSENT_TEXT;
+const memoryOn = () => !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION;
+function renderMemory(rows: MemoryRow[]): void {
+  memoryRows = rows;
+  const list = $("memory-list");
+  list.replaceChildren(...(rows.length
+    ? rows.map((r, i) => {
+      const li = document.createElement("li");
+      li.append(Object.assign(document.createElement("span"), { textContent: r.text }));
+      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Forget" });
+      btn.setAttribute("aria-label", forgetMemoryLabel(r.text));
+      btn.addEventListener("click", () => { memoryFocus = i; void window.ember.forgetMemory(r.id); });
+      li.append(btn);
+      return li;
+    })
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: memoryEmptyText(memoryOn()) })]));
+  ($("memory-forget-all") as HTMLButtonElement).hidden = !rows.length;
+  if (memoryFocus !== null) {
+    const buttons = list.querySelectorAll("button");
+    (buttons[Math.min(memoryFocus, buttons.length - 1)] ?? $("memory-on")).focus();
+    memoryFocus = null;
+  }
+}
+function applyMemorySettings(s: Settings): void {
+  ($("memory-on") as HTMLInputElement).checked = s.memory.on && s.memory.consent.version >= MEMORY_VERSION;
+  if (!memoryRows.length) renderMemory(memoryRows);
+}
+$("memory-on").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  const consent = settings?.memory.consent ?? { version: 0, at: null };
+  // First time: the note comes first, and focus moves to it so it is read and answered.
+  if (on && consent.version < MEMORY_VERSION) { $("memory-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("memory-yes").focus(); return; }
+  void save({ memory: { consent, on } });
+});
+$("memory-yes").addEventListener("click", () => {
+  $("memory-consent").hidden = true;
+  void save({ memory: { on: true, consent: { version: MEMORY_VERSION, at: new Date().toISOString() } } });
+  $("memory-on").focus();
+});
+$("memory-no").addEventListener("click", () => { $("memory-consent").hidden = true; $("memory-on").focus(); });
+$("memory-forget-all").addEventListener("click", () => { memoryFocus = 0; void window.ember.forgetAllMemory(); });
+window.ember.onSettingsChanged(applyMemorySettings);
+void window.ember.memory().then(renderMemory);
+window.ember.onMemory(renderMemory);
 
 // ───── Section links ─────
 // A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.

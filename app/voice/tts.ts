@@ -43,6 +43,8 @@ export function slowVerdict(rtf: number, now: number): string {
 /** A first chunk longer than this is cut at its first comma (or semicolon, or dash) past FIRST_MIN: its sound comes sooner. */
 const FIRST_MAX = 90;
 const FIRST_MIN = 25;
+/** A streamed answer's first clause is said on its own only with at least this many words ("Sure, …" waits). */
+const FIRST_WORDS = 4;
 /** Longer chunks are cut at a comma: the voice's pace and pitch hold better over a clause than over a paragraph. */
 const CHUNK_MAX = 240;
 /** A chunk this short ("Done.", "OK.") goes with the next, unless it's the first (it then plays at once). */
@@ -151,8 +153,33 @@ export class SpeechStream {
     this.said = 0;
   }
 
-  /** The last place a sentence ends with no code block or table open (0: none yet). */
+  /**
+   * The last place a sentence ends with no code block or table open (0: none yet). Before anything is said, the first
+   * clause will do (FIRST_MIN characters or more, at least FIRST_WORDS words, then ", " "; " ": " or a dash): Ember
+   * starts talking while Copilot is still writing the rest of a long first sentence, not after it.
+   */
   private safeCut(): number {
+    const best = this.sentenceCut();
+    return best || this.said ? best : this.clauseCut();
+  }
+
+  /** The first clause break of the answer, when it can be said on its own (0: none yet). */
+  private clauseCut(): number {
+    const re = /[,;:]\s+|\s+[—–-]\s+/g;
+    for (let m = re.exec(this.raw); m; m = re.exec(this.raw)) {
+      if (m.index < FIRST_MIN) continue;
+      const before = this.raw.slice(0, m.index);
+      // Not inside Markdown that isn't whole yet: a code span or block, a link's text or address, a table, a list's
+      // first line (it reads better as a whole), or a heading.
+      if ((before.match(/`/g) ?? []).length % 2 || /\[[^\]]*$|\]\([^)]*$/.test(before)) return 0;
+      if (/^[ \t]*(?:[|#>*+-]|\d+[.)])/m.test(before)) return 0;
+      if ((before.match(/[\p{L}\p{N}]+/gu) ?? []).length < FIRST_WORDS) continue;
+      return m.index + m[0].length;
+    }
+    return 0;
+  }
+
+  private sentenceCut(): number {
     let best = 0;
     for (const end of sentenceEnds(this.raw)) {
       if (end <= this.said) continue;

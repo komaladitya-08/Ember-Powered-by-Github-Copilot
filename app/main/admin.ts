@@ -50,6 +50,8 @@ export const AdminPolicySchema = z.object({
      * sent to the model for review ("Ask only about dangerous commands" is off and managed).
      */
     aiReview: z.boolean().optional(),
+    /** Long-term memory (docs/MEMORY.md): false, Ember remembers nothing between runs and keeps no memory file. */
+    memory: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -110,7 +112,7 @@ export interface LoadedAdminPolicy {
 
 /** Everything off that could act or listen: used when the policy file is broken. */
 const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },
@@ -219,6 +221,7 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   // that too), and no AI review where the organisation turned it off.
   if (!admin.allowGrants) s.trust = { ...s.trust, askedApps: false };
   if (admin.features.aiReview === false) s.trust = { ...s.trust, reviewCommands: false };
+  if (admin.features.memory === false) s.memory = { ...s.memory, on: false };
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
@@ -233,6 +236,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.models.conductor || admin.models.worker || admin.models.allowed) keys.push("models");
   if (!admin.allowGrants) keys.push("grants", "askedApps");
   if (admin.features.aiReview === false) keys.push("reviewCommands");
+  if (admin.features.memory === false) keys.push("memory");
   if (admin.provider) keys.push("provider");
   return keys;
 }

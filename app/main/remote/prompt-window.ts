@@ -87,6 +87,12 @@ export interface PromptWindowLike extends BrowserWindowLike {
 
 /** How long after a card that takes typing shows the window must have the keyboard, or the user is told (review #235). */
 export const PROMPT_FOCUS_CHECK_MS = 800;
+/**
+ * The window closes once no card has been up for this long (ms), rather than staying hidden for as long as Ember runs
+ * (a renderer of about 30 MB private bytes on Windows); the next card makes a new one. Long enough that the cards of
+ * one connection (a host key, then its password) share a window.
+ */
+export const PROMPT_IDLE_MS = 60_000;
 
 /** What a card that takes typing asks for, in the notification that says the keyboard is elsewhere. */
 const ASKS_FOR = { password: "your password", passphrase: "your SSH key's passphrase", code: "a verification code", other: "an answer" } as const;
@@ -151,6 +157,9 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
   };
   let win: PromptWindowLike | null = null;
   let disposed = false;
+  /** Closes the hidden window after PROMPT_IDLE_MS with no card. */
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const stopIdle = () => { if (idleTimer) clearTimeout(idleTimer); idleTimer = null; };
   /** The card on screen is queue[0]. */
   const queue: Entry[] = [];
   const consentFns = new Set<(a: ConsentAnswer) => void>();
@@ -208,8 +217,19 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
       // The page lets go of the card too (so the same card shown again later is drawn afresh, its buttons live).
       push();
       if (w) safe("hide", () => { if (w.isVisible()) w.hide(); });
+      stopIdle();
+      if (w) {
+        idleTimer = setTimeout(() => {
+          idleTimer = null;
+          if (queue.length || live() !== w) return;
+          win = null; // not a close with a card up: nothing to answer
+          safe("close", () => w.close());
+        }, PROMPT_IDLE_MS);
+        idleTimer.unref?.();
+      }
       return;
     }
+    stopIdle();
     const w = ensure();
     if (!w) {
       // No window to ask in: an SSH prompt is answered no at once, as refused (nobody can answer it, and ssh mustn't
@@ -388,6 +408,7 @@ export function createPromptWindowController(o: PromptWindowOptions): PromptWind
     dispose() {
       if (disposed) return;
       disposed = true;
+      stopIdle();
       if (focusTimer) clearTimeout(focusTimer);
       focusTimer = null;
       for (const e of queue.splice(0)) e.resolve?.({ id: e.card.id, ok: false });
