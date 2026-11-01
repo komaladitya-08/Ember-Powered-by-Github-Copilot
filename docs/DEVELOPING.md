@@ -1407,6 +1407,8 @@ with the command above, and create the release with those files.
 
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
+  memory/           long-term memory (docs/MEMORY.md): the temporal graph, recall (BM25 + Personalized PageRank),
+                    sleep-time consolidation, the secret guard and memory.json; not wired into the app yet
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
   commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
   wsl/              WSL discovery, the WSL runner, the WSLg router and matcher

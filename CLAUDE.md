@@ -8,6 +8,7 @@ The detail lives in the docs. Read the one for the area you are changing:
 - `docs/COMMANDS-WSL-SSH.md` is what users and administrators see of commands, WSL and SSH; README.md and CHANGELOG.md say what ships.
 - `docs/DESIGN.md` covers the characters, the rig, the bubble, motion and the design system.
 - `docs/RESEARCH.md` holds the background evidence.
+- `docs/MEMORY.md` is the long-term memory design: what it keeps, the safety limits, and the plan.
 
 Topic rules in `.claude/rules/` load when you open matching files:
 - `design-system.md`: renderers, windows, the bubble, the characters and the icon.
@@ -58,6 +59,7 @@ app/main/          Electron main: main.ts (wiring), windows.ts, overlay.ts, hand
   desk/            desk.ts (the Xvfb desk, Linux), agent-process.ts (every desk X call), place.ts, view.ts
   platform/        everything that differs by OS: types.ts (the contract), index.ts (loadPlatform), linux/, win32/, darwin/
   commands/        run_command's flow, the command classifier, output shaping, the command window; run/: runners
+  memory/          long-term memory (docs/MEMORY.md): graph, recall, consolidation, secret guard; not wired in yet
   targets/, wsl/, remote/   which computers exist and binding a task to one; WSL; the PC's side of SSH
 app/remote/        ember-remote, the agent Ember runs on a computer reached over SSH (plain Node 24)
 app/askpass/       SSH's password helper on Linux and macOS
