@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { SpeechStream, speechChunks } from "../../app/voice/tts";
+import { NATURAL_RECHECK_MS, SpeechStream, rememberedSlow, slowVerdict, speechChunks } from "../../app/voice/tts";
 import { Player, type PlayerAudio, type PlayerSource } from "../../app/renderer/mic/player";
 import { bestVoice } from "../../app/renderer/mic/voices";
 
@@ -30,6 +30,23 @@ describe("speechChunks", () => {
 
   it("says nothing for nothing", () => {
     expect(speechChunks("  \n ")).toEqual([]);
+  });
+});
+
+describe("the natural voice's too-slow verdict", () => {
+  it("holds for a week from when Kokoro was timed, then lets it be timed again", () => {
+    const at = 1_800_000_000_000;
+    const v = slowVerdict(0.598, at);
+    expect(rememberedSlow(v, at)).toBe(0.598);
+    expect(rememberedSlow(v, at + NATURAL_RECHECK_MS - 1)).toBe(0.598);
+    expect(rememberedSlow(v, at + NATURAL_RECHECK_MS)).toBeNull();
+  });
+
+  it("ignores a missing, damaged or future-dated verdict (Kokoro is timed as usual)", () => {
+    expect(rememberedSlow(undefined, 1)).toBeNull();
+    expect(rememberedSlow("cpu", 1)).toBeNull();
+    expect(rememberedSlow("slow:abc:1", 1)).toBeNull();
+    expect(rememberedSlow(slowVerdict(0.7, 5_000), 1_000)).toBeNull();
   });
 });
 

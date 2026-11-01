@@ -9,7 +9,7 @@
  * enough (timed when it loads); otherwise the Piper voice does.
  */
 
-import { NATURAL_MAX_RTF, speechChunks } from "./tts";
+import { NATURAL_MAX_RTF, rememberedSlow, slowVerdict, speechChunks } from "./tts";
 import { kokoroSpec, kokoroSpeaker, piperSpec } from "./tts-spec";
 import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, threads, type ProviderTry, type SherpaBackend, type Tts } from "./runtime";
 
@@ -74,16 +74,25 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
     // Kokoro is the model a GPU helps: CoreML competes with the CPU for it on macOS.
     const list = providers(sherpa.backend, process.platform, process.env, { gpu: true });
     try {
-      const speaker = kokoroSpeaker(m.natural);
       const n = threads(sherpa.backend, 4);
       const spec = kokoroSpec(m.natural);
-      const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
-        { cache: { store: providerCache(), key: modelKey(spec.model, list, n) } });
-      const rtf = realTimeFactor(chosen.made, speaker);
-      const info = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, rtf };
-      if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: "kokoro", ...info } };
-      chosen.made.free();
-      natural = `too slow here: ${rtf} of real time (at most ${NATURAL_MAX_RTF})`;
+      const store = providerCache();
+      const key = modelKey(spec.model, list, n);
+      const verdictKey = key && `natural|${key}`;
+      const slow = verdictKey ? rememberedSlow(store.get(verdictKey), Date.now()) : null;
+      if (slow !== null) {
+        natural = `too slow here: ${slow} of real time (at most ${NATURAL_MAX_RTF}; timed before)`;
+      } else {
+        const speaker = kokoroSpeaker(m.natural);
+        const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
+          { cache: { store, key } });
+        const rtf = realTimeFactor(chosen.made, speaker);
+        const info = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, rtf };
+        if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: "kokoro", ...info } };
+        chosen.made.free();
+        if (verdictKey) store.set(verdictKey, slowVerdict(rtf, Date.now()));
+        natural = `too slow here: ${rtf} of real time (at most ${NATURAL_MAX_RTF})`;
+      }
     } catch (err) {
       natural = `it couldn't be loaded: ${message(err)}`;
     }
