@@ -3,6 +3,7 @@
 import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
+import type { MemoryItem } from "../main/memory/service";
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -35,6 +36,11 @@ export const IPC = {
   openSignInPage: "agent:open-sign-in-page",
   conversation: "agent:conversation",
   conversationChanged: "agent:conversation-changed",
+  /** Long-term memory (docs/MEMORY.md): what Ember remembers, and forgetting one fact or all of it. */
+  memoryList: "memory:list",
+  memoryChanged: "memory:changed",
+  memoryForget: "memory:forget",
+  memoryForgetAll: "memory:forget-all",
   /**
    * Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"), or a control in
    * one ("computers:host", "computers:wsl"; renderer/home/section-request.ts).
@@ -205,6 +211,11 @@ export interface EmberHomeApi {
   enrolVoice(): Promise<boolean>;
   cancelEnrolVoice(): Promise<void>;
   forgetVoice(): Promise<void>;
+  /** What Ember remembers (newest first), and changes to it. */
+  memory(): Promise<MemoryItem[]>;
+  onMemory(fn: (items: MemoryItem[]) => void): () => void;
+  forgetMemory(id: string): Promise<void>;
+  forgetAllMemory(): Promise<void>;
   /** `phase` "unpacking": the last download is in, and is being checked and unpacked. */
   onVoiceProgress(fn: (p: { done: number; total: number; phase?: "unpacking" }) => void): () => void;
   /** The newest audit entries, newest first. */

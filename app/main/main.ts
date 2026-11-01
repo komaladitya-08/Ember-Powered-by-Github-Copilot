@@ -9,7 +9,7 @@
  * never tests the OS itself; it asks the platform's members.
  */
 
-import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, net, Notification, powerMonitor, safeStorage, screen, session, shell, systemPreferences, utilityProcess, webContents, type IpcMainInvokeEvent } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger, logLevel } from "./logger";
@@ -30,6 +30,7 @@ import { OverlayManager } from "./overlay";
 import { HandleWindow } from "./handle";
 import { otherSide } from "../shared/handle-place";
 import { revive } from "./revive";
+import { memoryReport } from "./memory-report";
 import { useAppNames } from "../shared/apps";
 import { AtspiSidecar, type FocusBefore } from "./perception/sidecar";
 import { isNeverLook } from "./perception/elements";
@@ -69,7 +70,7 @@ import { voiceprintStore } from "./voiceprint-store";
 import { speaksAloud } from "../shared/speech";
 import { LOCKED_ASK, LockController, ScreenLock, holdNotice, lockAwareInput, lockedOutHands, logindLock } from "./screen-lock";
 import { readAgentState } from "./agent/conductor";
-import { loadPlatform } from "./platform";
+import { loadPlatform, switchArgs } from "./platform";
 import { primaryScaledUnion, toHelperStatus } from "./platform/compose";
 import type { HelperStatus, Input, OwnWindowHandle, SidecarContext, WindowSystem } from "./platform/types";
 import { extraBinDirs } from "./platform/darwin/system";
@@ -85,6 +86,8 @@ import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
+import { TurnLatency } from "./turn-latency";
+import { MemoryService } from "./memory/service";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -131,8 +134,9 @@ const platform = loadPlatform({
 const sys = platform.system;
 useAppNames(platform.os);
 
-// Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
-for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(s);
+// Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch. Windows: the
+// video capture service runs in the browser process, not a process of its own (platform/types.ts).
+for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(...switchArgs(s));
 // Development only (test/voice-e2e): EMBER_TEST_MIC_WAV gives the microphone window a fake microphone that "hears"
 // that WAV file (once; a trailing %noloop is added unless the path has one), with no device prompt.
 const testMicWav = devEnv("EMBER_TEST_MIC_WAV");
@@ -930,9 +934,11 @@ function start(): void {
    */
   const answerSpeech = new SpeechStream();
   let answerSpoken = false;
+  /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
+  const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
   const sayStreamed = (chunks: string[]) => {
     if (!maySpeak()) return;
-    for (const c of chunks) { voice?.speak(c, { append: answerSpoken }); answerSpoken = true; }
+    for (const c of chunks) { turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true; }
     if (!answerSpeech.started) answerSpoken = false;
   };
 
@@ -1019,7 +1025,7 @@ function start(): void {
     }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
   };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean } = {}) => {
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
@@ -1031,7 +1037,8 @@ function start(): void {
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
-    return agent?.ask(text, context, epoch, how)?.catch(err => log.error("ask.failed", { err }));
+    if (how.spoken) turnLatency.mark("sent");
+    return agent?.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked })?.catch(err => log.error("ask.failed", { err }));
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1172,6 +1179,11 @@ function start(): void {
    * is in use while the setting is on; `enrolling` is the teaching under way (settings shows the phrase to say).
    */
   const voiceprints = voiceprintStore(userData, VOICE_MODELS.find(m => m.id === "speaker")!.target);
+  // Long-term memory (docs/MEMORY.md): memory.json beside the settings, used only while the user has it on and the
+  // organisation allows it. Settings lists it; nothing is read from the file until something asks.
+  const memoryAllowed = () => policy.features.memory !== false;
+  const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
+  memory.start();
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
@@ -1224,7 +1236,8 @@ function start(): void {
         }
         // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
         // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
-        void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers });
+        turnLatency.heard(e.ms);
+        void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true });
         break;
       }
       case "stop":
@@ -1410,6 +1423,12 @@ function start(): void {
     log.info("voice.match_forgotten");
     broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
   }));
+  ipcMain.handle(IPC.memoryList, guard(() => (memoryAllowed() ? memory.list() : [])));
+  ipcMain.handle(IPC.memoryForget, guard((id: unknown) => {
+    if (typeof id !== "string" || !id || id.length > 40) return;
+    memory.forget(id);
+  }));
+  ipcMain.handle(IPC.memoryForgetAll, guard(() => { memory.forgetAll(); }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -1562,6 +1581,8 @@ function start(): void {
   app.on("will-quit", e => {
     globalShortcut.unregisterAll();
     overlay?.stop();
+    // What Ember just remembered is written before it goes (a save waits a second after a change).
+    memory.stop();
     if (quitting || sessionEnding) return;
     quitting = true;
     e.preventDefault();
@@ -1989,6 +2010,7 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
+      ...(memoryAllowed() ? { memory } : {}),
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
@@ -2001,11 +2023,13 @@ function start(): void {
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
-      onAnswerDelta: delta => sayStreamed(answerSpeech.push(delta)),
+      onAnswerDelta: delta => { turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
       onAnswerEnd: text => sayStreamed(answerSpeech.finish(text)),
       onAnswer: text => { turnAnswer = text; sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
+        // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
+        if (aborted || !answerSpoken) turnLatency.end();
         answerSpeech.reset();
         answerSpoken = false;
         if (lastAskByVoice && !aborted) voice?.followUp(8000, { afterQuestion: endsWithQuestion(turnAnswer) });
@@ -2105,6 +2129,7 @@ function start(): void {
       // a menu path: it differs between Windows 10 ("Privacy"), Windows 11 and macOS ("Privacy & Security").
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
+      onSelfSpeaking: on => { if (on) turnLatency.mark("firstAudio"); },
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
@@ -2227,6 +2252,16 @@ function start(): void {
     // opens. Listened for only from here: Electron documents "activate" for a first launch too, and at login that would
     // open settings over the decision just made.
     if (sys.lifecycle.reopenShowsSettings) app.on("activate", () => showHomeFromKeys());
+
+    // Development: what each process costs (private bytes on Windows), with each renderer named after its page, every
+    // EMBER_MEMORY_LOG seconds (memory-report.ts).
+    const memoryEvery = Number(devEnv("EMBER_MEMORY_LOG") ?? "");
+    if (memoryEvery > 0) {
+      setInterval(() => {
+        const pages = webContents.getAllWebContents().map(wc => ({ pid: wc.getOSProcessId(), url: wc.getURL(), title: BrowserWindow.fromWebContents(wc)?.getTitle() ?? "" }));
+        log.info("memory.report", memoryReport(app.getAppMetrics(), pages));
+      }, memoryEvery * 1000).unref();
+    }
 
     if (devEnv("EMBER_TEST_HOOKS") === "1") {
       (globalThis as Record<string, unknown>).__ember = {

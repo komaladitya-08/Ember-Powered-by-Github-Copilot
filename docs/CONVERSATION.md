@@ -94,7 +94,7 @@ optimising. A task request is the worst case: for about five seconds the user he
 | 5 | Earlier end of turn | 250–300 ms on complete sentences | M | eval clips |
 | 6 | Interrupt by speaking | Saying "Hey Ember" (≈ 1 s) to cut in; makes long answers tolerable | L | Voice Match off Linux |
 | 7 | Speculative conductor start | Up to 300 ms more, on top of 5 | L | 5 first |
-| 8 | Opt-in memory of preferences | No latency; consistency ("call me Sam", "use Firefox") | M | `CONSENT_VERSION` bump |
+| 8 | Opt-in memory of preferences | No latency; consistency ("call me Sam", "use Firefox") | M | Built (docs/MEMORY.md) |
 
 ### 3.1 Instant spoken acknowledgement (rank 1)
 
@@ -242,22 +242,11 @@ a "committed" signal, and an aborted turn must leave no trace in the conversatio
 
 ### 3.8 Opt-in memory of preferences (rank 8)
 
-**What.** "Remember that I use Firefox", "call me Sam": Ember keeps a few short preferences across runs and the
-conductor sees them, so it feels like the same assistant every day.
-
-**How.**
-- Off by default; a setting, "Remember what I tell you to", with a list the user can read, edit and clear in Home.
-- Written only when the user's own words ask ("remember that…", "from now on…"), typed or spoken, never from screen
-  text, files or task results (untrusted), and never from the model's own initiative. The conductor proposes the
-  entry through a `remember` tool; main saves the user's sentence as heard (not the model's paraphrase), at most 40
-  entries of at most 200 characters, in the data folder (0700) as a 0600 file.
-- Never kept: anything that looks like a password, key, card or ID number (the vocabulary's secret patterns), and
-  never anything about approvals: a remembered "always send my emails" changes nothing in `PolicyEngine`, which
-  never reads memory.
-- The conductor sees the entries as `<preferences untrusted="true">` data at the start of each conversation.
-- **Consent.** "Before Ember starts" says the rest of the conversation "is kept only while it runs". Memory changes
-  what Ember keeps, so `CONSENT_VERSION` goes from 1 to 2, the page gains a line for it, and docs/DEVELOPING.md's data
-  section lists the file.
+Built on `main` since this plan was written: docs/MEMORY.md has the design, and steps 1 and 2 (remember, recall and
+forget in conversation) are in `app/main/memory/`. It has its own consent (`FEATURE_CONSENT_VERSION.memory`) rather
+than a `CONSENT_VERSION` bump, is off by default, keeps a fact as the user's only in their own words, refuses any fact
+holding a secret, and reaches the model only as `<memory untrusted="true">`; policy never reads it. Nothing more is
+needed here for conversation mode.
 
 ## 4. What the safety rules rule out
 

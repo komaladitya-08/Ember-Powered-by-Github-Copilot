@@ -604,6 +604,35 @@ describe("the speech-only window", () => {
     speaking(speechWindow(), false);
     expect(speechWindow().destroyed).toBe(true);
   });
+
+  it("closes once it has said nothing for a minute with listening off, and comes back for the next reply", async () => {
+    vi.useFakeTimers();
+    const { v } = service();
+    v.speak("Night Light is on.");
+    const first = speechWindow();
+    speaking(first, true);
+    vi.advanceTimersByTime(90_000);
+    expect(first.destroyed).toBe(false); // still speaking
+    speaking(first, false);
+    vi.advanceTimersByTime(59_000);
+    expect(first.destroyed).toBe(false);
+    vi.advanceTimersByTime(1000);
+    expect(first.destroyed).toBe(true);
+    v.speak("Dark mode is on.");
+    const next = electron.windows.filter(w => w.title === "Ember speech").at(-1)!;
+    expect(next).not.toBe(first);
+    expect(next.destroyed).toBe(false);
+  });
+
+  it("stays while a reply is still being sent to it", async () => {
+    vi.useFakeTimers();
+    const { v } = service();
+    v.speak("A long answer.");
+    vi.advanceTimersByTime(50_000);
+    v.speak("Its next sentence.", { append: true });
+    vi.advanceTimersByTime(50_000);
+    expect(speechWindow().destroyed).toBe(false);
+  });
 });
 
 describe("speech models", () => {

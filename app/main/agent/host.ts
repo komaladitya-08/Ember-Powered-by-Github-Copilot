@@ -11,7 +11,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
-import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState } from "./conductor";
+import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
+import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
@@ -122,6 +123,11 @@ export interface TranscriptEntry { t: string; who: "you" | "ember" | "task" | "p
 
 export interface HostOptions {
   userData: string;
+  /**
+   * Long-term memory (app/main/memory/service.ts): the conductor gets it while the user has it on (settings `memory`,
+   * with its consent) and the administrator allows it. Signing out, or another account signing in, erases it.
+   */
+  memory?: ConductorMemory & { forgetAll(): void };
   runtimePath: string;
   settings: SettingsStore;
   log: Logger;
@@ -1041,6 +1047,8 @@ export class AgentHost {
         this.transcript.length = 0;
         this.terminalRefused.clear();
         this.o.onTranscript?.([]);
+        // What Ember remembered was about the account before, its person: none of it carries over.
+        this.o.memory?.forgetAll();
         this.o.onAccountChanged?.();
       }
 
@@ -1165,6 +1173,8 @@ export class AgentHost {
       const tasks = this.tasks;
       // What the conversation's prompt may promise is fixed when it is created and kept for its resumes (§3.15).
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
+      const memory = this.memoryWanted() ? this.o.memory : undefined;
+      this.memoryOn = !!memory;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         stateFile: this.stateFile,
@@ -1175,6 +1185,7 @@ export class AgentHost {
         describeScreen: targets ? async (choice?: string) => { const turn = this.turn; const seen = await this.describeTarget(choice); if (seen.read) turn?.screen.push(seen.text); return seen.text; }
           : this.o.describeScreen ? async () => { const turn = this.turn; const seen = await this.describeThisScreen(); if (seen.read) turn?.screen.push(seen.text); return seen.text; } : undefined,
         caps,
+        ...(memory ? { memory } : {}),
         ...(targets ? {
           listComputers: () => targets.describeTargets(),
           // Only a host the user's own words named, and only a button for them to click (the model never connects).
@@ -1586,6 +1597,15 @@ export class AgentHost {
    * no task running or queued. A sign-in due for renewal waits for this before it is renewed and Copilot reconnected
    * with it (review #138, cross-review X11).
    */
+  /** Whether this conversation's conductor was given memory (memoryWanted() when it started). */
+  private memoryOn = false;
+
+  /** Memory is on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
+  private memoryWanted(): boolean {
+    const m = this.o.settings.get().memory;
+    return !!this.o.memory && m.on && m.consent.version >= FEATURE_CONSENT_VERSION.memory;
+  }
+
   get idle(): boolean {
     return this.starting === 0 && !this.presenter.atWork && !this.queued.length && !this.tasksAtWork();
   }
@@ -1625,6 +1645,12 @@ export class AgentHost {
     // was) has the task tools. Never while a turn or a task is under way (the reconnect would cut it off).
     if (this.status.phase === "ready" && !this.tasks && !this.o.hands && this.targetsTakeTasks() && !this.presenter.busy && !this.queued.length) {
       this.o.log.info("agent.tasks_available");
+      void this.launch(this.token, this.source);
+    }
+    // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
+    // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
+    if (this.status.phase === "ready" && this.memoryWanted() !== this.memoryOn && this.idle) {
+      this.o.log.info("agent.memory_changed", { on: this.memoryWanted() });
       void this.launch(this.token, this.source);
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
@@ -1737,6 +1763,8 @@ export class AgentHost {
     await this.tasks?.drain(2500);
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
+    // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
+    this.o.memory?.forgetAll();
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();

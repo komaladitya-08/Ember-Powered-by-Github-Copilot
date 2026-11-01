@@ -124,9 +124,9 @@ describe("settings for targets and commands", () => {
     expect(asRecord(HostRecordSchema.parse(host())).id).toBe("build-01");
   });
 
-  it("keeps the global consent at 1 and versions the three cards apart", () => {
+  it("keeps the global consent at 1 and versions the three cards and memory apart", () => {
     expect(CONSENT_VERSION).toBe(1);
-    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 1 });
+    expect(FEATURE_CONSENT_VERSION).toEqual({ wsl: 1, ssh: 1, commands: 1, memory: 1 });
   });
 });
 

@@ -526,8 +526,8 @@ SSH every desktop step is asked, and the remote checks every step again under it
      windows that accepts only the target window or its owner chain, and a scancode text path for them.
    - **Later:** a root-owned remote package for hardened hosts (L24); a JPEG encoder on remotes (L16); approval
      fatigue on remotes and after output taint (every step or command asks), revisited with SX's view.
-9. Conversational voice (proposed 2026-11-02; design, measurements and ranking in docs/CONVERSATION.md). Measured
-   on a Core i5-10300H under Windows 11: end of speech to transcript 751 ms natively and 823 ms in WebAssembly (600 ms
+9. Conversational voice (proposed 2026-11-02; design, measurements and ranking in docs/CONVERSATION.md, which
+   builds on docs/ASSISTANT.md's latency plan). Measured on a Core i5-10300H under Windows 11: end of speech to transcript 751 ms natively and 823 ms in WebAssembly (600 ms
    of it the VAD's silence wait), main 1 ms, the first sentence's audio 65–446 ms (194–1,145 ms in WebAssembly), and
    real Copilot 2.45 s (median of 14 requests) to a `start_task` call, so a task request is silent for about 5 s.
    In order of impact per effort:
@@ -542,11 +542,17 @@ SSH every desktop step is asked, and the remote checks every step again under it
    4. **Earlier end of turn**: 0.3 s of silence when the transcript is a complete sentence (saves 250–300 ms).
    5. **Interrupt by speaking**: speech not in the speakers' stream (Linux with parec) or, elsewhere, matching the
       owner's voiceprint and not Ember's, hushes Ember; the stop phrases and shortcut are checked first and unchanged.
-   6. **Opt-in memory** of preferences, written only from the user's own words, never read by policy; bumps
-      `CONSENT_VERSION` to 2 ("kept only while it runs" no longer holds).
+   6. **Opt-in memory** of preferences: built since, behind its own consent (docs/MEMORY.md, below).
    7. **Speculative conductor start** only if 4's numbers justify it (every tool would wait for the turn to commit).
    Ruled out by §5: approving by voice, cloud speech-to-speech or cloud transcription, always-on listening, reading
    screen text or commands aloud.
+
+Voice latency, recognition, a natural voice and a smaller footprint: docs/ASSISTANT.md has the measurements,
+decisions and phases. Nothing in it is built yet.
+
+Long-term memory, beyond the plan above: docs/MEMORY.md has the design and steps. Steps 1 (the core,
+`app/main/memory/`) and 2 (remember, recall and forget in conversation, behind its own consent, off by default) are
+built.
 
 ---
 

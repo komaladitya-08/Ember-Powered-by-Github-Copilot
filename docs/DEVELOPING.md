@@ -120,6 +120,16 @@ cache (test/temp-folder.ts).
   will look at, and ↑/↓ bring back earlier questions.
 - Long answers have **Read all** (counted at the text size you picked): the settings window's **Conversation** section
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
+- **Memory** (Settings › Conversation › **Remember what I tell you**, off until you turn it on and agree to its note):
+  Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
+  - It keeps this in `memory.json` in its data folder (mode 0600).
+  - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.
+  - A fact counts as yours only when it is mostly your own words. Otherwise it is the model's inference, and context
+    only.
+  - It never keeps passwords, codes, keys or card numbers.
+  - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
+    signing out forgets it all.
+  - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
 - If another app already holds one of Ember's shortcuts, Ember registers its fallback (the same chord with Shift;
   on a Mac Control+Shift+Command with another key, never VoiceOver's Option: `FALLBACK_SHORTCUTS` in
   `app/shared/shortcuts.ts`), and the **Setup check**, the greeting, the
@@ -280,6 +290,27 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
 | All 4 cores kept busy by other work: listening / Piper (1 thread) / Piper WebAssembly | 0.237 / — / 0.56 | 0.071 / 0.14 |
 | Kokoro int8 (`kokoro-int8-multi-lang-v1_0`) | — | 1.14–1.27 (2–4 threads) |
 
+**How long a spoken answer takes.** Each spoken request logs one `voice.latency` line, with times only, never words.
+- `asrMs` is what transcribing the request took.
+- The other fields count from when its transcript arrived:
+  - `sentMs`: the request handed to Copilot, after the screen read of up to 3 s;
+  - `firstTokenMs`: the answer's first words;
+  - `firstChunkMs`: its first piece handed to the voice;
+  - `firstAudioMs`: Ember's first sound.
+- A step that didn't happen is left out: a stop, or speaking off.
+
+A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
+report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).
+
+**What Ember costs at rest.** On Linux, after `npm run build` and `node scripts/voice/prepare.mjs`, run
+`dbus-run-session -- xvfb-run -a -s "-screen 0 1280x1024x24" node scripts/perf/footprint.mjs`.
+- It starts the built app with a throwaway data folder, consent and voice on, and silence for a microphone (`--sound`
+  plays a tone instead).
+- It prints each process's memory (PSS) and CPU, and each page's main-thread CPU, then the same as JSON.
+- Compare a change against `main` on the same computer: Xvfb has no GPU or compositor.
+- On 4 vCPUs at 2.1 GHz it measured 741 MB and 35 % of one core. The setup page was open (no sign-in) and cost 10.6 %;
+  the speech process cost 1.1 % in silence.
+
 ### Connecting Copilot
 
 Ember needs a GitHub account with Copilot. **Sign in with GitHub** uses Ember's own GitHub App (the device flow:
@@ -306,7 +337,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP` and `EMBER_AX_PROVIDER` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG` and `EMBER_AX_PROVIDER` switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
@@ -346,6 +377,7 @@ Environment variables for development:
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
 | `EMBER_TEST_ALLOW_LOOPBACK_SSH=1` | Development only: lets Ember connect over SSH to this same computer (`127.0.0.1`), for the SSH tests (§14.5) |
+| `EMBER_MEMORY_LOG=30` | Development only: every that many seconds, logs `memory.report`: each Electron process's private bytes (Windows) and working set in MB, each renderer named after its page and window (`renderer mic Ember microphone`), and the totals. Working set counts the pages processes share once per process, so its sum over-counts; compare private bytes. The accessibility host and the Copilot runtime are processes of their own and aren't in it |
 | `EMBER_REMOTE_DEV=1` | For the remote agent only: lets `ember-remote.cjs` run from a checkout's `dist/remote` instead of a verified install (§14.5); an installed agent ignores it |
 
 Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json` (matched against app name
@@ -387,6 +419,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left untouched and unused |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
@@ -897,6 +930,7 @@ shortcuts**.
 | Symptom | Fix |
 |---|---|
 | The first question about an app takes several seconds | The helper compiles once per version (§10.4); later starts take about a second |
+| Task Manager lists a dozen Ember processes | Electron runs each window's page in a renderer of its own, plus the GPU, network and audio services, the voice process ("Ember voice", mostly the speech models) and the accessibility helper. Compare their private bytes (Task Manager's Details tab, **Memory (private working set)**), not the working set, which counts shared pages in every process. Chromium's video capture service runs inside the main process (the mic page's device listing starts it; Ember opens no camera), and the prompt window and the speech-only window close after a minute unused. `EMBER_MEMORY_LOG` (§5) names each renderer in a checkout |
 | A shortcut is taken | PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar Win+Alt+M by default: change theirs, or use Ember's handle |
 | Ember won't borrow the mouse for a window | The window's program runs as administrator; Windows would drop Ember's input |
 | Ember can't open an app by name | Store (MSIX) apps that have no Start menu shortcut, such as the new Teams, can't be opened by name yet |
@@ -1407,6 +1441,8 @@ with the command above, and create the release with those files.
 
 ```
 app/main/           Electron main process (settings, logging, environment checks, windows, agent, perception)
+  memory/           long-term memory (docs/MEMORY.md): the temporal graph, recall (BM25 + Personalized PageRank),
+                    sleep-time consolidation, the secret guard, memory.json and MemoryService (main's)
   targets/          the targets runtime: which computers exist, naming and binding, consent cards, noticing ssh (§14)
   commands/         run_command's flow, the classifier, output shaping, the command window's controller; run/: runners
   wsl/              WSL discovery, the WSL runner, the WSLg router and matcher
