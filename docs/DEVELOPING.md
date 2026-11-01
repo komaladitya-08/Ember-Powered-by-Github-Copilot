@@ -1315,6 +1315,16 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    ```
 
    and creates the release `Ember <v>` for the tag with the eight files and `SHA256SUMS`.
+4. When that ci run has passed, `.github/workflows/npm.yml` publishes the npm launcher, `packages/npm` (the
+   `ember-copilot` package, whose `ember` command downloads the release's zip or AppImage, checks it against
+   `SHA256SUMS` and starts it), with `npm publish --access public --provenance`. Its version must be the tag's: bump
+   `version` in `packages/npm/package.json` with the app's (a unit test checks they match). It refuses a release
+   missing `SHA256SUMS` or one of the files it downloads, and does nothing when that version is already on npm. It
+   signs in with npm Trusted Publishing (OIDC, no token) and falls back to the `NPM_TOKEN` repository secret (a
+   granular npm token that can publish `ember-copilot`); with neither it warns and skips, so a release never fails
+   because of npm. The first publish needs `NPM_TOKEN`; after it, add a trusted publisher on npmjs.com
+   (**ember-copilot › Settings › Trusted publishing**: GitHub Actions, this repository, workflow `npm.yml`) and the
+   token can be deleted. For a release that already exists, run **Actions › npm › Run workflow** with its tag.
 
 When a job fails, nothing is published: fix it on `main`, move the tag to the fixed commit (`git tag -f v<v>` and
 `git push -f origin v<v>`) and the run starts again. To publish by hand instead, run **Actions › ci › Run workflow**
