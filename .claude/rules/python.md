@@ -5,9 +5,9 @@ paths:
 
 # Python: the AT-SPI sidecar and the GTK fixtures
 
-Every Python file here runs on RHEL 8's system interpreter, platform-python 3.6, with pyatspi 2.26. That covers `sidecar/atspi/ember_atspi.py`, its self-test, and the `test/fixtures/gtk3_*.py` windows. The local `python3` is usually much newer, so code that passes locally can still fail on the target.
+Every Python file here must run on RHEL 8's system interpreter, platform-python 3.6 (with pyatspi 2.26 where it reads apps), and on newer Pythons. That covers `sidecar/atspi/ember_atspi.py` (also run inside WSL distros, with `EMBER_ATSPI_FIND_BUS=1`), its self-test, `sidecar/notice/ember_notice.py` (run on an SSH computer's own Python), and the `test/fixtures/gtk3_*.py` and `test/fixtures/remote/*.py` test helpers. The local `python3` is usually much newer, so code that passes locally can still fail on the target.
 
-- **Imports.** Import only the standard library plus the system's `pyatspi` and `gi` (PyGObject). The sidecar uses `Atspi`, `Gio` and `GLib`, and the GTK fixtures use `Gtk`. In the sidecar, guard those imports so the helpers still import without them. Tests use `unittest`, never pytest.
+- **Imports.** Import only the standard library plus the system's `pyatspi` and `gi` (PyGObject). The sidecar uses `Atspi`, `Gio` and `GLib`; the notice and the GTK fixtures use `Gtk`. In the sidecar, guard those imports so the helpers still import without them. Tests use `unittest`, never pytest.
 - **No Python 3.7+ features.** These all fail on 3.6:
   - the walrus operator;
   - dataclasses;
