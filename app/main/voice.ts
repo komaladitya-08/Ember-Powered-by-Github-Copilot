@@ -22,7 +22,7 @@ import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage } from "../voice/tts-process";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
-import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio } from "../shared/voice";
+import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
 import type { Logger } from "./logger";
 import { pageUrl } from "./page-url";
 
@@ -157,6 +157,8 @@ export class VoiceService {
   private ttsPending = new Map<number, { text: string; send: PageSend }>();
   /** Enrolment (Voice Match) is under way in the voice process. */
   private enrolling = false;
+  /** Whether the log last said that Ember speaks (voice.self_speaking). */
+  private saidSpeaking = false;
 
   constructor(private o: VoiceOptions) {
     this.bundledRoot = o.bundled ? o.modelsRoot : null;
@@ -174,8 +176,14 @@ export class VoiceService {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
       this.o.onSpeech?.(ok === true);
     });
+    ipcMain.on(VOICE.played, (e, p: SpeechPlayed) => {
+      const page = this.mic && e.sender === this.mic.webContents ? "mic" : e.sender === this.speaker?.wc ? "speaker" : null;
+      if (page) this.o.log.info("voice.audio_played", { id: Number(p?.id), seconds: Number(p?.seconds), page });
+    });
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
+      if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); }
       this.proc?.postMessage({ type: "self-speaking", on: !!on });
       this.speakingUntil = on ? Date.now() + SPEAKING_MAX_MS : 0;
       if (this.speaker && e.sender === this.speaker.wc) {
@@ -326,6 +334,7 @@ export class VoiceService {
     if (!this.followUpMs) return;
     const wait = this.speakingUntil - Date.now();
     if (wait > 0) { this.followUpTimer = setTimeout(() => this.openFollowUp(), wait); return; }
+    if (this.proc) this.o.log.info("voice.follow_up", { ms: this.followUpMs, afterQuestion: this.followUpAsked });
     this.proc?.postMessage({ type: "follow-up", ms: this.followUpMs, ...(this.followUpAsked ? { afterQuestion: true } : {}) });
     this.followUpMs = 0;
   }
@@ -533,7 +542,8 @@ export class VoiceService {
         return;
       }
       if (m.type === "utterance" && Date.now() - this.cancelledAt < CANCEL_GRACE_MS) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
-      if (m.type === "wake") { this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
+      if (m.type === "wake") { this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
+      if (m.type === "stop") this.o.log.info("voice.stop");
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });

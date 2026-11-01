@@ -133,6 +133,14 @@ useAppNames(platform.os);
 
 // Linux: Chromium speaks (speechSynthesis) only through speech-dispatcher, and only with this switch.
 for (const s of sys.chromiumSwitches) app.commandLine.appendSwitch(s);
+// Development only (test/voice-e2e): EMBER_TEST_MIC_WAV gives the microphone window a fake microphone that "hears"
+// that WAV file (once; a trailing %noloop is added unless the path has one), with no device prompt.
+const testMicWav = devEnv("EMBER_TEST_MIC_WAV");
+if (testMicWav) {
+  app.commandLine.appendSwitch("use-fake-ui-for-media-stream");
+  app.commandLine.appendSwitch("use-fake-device-for-media-stream");
+  app.commandLine.appendSwitch("use-file-for-fake-audio-capture", testMicWav.includes("%") ? testMicWav : `${testMicWav}%noloop`);
+}
 
 // ~/.config/ember on Linux unless overridden (tests use a temp dir).
 app.setName("ember");

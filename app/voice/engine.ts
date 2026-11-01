@@ -1082,14 +1082,24 @@ export class VoiceEngine {
   private handleSegment(clip: Clip | null, cut = false): void {
     if (this.mode.kind !== "listening" || !clip?.audio.length) return;
     const t0 = this.now();
+    const withBefore = (before: Float32Array) => {
+      const a = new Float32Array(before.length + clip.audio.length);
+      a.set(before);
+      a.set(clip.audio, before.length);
+      return a;
+    };
     let heard = this.transcribe(clip.audio);
     if (!/[a-z0-9]/i.test(heard) && clip.before?.length && clip.audio.length <= RETRY_MAX) {
       // The recognizer heard nothing in a short segment (its way with a lone word now and then): a second try, with
       // a moment of what came before it (measured on 159 short replies: 24 came back empty, 4 after a second try).
-      const again = new Float32Array(clip.before.length + clip.audio.length);
-      again.set(clip.before);
-      again.set(clip.audio, clip.before.length);
-      heard = this.transcribe(again);
+      heard = this.transcribe(withBefore(clip.before));
+    }
+    if (this.mode.announced === false && clip.before?.length && !calledByName(heard) && !(heard && isStop(stripWake(heard, true)))) {
+      // The bare name must start what was said, and the VAD's segment can start a little into it: "Ember, turn on…" was
+      // heard as "Remember, turn on…", "Ever turn on…" or "Amber turned on…" for 7 of 16 placements of the same clip.
+      // A second try with the moment before the segment (as above) hears the whole name.
+      const again = this.transcribe(withBefore(clip.before));
+      if (calledByName(again) || isStop(stripWake(again, true))) heard = again;
     }
     if (this.mode.announced === false) {
       // The bare name, with all that was said with it: "Ember, stop" stops (the spotter takes the name, so the kill phrase

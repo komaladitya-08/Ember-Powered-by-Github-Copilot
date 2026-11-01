@@ -11,6 +11,8 @@ export const VOICE = {
   /** A chunk of Ember's own (neural) voice to play (SpeechAudio), and the end of a reply's chunks (its id). */
   audio: "voice:audio",
   audioDone: "voice:audio-done",
+  /** The speaking page scheduled a chunk of Ember's own voice to play (SpeechPlayed): said in the log. */
+  played: "voice:played",
 } as const;
 
 /** What the system's voice is to say; `append`: after what it is saying (the next sentence of a streamed answer), not instead. */
@@ -26,6 +28,12 @@ export interface SpeechAudio {
   rate: number;
 }
 
+/** A chunk of reply `id` that the speaking page scheduled to play, and how long it lasts (s). */
+export interface SpeechPlayed {
+  id: number;
+  seconds: number;
+}
+
 /** "error": Ember may not use the microphone (not retried); "lost": there's no sound from it (it went away, isn't there yet, or is busy), and the page is trying again. */
 export type MicStatus = { state: "capturing"; device: string; rate: number; context: string } | { state: "error"; message: string } | { state: "lost"; message: string };
 
@@ -38,6 +46,8 @@ export interface MicApi {
   onHush(fn: () => void): void;
   onAudio(fn: (a: SpeechAudio) => void): void;
   onAudioDone(fn: (id: number) => void): void;
+  /** A chunk of Ember's own voice was scheduled to play (said in main's log). */
+  played(p: SpeechPlayed): void;
 }
 
 /** What the user sees about the microphone. */

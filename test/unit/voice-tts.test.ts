@@ -88,8 +88,8 @@ describe("Player", () => {
     const { ctx, sources } = fakeAudio();
     const speaking = vi.fn();
     const p = new Player(() => ctx, speaking);
-    p.chunk(1, new Float32Array(22_050), 22_050);
-    p.chunk(1, new Float32Array(11_025), 22_050);
+    expect(p.chunk(1, new Float32Array(22_050), 22_050)).toBe(1);
+    expect(p.chunk(1, new Float32Array(11_025), 22_050)).toBe(0.5);
     expect(sources.map(s => s.at)).toEqual([10.03, 11.03]);
     expect(speaking.mock.calls).toEqual([[true]]);
     sources[0].onended?.();
@@ -107,7 +107,7 @@ describe("Player", () => {
     p.stop();
     expect(sources[0].stopped).toBe(true);
     expect(speaking.mock.calls).toEqual([[true], [false]]);
-    p.chunk(1, new Float32Array(100), 22_050);
+    expect(p.chunk(1, new Float32Array(100), 22_050)).toBe(0); // dropped
     expect(sources).toHaveLength(1);
     p.chunk(2, new Float32Array(100), 22_050);
     expect(sources).toHaveLength(2);
