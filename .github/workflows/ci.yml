@@ -151,32 +151,40 @@ jobs:
       - name: Rebuild native modules on glibc 2.28
         run: scripts/rebuild-el8.sh --here
       - run: npm run build
-      # The real models, so rpm.sh builds the ember-voice-models package too (the release builds it).
+      # The real models, which the RPM and the AppImage carry (a release's must: EMBER_RPM_MODELS=required).
       - name: Speech models (cached; verified by SHA-256)
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/voice
           key: voice-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - run: node scripts/voice/prepare.mjs
+      - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/remote-runtime
+          key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
+      - name: Fetch and verify the Node runtimes
+        run: node scripts/package/runtimes.mjs
       - name: Stage the app and check every binary against RHEL 8.4's glibc
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs
+          node scripts/package/stage.mjs --with-runtimes
           scripts/check-symvers.sh dist/package/ember | grep -v '^ok' || true
           scripts/check-symvers.sh dist/package/ember > /dev/null
-      - name: Build the RPMs (Ember and its speech models)
-        run: |
-          scripts/package/rpm.sh
-          ls dist/package/ember-voice-models-*.noarch.rpm
+      - name: Build the RPM (Ember with its speech models inside)
+        run: EMBER_RPM_MODELS=required scripts/package/rpm.sh
       # The same verified models as a zip, for Windows, macOS and Linux PCs that can't download them (IT unzips it into
       # the machine-wide folder Ember looks in: README "Computers without internet access").
       - name: Zip the speech models for network-restricted computers
         run: |
           node scripts/package/models-zip.mjs dist/package/voice-models "dist/package/Ember-voice-models-$(node -p "require('./package.json').version").zip"
           unzip -tq dist/package/Ember-voice-models-*.zip
-      - name: Build the AppImage
-        run: scripts/package/appimage.sh
+      - name: Build the AppImage (its speech models inside)
+        run: |
+          scripts/package/appimage.sh
+          # The models are inside it, where Ember looks first.
+          (cd /tmp && "$GITHUB_WORKSPACE"/dist/package/Ember-*-x86_64.AppImage --appimage-extract 'ember/resources/voice-models/*.ok' > /dev/null && ls squashfs-root/ember/resources/voice-models/.*.ok && rm -rf squashfs-root)
       - name: Install the RPM with dnf (resolves every Requires from the distribution)
         run: |
           dnf -y install ./dist/package/ember-*.x86_64.rpm
@@ -218,31 +226,31 @@ jobs:
       - name: "STIG-like host (user namespaces off): the setuid sandbox helper is in place"
         # The container can't turn off the host's user namespaces; this checks what Chromium falls back to.
         run: stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
-      - name: "RPM lifecycle: the speech models package, an upgrade to Release 2, rpm -V, and removal that keeps the admin's policy"
+      - name: "RPM lifecycle: the speech models inside, an upgrade to Release 2, rpm -V, and removal that keeps the admin's policy"
         run: |
           set -euo pipefail
           v=$(node -p "require('./package.json').version")
-          # The models package needs the Ember it was built with (Requires: ember = version-release).
-          dnf -y install ./dist/package/ember-voice-models-$v-1.*.noarch.rpm
+          # The one RPM installed the speech models too (nothing is downloaded for voice).
           test -f /usr/share/ember/voice-models/silero_vad.onnx
-          rpm -V ember ember-voice-models
+          test -f /usr/share/ember/voice-models/wespeaker_en_voxceleb_resnet34.onnx
+          rpm -q --provides ember | grep -q '^ember-voice-models ='
+          rpm -V ember
           # An administrator's policy: no package owns it, so an upgrade and a removal leave it as it is.
           cp packaging/policy.example.json /etc/ember/policy.json
-          EMBER_RPM_RELEASE=2 scripts/package/rpm.sh
-          dnf -y upgrade ./dist/package/ember-$v-2.*.x86_64.rpm ./dist/package/ember-voice-models-$v-2.*.noarch.rpm
+          EMBER_RPM_RELEASE=2 EMBER_RPM_MODELS=required scripts/package/rpm.sh
+          dnf -y upgrade ./dist/package/ember-$v-2.*.x86_64.rpm
           test "$(rpm -q --qf '%{RELEASE}' ember | cut -d. -f1)" = 2
-          test "$(rpm -q --qf '%{RELEASE}' ember-voice-models | cut -d. -f1)" = 2
-          rpm -V ember ember-voice-models
+          rpm -V ember
           stat -c '%a %U' /opt/ember/chrome-sandbox | grep -qx '4755 root'
           cmp packaging/policy.example.json /etc/ember/policy.json
-          rpm -e ember ember-voice-models
+          rpm -e ember
           for p in /opt/ember /usr/share/ember /usr/bin/ember /usr/share/applications/ember.desktop /usr/share/doc/ember; do
             if [ -e "$p" ]; then echo "::error::$p is still there after rpm -e"; find "$p" | head -20; exit 1; fi
           done
           cmp packaging/policy.example.json /etc/ember/policy.json
           if rpm -qf /etc/ember/policy.json; then echo "::error::a package owns /etc/ember/policy.json"; exit 1; fi
           # The packages kept for download are Release 1's.
-          rm -f ./dist/package/ember-$v-2.*.rpm ./dist/package/ember-voice-models-$v-2.*.rpm
+          rm -f ./dist/package/ember-$v-2.*.rpm
       # The packages are about 450 MB with the speech models, so they're kept only when asked for (Run workflow,
       # "packages") and on release tags, for the release job: uploading them on every run filled the account's artifact
       # storage, after which no artifact could be uploaded at all.
@@ -420,13 +428,22 @@ jobs:
       - name: Fetch and verify the speech models
         if: ${{ !cancelled() }}
         run: node scripts/voice/prepare.mjs
+      - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
+        if: ${{ !cancelled() }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/remote-runtime
+          key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
+      - name: Fetch and verify the Node runtimes
+        if: ${{ !cancelled() }}
+        run: node scripts/package/runtimes.mjs
       - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
         # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
         if: ${{ !cancelled() }}
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs --with-models
+          node scripts/package/stage.mjs --with-models --with-runtimes
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
         if: ${{ !cancelled() }}
@@ -609,13 +626,22 @@ jobs:
       - name: Fetch and verify the speech models
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node scripts/voice/prepare.mjs
+      - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/remote-runtime
+          key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
+      - name: Fetch and verify the Node runtimes
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/package/runtimes.mjs
       - name: Stage Ember.app (signed ad hoc), zip it and make the disk image
         id: stage
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs --with-models
+          node scripts/package/stage.mjs --with-models --with-runtimes
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app: its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused (so it knows it's packaged)"
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
@@ -817,11 +843,18 @@ jobs:
           key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
       - name: Fetch and verify the speech models
         run: node scripts/voice/prepare.mjs
+      - name: Node runtimes for computers reached over SSH (cached; verified by SHA-256), carried in the package
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/remote-runtime
+          key: remote-runtime-${{ hashFiles('scripts/package/remote-runtime.json') }}
+      - name: Fetch and verify the Node runtimes
+        run: node scripts/package/runtimes.mjs
       - name: Stage Ember.app for x64 (signed ad hoc), zip it and make the disk image
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs --with-models
+          node scripts/package/stage.mjs --with-models --with-runtimes
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused"
         run: |

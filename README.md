@@ -44,10 +44,8 @@ true`), restart the apps that were already open, or log out and in, so Ember can
 are silent, settings shows a **Speaking** row and a note under **Speak**: run `sudo dnf install speech-dispatcher
 speech-dispatcher-espeak-ng`, then restart Ember.
 
-For “Hey Ember” without downloading the speech models on each computer, also install
-`ember-voice-models-0.1.0-1.el8.noarch.rpm` from the same release (to build it, run `node scripts/voice/prepare.mjs`
-before packaging: docs/DEVELOPING.md §7). Without it, Ember offers to download the models (142 MB) when voice is
-turned on.
+The RPM carries Ember's speech models (142 MB: the wake word, speech recognition, Ember's voice and Voice Match), so
+nothing is downloaded when voice is turned on.
 
 Or run `Ember-0.1.0-x86_64.AppImage` without installing Ember itself. It carries only Ember, so it still needs the
 system packages the RPM would bring for reading apps:
@@ -64,12 +62,12 @@ The AppImage downloads the speech models when voice is turned on (the models RPM
 namespaces are off (STIG-hardened computers), it runs without Chromium's sandbox: install the RPM there instead.
 
 To update, quit Ember, then install the new RPM the same way (`sudo dnf upgrade ./ember-<version>-1.el8.x86_64.rpm`,
-with the new `ember-voice-models` RPM if you installed it); then start Ember again (it starts by itself at your next
+which also replaces the separate `ember-voice-models` RPM of 0.1.0); then start Ember again (it starts by itself at your next
 login when **Start Ember when I log in** is on). If Ember was running during an update (GNOME Software or automatic
 updates included), it asks the next time it opens a window: choose **Restart Ember** to finish the update. To remove
 Ember, first remove its helper from the computers you added over SSH (below). Then turn off
 **Start Ember when I log in** in its settings (or delete `~/.config/autostart/ember.desktop`), quit it, run
-`sudo dnf remove ember` (it removes `ember-voice-models` too) or delete the AppImage, and delete `~/.config/ember` (its
+`sudo dnf remove ember` or delete the AppImage, and delete `~/.config/ember` (its
 settings, logs, audit log, speech models, Voice Match voiceprint, sign-in and the Node.js it downloaded for other computers, in
 `remote/runtime`) and `~/Ember` (what it made on its desk).
 
@@ -165,9 +163,10 @@ open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --docto
 ## Computers without internet access
 
 Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's
-voice and Voice Match need no network once their models are there. Ember's only downloads are those models (when
-voice is turned on) and, for computers reached over SSH, a Node.js runtime (your organisation can point it at a mirror:
-docs/DEVELOPING.md). Copilot itself, and the review of commands, need the model service, as Ember's answers do.
+voice and Voice Match need no network. Ember's packages carry everything it runs: its speech models, and the Node.js
+runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256), so Ember downloads
+nothing from third parties. Only Copilot itself, and the review of commands, need the network: your organisation's
+model service, or GitHub Copilot's.
 
 What to install so nothing is downloaded:
 
@@ -175,8 +174,8 @@ What to install so nothing is downloaded:
 |---|---|
 | Windows | `Ember-0.1.0-win-x64.zip`: the speech models are inside it |
 | macOS | `Ember-0.1.0-mac-arm64.dmg` (or the .zip; mac-x64 for Intel): the speech models are inside it |
-| RHEL 8 | `ember-0.1.0-1.el8.x86_64.rpm` and `ember-voice-models-0.1.0-1.el8.noarch.rpm`; `dnf` takes the RPM's system packages (speech-dispatcher, AT-SPI…) from your distribution's repositories, so point it at your organisation's mirror |
-| AppImage | `Ember-voice-models-0.1.0.zip`, unzipped so its `voice-models` folder is `/usr/share/ember/voice-models` |
+| RHEL 8 | `ember-0.1.0-1.el8.x86_64.rpm`: the speech models are inside it; `dnf` takes the RPM's system packages (speech-dispatcher, AT-SPI…) from your distribution's repositories, so point it at your organisation's mirror |
+| AppImage | `Ember-0.1.0-x86_64.AppImage`: the speech models are inside it (it still needs the system packages above for reading apps) |
 
 `Ember-voice-models-0.1.0.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
 computer for every copy of Ember: unzip it so its `voice-models` folder lands in `%ProgramData%\Ember\voice-models`

@@ -16,7 +16,6 @@ import { artifactNames, layoutFor } from "./layout.mjs";
 export function releaseFiles(version) {
   return [
     `ember-${version}-1.el8.x86_64.rpm`,
-    `ember-voice-models-${version}-1.el8.noarch.rpm`,
     `Ember-${version}-x86_64.AppImage`,
     `Ember-voice-models-${version}.zip`,
     ...[layoutFor("win32", "x64"), layoutFor("darwin", "arm64"), layoutFor("darwin", "x64")].flatMap(l => artifactNames(l, version)),

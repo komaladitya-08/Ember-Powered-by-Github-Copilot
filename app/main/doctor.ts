@@ -207,9 +207,10 @@ export function doctorChecks(p: DoctorProbes): DoctorCheck[] {
     : micOk
       ? { id: "microphone", status: "ok", label: "Microphone", detail: p.microphones!.slice(0, 2).join(", ") }
       : { id: "microphone", status: "warn", label: "Microphone", detail: `No microphone found. Only needed for “Hey Ember”; typing (${chord("ask")}) always works.` });
-  // The speech models RPM needs Ember's own RPM, so an AppImage is only told to download them.
+  // Missing only from a build packaged without them (Ember's own packages carry them): where they come from offline is
+  // the release's Ember-voice-models zip, unzipped where Ember looks (README: Computers without internet access).
   out.push(p.voiceModels === "missing"
-    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux && !p.sandbox?.appImage ? ", or install ember-voice-models" : ""}.` }
+    ? { id: "voice-models", status: "warn", label: "Speech models", detail: "Not downloaded yet. Only needed for “Hey Ember”.", fix: `Turn on “Hey Ember” in Ember's settings and download them (${Math.round(VOICE_MODELS_BYTES / 1e6)} MB, once)${linux ? ", or unzip the release's Ember-voice-models zip into /usr/share/ember" : ""}.` }
     : { id: "voice-models", status: "ok", label: "Speech models", detail: p.voiceModels === "bundled" ? "Installed with Ember." : "Downloaded." });
   out.push(off
     ? p.speechDispatcher

@@ -369,8 +369,8 @@ The RPMs carry the build machine's dist tag (`.el8` when built on RHEL 8 or `roc
 
 | Output | What it is |
 |---|---|
-| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, speaking, microphone list, tray icons, speech models). `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
-| `ember-voice-models-<v>-1.el8.noarch.rpm` | The speech models in `/usr/share/ember/voice-models`, so Ember needn't download them. Built when `.cache/voice` has them (`node scripts/voice/prepare.mjs`) |
+| `ember-<v>-1.el8.x86_64.rpm` | Ember in `/opt/ember`, `/usr/bin/ember`, menu entry and icon. Library dependencies are listed explicitly (no auto-detection), optional parts are *Recommends* (Ember's desk, the system voice, microphone list, tray icons). It carries the speech models in `/usr/share/ember/voice-models` (a release must: `EMBER_RPM_MODELS=required`; they come from `node scripts/voice/prepare.mjs`), and replaces 0.1.0's separate `ember-voice-models` RPM on upgrade. `chrome-sandbox` is setuid root, so Ember stays sandboxed on STIG hosts where user namespaces are off. Needs `rpm-build` |
+| `Ember-voice-models-<v>.zip` | The same models for computers that can't download them, unzipped where Ember looks (`scripts/package/models-zip.mjs`; README: Computers without internet access) |
 | `Ember-<v>-x86_64.AppImage` | Runs without installing. Without user namespaces it runs without Chromium's sandbox (an AppImage can't carry a setuid helper); use the RPM on hardened machines |
 
 The RPM's example policy, `/usr/share/doc/ember/policy.example.json`, turns commands on for this computer, WSL and
@@ -658,7 +658,9 @@ For Windows it:
   accessibility host, and the job host that runs commands, WSL's launcher and SSH; §11.5 says what Node mode allows);
 - adds `ember-doctor.cmd`: Ember.exe is a windowed program, which `cmd.exe` doesn't wait for, so the launcher runs
   `start "" /wait Ember.exe --doctor` and keeps its exit code;
-- bundles the speech models only with `--with-models` (otherwise Ember downloads them when “Hey Ember” is turned
+- carries the Node.js runtimes for SSH remotes with `--with-runtimes` (from `node scripts/package/runtimes.mjs`, each
+  checked against `remote-runtime.json`; release builds do), so Ember sends one without downloading it;
+- bundles the speech models only with `--with-models` (release builds do; otherwise Ember downloads them when “Hey Ember” is turned
   on);
 - refuses to stage without `dist/app/ax-sidecar.cjs` and the helper's files (`--allow-missing-sidecar` is for a local
   try only).
@@ -1309,7 +1311,7 @@ needs both. CI publishes them when a `v<v>` tag is pushed:
    (`ember-packages`, `ember-windows`, `ember-macos`, `ember-macos-x64`). Once all of them pass, the **release** job,
    the only one with write access, downloads the four artifacts into one folder, and `scripts/package/release.mjs`
    checks that it holds exactly the eight files the README downloads: `ember-<v>-1.el8.x86_64.rpm`,
-   `ember-voice-models-<v>-1.el8.noarch.rpm`, `Ember-<v>-x86_64.AppImage`, `Ember-<v>-win-x64.zip`,
+   `Ember-<v>-x86_64.AppImage`, `Ember-voice-models-<v>.zip`, `Ember-<v>-win-x64.zip`,
    `Ember-<v>-mac-arm64.dmg`, `Ember-<v>-mac-arm64.zip`, `Ember-<v>-mac-x64.dmg` and `Ember-<v>-mac-x64.zip`. It
    refuses a tag that isn't package.json's version, and takes the notes from CHANGELOG.md, with relative links made
    absolute at the tag and wrapped lines joined. The job then writes the checksums, one line per file (a hash, two

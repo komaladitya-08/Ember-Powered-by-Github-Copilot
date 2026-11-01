@@ -37,32 +37,24 @@ Requires:       libX11, libXcomposite, libXdamage, libXext, libXfixes, libXrandr
 # Reading apps (the accessibility sidecar runs on the system Python).
 Requires:       platform-python, python3-pyatspi, python3-gobject, at-spi2-core, at-spi2-atk
 Requires:       glib2, desktop-file-utils
-# Nice to have: Ember's desk, speaking, the microphone list, tray icons, offline speech models.
+# Nice to have: Ember's desk, the system voice (only when Ember's own is missing), the microphone list and the
+# speakers' stream, tray icons. Weak: dnf installs what the computer's repositories have, and Ember works without them.
 Recommends:     xorg-x11-server-Xvfb, xorg-x11-xauth, dbus-daemon
 Recommends:     speech-dispatcher, speech-dispatcher-espeak-ng, pulseaudio-utils
 Recommends:     gnome-shell-extension-top-icons
-Recommends:     ember-voice-models
 Suggests:       metacity
+%if 0%{?with_models}
+# The speech models are in this package (one RPM installs everything Ember runs here); before 0.2 they were a
+# package of their own, which this one replaces on upgrade.
+Provides:       ember-voice-models = %{version}-%{release}
+Obsoletes:      ember-voice-models < %{version}-%{release}
+%endif
 
 %description
 Ember lives beside your mouse cursor on GNOME. Ask it something (Ctrl+Alt+Space
 or "Hey Ember") and it answers, shows you where things are, or does the job in
 your real applications while you keep working, asking before anything that
 matters. Run "ember doctor" to check this computer.
-
-%if 0%{?with_models}
-%package voice-models
-Summary:        Offline speech models and voice for Ember ("Hey Ember")
-BuildArch:      noarch
-License:        Apache-2.0 AND MIT
-Requires:       ember = %{version}-%{release}
-
-%description voice-models
-The wake-word spotter, voice-activity detector and speech recogniser Ember uses
-for "Ember" and "Hey Ember", Ember's own neural voice and Voice Match. With this package
-Ember doesn't download them (about 142 MB).
-Everything runs on this computer.
-%endif
 
 %prep
 %setup -q -c -n ember-%{version}
@@ -129,7 +121,8 @@ done
 %dir %{_sysconfdir}/ember
 
 %if 0%{?with_models}
-%files voice-models
+# The wake-word spotter, voice-activity detector, speech recogniser, Ember's own voice and Voice Match's model
+# (about 142 MB): Ember never downloads them.
 %dir %{_datadir}/ember
 %{_datadir}/ember/voice-models
 %endif

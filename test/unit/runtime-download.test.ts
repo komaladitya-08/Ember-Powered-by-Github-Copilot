@@ -71,7 +71,7 @@ function stallingFetch(first: Buffer | null) {
   return { fetch, seen };
 }
 
-const run = (dir: string, fetch: (url: string) => Promise<ReturnType<typeof answer>>, over: { mirror?: string; progress?: (d: number, t: number) => void } = {}) =>
+const run = (dir: string, fetch: (url: string) => Promise<ReturnType<typeof answer>>, over: { mirror?: string; progress?: (d: number, t: number) => void; bundled?: string[]; join?: (...p: string[]) => string } = {}) =>
   ensureRuntime({ manifest: manifest(), target: "linux-x64", format: "xz", dir, file: n => path.join(dir, n), fs, fetch, ...over });
 
 describe("the Node runtime for remotes (§5.2.1)", () => {
@@ -88,6 +88,20 @@ describe("the Node runtime for remotes (§5.2.1)", () => {
     const again = vi.fn(async () => answer(BODY));
     await run(dir, again);
     expect(again).not.toHaveBeenCalled();
+  });
+
+  it("sends the archive Ember's package carries, as it is, without downloading anything (network-restricted PCs)", async () => {
+    const dir = tmp(), shipped = tmp();
+    writeFileSync(path.join(shipped, "node-v24.11.1-linux-x64.tar.xz"), BODY);
+    const fetch = vi.fn(async () => answer(BODY));
+    const r = await run(dir, fetch, { bundled: [shipped], join: path.join });
+    expect(r).toEqual({ path: path.join(shipped, "node-v24.11.1-linux-x64.tar.xz"), sha256: sha(BODY), bytes: BODY.length });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readdirSync(dir)).toEqual([]);
+    // One that isn't the pinned file is passed over: downloaded as before.
+    writeFileSync(path.join(shipped, "node-v24.11.1-linux-x64.tar.xz"), Buffer.alloc(BODY.length, 9));
+    await run(dir, fetch, { bundled: [shipped], join: path.join });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("uses the administrator's mirror, https only", async () => {

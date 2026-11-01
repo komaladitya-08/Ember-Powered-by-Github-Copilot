@@ -32,6 +32,12 @@ const COPILOT_TOOLS = ["ripgrep", "tgrep", "plugins", "builtin-skills"];
  */
 const ORT_UNUSED = ["lib", "docs", ...["dist/ort-wasm-simd-threaded.asyncify.mjs", "dist/ort-wasm-simd-threaded.asyncify.wasm", "dist/ort-wasm-simd-threaded.jsep.mjs", "dist/ort-wasm-simd-threaded.jsep.wasm", "dist/ort.all.bundle.min.mjs", "dist/ort.all.bundle.min.mjs.map", "dist/ort.all.js", "dist/ort.all.min.js", "dist/ort.all.min.js.map", "dist/ort.all.min.mjs", "dist/ort.all.min.mjs.map", "dist/ort.all.mjs", "dist/ort.bundle.min.mjs", "dist/ort.bundle.min.mjs.map", "dist/ort.js", "dist/ort.min.js", "dist/ort.min.js.map", "dist/ort.min.mjs", "dist/ort.min.mjs.map", "dist/ort.mjs", "dist/ort.node.min.js.map", "dist/ort.node.min.mjs", "dist/ort.node.min.mjs.map", "dist/ort.wasm.bundle.min.mjs", "dist/ort.wasm.bundle.min.mjs.map", "dist/ort.wasm.js", "dist/ort.wasm.min.js", "dist/ort.wasm.min.js.map", "dist/ort.wasm.min.mjs", "dist/ort.wasm.min.mjs.map", "dist/ort.wasm.mjs", "dist/ort.webgl.js", "dist/ort.webgl.min.js", "dist/ort.webgl.min.js.map", "dist/ort.webgl.min.mjs", "dist/ort.webgl.min.mjs.map", "dist/ort.webgl.mjs", "dist/ort.webgpu.bundle.min.mjs", "dist/ort.webgpu.bundle.min.mjs.map", "dist/ort.webgpu.js", "dist/ort.webgpu.min.js", "dist/ort.webgpu.min.js.map", "dist/ort.webgpu.min.mjs", "dist/ort.webgpu.min.mjs.map", "dist/ort.webgpu.mjs"]].map(f => `onnxruntime-web/${f}`);
 
+/**
+ * The Node runtimes a package carries for computers reached over SSH (stage.mjs --with-runtimes, runtimes.mjs): each
+ * target's archive in the format Ember sends it, .tar.xz for Linux (it has xz), .tar.gz for macOS (no xz program).
+ */
+export const RUNTIME_BUNDLE = { "linux-x64": "xz", "linux-arm64": "xz", "darwin-arm64": "gz", "darwin-x64": "gz" };
+
 /** Built files every target needs (relative to dist/app). A trailing "/" means a folder that must not be empty. */
 const COMMON_DIST = ["main.cjs", "renderer/shared/ember.css", "renderer/fonts/InterVariable.woff2", "renderer/fonts/LICENSE.txt", "voice.cjs", "voiceprint.cjs", "tts.cjs", "preload/", "renderer/"];
 

@@ -57,6 +57,10 @@ export const LICENCE_TEXTS = [
   { package: /^@github\/copilot-sdk(-(linux|win32|darwin)-(x64|arm64))?$/, texts: ["packaging/licences/github-copilot-sdk.txt"] },
   { package: /^@koromix\/koffi-(linux|win32|darwin)-(x64|arm64)$/, texts: ["node_modules/koffi/LICENSE.txt"] },
   { package: /^sherpa-onnx$/, version: "1.13.8", texts: ["packaging/licences/sherpa-onnx.txt", "packaging/licences/espeak-ng-COPYING.txt"] },
+  // onnxruntime's WebAssembly (Voice Match): Microsoft's MIT licence and the release's third-party notices, from the
+  // v1.23.2 tag (neither package ships them).
+  { package: /^onnxruntime-(web|common)$/, version: "1.23.2", texts: ["packaging/licences/onnxruntime-LICENSE.txt", "packaging/licences/onnxruntime-ThirdPartyNotices.txt"] },
+  { package: /^guid-typescript$/, version: "1.0.9", texts: ["packaging/licences/guid-typescript.txt"] },
 ];
 
 /** The licence texts Ember supplies for a package that ships none (LICENCE_TEXTS), or why staging must stop. */

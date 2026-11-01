@@ -136,9 +136,19 @@ export async function ensureRuntime(o: {
   signal?: AbortSignal;
   progress?: (done: number, total: number) => void;
   stallMs?: number;
+  /**
+   * Folders that came with Ember holding the pinned archives (resources/remote-parts/runtime): one there, of the size and
+   * SHA-256 pinned, is sent as it is, and nothing is downloaded (network-restricted PCs).
+   */
+  bundled?: string[];
+  join?: (...p: string[]) => string;
 }): Promise<{ path: string; sha256: string; bytes: number }> {
   const entry = o.manifest.targets[o.target]?.[o.format];
   if (!entry) throw new RuntimeError("download", "no runtime for that computer");
+  for (const dir of o.bundled ?? []) {
+    const p = (o.join ?? ((...x: string[]) => x.join("/")))(dir, entry.file);
+    if (await cachedOk(o.fs, p, entry)) return { path: p, sha256: entry.sha256, bytes: entry.bytes };
+  }
   const dest = o.file(entry.file);
   if (await cachedOk(o.fs, dest, entry)) {
     await pruneRuntimes(o);

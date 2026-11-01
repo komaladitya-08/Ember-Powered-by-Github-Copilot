@@ -393,6 +393,8 @@ export function createConnections(o: {
             manifest: shipped.runtime as NonNullable<Shipped["runtime"]>, target: plan.target, format: plan.runtime.format,
             dir: pc.join(o.userData, "remote", "runtime"), file: n => pc.join(o.userData, "remote", "runtime", n),
             fs: runtimeFs(), fetch: o.fetch, mirror: o.admin().policy.ssh?.runtimeMirror, signal,
+            // The archives Ember's package carries come first: no download where they are.
+            bundled: [pc.join(o.resourcesPath, "remote-parts", "runtime")], join: pc.join,
             progress: (done, total) => progress(host.id, { step: "downloading", done, total }),
             ...(internals.runtimeStallMs !== undefined ? { stallMs: internals.runtimeStallMs } : {}),
           });
