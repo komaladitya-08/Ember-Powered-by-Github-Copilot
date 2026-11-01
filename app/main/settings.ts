@@ -146,6 +146,15 @@ export const SettingsSchema = z.object({
     /** This Ember install's id (§5.1.13): 32 hex digits the targets runtime makes at first use; "" until then. */
     pcId: z.string().regex(/^(?:[0-9a-f]{32})?$/).default(""),
   }).default({ active: "local", offerSsh: true, dismissedOffers: [], hosts: [], wsl: { on: false, consent: { version: 0, at: null } }, pcId: "" }),
+  /**
+   * How often Ember asks (both on by default): `askedApps`, no "Let me work in …?" in an app the user asked for help in
+   * (they were in it, or named it; risky steps still ask); `reviewCommands`, a command that would ask is reviewed by the
+   * model first, and one it finds routine for the request runs with its Stop countdown instead (commands/review.ts).
+   */
+  trust: z.object({
+    askedApps: z.boolean().default(true),
+    reviewCommands: z.boolean().default(true),
+  }).default({ askedApps: true, reviewCommands: true }),
   /** Commands per target id (§3.9.3): off until the user turns them on with the commands card. */
   commands: z.partialRecord(z.string().refine(isTargetId), TargetCommands).default({}),
 });

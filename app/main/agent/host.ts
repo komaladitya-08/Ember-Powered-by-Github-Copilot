@@ -1150,6 +1150,7 @@ export class AgentHost {
             provider: this.o.provider, workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
+            reviewCommands: () => this.o.settings.get().trust.reviewCommands,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUsage: (i, o) => this.recordUsage(i, o),

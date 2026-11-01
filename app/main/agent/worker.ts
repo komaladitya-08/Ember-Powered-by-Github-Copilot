@@ -10,6 +10,7 @@
  * was already approved or waiting for its turn.
  */
 
+import { copilotReviewer } from "./reviewer";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
@@ -76,6 +77,8 @@ export const LINUX_WORKER_SYSTEM: WorkerSystem = {
 
 export interface WorkerDeps {
   client: CopilotClient;
+  /** The user's "Ask only about dangerous commands" (Settings › Commands): commands that would ask are reviewed first. */
+  reviewCommands?: () => boolean;
   log: Logger;
   model: string | null;
   /**
@@ -1312,6 +1315,7 @@ export class Worker {
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
       onDeclined: () => { this.declined = true; },
+      ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
     };
   }
 
@@ -2097,7 +2101,7 @@ export class Worker {
     const around: Focus = { role: handler.role, name: handler.name || element.name };
     // Judged as a click by accessibility on Ember's desk: risky or never, whatever the grant (not counted again).
     const weight = (el: Focus) => {
-      const d = this.d.policy.recheck({ ...req, kind: "click", element: el, onDesk: true, goal: this.userWords, readFrom: [...this.read.values()], windowId: this.windowId });
+      const d = this.d.policy.recheck({ ...req, kind: "click", element: el, onDesk: true, goal: this.userWords, askedIn: this.spec.target.app, readFrom: [...this.read.values()], windowId: this.windowId });
       return d.verdict === "deny" ? 2 : d.risky ? 1 : 0;
     };
     return weight(element) > weight(around) ? element : around;
@@ -2572,7 +2576,7 @@ export class Worker {
     this.keyed = { window: "", selected: null };
     this.moving = null;
     const base = { taskId: this.spec.id, kind: "cursor_text" as const, app: this.window.app, window: this.window.name, mode: "replace" as const,
-      onDesk: !!this.place, goal: this.userWords, agreed: this.agreed, readFrom: [...this.read.values()], windowId: this.windowId };
+      onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], windowId: this.windowId };
     // Judged after what was typed into the window's other fields before, as each cell would be one after the other.
     let typed = this.typedWindows.get(this.windowKey);
     const judged = jobs.map((job, i) => {
@@ -3031,7 +3035,7 @@ export class Worker {
 
   /** Would these keys on this element be pressed without a question where nothing needs borrowing (judged as on the desk)? */
   private harmlessKeys(req: ActionRequest): boolean {
-    return this.d.policy.recheck({ ...req, onDesk: true, goal: this.userWords, windowId: this.windowId, readFrom: [...this.read.values()] }).verdict === "allow";
+    return this.d.policy.recheck({ ...req, onDesk: true, goal: this.userWords, askedIn: this.spec.target.app, windowId: this.windowId, readFrom: [...this.read.values()] }).verdict === "allow";
   }
 
   private async scroll(id: number, direction: "up" | "down" | "left" | "right", steps: number): Promise<ToolResultObject> {
@@ -3454,7 +3458,7 @@ export class Worker {
     // Text going into a field is judged after what this task typed into the window's other fields too.
     const adds = request.kind === "text" || request.kind === "cursor_text" ? request.value ?? "" : request.kind === "keys" ? typedChar(request.value ?? "", this.kc) ?? "" : "";
     const typedHere = adds && inWindow ? this.typedHere(this.fieldOf(request.element), adds) : undefined;
-    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
+    const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
     if (decision.aligned === false) this.tainted = true;
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),

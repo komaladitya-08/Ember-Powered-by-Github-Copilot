@@ -278,6 +278,23 @@ command also asks when it runs as root or as an administrator, when **Ask me bef
 organisation's policy says so, in a Podman distro, after a step in this task came up that you didn't ask for, and
 when the command may carry text Ember read in another app.
 
+### 2.5a When Copilot reviewed it
+
+With **Ask only about dangerous commands** on (Settings › **Apps & privacy**, the default), a command that would ask
+only because of what it does (it deletes, publishes, downloads and runs something, or Ember can't tell exactly what it
+does) is first shown to Copilot, in a conversation of its own with no tools: your own words for the task, the command,
+where and in which folder it runs, the model's reason and what Ember's checks found. Never a command's output or your
+screen, where text aimed at the reviewer would come from. When Copilot answers that it is routine for what you asked,
+the command runs after the announcement above (the bubble says what it does; the command window adds "Ember's review:"
+and the reason, with **Stop** and the countdown). When it answers that it is dangerous, can't tell, or doesn't answer
+within 20 seconds, it asks as before, the card adding Copilot's reason when it gave one.
+
+Never reviewed, always asked: commands that touch passwords, keys or other secrets, or change the system; commands
+where Ember runs as root or an administrator; every command when your organisation, or you (**Ask before every
+command**), asked for that; a task something on screen or in a command's output tried to steer; a command that may
+carry text read in another window; a command your words place on another computer; and a task without your own words.
+Turn the switch off to have every such command ask.
+
 ### 2.6 What Ember never runs
 
 A command that would read or change Ember's own safety settings, records or programs (its organisation policy, audit

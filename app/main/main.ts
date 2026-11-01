@@ -1860,6 +1860,7 @@ function start(): void {
         actionsAllowed: () => policy.features.actions !== false,
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
+        trustAskedApps: () => settings.get().trust.askedApps,
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),

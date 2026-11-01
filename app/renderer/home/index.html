@@ -114,6 +114,11 @@
     <section class="after-setup" aria-labelledby="privacy-h">
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
       <div class="stack">
+        <h3 class="sub">When Ember asks first</h3>
+        <label class="switch-row"><input type="checkbox" id="trust-apps" role="switch" aria-describedby="trust-apps-hint"><span>Don't ask before working in an app I asked for help with</span></label>
+        <p class="hint" id="trust-apps-hint">The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.</p>
+        <label class="switch-row"><input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>Ask only about dangerous commands</span></label>
+        <p class="hint" id="trust-commands-hint">A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.</p>
         <h3 class="sub">Apps Ember may act in without asking first</h3>
         <p class="hint grants-off" id="grants-off" hidden>Not in effect: your organisation has Ember ask before every action, in these apps too.</p>
         <ul class="plain-list" id="grants" aria-label="Apps Ember may act in without asking"></ul>

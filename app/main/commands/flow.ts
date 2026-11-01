@@ -26,6 +26,7 @@ import type { ConsentPanel } from "../../shared/consent";
 import type { OS } from "../../shared/shortcuts";
 import type { TargetId } from "../../shared/targets";
 import { carriedText } from "./carried";
+import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
 import { mentioned } from "./intent";
@@ -81,6 +82,11 @@ export interface CommandFlowContext {
   emberPids: () => number[];
   /** The user said no to a question of this flow (or let it go unanswered): the worker's `declined` (extension, AG). */
   onDeclined?: () => void;
+  /**
+   * AI review (review.ts), while the user's "Ask only about dangerous commands" is on: a command that would ask, and
+   * that no hard rule makes ask, is reviewed first, and runs with its announcement when the reviewer finds it routine.
+   */
+  review?: CommandReviewer;
 }
 
 export type { SecretTracker, ShapeOptions };
@@ -751,6 +757,23 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   if (d.verdict === "ask" && (others.length || places.length)) {
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
+  }
+  // AI review: a command that asks only by the danger rules is shown to the reviewer with the user's words; one it finds
+  // routine runs with its announcement (Stop countdown) instead. The hard asks are never reviewed (review.ts).
+  if (ctx.review && d.verdict === "ask") {
+    const blocked = notReviewable(d, {
+      words, privileged: facts.privileged, mode, askEvery: cap.askEvery, userAskEvery, tainted, carried, elsewhere: others.length > 0 || places.length > 0,
+    });
+    if (blocked === null) {
+      const t0 = performance.now();
+      const v = await ctx.review({
+        userWords: words, command: a.command, shell, cwd, where: binding.label || place, os: facts.os, why: a.why, findings: d.says,
+      }, ctx.signal).catch(() => null);
+      if (ctx.isOver()) return STOPPED();
+      ctx.log.info("commands.reviewed", { task, target, verdict: v ? (v.run ? "run" : "ask") : "none", ms: Math.round(performance.now() - t0) });
+      if (v?.run) d = reviewedDecision(d, v);
+      else if (v?.why) d = { ...d, says: [...d.says, `Ember's review: ${v.why.replace(/[.\s]+$/, "")}.`] };
+    }
   }
   // The checks are done: a boot from here on happens in the run, whose tab shows it (followStatus).
   endPending();

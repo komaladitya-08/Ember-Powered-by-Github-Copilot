@@ -15,8 +15,12 @@ the work in your real apps where you can watch, without taking over your mouse. 
   Windows, the accessibility API on a Mac) and screenshots, and uses their controls in the background, so your mouse
   and keyboard stay yours. When an app can't be used that way, it asks to borrow the mouse, and gives it back the
   moment you move. "Show me how…" guides you to each control instead of doing it.
-- **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), and every
-  time before sending, deleting, paying and the like. It never types into password, payment or terminal fields. The
+- **It asks first**: before its first action in an app (**Allow**, **Always in this app**, **Not now**), but not in
+  the app you were in when you asked, or one your request names (Settings › **Apps & privacy** › **Don't ask before
+  working in an app I asked for help with**, on by default); and every time before sending, deleting, paying and the
+  like. A command that would ask is first reviewed by Copilot against your request (**Ask only about dangerous
+  commands**, on by default): a routine one runs in the command window with its **Stop** countdown instead; secrets,
+  system changes, root and anything a page or a command's output tried to steer always ask. It never types into password, payment or terminal fields. The
   stop shortcut, "Ember, stop" and **Stop everything** stop everything at once.
 - **Questions show what will be typed**: text Ember is about to type shows as it will be typed, real double quotes
   (a formula's `=IF(A1="x";1;0)`), emoji and spaces included, with a line break shown as ⏎ and a tab as ⇥. Other

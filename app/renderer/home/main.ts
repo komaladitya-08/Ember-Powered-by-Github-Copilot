@@ -818,7 +818,16 @@ let privacyKey = "";
 /** After a Remove: which list, and where in it, focus goes once the list is redrawn. */
 let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
+// ───── When Ember asks first ─────
+$("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: true }), askedApps: (e.target as HTMLInputElement).checked } }); });
+$("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: true }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
+function renderTrust(s: Settings): void {
+  ($("trust-apps") as HTMLInputElement).checked = s.trust.askedApps;
+  ($("trust-commands") as HTMLInputElement).checked = s.trust.reviewCommands;
+}
+
 function renderPrivacy(s: Settings): void {
+  renderTrust(s);
   // Redrawn only when the lists change (never under a pointer or a screen reader for an unrelated setting).
   const key = JSON.stringify([s.grants, s.privacy.neverLook, managed.has("grants"), confirmEvery, [...adminNeverLook]]);
   if (key === privacyKey) return;
