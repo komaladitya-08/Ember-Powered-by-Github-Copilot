@@ -72,6 +72,8 @@ export interface PromptCaps {
    * conversation says where to turn them on instead of "Ember doesn't act in terminals" (review #40). Absent: false.
    */
   commandsOffered?: boolean;
+  /** Long-term memory is on: the conductor has remember, recall and forget_memory (docs/MEMORY.md). Absent: false. */
+  memory?: boolean;
 }
 
 /** What AgentHost asks of the targets runtime (HostOptions.targets). */

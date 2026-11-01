@@ -527,8 +527,9 @@ SSH every desktop step is asked, and the remote checks every step again under it
    - **Later:** a root-owned remote package for hardened hosts (L24); a JPEG encoder on remotes (L16); approval
      fatigue on remotes and after output taint (every step or command asks), revisited with SX's view.
 
-Long-term memory, beyond the plan above: docs/MEMORY.md has the design and steps. Its core (`app/main/memory/`) is
-built and tested, and nothing in the app uses it yet.
+Long-term memory, beyond the plan above: docs/MEMORY.md has the design and steps. Steps 1 (the core,
+`app/main/memory/`) and 2 (remember, recall and forget in conversation, behind its own consent, off by default) are
+built.
 
 ---
 
