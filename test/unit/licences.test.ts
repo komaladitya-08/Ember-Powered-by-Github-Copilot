@@ -58,6 +58,15 @@ describe("the licence check before staging", () => {
     expect(spec).toMatch(/eSpeak NG[^\n]*\n?[^\n]*GPL-3\.0-or-later/);
   });
 
+  it("checks what sherpa-onnx's native addon (Windows, macOS) holds: Eigen's MPL-2.0 and eSpeak NG's GPL among it", () => {
+    for (const name of ["sherpa-onnx-win-x64", "sherpa-onnx-win-arm64", "sherpa-onnx-darwin-arm64", "sherpa-onnx-darwin-x64"]) {
+      const addon = [{ name, license: "Apache-2.0", readme: null }];
+      expect(uncoveredLicences(addon, ["Apache-2.0", "MIT", "BSD-3-Clause", "GPL-3.0-or-later"])).toEqual([`${name}'s Eigen (MPL-2.0)`]);
+      expect(uncoveredLicences(addon, specLicenceIds(spec)), name).toEqual([]);
+    }
+    expect(spec).toMatch(/native\s+addon, with Eigen \(MPL-2\.0\)/);
+  });
+
   it.skipIf(!libvipsReadme || !fs.existsSync(libvipsReadme))("passes for what Ember bundles today (the spec names every library's licence)", () => {
     const readme = fs.readFileSync(libvipsReadme, "utf8");
     const { license } = JSON.parse(fs.readFileSync(path.resolve("node_modules", libvipsPackage!, "package.json"), "utf8")) as { license: string };
@@ -75,6 +84,12 @@ describe("licence texts for packages that ship none (review #211)", () => {
       expect(suppliedLicence(name, "3.2.1"), name).toEqual({ texts: ["node_modules/koffi/LICENSE.txt"] });
     }
     expect(suppliedLicence("sherpa-onnx", "1.13.8")).toEqual({ texts: ["packaging/licences/sherpa-onnx.txt", "packaging/licences/espeak-ng-COPYING.txt"] });
+    for (const name of ["sherpa-onnx-win-x64", "sherpa-onnx-win-arm64", "sherpa-onnx-darwin-arm64", "sherpa-onnx-darwin-x64"]) {
+      expect(suppliedLicence(name, "1.13.8"), name).toEqual({ texts: ["packaging/licences/sherpa-onnx-native.txt", "packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt", "packaging/licences/espeak-ng-COPYING.txt"] });
+    }
+    // Linux never ships the addon: no text is supplied for it, so staging would stop.
+    expect(suppliedLicence("sherpa-onnx-linux-x64", "1.13.8")).toHaveProperty("error");
+    expect(suppliedLicence("sherpa-onnx-win-x64", "1.14.0")).toHaveProperty("error");
   });
 
   it("stops staging for any other package without a licence file, and for a sherpa-onnx whose WebAssembly nobody checked", () => {
@@ -90,6 +105,11 @@ describe("licence texts for packages that ship none (review #211)", () => {
     expect(sherpa).toMatch(/Apache License\s+Version 2\.0, January 2004/);
     expect(sherpa).toMatch(/Copyright \(c\) Microsoft Corporation/);
     expect(sherpa).toMatch(/eSpeak NG .*GPL-3\.0-or-later/);
+    const native = fs.readFileSync(path.resolve("packaging/licences/sherpa-onnx-native.txt"), "utf8");
+    expect(native).toMatch(/Apache License\s+Version 2\.0, January 2004/);
+    expect(native).toMatch(/ONNX Runtime 1\.28\.2/);
+    expect(native).toMatch(/Eigen .*MPL-2\.0/);
+    expect(fs.readFileSync(path.resolve("packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt"), "utf8")).toMatch(/^THIRD PARTY SOFTWARE NOTICES AND INFORMATION/);
     expect(fs.readFileSync(path.resolve("packaging/licences/espeak-ng-COPYING.txt"), "utf8")).toMatch(/^\s+GNU GENERAL PUBLIC LICENSE\n\s+Version 3, 29 June 2007/);
   });
 });

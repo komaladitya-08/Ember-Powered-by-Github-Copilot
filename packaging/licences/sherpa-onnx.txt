@@ -214,8 +214,7 @@ not a complete list:
 - simple-sentencepiece: Apache-2.0
 - piper-phonemize: MIT
 - eSpeak NG (https://github.com/espeak-ng/espeak-ng): GPL-3.0-or-later (its COPYING follows). It is part of
-  sherpa-onnx's text-to-speech, which Ember never calls: Ember uses only its keyword spotting, voice activity
-  detection and speech recognition.
+  sherpa-onnx's text-to-speech, which speaks Ember's voice (it turns text into phonemes).
 
 --- ONNX Runtime's LICENSE ---
 MIT License

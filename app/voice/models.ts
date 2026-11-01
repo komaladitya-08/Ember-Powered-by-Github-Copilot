@@ -77,6 +77,23 @@ export const VOICE_MODELS: ModelFile[] = [
 
 export const VOICE_MODELS_BYTES = VOICE_MODELS.reduce((n, m) => n + m.bytes, 0);
 
+/**
+ * The natural voice: Kokoro (82M, US English, fp32), more natural than the Piper voice but about six times the work.
+ * It isn't one of the speech models (nothing waits for it, and no package carries it): on Windows and macOS, where
+ * speech runs natively, Ember fetches it in the background once the Piper voice shows this computer is fast enough
+ * (VoiceService), and the speech process uses it only if it is made at most at NATURAL_MAX_RTF of real time there.
+ * fp32, not kokoro-int8-*: onnxruntime's int8 kernels made it slower (on a 2.1 GHz Xeon, 4 vCPUs: int8 multi-lang
+ * v1.0 at 1.1–1.3 of real time, this one at 0.48 on 4 threads).
+ */
+export const NATURAL_VOICE: ModelFile = {
+  id: "natural", name: "Ember's natural voice (Kokoro, US English)", kind: "tar.bz2", license: "Apache-2.0",
+  url: `${RELEASES}/tts-models/kokoro-en-v0_19.tar.bz2`,
+  sha256: "912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7", bytes: 319_625_534,
+  target: "kokoro-en-v0_19",
+};
+
+const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];
+
 /** Downloads `url` to `dest`, reporting bytes so far. */
 export type Downloader = (url: string, dest: string, progress: (bytes: number) => void) => Promise<void>;
 
@@ -94,8 +111,8 @@ export type ModelsProgress = (done: number, total: number, phase?: "unpacking") 
 const DOWNLOAD_SHARE = 0.8;
 
 export function modelPaths(root: string): ModelPaths {
-  const p = (id: keyof ModelPaths) => path.join(root, VOICE_MODELS.find(m => m.id === id)!.target);
-  return { kws: p("kws"), vad: p("vad"), asr: p("asr"), tts: p("tts"), speaker: p("speaker") };
+  const p = (id: keyof ModelPaths) => path.join(root, ALL_MODELS.find(m => m.id === id)!.target);
+  return { kws: p("kws"), vad: p("vad"), asr: p("asr"), tts: p("tts"), speaker: p("speaker"), natural: p("natural") };
 }
 
 const marker = (root: string, m: ModelFile) => path.join(root, `.${m.target}.ok`);
@@ -111,7 +128,7 @@ function verified(root: string, m: ModelFile): boolean {
 
 /** One model (`id`) is in place and verified. */
 export function modelReady(root: string, id: ModelFile["id"]): boolean {
-  const m = VOICE_MODELS.find(x => x.id === id);
+  const m = ALL_MODELS.find(x => x.id === id);
   return !!m && verified(root, m);
 }
 
@@ -236,6 +253,17 @@ export async function ensureModels(root: string, download: Downloader, progress:
     progress(done, VOICE_MODELS_BYTES);
   }
   return modelPaths(root);
+}
+
+/** Fetches one optional model (NATURAL_VOICE) into `root` unless it is in place and verified; its folder. */
+export async function ensureModel(root: string, m: ModelFile, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<string> {
+  fs.mkdirSync(root, { recursive: true });
+  if (!verified(root, m)) {
+    fs.rmSync(marker(root, m), { force: true });
+    await fetchModel(root, m, download, progress);
+    fs.writeFileSync(marker(root, m), `${m.sha256}\n`);
+  }
+  return path.join(root, m.target);
 }
 
 /** Retries after a transient failure (a stall, a dropped connection, HTTP 408, 429 or 5xx), as curl --retry 3 did. */

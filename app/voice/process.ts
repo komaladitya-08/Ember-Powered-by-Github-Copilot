@@ -13,14 +13,15 @@ import { VoiceEngine, type VoiceBackend, type VoiceEvent } from "./engine";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "./match";
 import { decodePrint, encodePrint } from "./voiceprint";
 import type { VoiceprintWorkerMessage } from "./voiceprint-worker";
-import { ModelLoadError, sherpaBackend, type ModelPaths } from "./sherpa";
+import { ModelLoadError, sherpaBackend, type BackendInfo, type ModelPaths } from "./sherpa";
 import { SpeakerMonitor } from "./speakers";
 import { FrameWatchdog, SilenceWatch } from "./watchdog";
 
 type FromMain =
   /** `dev`: an unpackaged (development) build. */
   /** `voiceprint`: the owner's (Voice Match on), base64 (voiceprint.ts). */
-  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null }
+  /** `wasm`: run on WebAssembly (a voice process before this one died loading natively; runtime.ts). */
+  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null; wasm?: boolean }
   /** Voice Match turned on (the owner's voiceprint) or off (null). */
   | { type: "voiceprint"; print: string | null }
   /** Enrolment: listen for the owner's phrases (nothing heard meanwhile is a request), or stop doing so. */
@@ -42,7 +43,8 @@ type FromMain =
  */
 export type VoiceProcessMessage =
   | VoiceEvent
-  | { type: "ready"; loadMs: number }
+  /** `backend`: which build of sherpa-onnx runs the recognizers, and how (runtime.ts). */
+  | { type: "ready"; loadMs: number; backend: BackendInfo }
   | { type: "error"; message: string; models?: boolean }
   | { type: "engine-error"; message: string; count: number }
   | { type: "engine-broken"; message: string }
@@ -149,13 +151,14 @@ parent.on("message", e => {
     if (m.dev && process.env.EMBER_VOICE_DUMP) dump = fs.createWriteStream(process.env.EMBER_VOICE_DUMP);
     try {
       const t0 = Date.now();
-      backend = sherpaBackend(m.models, { monitor: m.monitor, onError: failed });
+      const recognizers = sherpaBackend(m.models, { monitor: m.monitor, onError: failed, ...(m.wasm ? { runtime: { prefer: "wasm" as const } } : {}) });
+      backend = recognizers;
       speakerModel = m.models.speaker;
       gate.setOwner(decodePrint(m.voiceprint));
       const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : e.type === "wake" ? made.wakeAudio : null));
       engine = made;
       if (m.monitor) speakers.start();
-      send({ type: "ready", loadMs: Date.now() - t0 });
+      send({ type: "ready", loadMs: Date.now() - t0, backend: recognizers.info });
     } catch (err) {
       // What WebAssembly throws while loading a model is a bare number: the models are damaged (review #254).
       if (err instanceof ModelLoadError) send({ type: "error", message: err.message, models: true });

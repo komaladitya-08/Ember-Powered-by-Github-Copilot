@@ -2092,6 +2092,8 @@ function start(): void {
       onEvent: onVoice,
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
+      // On Windows and macOS (speech runs natively there), the more natural Kokoro voice where this computer keeps up.
+      naturalVoice: true,
       voiceprint: ownerPrint,
       onEnrol: p => {
         if (p.state === "done") {

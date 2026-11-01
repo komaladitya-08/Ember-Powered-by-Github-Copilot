@@ -1,6 +1,8 @@
 /**
- * The real recognizers (sherpa-onnx WASM) on synthesized speech: the clips in
- * test/fixtures/voice. Needs the models from `node scripts/voice/prepare.mjs`
+ * The real recognizers on synthesized speech: the clips in test/fixtures/voice. They run on the build Ember picks
+ * (runtime.ts: the native addon on Windows and macOS, WebAssembly elsewhere); EMBER_VOICE_BACKEND=wasm forces
+ * WebAssembly, and EMBER_SHERPA_ADDON=<path to a sherpa-onnx.node> runs an addon where none is installed (Linux:
+ * sherpa-onnx-linux-x64's, to try the native path there). Needs the models from `node scripts/voice/prepare.mjs`
  * (skipped otherwise; EMBER_VOICE_TEST=1 requires them).
  */
 
@@ -9,9 +11,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { ModelLoadError, sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
+import { nativePackage, type RuntimeOptions } from "../../app/voice/runtime";
 import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, printFeatures, similarity, unit } from "../../app/voice/voiceprint";
 
@@ -19,11 +23,17 @@ const dir = path.resolve(process.env.EMBER_VOICE_DIR ?? ".cache/voice");
 const clips = path.resolve("test/fixtures/voice");
 const ready = modelsReady(path.join(dir, "models")) && fs.existsSync(path.join(clips, "wake.wav"));
 const sherpa = createRequire(import.meta.url)("sherpa-onnx");
+const addonFile = process.env.EMBER_SHERPA_ADDON ? path.resolve(process.env.EMBER_SHERPA_ADDON) : undefined;
+const runtime: RuntimeOptions | undefined = addonFile ? { prefer: "native", addonFile } : undefined;
 
 // Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
 describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
   let backend: ReturnType<typeof sherpaBackend>;
-  beforeAll(() => { backend = sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true }); }, 60_000);
+  beforeAll(() => {
+    const t0 = performance.now();
+    backend = sherpaBackend(modelPaths(path.join(dir, "models")), { monitor: true, runtime });
+    console.log(`voice backend: ${JSON.stringify(backend.info)}, loaded in ${Math.round(performance.now() - t0)} ms`);
+  }, 60_000);
 
   const read = (name: string): Float32Array => sherpa.readWave(path.join(clips, `${name}.wav`)).samples;
   /** Plays a clip (or audio) through the engine in 32 ms frames, like the microphone would, with real time; `at`: when each event came (ms). */
@@ -50,8 +60,15 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     return { events, at, rtf: cpu / (all.length / 16) };
   };
 
+  it("runs on the native addon on Windows and macOS (WebAssembly on Linux)", () => {
+    const native = !!addonFile || ((process.platform === "win32" || process.platform === "darwin") && process.env.EMBER_VOICE_BACKEND !== "wasm");
+    expect(backend.info).toMatchObject({ backend: native ? "native" : "wasm" });
+    expect(backend.info.threads).toBe(native ? Math.max(1, Math.min(2, os.availableParallelism() - 1)) : 1);
+  });
+
   it("wakes on 'Hey Ember' and hears the request in the same breath", () => {
     const { events, rtf } = play("wake");
+    console.log(`voice: 'Hey Ember, turn on night light' processed at ${rtf.toFixed(3)} of real time (${backend.info.backend}, ${backend.info.provider})`);
     expect(events.map(e => e.type)).toEqual(["wake", "listening", "utterance", "listening"]);
     expect(events.find(e => e.type === "utterance")).toMatchObject({ text: expect.stringMatching(/^Turn on night ?light\.?$/i) });
     expect(rtf).toBeLessThan(1);
@@ -240,18 +257,31 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     for (const n of [0, 800, 1599]) expect(backend.transcribe(new Float32Array(n))).toBe("");
   });
 
-  it("fails to load, with a ModelLoadError, when a model file is cut short or missing (review #254)", () => {
+  it("fails to load, with a ModelLoadError, when a model file is cut short or missing (review #254); natively, a cut one ends the process", () => {
     const models = modelPaths(path.join(dir, "models"));
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ember-damaged-"));
     try {
       // The recognition model's folder, its encoder cut to 1000 bytes (as an antivirus or a disk error leaves it), then gone.
       const asr = path.join(tmp, "asr");
       fs.mkdirSync(asr);
-      for (const f of fs.readdirSync(models.asr)) if (f !== "encoder_model.ort") fs.symlinkSync(path.join(models.asr, f), path.join(asr, f));
+      // (Copies: Windows makes symbolic links only with Developer Mode on.)
+      for (const f of ["decoder_model_merged.ort", "tokens.txt"]) fs.copyFileSync(path.join(models.asr, f), path.join(asr, f));
       fs.writeFileSync(path.join(asr, "encoder_model.ort"), fs.readFileSync(path.join(models.asr, "encoder_model.ort")).subarray(0, 1000));
-      expect(() => sherpaBackend({ ...models, asr })).toThrow(ModelLoadError);
+      // WebAssembly throws. The addon's onnxruntime aborts the process instead (an uncaught C++ exception: nothing in
+      // JavaScript can catch it), so main starts a voice process that died loading again on WebAssembly, which says the
+      // models are damaged (VoiceService.nativeFailed).
+      expect(() => sherpaBackend({ ...models, asr }, { runtime: { prefer: "wasm" } })).toThrow(ModelLoadError);
+      if (backend.info.backend === "native") {
+        const file = addonFile ?? createRequire(import.meta.url).resolve(`${nativePackage()}/sherpa-onnx.node`);
+        const make = `const a = require(process.env.ADDON), d = process.env.ASR; a.createOfflineRecognizer({ featConfig: { sampleRate: 16000, featureDim: 80 }, modelConfig: { moonshine: { encoder: d + "/encoder_model.ort", mergedDecoder: d + "/decoder_model_merged.ort" }, tokens: d + "/tokens.txt", numThreads: 1, provider: "cpu", debug: 0 } }); console.log("loaded");`;
+        const r = spawnSync(process.execPath, ["-e", make], { env: { ...process.env, ADDON: file, ASR: asr }, encoding: "utf8", timeout: 30_000 });
+        expect(r.stdout).not.toContain("loaded");
+        expect(r.status !== 0 || r.signal !== null).toBe(true);
+      }
       fs.rmSync(path.join(asr, "encoder_model.ort"));
-      expect(() => sherpaBackend({ ...models, asr })).toThrow("The speech recognition model couldn't be loaded.");
+      // A missing file is refused before onnxruntime sees it, by either build.
+      expect(() => sherpaBackend({ ...models, asr }, { runtime })).toThrow("The speech recognition model couldn't be loaded.");
+      expect(() => sherpaBackend({ ...models, asr }, { runtime: { prefer: "wasm" } })).toThrow("The speech recognition model couldn't be loaded.");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

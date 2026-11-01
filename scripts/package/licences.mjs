@@ -36,12 +36,23 @@ export const BUNDLED_LIBRARIES = [
   },
   {
     // sherpa-onnx-wasm-nodejs.wasm 1.13.8, as the names and messages in it show (packaging/licences/sherpa-onnx.txt).
-    // eSpeak NG is part of its text-to-speech, which Ember never calls, but it is in the object code Ember ships.
+    // eSpeak NG is part of its text-to-speech, which speaks Ember's voice.
     package: /^sherpa-onnx$/,
     embedded: {
       "ONNX Runtime": ["MIT"], ONNX: ["Apache-2.0"], Abseil: ["Apache-2.0"], FlatBuffers: ["Apache-2.0"],
       "Protocol Buffers": ["BSD-3-Clause"], RE2: ["BSD-3-Clause"], "kaldi-decoder": ["Apache-2.0"], kaldifst: ["Apache-2.0"],
       OpenFst: ["Apache-2.0"], "simple-sentencepiece": ["Apache-2.0"], "piper-phonemize": ["MIT"], "eSpeak NG": ["GPL-3.0-or-later"],
+    },
+  },
+  {
+    // sherpa-onnx's native addon 1.13.8 (Windows, macOS): sherpa-onnx's C API with what it is built from, as the
+    // names in sherpa-onnx-c-api show, and onnxruntime 1.28.2 as a library of its own (packaging/licences/
+    // sherpa-onnx-native.txt). Its text-to-speech, which speaks Ember's voice, includes eSpeak NG. Never on Linux.
+    package: /^sherpa-onnx-(win|darwin)-(x64|arm64)$/,
+    embedded: {
+      "ONNX Runtime": ["MIT"], "kaldi-native-fbank": ["Apache-2.0"], "kaldi-decoder": ["Apache-2.0"], kaldifst: ["Apache-2.0"],
+      OpenFst: ["Apache-2.0"], "simple-sentencepiece": ["Apache-2.0"], "piper-phonemize": ["MIT"], "nlohmann/json": ["MIT"],
+      Eigen: ["MPL-2.0"], "KISS FFT": ["BSD-3-Clause"], "eSpeak NG": ["GPL-3.0-or-later"],
     },
   },
 ];
@@ -57,6 +68,12 @@ export const LICENCE_TEXTS = [
   { package: /^@github\/copilot-sdk(-(linux|win32|darwin)-(x64|arm64))?$/, texts: ["packaging/licences/github-copilot-sdk.txt"] },
   { package: /^@koromix\/koffi-(linux|win32|darwin)-(x64|arm64)$/, texts: ["node_modules/koffi/LICENSE.txt"] },
   { package: /^sherpa-onnx$/, version: "1.13.8", texts: ["packaging/licences/sherpa-onnx.txt", "packaging/licences/espeak-ng-COPYING.txt"] },
+  // Its native addon (Windows, macOS): the same Apache-2.0 licence, what the addon is built from, onnxruntime's licence
+  // and notices (the addon carries onnxruntime 1.28.2), and eSpeak NG's.
+  {
+    package: /^sherpa-onnx-(win|darwin)-(x64|arm64)$/, version: "1.13.8",
+    texts: ["packaging/licences/sherpa-onnx-native.txt", "packaging/licences/onnxruntime-1.28.2-ThirdPartyNotices.txt", "packaging/licences/espeak-ng-COPYING.txt"],
+  },
   // onnxruntime's WebAssembly (Voice Match): Microsoft's MIT licence and the release's third-party notices, from the
   // v1.23.2 tag (neither package ships them).
   { package: /^onnxruntime-(web|common)$/, version: "1.23.2", texts: ["packaging/licences/onnxruntime-LICENSE.txt", "packaging/licences/onnxruntime-ThirdPartyNotices.txt"] },

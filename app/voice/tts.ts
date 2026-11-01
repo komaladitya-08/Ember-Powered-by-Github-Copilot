@@ -1,12 +1,24 @@
 /**
- * Ember's own voice: a neural (VITS/Piper) voice run by sherpa-onnx's WebAssembly build in its own utility process
- * (app/voice/tts-process.ts), so speaking never holds up listening. A reply is spoken sentence by sentence as it is
+ * Ember's own voice: a neural (VITS/Piper) voice run by sherpa-onnx in its own utility process (app/voice/tts-process.ts;
+ * natively on Windows and macOS, where Kokoro, more natural, can speak instead), so speaking never holds up listening. A reply is spoken sentence by sentence as it is
  * made, and a streamed answer as its sentences arrive (SpeechStream): the first words play within about half a second.
  * Without the voice's model (not downloaded yet), or should it fail, the system's voice speaks (speechSynthesis).
  * Pure helpers here; nothing in this file loads a model.
  */
 
 import { spokenText } from "./spoken";
+
+/**
+ * The natural voice (Kokoro) speaks only where it is made at most this fast (0.5: a second of speech in half a second),
+ * so a reply streams sentence by sentence without gaps and its first words come within about half a second.
+ */
+export const NATURAL_MAX_RTF = 0.5;
+/**
+ * About how much more work Kokoro is than the Piper voice, natively: Ember fetches Kokoro only where the Piper voice
+ * runs at most NATURAL_MAX_RTF / NATURAL_COST of real time. Measured on a 2.1 GHz Xeon (4 vCPUs): Piper at 0.08 of real
+ * time on 2 threads (in WebAssembly: 0.49), Kokoro fp32 at 0.48 on 4 threads and 0.53 on 3.
+ */
+export const NATURAL_COST = 6;
 
 /** A first chunk longer than this is cut at its first comma (or semicolon, or dash) past FIRST_MIN: its sound comes sooner. */
 const FIRST_MAX = 90;
