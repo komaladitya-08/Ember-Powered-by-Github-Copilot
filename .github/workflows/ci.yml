@@ -136,7 +136,7 @@ jobs:
     steps:
       - name: Build tools only (the RPM must bring in its own runtime dependencies)
         run: |
-          dnf -y -q --nobest install git tar xz file binutils findutils which sudo gcc-c++ make python3 rpm-build \
+          dnf -y -q --nobest install git tar xz unzip file binutils findutils which sudo gcc-c++ make python3 rpm-build \
             libX11-devel libXtst-devel libXt-devel xorg-x11-server-Xvfb xorg-x11-xauth dbus-x11 mesa-dri-drivers dejavu-sans-fonts
           useradd -m ci
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -169,6 +169,12 @@ jobs:
         run: |
           scripts/package/rpm.sh
           ls dist/package/ember-voice-models-*.noarch.rpm
+      # The same verified models as a zip, for Windows, macOS and Linux PCs that can't download them (IT unzips it into
+      # the machine-wide folder Ember looks in: README "Computers without internet access").
+      - name: Zip the speech models for network-restricted computers
+        run: |
+          node scripts/package/models-zip.mjs dist/package/voice-models "dist/package/Ember-voice-models-$(node -p "require('./package.json').version").zip"
+          unzip -tq dist/package/Ember-voice-models-*.zip
       - name: Build the AppImage
         run: scripts/package/appimage.sh
       - name: Install the RPM with dnf (resolves every Requires from the distribution)
@@ -248,6 +254,7 @@ jobs:
           path: |
             dist/package/*.rpm
             dist/package/*.AppImage
+            dist/package/Ember-voice-models-*.zip
           retention-days: 3
 
   eval:
@@ -402,13 +409,24 @@ jobs:
           EMBER_WIN32_TEST: "1"
           EMBER_UIA_TEST: "1"
           EMBER_WINSYS_TEST: "1"
+      # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
+      # restricted PCs never need github.com for voice).
+      - name: Speech models to bundle (cached; verified by SHA-256)
+        if: ${{ !cancelled() }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/voice
+          key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - name: Fetch and verify the speech models
+        if: ${{ !cancelled() }}
+        run: node scripts/voice/prepare.mjs
       - name: Stage Ember (Ember.exe with its own version resource and icon) and zip it
         # Runs after a failed integration step too (the job stays failed): the package's checks don't depend on it.
         if: ${{ !cancelled() }}
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs
+          node scripts/package/stage.mjs --with-models
           node scripts/package/archive.mjs
       - name: "The packaged Ember: its fuses, plain Node kept, NODE_OPTIONS ignored, --inspect refused, its files"
         if: ${{ !cancelled() }}
@@ -580,13 +598,24 @@ jobs:
         run: node scripts/run-integration.mjs test/integration/darwin-system.test.ts test/integration/darwin-vocabulary.test.ts
         env:
           EMBER_MACSYS_TEST: "1"
+      # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
+      # restricted PCs never need github.com for voice).
+      - name: Speech models to bundle (cached; verified by SHA-256)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/voice
+          key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - name: Fetch and verify the speech models
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: node scripts/voice/prepare.mjs
       - name: Stage Ember.app (signed ad hoc), zip it and make the disk image
         id: stage
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs
+          node scripts/package/stage.mjs --with-models
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app: its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused (so it knows it's packaged)"
         if: ${{ !cancelled() && steps.stage.outcome == 'success' }}
@@ -779,11 +808,20 @@ jobs:
         run: node scripts/run-integration.mjs test/integration/darwin-desktop.test.ts
         env:
           EMBER_DARWIN_TEST: "1"
+      # The speech models go inside the app, so one download carries everything Ember runs on the computer (network-
+      # restricted PCs never need github.com for voice).
+      - name: Speech models to bundle (cached; verified by SHA-256)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/voice
+          key: voice-${{ runner.os }}-${{ hashFiles('app/voice/models.ts', 'scripts/voice/prepare.mjs') }}
+      - name: Fetch and verify the speech models
+        run: node scripts/voice/prepare.mjs
       - name: Stage Ember.app for x64 (signed ad hoc), zip it and make the disk image
         run: |
           # The remote agent's parts for SSH targets (dist/remote-parts): stage.mjs ships them in resources/.
           node scripts/package/remote-parts.mjs
-          node scripts/package/stage.mjs
+          node scripts/package/stage.mjs --with-models
           node scripts/package/archive.mjs
       - name: "The packaged Ember.app on Intel: every binary runs on x86_64, its fuses, its signature, node mode refused, NODE_OPTIONS fuse off, --inspect refused"
         run: |

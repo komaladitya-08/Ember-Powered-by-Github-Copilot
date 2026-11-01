@@ -126,7 +126,7 @@ export class ModelLoadError extends Error {}
  * a model can't be loaded.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- sherpa-onnx ships untyped JS */
-export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void } = {}): VoiceBackend & { free(): void } {
+export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void; keywords?: string } = {}): VoiceBackend & { free(): void } {
   const requireCjs = createRequire(__filename);
   const sherpa = requireCjs("sherpa-onnx") as any;
   // A damaged file throws a bare number out of WebAssembly; a missing one only gives an empty handle (and a recognizer
@@ -152,7 +152,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
       },
       tokens: k("tokens.txt"), numThreads: 1, provider: "cpu", debug: 0,
     },
-    maxActivePaths: 4, numTrailingBlanks: 1, keywordsScore: 1.0, keywordsThreshold: 0.25, keywords: KEYWORDS,
+    maxActivePaths: 4, numTrailingBlanks: 1, keywordsScore: 1.0, keywordsThreshold: 0.25, keywords: opts.keywords ?? KEYWORDS,
   };
   const kws = load("wake word model", () => sherpa.createKws(kwsConfig));
   let micStream = kws.createStream();

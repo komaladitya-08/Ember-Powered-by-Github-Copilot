@@ -17,6 +17,7 @@ import { appEnv } from "../../app/main/hands/system";
 import { VoiceEngine, type VoiceEvent } from "../../app/voice/engine";
 import { sherpaBackend } from "../../app/voice/sherpa";
 import { modelPaths, modelsReady } from "../../app/voice/models";
+import { corpusDir, loadCorpus } from "./corpus";
 import type { Logger } from "../../app/main/logger";
 import type { Attempt, Outcome } from "./runner";
 import { LIVE_PASS_PCT } from "./exit";
@@ -275,6 +276,24 @@ export async function measureGates(o: { root: string; python: string; outcomes: 
       note: `“Ember, …” without “Hey”: ${named.length} clips (test clip + synthesized renderings at 3 speeds); this test voice's first “Ember” often comes out as “Amber” or “Number”, which the check rightly doesn't take` });
     add({ id: "false-wakes", name: "False wakes", target: "< 0.5 per hour (office-noise corpus)", blocking: false, value: `${falseWakes}/${negatives.length} non-wake clips${flickers ? ` (+${flickers} taken back at once)` : ""}`,
       status: "not-measured", note: "no office-noise corpus here; counted on near-miss phrases (“remember”, “embers”, “member”) instead" });
+    // Real voices (scripts/voice/record.mjs), when a corpus is here: the figures that count for release.
+    const real = corpusDir(voiceDir);
+    if (real) {
+      const clips = loadCorpus(real);
+      const speakers = new Set(clips.map(c => c.speaker)).size;
+      const rate = (n: number, of: number) => `${of ? ((n / of) * 100).toFixed(1) : "—"} % (${n}/${of}; 95 % CI ${of ? wilson(n, of).map(x => (x * 100).toFixed(1)).join("–") : "—"} %)`;
+      const runs = clips.map(c => ({ c, ev: play(c.samples).events }));
+      const of = (f: (r: (typeof runs)[number]) => boolean) => runs.filter(f);
+      const hey = of(r => r.c.wakes && !r.c.bare), bare = of(r => r.c.wakes && r.c.bare), neg = of(r => r.c.label === "negative"), stops = of(r => r.c.stops);
+      const note = `${speakers} real speaker${speakers === 1 ? "" : "s"}, recorded with scripts/voice/record.mjs`;
+      const heyMissed = hey.filter(r => !kept(r.ev)).length, bareMissed = bare.filter(r => !kept(r.ev)).length;
+      add({ id: "real-missed-wakes", name: "Missed wakes (real voices)", target: "< 5 %", blocking: false, value: rate(heyMissed, hey.length), status: missedWakesStatus(heyMissed, hey.length), note });
+      add({ id: "real-missed-name-wakes", name: "Missed wakes by the bare name (real voices)", target: "< 5 %", blocking: false, value: rate(bareMissed, bare.length), status: missedWakesStatus(bareMissed, bare.length), note });
+      const falseReal = neg.filter(r => kept(r.ev)).length;
+      add({ id: "real-false-wakes", name: "False wakes (real voices)", target: "0 on near-miss phrases", blocking: false, value: rate(falseReal, neg.length), status: neg.length ? (falseReal ? "fail" : "pass") : "not-measured", note });
+      const missedStops = stops.filter(r => !r.ev.some(e => e.type === "stop")).length;
+      add({ id: "real-missed-stops", name: "Missed stops (real voices)", target: "< 5 %", blocking: false, value: rate(missedStops, stops.length), status: missedWakesStatus(missedStops, stops.length), note });
+    }
     // Idle listening: a minute of quiet room noise.
     const noise = new Float32Array(16000 * 60);
     let seed = 7;

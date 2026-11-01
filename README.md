@@ -162,6 +162,28 @@ Terminal, `/Applications/Ember.app/Contents/MacOS/Ember --doctor` reports Termin
 open -n -W --stdout ~/ember-doctor.txt -a /Applications/Ember.app --args --doctor; cat ~/ember-doctor.txt
 ```
 
+## Computers without internet access
+
+Everything Ember hears and says is worked out on the computer itself: the wake word, speech recognition, Ember's
+voice and Voice Match need no network once their models are there. Ember's only downloads are those models (when
+voice is turned on) and, for computers reached over SSH, a Node.js runtime (your organisation can point it at a mirror:
+docs/DEVELOPING.md). Copilot itself, and the review of commands, need the model service, as Ember's answers do.
+
+What to install so nothing is downloaded:
+
+| Computer | Install |
+|---|---|
+| Windows | `Ember-0.1.0-win-x64.zip`: the speech models are inside it |
+| macOS | `Ember-0.1.0-mac-arm64.dmg` (or the .zip; mac-x64 for Intel): the speech models are inside it |
+| RHEL 8 | `ember-0.1.0-1.el8.x86_64.rpm` and `ember-voice-models-0.1.0-1.el8.noarch.rpm`; `dnf` takes the RPM's system packages (speech-dispatcher, AT-SPI…) from your distribution's repositories, so point it at your organisation's mirror |
+| AppImage | `Ember-voice-models-0.1.0.zip`, unzipped so its `voice-models` folder is `/usr/share/ember/voice-models` |
+
+`Ember-voice-models-0.1.0.zip` (check it against `SHA256SUMS`) also serves IT that installs the models once per
+computer for every copy of Ember: unzip it so its `voice-models` folder lands in `%ProgramData%\Ember\voice-models`
+(Windows) or `/Library/Application Support/Ember/voice-models` (macOS).
+
+Ember checks each model against its SHA-256 and uses that folder without downloading anything; it never changes it.
+
 ## Sign in to Copilot
 
 Ember needs a **GitHub account with Copilot** (for Copilot Business or Enterprise, your organisation must also turn on

@@ -12,12 +12,12 @@ const read = (p: string) => fs.readFileSync(p, "utf8");
 const version = JSON.parse(read("package.json")).version as string;
 
 describe("release.mjs", () => {
-  it("names the eight files the README downloads", () => {
+  it("names the nine files the README downloads", () => {
     const files = releaseFiles(version);
-    expect(files).toHaveLength(8);
+    expect(files).toHaveLength(9);
     const readme = read("README.md");
     // The README spells these out; the Mac zips and the Intel Mac's files it names as "(or the .zip; mac-x64 …)".
-    for (const f of [`ember-${version}-1.el8.x86_64.rpm`, `ember-voice-models-${version}-1.el8.noarch.rpm`, `Ember-${version}-win-x64.zip`, `Ember-${version}-mac-arm64.dmg`]) {
+    for (const f of [`ember-${version}-1.el8.x86_64.rpm`, `ember-voice-models-${version}-1.el8.noarch.rpm`, `Ember-${version}-win-x64.zip`, `Ember-${version}-mac-arm64.dmg`, `Ember-voice-models-${version}.zip`]) {
       expect(files, f).toContain(f);
       expect(readme, f).toContain(f);
     }
