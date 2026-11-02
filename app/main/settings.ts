@@ -198,14 +198,27 @@ export const MAX_HOME_PATCH = 64 * 1024;
 
 /**
  * A change sent from the settings window (IPC), checked before use: a plain object of at most MAX_HOME_PATCH bytes as
- * JSON. Anything else is refused with a plain sentence; the values themselves are checked by SettingsSchema on update.
+ * JSON (UTF-8 bytes, as written to settings.json: "€" is three, not one). Anything else is refused with a plain
+ * sentence; the values themselves are checked by SettingsSchema on update.
  */
 export function checkHomePatch(sent: unknown): SettingsPatch {
   if (!sent || typeof sent !== "object" || Array.isArray(sent)) throw new Error("That change isn't a setting Ember knows.");
   let size: number;
-  try { size = JSON.stringify(sent).length; } catch { throw new Error("That change isn't a setting Ember knows."); }
+  try { size = Buffer.byteLength(JSON.stringify(sent), "utf8"); } catch { throw new Error("That change isn't a setting Ember knows."); }
   if (size > MAX_HOME_PATCH) throw new Error("That change is too large to save.");
   return sent as SettingsPatch;
+}
+
+/**
+ * A change to `trust` from the settings window carries only the switch the user flipped: the other is taken from the
+ * user's own settings (`own`, SettingsStore.own()), never from what Home shows, which has the administrator's forced
+ * values applied (they would otherwise be written into the user's file and outlive the policy).
+ */
+export function withOwnTrust(patch: SettingsPatch, own: Settings["trust"]): SettingsPatch {
+  const t = (patch as { trust?: unknown }).trust;
+  if (!t || typeof t !== "object" || Array.isArray(t)) return patch;
+  const sent = t as Partial<Settings["trust"]>;
+  return { ...patch, trust: { ...own, ...(sent.askedApps !== undefined ? { askedApps: sent.askedApps } : {}), ...(sent.reviewCommands !== undefined ? { reviewCommands: sent.reviewCommands } : {}) } };
 }
 
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});

@@ -928,8 +928,10 @@ let privacyKey = "";
 let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
 // ───── When Ember asks first ─────
-$("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), askedApps: (e.target as HTMLInputElement).checked } }); });
-$("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
+// Only the switch flipped: main fills in the other from the user's own settings (withOwnTrust), never the shown value,
+// which may be the administrator's.
+$("trust-apps").addEventListener("change", e => { void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch); });
+$("trust-commands").addEventListener("change", e => { void save({ trust: { reviewCommands: (e.target as HTMLInputElement).checked } } as SettingsPatch); });
 function renderTrust(s: Settings): void {
   for (const row of trustView(s.trust, managed)) {
     const input = $(row.id) as HTMLInputElement;

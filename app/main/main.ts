@@ -17,7 +17,7 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnTrust, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -526,7 +526,7 @@ function start(): void {
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     // A save that failed reaches the window as one plain sentence (review #84).
-    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
+    try { return settings.update(ownNeverLook(withOwnTrust(patch, settings.own().trust)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
