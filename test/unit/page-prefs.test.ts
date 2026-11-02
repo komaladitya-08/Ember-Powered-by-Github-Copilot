@@ -173,7 +173,7 @@ describe("the text size", () => {
   it("scales every type token, from a scale the text size sets on the page (review #57)", () => {
     const tokens = [...shared.matchAll(/--type-[\w-]+: ([^;]+);/g)].map(m => m[1]);
     expect(tokens.length).toBe(8);
-    // Line heights in whole pixels at every size (18 px × 1.15 is 20.7 px: fractional baselines blur at 100 %).
+    // Line heights round to whole pixels (Apple's crisp-text rule): 18 px at 1.15 would be 20.7 px, blurring the baseline.
     for (const t of tokens) expect(t).toMatch(/^\d00 calc\(\d+px \* var\(--text-scale\)\)\/round\(calc\(\d+px \* var\(--text-scale\)\), 1px\) var\(--ember-font\)$/);
     expect(shared).toMatch(/:root \{[^}]*--text-scale: 1;/);
     expect(shared).toContain('html[data-text-size="large"] { --text-scale: 1.15; }');

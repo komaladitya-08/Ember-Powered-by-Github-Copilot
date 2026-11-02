@@ -1,8 +1,8 @@
 /**
- * Settings window: first-run consent, pick your Ember, Copilot sign-in, the
+ * Settings window: first-run setup, pick your Ember, Copilot sign-in, the
  * conversation, voice, apps & privacy, comfort & access (where Ember is), what
- * Ember did, setup checks and build facts. Until Start, only the welcome, the
- * character picker and Start show.
+ * Ember did, setup checks and build facts. Until Start, only first run's steps
+ * show (welcome.ts).
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
@@ -25,7 +25,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
-import { followStartRow } from "./start-row";
+import { startWelcome } from "./welcome";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -148,19 +148,12 @@ function applySettings(s: Settings): void {
   const corner = handleCornerText(s.handlePosition);
   if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
   if (presence) renderPresence(presence);
-  // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
-  // everything else waits until Ember has started.
-  const consented = s.consent.version >= CONSENT_VERSION;
-  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // First run (or changed terms): its steps come first, the consent among them (welcome.ts); everything else waits
+  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Ember says it started
   // (review #50), rather than dropping to the page.
-  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
+  const started = welcome.settings(s);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
-  $("welcome").hidden = consented;
-  $("start-row").hidden = s.onboarded;
-  $("agree-row").hidden = consented;
-  ($("start") as HTMLButtonElement).disabled = !consented && !($("agree") as HTMLInputElement).checked;
-  $("start-hint").hidden = consented;
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
@@ -170,16 +163,11 @@ function applySettings(s: Settings): void {
     $("pick-h").focus({ preventScroll: true });
   }
 }
-// First run's Start row stays at the window's foot: focus scrolls clear of it at its height now (start-row.ts).
-followStartRow($("start-row"), document.documentElement);
+// First run, one step at a time: it borrows the character and the cards until Start, and its fixes reach the setup check.
+const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } } });
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
-$("agree").addEventListener("change", e => {
-  const on = (e.target as HTMLInputElement).checked;
-  ($("start") as HTMLButtonElement).disabled = !on;
-  $("start-hint").hidden = on;
-});
 $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
@@ -197,14 +185,6 @@ size.addEventListener("input", () => {
   sizeLabel(v);
   void save({ size: v });
 });
-$("start").addEventListener("click", () => {
-  const already = (settings?.consent.version ?? 0) >= CONSENT_VERSION;
-  if (!already && !($("agree") as HTMLInputElement).checked) return;
-  void save({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true }).then(ok => {
-    // Start did nothing visible: the notice at the top says why (review #84).
-    if (!ok) $("settings-notice").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  });
-});
 /**
  * Saves a change made in this window. One that can't be saved says why (main's plain sentence, in the notice at the
  * top) and the controls go back to the settings still in use, instead of nothing happening (review #84).
@@ -216,12 +196,6 @@ function save(patch: SettingsPatch): Promise<boolean> {
     if (agent) renderAgent(agent);
     return false;
   });
-}
-/** Something needs the user's agreement first: take them to the checkbox. */
-function focusAgree(): void {
-  const agree = $("agree");
-  agree.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  agree.focus({ preventScroll: true });
 }
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
@@ -332,6 +306,7 @@ function render(status: Status): void {
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
+  welcome.status(status);
   const v = status.environment.versions;
   const facts: [string, string][] = [
     ["Ember", status.appVersion],
@@ -436,13 +411,15 @@ function renderAdmin(a: Status["admin"]): void {
   }
   $("retention").textContent = keptWords(a);
   // Locked down, nothing goes to a model service: the data list says so instead of naming one.
-  const send = document.querySelector<HTMLElement>("li[data-icon='send']");
+  // The full consent text's line (first run's short form beside it is welcome.ts's own, drawn from the status).
+  const send = document.querySelector<HTMLElement>("#w-full li[data-icon='send']");
   const sendLine = lockdownSendLine(a);
   if (send) {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
-  if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  const service = document.querySelector<HTMLElement>("#w-full #model-service");
+  if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
@@ -649,8 +626,8 @@ $("sign-in").addEventListener("click", () => {
   $("cancel-sign-in").focus();
   window.ember.signIn().catch(err => {
     setSigningIn(false);
-    // Not agreed yet: the way forward is the checkbox at the top, so go there.
-    if (settings && settings.consent.version < CONSENT_VERSION) { focusAgree(); return; }
+    // Not agreed yet: the way forward is first run's consent step, so go there.
+    if (settings && settings.consent.version < CONSENT_VERSION) { welcome.toConsent(); return; }
     signInMsg(ipcErrorText(err), true);
   });
 });
@@ -674,7 +651,8 @@ function showCode(userCode: string, uri: string): void {
   const code = Object.assign(document.createElement("code"), { textContent: userCode });
   const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
   copy.setAttribute("aria-label", `Copy the code ${userCode}`);
-  copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
+  // Main copies it: the page has no clipboard permission (every web permission is denied but the mic window's audio).
+  copy.addEventListener("click", () => { window.ember.copyText(userCode).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
   // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).

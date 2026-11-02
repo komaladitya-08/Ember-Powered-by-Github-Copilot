@@ -134,7 +134,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - headline 14, body 14, callout 13;
   - footnote 12, caption 11.
 
-  These are the default text size; every token is `calc(Npx * var(--text-scale))`, and `--text-scale` is 1, 1.15 or 1.3 (Settings › Comfort & access › Text size). Weights and line heights are in ember.css.
+  These are the default text size; every token is `calc(Npx * var(--text-scale))` with its line height rounded to a whole pixel (`round(calc(Npx * var(--text-scale)), 1px)`, so baselines stay crisp at 1.15), and `--text-scale` is 1, 1.15 or 1.3 (Settings › Comfort & access › Text size). Weights and line heights are in ember.css.
 - **Text size.** A literal px font size, and the height of a control that holds words, needs an `html[data-text-size] <selector>` twin at `calc(Npx * var(--text-scale))` (page-prefs.test.ts checks every page and the bubble). `--type-title-3` (22, Apple's Title 1 size) is larger than `--type-title-2` (17), so choose a title style by its size, not its number.
 - **Hierarchy.** Build it from size, weight (400, 500, 600 or 700 only) and label colour. Nothing goes below 11px except the Ask hint keycaps.
 - **Tracking.** Track in em, tighter as text grows, on Inter's own curve (−0.006em at 14px, −0.003em at 13px, +0.01em at 11px); don't copy SF Pro's table.
@@ -156,7 +156,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - Place anything that moves on device pixels: `snapToDevice(v, devicePixelRatio)` (@ember/bubble), never `Math.round` to CSS px (half a device pixel at 150%). The bubble's mount, Ember's stage canvas and the presence ring do.
   - Size a canvas's backing store in whole device pixels and derive its CSS size from it (`canvasSize()`, app/renderer/shared/pixels.ts), and draw again when the scale changes: `watchPixels()` listens to a `resolution` media query (moving to another monitor changes the scale without a resize).
   - Don't centre with `translateX(-50%)`: an odd width lands on half a pixel. Centre by layout (`left: 0; right: 0; margin: 0 auto; width: max-content`).
-  - Line heights are whole pixels: the type tokens and every `html[data-text-size]` twin write `round(calc(Npx * var(--text-scale)), 1px)`, but for the Ask box's, whose window main sizes by the exact scale (ask.ts `askSize`, ui-place.test.ts).
+  - Line heights are whole pixels: every `html[data-text-size]` twin rounds as the type tokens do (Type, above), but for the Ask box's, whose window main sizes by the exact scale (ask.ts `askSize`, ui-place.test.ts).
 - **Button shapes.**
   - In-window push buttons are rounded rectangles: `.btn` is 28px at `--r-sm`, and `.btn.small` is 24px at `--r-xs` (at the default text size; their heights scale with `--text-scale`).
   - Home's single large Start is its only capsule button.
@@ -169,6 +169,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - words first in a row, with the switch at the trailing edge;
   - Remove as a `--red-text` text button.
 - **Section links.** From 640px up, Home has a fixed 200px sidebar with coloured symbol tiles, and marks the current section with `aria-current="true"`. Below 640px the links form one capsule row that scrolls sideways and is never sticky, so it never hides the focused element.
+- **First run** (`#welcome`, welcome.ts): one decision a step, the step's buttons after its words (never stuck to the window's foot), a reason beside any button that waits (`aria-describedby="w-why"`), and a still step indicator. Its words are pure functions in welcome-copy.ts (home-welcome.test.ts). While it runs it borrows the hero's canvas and the character cards and gives them back at Start. Its forced-colours rules are in their own block at the end of home/styles.css; design-system.test.ts reads every block.
 - **Folds.** Fold a section with `<details class="fold" id="X-fold" aria-labelledby="X-h">`, with the chevron as a `::before` using `content: "" / ""` so it stays out of the spoken name.
 - **Window sizes.** Change CSS sizes and main-process window sizes together. The defaults:
   - Ask is 560×92, plus 24px a row as the text grows;
@@ -232,7 +233,7 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Springs.** Ease with the springs, Apple's `Spring(duration, bounce)` written as CSS `linear()` curves (a curve is the shape; pair it with a `--t-*` duration):
   - `--spring-smooth-0` (bounce 0) for what glides: setup's step, the sidebar's selection, Ember's arrival;
   - `--spring-brisk` (bounce 0.15) for entrances from their source (the bubble grows out of Ember, the Ask box out of Ember below it, a disclosure's content) and dots filling;
-  - `--spring-reward` (bounce 0.3) only for a completion or selection flourish, once: a card's done tick, the checkbox tick, the character card's check (`--spring-bouncy` is its older alias). Never on a question or an error;
+  - `--spring-reward` (bounce 0.3) only for a completion or selection flourish, once: a card's done tick, the checkbox tick, the character card's check, first run's try check (`--spring-bouncy` is its older alias). Never on a question or an error;
   - `--spring-snappy` (`--t-snappy`) for presses, switches and chevrons; `--spring-smooth` for the overlay focus ring.
 
   Durations: `--t-press` 220, `--t-fast` 300, `--t-move` 420, `--t-glide` 600, `--t-fade-in` 180 (ease-out), `--t-fade-out` 130 (ease-in), `--t-calm-fade` 150 ms; `--stagger` 30 ms an item (six at most) and `--stagger-plan` 40. Exits are faster than entrances, opacity first. Plain `ease` is for opacity and colour fades.
