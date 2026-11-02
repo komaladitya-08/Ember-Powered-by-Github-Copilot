@@ -13,8 +13,11 @@
 import crypto from "node:crypto";
 import { ownWords } from "../memory/service";
 
-/** One reminder: its words (the user's), when it is due (the clock's ms) and when it was set. */
-export interface Reminder { id: string; text: string; at: number; created: number }
+/**
+ * One reminder: its words (the user's), when it is due (the clock's ms) and when it was set. `missed`: it fell due while
+ * Ember wasn't running (a lasting reminder, routines.ts), and is told at the next start.
+ */
+export interface Reminder { id: string; text: string; at: number; created: number; missed?: boolean }
 
 /** At most this many waiting at once. */
 export const MAX_REMINDERS = 20;
@@ -48,17 +51,19 @@ export function reminderTime(a: { minutes?: number; at?: string }, now: number):
 /** A time as people say it, in the user's locale ("3:30 PM"). */
 export const clockTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
-/** "today at 3:30 PM", "tomorrow at 9:00 AM", or the weekday further ahead. */
+/** "today at 3:30 PM", "tomorrow at 9:00 AM", "yesterday at 6:00 PM" (a missed one), or the weekday further off. */
 export function whenWords(at: number, now: number): string {
   const day = (ms: number) => { const d = new Date(ms); d.setHours(0, 0, 0, 0); return d.getTime(); };
   const days = Math.round((day(at) - day(now)) / 86_400_000);
-  const on = days <= 0 ? "today" : days === 1 ? "tomorrow" : new Date(at).toLocaleDateString([], { weekday: "long" });
+  const on = days === 0 ? "today" : days === 1 ? "tomorrow" : days === -1 ? "yesterday" : new Date(at).toLocaleDateString([], { weekday: "long" });
   return `${on} at ${clockTime(at)}`;
 }
 
 export interface RemindersOptions {
   /** A reminder is due: tell the user (it has already left the list). */
   onDue: (r: Reminder) => void;
+  /** The reminders waiting changed (one set, cancelled or due): routines keep them for the next run. */
+  onChange?: (list: Reminder[]) => void;
   now?: () => number;
   timers?: { set: typeof setTimeout; clear: typeof clearTimeout };
 }
@@ -91,7 +96,32 @@ export class Reminders {
     const timer = this.timers.set(() => this.due(r.id), Math.max(0, r.at - now));
     (timer as { unref?: () => void }).unref?.();
     this.items.set(r.id, { r, timer });
+    this.changed();
     return r;
+  }
+
+  /**
+   * Puts back reminders kept from an earlier run (they passed the user's-words check when set). One whose time passed
+   * while Ember wasn't running is told at once, as missed. Ids already waiting are left as they are.
+   */
+  restore(list: readonly Reminder[]): void {
+    const now = this.now();
+    for (const kept of list) {
+      if (this.items.has(kept.id) || this.items.size >= MAX_REMINDERS) continue;
+      const r: Reminder = { id: kept.id, text: kept.text, at: kept.at, created: kept.created, ...(kept.at < now ? { missed: true } : {}) };
+      const timer = this.timers.set(() => this.due(r.id), Math.max(0, Math.min(r.at - now, MAX_AHEAD_MS)));
+      (timer as { unref?: () => void }).unref?.();
+      this.items.set(r.id, { r, timer });
+    }
+  }
+
+  /** Where the list goes when it changes (null: nowhere, routines off). */
+  setOnChange(fn: ((list: Reminder[]) => void) | null): void {
+    this.o.onChange = fn ?? undefined;
+  }
+
+  private changed(): void {
+    this.o.onChange?.(this.list());
   }
 
   /** The reminders waiting, soonest first. */
@@ -105,6 +135,7 @@ export class Reminders {
     if (!i) return false;
     this.timers.clear(i.timer);
     this.items.delete(id);
+    this.changed();
     return true;
   }
 
@@ -118,6 +149,7 @@ export class Reminders {
     const i = this.items.get(id);
     if (!i) return;
     this.items.delete(id);
+    this.changed();
     this.o.onDue(i.r);
   }
 }

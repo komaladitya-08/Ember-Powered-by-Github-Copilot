@@ -88,6 +88,7 @@ import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { MemoryService } from "./memory/service";
+import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -1184,6 +1185,14 @@ function start(): void {
   const memoryAllowed = () => policy.features.memory !== false;
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
+  // Routines and lasting reminders (app/main/agent/routines.ts): routines.json beside the settings, used only while the
+  // user has them on and the organisation allows them.
+  const routinesAllowed = () => policy.features.routines !== false;
+  const routineRows = () => (routinesAllowed() ? routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })) : []);
+  const routineBook: RoutineBook = new RoutineBook({
+    file: routinesFile(userData, err => log.warn("routines.file_broken", { err: err instanceof Error ? err.message : String(err) })),
+    onChange: () => broadcast(IPC.routinesChanged, routineRows()),
+  });
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
@@ -1429,6 +1438,13 @@ function start(): void {
     memory.forget(id);
   }));
   ipcMain.handle(IPC.memoryForgetAll, guard(() => { memory.forgetAll(); }));
+  ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
+  ipcMain.handle(IPC.routinesForget, guard((id: unknown) => {
+    if (typeof id !== "string" || !id || id.length > 20) return;
+    routineBook.forget(id);
+  }));
+  // Everything kept goes, and so do the reminders waiting this run (they would be kept again at their next change).
+  ipcMain.handle(IPC.routinesForgetAll, guard(() => { agent?.reminders.clear(); routineBook.forgetAll(); }));
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -2011,6 +2027,7 @@ function start(): void {
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       ...(memoryAllowed() ? { memory } : {}),
+      ...(routinesAllowed() ? { routines: routineBook } : {}),
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
       cornerTasks: true,
       readTime,

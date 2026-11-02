@@ -49,6 +49,7 @@ describe("reminderTime", () => {
     expect(whenWords(at(15, 30), NOW)).toMatch(/^today at 3:30/);
     expect(whenWords(at(9, 0, 1), NOW)).toMatch(/^tomorrow at 9:00/);
     expect(whenWords(at(9, 0, 3), NOW)).toMatch(/^Thursday at/);
+    expect(whenWords(at(18, 0, -1), NOW)).toMatch(/^yesterday at 6:00/);
   });
 });
 
