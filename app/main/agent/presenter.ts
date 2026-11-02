@@ -17,6 +17,8 @@ export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 const KEEP_CHARS = 600;
 /** The user's request as "Thinking…" quotes it: its first 120 characters, marked when cut short. */
 const quoted = (text: string) => `“${text.length > 120 ? `${text.slice(0, 119).trimEnd()}…` : text}”`;
+/** What a task's worker's own note says it is in the bubble (Presenter.note). */
+export const TASK_NOTE = "Task note: ";
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
@@ -773,6 +775,9 @@ export class Presenter {
     this.held = false;
     this.answering = false;
     this.asked = null;
+    // Stopped (the kill switch): a later problem never offers to ask again what the user just stopped.
+    this.forgetTurns();
+    this.offered = null;
     this.silent = true;
     this.owner.forget(this);
   }
@@ -935,6 +940,19 @@ export class Presenter {
     return b.visible && b.actions.some(a => a.id === TRY_AGAIN.id) ? this.offered : null;
   }
 
+  /**
+   * Try again was pressed: the request it offers, taken once. The offer and the button go at once, so a second press
+   * (the request waits up to 3 s for the screen's context first) asks nothing twice. Null when nothing is offered.
+   */
+  takeRetry(): string | null {
+    const ask = this.retryRequest;
+    if (ask === null) return null;
+    this.offered = null;
+    const b = this.state.bubble;
+    this.apply({ bubble: { ...b, actions: b.actions.filter(a => a.id !== TRY_AGAIN.id) } });
+    return ask;
+  }
+
   /** No turn is under way any more, and no request is owed one (a stop, a reset). */
   private forgetTurns(): void {
     this.pendingAsks = [];
@@ -1080,12 +1098,13 @@ export class Presenter {
   }
 
   /**
-   * The task's worker's own note (report_progress): shown as the task's words, quoted under its title in the quieter
-   * commentary of a working bubble, never as Ember's own thought (the model wrote it; markdown is stripped).
+   * The task's worker's own note (report_progress): shown as the task's words, labelled ("Task note: …") under its title
+   * in the quieter commentary of a working bubble: never as Ember's own thought, and never in quotes, which mark the
+   * user's own request (the model wrote it; markdown is stripped).
    */
   note(text: string): void {
     const plain = plainText(text).replace(/\s+/g, " ").trim();
-    if (plain) this.progress(quoted(plain));
+    if (plain) this.progress(`${TASK_NOTE}${clip(plain)}`);
   }
 
   /**
@@ -1287,6 +1306,9 @@ export class Presenter {
           this.apply({ emotion: "confused", talking: false, bubble: { visible: true, mood: "error", title: "No answer", thought: NO_REPLY, step: null, streaming: false, actions: this.problemActions(NO_REPLY) } });
           this.onProblem?.(NO_REPLY);
           this.hideLater(8000);
+          // The turn ended (its request is offered above): a later problem never offers it again.
+          this.turnOn = false;
+          this.turnAsked = null;
           break;
         }
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)

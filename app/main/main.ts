@@ -1049,7 +1049,7 @@ function start(): void {
    */
   /**
    * The latest requests asked, and how, for a problem's Try again (presenter TRY_AGAIN): the request the problem offers
-   * (AgentHost.retryRequest, its own turn's, not a newer one) goes again in the same words, with the same caution.
+   * (AgentHost.takeRetry, its own turn's, not a newer one) goes again in the same words, with the same caution.
    */
   let recentAsks: { text: string; voiceUnchecked?: boolean }[] = [];
   const showNotice = (n: { title: string; thought: string }, ms: number) => {
@@ -1572,7 +1572,8 @@ function start(): void {
     // (the same request, as it was asked: offered only where its turn ran no tool).
     if (id === "ui:stop") { void agent?.stopAnswer(); return; }
     if (id === "ui:retry") {
-      const again = agent?.retryRequest() ?? null;
+      // Taken on the first press: a second one, while this request waits for the screen's context, asks nothing.
+      const again = agent?.takeRetry() ?? null;
       // Its caution as it was asked; one no longer remembered here is treated as heard unchecked (never the user's words for commands).
       const how = again === null ? undefined : [...recentAsks].reverse().find(a => a.text === again);
       if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true }); }

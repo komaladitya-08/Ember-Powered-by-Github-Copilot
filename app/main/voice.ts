@@ -671,6 +671,8 @@ export class VoiceService {
       if (m.type === "ready") {
         const b = m.backend;
         this.o.log.info("voice.ready", { loadMs: m.loadMs, ...(b ? { backend: b.backend, detail: b.detail, provider: b.provider, threads: b.threads, tried: b.tried } : {}) });
+        // A model the native build couldn't make runs on WebAssembly (slower): worth a warning, it may be the build's fault.
+        if (b?.wasmModels?.length) this.o.log.warn("voice.model_wasm_fallback", { models: b.wasmModels, detail: b.detail });
         this.readyAt = Date.now(); this.watchAlive(proc); this.setState("waiting"); return;
       }
       if (m.type === "error") {

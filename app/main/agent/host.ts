@@ -1921,11 +1921,11 @@ export class AgentHost {
   }
 
   /**
-   * The request the conversation's problem on screen offers to ask again (its Try again): that turn's own request, never
-   * a newer one asked while it ran. Null when the bubble offers none.
+   * Try again was pressed on the conversation's problem: the request it offers (that turn's own, never a newer one asked
+   * while it ran), taken once, the button going with it, so a second press asks nothing twice. Null when none is offered.
    */
-  retryRequest(): string | null {
-    return this.presenter.retryRequest;
+  takeRetry(): string | null {
+    return this.presenter.takeRetry();
   }
 
   /**

@@ -153,6 +153,8 @@ export interface BackendInfo {
   provider: string;
   threads: number;
   tried: ProviderTry[];
+  /** The models the native build couldn't make, made on WebAssembly instead (loadModel); main logs a warning for them. */
+  wasmModels?: string[];
 }
 
 /**
@@ -214,7 +216,7 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   });
   const asr = chosen.made;
   const detail = onWasm.length ? `${sherpa.detail}; on WebAssembly: ${onWasm.join(", ")}` : sherpa.detail;
-  const info: BackendInfo = { backend: sherpa.backend, detail, provider: chosen.provider, threads: chosen.asrThreads, tried: chosen.tried };
+  const info: BackendInfo = { backend: sherpa.backend, detail, provider: chosen.provider, threads: chosen.asrThreads, tried: chosen.tried, ...(onWasm.length ? { wasmModels: [...onWasm] } : {}) };
 
   const spotIn = (stream: KwsStream, frame: Float32Array): string[] => {
     stream.acceptWaveform(SAMPLE_RATE, frame);

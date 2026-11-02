@@ -813,6 +813,16 @@ describe("speech models", () => {
       const backend = { backend: "native", detail: "sherpa-onnx 1.13.8 (11afbd00), onnxruntime 1.28.2", provider: "coreml", threads: 2, tried: [{ provider: "coreml", ms: 31 }, { provider: "cpu", ms: 48 }] };
       electron.procs[0].emit("message", { type: "ready", loadMs: 900, backend });
       expect(lines.find(x => x.event === "voice.ready")?.data).toEqual({ loadMs: 900, ...backend });
+      expect(lines.some(x => x.event === "voice.model_wasm_fallback")).toBe(false);
+    });
+
+    it("warns when a model the native build couldn't make runs on WebAssembly (PR #130 review)", async () => {
+      const { log: l, lines } = recording();
+      const { v } = service(true, { native: true, log: l });
+      await v.setWanted(true);
+      const backend = { backend: "native", detail: "sherpa-onnx 1.13.8 (C API); on WebAssembly: wake word model", provider: "cpu", threads: 2, tried: [{ provider: "cpu" }], wasmModels: ["wake word model"] };
+      electron.procs[0].emit("message", { type: "ready", loadMs: 900, backend });
+      expect(lines.find(x => x.event === "voice.model_wasm_fallback")).toMatchObject({ level: "warn", data: { models: ["wake word model"] } });
     });
 
     it("starts a voice process that died loading natively again at once on WebAssembly, and only once", async () => {
