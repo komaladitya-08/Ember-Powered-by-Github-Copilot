@@ -11,7 +11,7 @@
 
 import type { MicApi } from "../../shared/voice";
 import { Capture } from "./capture";
-import { Player, type PlayerAudio } from "./player";
+import { Player, playerAudio, type PlayerContext } from "./player";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
 import { bestVoice } from "./voices";
 
@@ -76,7 +76,7 @@ function update(): void {
 }
 
 /** Ember's own voice: main sends each reply's audio as it is made; the first chunk of sound says speech works. */
-const player = new Player(() => new AudioContext({ latencyHint: "interactive" }) as unknown as PlayerAudio, on => {
+const player = new Player(() => playerAudio(new AudioContext({ latencyHint: "interactive" }) as unknown as PlayerContext, new URLSearchParams(location.search).get("playback") === "element"), on => {
   if (on) api.speech(true);
   update();
 });
