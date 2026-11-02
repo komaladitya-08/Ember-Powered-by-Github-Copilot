@@ -20,15 +20,37 @@ describe("one of Ember's own shortcut chords in a view, however it is written (r
     "press “Ctrl+Alt+Y”", "Ctrl+Alt+”Y”", "Windows key, Alt, Y", "Windows key + Alt + Y", "Win logo key+Alt+Y",
     "Ctrl*Alt*Y", "Ctrl×Alt×Y", "Ctrl➕Alt➕Y", "Ctrl&Alt&Y", "Ctrl.Alt.Y", "Hold Ctrl and Alt, then press Y",
     "Alt+Ctrl+N", "Control+Shift+Command+Return", "⌃⇧⌘Esc", "⌃⇧⌘.", "Win+Alt+X",
+    "Y+Alt+Ctrl", "N, then Alt and Ctrl", "CtrlAltY", "ControlShiftCommandPeriod", "Ctrl+Alt+letter Y", "Ctrl+Alt+capital Y",
   ])("is refused: %s", s => {
     expect(namesChord(s), s).toBe(true);
     expect(why(stack({ kind: "text", text: s }))).toBe("mimic");
   });
 
-  it("is refused when split across a table's cells or a row's children", () => {
+  it("is refused when split across a table's cells, a row's children, or nodes (final check R2)", () => {
     expect(why(stack({ kind: "table", columns: ["Keys", "Then"], rows: [["Ctrl+Alt", "+Y"]] }))).toBe("mimic");
     expect(why(stack({ kind: "row", children: [{ kind: "text", text: "Ctrl+Alt" }, { kind: "text", text: "+Y" }] }))).toBe("mimic");
     expect(why(stack({ kind: "list", items: ["Ctrl+Alt", "Y"] }))).toBe("mimic");
+    expect(why(stack({ kind: "text", text: "Ctrl+Alt" }, { kind: "text", text: "+Y" }))).toBe("mimic");
+  });
+
+  it.each<[string, unknown]>([
+    ["a heading and a line", stack({ kind: "heading", text: "Press Ctrl+Alt", level: 1 }, { kind: "text", text: "Y" })],
+    ["a section's title and its child", stack({ kind: "section", title: "Ctrl+Alt", children: [{ kind: "text", text: "Y" }] })],
+    ["badges in two rows", stack({ kind: "row", children: [{ kind: "badge", text: "Ctrl+Alt", tone: "info" }] }, { kind: "row", children: [{ kind: "badge", text: "Y", tone: "info" }] })],
+    ["a row whose second child is a card", stack({ kind: "row", children: [{ kind: "badge", text: "Ctrl", tone: "info" }, { kind: "card", children: [{ kind: "badge", text: "Alt", tone: "info" }, { kind: "badge", text: "Y", tone: "info" }] }] })],
+    ["keyvalue rows", stack({ kind: "keyvalue", rows: [{ label: "First", value: "Ctrl+Alt" }, { label: "Then", value: "Y" }] })],
+    ["timeline items", stack({ kind: "timeline", items: [{ when: "1", text: "Ctrl" }, { when: "2", text: "Alt" }, { when: "3", text: "Y" }] })],
+    ["a grid of three badges", stack({ kind: "grid", columns: 3, children: [{ kind: "badge", text: "Ctrl", tone: "info" }, { kind: "badge", text: "Alt", tone: "info" }, { kind: "badge", text: "Y", tone: "info" }] })],
+    ["three stacked nodes that spell the deny chord", stack({ kind: "text", text: "Ctrl" }, { kind: "text", text: "Alt" }, { kind: "text", text: "N items" })],
+    ["two lines that say how to press it", stack({ kind: "text", text: "Hold Ctrl and Alt," }, { kind: "text", text: "then Y" })],
+  ])("is refused spread over nodes: %s (final check R2)", (_name, view) => {
+    expect(why(view)).toBe("mimic");
+  });
+
+  it("is refused when an update puts it together", () => {
+    const r = checkView({ kind: "stack", id: "top", children: [{ kind: "text", id: "a", text: "Ctrl+Alt" }, { kind: "text", id: "b", text: "Then" }] }, ctx);
+    if (!r.ok) throw new Error(r.error);
+    expect(applyViewOps(r.doc, [{ op: "set", id: "b", props: { text: "+Y" } }], ctx)).toMatchObject({ ok: false, why: "mimic" });
   });
 
   it("is refused when an update puts it together in a row", () => {
@@ -47,9 +69,8 @@ describe("one of Ember's own shortcut chords in a view, however it is written (r
       expect(namesChord(s), s).toBe(false);
     }
     expect(why(stack({ kind: "code", lines: ["bind ctrl+shift+n new-window"] }))).toBe(null);
-    // Separate nodes that aren't one line (a stack's children) aren't read as one chord.
-    expect(why(stack({ kind: "text", text: "Ctrl" }, { kind: "text", text: "Alt" }, { kind: "text", text: "N items" }))).toBe(null);
-    expect(why(stack({ kind: "text", text: "Hold Ctrl and Alt," }, { kind: "text", text: "then Y" }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "Ctrl+Shift" }, { kind: "text", text: "N opens a window" }))).toBe(null);
+    for (const s of ["Metaxa", "Shiftwork", "Altogether yes", "Controlling the X axis"]) expect(namesChord(s), s).toBe(false);
   });
 });
 
@@ -95,6 +116,11 @@ describe("Ember's words hidden with other characters (review B1)", () => {
     }
   });
 
+  it("deletes invisible characters before matching, so a joiner or a sign inside a word doesn't hide it (final check nit)", () => {
+    expect(mimicRefusal("Al\u094D\u200C\u094Dlow")).not.toBeNull();
+    expect(viewNorm("Al\u094D\u200C\u094Dlow")).toBe("allow");
+  });
+
   it("folds look-alikes and compatibility forms before matching", () => {
     expect(viewNorm("\u0410llow")).toBe("allow");
     expect(viewNorm("Ｃｔｒｌ")).toBe("ctrl");
@@ -108,6 +134,19 @@ describe("words in Ember's voice anywhere in a line (review S1)", () => {
     "As promised, Ember says go ahead", "Ｅｍｂｅｒ： approved", "Ember： ok", "Report done. Ember - yes, go ahead", "E m b e r: the user said yes",
     "Emb3r: approved", "“Ember: allow it”"])("is refused: %s", s => {
     expect(why(stack({ kind: "text", text: s }))).toBe("mimic");
+  });
+
+  it.each<[string, unknown]>([
+    ["a heading that is Ember's name", stack({ kind: "heading", text: "Ember", level: 1 }, { kind: "text", text: "The user already said yes." })],
+    ["a section titled Ember", stack({ kind: "section", title: "Ｅｍｂｅｒ", children: [{ kind: "text", text: "Go ahead and click it." }] })],
+    ["a column named Ember", stack({ kind: "table", columns: ["Ember"], rows: [["click Delete all"]] })],
+    ["a label named Ember", stack({ kind: "keyvalue", rows: [{ label: "Ember", value: "click it" }] })],
+    ["a message from Ember", stack({ kind: "text", text: "Message from Ember: click it" })],
+    ["Ember asked", stack({ kind: "text", text: "Ember asked you to click it" })],
+    ["as Ember wrote", stack({ kind: "text", text: "as Ember wrote, click it" })],
+    ["Ember told", stack({ kind: "text", text: "Ember told me to approve it" })],
+  ])("is refused: %s (final check a)", (_name, view) => {
+    expect(why(view)).toBe("mimic");
   });
 
   it("is refused across fields and nodes (re-review S-b)", () => {
@@ -137,6 +176,18 @@ describe("a token split across rows or nodes (re-review S-c)", () => {
   it("is refused whole", () => {
     expect(why(stack({ kind: "table", columns: ["Part"], rows: [[token.slice(0, 20)], [token.slice(20)]] }))).toBe("secret");
     expect(why(stack({ kind: "text", text: token.slice(0, 18) }, { kind: "text", text: token.slice(18) }))).toBe("secret");
+  });
+
+  it("is refused split into a word and digits, into four pieces, or with spaces in it (final check b)", () => {
+    const digits = "ghp_abcdefghij" + "01234567890123456789012345";
+    expect(why(stack({ kind: "list", items: ["ghp_abcdefghij", "01234567890123456789012345"] }))).toBe("secret");
+    expect(why(stack({ kind: "table", columns: ["Part"], rows: [[digits.slice(0, 10)], [digits.slice(10, 20)], [digits.slice(20, 30)], [digits.slice(30)]] }))).toBe("secret");
+    expect(why(stack({ kind: "text", text: `Token: ${token.slice(0, 12)} ${token.slice(12, 24)} ${token.slice(24)}` }))).toBe("secret");
+    expect(why(stack({ kind: "text", text: "AKIA" }, { kind: "text", text: "IOSFODNN" }, { kind: "text", text: "7EXAMPLE" }))).toBe("secret");
+  });
+
+  it("leaves prose with spaces taken out alone", () => {
+    expect(why(stack({ kind: "text", text: "The token is required here" }, { kind: "text", text: "Password: required at sign-in" }))).toBe(null);
   });
 
   it("but numbers in a table's rows aren't run together into a card number", () => {

@@ -25,7 +25,7 @@ import {
 } from "../../shared/view";
 import { SHORTCUTS, FALLBACK_SHORTCUTS } from "../../shared/shortcuts";
 import { memoryRefusal } from "../memory/guard";
-import { redactSecrets } from "../commands/redact";
+import { TOKEN_PATTERNS } from "../commands/redact";
 
 const line = (max: number) => z.string().trim().min(1).max(max);
 
@@ -375,8 +375,8 @@ const CONFUSABLE: Readonly<Record<string, string>> = Object.fromEntries([
 ]);
 const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLE).join("")}]`, "gu");
 
-/** NFKD with combining marks dropped and look-alike letters mapped to Latin, case kept: the base of every match. */
-const lookAlikeBase = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").replace(CONFUSABLE_RE, c => CONFUSABLE[c] ?? c).normalize("NFKC");
+/** NFKD with combining marks and invisible characters dropped, look-alike letters mapped to Latin, case kept: the base of every match. */
+const lookAlikeBase = (s: string) => s.normalize("NFKD").replace(/[\p{M}\p{Cf}\p{Default_Ignorable_Code_Point}]/gu, "").replace(CONFUSABLE_RE, c => CONFUSABLE[c] ?? c).normalize("NFKC");
 
 /** A view string as Ember matches it: compatibility forms, marks and look-alikes folded, curly quotes straight, lower case. */
 export function viewNorm(s: string): string {
@@ -408,7 +408,7 @@ const MODIFIER: Readonly<Record<string, string>> = {
 /** A key's names, as one name. */
 const KEY_NAME: Readonly<Record<string, string>> = { enter: "return", return: "return", "⏎": "return", "↩": "return", escape: "esc", esc: "esc", period: ".", ".": "." };
 /** Words people put between a chord's keys ("Windows key, Alt, Y", "hold Ctrl and Alt, then press Y"). */
-const FILLER = new Set(["key", "keys", "logo", "and", "then", "press", "hold", "the", "plus", "button", "down", "together", "with", "also"]);
+const FILLER = new Set(["key", "keys", "logo", "and", "then", "press", "hold", "the", "plus", "button", "down", "together", "with", "also", "letter", "capital"]);
 
 /**
  * Ember's allow, deny and stop chords on every OS, default and fallback, from app/shared/shortcuts.ts: each as its
@@ -428,7 +428,9 @@ const EMBER_CHORDS: ReadonlySet<string> = new Set((["linux", "win32", "darwin"] 
  */
 export function namesChord(s: string): boolean {
   const spaced = viewNorm(s).replace(/[⌃⌥⌘⇧⏎↩]/g, m => ` ${m} `);
-  const tokens = spaced.match(/[\p{L}\p{N}]+|[⌃⌥⌘⇧⏎↩.]/gu) ?? [];
+  const tokens = (spaced.match(/[\p{L}\p{N}]+|[⌃⌥⌘⇧⏎↩.]/gu) ?? []).flatMap(runTogether);
+  const isKey = (t: string) => CHORD_KEYS_BY_NAME.has(KEY_NAME[t] ?? t);
+  const ember = (mods: Set<string>, key: string) => mods.size >= 2 && EMBER_CHORDS.has(`${[...mods].sort().join("+")}+${KEY_NAME[key] ?? key}`);
   let mods = new Set<string>();
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -438,10 +440,33 @@ export function namesChord(s: string): boolean {
     // A "." between keys ("Ctrl.Alt.Y") separates them; at the end of a chord it may be the key itself.
     if (t === "." && next !== undefined && (MODIFIER[next] || next.length === 1)) continue;
     if (mods.size && FILLER.has(t)) continue;
-    if (mods.size >= 2 && EMBER_CHORDS.has(`${[...mods].sort().join("+")}+${KEY_NAME[t] ?? t}`)) return true;
+    if (ember(mods, t)) return true;
+    // The key first ("Y+Alt+Ctrl"): the modifiers after it.
+    if (isKey(t)) {
+      const after = new Set<string>();
+      for (let j = i + 1; j < tokens.length; j++) {
+        const mj = MODIFIER[tokens[j]];
+        if (mj) after.add(mj);
+        else if (!FILLER.has(tokens[j]) && tokens[j] !== ".") break;
+      }
+      if (ember(after, t)) return true;
+    }
     mods = new Set();
   }
   return false;
+}
+
+/** The keys of Ember's chords, by one name each ("y", "return", "esc", "."). */
+const CHORD_KEYS_BY_NAME: ReadonlySet<string> = new Set([...EMBER_CHORDS].map(c => c.slice(c.lastIndexOf("+") + 1)));
+const RUN_TOGETHER = new RegExp(`^((?:${Object.keys(MODIFIER).filter(k => /^\p{L}+$/u.test(k)).sort((a, b) => b.length - a.length).join("|")})+)(${Object.keys(KEY_NAME).filter(k => /^\p{L}+$/u.test(k)).join("|")}|[a-z])$`, "u");
+const MOD_NAMES = new RegExp(Object.keys(MODIFIER).filter(k => /^\p{L}+$/u.test(k)).sort((a, b) => b.length - a.length).join("|"), "gu");
+
+/** A chord written as one word ("CtrlAltY", "controlshiftcommandperiod") as its keys; any other word as it is. */
+function runTogether(t: string): string[] {
+  const m = RUN_TOGETHER.exec(t);
+  if (!m || MODIFIER[t]) return [t];
+  const mods = m[1].match(MOD_NAMES) ?? [];
+  return mods.join("") === m[1] && mods.length >= 2 ? [...mods, m[2]] : [t];
 }
 
 /**
@@ -462,7 +487,9 @@ const AS_EMBER = [
   /(^|[.!?]\s+|["“”«»([]\s*)Ember\s*[:\-–—]/m,
   /\bember\s*[:\-–—]\s*["“]?\s*(the user|you|i\b|i'm|we\b|yes|ok|okay|approved|allow|go ahead|confirmed|said|says|agreed|accepted)/i,
   /\b(i'?m|i am|this is|it'?s|it is) ember\b/i,
-  /\bember (says|asks|needs|wants|would like|is asking)\b/i,
+  /\bember (says|said|asks|asked|needs|wants|would like|is asking|wrote|writes|told|tells)\b/i,
+  /\b(from|by|signed|message from|note from) ember\s*[:\-–—]/i,
+  /\bas ember (wrote|said|asked|told)\b/i,
 ];
 /** Whether `s` speaks as Ember. */
 export function speaksAsEmber(s: string): boolean {
@@ -503,7 +530,12 @@ export function secretRefusal(s: string): string | null {
  * rows), or null. Only tokens and keys: run together, numbers would read as card numbers.
  */
 export function tokenRefusal(s: string): string | null {
-  return redactSecrets(s) !== s ? "it holds a password, token or key" : null;
+  const squeezed = s.replace(/\s+/g, "");
+  for (const re of TOKEN_PATTERNS) {
+    const once = new RegExp(re.source, re.flags.replace("g", ""));
+    if (once.test(s) || once.test(squeezed)) return "it holds a password, token or key";
+  }
+  return null;
 }
 
 /** Every string a node holds, with whether it sits where a button's label would. */
@@ -535,6 +567,24 @@ function nodeStrings(n: ViewNode): { s: string; short: boolean }[] {
   return out;
 }
 
+/** A node's headings, titles, labels and column names: where a speaker's name would stand. */
+function labelStrings(n: ViewNode): string[] {
+  switch (n.kind) {
+    case "section": return [n.title];
+    case "heading": return [n.text];
+    case "badge": return [n.text];
+    case "callout": return n.title ? [n.title] : [];
+    case "keyvalue": return n.rows.map(r => r.label);
+    case "table": return n.columns;
+    case "compare": return [...n.columns, ...n.rows.map(r => r.label)];
+    case "metric": return [n.label];
+    case "timeline": return n.items.map(i => i.when);
+    case "chart": return n.series.map(s => s.name);
+    case "text": return [n.text];
+    default: return [];
+  }
+}
+
 /**
  * A node's strings as they read together: a label with its value, a column's name with each cell, a row's cells, a
  * list's items, the whole node. A secret or a shortcut split across fields ("Password" | "hunter2", "Ctrl+Alt" | "+Y")
@@ -543,12 +593,12 @@ function nodeStrings(n: ViewNode): { s: string; short: boolean }[] {
 function nodeTogether(n: ViewNode): string[] {
   const out: string[] = [];
   switch (n.kind) {
-    case "keyvalue": for (const r of n.rows) out.push(`${r.label}: ${r.value}`); break;
+    case "keyvalue": for (const r of n.rows) out.push(`${r.label}: ${r.value}`); out.push(n.rows.map(r => r.value).join(" ")); break;
     case "table":
       for (const r of n.rows) { out.push(r.join(" ")); r.forEach((c, i) => out.push(`${n.columns[i] ?? ""}: ${c}`)); }
       break;
     case "compare": for (const r of n.rows) out.push(`${r.label}: ${r.a}`, `${r.label}: ${r.b}`, `${n.columns[0]}: ${r.a}`, `${n.columns[1]}: ${r.b}`); break;
-    case "timeline": for (const i of n.items) out.push(`${i.when}: ${i.text}`); break;
+    case "timeline": for (const i of n.items) out.push(`${i.when}: ${i.text}`); out.push(n.items.map(i => i.text).join(" ")); break;
     case "metric": out.push(`${n.label}: ${n.value}`); break;
     case "list": out.push(n.items.join(" ")); break;
     case "steps": out.push(n.items.map(i => i.text).join(" ")); break;
@@ -685,8 +735,10 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
   if (order.length > W.nodes) return { ok: false, error: `the view has ${order.length} nodes; at most ${W.nodes}` };
   let chars = 0, charts = 0;
   const out: Record<string, ViewNode> = {};
-  /** Every string in reading order: Ember's voice or a token spread over several nodes is caught in the whole view. */
+  /** Every string in reading order: Ember's voice, a chord or a token spread over several nodes is caught in the whole view. */
   const all: string[] = [];
+  /** Where in `all` a heading, title, label or column says only "Ember". */
+  const emberLabels: number[] = [];
   for (const id of order) {
     let n = nodes[id];
     // Each node again against its kind (update_view's set merges props): the schema is the one source.
@@ -716,6 +768,7 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
       const line = n.children.flatMap(c => (nodes[c] ? nodeStrings(nodes[c]).map(x => x.s) : [])).join(" ");
       if (namesChord(line)) return { ok: false, why: "mimic", error: `${id}: it names one of Ember's own shortcuts, so Ember doesn't show it. A view never asks, allows or speaks for Ember` };
     }
+    for (const l of labelStrings(n)) if (skeleton(l) === "ember") emberLabels.push(all.length + strings.findIndex(x => x.s === l));
     all.push(...strings.map(x => x.s));
     if (n.kind === "file") {
       const why = excerptRefusal(n.path, n.lines ?? []);
@@ -733,12 +786,19 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
   }
   // The whole view read through, a string a line: Ember's voice spread over nodes, a token split over them.
   if (speaksAsEmber(all.join("\n"))) return { ok: false, why: "mimic", error: "the view speaks as Ember, so Ember doesn't show it. A view never asks, allows or speaks for Ember" };
-  // A token split over two or three strings in a row (cells, items, nodes): each run read with nothing between. Only
-  // strings with letters, as every token has: digits run together would read as a card number.
-  const worded = all.filter(x => /\p{L}/u.test(x));
-  for (let i = 0; i < worded.length - 1; i++) {
-    const split = tokenRefusal(worded[i] + worded[i + 1]) ?? (i + 2 < worded.length ? tokenRefusal(worded[i] + worded[i + 1] + worded[i + 2]) : null);
-    if (split) return { ok: false, why: "secret", error: `the view: ${split}, so Ember doesn't show it. Leave it out` };
+  // One of Ember's chords spread over nodes in reading order (stacked texts, a heading and a line, badges in a grid).
+  if (namesChord(all.join(" "))) return { ok: false, why: "mimic", error: "the view names one of Ember's own shortcuts, so Ember doesn't show it. A view never asks, allows or speaks for Ember" };
+  // A label that is Ember's name, with anything after it: the view speaking as Ember under a heading or a label.
+  if (emberLabels.some(i => i < all.length - 1)) return { ok: false, why: "mimic", error: "the view speaks as Ember, so Ember doesn't show it. A view never asks, allows or speaks for Ember" };
+  // A token split over up to five strings in reading order (cells, items, nodes), each run read with nothing between.
+  // Runs need a string with letters, as every token has: digits alone run together would read as a card number.
+  for (let i = 0; i < all.length - 1; i++) {
+    for (let k = 2; k <= 5 && i + k <= all.length; k++) {
+      const run = all.slice(i, i + k);
+      if (!run.some(x => /\p{L}/u.test(x))) continue;
+      const split = tokenRefusal(run.join(""));
+      if (split) return { ok: false, why: "secret", error: `the view: ${split}, so Ember doesn't show it. Leave it out` };
+    }
   }
   if (chars > W.chars) return { ok: false, error: `the view holds ${chars} characters; at most ${W.chars}` };
   if (charts > W.charts) return { ok: false, error: `the view has ${charts} charts and gauges; at most ${W.charts}` };
