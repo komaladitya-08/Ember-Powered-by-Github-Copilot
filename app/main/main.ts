@@ -17,7 +17,7 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -516,9 +516,9 @@ function start(): void {
     return { ...patch, privacy: { ...patch.privacy, neverLook: patch.privacy.neverLook.filter(x => !adminOnly.has(lower(x))) } };
   };
   // Dragging the size slider sends a change per step: shown at once, saved a moment later.
-  ipcMain.handle(IPC.updateSettings, guard((sent: SettingsPatch) => {
+  ipcMain.handle(IPC.updateSettings, guard((sent: unknown) => {
     // Where Ember works and what commands may do change only behind their consent cards (TARGETS_IPC), never here.
-    const { patch, dropped } = settingsFromHome(sent);
+    const { patch, dropped } = settingsFromHome(checkHomePatch(sent));
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     // A save that failed reaches the window as one plain sentence (review #84).
