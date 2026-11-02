@@ -127,7 +127,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - headline 14, body 14, callout 13;
   - footnote 12, caption 11.
 
-  These are the default text size; every token is `calc(Npx * var(--text-scale))`, and `--text-scale` is 1, 1.15 or 1.3 (Settings › Comfort & access › Text size). Weights and line heights are in ember.css.
+  These are the default text size; every token is `calc(Npx * var(--text-scale))` with its line height rounded to a whole pixel (`round(calc(Npx * var(--text-scale)), 1px)`, so baselines stay crisp at 1.15), and `--text-scale` is 1, 1.15 or 1.3 (Settings › Comfort & access › Text size). Weights and line heights are in ember.css.
 - **Text size.** A literal px font size, and the height of a control that holds words, needs an `html[data-text-size] <selector>` twin at `calc(Npx * var(--text-scale))` (page-prefs.test.ts checks every page and the bubble). `--type-title-3` (22, Apple's Title 1 size) is larger than `--type-title-2` (17), so choose a title style by its size, not its number.
 - **Hierarchy.** Build it from size, weight (400, 500, 600 or 700 only) and label colour. Nothing goes below 11px except the Ask hint keycaps.
 - **Tracking.** Track in em, tighter as text grows, on Inter's own curve (−0.006em at 14px, −0.003em at 13px, +0.01em at 11px); don't copy SF Pro's table.
@@ -156,8 +156,12 @@ Name these patterns when you design something new. Vague direction such as "make
   - `.hint` footnotes below the group;
   - words first in a row, with the switch at the trailing edge;
   - Remove as a `--red-text` text button.
+<<<<<<< HEAD
 - **Panes and section links.** Once Ember has started, Home shows one pane at a time (every top-level section carries `data-pane`; main.ts `showPane` takes the others off the page with `.off-pane`), and reopens on the last one. From 640px up, Home has a fixed 200px sidebar with **Search settings** at its top and coloured symbol tiles, and marks the current pane's link with `aria-current="true"`. Below 640px the search field and the links form one capsule row that scrolls sideways and is never sticky, so it never hides the focused element. A new section goes on a pane; a new pane gets a link, a tile and a place in the order (most used first).
 - **Home's status panel** is the one HUD part of a content window: still (its ring never animates), opaque on `--surface-1`, with one prominent button. Its words come from the same data the page shows below it (Task activity's tasks, the setup check's count), so the two never disagree.
+=======
+- **First run** (`#welcome`, welcome.ts): one decision a step, the step's buttons after its words (never stuck to the window's foot), a reason beside any button that waits (`aria-describedby="w-why"`), and a still step indicator. Its words are pure functions in welcome-copy.ts (home-welcome.test.ts). While it runs it borrows the hero's canvas and the character cards and gives them back at Start. Its forced-colours rules are in their own block at the end of home/styles.css; design-system.test.ts reads every block.
+>>>>>>> origin/main
 - **Folds.** Fold a section with `<details class="fold" id="X-fold" aria-labelledby="X-h">`, with the chevron as a `::before` using `content: "" / ""` so it stays out of the spoken name.
 - **Window sizes.** Change CSS sizes and main-process window sizes together. The defaults:
   - Ask is 560×92, plus 24px a row as the text grows;
@@ -221,7 +225,7 @@ Name these patterns when you design something new. Vague direction such as "make
 
 - **Springs.** Ease with the springs, which are SwiftUI springs written as CSS `linear()` curves:
   - `--spring-snappy` (`--t-snappy`) for presses, switches, chevrons and entrances;
-  - `--spring-bouncy` only for a selection flourish (the character card's check, the checkbox tick);
+  - `--spring-bouncy` only for a selection or completion flourish, once, never on a question or an error (the character card's check, the checkbox tick; first run's try check uses its successor `--spring-reward`, defined in `.welcome` until ember.css carries the motion tokens);
   - `--spring-smooth` only for the overlay focus ring.
 
   Plain `ease` is for opacity and colour fades.

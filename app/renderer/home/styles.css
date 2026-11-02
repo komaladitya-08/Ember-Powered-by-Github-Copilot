@@ -81,7 +81,7 @@ h3.sub:first-child { margin-top: 0; }
 h2[tabindex="-1"]:focus { outline: none; }
 
 /* ───── Groups: the rounded sections everything sits in ───── */
-.copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row {
+.copilot, .group, .checks, .activity, .conversation, .plain-list, .facts {
   background: var(--panel); border-radius: var(--r-lg); box-shadow: var(--group-edge);
 }
 .copilot { display: grid; gap: 12px; padding: 16px; }
@@ -143,32 +143,8 @@ h2[tabindex="-1"]:focus { outline: none; }
 .pick-row input[type="range"]:focus-visible { outline: none; }
 .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), var(--focus-ring); }
 
-/* The first-run Start: agreement and the one prominent button (a large capsule). */
-.start-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; margin-top: 6px; padding: 16px; }
-.start-row[hidden], .switch-row[hidden], .hint[hidden] { display: none; }
-/* It is the page's last part, and in first run it stays at the window's foot while the terms scroll, so agreeing and
-   Start are never below the fold (review #104); focus scrolls clear of it (WCAG 2.4.11). A soft shadow sets it apart.
-   From the card's top down, the window's own background covers everything around it, across the whole window, so
-   nothing scrolls into view beside or below the card or through its rounded corners: a shadow spread from a box the
-   card's shape, behind its content, moved down by its spread so it starts at the card's top (a shadow, so the window
-   never scrolls sideways). The box lies a pixel inside the card's, so nothing behind shows through where their rounded
-   edges meet, and the card's edge is drawn over it there, so it shows all round (in increased contrast, its only
-   edge). */
-body.first-run .start-row {
-  position: sticky; bottom: 12px; z-index: 1;
-  box-shadow: 0 -10px 24px -8px rgba(0, 0, 0, 0.6);
-}
-body.first-run .start-row::before {
-  content: ""; position: absolute; inset: 1px; z-index: -1; border-radius: inherit; pointer-events: none;
-  box-shadow: var(--group-edge), 0 100vmax 0 100vmax var(--bg);
-}
-/* Focus scrolls clear of the row and its gap, with the room left at the top for a focus ring (16 px), at the row's own
-   height, which its words set: the text size, the window's width and its zoom wrap them onto more lines (start-row.ts
-   keeps it as --start-row-h). Until it is measured, at least the row at the narrowest window, not zoomed, at each text
-   size (136, 143.8 and 175.6 px). */
-html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138px * var(--text-scale)) + 12px + 16px); }
-.start-row .hint { margin: 0; flex-basis: 100%; }
-#agree-row { min-height: 28px; }
+/* The first run's Start (welcome.ts, on its last step): the one prominent button, a large capsule. */
+.switch-row[hidden], .hint[hidden] { display: none; }
 .start {
   all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
   min-height: calc(36px * var(--text-scale)); padding: 8px 22px; border-radius: var(--r-capsule); background: var(--accent); color: var(--on-accent);
@@ -180,8 +156,6 @@ html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138p
 .start:active { transform: scale(0.97); }
 .start:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring); }
 .start[hidden] { display: none; }
-/* Unavailable until agreed: a grey capsule with a readable label, as Apple's disabled prominent buttons. */
-.start:disabled { cursor: default; filter: none; transform: none; background: rgba(120, 120, 128, 0.32); color: rgba(245, 240, 236, 0.6); box-shadow: none; }
 
 /* Footnotes: under their group, in the secondary label. */
 .hint { margin: 0 4px; color: var(--muted); font: var(--type-footnote); }
@@ -250,12 +224,7 @@ progress[hidden] { display: none; }
   background: color-mix(in srgb, var(--blue) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 38%, transparent);
 }
 .managed.error { background: color-mix(in srgb, var(--red) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 45%, transparent); }
-.managed[hidden], .welcome[hidden] { display: none; }
-.welcome {
-  padding: 22px 22px 8px; border-radius: var(--r-xl); background: var(--panel);
-  box-shadow: var(--group-edge), 0 12px 32px rgba(0, 0, 0, 0.3);
-}
-.welcome h2 { margin: 0 0 16px; font: var(--type-title-3); letter-spacing: -0.018em; }
+.managed[hidden] { display: none; }
 /* Each promise with its symbol, as Apple's privacy screens do. */
 .terms { margin: 0 0 14px; padding: 0; list-style: none; display: grid; gap: 16px; color: var(--muted); }
 .terms li { position: relative; padding-left: 42px; min-height: 28px; text-wrap: pretty; }
@@ -456,7 +425,7 @@ progress[hidden] { display: none; }
 .facts dd.path { font: 13px/20px var(--ember-mono); }
 .facts dd.plain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
-/* ── First run: only the welcome, the character picker and Start ── */
+/* ── First run: only its steps (welcome.ts; styled at the end of this sheet) ── */
 body.first-run .after-setup { display: none !important; }
 /* Until the first status says which of the two layouts this is, nothing of the page shows (the window paints its
    background), so a first run never flashes the full settings first; main.ts lifts it, after 1.5 s at the latest. */
@@ -510,7 +479,6 @@ html { scroll-padding-top: 16px; }
 .jump a[href="#commands-h"] { --tile: #3a3a3c; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 7 5 5-5 5M12.5 18h6.5'/%3E%3C/svg%3E"); }
 .jump a[href="#access-h"] { --tile: #00b8c4; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='4.6' r='2.1'/%3E%3Cpath d='M4.2 7.6a1.1 1.1 0 0 1 1.3-.9l4.5.9h4l4.5-.9a1.1 1.1 0 1 1 .4 2.2l-4 .8V13l2 7a1.1 1.1 0 1 1-2.1.6L12.9 15h-1.8l-1.9 5.6a1.1 1.1 0 1 1-2.1-.6l2-7V9.7l-4-.8a1.1 1.1 0 0 1-.9-1.3z'/%3E%3C/svg%3E"); }
 .jump a[href="#checks-h"] { --tile: #8e8e93; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14.7 3.3a5 5 0 0 0-5.9 6.5l-5.4 5.4a2 2 0 0 0 2.8 2.8l5.4-5.4a5 5 0 0 0 6.5-5.9l-2.9 2.9-2.4-.5-.5-2.4z'/%3E%3C/svg%3E"); }
-#agree { scroll-margin: 120px; }
 
 /* ── Folded sections (What Ember did, Setup check, About): a disclosure chevron in the gutter, titles in line ── */
 .fold { display: grid; }
@@ -544,17 +512,11 @@ html { scroll-padding-top: 16px; }
    cards and Start keep an edge; the chosen character a thick highlight edge (and its check); the section you are in
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
-  body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row, .consent, .managed, .welcome, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
+  body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .consent, .managed, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
   .card, .start, .models select, .choice select, #text-size, #handle-position, .add-row input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
-  .start:disabled { color: GrayText; background: Canvas; border-color: GrayText; }
-  /* First run's Start row stays opaque at the window's foot: what covers the window round it is a shadow, which the
-     system drops, so the terms scrolling under it showed beside and below it. The cover is drawn as it is, in the
-     window's colour, with the row's edge in the text colour over it (and the outline above over that). */
-  body.first-run .start-row { background: Canvas; }
-  body.first-run .start-row::before { forced-color-adjust: none; box-shadow: 0 0 0 1px CanvasText, 0 100vmax 0 100vmax Canvas; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
   .models select, .choice select, #text-size, #handle-position { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
@@ -743,7 +705,7 @@ html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-
   --stagger: 30ms;
 }
 /* A pane coming into view (the sidebar picked it) settles in from just below: one fade and a 6 px rise. */
-body:not(.first-run) [data-pane]:not(.off-pane) {
+body:not(.first-run) .home > [data-pane]:not(.off-pane) {
   transition: opacity var(--t-fade-in) ease-out, translate var(--t-move) var(--spring-brisk);
 }
 /* Disclosure content (a fold, a finished task, a folded row) fades in from just above; the height doesn't animate. */
@@ -763,10 +725,170 @@ body:not(.first-run) [data-pane]:not(.off-pane) {
 @media (max-width: 639px) { .jump-hl { display: none; } }
 @media (forced-colors: active) { .jump-hl { display: none; } }
 @starting-style {
-  body:not(.first-run) [data-pane]:not(.off-pane) { opacity: 0; translate: 0 6px; }
+  body:not(.first-run) .home > [data-pane]:not(.off-pane) { opacity: 0; translate: 0 6px; }
   .fold[open] > :not(summary), .task-fold[open] > .task-body, .timeline .steps[open] > .step-list { opacity: 0; translate: 0 -4px; }
 }
 @media (prefers-contrast: more) {
   .jump-hl { display: none; }
   body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: rgba(255, 255, 255, 0.1); }
+}
+
+/* ───── First run (welcome.ts): one decision a step, Ember's line as its title, a still step indicator ─────
+   The window shows only the steps (and the organisation's notices) until Start; the step's buttons stay at the
+   window's foot when the step is short, and follow the step when it is long, so nothing ever covers it. */
+body.first-run .home { max-width: 640px; display: flex; flex-direction: column; gap: 20px; padding: 28px 24px 32px; }
+body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: none; }
+.welcome {
+  display: flex; flex-direction: column; gap: 22px;
+  /* The motion system's tokens (docs/DESIGN.md "Motion"), with the values ember.css takes on: defined here until then. */
+  --spring-smooth-0: linear(0, 0.01 2%, 0.045 4.5%, 0.12 8%, 0.45 20.5%, 0.575 26%, 0.678 31.5%, 0.766 37.5%, 0.837 44%, 0.895 51.5%, 0.939 60.5%, 0.971 72.5%, 0.991 91.5%, 1);
+  --spring-brisk: linear(0, 0.013 2.5%, 0.047 5%, 0.119 8.5%, 0.262 14%, 0.491 22.5%, 0.621 28%, 0.728 33.5%, 0.813 39%, 0.881 45%, 0.933 51.5%, 0.972 59.5%, 0.997 70%, 1.006 87.5%, 1);
+  --spring-reward: linear(0, 0.009 2%, 0.043 4.5%, 0.107 7.5%, 0.218 11.5%, 0.562 22.5%, 0.698 27.5%, 0.801 32%, 0.882 36.5%, 0.95 41.5%, 1 47%, 1.031 53%, 1.046 61%, 1.037 74%, 1.005 99.5%, 1);
+  --t-fast: 300ms; --t-move: 420ms; --t-glide: 600ms; --t-fade-in: 180ms; --t-fade-out: 130ms; --t-calm-fade: 150ms; --stagger: 30ms;
+}
+.welcome > * { min-width: 0; }
+
+/* The step indicator: a segment a step, lit to the one you are on. Still: it never animates. */
+.w-arc { display: flex; gap: 6px; }
+.w-arc i { flex: 1; height: 4px; border-radius: var(--r-capsule); background: var(--hud-dim); }
+.w-arc i.on { background: var(--accent); }
+
+/* Ember and its line. The first and last steps give Ember the stage; the others keep it small beside the title. */
+.w-head { display: flex; align-items: center; gap: 18px; }
+.w-heading { min-width: 0; }
+/* Ember arrives once, as first run opens: from 0.6 to its size on a brisk spring, then a happy hop (welcome.ts). */
+.w-stage { flex: none; transition: scale var(--t-glide) var(--spring-brisk), opacity var(--t-fade-in) ease-out; }
+@starting-style { .w-stage { scale: 0.6; opacity: 0; } }
+.welcome #buddy { display: block; width: 76px; height: 76px; }
+.welcome[data-step="hello"] .w-head { flex-direction: column; align-items: flex-start; gap: 22px; margin-top: 8vh; }
+.welcome[data-step="hello"] #buddy { width: 148px; height: 148px; }
+.w-count { margin: 0 0 2px; color: var(--muted); font: var(--type-footnote); font-variant-numeric: tabular-nums; }
+.welcome h2 { margin: 0; font: var(--type-large-title); letter-spacing: -0.021em; text-wrap: balance; overflow-wrap: anywhere; }
+.welcome h2:focus { outline: none; }
+.w-lead { margin: 6px 0 0; color: var(--muted); font: var(--type-body); max-width: 52ch; text-wrap: pretty; }
+
+/* A step's own part comes in as the step opens, from the side it comes from (Back reverses it), and then stays
+   still: nothing moves near the consent's decision once it is on screen. */
+.w-pane { display: grid; gap: 12px; transition: opacity var(--t-fade-in) ease-out, translate var(--t-move) var(--spring-smooth-0); }
+@starting-style { .w-pane { opacity: 0; translate: 16px 0; } }
+@starting-style { .welcome[data-dir="back"] .w-pane { translate: -16px 0; } }
+/* Reduced motion: the step fades in without moving (Calm stops every transition, ember.css). */
+@media (prefers-reduced-motion: reduce) { @starting-style { .w-pane, .welcome[data-dir="back"] .w-pane { translate: none; } .w-stage { scale: none; } } }
+.w-pane > .hint { margin: 0 4px; }
+
+/* What Ember does: the full text's symbols, one short line each. */
+.w-points { margin: 0; gap: 12px; color: var(--fg); }
+.w-points li { padding-left: 40px; min-height: 28px; padding-top: 3px; }
+
+/* "Read the full text", "Show the details": a disclosure with its chevron, the text in a callout. */
+.w-more > summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px 2px 2px; border-radius: var(--r-xs);
+  color: var(--accent); font: var(--type-callout); font-weight: 500;
+}
+.w-more > summary::-webkit-details-marker { display: none; }
+.w-more > summary::before {
+  content: "" / ""; flex: none; width: 12px; height: 12px; background: currentColor;
+  -webkit-mask: var(--sym-chevron) center / 10px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
+.w-more[open] > summary::before { transform: rotate(90deg); }
+.w-more > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.w-more[open] > summary { margin-bottom: 10px; }
+.w-more h3 { margin: 0 0 12px; font: var(--type-headline); }
+.w-more > :not(summary) { margin-left: 0; }
+.w-more .terms, .w-detail { margin: 0; padding: 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.w-more h3 + .terms { margin-top: -4px; }
+.w-note { margin: 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
+.w-note:empty { display: none; }
+
+/* A status line with its symbol (never colour alone): connected, all good, or what needs doing. */
+.w-status { margin: 0; display: flex; align-items: flex-start; gap: 8px; color: var(--fg); font: var(--type-headline); text-wrap: pretty; }
+.w-status:empty { display: none; }
+.w-status.ok::before, .w-status.fail::before, .w-status.warn::before, .w-status.error::before {
+  content: "" / ""; flex: none; width: 18px; height: 18px; margin-top: 1px; -webkit-mask: var(--sym) center / contain no-repeat; background: var(--sym-tint);
+}
+.w-status.ok { --sym: var(--sym-done); --sym-tint: var(--green); }
+.w-status.warn { --sym: var(--sym-failed); --sym-tint: var(--yellow); }
+.w-status.fail, .w-status.error { --sym: var(--sym-failed); --sym-tint: var(--red); }
+.w-status.error { color: var(--red-text); font: var(--type-body); }
+
+/* The device code (the Copilot section's own look). */
+.w-code { display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.w-code-row { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: var(--muted); }
+.w-code-row code { color: var(--accent); font: var(--type-title-3); font-family: var(--ember-mono); letter-spacing: 0.04em; }
+
+/* Rows that need the user, the tries and the summary: grouped rows, as the rest of settings. */
+.w-checks, .w-tries, .w-card { margin: 0; padding: 0 16px; list-style: none; background: var(--panel); border-radius: var(--r-lg); box-shadow: var(--group-edge); }
+.w-check, .w-try { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 12px 0; }
+/* A row with a long explanation keeps its symbol by its title. */
+.w-check { align-items: flex-start; }
+.w-check .w-sym { margin-top: 1px; }
+.w-check > .btn { margin-top: -2px; }
+.w-check + .w-check, .w-try + .w-try { border-top: 1px solid var(--line); }
+.w-check-text, .w-try-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.w-check-text p, .w-try-text p { margin: 2px 0 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
+.w-try-text b, .w-check-text b { font-weight: 600; }
+.w-try-text .chord { margin-left: 6px; }
+.w-sym { flex: none; width: 20px; height: 20px; background: var(--yellow); -webkit-mask: var(--sym-failed) center / contain no-repeat; }
+.w-check[data-tone="fail"] .w-sym { background: var(--red); }
+/* A try not done yet is an empty ring; done, a filled check that lands once (a completion flourish). */
+.w-tick { flex: none; position: relative; width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--control-edge); }
+.w-tick::after {
+  content: ""; position: absolute; inset: 0; background: var(--green); -webkit-mask: var(--sym-done) center / contain no-repeat;
+  opacity: 0; scale: 0.6; transition: opacity var(--t-fade-in) ease-out, scale var(--t-move) var(--spring-reward);
+}
+.w-try.done .w-tick { box-shadow: none; }
+.w-try.done .w-tick::after { opacity: 1; scale: 1; }
+.w-try.done .w-try-text p { color: var(--green-text); }
+.w-cmd { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 0; }
+.w-cmd code { padding: 3px 8px; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); font: var(--type-footnote); font-family: var(--ember-mono); overflow-wrap: anywhere; }
+.w-detail { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 10px 16px; font: var(--type-callout); }
+.w-detail dt { color: var(--fg); }
+.w-detail dd { margin: 0; display: grid; gap: 2px; color: var(--muted); overflow-wrap: anywhere; }
+/* A row's state: its symbol and word, in the colour's text tint. */
+.w-state { display: inline-flex; align-items: center; gap: 5px; color: var(--fg); font-weight: 500; }
+.w-state::before { content: "" / ""; flex: none; width: 14px; height: 14px; background: var(--green); -webkit-mask: var(--sym-done) center / contain no-repeat; }
+.w-state[data-tone="warn"]::before { background: var(--yellow); -webkit-mask-image: var(--sym-failed); }
+.w-state[data-tone="fail"]::before { background: var(--red); -webkit-mask-image: var(--sym-failed); }
+
+/* "Hey Ember": eight bars lit by the microphone's level while Ember hears you, still otherwise (never on silence). */
+.w-meter { flex: none; display: flex; align-items: flex-end; gap: 3px; height: 22px; }
+.w-meter i { width: 4px; border-radius: var(--r-capsule); background: var(--hud-dim); }
+.w-meter i:nth-child(1) { height: 6px; } .w-meter i:nth-child(2) { height: 8px; } .w-meter i:nth-child(3) { height: 10px; } .w-meter i:nth-child(4) { height: 12px; }
+.w-meter i:nth-child(5) { height: 14px; } .w-meter i:nth-child(6) { height: 16px; } .w-meter i:nth-child(7) { height: 19px; } .w-meter i:nth-child(8) { height: 22px; }
+.w-meter i.on { background: var(--accent); }
+.w-meter.off { opacity: 0.4; }
+
+/* "Your Ember": what was chosen, as rows of label and value. */
+.w-card { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); padding: 4px 16px; }
+.w-card dt, .w-card dd { margin: 0; padding: 12px 0; min-height: 44px; }
+.w-card dt { color: var(--muted); padding-right: 16px; }
+.w-card dd { text-align: end; font-weight: 500; overflow-wrap: anywhere; }
+.w-card dt:not(:first-of-type), .w-card dt:not(:first-of-type) + dd { border-top: 1px solid var(--line); }
+/* Its lines arrive one after another (six at most), once, as the step opens. */
+.w-card > * { transition: opacity var(--t-fade-in) ease-out; }
+@starting-style { .w-card > * { opacity: 0; } }
+.w-card > :nth-child(n+3) { transition-delay: var(--stagger); }
+.w-card > :nth-child(n+5) { transition-delay: calc(var(--stagger) * 2); }
+.w-card > :nth-child(n+7) { transition-delay: calc(var(--stagger) * 3); }
+.w-card > :nth-child(n+9) { transition-delay: calc(var(--stagger) * 4); }
+.w-card > :nth-child(n+11) { transition-delay: calc(var(--stagger) * 5); }
+html.calm .w-card > * { transition-delay: 0s; }
+
+/* The step's buttons: Back leading, the step's own trailing, and why the main one waits beside it. They follow the
+   step rather than sit at the window's foot (Apple: no controls at the bottom of a macOS window), so a short step
+   keeps its decision close to its words. */
+.w-nav { margin-top: 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+.w-why { flex: 1 1 160px; margin: 0; color: var(--muted); font: var(--type-footnote); text-align: end; text-wrap: pretty; }
+.w-nav #w-back { margin-inline-end: auto; }
+.w-nav .start { min-width: 140px; }
+@media (max-width: 480px) { .w-why { flex-basis: 100%; order: -1; text-align: start; } }
+
+@media (forced-colors: active) {
+  .w-arc i, .w-meter i { forced-color-adjust: none; background: GrayText; }
+  .w-arc i.on, .w-meter i.on { background: Highlight; }
+  .w-checks, .w-tries, .w-card, .w-code, .w-more .terms, .w-detail { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .w-status::before, .w-sym, .w-tick::after, .w-more > summary::before, .w-state::before { background: CanvasText; }
+  .w-cmd code { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .w-tick { border: 1.5px solid CanvasText; }
+  .w-try.done .w-tick { border: 0; }
 }

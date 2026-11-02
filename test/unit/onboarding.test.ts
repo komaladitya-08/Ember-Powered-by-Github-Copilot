@@ -95,30 +95,24 @@ describe("the first-run window", () => {
   /** The page's markup with comments and white space between tags taken out, so the order of its parts is plain. */
   const flat = PAGE.replace(/>\s+</g, "><");
 
-  it("keeps agreeing and Start in view at the window's foot, after everything first run shows (review #104, #160)", () => {
-    // The start row is the page's last part, after the setup check (whose rows can show before Start), not inside the
-    // character picker, so it can stay at the window's foot while the terms scroll.
-    const start = flat.indexOf("<div class=\"start-row\" id=\"start-row\" hidden>");
-    expect(start).toBeGreaterThan(flat.indexOf("<details class=\"fold\" id=\"checks-fold\""));
-    expect(start).toBeGreaterThan(flat.indexOf("<details class=\"fold\" id=\"about-fold\""));
-    expect(flat.slice(start)).toMatch(/^<div class="start-row" id="start-row" hidden>.*?<\/div><\/main>/);
-    const pick = flat.slice(flat.indexOf("<section class=\"pick\""), flat.indexOf("</section>", flat.indexOf("<section class=\"pick\"")));
-    expect(pick).not.toContain("start-row");
-    // In first run it sticks to the window's foot, and focus scrolls clear of it (WCAG 2.4.11), at the row's own height
-    // (home-start-row.test.ts has the lengths).
-    expect(STYLES).toMatch(/body\.first-run \.start-row \{[^}]*position: sticky; bottom: \d+px;/);
-    expect(STYLES).toMatch(/html:has\(> body\.first-run\) \{ scroll-padding-bottom: calc\(var\(--start-row-h, [^;]+\) \+ \d+px \+ \d+px\); \}/);
-    // Nothing shows around it from its top down, across the whole window: a shadow moved down by its spread, so it
-    // starts at the card's top (a shadow, so no sideways scrolling), behind the card's content.
-    const band = /body\.first-run \.start-row::before \{([^}]*)\}/.exec(STYLES)?.[1] ?? "";
-    expect(band).toContain("0 100vmax 0 100vmax var(--bg)");
-    expect(band).toContain("z-index: -1");
-    // The card's edge (--group-edge's ring, its only edge in increased contrast) is drawn over that background, so it
-    // shows all round; the card itself no longer draws it, where the background would cover it at the sides and foot.
-    expect(band).toMatch(/box-shadow: var\(--group-edge\), 0 100vmax/);
-    expect(/body\.first-run \.start-row \{([^}]*)\}/.exec(STYLES)?.[1]).not.toContain("--group-edge");
-    // Its box lies a pixel inside the card's, so where the two rounded edges meet, nothing behind the card shows through.
-    expect(band).toContain("inset: 1px");
+  it("shows only its steps until Start, with each step's buttons after its words (UI audit #7)", () => {
+    // Everything else on the page waits until Ember has started; the organisation's notices still show.
+    expect(STYLES).toContain("body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: none; }");
+    // The buttons follow the step (Apple: no controls at a macOS window's foot), and nothing sticks over the words.
+    const nav = flat.slice(flat.indexOf("<div class=\"w-nav\">"));
+    expect(nav).toMatch(/^<div class="w-nav"><button type="button" class="btn quiet" id="w-back">Back<\/button><p class="w-why" id="w-why" role="status"><\/p>/);
+    expect(STYLES).not.toMatch(/\.w-nav \{[^}]*position: (sticky|fixed)/);
+    // The main button is described by the reason beside it, so a screen reader hears why it waits.
+    expect(tagOf("w-next").attrs["aria-describedby"]).toBe("w-why");
+    // The old Start row is gone: Start is the last step's button.
+    expect(PAGE).not.toContain("id=\"start-row\"");
+    expect(SCRIPT).toContain("const started = welcome.settings(s);");
+  });
+
+  it("keeps the full consent text one click away inside the consent step (M8.8)", () => {
+    const welcome = flat.slice(flat.indexOf("<section id=\"welcome\""), flat.indexOf("</section>", flat.indexOf("<section id=\"welcome\"")));
+    const consent = welcome.slice(welcome.indexOf("data-pane=\"consent\""), welcome.indexOf("data-pane=\"sign-in\""));
+    expect(consent).toContain("<details class=\"w-more\" id=\"w-full\"><summary>Read the full text</summary><h3 id=\"welcome-h\">Before Ember starts</h3><ul class=\"terms\">");
   });
 
   it("doesn't point to sections that aren't shown before Start (review #104)", () => {

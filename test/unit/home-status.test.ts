@@ -101,13 +101,29 @@ describe("Search settings", () => {
   });
 });
 
+describe("Home's style sheet", () => {
+  it("closes every block it opens, so a rule after a merge isn't swallowed (first run showed Home's panes once)", () => {
+    const css = fs.readFileSync(path.resolve("app/renderer/home/styles.css"), "utf8").replace(/\/\*[^]*?\*\//g, "");
+    let depth = 0;
+    for (const ch of css) {
+      if (ch === "{") depth++;
+      if (ch === "}") depth--;
+      expect(depth).toBeGreaterThanOrEqual(0);
+    }
+    expect(depth).toBe(0);
+    // First run shows only its steps and the organisation's notices, at the top level of the sheet.
+    expect(css).toMatch(/(?:^|\n)body\.first-run \.home > :not\(#welcome, #managed, #settings-notice\) \{ display: none; \}/);
+  });
+});
+
 describe("Home's panes and its Task activity channel", () => {
   const page = fs.readFileSync(path.resolve("app/renderer/home/index.html"), "utf8");
   const MAIN = fs.readFileSync(path.resolve("app/main/main.ts"), "utf8");
   const preload = fs.readFileSync(path.resolve("app/preload/home.ts"), "utf8");
 
   it("puts every section after the first run on a pane a sidebar link opens (UI audit #1)", () => {
-    const panes = new Set([...page.matchAll(/data-pane="(\w+)"/g)].map(m => m[1]));
+    // The page's own sections (first run's steps use the same attribute inside #welcome, and aren't panes).
+    const panes = new Set([...page.matchAll(/<section[^>]*data-pane="(\w+)"/g)].map(m => m[1]));
     const links = [...page.matchAll(/<a href="#([\w-]+)-h"/g)].map(m => m[1]);
     for (const l of links) expect(page, l).toMatch(new RegExp(`<section[^>]*data-pane="\\w+"[^>]*>\\s*(?:<[^>]+>\\s*)*?<h[12] id="${l}-h"`));
     expect(links[0]).toBe("home");

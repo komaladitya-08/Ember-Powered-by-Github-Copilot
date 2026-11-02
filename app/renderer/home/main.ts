@@ -1,5 +1,5 @@
 /**
- * Settings window (Home): first-run consent and the character picker until Start; then one pane at a time, chosen in
+ * Settings window (Home): until Start, only first run's steps show (welcome.ts); then one pane at a time, chosen in
  * the sidebar as System Settings does (docs/DESIGN.md "Home"). Home itself is the status panel (Ember's still ring,
  * its state, what is on, today, Ask and Stop everything), the conversation, Task activity and what Ember did; the
  * other panes are Your Ember (character, size, Ember on screen), Copilot, Voice, Memory, Apps & privacy, Computers,
@@ -26,7 +26,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
-import { followStartRow } from "./start-row";
+import { startWelcome } from "./welcome";
 import { revealAsking, startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { searchMatches, searchMessage } from "./search-copy";
@@ -155,19 +155,12 @@ function applySettings(s: Settings): void {
   const corner = handleCornerText(s.handlePosition);
   if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
   if (presence) renderPresence(presence);
-  // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
-  // everything else waits until Ember has started.
-  const consented = s.consent.version >= CONSENT_VERSION;
-  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // First run (or changed terms): its steps come first, the consent among them (welcome.ts); everything else waits
+  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Ember says it started
   // (review #50), rather than dropping to the page.
-  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
+  const started = welcome.settings(s);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
-  $("welcome").hidden = consented;
-  $("start-row").hidden = s.onboarded;
-  $("agree-row").hidden = consented;
-  ($("start") as HTMLButtonElement).disabled = !consented && !($("agree") as HTMLInputElement).checked;
-  $("start-hint").hidden = consented;
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
@@ -179,16 +172,11 @@ function applySettings(s: Settings): void {
   }
   renderStatus();
 }
-// First run's Start row stays at the window's foot: focus scrolls clear of it at its height now (start-row.ts).
-followStartRow($("start-row"), document.documentElement);
+// First run, one step at a time: it borrows the character and the cards until Start, and its fixes reach the setup check.
+const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } } });
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
-$("agree").addEventListener("change", e => {
-  const on = (e.target as HTMLInputElement).checked;
-  ($("start") as HTMLButtonElement).disabled = !on;
-  $("start-hint").hidden = on;
-});
 $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
@@ -201,14 +189,6 @@ size.addEventListener("input", () => {
   sizeLabel(v);
   void save({ size: v });
 });
-$("start").addEventListener("click", () => {
-  const already = (settings?.consent.version ?? 0) >= CONSENT_VERSION;
-  if (!already && !($("agree") as HTMLInputElement).checked) return;
-  void save({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true }).then(ok => {
-    // Start did nothing visible: the notice at the top says why (review #84).
-    if (!ok) $("settings-notice").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  });
-});
 /**
  * Saves a change made in this window. One that can't be saved says why (main's plain sentence, in the notice at the
  * top) and the controls go back to the settings still in use, instead of nothing happening (review #84).
@@ -220,12 +200,6 @@ function save(patch: SettingsPatch): Promise<boolean> {
     if (agent) renderAgent(agent);
     return false;
   });
-}
-/** Something needs the user's agreement first: take them to the checkbox. */
-function focusAgree(): void {
-  const agree = $("agree");
-  agree.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  agree.focus({ preventScroll: true });
 }
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
@@ -379,6 +353,7 @@ function render(status: Status): void {
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
+  welcome.status(status);
   const v = status.environment.versions;
   // Paths are set in the mono face (they are values to copy); versions and the address read as words (UI audit #15).
   const facts: [string, string, "path" | "text" | "copy"][] = [
@@ -396,7 +371,8 @@ function render(status: Status): void {
     if (kind === "copy") {
       const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
       copy.setAttribute("aria-label", `Copy the address ${val}`);
-      copy.addEventListener("click", () => { void navigator.clipboard.writeText(val).then(() => { copy.textContent = "Copied"; }, () => { /* the address stays shown to copy by hand */ }); });
+      // Through main (pages get no clipboard permission), as the sign-in code is copied.
+      copy.addEventListener("click", () => { window.ember.copyText(val).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
       dd.append(copy);
     }
     return [dt, dd];
@@ -491,13 +467,15 @@ function renderAdmin(a: Status["admin"]): void {
   }
   $("retention").textContent = keptWords(a);
   // Locked down, nothing goes to a model service: the data list says so instead of naming one.
-  const send = document.querySelector<HTMLElement>("li[data-icon='send']");
+  // The full consent text's line (first run's short form beside it is welcome.ts's own, drawn from the status).
+  const send = document.querySelector<HTMLElement>("#w-full li[data-icon='send']");
   const sendLine = lockdownSendLine(a);
   if (send) {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
-  if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  const service = document.querySelector<HTMLElement>("#w-full #model-service");
+  if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
@@ -706,8 +684,8 @@ $("sign-in").addEventListener("click", () => {
   $("cancel-sign-in").focus();
   window.ember.signIn().catch(err => {
     setSigningIn(false);
-    // Not agreed yet: the way forward is the checkbox at the top, so go there.
-    if (settings && settings.consent.version < CONSENT_VERSION) { focusAgree(); return; }
+    // Not agreed yet: the way forward is first run's consent step, so go there.
+    if (settings && settings.consent.version < CONSENT_VERSION) { welcome.toConsent(); return; }
     signInMsg(ipcErrorText(err), true);
   });
 });
@@ -731,7 +709,8 @@ function showCode(userCode: string, uri: string): void {
   const code = Object.assign(document.createElement("code"), { textContent: userCode });
   const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
   copy.setAttribute("aria-label", `Copy the code ${userCode}`);
-  copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
+  // Main copies it: the page has no clipboard permission (every web permission is denied but the mic window's audio).
+  copy.addEventListener("click", () => { window.ember.copyText(userCode).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
   // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).
@@ -949,13 +928,13 @@ function showSection(value: string): void {
 // ───── Panes: one at a time, as System Settings shows one pane per sidebar item (UI audit #1) ─────
 /** The pane shown: Home until the user picks another. */
 let pane = "home";
-/** A section's pane (its `data-pane`, or its section's). */
-const paneOf = (el: Element) => el.closest<HTMLElement>("[data-pane]")?.dataset.pane ?? null;
+/** A section's pane (its `data-pane`: the page's own sections, not first run's steps, which use the same attribute). */
+const paneOf = (el: Element) => el.closest<HTMLElement>(".home > [data-pane]")?.dataset.pane ?? null;
 /** Shows pane `p` (every other pane's sections are taken off the page) and marks its link. */
 function showPane(p: string, glide = false, remember = true): void {
   pane = p;
   if (remember) try { localStorage.setItem("ember.home.pane", p); } catch { /* storage blocked: the window opens on Home */ }
-  for (const s of document.querySelectorAll<HTMLElement>("[data-pane]")) s.classList.toggle("off-pane", s.dataset.pane !== p);
+  for (const s of document.querySelectorAll<HTMLElement>(".home > [data-pane]")) s.classList.toggle("off-pane", s.dataset.pane !== p);
   for (const a of jumpLinks) {
     const h = document.getElementById(`${sectionOf(a)}-h`);
     if (h && paneOf(h) === p) a.setAttribute("aria-current", "true");
@@ -1017,8 +996,8 @@ $("jump").addEventListener("focusin", e => {
 // once their list has come: the window waits on Home for them (without forgetting them), until the user picks a pane.
 let lastPane: string | null = null;
 try { lastPane = localStorage.getItem("ember.home.pane"); } catch { /* storage blocked: Home */ }
-const paneShows = (p: string) => !!document.querySelector(`[data-pane="${CSS.escape(p)}"]:not([hidden])`);
-const known = !!lastPane && !!document.querySelector(`[data-pane="${CSS.escape(lastPane)}"]`);
+const paneShows = (p: string) => !!document.querySelector(`.home > [data-pane="${CSS.escape(p)}"]:not([hidden])`);
+const known = !!lastPane && !!document.querySelector(`.home > [data-pane="${CSS.escape(lastPane)}"]`);
 /** The pane to reopen once it shows; null once it did, or the user picked another. */
 let restoring: string | null = known && lastPane && !paneShows(lastPane) ? lastPane : null;
 if (known && lastPane && paneShows(lastPane)) showPane(lastPane);
@@ -1028,7 +1007,7 @@ const panesSeen = new MutationObserver(() => {
   if (restoring && paneShows(restoring)) { const p = restoring; restoring = null; showPane(p); return; }
   if (!paneShows(pane)) showPane("home", false, false);
 });
-for (const s of document.querySelectorAll("[data-pane]")) panesSeen.observe(s, { attributes: true, attributeFilter: ["hidden"] });
+for (const s of document.querySelectorAll(".home > [data-pane]")) panesSeen.observe(s, { attributes: true, attributeFilter: ["hidden"] });
 // Links that show or step out later (Computers, Commands, a search) move the others, and a text size or window change
 // resizes them: the highlight follows at once.
 const linksMoved = new MutationObserver(() => placeHighlight(false));
@@ -1040,7 +1019,7 @@ new ResizeObserver(() => placeHighlight(false)).observe($("jump"));
 const SEARCHED = "h2, h3.sub, label, summary, .hint, .row-note, .intro, .agent-actions > button, .pick-row label";
 function searchItems(): { pane: string; text: string; el: HTMLElement }[] {
   const items: { pane: string; text: string; el: HTMLElement }[] = [];
-  for (const el of document.querySelectorAll<HTMLElement>(`[data-pane] :is(${SEARCHED})`)) {
+  for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
     const p = paneOf(el);
     if (!p || hiddenHere(el) || !el.textContent?.trim()) continue;
     items.push({ pane: p, text: el.textContent, el });
