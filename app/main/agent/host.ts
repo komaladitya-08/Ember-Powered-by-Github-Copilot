@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText } from "../../shared/view";
+import type { TaskActivity } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
@@ -1172,7 +1173,7 @@ export class AgentHost {
           if (byUser && p?.waiting) p.drop();
         },
         provider: !!this.o.provider,
-        makeWorker: (spec, progress, update) => {
+        makeWorker: (spec, progress, update, activity) => {
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
           // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
@@ -1197,7 +1198,7 @@ export class AgentHost {
             reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
-            desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onUsage: (i, o) => this.recordUsage(i, o),
+            desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),
             limits: { turnStartMs: this.o.turnStartMs, turnSlowMs: this.o.turnSlowMs, turnSilentMs: this.o.turnSilentMs },
             inotifyUsedUp: this.o.inotifyUsedUp ?? inotifyUsedUp,
             system: h.system, target: h.binding, commands: h.commands, grantKey: h.grantKey, onAuthorized: h.onAuthorized,
@@ -1845,6 +1846,29 @@ export class AgentHost {
     this.tasks?.cancelAll();
     this.confirmer?.cancelAll();
     await this.conductor?.abort();
+  }
+
+  /**
+   * What each kept task did and is doing, newest first (TaskManager.activities): Home's "Task activity" reads it. In
+   * memory only; empty while no TaskManager runs.
+   */
+  taskActivities(): { id: string; title: string; activity: TaskActivity }[] {
+    return this.tasks?.activities() ?? [];
+  }
+
+  /**
+   * The user pressed Try again on a failed task's card: it starts again with what it was asked with, on the same
+   * computer (which must still take it: its worker refuses otherwise). Nothing starts while the organisation has
+   * turned acting off. Returns whether it started.
+   */
+  retryTask(id: string): boolean {
+    if (this.o.admin?.().features.actions === false) return false;
+    const t = this.tasks?.retry(id);
+    if (!t) return false;
+    const target = t.targetId ? this.o.targets?.handsFor(t.targetId) : undefined;
+    if (target?.ok) this.taskBindings.set(t.id, target.hands.binding);
+    this.announced.add(t.id);
+    return true;
   }
 
   /**

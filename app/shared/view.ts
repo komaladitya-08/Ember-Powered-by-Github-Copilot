@@ -17,12 +17,29 @@ export type ViewBlock =
   | { kind: "list"; items: string[]; ordered?: boolean }
   | { kind: "facts"; rows: { label: string; value: string }[] }
   | { kind: "table"; columns: string[]; rows: string[][] }
-  | { kind: "file"; path: string; label?: string };
+  | { kind: "file"; path: string; label?: string }
+  /** Items ticked off or not ("Night Light on"). */
+  | { kind: "checklist"; items: { text: string; done: boolean }[] }
+  /** How far something got: `value` of `total` (whole numbers, 0 <= value <= total), a static bar with the words. */
+  | { kind: "progress"; label: string; value: number; total: number }
+  /** Two things side by side: two column names, then rows of a label and each one's value. */
+  | { kind: "compare"; columns: [string, string]; rows: { label: string; a: string; b: string }[] }
+  /** A few lines of a file, as text (no link, nothing to open): refused whole if any line holds a secret (view-schema.ts). */
+  | { kind: "excerpt"; path: string; lines: string[] }
+  /** One outcome in words beside a symbol: fine, worth a look, or a problem (never colour alone). */
+  | { kind: "status"; tone: "ok" | "warn" | "fail"; text: string };
 
 /** The catalog's limits: what fits a card, and keeps one card from folding the others away. */
 export const VIEW_LIMITS = {
   blocks: 6, text: 600, items: 8, item: 200, rows: 6, columns: 3, cell: 80, label: 60, value: 200, path: 400, plan: 8, step: 80,
+  lines: 8, line: 120, total: 10_000,
 } as const;
+
+/** A status block's tone in words, before its text (screen readers, and the view as text). */
+export const TONE_WORD: Record<"ok" | "warn" | "fail", string> = { ok: "OK: ", warn: "Worth a look: ", fail: "Problem: " };
+
+/** A progress block's words: "3 of 5". */
+export const progressWords = (value: number, total: number): string => `${value} of ${total}`;
 
 /** The words of a task's plan step for screen readers, before the step ("Done: ", "Now: ", "Next: "). */
 export const PLAN_WORD: Record<PlanStep["state"], string> = { done: "Done: ", now: "Now: ", todo: "Next: " };
@@ -47,6 +64,11 @@ export function viewText(blocks: readonly ViewBlock[]): string {
     else if (b.kind === "list") out.push(...b.items.map((t, i) => `${b.ordered ? `${i + 1}.` : "-"} ${t}`));
     else if (b.kind === "facts") out.push(...b.rows.map(r => `${r.label}: ${r.value}`));
     else if (b.kind === "table") out.push(b.columns.join(" | "), ...b.rows.map(r => r.join(" | ")));
+    else if (b.kind === "checklist") out.push(...b.items.map(i => `${i.done ? "[x]" : "[ ]"} ${i.text}`));
+    else if (b.kind === "progress") out.push(`${b.label}: ${progressWords(b.value, b.total)}`);
+    else if (b.kind === "compare") out.push(`${b.columns[0]} / ${b.columns[1]}`, ...b.rows.map(r => `${r.label}: ${r.a} / ${r.b}`));
+    else if (b.kind === "excerpt") out.push(b.path, ...b.lines);
+    else if (b.kind === "status") out.push(`${TONE_WORD[b.tone]}${b.text}`);
     else out.push(b.label ? `${b.label}: ${b.path}` : b.path);
   }
   return out.join("\n");

@@ -6,6 +6,7 @@ import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
 import type { MicState } from "./voice";
 import type { TargetSummary } from "./targets";
+import type { CardActivity } from "./activity";
 
 export const OVERLAY = {
   init: "overlay:init",
@@ -107,6 +108,8 @@ export interface TaskCard {
   plan?: PlanStep[];
   /** What it found or made, as its worker showed it (finish_task's view, from app/shared/view.ts's catalog). */
   view?: ViewBlock[];
+  /** What it is doing and has done, in Ember's words (app/shared/activity.ts), from the moment it starts to run. */
+  activity?: CardActivity;
 }
 
 /** A running task's card detail from the moment its Stop is pressed until it has wound down. */

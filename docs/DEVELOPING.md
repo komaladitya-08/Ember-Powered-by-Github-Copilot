@@ -172,8 +172,10 @@ by accident. A hidden Ember shows itself to ask, and with **Speak replies, quest
 **Always** (the default), or a screen reader running and it set to **When a screen reader runs**, it says the question
 out loud; **Never** keeps it quiet even for a screen reader. Buttons that send, delete, pay and the like, risky
 shortcuts (Delete, Ctrl+Enter, Alt+F4…) and Enter on such a button are always confirmed, and “Always” is never offered
-for them. Each task card has **Stop**; a failed card goes on its own after about a minute (the settings window's
-Conversation section keeps what went wrong). If an app can't be operated through accessibility, Ember asks to **borrow
+for them. Each task card has **Stop**, says what Ember is doing now in its own words ("Clicking in Text Editor…",
+"Waiting for you" while it asks), how long it has worked and which step of its plan it is on, and shows what it did
+under **Details**; a failed card goes on its own after about a minute (the settings window's Conversation section keeps
+what went wrong), and its **Try again** starts the same request again, asking every question again. If an app can't be operated through accessibility, Ember asks to **borrow
 your mouse**: it waits until you're still, moves the pointer visibly, and puts it back afterwards. Move the mouse, turn
 the wheel or press any key to take over instantly. Ember never types into password, payment or terminal fields and never
 acts in authentication windows. While a password prompt (polkit, keyring, sudo) is open, Ember doesn't read the screen,

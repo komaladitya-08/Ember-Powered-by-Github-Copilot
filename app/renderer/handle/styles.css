@@ -111,9 +111,15 @@ body.fallback .task {
 }
 body.fallback .task[hidden] { display: none; }
 body.fallback .task::before { content: ""; flex: none; width: 16px; height: 16px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 16px no-repeat; }
-.task-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: var(--type-callout); }
-.task-text b { margin-right: 2px; font-weight: 600; }
-#task-detail { color: var(--label-2); }
+/* While it works: a ring round a lit dot, as on the overlay's cards (it reads as live, not as a spinner that froze). */
+body.fallback .task[data-status="running"] { --sym: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9.5' fill='none' stroke='black' stroke-opacity='0.45' stroke-width='2'/%3E%3Ccircle cx='12' cy='12' r='5'/%3E%3C/svg%3E"); }
+/* Two lines: the task's title, then what it is doing now (stack.ts cardLines), each cut with an ellipsis only at the
+   card's edge: on one line the step was cut to "Re…" behind a long title (audit #14). */
+.task-text { flex: 1; min-width: 0; display: grid; font: var(--type-callout); }
+.task-text > b, #task-detail { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-text > b { font-weight: 600; }
+#task-detail { color: var(--label-2); font: var(--type-footnote); }
+#task-detail:empty { display: none; }
 .task-actions { flex: none; display: flex; gap: 6px; }
 .task-actions button { min-height: calc(24px * var(--text-scale)); padding: 3px 12px; font-size: 12px; line-height: 16px; }
 /* Microphone: a badge on the face's lower right, a symbol on a dark disc (so it never reads as part of the character,
