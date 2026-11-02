@@ -84,6 +84,11 @@ export const SettingsSchema = z.object({
   speak: z.boolean().default(true),
   /** Speak them while a screen reader runs, even with `speak` off; off with it, Ember never speaks (app/shared/speech.ts). */
   speakWithScreenReader: z.boolean().default(true),
+  /**
+   * Read a finished task's result out loud too (when replies are spoken); off, it shows on screen only ("Ember, just
+   * show me", JARVIS's "leave it on the screen"). Questions, answers and announcements are spoken either way.
+   */
+  speakResults: z.boolean().default(true),
   /** Listen for "Hey Ember". */
   wakeWord: z.boolean().default(true),
   voice: z.object({

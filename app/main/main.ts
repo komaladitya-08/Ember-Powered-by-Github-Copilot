@@ -2051,7 +2051,8 @@ function start(): void {
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
       onAccountChanged: () => { askHistory = []; },
       onTaskFinished: t => {
-        if (maySpeak()) voice?.speak(spokenText(t.text));
+        // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
+        if (maySpeak() && settings.get().speakResults) voice?.speak(spokenText(t.text));
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),
