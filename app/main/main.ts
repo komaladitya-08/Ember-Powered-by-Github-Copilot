@@ -2055,8 +2055,11 @@ function start(): void {
         if (maySpeak()) voice?.speak(spokenText(`Reminder: ${r.text}`));
         if (userAway()) notify("Ember: reminder", r.text);
       },
+      // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
+      health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       onTaskFinished: t => {
-        if (maySpeak()) voice?.speak(spokenText(t.text));
+        // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
+        if (maySpeak() && settings.get().speakResults) voice?.speak(spokenText(t.text));
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);
       },
       isOnline: () => net.isOnline(),

@@ -29,9 +29,10 @@ const FROZEN = {
 };
 /**
  * SHA-256 of JSON.stringify of each system message before the port (Linux, the desk, every setting). The worker's was
- * re-pinned when its identity stopped saying it never uses the mouse or keyboard (review #146).
+ * re-pinned when its identity stopped saying it never uses the mouse or keyboard (review #146); the conversation's when
+ * its tone gained the answer-first, honest-uncertainty and one-warning rules (TONE, the Jarvis research's J1).
  */
-const FROZEN_HASHES = { ember: "e96a17a95ad670b40e1d0ae09f71a728b30d63637dca6a560833bbfba4d387ec", worker: "8e0d7f2d0cab3ea12d44e280076f49cd4d4d8af6bd8082e52557d88af3a2cfa2", guide: "306579e7226e48c4eba7b8b7f03bb64c2a1aa06e2d34f8ec0c2f4afd33b35793" };
+const FROZEN_HASHES = { ember: "190699e127521e9626d34d5b9bf8a8e853f005a3002eabfb149294f9789768c6", worker: "8e0d7f2d0cab3ea12d44e280076f49cd4d4d8af6bd8082e52557d88af3a2cfa2", guide: "306579e7226e48c4eba7b8b7f03bb64c2a1aa06e2d34f8ec0c2f4afd33b35793" };
 const sha = (x: unknown) => crypto.createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const sectionsOf = (m: ReturnType<typeof workerSystemMessage>) => m.sections as Record<string, { content?: string }>;
 
