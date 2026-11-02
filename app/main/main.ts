@@ -1059,7 +1059,12 @@ function start(): void {
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
     if (how.spoken) { turnLatency.mark("sent"); ackLater(text); }
-    return agent?.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked })?.catch(err => log.error("ask.failed", { err }));
+    // Unanswered (not connected, stopped, never sent): this request's acknowledgement isn't said ("On it." after
+    // "Connect your GitHub account" would promise what won't happen). A later request's is left alone.
+    const ack = ackTimer;
+    const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
+    if (!agent) { unanswered(); return; }
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and

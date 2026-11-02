@@ -1713,9 +1713,13 @@ export class AgentHost {
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
    * before reading the screen); a Stop since then drops the request instead of sending it.
    */
-  /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked). */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<void> {
-    if (epoch !== this.stopEpoch) return;
+  /**
+   * `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked).
+   * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
+   * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
+   */
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<boolean> {
+    if (epoch !== this.stopEpoch) return false;
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
@@ -1724,7 +1728,7 @@ export class AgentHost {
       try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
       this.o.log.info("agent.results_switch", { on: results === "loud" });
       this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
-      return;
+      return true;
     }
     // "Systems check": Ember's report on itself, which works when Copilot doesn't.
     if (healthQuestion(text) && this.betweenTurns()) {
@@ -1734,20 +1738,20 @@ export class AgentHost {
       };
       this.o.log.info("agent.health_local", { phase: health.phase, mic: health.mic });
       this.answerLocally(text, healthReply(health), how.voiceUnchecked);
-      return;
+      return true;
     }
     // "What did I miss?": the tasks that finished lately, from Ember's own record.
     if (catchUpQuestion(text) && this.betweenTurns()) {
       this.o.log.info("agent.catch_up_local");
       this.answerLocally(text, catchUpReply(this.tasks?.list() ?? [], Date.now()), how.voiceUnchecked);
-      return;
+      return true;
     }
     const status = statusQuestion(text);
     if (status && this.betweenTurns()) {
       const tasks = this.tasks?.list() ?? [];
       this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
       this.answerLocally(text, statusReply(status, tasks, Date.now()), how.voiceUnchecked);
-      return;
+      return true;
     }
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
@@ -1755,7 +1759,7 @@ export class AgentHost {
     if (ending) {
       this.presenter.userPrompt(text);
       await ending;
-      if (epoch !== this.stopEpoch) { this.presenter.reset(); return; }
+      if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
@@ -1777,7 +1781,7 @@ export class AgentHost {
       this.presenter.userPrompt(text);
       await Promise.race([this.settled(), sleep(15_000)]);
       // Stop was pressed while it waited: the request is dropped, not sent once connected.
-      if (epoch !== this.stopEpoch) { this.presenter.reset(); return; }
+      if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     if (!this.conductor?.sessionId || this.status.phase !== "ready") {
       const signedOut = this.status.phase === "signed-out";
@@ -1794,7 +1798,7 @@ export class AgentHost {
       const asked = this.remember("you", text);
       if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
       this.remember("problem", `${title}: ${why}`);
-      return;
+      return false;
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
@@ -1819,9 +1823,10 @@ export class AgentHost {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
-      if (err instanceof ConnectionLost) this.lost(gen, "send failed");
-      else throw err;
+      if (err instanceof ConnectionLost) { this.lost(gen, "send failed"); return false; }
+      throw err;
     }
+    return true;
   }
 
   /**
