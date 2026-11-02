@@ -92,6 +92,17 @@
       <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
+      <h3 class="sub" id="routines-h">Routines and reminders</h3>
+      <div class="group">
+        <label class="switch-row"><input type="checkbox" id="routines-on" role="switch" aria-describedby="routines-hint"><span>Keep my routines and reminders</span></label>
+        <div id="routines-consent" class="consent" role="group" aria-label="Before Ember keeps routines" hidden>
+          <p id="routines-consent-text"></p>
+          <div class="agent-actions"><button type="button" id="routines-yes" class="btn" aria-describedby="routines-consent-text">I agree, keep them</button><button type="button" id="routines-no" class="btn quiet">Not now</button></div>
+        </div>
+      </div>
+      <ul class="plain-list" id="routines-list" aria-labelledby="routines-h"></ul>
+      <p class="hint" id="routines-hint">Off, reminders last until Ember closes and routines aren't kept. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
+      <div class="agent-actions"><button type="button" id="routines-forget-all" class="btn quiet" hidden>Delete all routines and reminders</button></div>
     </section>
 
     <section class="after-setup" aria-labelledby="voice-h">
@@ -121,9 +132,10 @@
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
         </div>
+        <label class="switch-row"><input type="checkbox" id="speak-results" role="switch"><span>Read finished tasks out loud, not only on screen</span></label>
       </div>
       <p class="hint" id="speak-note" role="status" hidden></p>
-      <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything.</p>
+      <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything. “Ember?” on its own tells you what Ember is doing, “What did I miss?” what finished while you were away, and “Ember, just show me” keeps results on screen.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="privacy-h">

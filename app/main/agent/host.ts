@@ -39,6 +39,9 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
+import { Reminders, whenWords, type Reminder } from "./reminders";
+import type { RoutineBook } from "./routines";
+import { catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -129,6 +132,12 @@ export interface HostOptions {
    * with its consent) and the administrator allows it. Signing out, or another account signing in, erases it.
    */
   memory?: ConductorMemory & { forgetAll(): void };
+  /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
+  onReminder?: (r: Reminder) => void;
+  /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
+  routines?: RoutineBook;
+  /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
+  health?: () => Pick<Health, "mic" | "speaks">;
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -687,6 +696,21 @@ export class AgentHost {
   }
 
   /**
+   * The user's reminders (reminders.ts): set only from their own words, kept in memory only, and when one is due it is
+   * shown in the bubble (main also says it and notifies): it never starts anything.
+   */
+  readonly reminders = new Reminders({ onDue: r => this.reminderDue(r) });
+
+  private reminderDue(r: Reminder): void {
+    this.o.log.info("agent.reminder_due", { late: Math.max(0, Date.now() - r.at) });
+    // One that fell due while Ember was closed (a lasting reminder) says when it was due.
+    const text = r.missed ? `${r.text} (due ${whenWords(r.at, Date.now())})` : r.text;
+    this.remember("ember", `${r.missed ? "Missed reminder" : "Reminder"}: ${text}`);
+    this.noticeBoard.post({ title: r.missed ? "Missed reminder" : "Reminder", thought: text, actions: [], mood: "attention" }, { ms: 60_000, emotion: "curious" });
+    this.o.onReminder?.(r);
+  }
+
+  /**
    * Where the targets runtime's bubbles go (a connection, an offer, a loss): through the shared bubble, so the
    * conversation's and the tasks' bubbles wait behind them as behind a question, and no presenter's timer hides them.
    */
@@ -1057,6 +1081,8 @@ export class AgentHost {
         this.o.onTranscript?.([]);
         // What Ember remembered was about the account before, its person: none of it carries over.
         this.o.memory?.forgetAll();
+        this.reminders.clear();
+        this.o.routines?.forgetAll();
         this.o.onAccountChanged?.();
       }
 
@@ -1185,8 +1211,11 @@ export class AgentHost {
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       const memory = this.memoryWanted() ? this.o.memory : undefined;
       this.memoryOn = !!memory;
+      const routines = this.keepRoutines();
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
+        reminders: this.reminders,
+        ...(routines ? { routines } : {}),
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1611,6 +1640,35 @@ export class AgentHost {
   /** Whether this conversation's conductor was given memory (memoryWanted() when it started). */
   private memoryOn = false;
 
+  /** Whether this conversation's conductor was given routines (routinesWanted() when it started). */
+  private routinesOn = false;
+  /** The kept reminders were put back this run (once: a reconnect doesn't put back what already fired). */
+  private remindersRestored = false;
+
+  /** Routines are on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
+  private routinesWanted(): boolean {
+    const r = this.o.settings.get().routines;
+    return !!this.o.routines && r.on && r.consent.version >= FEATURE_CONSENT_VERSION.routines;
+  }
+
+  /**
+   * Follows the routines switch as a conversation starts: on, reminders are kept in routines.json (and the ones kept
+   * from the last run come back, once); off, they are kept in memory only. The book to give the conductor, or none.
+   */
+  private keepRoutines(): RoutineBook | undefined {
+    const book = this.routinesWanted() ? this.o.routines : undefined;
+    this.routinesOn = !!book;
+    if (!book) { this.reminders.setOnChange(null); return undefined; }
+    try {
+      if (!this.remindersRestored) { this.remindersRestored = true; this.reminders.restore(book.reminders()); }
+      this.reminders.setOnChange(list => { try { book.setReminders(list); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); } });
+      book.setReminders(this.reminders.list());
+    } catch (err) {
+      this.o.log.warn("agent.routines_unreadable", { err });
+    }
+    return book;
+  }
+
   /** Memory is on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
   private memoryWanted(): boolean {
     const m = this.o.settings.get().memory;
@@ -1624,6 +1682,23 @@ export class AgentHost {
   /** Tasks running or waiting to run. */
   private tasksAtWork(): boolean {
     return this.tasks?.list().some(t => t.status === "running" || t.status === "queued") ?? false;
+  }
+
+  /** No conversation turn is under way or owed: a request answered here can't cut into one. */
+  private betweenTurns(): boolean {
+    return !this.presenter.busy && !this.queued.length;
+  }
+
+  /**
+   * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
+   * answer, and (asked by voice) followed by the usual follow-up window.
+   */
+  private answerLocally(text: string, reply: string, voiceUnchecked?: boolean): void {
+    const asked = this.remember("you", text);
+    if (voiceUnchecked) this.voiceUnchecked.add(asked);
+    this.presenter.say(reply);
+    this.o.onAnswer?.(reply);
+    this.o.onTurnEnd?.(false);
   }
 
   /** Requests sent whose turn hasn't started yet, oldest first (a request sent during a turn waits for it to end). */
@@ -1641,6 +1716,39 @@ export class AgentHost {
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked). */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<void> {
     if (epoch !== this.stopEpoch) return;
+    // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
+    // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
+    // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
+    const results = resultsRequest(text);
+    if (results && this.betweenTurns()) {
+      try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
+      this.o.log.info("agent.results_switch", { on: results === "loud" });
+      this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
+      return;
+    }
+    // "Systems check": Ember's report on itself, which works when Copilot doesn't.
+    if (healthQuestion(text) && this.betweenTurns()) {
+      const health: Health = {
+        phase: this.status.phase, ...(this.status.detail ? { detail: this.status.detail } : {}),
+        mic: "off", speaks: false, ...this.o.health?.(), tasks: this.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0,
+      };
+      this.o.log.info("agent.health_local", { phase: health.phase, mic: health.mic });
+      this.answerLocally(text, healthReply(health), how.voiceUnchecked);
+      return;
+    }
+    // "What did I miss?": the tasks that finished lately, from Ember's own record.
+    if (catchUpQuestion(text) && this.betweenTurns()) {
+      this.o.log.info("agent.catch_up_local");
+      this.answerLocally(text, catchUpReply(this.tasks?.list() ?? [], Date.now()), how.voiceUnchecked);
+      return;
+    }
+    const status = statusQuestion(text);
+    if (status && this.betweenTurns()) {
+      const tasks = this.tasks?.list() ?? [];
+      this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
+      this.answerLocally(text, statusReply(status, tasks, Date.now()), how.voiceUnchecked);
+      return;
+    }
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
     const ending = this.conductor?.ending;
@@ -1660,8 +1768,8 @@ export class AgentHost {
     }
     // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
     // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
-    if (this.status.phase === "ready" && this.memoryWanted() !== this.memoryOn && this.idle) {
-      this.o.log.info("agent.memory_changed", { on: this.memoryWanted() });
+    if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
+      this.o.log.info("agent.memory_changed", { on: this.memoryWanted(), routines: this.routinesWanted() });
       void this.launch(this.token, this.source);
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
@@ -1776,6 +1884,8 @@ export class AgentHost {
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.o.memory?.forgetAll();
+    this.reminders.clear();
+    this.o.routines?.forgetAll();
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();

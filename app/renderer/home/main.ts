@@ -6,9 +6,9 @@
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
-import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
+import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { MEMORY_CONSENT_TEXT, forgetMemoryLabel, handleCornerText, memoryEmptyText } from "./copy";
+import { MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
@@ -117,7 +117,11 @@ let settings: Settings | null = null;
 /** Memory (Settings › Conversation): see the Memory part below. Declared here: applySettings shows its switch. */
 type MemoryRow = Awaited<ReturnType<EmberHomeApi["memory"]>>[number];
 const MEMORY_VERSION = FEATURE_CONSENT_VERSION.memory;
+const ROUTINES_VERSION = FEATURE_CONSENT_VERSION.routines;
 let memoryRows: MemoryRow[] = [];
+let routineRows: RoutineRow[] = [];
+/** The routine whose Delete was pressed: focus goes to the one now in its place. */
+let routineFocus: number | null = null;
 /** After a Forget, focus goes to the row that took its place (or the list's last, or the switch). */
 let memoryFocus: number | null = null;
 function applySettings(s: Settings): void {
@@ -133,6 +137,7 @@ function applySettings(s: Settings): void {
   }
   if (!sliding && document.activeElement !== size) showSize(s.size);
   applyMemorySettings(s);
+  applyRoutineSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -435,7 +440,7 @@ function renderAdmin(a: Status["admin"]): void {
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
   if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -445,6 +450,7 @@ function renderAdmin(a: Status["admin"]): void {
   if (settings) renderPrivacy(settings);
   if (voice) renderVoice(voice);
   if (settings) applyMemorySettings(settings);
+  if (settings) applyRoutineSettings(settings);
 }
 
 // ───── What Ember did ─────
@@ -778,6 +784,52 @@ $("memory-forget-all").addEventListener("click", () => { memoryFocus = 0; void w
 window.ember.onSettingsChanged(applyMemorySettings);
 void window.ember.memory().then(renderMemory);
 window.ember.onMemory(renderMemory);
+
+// ───── Routines and lasting reminders (app/main/agent/routines.ts): kept only once the user turns them on and agrees ─────
+$("routines-consent-text").textContent = ROUTINES_CONSENT_TEXT;
+const routinesOn = () => !!settings?.routines.on && (settings?.routines.consent.version ?? 0) >= ROUTINES_VERSION;
+function renderRoutines(rows: RoutineRow[]): void {
+  routineRows = rows;
+  const list = $("routines-list");
+  list.replaceChildren(...(rows.length
+    ? rows.map((r, i) => {
+      const li = document.createElement("li");
+      li.append(Object.assign(document.createElement("span"), { textContent: `“${r.name}”: ${r.steps.join("; ")}` }));
+      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Delete" });
+      btn.setAttribute("aria-label", deleteRoutineLabel(r.name));
+      btn.addEventListener("click", () => { routineFocus = i; void window.ember.forgetRoutine(r.id); });
+      li.append(btn);
+      return li;
+    })
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: routinesEmptyText(routinesOn()) })]));
+  ($("routines-forget-all") as HTMLButtonElement).hidden = !rows.length;
+  if (routineFocus !== null) {
+    const buttons = list.querySelectorAll("button");
+    (buttons[Math.min(routineFocus, buttons.length - 1)] ?? $("routines-on")).focus();
+    routineFocus = null;
+  }
+}
+function applyRoutineSettings(s: Settings): void {
+  ($("routines-on") as HTMLInputElement).checked = s.routines.on && s.routines.consent.version >= ROUTINES_VERSION;
+  if (!routineRows.length) renderRoutines(routineRows);
+}
+$("routines-on").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  const consent = settings?.routines.consent ?? { version: 0, at: null };
+  // First time: the note comes first, and focus moves to it so it is read and answered.
+  if (on && consent.version < ROUTINES_VERSION) { $("routines-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("routines-yes").focus(); return; }
+  void save({ routines: { consent, on } });
+});
+$("routines-yes").addEventListener("click", () => {
+  $("routines-consent").hidden = true;
+  void save({ routines: { on: true, consent: { version: ROUTINES_VERSION, at: new Date().toISOString() } } });
+  $("routines-on").focus();
+});
+$("routines-no").addEventListener("click", () => { $("routines-consent").hidden = true; $("routines-on").focus(); });
+$("routines-forget-all").addEventListener("click", () => { routineFocus = 0; void window.ember.forgetAllRoutines(); });
+window.ember.onSettingsChanged(applyRoutineSettings);
+void window.ember.routines().then(renderRoutines);
+window.ember.onRoutines(renderRoutines);
 
 // ───── Section links ─────
 // A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.
@@ -1114,6 +1166,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
+  ($("speak-results") as HTMLInputElement).checked = s.speakResults;
   ($("natural") as HTMLInputElement).checked = s.voice.natural;
   if (voice) renderVoice(voice);
 }
@@ -1136,6 +1189,7 @@ $("natural").addEventListener("change", e => {
   void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false }), natural: on } });
 });
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
+$("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
   // The button goes while it downloads: focus stays in the section.
