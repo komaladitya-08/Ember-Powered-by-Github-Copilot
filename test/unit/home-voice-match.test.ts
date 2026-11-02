@@ -168,8 +168,10 @@ describe("When Ember asks first", () => {
   it("has the page's words", () => {
     expect(page).toContain(`<h3 class="sub">${TRUST_TEXT.heading}</h3>`);
     expect(page).toContain(`<input type="checkbox" id="trust-apps" role="switch" aria-describedby="trust-apps-hint"><span>${TRUST_TEXT.apps}</span>`);
-    expect(page).toContain(`<p class="hint" id="trust-apps-hint">${TRUST_TEXT.appsHint}</p>`);
+    expect(page).toContain(`<p class="row-note" id="trust-apps-hint">${TRUST_TEXT.appsHint}</p>`);
     expect(page).toContain(`<input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>${TRUST_TEXT.commands}</span>`);
-    expect(page).toContain(`<p class="hint" id="trust-commands-hint">${TRUST_TEXT.commandsHint}</p>`);
+    expect(page).toContain(`<p class="row-note" id="trust-commands-hint">${TRUST_TEXT.commandsHint}</p>`);
+    // Both switches sit in one group, each with its note under it (UI audit #11).
+    expect(page).toMatch(/<div class="group">\s*<div class="noted-row">\s*<label class="switch-row"><input type="checkbox" id="trust-apps"[^]*?<div class="noted-row">\s*<label class="switch-row"><input type="checkbox" id="trust-commands"/);
   });
 });

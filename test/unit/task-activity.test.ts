@@ -105,6 +105,17 @@ describe("a failed task's card", () => {
 });
 
 describe("finished tasks' activity, for Home", () => {
+  it("lists a task still waiting its turn too, newest first, so Home counts every task (review of PR #125)", async () => {
+    const { tm, specs } = manager({ maxRunning: 1 });
+    const first = tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(specs.length).toBe(1));
+    const second = tm.start("Rename the screenshots");
+    const list = tm.activities();
+    expect(list.map(t => [t.id, t.status])).toEqual([[second.id, "queued"], [first.id, "running"]]);
+    expect(list[0].activity).toMatchObject({ items: [], steps: 0 });
+    expect(list[0].activity.endedAt).toBeUndefined();
+  });
+
   it("is kept in memory after the card goes, newest first, and only for the latest twenty", async () => {
     vi.useFakeTimers();
     try {
@@ -115,6 +126,9 @@ describe("finished tasks' activity, for Home", () => {
       const kept = tm.activities();
       expect(kept.length).toBe(20);
       expect(kept[0]).toMatchObject({ id: ids[21], title: "Task 21", activity: { live: "Done" } });
+      // With what its card showed: its state and how it ended, for Home's Task activity.
+      expect(kept[0]).toMatchObject({ status: "done", summary: "Done." });
+      expect(kept[0]).not.toHaveProperty("hand");
       expect(tm.activity(ids[0])).toBeNull();
       expect(tm.activity(ids[21])?.endedAt).toBeDefined();
     } finally {

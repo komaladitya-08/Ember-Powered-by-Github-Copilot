@@ -22,7 +22,7 @@ import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelSe
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -84,7 +84,7 @@ import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
-import { settingsSection, setupIdle } from "../shared/setup-attention";
+import { needsUser, settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement } from "./acknowledge";
@@ -95,6 +95,7 @@ import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
+import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
 // SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
@@ -568,8 +569,11 @@ function start(): void {
   let confirmer: Confirmer | null = null;
   // While the user works on Ember's desk, the task cards stay out of the enlarged view's way.
   let deskInControl = false;
+  /** The task cards changed: Home's Task activity hears of it (set once the agent's handlers are, below). */
+  let tasksShown = () => { /* nothing to tell until then */ };
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
+    if (next.tasks) tasksShown();
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
     if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
@@ -1366,6 +1370,11 @@ function start(): void {
 
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
   ipcMain.handle(IPC.conversation, guard(() => agent?.getTranscript() ?? []));
+  // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
+  // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
+  ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
+  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
+  tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
     signInAbort?.abort();
@@ -2369,10 +2378,11 @@ function start(): void {
     // One listener for the policy watch and the screen lock, in that order: an 11th will-quit listener warns of a leak.
     app.on("will-quit", () => { unwatchPolicy(); screenLock?.stop(); lockControl.dispose(); });
 
-    // Started by the user (the launcher, a terminal), settings opens; by a launcher's Ask Ember (--ask), the ask box;
-    // started at login (--autostart), Ember only greets, unless the desktop session is one Ember can't use (a Wayland
-    // login after an Xorg one): then the check is shown.
-    const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv) });
+    // Started by the user (the launcher, a terminal) once set up, Ember greets, and settings opens only while a setup
+    // row needs them; by a launcher's Ask Ember (--ask), the ask box; started at login (--autostart), Ember only greets,
+    // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
+    const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv),
+      setupNeeded: env.checks.some(needsUser) });
     if (view === "ask") openAsk({ source: "launcher" });
     else if (view === "settings") showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
@@ -2396,7 +2406,7 @@ function start(): void {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
         agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
-        showMenu, state: () => lastState, stopEverything,
+        showMenu, state: () => lastState, extensions: () => extensionsRef, stopEverything,
       };
     }
   };

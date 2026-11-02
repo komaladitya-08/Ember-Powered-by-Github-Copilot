@@ -281,6 +281,18 @@ allows them.
 - **Not yet**: connectors (GitHub-hosted services), Copilot `extension.mjs` extensions, extensions in tasks (only the
   conversation uses them), programs from extensions on macOS, and servers that need you to sign in to them.
 
+### Settings, redesigned
+
+- **One pane at a time**, as System Settings: a sidebar with **Search settings** at its top (Enter goes to the first
+  setting found), and the window reopens where you left it. **Home** shows what Ember is doing now: its state, what is
+  on, today's tasks and approvals, **Ask Ember…** and **Stop everything**; then the conversation and **Task activity**.
+- **Task activity**: each task of this session, step by step, with its plan, its questions and how you answered them,
+  and what it found. A task waiting for you says where it asks and which keys answer. Kept until you quit.
+- **Ember on screen** (Settings › Your Ember): **Follow my cursor** and **Hide Ember until it needs me** are switches
+  now; **Quit Ember** is under them.
+- **Starting Ember** once it is set up only greets you, unless the setup check needs you; start it again (or press the
+  settings shortcut) to open settings.
+
 ### In detail
 
 #### Signing in and Copilot
