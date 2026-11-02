@@ -24,5 +24,9 @@ const bundle = path.join(dir, "models.cjs");
 await build({ entryPoints: [path.join(root, "app/voice/models.ts")], outfile: bundle, bundle: true, platform: "node", format: "cjs", logLevel: "error" });
 const { fetchModel, httpsDownloader } = createRequire(import.meta.url)(bundle);
 const lib = path.join(dir, RELEASE.target, "lib");
-if (!fs.existsSync(path.join(lib, "libsherpa-onnx-c-api.so"))) await fetchModel(dir, RELEASE, httpsDownloader);
+// In place only once its marker says it verified against this pin (an unpack cut short leaves the .so but no marker).
+const verified = () => {
+  try { return fs.readFileSync(path.join(dir, `.${RELEASE.target}.ok`), "utf8").trim() === RELEASE.sha256; } catch { return false; }
+};
+if (!verified() || !fs.existsSync(path.join(lib, "libsherpa-onnx-c-api.so"))) await fetchModel(dir, RELEASE, httpsDownloader);
 console.log(lib);

@@ -128,3 +128,18 @@ export function voiceAt(spans: readonly VoiceSpan[], time: number): number | nul
   }
   return null;
 }
+
+/** Every meter stopped: sent to the overlay as Ember shows again, so a level from before it hid is never shown stale. */
+export const NO_LEVEL: Readonly<SoundLevel> = { mic: null, voice: null };
+
+/**
+ * What of a level reaches the overlay: all of it while Ember shows; while it is hidden only the streams that ended
+ * (null), so a meter never stays lit (a level and an end sent together keep the end). Null when nothing passes.
+ */
+export function levelForOverlay(l: SoundLevel, hidden: boolean): SoundLevel | null {
+  if (!hidden) return l;
+  const ended: SoundLevel = {};
+  if (l.mic === null) ended.mic = null;
+  if (l.voice === null) ended.voice = null;
+  return Object.keys(ended).length ? ended : null;
+}

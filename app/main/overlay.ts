@@ -21,7 +21,7 @@ import { applyAllWorkspaces } from "./platform/compose";
 import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
 import { pageUrl } from "./page-url";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
-import type { SoundLevel } from "../shared/level";
+import { NO_LEVEL, levelForOverlay, type SoundLevel } from "../shared/level";
 import type { ViewDoc } from "../shared/view";
 import { ViewHub } from "./agent/view-doc";
 
@@ -97,7 +97,10 @@ export class OverlayManager {
   }
 
   setHidden(on: boolean): void {
+    const shows = this.hidden && !on;
     this.hidden = on;
+    // Levels were dropped while hidden: the meters start from nothing rather than show one from before it hid.
+    if (shows) this.setLevel({ ...NO_LEVEL });
     this.views.setVisible(!on);
   }
 
@@ -206,8 +209,9 @@ export class OverlayManager {
    * state, so a level 20 times a second never resends the bubble and the cards. Not while Ember is hidden.
    */
   setLevel(l: SoundLevel): void {
-    if (this.hidden && Object.values(l).some(v => v !== null)) return;
-    for (const o of this.overlays.values()) if (!o.win.isDestroyed()) o.win.webContents.send(OVERLAY.level, l);
+    const sent = levelForOverlay(l, this.hidden);
+    if (!sent) return;
+    for (const o of this.overlays.values()) if (!o.win.isDestroyed()) o.win.webContents.send(OVERLAY.level, sent);
   }
 
   broadcastSettings(s: Settings): void {

@@ -121,6 +121,29 @@ export function withoutRepeats(text: string): string {
  */
 export class ModelLoadError extends Error {}
 
+/**
+ * Makes one model with `primary`; where that is a native build (the addon, or the C API, whose create* gives NULL for
+ * reasons of its own), a model it can't make is tried on WebAssembly (`wasm()`, made once by the caller) before it
+ * counts as damaged: only a model no build can load is a ModelLoadError, which has the models downloaded again.
+ * `onFallback`: told when WebAssembly made it.
+ */
+export function loadModel<T>(what: string, make: (s: Sherpa) => T, primary: Sherpa, wasm: () => Sherpa, onFallback?: (what: string, err: unknown) => void): T {
+  try {
+    return make(primary);
+  } catch (err) {
+    if (primary.backend === "native") {
+      try {
+        const made = make(wasm());
+        onFallback?.(what, err);
+        return made;
+      } catch {
+        // No build loads it: damaged after all (the native build's error says the most).
+      }
+    }
+    throw new ModelLoadError(`The ${what} couldn't be loaded.`, { cause: err });
+  }
+}
+
 /** Which build runs the recognizers, and how (the voice process logs it). */
 export interface BackendInfo {
   backend: Sherpa["backend"];
@@ -130,6 +153,8 @@ export interface BackendInfo {
   provider: string;
   threads: number;
   tried: ProviderTry[];
+  /** The models the native build couldn't make, made on WebAssembly instead (loadModel); main logs a warning for them. */
+  wasmModels?: string[];
 }
 
 /**
@@ -152,18 +177,15 @@ function probeAudio(): Float32Array {
 export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onError?: (err: unknown) => void; keywords?: string; runtime?: RuntimeOptions; providerCache?: ProviderCache } = {}): VoiceBackend & { free(): void; info: BackendInfo } {
   const sherpa = sherpaRuntime(opts.runtime);
   // A damaged file throws (a bare number out of WebAssembly); a missing one only gives an empty handle there (and a
-  // recognizer that hears nothing, ever), which the runtime throws for too.
-  const load = <T>(what: string, make: () => T): T => {
-    try {
-      return make();
-    } catch (err) {
-      throw new ModelLoadError(`The ${what} couldn't be loaded.`, { cause: err });
-    }
-  };
+  // recognizer that hears nothing, ever), which the runtime throws for too. A model the native build can't make is
+  // tried on WebAssembly first (loadModel).
+  let wasm: Sherpa | null = null;
+  const onWasm: string[] = [];
+  const load = <T>(what: string, make: (s: Sherpa) => T): T => loadModel(what, make, sherpa, () => (wasm ??= sherpaRuntime({ ...opts.runtime, prefer: "wasm" })), w => onWasm.push(w));
   // The spotter and the VADs run every frame, on the CPU (a single thread: their work is a few milliseconds a frame).
   const cpu1 = { provider: "cpu", numThreads: 1 };
   const k = (f: string) => path.join(models.kws, f);
-  const kws = load("wake word model", () => sherpa.createKws({
+  const kws = load("wake word model", s => s.createKws({
     encoder: k("encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
     decoder: k("decoder-epoch-12-avg-2-chunk-16-left-64.onnx"),
     joiner: k("joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx"),
@@ -172,26 +194,29 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   }, cpu1));
   let micStream = kws.createStream();
   let monStream: KwsStream | null = null;
-  const vad = load("voice activity model", () => sherpa.createVad({
+  const vad = load("voice activity model", s => s.createVad({
     model: models.vad, threshold: 0.5, minSilenceDuration: MIN_SILENCE, minSpeechDuration: 0.2, maxSpeechDuration: VAD_MAX_SPEECH_SECONDS, windowSize: 512, bufferSizeInSeconds: 30,
   }, cpu1));
   // The voice check for the idle spotter: a second Silero, eager (low threshold, a 64 ms onset), with its own state.
   // Its segments aren't needed: they're dropped as they come.
-  const check = load("voice activity model", () => sherpa.createVad({
+  const check = load("voice activity model", s => s.createVad({
     model: models.vad, threshold: CHECK_THRESHOLD, minSilenceDuration: 0.25, minSpeechDuration: 0.064, maxSpeechDuration: 30, windowSize: 512, bufferSizeInSeconds: 30,
   }, cpu1));
   const a = (f: string) => path.join(models.asr, f);
   // Moonshine runs once per request: natively on two threads (a 5 s request: about 0.1 s), and on macOS with CoreML
   // when that comes out faster on this Mac (both are timed on a probe).
-  const asrThreads = threads(sherpa.backend, 2);
   const probe = probeAudio();
-  const list = providers(sherpa.backend);
-  const chosen = load("speech recognition model", () => fastestProvider(list,
-    provider => sherpa.createMoonshine({ encoder: a("encoder_model.ort"), mergedDecoder: a("decoder_model_merged.ort"), tokens: a("tokens.txt") }, { provider, numThreads: asrThreads }),
-    r => { const s = r.createStream(); try { s.acceptWaveform(SAMPLE_RATE, probe); r.decode(s); r.getResult(s); } finally { s.free(); } },
-    { cache: { store: opts.providerCache ?? providerCache(), key: modelKey(a("encoder_model.ort"), list, asrThreads) } }));
+  const chosen = load("speech recognition model", sh => {
+    const asrThreads = threads(sh.backend, 2);
+    const list = providers(sh.backend);
+    return { asrThreads, ...fastestProvider(list,
+      provider => sh.createMoonshine({ encoder: a("encoder_model.ort"), mergedDecoder: a("decoder_model_merged.ort"), tokens: a("tokens.txt") }, { provider, numThreads: asrThreads }),
+      r => { const s = r.createStream(); try { s.acceptWaveform(SAMPLE_RATE, probe); r.decode(s); r.getResult(s); } finally { s.free(); } },
+      { cache: { store: opts.providerCache ?? providerCache(), key: modelKey(a("encoder_model.ort"), list, asrThreads) }, free: r => r.free() }) };
+  });
   const asr = chosen.made;
-  const info: BackendInfo = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: asrThreads, tried: chosen.tried };
+  const detail = onWasm.length ? `${sherpa.detail}; on WebAssembly: ${onWasm.join(", ")}` : sherpa.detail;
+  const info: BackendInfo = { backend: sherpa.backend, detail, provider: chosen.provider, threads: chosen.asrThreads, tried: chosen.tried, ...(onWasm.length ? { wasmModels: [...onWasm] } : {}) };
 
   const spotIn = (stream: KwsStream, frame: Float32Array): string[] => {
     stream.acceptWaveform(SAMPLE_RATE, frame);
@@ -276,8 +301,10 @@ export function sherpaBackend(models: ModelPaths, opts: { monitor?: boolean; onE
   return {
     spot: frame => spotIn(micStream, frame),
     resetSpot() {
-      micStream.free();
+      // The new stream first: if making it throws, the old one is still the live (unfreed) stream spot() uses.
+      const old = micStream;
       micStream = freshStream();
+      old.free();
     },
     // 0.32 s of silence completes the chunk the last words are in (the stream just hears a longer pause).
     padSpot: () => spotIn(micStream, new Float32Array(PAD_SAMPLES)),

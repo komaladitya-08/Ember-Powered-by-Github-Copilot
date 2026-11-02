@@ -227,6 +227,19 @@ export function summarizeActivity(counts: Partial<Record<StepGroup, number>>, fa
   return failed > 0 ? `${said} (${failed === 1 ? "1 didn't work" : `${failed} didn't work`})` : said;
 }
 
+/** The longest app name a card's words keep (a window's app name can be anything another computer says). */
+export const CARD_APP_MAX = 40;
+
+/**
+ * An app's name as a card's words carry it ("in Text Editor"): cut to CARD_APP_MAX characters, and on a computer reached
+ * over SSH quoted (“…”), since that name is whatever the other computer says, never Ember's own words.
+ */
+export function cardApp(name: string, remote = false): string {
+  const t = name.replace(/\s+/g, " ").trim();
+  const cut = t.length > CARD_APP_MAX ? `${t.slice(0, CARD_APP_MAX - 1).trimEnd()}…` : t;
+  return remote ? `“${cut}”` : cut;
+}
+
 /** A step under way, as the card's live line says it: "Clicking in Text Editor…" (the hand line says whose mouse). */
 export function doingWords(step: string | undefined, app?: string): string {
   if (!step) return "Working…";
@@ -303,7 +316,8 @@ export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS):
       last.n = (last.n ?? 1) + 1;
       if (it.app) last.apps!.add(it.app);
       const one = last.apps!.size === 1 ? [...last.apps!][0] : undefined;
-      last.words = it.state === "failed" ? triedWords(it.group, last.n, one) : stepsWords(it.group, last.n, one);
+      // (A step that was stopped, a "Not now", is one it tried too, as is one that failed.)
+      last.words = it.state === "done" ? stepsWords(it.group, last.n, one) : triedWords(it.group, last.n, one);
       continue;
     }
     rows.push({

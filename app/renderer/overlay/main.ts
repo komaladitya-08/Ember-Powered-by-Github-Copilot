@@ -17,7 +17,10 @@ import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
-import { TASK_ARM_MS } from "../handle/arm";
+import { ArmClock, TASK_ARM_MS } from "../handle/arm";
+
+/** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
+const bubbleArm = new ArmClock();
 import { shortWhere, whereText } from "../handle/badge";
 import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
@@ -168,7 +171,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   bubble.setExpanded(b.expanded === true);
   // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
   bubble.setWhole(b.whole ?? null);
-  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => api.bubbleAction(a.id) })) : null);
+  bubbleArm.shown(b.visible ? b.actions.map(a => a.id) : [], performance.now());
+  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => { if (bubbleArm.ready(a.id, performance.now())) api.bubbleAction(a.id); } })) : null);
   const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;
   if (f) {

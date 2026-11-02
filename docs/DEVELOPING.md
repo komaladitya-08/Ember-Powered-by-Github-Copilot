@@ -443,7 +443,9 @@ installed Ember: neither loads code). `npx electron test/smoke/voice-backends.mj
 `node scripts/voice/prepare.mjs`) starts both processes in Electron, has them hear a clip and speak a reply on the
 build Ember picks and then on WebAssembly, and prints each one's build, load time and latency; CI runs it on Windows
 and macOS, after `test/integration/voice.test.ts` (which runs on the picked build too; `EMBER_SHERPA_ADDON=<a
-sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux).
+sherpa-onnx.node>` tries an addon where none is installed, such as `sherpa-onnx-linux-x64`'s on a newer Linux, and
+`EMBER_SHERPA_CAPI=<folder>` runs it on the C API, with the folder `scripts/voice/fetch-capi.mjs` prints). A model the
+native build can't make (the C API gives no handle) is tried on WebAssembly before it counts as damaged.
 
 **The natural voice (Kokoro).** Settings › Voice › **Use a more natural voice** (`voice.natural`, off by default;
 shown on Windows and macOS) lets Ember fetch Kokoro v1.0 (`kokoro-multi-lang-v1_0`, fp32, its `af_heart` voice in US

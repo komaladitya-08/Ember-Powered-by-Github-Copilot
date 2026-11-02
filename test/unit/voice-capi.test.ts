@@ -10,6 +10,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { CAPI_STRUCTS, CAPI_VERSION } from "../../app/voice/capi-structs";
 import { sherpaRuntime } from "../../app/voice/runtime";
+import { isDuplicateType } from "../../app/voice/capi";
 import { modelPaths } from "../../app/voice/models";
 import { piperSpec } from "../../app/voice/tts-spec";
 
@@ -39,11 +40,24 @@ describe("sherpaRuntime with a C API folder", () => {
     expect(s.detail).toMatch(/no C API libraries/);
   });
 
+  it("ignores only a struct defined twice in one process, never another layout error (voice audit)", () => {
+    expect(isDuplicateType(new Error("Duplicate type name 'SherpaOnnxVadModelConfig'"))).toBe(true);
+    expect(isDuplicateType(new Error("Unknown or invalid type name 'float32'"))).toBe(false);
+    expect(isDuplicateType("boom")).toBe(false);
+  });
+
+  it("are fetched again unless their marker says they verified against the pin (voice audit)", () => {
+    const fetch = fs.readFileSync(path.join(root, "scripts/voice/fetch-capi.mjs"), "utf8");
+    expect(fetch).toContain('fs.readFileSync(path.join(dir, `.${RELEASE.target}.ok`), "utf8").trim() === RELEASE.sha256');
+    expect(fetch).toContain('if (!verified() || !fs.existsSync(path.join(lib, "libsherpa-onnx-c-api.so"))) await fetchModel(');
+  });
+
   it("is never used when WebAssembly is asked for", () => {
     expect(sherpaRuntime({ prefer: "wasm", capiDir: "/anywhere" }).backend).toBe("wasm");
   });
 
-  it.skipIf(!runnable)("runs Ember's own models natively: hears the wake clip's request and speaks with Piper", () => {
+  // Loading and running real models takes seconds on a busy CI machine (as in test/integration/voice.test.ts).
+  it.skipIf(!runnable)("runs Ember's own models natively: hears the wake clip's request and speaks with Piper", { timeout: 20_000 }, () => {
     const s = sherpaRuntime({ capiDir });
     expect(s.backend).toBe("native");
     expect(s.detail).toMatch(/C API through koffi/);

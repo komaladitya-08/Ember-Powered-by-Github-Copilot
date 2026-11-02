@@ -45,3 +45,11 @@ export function cardTask(tasks: readonly TaskCard[], bubble?: Pick<BubbleState, 
     ?? newest.find(t => (t.actions ?? []).length > 0)
     ?? null;
 }
+
+/**
+ * The card shows a risky question (policy's risky, BubbleState.risky): its "Risky step" tag and a bordered Allow, as the
+ * bubble shows one. Only a question on screen is one; a risky flag left on another bubble isn't.
+ */
+export function cardRisky(b: Pick<BubbleState, "visible" | "mood" | "risky">): boolean {
+  return b.visible && b.mood === "attention" && b.risky === true;
+}

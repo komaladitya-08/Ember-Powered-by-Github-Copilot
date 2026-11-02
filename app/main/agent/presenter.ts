@@ -17,6 +17,8 @@ export interface PresenterEvent { type: string; data?: Record<string, unknown> }
 const KEEP_CHARS = 600;
 /** The user's request as "Thinking…" quotes it: its first 120 characters, marked when cut short. */
 const quoted = (text: string) => `“${text.length > 120 ? `${text.slice(0, 119).trimEnd()}…` : text}”`;
+/** What a task's worker's own note says it is in the bubble (Presenter.note). */
+export const TASK_NOTE = "Task note: ";
 const clip = (s: string) => (s.length > KEEP_CHARS ? s.slice(0, KEEP_CHARS - 1).trimEnd() + "…" : s);
 /** Answers longer than this don't fit the bubble: it offers "Read all". */
 export const LONG_ANSWER = 260;
@@ -585,8 +587,16 @@ export class Presenter {
   private stalledTitle = "";
   /** "Thinking…" with nothing from Copilot yet: after THINK_SLOW_MS it says it is still waiting, with Stop (see slowThinking). */
   private thinkTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The latest request asked (userPrompt), for a problem's Try again; null once the presenter has no request to offer again. */
-  private lastAsked: string | null = null;
+  /**
+   * Requests asked (userPrompt) whose turns haven't begun yet, oldest first: a turn's user.message says which one it is,
+   * so a problem's Try again offers that turn's own request, never a newer one asked meanwhile.
+   */
+  private pendingAsks: string[] = [];
+  /** A turn is under way (its user.message came, its session.idle hasn't), and the request it answers (null: not one asked here). */
+  private turnOn = false;
+  private turnAsked: string | null = null;
+  /** The request the problem on screen offers to ask again (Try again), or null. */
+  private offered: string | null = null;
   /** The turn under way ran a tool (Try again is offered only for a turn that did nothing yet), and started a task. */
   private toolRan = false;
   private startingTask = false;
@@ -773,6 +783,9 @@ export class Presenter {
     this.held = false;
     this.answering = false;
     this.asked = null;
+    // Stopped (the kill switch): a later problem never offers to ask again what the user just stopped.
+    this.forgetTurns();
+    this.offered = null;
     this.silent = true;
     this.owner.forget(this);
   }
@@ -814,6 +827,8 @@ export class Presenter {
    * settings can fix it (settingsHelps): a runtime that reconnects by itself needs nothing from there.
    */
   fail(message: string): void {
+    // (Taken before the request owed a turn is let go: a send that failed offers that request again.)
+    const retry = this.retryCandidate();
     this.cancelHide();
     this.guiding = false;
     this.answering = false;
@@ -823,7 +838,7 @@ export class Presenter {
     this.cancelSlow();
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
-      bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: this.problemActions(said) },
+      bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: this.problemActions(said, retry) },
     }, "take");
     this.onProblem?.(message);
     this.hideLater(12000);
@@ -908,9 +923,49 @@ export class Presenter {
    * A problem's buttons: Open settings where settings can fix it; otherwise Try again where asking again is safe (the
    * conversation's own request, whose turn ran no tool: nothing it did would be done twice); otherwise none.
    */
-  private problemActions(said: string): BubbleState["actions"] {
+  private problemActions(said: string, retry = this.retryCandidate()): BubbleState["actions"] {
+    this.offered = null;
     if (settingsHelps(said)) return [{ id: "ui:settings", label: "Open settings" }];
-    return this.work === "reply" && this.lastAsked !== null && !this.toolRan ? [{ ...TRY_AGAIN }] : [];
+    if (retry === null) return [];
+    this.offered = retry;
+    return [{ ...TRY_AGAIN }];
+  }
+
+  /**
+   * The request a problem now could safely ask again: the turn under way's own request while that turn ran no tool;
+   * with no turn under way, the request still owed its turn (it never began); otherwise none (a task's bubble, a turn
+   * not started by a request asked here, one that did something).
+   */
+  private retryCandidate(): string | null {
+    if (this.work !== "reply") return null;
+    if (this.turnOn) return this.toolRan ? null : this.turnAsked;
+    return this.asked;
+  }
+
+  /** The request the problem on screen offers to ask again (its Try again), or null when it offers none. */
+  get retryRequest(): string | null {
+    const b = this.state.bubble;
+    return b.visible && b.actions.some(a => a.id === TRY_AGAIN.id) ? this.offered : null;
+  }
+
+  /**
+   * Try again was pressed: the request it offers, taken once. The offer and the button go at once, so a second press
+   * (the request waits up to 3 s for the screen's context first) asks nothing twice. Null when nothing is offered.
+   */
+  takeRetry(): string | null {
+    const ask = this.retryRequest;
+    if (ask === null) return null;
+    this.offered = null;
+    const b = this.state.bubble;
+    this.apply({ bubble: { ...b, actions: b.actions.filter(a => a.id !== TRY_AGAIN.id) } });
+    return ask;
+  }
+
+  /** No turn is under way any more, and no request is owed one (a stop, a reset). */
+  private forgetTurns(): void {
+    this.pendingAsks = [];
+    this.turnOn = false;
+    this.turnAsked = null;
   }
 
   /** "Thinking…" is up with nothing from Copilot yet: in THINK_SLOW_MS it says it is still waiting, with Stop. */
@@ -953,6 +1008,7 @@ export class Presenter {
     this.guiding = false;
     this.answering = false;
     this.asked = null;
+    this.forgetTurns();
     this.silent = false;
     this.apply({ emotion: "neutral", talking: false, bubble: { visible: true, mood: "idle", title: "Stopped", thought: STOPPED_ANSWER, step: null, streaming: false, actions: [] } }, "take");
     this.hideLater(4000);
@@ -965,6 +1021,7 @@ export class Presenter {
     this.answering = false;
     this.answer = "";
     this.asked = null;
+    this.forgetTurns();
     // Only a bubble mid-turn is cleared; a notice or an answer keeps its own hide timer.
     if (wasBusy) this.hide();
   }
@@ -995,8 +1052,9 @@ export class Presenter {
     this.answer = "";
     this.silent = false;
     this.asked = text;
-    this.lastAsked = text;
-    this.toolRan = false;
+    // (Asked again while it waits to be sent, it is still the one request. The turn under way keeps its own toolRan:
+    // a newer request doesn't make a turn that already did something safe to ask again.)
+    if (this.pendingAsks.at(-1) !== text) this.pendingAsks = [...this.pendingAsks, text].slice(-4);
     this.startedTask = false;
     this.apply({
       emotion: "thinking", talking: false,
@@ -1045,6 +1103,16 @@ export class Presenter {
     const needsYou = more?.needsYou === true;
     this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
       ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
+  }
+
+  /**
+   * The task's worker's own note (report_progress): shown as the task's words, labelled ("Task note: …") under its title
+   * in the quieter commentary of a working bubble: never as Ember's own thought, and never in quotes, which mark the
+   * user's own request (the model wrote it; markdown is stripped).
+   */
+  note(text: string): void {
+    const plain = plainText(text).replace(/\s+/g, " ").trim();
+    if (plain) this.progress(`${TASK_NOTE}${clip(plain)}`);
   }
 
   /**
@@ -1145,6 +1213,12 @@ export class Presenter {
           const said = typeof d.content === "string" ? d.content.trimEnd() : null;
           if (said === null || said.endsWith(asked.trim())) { this.asked = null; this.askedOverAnswer = false; }
         }
+        // Which request this turn answers (its message ends with the user's words); none asked before it is owed one.
+        const content = typeof d.content === "string" ? d.content.trimEnd() : null;
+        const mine = content === null ? 0 : this.pendingAsks.findIndex(a => content.endsWith(a.trim()));
+        this.turnAsked = mine >= 0 ? this.pendingAsks[mine] ?? null : null;
+        if (mine >= 0) this.pendingAsks = this.pendingAsks.slice(mine + 1);
+        this.turnOn = true;
         this.answering = false;
         this.answer = "";
         this.produced = false;
@@ -1190,6 +1264,7 @@ export class Presenter {
         this.answering = false;
         this.produced = true;
         this.toolRan = true;
+        this.turnOn = true;
         this.startingTask = name === "start_task";
         this.thoughtBreak = true;
         // While guiding, the instruction stays up (Ember is waiting for the user, not working).
@@ -1258,6 +1333,9 @@ export class Presenter {
           this.apply({ emotion: "confused", talking: false, bubble: { visible: true, mood: "error", title: "No answer", thought: NO_REPLY, step: null, streaming: false, actions: this.problemActions(NO_REPLY) } });
           this.onProblem?.(NO_REPLY);
           this.hideLater(8000);
+          // The turn ended (its request is offered above): a later problem never offers it again.
+          this.turnOn = false;
+          this.turnAsked = null;
           break;
         }
         // Nothing runs any more: not "thinking" or "working". (Held off meanwhile, it shows once the bubble is free.)
@@ -1268,7 +1346,8 @@ export class Presenter {
         this.hideLater(Math.min(30000, 6000 + chars * 50));
         this.answering = false;
         // The request had its turn: a later problem (the runtime stopping meanwhile) doesn't offer to ask it again.
-        if (this.asked === null) this.lastAsked = null;
+        this.turnOn = false;
+        this.turnAsked = null;
         break;
       }
     }

@@ -4,13 +4,16 @@
  * "Working…"). Never the model's arguments or reasoning; only the worker's own note is its words, and marked so.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ActivityLog } from "../../app/main/agent/activity";
 import {
-  ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, planStepText, retryWords, stepsWords,
+  cardApp, CARD_APP_MAX, ACTIVITY_LIMIT, STATUS_WORDS, activityRows, clockText, doingWords, elapsedText, planStepText, retryWords, stepsWords,
   summarizeActivity, telemetryItems, type ActivityItem,
 } from "../../app/shared/activity";
 import { stepOf } from "../../app/main/agent/presenter";
+
+const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 
 const T0 = 1_000_000;
 
@@ -174,6 +177,29 @@ describe("the details' rows", () => {
     expect(l.card().rows).toEqual([{ at: 0, state: "stopped", words: "Not allowed: Ember doesn't run terminals" }]);
     expect(l.card().summary).toBeUndefined();
     expect(l.card().live).toBe("Thinking…");
+  });
+
+  it("show a step the user said “Not now” to as stopped, not as one that didn't work, and don't count it (UI audit)", () => {
+    const { l } = log();
+    l.add({ type: "tool-start", id: "c1", tool: "click", step: stepOf("click"), app: "Files" }, T0);
+    l.add({ type: "question" }, T0 + 5);
+    l.add({ type: "answer", answer: "declined" }, T0 + 10);
+    l.add({ type: "denied" }, T0 + 11);
+    l.add({ type: "tool-end", id: "c1", ok: false }, T0 + 12);
+    const card = l.card();
+    expect(card.rows.find(r => r.words.startsWith("Tried to click"))?.state).toBe("stopped");
+    expect(card.rows.some(r => r.state === "failed")).toBe(false);
+    expect(card.summary ?? "").not.toMatch(/didn't work/);
+  });
+
+  it("keep an app's name short, and quote one another computer named over SSH (UI audit)", () => {
+    expect(cardApp("Text Editor")).toBe("Text Editor");
+    const long = cardApp("A window title that some app put in its WM_CLASS to look official");
+    expect(long.length).toBe(CARD_APP_MAX);
+    expect(long.endsWith("…")).toBe(true);
+    expect(cardApp("Files", true)).toBe("“Files”");
+    expect(doingWords("Clicking", cardApp("Files", true))).toBe("Clicking in “Files”…");
+    expect(read("app/main/agent/worker.ts")).toContain('app: cardApp(friendlyApp(this.window.app), this.d.target?.kind === "ssh")');
   });
 
   it("say a refusal with Ember's (policy's) reason, and a change of hand", () => {

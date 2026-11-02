@@ -7,7 +7,8 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fastestProvider, modelKey, nativePackage, providerCache, providers, sherpaRuntime, threads } from "../../app/voice/runtime";
+import { fastestProvider, modelKey, nativePackage, providerCache, providers, sherpaRuntime, threads, type Sherpa } from "../../app/voice/runtime";
+import { ModelLoadError, loadModel } from "../../app/voice/sherpa";
 
 describe("the native addon's package", () => {
   it("is sherpa-onnx-node's own per-platform package on Windows and macOS (npm's names: win, not win32)", () => {
@@ -90,6 +91,35 @@ describe("fastestProvider", () => {
     const r2 = fastestProvider(["coreml", "cpu"], p => p, p => { if (p === "coreml") throw new Error("CoreML failed to run it"); }, { now: () => 0 });
     expect(r2.provider).toBe("cpu");
     expect(() => fastestProvider(["coreml", "cpu"], () => { throw new Error("damaged"); }, () => undefined)).toThrow("damaged");
+  });
+
+  it("frees the models it doesn't keep: a slower provider's and one whose probe failed (voice audit)", () => {
+    const freed: string[] = [];
+    const c = timed({ coreml: 40, cpu: 90 });
+    expect(fastestProvider(["coreml", "cpu"], p => p, c.probe, { now: c.now, free: m => freed.push(m) }).made).toBe("coreml");
+    expect(freed).toEqual(["cpu"]);
+    freed.length = 0;
+    const r = fastestProvider(["coreml", "cpu"], p => p, p => { if (p === "coreml") throw new Error("CoreML failed to run it"); }, { now: () => 0, free: m => freed.push(m) });
+    expect(r.made).toBe("cpu");
+    expect(freed).toEqual(["coreml"]);
+  });
+});
+
+describe("loading a model (sherpa.ts loadModel)", () => {
+  const build = (backend: "native" | "wasm", ok: boolean) => ({ backend, ok }) as unknown as Sherpa & { ok: boolean };
+  const make = (s: Sherpa) => { if (!(s as Sherpa & { ok: boolean }).ok) throw new Error("the keyword spotter couldn't be made"); return s.backend; };
+
+  it("tries WebAssembly before calling a model the native build can't make damaged (the C API's NULL; voice audit V4)", () => {
+    const fell: string[] = [];
+    expect(loadModel("wake word model", make, build("native", false), () => build("wasm", true), w => fell.push(w))).toBe("wasm");
+    expect(fell).toEqual(["wake word model"]);
+  });
+
+  it("calls it damaged only when no build can load it", () => {
+    expect(() => loadModel("wake word model", make, build("native", false), () => build("wasm", false))).toThrow(ModelLoadError);
+    let asked = false;
+    expect(() => loadModel("wake word model", make, build("wasm", false), () => { asked = true; return build("wasm", true); })).toThrow("The wake word model couldn't be loaded.");
+    expect(asked).toBe(false);
   });
 });
 

@@ -1220,6 +1220,7 @@ export class AgentHost {
           if (byUser && p?.waiting) p.drop();
         },
         provider: !!this.o.provider,
+        actionsAllowed: () => this.actionsAllowed(),
         makeWorker: (spec, progress, update, activity) => {
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
@@ -1230,6 +1231,8 @@ export class AgentHost {
             : { ok: false as const, why: id === "local" ? "Ember can't work on this computer's screen here." : "Ember can't work on that computer here." };
           if (!got.ok) return refusedWorker(spec, got.why);
           const h = got.hands;
+          // Its computer, as its outcome's bubble names it (a retried task gets it here, from the one handsFor).
+          this.taskBindings.set(spec.id, h.binding);
           const usedDesktop = (h as TargetHands & Partial<DesktopUse>).usedDesktop;
           if (typeof usedDesktop === "function") this.taskDesktop.set(spec.id, () => usedDesktop.call(h));
           const presenter = this.taskPresenter(spec.id, spec.goal, h.binding, (targets?.othersNamed?.(id, spec.userWords ?? "") ?? []).length > 0, spec.mode !== "guide");
@@ -1982,18 +1985,29 @@ export class AgentHost {
   }
 
   /**
+   * Try again was pressed on the conversation's problem: the request it offers (that turn's own, never a newer one asked
+   * while it ran), taken once, the button going with it, so a second press asks nothing twice. Null when none is offered.
+   */
+  takeRetry(): string | null {
+    return this.presenter.takeRetry();
+  }
+
+  /**
    * The user pressed Try again on a failed task's card: it starts again with what it was asked with, on the same
    * computer (which must still take it: its worker refuses otherwise). Nothing starts while the organisation has
    * turned acting off. Returns whether it started.
    */
   retryTask(id: string): boolean {
-    if (this.o.admin?.().features.actions === false) return false;
+    if (!this.actionsAllowed()) return false;
     const t = this.tasks?.retry(id);
     if (!t) return false;
-    const target = t.targetId ? this.o.targets?.handsFor(t.targetId) : undefined;
-    if (target?.ok) this.taskBindings.set(t.id, target.hands.binding);
     this.announced.add(t.id);
     return true;
+  }
+
+  /** The organisation lets tasks act (its policy's features.actions); a failed card's Try again shows only then. */
+  private actionsAllowed(): boolean {
+    return this.o.admin?.().features.actions !== false;
   }
 
   /**

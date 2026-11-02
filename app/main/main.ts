@@ -17,7 +17,7 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnTrust, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
 import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
@@ -535,7 +535,7 @@ function start(): void {
     // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
     // (its audit entry says so; one found in the file otherwise is "file").
     if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
-    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
+    try { return settings.update(ownNeverLook(withOwnTrust(patch, settings.own().trust)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1070,8 +1070,11 @@ function start(): void {
    * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
    * hide doesn't wipe it, and given back after, so a task still at work shows its progress again (review #81).
    */
-  /** The latest request asked, and how, for a problem's Try again (presenter TRY_AGAIN): the same words, the same caution. */
-  let lastAsk: { text: string; voiceUnchecked?: boolean } | null = null;
+  /**
+   * The latest requests asked, and how, for a problem's Try again (presenter TRY_AGAIN): the request the problem offers
+   * (AgentHost.takeRetry, its own turn's, not a newer one) goes again in the same words, with the same caution.
+   */
+  let recentAsks: { text: string; voiceUnchecked?: boolean }[] = [];
   const showNotice = (n: { title: string; thought: string }, ms: number) => {
     const time = ms * readTime();
     return holdNotice<EmberState["bubble"]>({
@@ -1082,7 +1085,7 @@ function start(): void {
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
-    lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
+    recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) }].slice(-4);
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
@@ -1376,6 +1379,8 @@ function start(): void {
         }
         break;
       case "speech":
+        // (Counted by scripts/voice/echo-check.mjs: speech heard while Ember's own voice plays is its echo.)
+        log.info("voice.speech_heard", { on: e.on });
         // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
         if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
@@ -1680,7 +1685,14 @@ function start(): void {
     // The conversation's Stop while Copilot keeps it waiting (its turn ends; tasks go on), and a problem's Try again
     // (the same request, as it was asked: offered only where its turn ran no tool).
     if (id === "ui:stop") { void agent?.stopAnswer(); return; }
-    if (id === "ui:retry") { if (lastAsk) { captureContext(); void askEmber(lastAsk.text, { voiceUnchecked: lastAsk.voiceUnchecked }); } return; }
+    if (id === "ui:retry") {
+      // Taken on the first press: a second one, while this request waits for the screen's context, asks nothing.
+      const again = agent?.takeRetry() ?? null;
+      // Its caution as it was asked; one no longer remembered here is treated as heard unchecked (never the user's words for commands).
+      const how = again === null ? undefined : [...recentAsks].reverse().find(a => a.text === again);
+      if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true }); }
+      return;
+    }
     if (id === "ui:settings") { openSettings(); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
