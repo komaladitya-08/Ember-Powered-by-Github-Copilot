@@ -263,6 +263,8 @@ export class TaskManager {
 
   /** A task's view, to its card (a listener's fault never stops the task). */
   private showView(task: Task, view: ViewDoc): void {
+    // A closed manager's cards are gone for good: a worker still winding down shows nothing more.
+    if (this.closed) return;
     task.view = view;
     try { this.d.onView?.(task.id, view); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
   }

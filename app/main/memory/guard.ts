@@ -11,6 +11,9 @@ import { redactSecrets } from "../commands/redact";
 const TOLD_SECRET =
   /\b(?:pass(?:word|phrase|code|wd)|pin|passcode|otp|2fa code|verification code|recovery (?:code|key)|seed phrase|security answer|cvv|cvc|wi-?fi (?:key|password))s?\b\s*(?:is|was|=|:|-)\s*\S+/i;
 
+/** A private key's armour header ("-----BEGIN OPENSSH PRIVATE KEY-----"), on its own: refused without its END line. */
+const PRIVATE_KEY_START = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY( BLOCK)?-----/i;
+
 /** A run of 13 to 19 digits (spaces or dashes between groups) that passes the Luhn check: a payment card. */
 const CARD = /\b(?:\d[ -]?){12,18}\d\b/g;
 
@@ -27,6 +30,8 @@ function luhn(digits: string): boolean {
 /** Why `text` may not be remembered, in a few words for the model to pass on, or null when it may. */
 export function memoryRefusal(text: string): string | null {
   if (redactSecrets(text) !== text) return "it holds a password, token or key";
+  // The redactor hides a key only with its END line too: a key's first line alone is still a key's start (audit).
+  if (PRIVATE_KEY_START.test(text)) return "it holds a private key";
   if (TOLD_SECRET.test(text)) return "it holds a password, PIN or code";
   for (const m of text.match(CARD) ?? []) {
     const digits = m.replace(/\D/g, "");

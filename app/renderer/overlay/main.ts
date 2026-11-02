@@ -652,7 +652,9 @@ function renderTasks(tasks: TaskCard[]): boolean {
     return c.li;
   });
   const ids = new Set(tasks.map(t => t.id));
-  for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); detailsOpen.delete(id); views.delete(id); }
+  for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); detailsOpen.delete(id); }
+  // Views only for tasks with a card now (a view whose card never came, or went, is not kept).
+  for (const id of [...views.keys()]) if (!ids.has(id)) views.delete(id);
   drawViews();
   // The "+N more" line heads the stack whenever there are ended cards that could fold.
   const all = stacked.some(t => !underWay(t)) ? [more.li, ...items] : items;

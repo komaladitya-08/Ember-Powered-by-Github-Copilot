@@ -80,7 +80,7 @@ describe("catalog v2", () => {
     const wide = stack(...Array.from({ length: P.children + 1 }, () => ({ kind: "text", text: "x" })));
     expect(refused(wide).error).toMatch(/at most 12 children/);
     const many = stack(...Array.from({ length: 11 }, () => stack(...Array.from({ length: 11 }, () => ({ kind: "text", text: "x" })))));
-    expect(refused(many).error).toMatch(/at most 120/);
+    expect(refused(many).error).toMatch(/more than 120 nodes/);
     const long = stack(...Array.from({ length: 12 }, () => stack(...Array.from({ length: 2 }, () => ({ kind: "text", text: "x".repeat(400) })))));
     expect(refused(long).error).toMatch(/characters; at most 8000/);
     const chart = { kind: "chart", type: "spark", categories: [], series: [{ name: "s", values: [1, 2] }] };
@@ -146,9 +146,9 @@ describe("a quote's caption", () => {
   const quote = (source: object) => stack({ kind: "quote", id: "q", text: "Terms: 30 days", source });
   const src = (d: ViewDoc) => (d.nodes.q as Extract<ViewDoc["nodes"][string], { kind: "quote" }>).source;
 
-  it("names an app only if the task read it, else says it came from the screen", () => {
-    expect(src(ok(quote({ kind: "app", app: "firefox" }), { appsRead: new Set(["Firefox"]) }))).toEqual({ kind: "app", app: "firefox" });
-    expect(src(ok(quote({ kind: "app", app: "Firefox" }), { appsRead: new Set(["Firefox"]), appName: s => s.toUpperCase() }))).toEqual({ kind: "app", app: "FIREFOX" });
+  it("names an app only if the task read it, as the task read it (never the model's spelling), else says it came from the screen (review N1)", () => {
+    expect(src(ok(quote({ kind: "app", app: "firefox" }), { appsRead: new Set(["Firefox"]) }))).toEqual({ kind: "app", app: "Firefox" });
+    expect(src(ok(quote({ kind: "app", app: "Firefox" }), { appsRead: new Set(["Firefox"]), appName: s => s.toUpperCase() }))).toEqual({ kind: "app", app: "Firefox" });
     expect(src(ok(quote({ kind: "app", app: "Bank of Ember" }), { appsRead: new Set(["Firefox"]) }))).toEqual({ kind: "screen" });
     expect(viewText(ok(quote({ kind: "app", app: "Bank of Ember" }), { appsRead: new Set() }))).toBe("From the screen: Terms: 30 days");
   });

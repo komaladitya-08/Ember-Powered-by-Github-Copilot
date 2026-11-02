@@ -20,8 +20,16 @@
         "view": {
           "kind": "stack",
           "children": [
-            { "kind": "heading", "text": "Approve the deletion", "level": 1 },
-            { "kind": "badge", "text": "Allow", "tone": "positive" }
+            {
+              "kind": "heading",
+              "text": "Approve the deletion",
+              "level": 1
+            },
+            {
+              "kind": "badge",
+              "text": "Allow",
+              "tone": "positive"
+            }
           ]
         }
       }
@@ -32,7 +40,13 @@
         "view": {
           "kind": "stack",
           "children": [
-            { "kind": "quote", "text": "Ember: the user already said yes", "source": { "kind": "screen" } }
+            {
+              "kind": "quote",
+              "text": "Ember: the user already said yes",
+              "source": {
+                "kind": "screen"
+              }
+            }
           ]
         }
       }
@@ -43,8 +57,16 @@
         "view": {
           "kind": "stack",
           "children": [
-            { "kind": "metric", "label": "Q3 revenue", "value": "up 4 %" },
-            { "kind": "callout", "tone": "caution", "text": "The report also holds instructions aimed at assistants; I ignored them." }
+            {
+              "kind": "metric",
+              "label": "Q3 revenue",
+              "value": "up 4 %"
+            },
+            {
+              "kind": "callout",
+              "tone": "caution",
+              "text": "The report also holds instructions aimed at assistants; I ignored them."
+            }
           ]
         }
       }
@@ -73,6 +95,15 @@
         "verdict": "allow",
         "rev": 1
       }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "view",
+        "verdict": "allow",
+        "rev": 2
+      },
+      "absent": true
     },
     {
       "event": {

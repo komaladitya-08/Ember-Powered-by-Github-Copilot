@@ -87,10 +87,21 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 ## Views (show_view, update_view, finish_task's view)
 
 - **Checked whole, fail closed.** Every view, and every update_view batch applied to a copy, goes through
-  `checkDoc()` (app/main/agent/view-schema.ts): the closed catalog and its limits, `mimicRefusal()` (Ember's control
-  words, shortcut chords, "Ember: …") and `memoryRefusal()` on every string, private paths on files and quotes. A
-  refusal for what a view says (`why`) is audited as a `decision` with `kind: "view"`, shown on the card as a refusal,
-  and the model is told not to try another way. A quote's caption names an app only if the task read it.
+  `checkDoc()` (app/main/agent/view-schema.ts): the closed catalog and its limits, then every string, every string
+  read with its label, column or neighbours (`nodeTogether`), and the whole view read together:
+  - `mimicRefusal()`: any invisible, default-ignorable or bidi character refuses the view outright; Ember's control
+    words are matched after `viewNorm()` (NFKC, Cyrillic, Greek and small-capital look-alikes folded to Latin); a key
+    chord is matched by tokens (`namesChord`: any OS's names and symbols for two or more modifiers, then one of Ember's
+    shortcut keys, any separators); Ember's voice ("Ember:", "I'm Ember", "Ember says") anywhere in a line.
+  - `secretRefusal()`: `memoryRefusal()`, a private key's armour header, and a private path anywhere in any string,
+    after NFKC and with look-alike slashes read as "/".
+
+  A refusal for what a view says (`why`) is audited as a `decision` with `kind: "view"`, shown on the card as a
+  refusal, and the model is told not to try another way. A quote's caption names an app only if the task read it (as
+  the task read it), and a file or a web page only if the task read something or ran a command. A new check adds its
+  bypasses to view-redteam.test.ts.
+- **Views reach the conductor only as data.** A finished task's view goes to the next turn as words inside
+  `<task_results untrusted="true">` (with "<" escaped), and to the conversation as the task's text, never as Ember's.
 - **Never in the audit:** a view's words. It records "showed a view" with its blocks, charts and rev.
 - **To the page apart from the state.** TaskManager's `onView` → main's `ViewHub` (app/main/agent/view-doc.ts): diffs
   only, at most 4 a second a task, nothing while Ember is hidden, every view whole to a page that reloads.

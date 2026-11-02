@@ -191,9 +191,12 @@ Ember is two places at once, each for one kind of work.
     ("From Firefox", "From a command"), with a grey rule, in the secondary label, never toned; the caption names an
     app only if the task read it, and a command only if it ran one.
   - **Checks** (app/main/agent/view-schema.ts, whole document, fail closed): each node against its kind's strict schema;
-    references, one parent, no cycles and the limits; no string that imitates Ember's controls or voice ("Allow", "Not
-    now", a shortcut chord, "Ember: …"); no secret anywhere, and no file from where secrets live. One failure refuses
-    the whole view.
+    references, one parent, no cycles and the limits; no invisible or direction-changing character anywhere; no
+    string, label with its value, row or whole view that imitates Ember's controls or voice ("Allow" however it is
+    spelt, with look-alike letters folded, a shortcut chord written any way, "Ember: …", "I'm Ember"); no secret
+    anywhere (also split across a label and its value), no private key header, and no path into a place where secrets
+    live in any string. One failure refuses the whole view. A finished task's view reaches the conductor only as words
+    inside its untrusted `<task_results>`.
   - **Drawing** (app/renderer/shared/view-dom.ts, view.css): `textContent` and static SVG only, no inline styles (a
     bar's length and a chart's shapes are SVG geometry), so Home's `style-src 'self'` needs no exception. Charts get an
     Ember-written accessible name and a hidden table of the same numbers; series differ by dash as well as tone.
