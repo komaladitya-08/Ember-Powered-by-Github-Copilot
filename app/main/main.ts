@@ -381,6 +381,8 @@ function start(): void {
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
+  let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
   const ownId = (win: OwnWindowHandle): number => {
     try { return wsRef?.windowId(win) ?? 0; } catch { return 0; }
@@ -427,6 +429,7 @@ function start(): void {
     win.on("minimize", shown(false)); win.on("hide", shown(false)); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       home = null;
+      homeWantsLevel = false;
       stepAside();
       if (greetOnClose) { greetOnClose = false; setTimeout(() => greet(), 300); }
     });
@@ -1152,6 +1155,8 @@ function start(): void {
     // An acknowledgement still waiting isn't said after a stop.
     cancelAck();
     const pulled = killSwitch.pull(source);
+    // First run's stop rehearsal hears it (only the settings window, and only that it happened and how).
+    sendToHome(IPC.homeStopped, source);
     // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
     // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
     // screen reader's).
@@ -1454,6 +1459,12 @@ function start(): void {
   let signInPage: string | null = null;
   const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
+  // The sign-in code and a setup command's Copy: every web permission stays denied (the clipboard's too), so main
+  // writes it. Plain text from the settings window only, and short.
+  ipcMain.handle(IPC.copyText, guard((text: unknown) => {
+    if (typeof text !== "string" || !text || text.length > 4096) throw new Error("Nothing to copy.");
+    clipboard.writeText(text);
+  }));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
   const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   /**
@@ -1553,6 +1564,9 @@ function start(): void {
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
   ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
+  // First run's "Hey Ember" try: the microphone's level (a step of 0–8, never audio) goes to the settings window too,
+  // only while that step shows and the window can be seen.
+  ipcMain.handle(IPC.watchLevel, guard((on: unknown) => { homeWantsLevel = on === true; }));
   // Voice Match: teaching needs Ember listening (the microphone open); the voiceprint goes in when the phrases are in.
   ipcMain.handle(IPC.voiceMatchEnrol, guard(() => {
     if (policy.features.voice === false || !voice?.enrol()) return false;
@@ -2339,7 +2353,10 @@ function start(): void {
       onEvent: onVoice,
       onSelfSpeaking: on => { if (on) turnLatency.mark("firstAudio"); },
       // The level for Ember's presence ring and voice meter: straight to the overlay, never through the state.
-      onLevel: l => overlay?.setLevel(l),
+      onLevel: l => {
+        overlay?.setLevel(l);
+        if (homeWantsLevel && l.mic !== undefined && home && !home.isDestroyed() && home.isVisible() && !home.isMinimized()) home.webContents.send(IPC.homeLevel, l.mic);
+      },
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
@@ -2477,7 +2494,7 @@ function start(): void {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
         agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
-        showMenu, state: () => lastState,
+        showMenu, state: () => lastState, stopEverything,
       };
     }
   };

@@ -271,8 +271,10 @@ allows them.
   did; anything that changes or sends something asks you every time, with no "Always". After "Not now" Ember doesn't
   try again. Results are treated as information, never instructions, and one that reads as instructions to an AI
   makes every later call ask.
-- **Changed tools stop**: Ember remembers each tool as you agreed to it. If an extension's tool changes later, Ember
-  stops using it until you agree again.
+- **Changed tools stop**: Ember remembers each tool as you agreed to it. If an extension's tool changes later, even
+  in the middle of a conversation, Ember stops using it until you agree again.
+- **Asking more, not less**: tools that reach the wider internet, and every tool of an extension on a server
+  elsewhere, ask each time. A failed call's message is treated as information too, and makes every later call ask.
 - **Its own environment**: an extension's program on this computer gets only what any app Ember starts gets, never
   your GitHub sign-in or keys. Stop everything ends every extension program too.
 - **Administrators**: `features.extensions: false` turns extensions off (lockdown does too). An Ember from before this

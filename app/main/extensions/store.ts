@@ -86,7 +86,14 @@ export const COPY_LIMITS = { files: 20_000, bytes: 300 * 1024 * 1024 };
  * outside it), without `.git`. Throws when it is bigger than COPY_LIMITS. Ember runs its own copy, so a marketplace
  * that changes later can't change what the user agreed to.
  */
-export function copyPlugin(src: string, dst: string, limits = COPY_LIMITS): void {
+export function copyPlugin(src: string, dst: string, limits = COPY_LIMITS, within?: string): void {
+  // The plugin's own folder may not be a link either (it could point anywhere), and it must really lie inside its
+  // marketplace's folder.
+  if (fs.lstatSync(src).isSymbolicLink() || !fs.statSync(src).isDirectory()) throw new Error("not a folder");
+  if (within) {
+    const real = fs.realpathSync(src), root = fs.realpathSync(within);
+    if (real !== root && !real.startsWith(root + path.sep)) throw new Error("outside its marketplace");
+  }
   let files = 0, bytes = 0;
   const walk = (from: string, to: string) => {
     fs.mkdirSync(to, { recursive: true, mode: 0o700 });

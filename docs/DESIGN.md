@@ -201,7 +201,7 @@ Guidelines and its current design language (Liquid Glass, macOS 26/27), adapted 
 Pages use the tokens rather than literals, so Increase Contrast and Reduce Transparency reach every surface.
 
 - **Type:** Inter (bundled, SIL OFL 1.1) stands in for SF Pro, with optical sizes and Inter's own
-  tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid; hierarchy
+  tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid, line heights rounded to whole pixels at every text size; hierarchy
   comes from size, weight and label colour, never italics. Sentence case; no tracked capitals or
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
   scales the type tokens, each page's own px sizes and the heights of its buttons, pop-up buttons and
@@ -238,6 +238,17 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   cards, handle, ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
   left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
+- **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column. A still step indicator
+  (seven 4 px capsules, lit up to the current step, `--accent` and `--hud-dim`), "Step n of 7" in the footnote style,
+  Ember's character on its tile beside its line as the step's large title (148 px on the first step, 76 px after),
+  and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
+  quiet choice (Not now, Skip for now, Cancel), then its one prominent button, with the reason beside it whenever it
+  waits (`aria-describedby`). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
+  the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
+  `--surface-2` callout. Every state is a symbol and words. Motion: Ember arrives once (0.6 to 1 over 600 ms on the
+  brisk spring, then a happy hop), each step's part comes in from the side it lies on (16 px over 420 ms, Back from the
+  other side) and then holds still, a try's check lands on the reward spring, and the summary's lines arrive 30 ms
+  apart; Calm shows it all at rest.
 - **Catalog cards** (settings › Extensions › Browse): a marketplace's entries as cards on
   `--surface-2` inside their group, in columns of at least 240 px; the name with its kind as a
   neutral tag, the publisher's description (cut to whole words), who and where it comes from in the
