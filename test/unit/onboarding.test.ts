@@ -597,7 +597,7 @@ describe("the call sites", () => {
       "toggle(\"after-setup\", !checksBeforeStart)", // the check before Start (#94)
       "renderSetupBadge(view.needing, failing)", // the sidebar's badge (#95)
       "[c.fix, c.alt]", // a row's second button (#99)
-      "targetFeatureApplies(k, platform?.os)", // the policy line (#221)
+      "turnedOffWords(a.features, platform?.os)", // the policy line (#221; admin-copy.ts)
       "v.speechMissing === true", // the note under Speak (#101)
     ]) expect(SCRIPT, call).toContain(call);
   });
