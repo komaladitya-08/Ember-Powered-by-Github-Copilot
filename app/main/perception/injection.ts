@@ -13,13 +13,19 @@
 
 /** What may stand for the agent being addressed. */
 const AGENT = String.raw`(?:ai|a\.i\.|llms?|language models?|(?:ai |virtual |digital )?assistants?|agents?|bots?|chatbots?|copilot|ember|chatgpt|claude|gemini|gpt(?:-?\d)?)`;
+/**
+ * What may stand for the agent where a greeting or a note names it ("Dear AI assistant", "Note to Copilot"): only words
+ * that name an AI. Not people's names (a colleague called Claude, Gemini or Ember) or a plain agent, assistant or bot
+ * ("Hello agent" in a support chat, "Note to agents" on a listing): mail opening "Dear Claude," is ordinary text.
+ */
+const AI = String.raw`(?:ai|a\.i\.|llms?|language models?|(?:ai |virtual |digital )assistants?|ai agents?|chatbots?|copilot|chatgpt|gpt(?:-?\d)?)`;
 
 /** Each signal: a name (logged, never the text) and its pattern. */
 const SIGNALS: { name: string; re: RegExp }[] = [
   // "Ignore your previous instructions", "disregard all prior rules".
   { name: "override", re: /\b(?:ignore|disregard|forget|override|bypass)\b[^.\n]{0,30}\b(?:previous|prior|earlier|above|original|all|your|any|system)\b[^.\n]{0,20}\b(?:instructions?|prompts?|rules|directions|guidelines|orders)\b/i },
   // "Important notice for AI assistants", "Attention AI agents", "If you are an AI".
-  { name: "addressed", re: new RegExp(String.raw`\b(?:(?:notice|message|note|instructions?|attention|reminder)\s+(?:to|for)\s+(?:all\s+|any\s+)?${AGENT}\b|(?:attention|dear|hey|hello),?\s+(?:all\s+)?${AGENT}\b|if you are an?\s+${AGENT}\b|${AGENT}\s+(?:reading|processing|viewing) this\b)`, "i") },
+  { name: "addressed", re: new RegExp(String.raw`\b(?:(?:notice|message|note|instructions?|attention|reminder)\s+(?:to|for)\s+(?:all\s+|any\s+)?${AI}\b|(?:attention|dear|hey|hello),?\s+(?:all\s+)?${AI}\b|if you are an?\s+${AGENT}\b|${AGENT}\s+(?:reading|processing|viewing) this\b)`, "i") },
   // "You are now in developer mode", "new instructions:", "system prompt:".
   // (Not "you are now…" alone: "You are now a premium member" is ordinary page text.)
   { name: "role", re: /\b(?:you are now (?:in )?(?:developer|jailbreak|unrestricted|god|dan) mode\b|new instructions\s*:|(?:system|developer|admin) (?:prompt|message|override|instructions?)\s*:|act as (?:a|an) (?:different|new|unrestricted) (?:ai|assistant|agent|model)\b)/i },
@@ -27,8 +33,8 @@ const SIGNALS: { name: string; re: RegExp }[] = [
   // <user> or <system> alone: an XML file in an editor may hold them.
   { name: "markup", re: /<\/?(?:screen|task_results|command_output|untrusted)\b[^>]*>|<\|(?:im_start|im_end|endoftext)\|>/i },
   // "Don't tell the user", "without asking the user", "the user has already approved" (not "the user agreed to the
-  // terms", which a page may say of itself).
-  { name: "hide", re: /\b(?:do not|don't|never|without)\s+(?:tell(?:ing)?|inform(?:ing)?|alert(?:ing)?|ask(?:ing)?|notify(?:ing)?|confirm(?:ing)? with)\s+the user\b|\bthe user (?:has already|already|has) (?:approved|authori[sz]ed|consented|agreed)\b/i },
+  // terms" or "where the user has consented", which terms and privacy policies say of themselves).
+  { name: "hide", re: /\b(?:do not|don't|never|without)\s+(?:tell(?:ing)?|inform(?:ing)?|alert(?:ing)?|ask(?:ing)?|notify(?:ing)?|confirm(?:ing)? with)\s+the user\b|\bthe user (?:has already|already) (?:approved|authori[sz]ed|consented|agreed)\b/i },
 ];
 
 /** The signals found in `text` (their names, each once), empty when it reads as ordinary app text. */

@@ -25,6 +25,11 @@ export const MAX_REMINDERS = 20;
 export const MAX_AHEAD_MS = 7 * 24 * 60 * 60_000;
 /** A reminder's words, at most. */
 export const MAX_TEXT = 200;
+/**
+ * The longest one timer waits before the clock is looked at again. Timers count time awake (CLOCK_MONOTONIC on
+ * Linux), so a single timer for "3 pm" set before the laptop slept for an hour would go off at 4 pm.
+ */
+export const CHECK_MS = 60_000;
 
 /** When a reminder is due, from minutes from now or a local clock time ("15:30", "3:30 pm"): its ms, or why not. */
 export function reminderTime(a: { minutes?: number; at?: string }, now: number): number | string {
@@ -93,9 +98,7 @@ export class Reminders {
     const now = this.now();
     if (at - now > MAX_AHEAD_MS) return "Reminders can be at most a week ahead.";
     const r: Reminder = { id: crypto.randomBytes(3).toString("hex"), text: t, at: Math.max(at, now), created: now };
-    const timer = this.timers.set(() => this.due(r.id), Math.max(0, r.at - now));
-    (timer as { unref?: () => void }).unref?.();
-    this.items.set(r.id, { r, timer });
+    this.items.set(r.id, { r, timer: this.arm(r, now) });
     this.changed();
     return r;
   }
@@ -109,9 +112,7 @@ export class Reminders {
     for (const kept of list) {
       if (this.items.has(kept.id) || this.items.size >= MAX_REMINDERS) continue;
       const r: Reminder = { id: kept.id, text: kept.text, at: kept.at, created: kept.created, ...(kept.at < now ? { missed: true } : {}) };
-      const timer = this.timers.set(() => this.due(r.id), Math.max(0, Math.min(r.at - now, MAX_AHEAD_MS)));
-      (timer as { unref?: () => void }).unref?.();
-      this.items.set(r.id, { r, timer });
+      this.items.set(r.id, { r, timer: this.arm(r, now) });
     }
   }
 
@@ -145,9 +146,19 @@ export class Reminders {
     this.items.clear();
   }
 
+  /** A timer for `r`, at most CHECK_MS away: when it goes off, due() looks at the clock. */
+  private arm(r: Reminder, now: number): ReturnType<typeof setTimeout> {
+    const timer = this.timers.set(() => this.due(r.id), Math.max(0, Math.min(r.at - now, CHECK_MS)));
+    (timer as { unref?: () => void }).unref?.();
+    return timer;
+  }
+
   private due(id: string): void {
     const i = this.items.get(id);
     if (!i) return;
+    // Not yet by the clock: wait again (never early).
+    const now = this.now();
+    if (now < i.r.at) { i.timer = this.arm(i.r, now); return; }
     this.items.delete(id);
     this.changed();
     this.o.onDue(i.r);
