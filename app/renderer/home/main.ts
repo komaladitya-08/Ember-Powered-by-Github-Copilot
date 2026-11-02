@@ -11,7 +11,6 @@ import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./co
 import { MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
-import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 import { ISSUES_URL } from "../../shared/support";
 import { CONSENT_VERSION } from "../../shared/consent";
 import { useAppNames } from "../../shared/apps";
@@ -23,7 +22,8 @@ import {
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
-import { keptWords, lockdownNotice, lockdownSendLine } from "./admin-copy";
+import { extensionsStatus, startExtensions } from "./extensions";
+import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 import { followStartRow } from "./start-row";
 
@@ -344,6 +344,7 @@ function render(status: Status): void {
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
   targetsStatus(status);
+  extensionsStatus(status);
 }
 
 // ───── What differs by OS: shortcuts, folders, the consent's OS sentences (from main; Linux's markup until then) ─────
@@ -402,10 +403,6 @@ let managed = new Set<string>();
 let confirmEvery = false;
 /** Never-look entries the administrator set (lower case): shown locked, never part of the user's own list. */
 let adminNeverLook = new Set<string>();
-const FEATURE_TEXT: Record<string, string> = {
-  voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
-  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", memory: "remembering between runs", ...TARGET_FEATURE_TEXT,
-};
 /** The data list's "When you ask something" line as the page writes it, put back once Ember isn't locked down. */
 let sendAsWritten: Node[] | null = null;
 function renderAdmin(a: Status["admin"]): void {
@@ -419,7 +416,7 @@ function renderAdmin(a: Status["admin"]): void {
     el.hidden = false;
     el.textContent = locked;
   } else if (a.source) {
-    const off = Object.entries(a.features).filter(([k, v]) => v === false && targetFeatureApplies(k, platform?.os)).map(([k]) => FEATURE_TEXT[k] ?? k);
+    const off = turnedOffWords(a.features, platform?.os);
     const rules = [
       off.length ? `Turned off: ${off.join(", ")}.` : "",
       a.confirmEveryAction ? "Ember asks before every action." : "",
@@ -711,6 +708,8 @@ window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
 startTargets();
+// Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
+startExtensions();
 
 // ───── Conversation (this session only) ─────
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];

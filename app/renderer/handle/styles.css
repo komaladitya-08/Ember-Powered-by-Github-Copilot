@@ -9,8 +9,20 @@ body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label);
   box-shadow: var(--glass-spec), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18);
 }
 @media (hover: hover) { .handle:hover { box-shadow: var(--glass-spec), inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18); } }
-.menu { all: unset; flex: none; display: block; cursor: pointer; border-radius: 50%; }
+.menu { all: unset; flex: none; display: block; position: relative; cursor: pointer; border-radius: 50%; }
 .menu:focus-visible { box-shadow: var(--focus-ring); }
+/* Ember's presence ring round its face (app/shared/presence.ts; docs/DESIGN.md "Presence"): the dim ink at rest, the
+   state's colour otherwise, a notch at the top on a problem. Always still on the handle (it is on screen all day), and
+   decorative: the line beside it says the state in words. */
+.menu::before {
+  content: ""; position: absolute; inset: 1px; border-radius: 50%; pointer-events: none;
+  border: 1.5px solid var(--hud-dim);
+}
+body:is([data-presence="listening"], [data-presence="acting"], [data-presence="needs"]) .menu::before { border-color: var(--accent); }
+body[data-presence="needs"] .menu::before { border-width: 2px; }
+body[data-presence="thinking"] .menu::before { border-color: var(--accent-2); }
+body[data-presence="done"] .menu::before { border-color: var(--green); }
+body[data-presence="error"] .menu::before { border-color: var(--red); -webkit-mask: conic-gradient(from -20deg, transparent 0 40deg, #000 40deg); }
 #face { display: block; width: 46px; height: 46px; }
 .text { display: grid; min-width: 0; }
 /* Ember's name, and beside it the computer Ember works on when that isn't this one (§8.1): a small capsule with a dot

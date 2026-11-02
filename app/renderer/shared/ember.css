@@ -66,6 +66,11 @@
   --green-text: #5be37d;
   --red-text: #ff7a71;
   --purple-text: #eea2ff;
+  /* Ember's HUD (the presence ring, its meter, lock-on brackets): Ember's own light as hairline ink. Decorative only,
+     never the one carrier of a state (words say it), so not held to a text or control contrast. --hud-line is the warm
+     hairline for scales, tracks and brackets; --hud-dim a segment not lit (to come, or no sound yet). */
+  --hud-line: rgba(255, 200, 160, 0.28);
+  --hud-dim: rgba(255, 146, 48, 0.22);
 
   /* Shape: concentric radii (inner = outer − padding, never pinched), capsules for large and floating controls,
      and Apple's icon corner as a share of the tile. */
@@ -132,6 +137,8 @@
     --green-text: #7ef09a;
     --red-text: #ff9a93;
     --purple-text: #f3c2ff;
+    --hud-line: rgba(255, 214, 184, 0.55);
+    --hud-dim: rgba(255, 160, 86, 0.45);
     --label-2: rgba(245, 240, 236, 0.84);
     --label-3: rgba(245, 240, 236, 0.66);
     --separator: rgba(255, 255, 255, 0.22);
@@ -286,6 +293,8 @@ html.calm *, html.calm *::before, html.calm *::after { transition-duration: 0s !
     --purple: CanvasText;
     --blue: CanvasText;
     --gray: GrayText;
+    --hud-line: CanvasText;
+    --hud-dim: GrayText;
     --control-edge: ButtonText;
     --scroll-thumb: CanvasText;
     /* A shadow ring would be dropped, and on the controls drawn as they are it would sit under the outline below. */

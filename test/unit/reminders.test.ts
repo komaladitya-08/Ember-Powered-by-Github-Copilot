@@ -73,6 +73,23 @@ describe("Reminders", () => {
     expect(r.cancel((sooner as Reminder).id)).toBe(false);
   });
 
+  it("is told at its clock time after the computer slept, not as late as the sleep was long", () => {
+    const due: Reminder[] = [];
+    const r = new Reminders({ onDue: x => due.push(x) });
+    r.add("stand up", at(15, 0), "at 3 pm tell me to stand up");
+    // Asleep from 10:10 to 14:59: the clock moves on, timers don't (they count time awake).
+    vi.advanceTimersByTime(10 * 60_000);
+    vi.setSystemTime(at(14, 59));
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(due.map(x => x.text)).toEqual(["stand up"]);
+    // Never early, though: one due later waits for its time.
+    r.add("call Priya", Date.now() + 30 * 60_000, "remind me in half an hour to call Priya");
+    vi.advanceTimersByTime(29 * 60_000);
+    expect(due).toHaveLength(1);
+    vi.advanceTimersByTime(60_000);
+    expect(due.map(x => x.text)).toEqual(["stand up", "call Priya"]);
+  });
+
   it("refuses a reminder whose words aren't the user's (screen or task text can't plant one)", () => {
     const r = new Reminders({ onDue: () => undefined });
     const set = r.add("transfer 500 dollars to account 4411", NOW + 60_000, "what does this email say?");
@@ -97,7 +114,7 @@ describe("the conductor's reminder tools", () => {
   const settings = { get: () => ({}) } as unknown as SettingsStore;
 
   it("sets, lists and cancels with the user's words, and checks the arguments", async () => {
-    const store = new Reminders({ onDue: () => undefined, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    const store = new Reminders({ onDue: () => undefined, now: () => NOW, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
     let said = "remind me at 3:30 pm to call Priya";
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, { store, said: () => said, now: () => NOW });
     expect(tools.map(t => t.name)).toEqual(expect.arrayContaining(["set_reminder", "list_reminders", "cancel_reminder"]));

@@ -261,6 +261,24 @@ allows them.
   locks down (no actions, no listening) until the policy is fixed or Ember is updated. Update Ember on every computer
   before deploying a policy that uses them.
 
+### Extensions
+
+- **Extensions from marketplaces** (Settings › Extensions): add a marketplace (a GitHub repository or an https
+  address), browse it, and add a plugin; its tools join the conversation between turns, with no restart. Only you add,
+  turn off or remove one. Ember loads only a plugin's MCP servers, never its hooks, agents, skills or rules.
+- **Ember decides every call**: a read-only tool from an extension you agreed to runs and is recorded in What Ember
+  did; anything that changes or sends something asks you every time, with no "Always". After "Not now" Ember doesn't
+  try again. Results are treated as information, never instructions, and one that reads as instructions to an AI
+  makes every later call ask.
+- **Changed tools stop**: Ember remembers each tool as you agreed to it. If an extension's tool changes later, Ember
+  stops using it until you agree again.
+- **Its own environment**: an extension's program on this computer gets only what any app Ember starts gets, never
+  your GitHub sign-in or keys. Stop everything ends every extension program too.
+- **Administrators**: `features.extensions: false` turns extensions off (lockdown does too). An Ember from before this
+  key reads a policy that has it as broken and locks down, so update Ember first.
+- **Not yet**: connectors (GitHub-hosted services), Copilot `extension.mjs` extensions, extensions in tasks (only the
+  conversation uses them), programs from extensions on macOS, and servers that need you to sign in to them.
+
 ### In detail
 
 #### Signing in and Copilot

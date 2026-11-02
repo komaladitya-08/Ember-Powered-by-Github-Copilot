@@ -5,6 +5,61 @@ body { font: var(--type-callout); color: var(--label); }
 #stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 
+/* ── Ember's presence (presence.ts; docs/DESIGN.md "Presence"): a ring of 24 ticks round Ember that says its state,
+   a steady microphone mark while it hears a request, and a five-bar meter while its own voice plays. Under Ember (it
+   draws over the ring), decorative (aria-hidden; the words say every state), and never takes a click. ── */
+/* The wrapper main.ts moves with Ember (an unstyled box: only its transform changes as Ember moves). */
+.presence { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 0; pointer-events: none; will-change: transform; }
+.presence[hidden] { display: none; }
+/* The ring: centred on Ember, its ticks placed once by a static transform (one every 15°: nothing ever rotates). */
+.ring { position: absolute; left: 0; top: 0; display: none; }
+.presence:not([data-state="idle"]) .ring { display: block; }
+.tick, .ring-now {
+  position: absolute; left: -1px; top: -3px; width: 2px; height: 6px; border-radius: 1px; background: var(--hud-dim);
+  transform: rotate(calc(var(--i, 0) * 15deg)) translateY(calc(var(--size, 60px) * -0.66));
+}
+/* Listening: the ticks the microphone's level lights, clockwise from the top (presence.ts toggles data-on, at most 20
+   times a second while the microphone is open). A level changes only their opacity: the ring's small area repaints
+   (measured cheaper under software compositing than 24 layers of their own: 7.6% against 9.1% of the GPU process at
+   20 changes a second). Unlit ticks are the dim ink, so a ring on silence shows nothing lit, never a meter moving on
+   nothing. */
+.presence[data-state="listening"] .tick { background: var(--accent); opacity: 0.28; }
+.presence[data-state="listening"] .tick[data-on] { opacity: 1; }
+/* Thinking: the ring in Ember's warmer light, breathing three times as the state begins, then still. */
+.presence[data-state="thinking"] .tick { background: var(--accent-2); }
+.presence[data-state="thinking"] .ring { animation: ring-glow 1.6s ease-in-out 3; }
+/* Acting (with your mouse and keyboard, or showing you): the ring dim, its top segment the one small pulse. */
+.presence[data-state="acting"] .tick { background: var(--accent); opacity: 0.4; }
+.ring-now { display: none; width: 3px; left: -1.5px; height: 9px; top: -4.5px; background: var(--accent-2); }
+.presence[data-state="acting"] .ring-now { display: block; animation: ring-pulse 1.4s ease-in-out infinite; }
+/* Needs you: the full ring, still (a question never pulses or counts down: it waits for you). */
+.presence[data-state="needs"] .tick { background: var(--accent); }
+/* A problem: red, with a notch at the top (its shape says it as well as its colour). */
+.presence[data-state="error"] .tick { background: var(--red); }
+.presence[data-state="error"] .tick:is(:nth-child(1), :nth-child(2), :nth-child(24)) { opacity: 0; }
+/* Done: the ring completes once and fades (presence.ts takes it away after DONE_RING_MS, in Calm too). */
+.presence[data-state="done"] .tick { background: var(--green); }
+.presence[data-state="done"] .ring { animation: ring-done 2.2s ease 1 forwards; }
+/* The microphone mark (a trust light: it says the microphone hears you, whatever the level), at Ember's lower left. */
+.mic-mark {
+  display: none; position: absolute; left: calc(var(--size, 60px) * -0.78 - 8px); top: calc(var(--size, 60px) * 0.2 - 8px);
+  width: 16px; height: 16px; border-radius: 50%; background: var(--glass-solid); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55), inset 0 0 0 1px var(--hud-line);
+}
+.mic-mark::before { content: ""; position: absolute; inset: 0; background: var(--accent); -webkit-mask: var(--sym-mic) center / 11px no-repeat; }
+.presence[data-mic] .mic-mark { display: block; }
+/* Ember's own voice: five bars at its upper left, scaled (scale only) by the voice's level as it plays; a steady mark
+   in Calm. Only while its own voice plays (the system's voice gives no level, so it shows none). */
+.meter {
+  display: none; position: absolute; left: calc(var(--size, 60px) * -0.78 - 11px); top: calc(var(--size, 60px) * -0.5 - 9px);
+  height: 18px; padding: 0 3px; border-radius: var(--r-xs); align-items: center; gap: 2px;
+  background: var(--glass-solid); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55), inset 0 0 0 1px var(--hud-line);
+}
+.presence[data-voice] .meter { display: inline-flex; }
+.meter i { width: 2px; height: 12px; border-radius: 1px; background: var(--accent); transform-origin: 50% 50%; scale: 1 0.15; }
+@keyframes ring-glow { 50% { opacity: 0.5; } }
+@keyframes ring-pulse { 50% { opacity: 0.3; } }
+@keyframes ring-done { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+
 /* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen (40 px down:
    layout.ts's PILL_TOP), or at the bottom while the control Ember works on is under it at the top (main.ts sets
    .low and how far up). It fades in from just above and out in place (main.ts keeps its words until it has gone). */
@@ -208,9 +263,11 @@ body { font: var(--type-callout); color: var(--label); }
 .focus[hidden] { display: block; opacity: 0; }
 .focus[hidden]::after { animation: none; }
 @keyframes focus-glow { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i, .ring, .ring-now { animation: none; } }
 html.calm .focus { transition: none; }
 html.calm .focus::after, html.calm .status i { animation: none; }
+/* Calm: the presence ring holds still (thinking stays lit, the acting segment steady, done shown whole until it goes). */
+html.calm .presence .ring, html.calm .presence[data-state="acting"] .ring-now { animation: none; }
 
 /* Windows contrast themes (forced colours; tokens and focus in ember.css): the cards' buttons and the where badge keep
    their edges (the cards, the status line and the bubble keep theirs: a border the system colours). */
@@ -226,6 +283,9 @@ html.calm .focus::after, html.calm .status i { animation: none; }
   .view .bar { outline: 1px solid CanvasText; }
   .view .bar i { forced-color-adjust: none; background: Highlight; }
   .view .excerpt pre { border: 1px solid CanvasText; }
+  /* The presence ring and its marks keep their paint, in the system colours the tokens become (ember.css). */
+  .tick, .ring-now, .mic-mark, .mic-mark::before, .meter, .meter i { forced-color-adjust: none; }
+  .mic-mark, .meter { background: Canvas; outline: 1px solid CanvasText; outline-offset: -1px; }
 }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type

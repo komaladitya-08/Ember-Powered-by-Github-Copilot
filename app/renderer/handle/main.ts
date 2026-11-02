@@ -7,10 +7,12 @@ import { cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
-import { STATE_WORD, cardLines, idleLine as tasksLine } from "../overlay/stack";
+import { STATE_WORD, cardLines } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
-import { idleLine, micBadge } from "../../shared/mic";
+import { micBadge } from "../../shared/mic";
+import { presenceOf } from "../../shared/presence";
 import { HandleLive } from "./live";
+import { handleLine } from "./line";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -87,7 +89,7 @@ function announce(b: BubbleState, status: string | null, micNews: string | null)
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}) };
+    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}) };
     const text = announcement(view, name);
     // The same question, its whole text now all shown: only that news, not the question and its text again.
     if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }
@@ -187,13 +189,20 @@ api.onState(s => {
   mic.title = micState?.label ?? "";
   mic.setAttribute("aria-label", micState?.label ?? "Microphone");
   const micNews = live.micNews(s.mic);
-  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work; while tasks run, their count in place of Ready.
-  const idle = tasksLine(idleLine(s.idle, s.mic), s.tasks) ?? "Ready";
+  // The presence ring round the face says Ember's state at a glance (still: the handle never animates it), dim at rest.
+  const ring = presenceOf(s);
+  if (document.body.dataset.presence !== ring) document.body.dataset.presence = ring;
+  // The most urgent thing that is true now: a task that needs you, why Ember can't answer, the tasks under way, a
+  // failure, the setup row that holds Ember back (by name), the microphone, else Ready (line.ts, review #5).
+  const idle = handleLine(s);
   if (!fallback) {
     if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
+    const line = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
+    $("line").textContent = line;
+    // Hovering the pill shows the whole line (it is cut off with an ellipsis when long).
+    $("handle").title = line;
     return;
   }
   announce(b, s.status ?? null, micNews);

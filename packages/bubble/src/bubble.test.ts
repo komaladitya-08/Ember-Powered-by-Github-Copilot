@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, onPress, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, keyHintParts, onPress, questionParts, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -332,5 +332,47 @@ describe("onPress (live test: Allow ignored the first click)", () => {
     expect(n).toBe(1);
     b.dispatchEvent(new Press("click", 0, 1));
     expect(n).toBe(2);
+  });
+});
+
+describe("the bubble's hierarchy (UI audit #9)", () => {
+  it("sets a question's decision apart from what it does and from the task it is part of", () => {
+    expect(questionParts("Borrow your mouse to click the “Send” button in Mail? It sends “Q3” to Priya Shah.\nYour task: Email Priya")).toEqual({
+      ask: "Borrow your mouse to click the “Send” button in Mail?", rest: "It sends “Q3” to Priya Shah.", task: "Your task: Email Priya",
+    });
+    expect(questionParts("Click “Save”?")).toEqual({ ask: "Click “Save”?", rest: "", task: "" });
+    // A question mark inside a quoted name isn't the end of the decision.
+    expect(questionParts("Click “Why?” in Help?")).toEqual({ ask: "Click “Why?” in Help?", rest: "", task: "" });
+    // Not a question: shown as it is.
+    expect(questionParts("Pushing feature-x to origin, as you asked.")).toBeNull();
+  });
+
+  it("shows the keys a question names as keycaps beside their words, and any other step as words", () => {
+    expect(keyHintParts("Ctrl+Alt+Y allow · Ctrl+Alt+N not now")).toEqual([{ keys: ["Ctrl", "Alt", "Y"], word: "allow" }, { keys: ["Ctrl", "Alt", "N"], word: "not now" }]);
+    expect(keyHintParts("Control+Shift+Command+Y allow")).toEqual([{ keys: ["Control", "Shift", "Command", "Y"], word: "allow" }]);
+    expect(keyHintParts("Or press Ctrl+Alt+E and go to Conversation.")).toBeNull();
+    expect(keyHintParts("Clicking “Rename”")).toBeNull();
+    expect(keyHintParts(null)).toBeNull();
+  });
+
+  it("says a risky question is one before anything else, as its tag shows it", () => {
+    const v: BubbleView = { visible: true, mood: "attention", title: "May I?", thought: "Click “Send”?", streaming: false, step: "Ctrl+Alt+Y allow · Ctrl+Alt+N not now", risky: true };
+    expect(announcement(v)).toBe(`Ember needs you: ${RISKY_TAG}. May I? Click “Send”? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.`);
+    expect(announcement({ ...v, risky: false })).toBe("Ember needs you: May I? Click “Send”? Ctrl+Alt+Y allow; Ctrl+Alt+N not now.");
+  });
+
+  it("makes the state a tag (a tint behind its word), never a pulse on a question, and a risky Allow that doesn't stand out", () => {
+    expect(BUBBLE_CSS).toMatch(/\.eb-chip \{[^}]*border-radius: var\(--r-capsule, 999px\);[^}]*background: color-mix\(in srgb, var\(--eb-mood\) 16%, transparent\);/);
+    const pulse = /([^{}]+)\{\s*animation: eb-pulse/.exec(BUBBLE_CSS)![1];
+    expect(/:is\(([^)]*)\)/.exec(pulse)![1]).not.toContain('"attention"');
+    expect(pulse).toContain(':not([data-mood="attention"])');
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-risky="true"\] \.eb-actions button\.eb-primary \{ background: rgba\(255, 255, 255, 0\.08\);/);
+  });
+
+  it("locks its brackets on a question once (180 ms), never in Calm, and keeps them out of the clickable parts", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-mood="attention"\]:not\(\[data-hidden="true"\]\) \.eb-lock \{ display: block; animation: eb-lock 180ms var\(--spring-snappy, ease-out\) 1; \}/);
+    expect(BUBBLE_CSS).toMatch(/\.eb-lock \{[^}]*pointer-events: none;/);
+    expect(BUBBLE_CSS).toContain("html.calm .eb-lock { animation: none !important; }");
+    expect(BUBBLE_CSS).toMatch(/@keyframes eb-lock \{ from \{ opacity: 0; scale: 1\.05; \} \}/);
   });
 });

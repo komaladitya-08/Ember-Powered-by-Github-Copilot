@@ -10,8 +10,9 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Conductor, conductorTools, type ConductorDeps } from "../../app/main/agent/conductor";
+import { Reminders } from "../../app/main/agent/reminders";
 import { emberSystemMessage, NO_CAPS } from "../../app/main/agent/persona";
-import { Presenter } from "../../app/main/agent/presenter";
+import { Presenter, stepOf } from "../../app/main/agent/presenter";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import type { EmberState } from "../../app/shared/overlay";
 import { PLATFORM_WORDS } from "../../app/shared/words";
@@ -77,11 +78,12 @@ describe("the conductor's tools with other computers (§2.6)", () => {
 /** A conductor on a pretend client: the session's config and every prompt sent are kept. */
 async function conductorWith(extra: Partial<ConductorDeps>, o: { send?: (prompt: string) => Promise<string> } = {}) {
   const sent: string[] = [];
-  let config: { tools: { name: string }[]; systemMessage: unknown } | null = null;
+  const listeners: ((e: { type: string; data?: unknown }) => void)[] = [];
+  let config: { tools: { name: string; handler: (a: unknown, i: unknown) => unknown }[]; systemMessage: unknown } | null = null;
   const session = {
     sessionId: "ember-conductor-x",
     rpc: { tools: { initializeAndValidate: async () => ({}), getCurrentMetadata: async () => ({ tools: config!.tools.map(t => ({ name: t.name })) }) } },
-    on: () => () => undefined,
+    on: (l: (e: { type: string; data?: unknown }) => void) => { listeners.push(l); return () => undefined; },
     send: async (m: { prompt: string }) => { sent.push(m.prompt); return o.send ? o.send(m.prompt) : "m"; },
     abort: async () => undefined, disconnect: async () => undefined,
   };
@@ -91,7 +93,7 @@ async function conductorWith(extra: Partial<ConductorDeps>, o: { send?: (prompt:
     workDir: "/tmp", model: "m", ...extra,
   });
   await c.start();
-  return { c, sent, config: () => config! };
+  return { c, sent, config: () => config!, emit: (e: { type: string; data?: unknown }) => { for (const l of listeners) l(e); } };
 }
 
 describe("the conductor's session (§3.15)", () => {
@@ -137,5 +139,35 @@ describe("a request that never went (cross-review X5)", () => {
     expect(await failed({ settingsKey: () => "Win+Alt+E", shortcuts: SHORTCUTS.darwin })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Win+Alt+E).");
     // Without the check (tests, the eval): the OS's own table, as before.
     expect(await failed({ shortcuts: SHORTCUTS.darwin })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Control+Shift+Command+E).");
+  });
+});
+
+describe("the conversation's tools in the bubble", () => {
+  it("each have a step in words, never the tool's own name (run_routine)", () => {
+    const said = () => "";
+    const all = conductorTools(settings, async () => "", () => "", () => "", {} as never, PLATFORM_WORDS.linux,
+      { caps: TARGETS, listComputers: () => "", offerConnect: () => "" }, { store: {} as never, said },
+      { store: new Reminders({ onDue: () => undefined }), said }, { store: {} as never, said });
+    expect(all.map(t => t.name)).toEqual(expect.arrayContaining(["remember", "set_reminder", "run_routine", "list_computers", "list_tasks"]));
+    expect(all.map(t => t.name).filter(n => stepOf(n) === undefined)).toEqual([]);
+  });
+});
+
+describe("the user's words a turn's tools check against", () => {
+  it("are the words of the request whose turn is running, not of one asked meanwhile", async () => {
+    const reminders = new Reminders({ onDue: () => undefined, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    const { c, config, emit } = await conductorWith({ reminders });
+    const setReminder = (text: string) => run(byName(config().tools, "set_reminder"), { text, minutes: 5 });
+    await c.ask("remind me in 5 minutes to water the plants");
+    emit({ type: "user.message", data: { content: "remind me in 5 minutes to water the plants" } });
+    // Asked while that turn still runs: the runtime holds it until the turn ends.
+    await c.ask("and how is the weather today");
+    expect(await setReminder("water the plants")).toMatch(/^Set \[/);
+    emit({ type: "session.idle", data: {} });
+    emit({ type: "user.message", data: { content: "<context untrusted=\"true\">Mail</context>\n\nand how is the weather today" } });
+    expect(await setReminder("water the plants")).toMatch(/user's own words/);
+    // A turn that is none of the user's requests has none of their words.
+    emit({ type: "user.message", data: { content: "Something the runtime sent itself" } });
+    expect(await setReminder("how is the weather today")).toMatch(/user's own words/);
   });
 });

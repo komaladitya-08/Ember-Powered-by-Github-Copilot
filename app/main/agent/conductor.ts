@@ -14,7 +14,7 @@ import { reminderTime, whenWords, type Reminders } from "./reminders";
 import { MAX_STEPS, routineSteps, type RoutineBook } from "./routines";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
-import { hardenedSessionConfig, verifySessionTools } from "./session-config";
+import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
 import { friendlyError, type Presenter } from "./presenter";
 import type { Logger } from "../logger";
@@ -102,6 +102,11 @@ export interface ConductorDeps {
   listComputers?: () => string;
   /** offer_connect: shows the user a Connect button for a host their words named; returns what to tell the model. */
   offerConnect?: (name: string) => string;
+  /**
+   * The extension tools the user agreed to (ExtensionsService.forSession), each call decided by Ember's gate. Absent:
+   * today's tools exactly.
+   */
+  extensions?: SessionExtensions;
 }
 
 /** The tools that come with other computers (§2.6): only with PromptCaps.targets. */
@@ -543,8 +548,29 @@ export class Conductor {
     this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools).map(t => t.name);
   }
 
-  /** What the user said in the turn under way: a fact saved now counts as theirs only if it is in their words. */
+  /**
+   * What the user said in the turn under way: a fact, reminder or routine saved now counts as theirs only if it is in
+   * their words. Set when that turn begins (its user.message), not when the request is sent: a request sent during a
+   * turn waits for it, and its words must not stand for the turn still running.
+   */
   private said = "";
+  /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
+  private unstarted: string[] = [];
+
+  /**
+   * A turn began with `content` (the prompt ask() sent, which ends with the user's words): the oldest request it
+   * matches gives the turn its words, and those before it never ran. A message that is none of them (nothing the user
+   * asked) gives the turn none.
+   */
+  private turnBegan(content: string): void {
+    const said = content.trimEnd();
+    const i = this.unstarted.findIndex(t => said.endsWith(t.trim()));
+    this.said = i < 0 ? "" : this.unstarted[i];
+    this.unstarted.splice(0, i + 1);
+    // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
+    // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
+    this.deps.extensions?.newTurn?.();
+  }
 
   /** Memory's tools, while memory is on (deps.memory). */
   private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
@@ -599,6 +625,7 @@ export class Conductor {
       systemMessage: emberSystemMessage(d.words, d.memory ? { ...(d.caps ?? NO_CAPS), memory: true } : d.caps),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
+      ...(d.extensions ? { extensions: d.extensions } : {}),
     });
     if (d.resume) {
       try {
@@ -622,7 +649,7 @@ export class Conductor {
       writeAgentState(d.stateFile, { forget: undefined });
       d.log.info("conductor.leftovers_deleted", { count: leftovers.length });
     }
-    const tools = await verifySessionTools(this.session, this.toolNames);
+    const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions);
     d.log.info("conductor.tools", { tools });
     const ms = d.turnStartMs ?? TURN_START_MS;
     const silentMs = d.turnSilentMs ?? TURN_SILENT_MS;
@@ -634,6 +661,10 @@ export class Conductor {
     this.watch = watch;
     this.session.on(e => {
       watch.event(e);
+      if (e.type === "user.message" && !(e as { agentId?: string }).agentId) {
+        const content = (e.data as { content?: unknown } | undefined)?.content;
+        this.turnBegan(typeof content === "string" ? content : "");
+      }
       if (this.stuck) {
         // The silent turn being ended has ended (Ember said so already): the conversation goes on.
         if (e.type === "session.idle") this.settleEnding?.(true);
@@ -674,7 +705,7 @@ export class Conductor {
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
-    this.said = text;
+    this.unstarted.push(text);
     // What Ember remembers that bears on the request (while memory is on): before it, as information.
     let remembered = "";
     try { remembered = this.deps.memory?.context(text) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
@@ -695,6 +726,8 @@ export class Conductor {
     } catch (err) {
       watch?.unsent();
       this.busy = false;
+      // No turn will come for it.
+      this.unstarted = this.unstarted.filter(t => t !== text);
       // The finished tasks' results were in the request that never went: they wait for the next one.
       if (reports.length) this.deps.returnReports?.(reports);
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this
@@ -718,6 +751,7 @@ export class Conductor {
     if (this.session && this.busy) this.stopping = true;
     // The runtime drops the requests waiting behind the turn: no turn is owed for them.
     this.watch?.clear();
+    this.unstarted = [];
     await this.session?.abort();
   }
 

@@ -196,6 +196,17 @@ describe("every window", () => {
     expect(shared).toMatch(/html\.calm \*, html\.calm \*::before, html\.calm \*::after \{[^}]*animation: none !important/);
   });
 
+  it("lists every keyframe, and lets only small opacity pulses run forever (the HUD's lock-on, ring glow and done are finite)", () => {
+    const sheets = [BUBBLE_CSS, shared, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
+    const names = sheets.flatMap(css => [...css.matchAll(/@keyframes ([\w-]+)/g)].map(m => m[1])).sort();
+    expect(names).toEqual(["eb-blink", "eb-glow", "eb-lock", "eb-pulse", "focus-glow", "mic-pulse", "pulse", "ring-done", "ring-glow", "ring-pulse"]);
+    const endless = sheets.flatMap(css => [...css.matchAll(/animation: ([\w-]+) [^;]*infinite/g)].map(m => m[1])).sort();
+    expect(endless).toEqual(["eb-blink", "eb-pulse", "focus-glow", "mic-pulse", "pulse", "ring-pulse"]);
+    for (const [name, css] of [["eb-lock", BUBBLE_CSS], ["ring-glow", read("app/renderer/overlay/styles.css")], ["ring-done", read("app/renderer/overlay/styles.css")]] as const) {
+      expect(css, name).toMatch(new RegExp(`animation: ${name} [^;]* [1-3]( forwards)?;`));
+    }
+  });
+
   it("fits the ask box's field and its hint line in the 92 px window", () => {
     const css = read("app/renderer/ask/styles.css");
     const inset = Number(/\.ask \{[^}]*inset: (\d+)px/.exec(css)![1]);

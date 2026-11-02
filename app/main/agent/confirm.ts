@@ -54,6 +54,11 @@ export interface Question {
   /** The keys can't allow it (consent cards: a click only). */
   clickOnly?: boolean;
   /**
+   * The step is risky (policy's Decision.risky: asked every time, never "Always"): its bubble is set apart from a routine
+   * question's (BubbleState.risky). It changes only how it looks; how it is answered stays the same.
+   */
+  risky?: boolean;
+  /**
    * The whole of what its sentence shows only in part: a typed text cut to its two ends (Decision.detail), or fill_cells'
    * cells each with all of its content, one to a line. Shown as the sentence shows typed text (policy.ts typedUnits).
    */
@@ -314,6 +319,7 @@ export class Confirmer {
         : p.q.options.map(o => ({ id: `q${p.n}:${o.id}`, label: o.label, primary: o.primary })),
       ...(p.q.task ? { task: p.q.task } : {}),
       ...(p.q.where ? { where: p.q.where } : {}),
+      ...(p.q.risky ? { risky: true } : {}),
       // All of a typed text its sentence cuts short, under it (review #116).
       ...(p.whole && p.q.detail ? { whole: { n: p.n, text: p.q.detail, seen: p.whole.seen, page: p.whole.page } } : {}),
     };

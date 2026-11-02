@@ -181,7 +181,8 @@ describe("every target", () => {
   it("requires the SSH and command helpers each target starts, so a partial build can't be staged (review #209)", () => {
     // askpass.cjs: the POSIX password helper (askpass-server.ts); remote-link.cjs: the SSH link worker (connections.ts);
     // job-host.cjs: Windows' command job host (main.ts, wsl/router.ts). Windows asks through ember-askpass.exe instead.
-    const helpers: Record<string, string[]> = { linux: ["askpass.cjs", "remote-link.cjs"], darwin: ["askpass.cjs", "remote-link.cjs"], win32: ["remote-link.cjs", "job-host.cjs"] };
+    // mcp-launch.cjs: the launcher for extensions' MCP servers (extensions/service.ts), on every OS.
+    const helpers: Record<string, string[]> = { linux: ["askpass.cjs", "remote-link.cjs", "mcp-launch.cjs"], darwin: ["askpass.cjs", "remote-link.cjs", "mcp-launch.cjs"], win32: ["remote-link.cjs", "job-host.cjs", "mcp-launch.cjs"] };
     const build = fs.readFileSync(path.resolve("scripts/build-app.mjs"), "utf8");
     for (const l of layouts) {
       for (const f of helpers[l.platform]) {

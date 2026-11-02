@@ -171,6 +171,19 @@ describe("AgentHost's status answer", () => {
     expect(bubbles.at(-1)?.thought).toMatch(/Connect your GitHub account/);
   });
 
+  it("tells main which requests go unanswered, so “On it.” never follows “Connect your GitHub account” (review of #109)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined });
+    // Answered here: main's acknowledgement was already cancelled by onAnswer.
+    expect(await host.ask("Ember?")).toBe(true);
+    // Signed out: only the notice comes, no turn, so the acknowledgement waiting must not be said.
+    expect(await host.ask("open the quarterly report")).toBe(false);
+    // Stopped while the screen was read: dropped.
+    expect(await host.ask("open the quarterly report", null, host.stopEpoch - 1)).toBe(false);
+  });
+
   it("turns reading results aloud off and on by request, saved in settings, and says so", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
     const settings = new SettingsStore(path.join(dir, "settings.json"));

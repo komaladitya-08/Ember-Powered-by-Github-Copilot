@@ -1,6 +1,6 @@
 // Builds the Electron app into dist/app:
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
-//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
+//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs, job-host.cjs and mcp-launch.cjs (helpers Ember runs
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
@@ -120,6 +120,8 @@ await Promise.all([
     ["app/askpass/main.ts", "dist/app/askpass.cjs"],
     ["app/main/remote/link-worker.ts", "dist/app/remote-link.cjs"],
     ["app/main/commands/run/job-host.ts", "dist/app/job-host.cjs"],
+    // The launcher for extensions' MCP servers (app/main/extensions/launch.ts), on every OS.
+    ["app/main/extensions/launch.ts", "dist/app/mcp-launch.cjs"],
   ].map(([entry, outfile]) => build({
     ...common,
     entryPoints: [entry],

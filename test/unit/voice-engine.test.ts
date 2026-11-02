@@ -696,6 +696,27 @@ describe("VoiceEngine with other people talking", () => {
     expect(utterances(events)).toEqual([expect.stringMatching(/^U77 b19$/)]);
   });
 
+  it("doesn't end a request at the speaker's own softer words, with gaps between their syllables (early end)", () => {
+    const b = talking({ wake: 9, hangover: 19 });
+    // As measured in a -45 dBFS room: "…and make the text a bit…" 13 dB under the speaker's loudest for 0.6 s (the
+    // count reached 16 frames), its syllables 2 frames apart at the room's own noise, then "…bigger." as loud as before.
+    const soft = Array.from({ length: 4 }, () => [...n(3, () => level(0.022)), ...n(2, room)]).flat();
+    const { events } = listen(b, [...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...soft, ...n(30, () => level(0.1)), ...n(60, room)]);
+    expect(utterances(events)).toEqual(["U77 b12"]);
+    expect(events.find(e => e.type === "utterance")).not.toHaveProperty("cut");
+  });
+
+  it("still sends a request that never goes quiet at the cap, saying it was cut (early end)", () => {
+    const b = talking({ wake: 9, hangover: 19 });
+    // The speaker goes on for 30 s, the softer words between their louder ones as above, in a room quiet at each gap.
+    const talk = Array.from({ length: 60 }, () => [...n(8, () => level(0.1)), ...n(3, () => level(0.022)), ...n(2, room), ...n(3, () => level(0.022))]).flat();
+    const { events } = listen(b, [...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...talk]);
+    const u = events.find(e => e.type === "utterance")!;
+    expect(u).toMatchObject({ type: "utterance", cut: true });
+    expect(u.at / 32 - 101).toBeGreaterThan(300); // at the cap (10 s of speech, with the wake phrase), not at a softer word
+    expect(events.at(-1)).toMatchObject({ type: "listening", on: false, reason: "done" });
+  });
+
   it("doesn't end a request at a short pause while the others talk either (the count starts over once the voice is back)", () => {
     for (const pause of [12, 16]) {
       const b = talking({ wake: 9, hangover: 19 });
@@ -1220,6 +1241,67 @@ describe("events", () => {
   it("sends no loudness levels (nothing uses them)", () => {
     const events = run(fake([]), e => { for (let i = 0; i < 100; i++) e.feed(new Float32Array(512).fill(0.1)); });
     expect(events).toEqual([]);
+  });
+});
+
+describe("the bare name before it shows", () => {
+  /** The spotter hears the bare name ("ember") in frame 3, then `speech` frames of speech, then silence. */
+  const byName = (heard: string[], speech = 3, after = 400) => {
+    const b = fake(heard);
+    const spot = b.spot;
+    b.spot = f => (f[0] === 3 ? ["ember"] : spot(f));
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    // The transcript check on (the default): the bare name shows only once what was said starts with it.
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    e.feed(frame(0));
+    c.t += 32; e.feed(frame(3));
+    for (let i = 0; i < speech; i++) { c.t += 32; e.feed(frame(0, true)); }
+    for (let i = 0; i < after; i++) { c.t += 32; e.feed(frame(0)); }
+    return { events, e };
+  };
+  /** Main shows "Listening…" on every "speech on", and clears it only on a window's "listening off". */
+  const listeningLeftUp = (events: VoiceEvent[]) => {
+    let shown = false, open = false;
+    for (const ev of events) {
+      if (ev.type === "listening") { open = ev.on; if (!ev.on) shown = false; }
+      if (ev.type === "speech" && ev.on) shown = true;
+      if (ev.type === "wake") shown = true;
+    }
+    return shown && !open;
+  };
+
+  it("shows nothing for 'I remember…' that the check takes back, so \"Listening…\" never stays up (stuck listening)", () => {
+    const { events, e } = byName(["I remember the milk."]);
+    expect(events).toEqual([{ type: "rejected", keyword: "ember", reason: "check", heard: "I remember the milk." }]);
+    expect(listeningLeftUp(events)).toBe(false);
+    expect(e.listening).toBe(false);
+  });
+
+  it("shows nothing for a bare name that nobody followed with words, and goes back to idle (stuck listening)", () => {
+    const { events, e } = byName([], 0);
+    expect(events).toEqual([]);
+    expect(e.listening).toBe(false);
+  });
+
+  it("shows the wake, the request and the end once what was said starts with the name (stuck listening)", () => {
+    const { events, e } = byName(["Ember, turn on night light."]);
+    expect(events).toEqual([
+      { type: "wake", keyword: "ember" },
+      { type: "listening", on: true, reason: "wake", window: "wake" },
+      { type: "utterance", text: "Turn on night light.", ms: 0, window: "wake" },
+      { type: "listening", on: false, reason: "done", window: "wake" },
+    ]);
+    expect(listeningLeftUp(events)).toBe(false);
+    expect(e.listening).toBe(false);
+  });
+
+  it("after the name alone, listens for the request and times out back to idle (stuck listening)", () => {
+    const { events, e } = byName(["Ember."]);
+    expect(events.map(ev => ev.type)).toEqual(["wake", "listening", "listening"]);
+    expect(events.at(-1)).toEqual({ type: "listening", on: false, reason: "timeout", window: "wake" });
+    expect(listeningLeftUp(events)).toBe(false);
+    expect(e.listening).toBe(false);
   });
 });
 

@@ -38,11 +38,11 @@ import type { TargetId } from "../../shared/targets";
 import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
-import { SessionToolsTimeoutError } from "./session-config";
+import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
-import { catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -137,6 +137,12 @@ export interface HostOptions {
   onReminder?: (r: Reminder) => void;
   /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
   routines?: RoutineBook;
+  /**
+   * Extensions (app/main/extensions/service.ts): the conductor's session gets the tools the user agreed to, each call
+   * decided by Ember's gate. When `generation` moves (an install, a change, a stop), Copilot is reconnected between
+   * turns, the conversation resumed as it was.
+   */
+  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
@@ -507,6 +513,8 @@ const OUTCOME = {
 const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.result?.view?.length ? `\n${viewText(t.result.view)}` : ""}`;
 /** Requests sent while the conversation was busy, kept at most (the runtime runs them one turn at a time). */
 const MAX_QUEUED = 20;
+/** Finished tasks kept for "what did I miss?" after their cards go (it names three and counts the rest). */
+const FINISHED_KEPT = 20;
 
 /**
  * One request of the user's: where they were when they called Ember, what they said, and what the conversation
@@ -555,6 +563,10 @@ const agrees = (reply: string, asked: string): boolean => {
 
 export class AgentHost {
   private client: CopilotClient | null = null;
+  /** The connected runtime, for the extensions' marketplaces (null until Copilot is ready). */
+  get copilotClient(): CopilotClient | null {
+    return this.status.phase === "ready" ? this.client : null;
+  }
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
   private status: AgentStatus;
@@ -647,6 +659,11 @@ export class AgentHost {
   private readonly announced = new Set<string>();
   /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
   private readonly outcomes = new Map<string, Presenter>();
+  /**
+   * The tasks that finished in this conversation, newest last (at most FINISHED_KEPT, none older than CATCH_UP_MS):
+   * "what did I miss?" and "status?" answer from them after their cards have gone (TaskManager forgets a task then).
+   */
+  private finishedLately: Task[] = [];
   /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
   private readonly taskBindings = new Map<string, TargetBinding>();
   /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
@@ -1135,6 +1152,7 @@ export class AgentHost {
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         onFinished: task => {
+          this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
           // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
@@ -1213,10 +1231,14 @@ export class AgentHost {
       const memory = this.memoryWanted() ? this.o.memory : undefined;
       this.memoryOn = !!memory;
       const routines = this.keepRoutines();
+      // The extension tools as they are now (none while extensions are off): a later change reconnects between turns.
+      this.extensionsGen = this.o.extensions?.generation ?? 0;
+      const extensions = this.o.extensions?.forSession();
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         reminders: this.reminders,
         ...(routines ? { routines } : {}),
+        ...(extensions ? { extensions } : {}),
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1640,6 +1662,8 @@ export class AgentHost {
    */
   /** Whether this conversation's conductor was given memory (memoryWanted() when it started). */
   private memoryOn = false;
+  /** The extensions' generation this conversation's conductor was given (ExtensionsService.generation when it started). */
+  private extensionsGen = 0;
 
   /** Whether this conversation's conductor was given routines (routinesWanted() when it started). */
   private routinesOn = false;
@@ -1659,7 +1683,16 @@ export class AgentHost {
   private keepRoutines(): RoutineBook | undefined {
     const book = this.routinesWanted() ? this.o.routines : undefined;
     this.routinesOn = !!book;
-    if (!book) { this.reminders.setOnChange(null); return undefined; }
+    if (!book) {
+      this.reminders.setOnChange(null);
+      // Turned off after this run's reminders were kept: the file lets go of them (they last in memory only now).
+      // Left there, one told this run would be put back at the next start with routines on and told again, as missed.
+      if (this.remindersRestored && this.o.routines) {
+        this.remindersRestored = false;
+        try { this.o.routines.setReminders([]); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); }
+      }
+      return undefined;
+    }
     try {
       if (!this.remindersRestored) { this.remindersRestored = true; this.reminders.restore(book.reminders()); }
       this.reminders.setOnChange(list => { try { book.setReminders(list); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); } });
@@ -1702,6 +1735,12 @@ export class AgentHost {
     this.o.onTurnEnd?.(false);
   }
 
+  /** The tasks on cards now, and those that finished lately whose cards have gone (finishedLately). */
+  private tasksLately(): Task[] {
+    const now = this.tasks?.list() ?? [];
+    return [...now, ...this.finishedLately.filter(t => !now.includes(t))];
+  }
+
   /** Requests sent whose turn hasn't started yet, oldest first (a request sent during a turn waits for it to end). */
   private queued: UserRequest[] = [];
   /**
@@ -1714,9 +1753,13 @@ export class AgentHost {
    * Sends the user's request to the conductor. `epoch`: stopEpoch when the user asked (main takes it
    * before reading the screen); a Stop since then drops the request instead of sending it.
    */
-  /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked). */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<void> {
-    if (epoch !== this.stopEpoch) return;
+  /**
+   * `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked).
+   * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
+   * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
+   */
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<boolean> {
+    if (epoch !== this.stopEpoch) return false;
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
@@ -1725,7 +1768,7 @@ export class AgentHost {
       try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
       this.o.log.info("agent.results_switch", { on: results === "loud" });
       this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
-      return;
+      return true;
     }
     // "Systems check": Ember's report on itself, which works when Copilot doesn't.
     if (healthQuestion(text) && this.betweenTurns()) {
@@ -1735,20 +1778,20 @@ export class AgentHost {
       };
       this.o.log.info("agent.health_local", { phase: health.phase, mic: health.mic });
       this.answerLocally(text, healthReply(health), how.voiceUnchecked);
-      return;
+      return true;
     }
     // "What did I miss?": the tasks that finished lately, from Ember's own record.
     if (catchUpQuestion(text) && this.betweenTurns()) {
       this.o.log.info("agent.catch_up_local");
-      this.answerLocally(text, catchUpReply(this.tasks?.list() ?? [], Date.now()), how.voiceUnchecked);
-      return;
+      this.answerLocally(text, catchUpReply(this.tasksLately(), Date.now()), how.voiceUnchecked);
+      return true;
     }
     const status = statusQuestion(text);
     if (status && this.betweenTurns()) {
-      const tasks = this.tasks?.list() ?? [];
+      const tasks = this.tasksLately();
       this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
       this.answerLocally(text, statusReply(status, tasks, Date.now()), how.voiceUnchecked);
-      return;
+      return true;
     }
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
@@ -1756,7 +1799,7 @@ export class AgentHost {
     if (ending) {
       this.presenter.userPrompt(text);
       await ending;
-      if (epoch !== this.stopEpoch) { this.presenter.reset(); return; }
+      if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     // Offline when it last tried (a retry is waiting): the network may be back, so it tries now and the question waits for it.
     if (this.status.phase === "error") this.retryNow();
@@ -1772,13 +1815,17 @@ export class AgentHost {
     if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
       this.o.log.info("agent.memory_changed", { on: this.memoryWanted(), routines: this.routinesWanted() });
       void this.launch(this.token, this.source);
+    } else if (this.status.phase === "ready" && this.o.extensions && this.o.extensions.generation !== this.extensionsGen && this.idle) {
+      // An extension was installed, changed, turned on or off, or stopped: the same reconnect, so the tools match.
+      this.o.log.info("agent.extensions_changed");
+      void this.launch(this.token, this.source);
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
     if (this.starting > 0 || this.status.phase === "starting") {
       this.presenter.userPrompt(text);
       await Promise.race([this.settled(), sleep(15_000)]);
       // Stop was pressed while it waited: the request is dropped, not sent once connected.
-      if (epoch !== this.stopEpoch) { this.presenter.reset(); return; }
+      if (epoch !== this.stopEpoch) { this.presenter.reset(); return false; }
     }
     if (!this.conductor?.sessionId || this.status.phase !== "ready") {
       const signedOut = this.status.phase === "signed-out";
@@ -1795,7 +1842,7 @@ export class AgentHost {
       const asked = this.remember("you", text);
       if (how.voiceUnchecked) this.voiceUnchecked.add(asked);
       this.remember("problem", `${title}: ${why}`);
-      return;
+      return false;
     }
     // The connection this request goes out on: if sending fails, that one is replaced (not a newer one).
     const gen = this.gen;
@@ -1820,9 +1867,23 @@ export class AgentHost {
       // Never sent: no turn of its own will come (nor its hint).
       this.hintOwed = false;
       this.queued = this.queued.filter(r => r !== request);
-      if (err instanceof ConnectionLost) this.lost(gen, "send failed");
-      else throw err;
+      if (err instanceof ConnectionLost) { this.lost(gen, "send failed"); return false; }
+      throw err;
     }
+    return true;
+  }
+
+  /**
+   * The conversation's own Stop (its bubble's, while Copilot keeps it waiting: presenter STOP_ANSWER): the turn under
+   * way ends, and so does a request still waiting to be sent. Tasks and their questions go on (the kill switch stops
+   * those).
+   */
+  async stopAnswer(): Promise<void> {
+    this.stops++;
+    this.queued = [];
+    this.presenter.stopped();
+    this.o.log.info("agent.answer_stopped");
+    await this.conductor?.abort();
   }
 
   /**
@@ -1913,6 +1974,7 @@ export class AgentHost {
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();
+    this.finishedLately = [];
     this.carried = [];
     this.transcript.length = 0;
     this.terminalRefused.clear();

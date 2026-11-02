@@ -70,7 +70,11 @@ export class Player {
   /** Replies at or below this were hushed: their late chunks are dropped. */
   private hushed = 0;
 
-  constructor(private make: () => PlayerAudio, private speaking: (on: boolean) => void) {}
+  /**
+   * `scheduled`: told of each chunk as it is scheduled (when it starts on the audio clock, and its samples), so the
+   * page can show Ember's voice level as it plays (app/shared/level.ts).
+   */
+  constructor(private make: () => PlayerAudio, private speaking: (on: boolean) => void, private scheduled?: (at: number, samples: Float32Array, rate: number) => void) {}
 
   /** Schedules a chunk of reply `id`; returns how long it plays (s), or 0 when it was dropped (its reply was hushed). */
   chunk(id: number, samples: Float32Array, rate: number): number {
@@ -88,6 +92,7 @@ export class Player {
     src.start(at);
     this.nextAt = at + buffer.duration;
     this.playing.add(src);
+    this.scheduled?.(at, samples, rate);
     this.tell(true);
     return buffer.duration;
   }
@@ -106,6 +111,11 @@ export class Player {
     this.playing.clear();
     this.nextAt = 0;
     this.tell(false);
+  }
+
+  /** The audio clock now (s), or null before anything has played. */
+  get time(): number | null {
+    return this.ctx ? this.ctx.currentTime : null;
   }
 
   /** Whether Ember's voice is playing, or about to (a reply's next chunk is on its way). */

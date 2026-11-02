@@ -124,7 +124,7 @@ describe("main.ts's Step 0b hooks (§11.3), for the packages that replace S0a's 
     ["10: the quit words", ["quitQuestion(busyTasks(), targets?.busy() ?? { commands: 0, connections: 0 },"]],
     ["11: dispose at quit", ['app.on("will-quit", () => { void targets?.dispose(); });']],
     ["12: the doctor's rows", ["...(await targetDoctorRows({ os: platform.os, sys, admin: () => admin, resourcesPath: process.resourcesPath, packaged: app.isPackaged, wslOn: wslSwitchOn(settingsText()) }))"]],
-    ["the settings page can't skip a consent card (S0a review)", ["const { patch, dropped } = settingsFromHome(sent);"]],
+    ["the settings page can't skip a consent card (S0a review)", ["const { patch, dropped } = settingsFromHome(checkHomePatch(sent));"]],
   ];
   for (const [hook, snippets] of hooks) {
     it(`keeps hook ${hook}`, () => {

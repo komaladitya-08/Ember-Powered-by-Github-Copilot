@@ -13,6 +13,8 @@ const api: MicApi = {
   onAudio: fn => { ipcRenderer.on(VOICE.audio, (_e, a: SpeechAudio) => fn(a)); },
   onAudioDone: fn => { ipcRenderer.on(VOICE.audioDone, (_e, id: number) => fn(id)); },
   played: (p: SpeechPlayed) => ipcRenderer.send(VOICE.played, p),
+  level: l => ipcRenderer.send(VOICE.level, l),
+  onLevelOn: fn => { ipcRenderer.on(VOICE.levelOn, (_e, on: boolean) => fn(on === true)); },
 };
 
 contextBridge.exposeInMainWorld("emberMic", api);

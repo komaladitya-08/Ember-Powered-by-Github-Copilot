@@ -17,7 +17,7 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
 import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
@@ -89,6 +89,10 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { ExtensionsService } from "./extensions/service";
+import { registerExtensionsIpc } from "./extensions-ipc";
+import { demoExtensionsApi, demoVariant } from "./extensions-demo";
+import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
@@ -516,9 +520,9 @@ function start(): void {
     return { ...patch, privacy: { ...patch.privacy, neverLook: patch.privacy.neverLook.filter(x => !adminOnly.has(lower(x))) } };
   };
   // Dragging the size slider sends a change per step: shown at once, saved a moment later.
-  ipcMain.handle(IPC.updateSettings, guard((sent: SettingsPatch) => {
+  ipcMain.handle(IPC.updateSettings, guard((sent: unknown) => {
     // Where Ember works and what commands may do change only behind their consent cards (TARGETS_IPC), never here.
-    const { patch, dropped } = settingsFromHome(sent);
+    const { patch, dropped } = settingsFromHome(checkHomePatch(sent));
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
     // A save that failed reaches the window as one plain sentence (review #84).
@@ -576,8 +580,13 @@ function start(): void {
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
   /** The setup rows as last read (none until then), for the handle's word: a status change doesn't read them again. */
   let setupSeen: EnvReport["checks"] = [];
-  /** The handle's word: "Setup needed" while Copilot is ready and a setup row holds Ember back (review #95), else the agent's. */
-  const idleNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen) ?? idleWord(status);
+  /** The handle's word: the agent's ("Ready", or why Ember can't answer yet). */
+  const idleNow = (status: Parameters<typeof idleWord>[0]) => idleWord(status);
+  /**
+   * The setup row that holds Ember back while Copilot is ready, in a few words ("Fix “Screen reading”", review #95):
+   * the handle says it when nothing more urgent is going on (a task, a question), never in place of those.
+   */
+  const setupNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen);
   /**
    * Setup rows just read (every readEnvironment: the settings window's status and focus re-read, a fix, Start, the
    * hello): kept, and the handle's word follows them, so "Setup needed" goes once the row holding Ember back is fixed.
@@ -585,8 +594,8 @@ function start(): void {
   const sawSetup = (rows: EnvReport["checks"]) => {
     setupSeen = rows;
     const status = agent?.getStatus();
-    const idle = status && idleNow(status);
-    if (idle && idle !== lastState.idle) showState({ idle });
+    const setup = status ? setupNow(status) : null;
+    if (status && setup !== (lastState.setup ?? null)) showState({ setup });
   };
   onSetupRead = sawSetup;
   /** This OS's setup rows now, for the Start decision and the hello (none if they can't be read: words, never a gate). */
@@ -1038,6 +1047,8 @@ function start(): void {
    * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
    * hide doesn't wipe it, and given back after, so a task still at work shows its progress again (review #81).
    */
+  /** The latest request asked, and how, for a problem's Try again (presenter TRY_AGAIN): the same words, the same caution. */
+  let lastAsk: { text: string; voiceUnchecked?: boolean } | null = null;
   const showNotice = (n: { title: string; thought: string }, ms: number) => {
     const time = ms * readTime();
     return holdNotice<EmberState["bubble"]>({
@@ -1048,6 +1059,7 @@ function start(): void {
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
+    lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
@@ -1059,7 +1071,12 @@ function start(): void {
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
     if (how.spoken) { turnLatency.mark("sent"); ackLater(text); }
-    return agent?.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked })?.catch(err => log.error("ask.failed", { err }));
+    // Unanswered (not connected, stopped, never sent): this request's acknowledgement isn't said ("On it." after
+    // "Connect your GitHub account" would promise what won't happen). A later request's is left alone.
+    const ack = ackTimer;
+    const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
+    if (!agent) { unanswered(); return; }
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1109,6 +1126,7 @@ function start(): void {
   let audit: AuditLog | null = null;
   let borrowRef: CursorBorrow | null = null;
   let deskViewRef: DeskView | null = null;
+  let extensionsRef: ExtensionsService | null = null;
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1117,6 +1135,8 @@ function start(): void {
     { name: "agent", stop: () => agent?.abortAll() },
     // Every command stops, on every target, and every remote is told to stop (at once, whatever the network does).
     { name: "targets", stop: () => targets?.stopAll() },
+    // Every extension call is refused from now on, its questions dropped, and every extension server ended.
+    { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -1207,6 +1227,27 @@ function start(): void {
   const memoryAllowed = () => policy.features.memory !== false;
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
+  // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
+  // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
+  const extensions = new ExtensionsService({
+    dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"),
+    settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
+    log: log.child("extensions"), os: platform.os,
+    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
+    launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
+    fetch: (u, i) => net.fetch(String(u), i as RequestInit),
+    allowLocal: devEnv("EMBER_EXTENSIONS_LOCAL") === "1",
+  });
+  // Every enabled extension's tools are checked against what the user agreed to before a conversation uses them.
+  extensionsRef = extensions;
+  void extensions.refresh().catch(err => log.warn("extensions.refresh_failed", { err }));
+  // Turned on (or agreed to) later: the same check first.
+  let extensionsActive = extensions.active();
+  settings.onChange(() => {
+    const on = extensions.active();
+    if (on && !extensionsActive) void extensions.refresh().catch(err => log.warn("extensions.refresh_failed", { err }));
+    extensionsActive = on;
+  });
   // Routines and lasting reminders (app/main/agent/routines.ts): routines.json beside the settings, used only while the
   // user has them on and the organisation allows them.
   const routinesAllowed = () => policy.features.routines !== false;
@@ -1467,6 +1508,15 @@ function start(): void {
   }));
   // Everything kept goes, and so do the reminders waiting this run (they would be kept again at their next change).
   ipcMain.handle(IPC.routinesForgetAll, guard(() => { agent?.reminders.clear(); routineBook.forgetAll(); }));
+  // Extensions, plugins and connectors (Home's Extensions section): the settings window's own page only, as guard. With
+  // no runtime the section says extensions aren't available yet; EMBER_TEST_EXTENSIONS shows a pretend one, which opens
+  // nothing in the browser.
+  const extensionsDemo = demoVariant(devEnv("EMBER_TEST_EXTENSIONS"));
+  const extensionsApi: ExtensionsApi | null = extensionsDemo ? demoExtensionsApi(extensionsDemo) : extensions;
+  registerExtensionsIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, extensionsApi, url => (extensionsDemo ? log.info("extensions.demo_open", { url }) : shell.openExternal(url)), { send: sendToHome, log: log.child("extensions") });
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;
@@ -1512,7 +1562,11 @@ function start(): void {
     // Stopping a task is always honoured (also while Ember waits for the mouse), and so is an announced command's Stop
     // (critique integration-24). Anything else that arrives while Ember really drives the pointer was Ember's own
     // click, not the user's: ignored.
-    if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:")) { log.warn("bubble.action_while_borrowing", { id }); return; }
+    if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:") && id !== "ui:stop") { log.warn("bubble.action_while_borrowing", { id }); return; }
+    // The conversation's Stop while Copilot keeps it waiting (its turn ends; tasks go on), and a problem's Try again
+    // (the same request, as it was asked: offered only where its turn ran no tool).
+    if (id === "ui:stop") { void agent?.stopAnswer(); return; }
+    if (id === "ui:retry") { if (lastAsk) { captureContext(); void askEmber(lastAsk.text, { voiceUnchecked: lastAsk.voiceUnchecked }); } return; }
     if (id === "ui:settings") { openSettings(); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
@@ -2051,6 +2105,7 @@ function start(): void {
     agent = new AgentHost({
       ...(memoryAllowed() ? { memory } : {}),
       ...(routinesAllowed() ? { routines: routineBook } : {}),
+      extensions,
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
       cornerTasks: true,
       readTime,
@@ -2086,7 +2141,7 @@ function start(): void {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
-        showState({ idle: idleNow(status) });
+        showState({ idle: idleNow(status), setup: setupNow(status) });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
@@ -2185,6 +2240,8 @@ function start(): void {
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
       onSelfSpeaking: on => { if (on) turnLatency.mark("firstAudio"); },
+      // The level for Ember's presence ring and voice meter: straight to the overlay, never through the state.
+      onLevel: l => overlay?.setLevel(l),
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.

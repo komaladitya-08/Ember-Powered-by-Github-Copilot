@@ -179,10 +179,34 @@ export const SettingsSchema = z.object({
    * note in Settings › Conversation (`consent`, FEATURE_CONSENT_VERSION.routines). Kept in routines.json.
    */
   routines: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  /**
+   * Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools in the conversation, off
+   * until the user turns them on and agrees to their note in Home (`consent`, FEATURE_CONSENT_VERSION.extensions).
+   * What is installed is kept in extensions.json, apart from the settings.
+   */
+  extensions: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
 export type SettingsPatch = Partial<Omit<Settings, "version">>;
+
+/**
+ * The most a change from the settings window may hold, as JSON. Its largest real change, a full never-look list,
+ * is about 10 KB; a bigger one (thousands of "Always" grants, say) would otherwise be written to settings.json.
+ */
+export const MAX_HOME_PATCH = 64 * 1024;
+
+/**
+ * A change sent from the settings window (IPC), checked before use: a plain object of at most MAX_HOME_PATCH bytes as
+ * JSON. Anything else is refused with a plain sentence; the values themselves are checked by SettingsSchema on update.
+ */
+export function checkHomePatch(sent: unknown): SettingsPatch {
+  if (!sent || typeof sent !== "object" || Array.isArray(sent)) throw new Error("That change isn't a setting Ember knows.");
+  let size: number;
+  try { size = JSON.stringify(sent).length; } catch { throw new Error("That change isn't a setting Ember knows."); }
+  if (size > MAX_HOME_PATCH) throw new Error("That change is too large to save.");
+  return sent as SettingsPatch;
+}
 
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 
