@@ -187,20 +187,20 @@ describe("the task card stack on the handle's side", () => {
   });
 });
 
-describe("Settings › Comfort & access › Handle position", () => {
+describe("Settings › Your Ember › Handle position", () => {
   const page = fs.readFileSync(new URL("../../app/renderer/home/index.html", import.meta.url), "utf8");
   const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
-  const access = page.slice(page.indexOf('<h2 id="access-h"'), page.indexOf("</section>", page.indexOf('<h2 id="access-h"')));
+  const pick = page.slice(page.indexOf('<h2 id="pick-h"'), page.indexOf("</section>", page.indexOf('<h2 id="pick-h"')));
 
   it("is a pop-up button under Ember on screen: Bottom right or Bottom left, named by its label", () => {
-    const onScreen = access.slice(access.indexOf("Ember on screen"), access.indexOf('<h3 class="sub">Text</h3>'));
+    const onScreen = pick.slice(pick.indexOf("Ember on screen"));
     expect(onScreen).toContain([
       '<label class="switch-row"><span>Handle position</span><select id="handle-position">',
-      '            <option value="bottom-right">Bottom right</option>',
-      '            <option value="bottom-left">Bottom left</option>',
-      "          </select></label>",
+      '          <option value="bottom-right">Bottom right</option>',
+      '          <option value="bottom-left">Bottom left</option>',
+      "        </select></label>",
     ].join("\n"));
-    expect(onScreen).toContain('<p class="hint">Ember\'s handle and its task cards sit in this corner of your main screen. “Move to the other side” in the handle\'s menu switches it too.</p>');
+    expect(onScreen).toContain('<p class="hint after-setup">Ember\'s handle and its task cards sit in this corner of your main screen. “Move to the other side” in the handle\'s menu switches it too.</p>');
   });
 
   it("shows the setting in use and saves a change at once", () => {

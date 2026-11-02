@@ -272,8 +272,10 @@ export class FakeProvider implements AxProvider {
         const left = Math.max(0, until - Date.now());
         await sleep(Math.min(el.spec.slowMs, left));
         if (this.o.deadlineMs !== undefined && el.spec.slowMs > this.o.deadlineMs) { busy = true; return false; }
-        // An element that outlasts the deadline ends the walk there, as the bridge's does. Not left to the next
-        // element's clock check: Windows timers can wake a millisecond before Date.now() reaches `until`.
+        // Its answer came after the walk's time was up, so the walk stops here, as the bridge's does at its deadline.
+        // Decided from the wait, not by reading Date.now() again: a timer can end a millisecond or more before the wall
+        // clock reaches `until` (timers count on a monotonic clock in whole milliseconds, Windows' in 15.6 ms ticks), and
+        // the rest of the window then read in time, with no "time" cut (twice on CI's Windows runner).
         if (el.spec.slowMs >= left) { cutShort("time"); return false; }
       }
       const index = nodes.length;

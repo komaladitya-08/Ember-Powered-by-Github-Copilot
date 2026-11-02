@@ -151,7 +151,8 @@ describe("the text size", () => {
   it("scales every type token, from a scale the text size sets on the page (review #57)", () => {
     const tokens = [...shared.matchAll(/--type-[\w-]+: ([^;]+);/g)].map(m => m[1]);
     expect(tokens.length).toBe(8);
-    for (const t of tokens) expect(t).toMatch(/^\d00 calc\(\d+px \* var\(--text-scale\)\)\/calc\(\d+px \* var\(--text-scale\)\) var\(--ember-font\)$/);
+    // Line heights round to whole pixels (Apple's crisp-text rule): 18 px at 1.15 would be 20.7 px, blurring the baseline.
+    for (const t of tokens) expect(t).toMatch(/^\d00 calc\(\d+px \* var\(--text-scale\)\)\/round\(calc\(\d+px \* var\(--text-scale\)\), 1px\) var\(--ember-font\)$/);
     expect(shared).toMatch(/:root \{[^}]*--text-scale: 1;/);
     expect(shared).toContain('html[data-text-size="large"] { --text-scale: 1.15; }');
     expect(shared).toContain('html[data-text-size="larger"] { --text-scale: 1.3; }');
@@ -184,7 +185,7 @@ describe("the text size", () => {
     expect(minHeight(read("app/renderer/overlay/styles.css"), ".task-actions button")).toBe("calc(24px * var(--text-scale))");
     expect(minHeight(read("app/renderer/overlay/styles.css"), ".task-actions button.stop")).toBe("calc(28px * var(--text-scale))");
     expect(minHeight(home, ".start")).toBe("calc(36px * var(--text-scale))");
-    expect(height(home, ".models select, .choice select, #text-size")).toBe("calc(28px * var(--text-scale))");
+    expect(height(home, ".models select, .choice select, #text-size, #handle-position")).toBe("calc(28px * var(--text-scale))");
     expect(height(home, ".add-row input")).toBe("calc(28px * var(--text-scale))");
     expect(minHeight(read("app/renderer/prompt/styles.css"), ".form input")).toBe("calc(30px * var(--text-scale))");
     // The guard sees them wherever they are, by element, class or the page's ids, and leaves what holds no words.

@@ -19,12 +19,59 @@ export type EnrolState =
   | { state: "done"; got: number; of: number; print: Float32Array }
   | { state: "cancelled"; got: number; of: number };
 
+/**
+ * The least voice a request needs for Voice Match to vouch for it (`verified`, what a spoken yes and turning "Work
+ * without asking" on need): VOICE_MATCH_THRESHOLD was tuned on requests of about 2.5 s (voiceprint.ts), and a bare
+ * "allow" (0.4 s) is too short to tell voices apart (security review of #127).
+ */
+export const APPROVAL_MIN_SECONDS = 1.5;
+
+/** The voice process's frames (32 ms at 16 kHz): voice is counted frame by frame. */
+const FRAME = 512;
+/** A frame is voiced at this RMS or more, and at least this share of the clip's loudest frame (silence padding isn't). */
+const VOICED_RMS = 0.003;
+const VOICED_SHARE = 0.125;
+/** "Hey Ember" takes about this much voice (measured on the test clips: 0.55–0.75 s); what follows it is the request. */
+const WAKE_VOICED_SECONDS = 0.8;
+
+/** Which frames of `audio` carry voice (by loudness against the clip's loudest frame: no VAD runs in this thread). */
+export function voicedFrames(audio: Float32Array): boolean[] {
+  const rms: number[] = [];
+  for (let i = 0; i + FRAME <= audio.length; i += FRAME) {
+    let sum = 0;
+    for (let j = i; j < i + FRAME; j++) sum += audio[j] * audio[j];
+    rms.push(Math.sqrt(sum / FRAME));
+  }
+  const peak = rms.reduce((m, x) => Math.max(m, x), 0);
+  return rms.map(x => x >= VOICED_RMS && x >= peak * VOICED_SHARE);
+}
+
+/** How many seconds of `audio` carry voice (silence before, after or between words isn't counted). */
+export function voicedSeconds(audio: Float32Array): number {
+  return (voicedFrames(audio).filter(Boolean).length * FRAME) / 16_000;
+}
+
+/**
+ * What follows the wake phrase in a request's audio: when it starts with it (`withWake`: "Hey Ember, allow"), the clip
+ * from just after its first WAKE_VOICED_SECONDS of voice; otherwise the clip as it is (the same object).
+ */
+export function afterWakePhrase(audio: Float32Array, withWake: boolean): Float32Array {
+  if (!withWake) return audio;
+  const voiced = voicedFrames(audio);
+  let seen = 0;
+  for (let f = 0; f < voiced.length; f++) {
+    if (voiced[f]) seen++;
+    if ((seen * FRAME) / 16_000 >= WAKE_VOICED_SECONDS) return audio.subarray((f + 1) * FRAME);
+  }
+  return audio.subarray(audio.length);
+}
+
 export class VoiceGate {
   private owner: Float32Array | null = null;
   /** Requests waiting for their check finish in order (a later one never overtakes an earlier). */
   private queue: Promise<void> = Promise.resolve();
   /** A wake being looked at (WAKE_MATCH_THRESHOLD): it and what followed it wait, but for a stop. */
-  private held: { e: VoiceEvent; audio: Float32Array | null }[] | null = null;
+  private held: { e: VoiceEvent; audio: Float32Array | null; withWake: boolean }[] | null = null;
   /** A turned-away wake's window is being cancelled: what it emits meanwhile goes nowhere. */
   private dropping = false;
 
@@ -52,9 +99,9 @@ export class VoiceGate {
    * stop never is (anyone may stop Ember), nor is anything else. A request turned away is followed by the end of its
    * window as main knows it for a wake taken back ("rejected"), so the bubble goes back to what it showed.
    */
-  event(e: VoiceEvent, audio: Float32Array | null): void {
+  event(e: VoiceEvent, audio: Float32Array | null, withWake = false): void {
     if (this.dropping) { if (e.type === "stop") this.send(e); return; }
-    if (this.held) { if (e.type === "stop") this.send(e); else this.held.push({ e, audio }); return; }
+    if (this.held) { if (e.type === "stop") this.send(e); else this.held.push({ e, audio, withWake }); return; }
     const owner = this.owner;
     // First look, at the wake phrase: a clearly other voice is turned away before main shows Ember listening. (The bare
     // name shows with its request, which is checked as it comes.)
@@ -71,10 +118,32 @@ export class VoiceGate {
         this.send(e);
         return;
       }
-      if (score >= this.threshold) { this.send(e); return; }
+      // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
+      // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
+      // (Only with enough voice to go on, APPROVAL_MIN_SECONDS of voiced frames after the wake phrase, checked on its
+      // own: the threshold was tuned on 2.5 s requests, a bare "allow" is too short to tell voices apart, and a recording
+      // of the owner's "Hey Ember" mustn't make up the rest. Such a match says `short`.)
+      if (score >= this.threshold) { this.send(await this.vouched(e, audio, owner, withWake)); return; }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
     });
+  }
+
+  /**
+   * The owner's request (it matched as a whole) as main gets it: `verified` when what follows the wake phrase holds at
+   * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`. A check that fails says
+   * neither (heard, but it can't approve anything).
+   */
+  private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean): Promise<VoiceEvent> {
+    const rest = afterWakePhrase(audio, withWake);
+    if (voicedSeconds(rest) < APPROVAL_MIN_SECONDS) return { ...e, short: true };
+    if (rest === audio) return { ...e, verified: true };
+    try {
+      return similarity(await this.printer().print(rest), owner) >= this.threshold ? { ...e, verified: true } : { ...e, short: true };
+    } catch (err) {
+      this.onError(err);
+      return e;
+    }
   }
 
   private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {
@@ -90,7 +159,7 @@ export class VoiceGate {
       this.held = null;
       if (score >= this.wakeThreshold) {
         this.send(e);
-        for (const h of held) this.event(h.e, h.audio);
+        for (const h of held) this.event(h.e, h.audio, h.withWake);
         return;
       }
       // Main never saw this wake: nothing it held is sent, and the engine's window ends unseen.

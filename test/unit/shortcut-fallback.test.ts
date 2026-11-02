@@ -321,8 +321,8 @@ describe("the README's keyboard routes say when settings is the way (D-45b)", ()
 
   it("sends the keyboard to settings only while another app holds the shortcut and its fallback, and names the launcher's Ask Ember", () => {
     // Ember's own windows have no taskbar button but settings' (skipTaskbar): its jump list is there once it is pinned.
-    expect(rows["Ask Ember"]).toContain("If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |");
-    expect(rows.Stop).toContain("If another app holds it and its fallback: **Stop everything** under **Comfort & access › Ember on screen** |");
+    expect(rows["Ask Ember"]).toContain("If another app holds it and its fallback: **Ask Ember…** in settings, at the top of **Home**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |");
+    expect(rows.Stop).toContain("If another app holds it and its fallback: **Stop everything** at the top of settings' **Home** |");
   });
 });
 
@@ -340,10 +340,20 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     expect(at({ ask: true, showSettings: true })).toBe("ask");
     expect(at({ ask: true, onboarded: false })).toBe("settings");
     expect(at({ ask: true, sessionProblem: true })).toBe("settings");
-    // Today's: started by the user, settings; at login, the greeting.
-    expect(at({})).toBe("settings");
+    // At login, the greeting; --show-settings, settings.
     expect(at({ atLogin: true })).toBe("greet");
     expect(at({ atLogin: true, showSettings: true })).toBe("settings");
+    expect(at({ showSettings: true })).toBe("settings");
+  });
+
+  it("greets a start by the user once Ember is set up, and opens settings only while a setup row needs them (UI audit #15)", () => {
+    const at = (o: Partial<Parameters<typeof startView>[0]>) => startView({ onboarded: true, showSettings: false, atLogin: false, sessionProblem: false, ask: false, ...o });
+    expect(at({})).toBe("greet");
+    expect(at({ setupNeeded: false })).toBe("greet");
+    expect(at({ setupNeeded: true })).toBe("settings");
+    // At login the greeting names what is still to set up (setupHello), and settings waits for the user.
+    expect(at({ atLogin: true, setupNeeded: true })).toBe("greet");
+    expect(at({ onboarded: false })).toBe("settings");
   });
 
   it("puts Ask Ember in the Windows jump list, starting Ember.exe with --ask", () => {
@@ -366,7 +376,7 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
   it("gives the Linux desktop entry an Ask Ember action that starts Ember with --ask (RPM and AppImage)", () => {
     const groups = desktopGroups(fs.readFileSync(path.resolve("packaging/ember.desktop"), "utf8"));
     expect(Object.keys(groups)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
-    expect(groups["[Desktop Entry]"]).toMatchObject({ Exec: "ember --show-settings", Actions: "Ask;" });
+    expect(groups["[Desktop Entry]"]).toMatchObject({ Exec: "ember", Actions: "Ask;" });
     expect(groups["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: "ember --ask" });
     // The AppImage takes the entry as it is: nothing there rewrites its Exec lines (a rewrite of every Exec= would turn
     // the action into a second "open settings").
@@ -385,7 +395,7 @@ describe("Ask Ember in the OS's launcher (D-45b)", () => {
     const ember = `"${path.resolve("node_modules/.bin/electron")}" "${path.resolve(".")}"`;
     const apps = desktopGroups(fs.readFileSync(path.join(home, ".local/share/applications/ember-dev.desktop"), "utf8"));
     expect(Object.keys(apps)).toEqual(["[Desktop Entry]", "[Desktop Action Ask]"]);
-    expect(apps["[Desktop Entry]"]).toMatchObject({ Name: "Ember (dev)", Exec: `${ember} --show-settings`, Actions: "Ask;" });
+    expect(apps["[Desktop Entry]"]).toMatchObject({ Name: "Ember (dev)", Exec: ember, Actions: "Ask;" });
     expect(apps["[Desktop Action Ask]"]).toEqual({ Name: "Ask Ember", Exec: `${ember} --ask` });
     // Started at login: the entry alone, with the autostart switch in its own group.
     const login = desktopGroups(fs.readFileSync(path.join(home, ".config/autostart/ember-dev.desktop"), "utf8"));

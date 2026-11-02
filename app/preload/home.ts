@@ -3,6 +3,7 @@ import { EXTENSIONS_IPC, IPC, type EmberExtensionsApi, type EmberHomeApi, type P
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
+import type { TaskEntry } from "../shared/activity";
 import { TARGETS_IPC, type TargetSummary } from "../shared/targets";
 import type { EmberTargetsApi } from "../renderer/home/computers-copy";
 
@@ -41,6 +42,8 @@ const api: EmberHomeApi = {
   retrySignIn: () => ipcRenderer.invoke(IPC.agentRetry),
   cancelSignIn: () => ipcRenderer.invoke(IPC.cancelSignIn),
   openSignInPage: () => ipcRenderer.invoke(IPC.openSignInPage),
+  tasks: () => ipcRenderer.invoke(IPC.tasks),
+  onTasks: fn => listen<TaskEntry[]>(IPC.tasksChanged, fn),
   conversation: () => ipcRenderer.invoke(IPC.conversation),
   onConversation: fn => listen<TranscriptEntry[]>(IPC.conversationChanged, fn),
   onFocusSection: fn => listen<string>(IPC.focusSection, fn),
@@ -52,6 +55,10 @@ const api: EmberHomeApi = {
   quit: () => ipcRenderer.invoke(IPC.quit),
   openAsk: () => ipcRenderer.invoke(IPC.openAsk),
   stopEverything: () => ipcRenderer.invoke(IPC.stopEverything),
+  onStopped: fn => listen<string>(IPC.homeStopped, fn),
+  watchLevel: on => ipcRenderer.invoke(IPC.watchLevel, on),
+  onLevel: fn => listen<number | null>(IPC.homeLevel, fn),
+  copyText: text => ipcRenderer.invoke(IPC.copyText, text),
 };
 
 contextBridge.exposeInMainWorld("ember", api);

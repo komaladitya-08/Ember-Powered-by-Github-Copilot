@@ -72,6 +72,12 @@ export interface BubbleState {
    * apart from a routine one (docs/DESIGN.md "Bubble and motion"). Presentation only: policy decided it already.
    */
   risky?: boolean;
+  /**
+   * Ember went ahead without asking (Work without asking) and says so: set only by Presenter.workedWithoutAsking from
+   * policy's announcement, never from model text; the bubble shows its own "Without asking" tag beside it. Any other
+   * update of the bubble's words drops it.
+   */
+  autonomous?: boolean;
 }
 
 /**

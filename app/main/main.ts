@@ -18,11 +18,13 @@ import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
-import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
+import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
+import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
+import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type VoiceMatchStatus } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -84,7 +86,7 @@ import { wrapWindowsForWsl } from "./wsl/routed-windows";
 import { wslAwarePrivacy, wslAwareSystem } from "./wsl/privacy";
 import type { Question } from "./agent/confirm";
 import { afterFix, type FixId } from "./environment";
-import { settingsSection, setupIdle } from "../shared/setup-attention";
+import { needsUser, settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement } from "./acknowledge";
@@ -95,6 +97,7 @@ import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
+import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
 // SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
@@ -379,6 +382,8 @@ function start(): void {
   app.on("will-quit", () => { unwatch(); try { settings.flush(); } catch (err) { log.warn("settings.not_saved", { err }); } });
 
   let home: BrowserWindow | null = null;
+  /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
+  let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
   const ownId = (win: OwnWindowHandle): number => {
     try { return wsRef?.windowId(win) ?? 0; } catch { return 0; }
@@ -425,6 +430,7 @@ function start(): void {
     win.on("minimize", shown(false)); win.on("hide", shown(false)); win.on("restore", shown(true)); win.on("show", shown(true));
     home.on("closed", () => {
       home = null;
+      homeWantsLevel = false;
       stepAside();
       if (greetOnClose) { greetOnClose = false; setTimeout(() => greet(), 300); }
     });
@@ -525,8 +531,10 @@ function start(): void {
     const { patch, dropped } = settingsFromHome(checkHomePatch(sent));
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
-    // A save that failed reaches the window as one plain sentence (review #84).
-    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
+    // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
+    // (its audit entry says so; one found in the file otherwise is "file").
+    if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
+    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -565,8 +573,11 @@ function start(): void {
   let confirmer: Confirmer | null = null;
   // While the user works on Ember's desk, the task cards stay out of the enlarged view's way.
   let deskInControl = false;
+  /** The task cards changed: Home's Task activity hears of it (set once the agent's handlers are, below). */
+  let tasksShown = () => { /* nothing to tell until then */ };
   const showState = (next: Partial<EmberState>) => {
     lastState = { ...lastState, ...next };
+    if (next.tasks) tasksShown();
     // Shown just for an answer the user asked for while Ember was hidden: hidden again once it's read.
     if (shownForAnswer && next.bubble && !next.bubble.visible) { shownForAnswer = false; keptHidden = true; overlay?.setHidden(true); }
     overlay?.setState(deskInControl && next.tasks ? { ...next, tasks: [] } : next);
@@ -903,6 +914,8 @@ function start(): void {
     // A question with a panel (a command, a consent card) shows its window; the window goes with it. While a command
     // card is up, Ember and its bubble keep clear of the command window (review #125).
     commandCardUp = q?.question.panel?.kind === "command";
+    // The voice process hears a short "no" in a follow-up window as an answer while a question is up (engine.ts).
+    voice?.questionUp(q !== null);
     targets?.questionChanged(q);
     stepAside();
     if (!q) {
@@ -1057,7 +1070,7 @@ function start(): void {
     }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
   };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean } = {}) => {
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
     lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
@@ -1076,7 +1089,7 @@ function start(): void {
     const ack = ackTimer;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) { unanswered(); return; }
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1146,6 +1159,8 @@ function start(): void {
     // An acknowledgement still waiting isn't said after a stop.
     cancelAck();
     const pulled = killSwitch.pull(source);
+    // First run's stop rehearsal hears it (only the settings window, and only that it happened and how).
+    sendToHome(IPC.homeStopped, source);
     // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
     // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
     // screen reader's).
@@ -1257,6 +1272,56 @@ function start(): void {
     onChange: () => broadcast(IPC.routinesChanged, routineRows()),
   });
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
+  /**
+   * "Work without asking" turned on or off is an audit entry (security review of #127): by voice or typed words (the host's
+   * intent says which, just before it saves), else from Home's switch or card.
+   */
+  let autonomyChangedBy: { via: "voice" | "typed" | "home"; verified: boolean } | null = null;
+  let autonomyWasOn = autonomyInForce(settings.get().autonomy, policy) !== null;
+  /** Turned off before the audit log was opened (before the app was ready): written once it is. */
+  const autonomyBeforeAudit: { on: boolean; via: string; verified: boolean }[] = [];
+  settings.onChange(s => {
+    const on = autonomyInForce(s.autonomy, policy) !== null;
+    // Whoever marked a change takes it with them, whether or not it changed anything (review of #127).
+    const how = autonomyChangedBy ?? { via: "file" as const, verified: false };
+    autonomyChangedBy = null;
+    if (on === autonomyWasOn) return;
+    autonomyWasOn = on;
+    const entry = { on, via: how.via, verified: how.verified };
+    try {
+      // No audit log yet: a turn on is refused (it can't be recorded), a turn off is kept for the log.
+      if (!audit) { if (on) throw new Error("the audit log isn't open yet"); autonomyBeforeAudit.push(entry); } else audit.write({ event: "autonomy", ...entry });
+    } catch (err) {
+      // Not recorded: it isn't turned on (fail closed); a turn off stands.
+      log.warn("autonomy.audit_failed", { err });
+      if (on) settings.update({ autonomy: { ...s.autonomy, on: false } });
+      return;
+    }
+    log.info("autonomy.changed", { on, via: how.via });
+  });
+  /** When the request being heard began (its wake, or a follow-up window opening): Ember's own voice since then is an echo. */
+  let heardFrom = 0;
+  /**
+   * When the speech being heard started, and the question up then (Confirmer.currentNumber): a spoken answer counts only
+   * for the question that was up, and armed, before it was said (security review of #127).
+   */
+  let saidFrom = 0;
+  let questionWhenSaid: number | null = null;
+  const speechStarts = () => { saidFrom = Date.now(); questionWhenSaid = confirmer?.currentNumber ?? null; };
+  /**
+   * A spoken answer to the question up (voice-answer.ts judged the words): taken through the Confirmer, which holds a yes
+   * to what the approve key may do; or, when it can't be taken, the question stays and its bubble says why (and how to
+   * set Voice Match up). Spoken too, where Ember speaks. Nothing of what was said is logged, only the outcome.
+   */
+  const answerByVoice = (o: Exclude<VoiceAnswerOutcome, { kind: "none" }>) => {
+    if (!confirmer) return;
+    const result = o.kind === "answer" ? confirmer.answerVoice(o.answer, { verified: o.verified, question: questionWhenSaid, startedAt: saidFrom }) : o.why;
+    log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified });
+    if (result === "answered" || result === "no-question") return;
+    const words = VOICE_ANSWER_REFUSED[result];
+    confirmer.note(words);
+    if (maySpeak()) voice?.speak(spokenText(words));
+  };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
@@ -1264,6 +1329,8 @@ function start(): void {
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
       case "wake":
+        heardFrom = Date.now();
+        speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
         voice?.hush();
@@ -1272,7 +1339,7 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        if (e.on && e.reason === "follow-up") { setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
+        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
         // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
         if (!e.on && !isCutNote(statusBy.listen)) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
@@ -1293,6 +1360,8 @@ function start(): void {
         }
         break;
       case "speech":
+        // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
+        if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
@@ -1306,15 +1375,30 @@ function start(): void {
           setStatus("listen", note);
           setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
         }
-        // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
-        // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
-        turnLatency.heard(e.ms);
-        void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true });
+        // While a question is up, "allow" or "not now" answers it (a yes only from the owner's verified voice, never from
+        // Ember's own; voice-answer.ts). Anything else is a request, as ever.
+        {
+          const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
+          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, short: e.short === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
+          if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
+          // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
+          // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
+          // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
+          turnLatency.heard(e.ms);
+          void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
+        }
         break;
       }
       case "stop":
         // "Ember, stop": everything stops, locally, without asking the model.
         stopEverything("voice");
+        break;
+      case "rejected":
+        // Voice Match turned another voice away while a question was up: no spoken yes for that question any more.
+        if (e.reason === "voice" && confirmer?.lockVoice()) {
+          log.info("voice.answer_locked");
+          confirmer.note(VOICE_ANSWER_REFUSED.locked);
+        }
         break;
     }
   };
@@ -1361,6 +1445,11 @@ function start(): void {
 
   ipcMain.handle(IPC.agentStatus, guard(() => agent?.getStatus() ?? null));
   ipcMain.handle(IPC.conversation, guard(() => agent?.getTranscript() ?? []));
+  // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
+  // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
+  ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
+  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
+  tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
     signInAbort?.abort();
@@ -1379,6 +1468,12 @@ function start(): void {
   let signInPage: string | null = null;
   const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
+  // The sign-in code and a setup command's Copy: every web permission stays denied (the clipboard's too), so main
+  // writes it. Plain text from the settings window only, and short.
+  ipcMain.handle(IPC.copyText, guard((text: unknown) => {
+    if (typeof text !== "string" || !text || text.length > 4096) throw new Error("Nothing to copy.");
+    clipboard.writeText(text);
+  }));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
   const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   /**
@@ -1478,6 +1573,9 @@ function start(): void {
   // The handle menu's Ask Ember… and Stop everything from settings: reachable without a pointer or a global shortcut.
   ipcMain.handle(IPC.openAsk, guard(() => { openAsk({ source: "settings" }); }));
   ipcMain.handle(IPC.stopEverything, guard(() => { stopEverything("settings"); }));
+  // First run's "Hey Ember" try: the microphone's level (a step of 0–8, never audio) goes to the settings window too,
+  // only while that step shows and the window can be seen.
+  ipcMain.handle(IPC.watchLevel, guard((on: unknown) => { homeWantsLevel = on === true; }));
   // Voice Match: teaching needs Ember listening (the microphone open); the voiceprint goes in when the phrases are in.
   ipcMain.handle(IPC.voiceMatchEnrol, guard(() => {
     if (policy.features.voice === false || !voice?.enrol()) return false;
@@ -1904,6 +2002,15 @@ function start(): void {
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
       err => log.warn("audit.write_failed", { err }));
+    // Work without asking as the log opens: turned off before now, and on as found in settings.json at start (by hand, or
+    // from the last run): recorded, or else turned off (fail closed).
+    for (const e of autonomyBeforeAudit.splice(0)) { try { audit.write({ event: "autonomy", ...e }); } catch (err) { log.warn("autonomy.audit_failed", { err }); } }
+    if (autonomyWasOn) {
+      try { audit.write({ event: "autonomy", on: true, via: "file", verified: false, atStart: true }); } catch (err) {
+        log.warn("autonomy.audit_failed", { err });
+        settings.update({ autonomy: { ...settings.get().autonomy, on: false } });
+      }
+    }
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
     const keepDays = auditRetentionDays(admin);
     try { if (keepDays !== null) audit.prune(keepDays); } catch (err) { log.warn("audit.prune_failed", { err }); }
@@ -1990,6 +2097,8 @@ function start(): void {
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
         trustAskedApps: () => settings.get().trust.askedApps,
+        // "Work without asking" (policy/autonomy.ts): only with its card agreed to and where the organisation allows it.
+        autonomy: () => autonomyInForce(settings.get().autonomy, policy),
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
@@ -2153,6 +2262,18 @@ function start(): void {
       },
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
+      // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
+      autonomy: {
+        state: () => ({ on: settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
+        // True once it is as asked and recorded (a turn on whose audit entry can't be written is undone: say so, not "Okay").
+        set: (on, how) => {
+          autonomyChangedBy = how;
+          const a = settings.get().autonomy;
+          try { settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); } finally { autonomyChangedBy = null; }
+          return (autonomyInForce(settings.get().autonomy, policy) !== null) === on;
+        },
+        open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
+      },
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
         if (maySpeak() && settings.get().speakResults) voice?.speak(spokenText(t.text));
@@ -2241,7 +2362,10 @@ function start(): void {
       onEvent: onVoice,
       onSelfSpeaking: on => { if (on) turnLatency.mark("firstAudio"); },
       // The level for Ember's presence ring and voice meter: straight to the overlay, never through the state.
-      onLevel: l => overlay?.setLevel(l),
+      onLevel: l => {
+        overlay?.setLevel(l);
+        if (homeWantsLevel && l.mic !== undefined && home && !home.isDestroyed() && home.isVisible() && !home.isMinimized()) home.webContents.send(IPC.homeLevel, l.mic);
+      },
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
@@ -2352,10 +2476,11 @@ function start(): void {
     // One listener for the policy watch and the screen lock, in that order: an 11th will-quit listener warns of a leak.
     app.on("will-quit", () => { unwatchPolicy(); screenLock?.stop(); lockControl.dispose(); });
 
-    // Started by the user (the launcher, a terminal), settings opens; by a launcher's Ask Ember (--ask), the ask box;
-    // started at login (--autostart), Ember only greets, unless the desktop session is one Ember can't use (a Wayland
-    // login after an Xorg one): then the check is shown.
-    const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv) });
+    // Started by the user (the launcher, a terminal) once set up, Ember greets, and settings opens only while a setup
+    // row needs them; by a launcher's Ask Ember (--ask), the ask box; started at login (--autostart), Ember only greets,
+    // unless the desktop session is one Ember can't use (a Wayland login after an Xorg one): then the check is shown.
+    const view = startView({ onboarded: settings.get().onboarded, showSettings: process.argv.includes("--show-settings"), atLogin, sessionProblem: !!sessionGreeting(env), ask: wantsAsk(process.argv),
+      setupNeeded: env.checks.some(needsUser) });
     if (view === "ask") openAsk({ source: "launcher" });
     else if (view === "settings") showHome();
     // The hello waits for Copilot to connect (at most a few seconds), so it doesn't say "not connected" too early.
@@ -2379,7 +2504,7 @@ function start(): void {
       (globalThis as Record<string, unknown>).__ember = {
         settings, setState, greet, showHome, overlay: () => overlay, handle: () => handle,
         agent: () => agent, perception: () => perception, confirmer: () => confirmer, voice: () => voice, deskView: () => deskView, ask: (text: string) => { captureContext(); return askEmber(text); }, showAsk: () => openAsk({ source: "test" }),
-        showMenu, state: () => lastState,
+        showMenu, state: () => lastState, extensions: () => extensionsRef, stopEverything,
       };
     }
   };

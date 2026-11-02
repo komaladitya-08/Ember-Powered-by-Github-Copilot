@@ -252,14 +252,16 @@ describe("read_window", () => {
     expect(timed.busy).toBeUndefined();
   });
 
-  it("says slow when an element outlasts the time, even if the clock lags the timer (Windows CI)", async () => {
-    const late = benchDesktop();
-    late[0].children![5].slowMs = 2000;
-    const frozen = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(frozen);
+  it("says slow when the time ran out even if the wall clock lags the timers (CI's Windows runner)", async () => {
+    // A timer can end before Date.now() reaches the deadline it was set for; a wall clock running 1% slow makes that
+    // certain, and the window's last elements were then read "in time", with no "time" cut.
+    const realNow = Date.now.bind(Date);
+    const origin = realNow();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => Math.floor(origin + (realNow() - origin) * 0.99));
     try {
-      const timed = await harness(late, 5000).call<Read>("read_window", {});
-      expect(timed).toMatchObject({ truncated: true, slow: true });
+      const late = benchDesktop();
+      late[0].children![5].slowMs = 2000;
+      expect(await harness(late, 5000).call<Read>("read_window", {})).toMatchObject({ truncated: true, slow: true });
     } finally {
       clock.mockRestore();
     }

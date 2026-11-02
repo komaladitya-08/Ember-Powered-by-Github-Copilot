@@ -99,6 +99,41 @@ export const SETTINGS_APP: Readonly<Record<OS, RegExp | null>> = {
 };
 
 /**
+ * System-administration apps (their program or bundle id, or the name people know), tested on the window's app and on
+ * its friendly name: what they change is the computer's own set-up (its registry and policies, disks, network and VPN,
+ * printers, software, services, processes, keys and certificates), so "Work without asking" never covers a step in one
+ * (policy.ts judge(); security review of #127). Asking as before is unaffected: these aren't refused.
+ */
+export const ADMIN_APP: Readonly<Record<OS, RegExp>> = {
+  linux: exactly([
+    "dconf-editor", "ca.desrt.dconf-editor", "dconf editor", "gnome-tweaks", "gnome-tweak-tool", "org.gnome.tweaks", "tweaks",
+    "nm-connection-editor", "network connections", "gnome-disks", "org.gnome.diskutility", "disks", "gnome-disk-utility",
+    "seahorse", "org.gnome.seahorse", "org.gnome.seahorse.application", "passwords and keys",
+    "system-config-printer", "print settings", "gnome-software", "org.gnome.software", "software",
+    "gnome-initial-setup", "cockpit", "cockpit-desktop", "gparted", "firewall-config", "firewall", "gnome-system-monitor",
+    "org.gnome.systemmonitor", "system monitor", "system-config-users", "gnome-control-center", "users-admin", "virt-manager",
+    "nm-applet", "blivet-gui", "gnome-logs", "org.gnome.logs", "baobab", "yumex", "dnfdragora", "setroubleshoot",
+    "sealert", "authconfig", "system-config-language", "system-config-date", "system-config-keyboard", "gnome-boxes",
+  ], String.raw`(?:\.desktop)?`),
+  win32: exactly([
+    "mmc", "regedit", "regedt32", "control", "gpedit", "gpedit.msc", "taskmgr", "services", "services.msc", "compmgmt", "compmgmt.msc",
+    "devmgmt", "devmgmt.msc", "diskmgmt", "diskmgmt.msc", "eventvwr", "eventvwr.msc", "perfmon", "resmon", "msconfig", "msinfo32",
+    "secpol", "secpol.msc", "lusrmgr", "lusrmgr.msc", "netplwiz", "wf", "wf.msc", "firewall.cpl", "ncpa.cpl", "appwiz.cpl",
+    "optionalfeatures", "rasphone", "certmgr", "certmgr.msc", "certlm", "certlm.msc", "taskschd", "taskschd.msc", "dfrgui",
+    "cleanmgr", "rstrui", "sysdm.cpl", "useraccountcontrolsettings", "printmanagement", "printmanagement.msc", "winver",
+    "registry editor", "task manager", "control panel", "computer management", "device manager", "disk management",
+    "group policy editor", "local group policy editor", "services", "event viewer", "resource monitor", "system configuration",
+  ], String.raw`(?:\.exe)?`),
+  darwin: exactly([
+    "disk utility", "com.apple.diskutility", "activity monitor", "com.apple.activitymonitor", "keychain access",
+    "com.apple.keychainaccess", "system information", "com.apple.systemprofiler", "directory utility", "com.apple.directoryutility",
+    "console", "com.apple.console", "boot camp assistant", "migration assistant", "network utility", "airport utility",
+    "audio midi setup", "bluetooth file exchange", "colorsync utility", "screen sharing", "ticket viewer", "wireless diagnostics",
+    "script editor", "automator", "installer", "com.apple.installer", "software update", "startup disk", "certificate assistant",
+  ]),
+};
+
+/**
  * Window classes of security prompts (lower case, whole), for the backends that report one: perception passes a
  * window's class as its app (WM_CLASS's parts on Linux, the Win32 class on Windows), so it is matched where the app
  * is. Empty on Linux, whose prompts are known by their programs, and on macOS, which has no window classes.

@@ -13,7 +13,8 @@ import { typesCharacter } from "./policy";
 
 export interface AuditEntry {
   task?: string;
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension";
+  /** `autonomy`: "Work without asking" turned on or off (`on`), and how (`via`: home, voice or typed; `verified`). */
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension" | "autonomy";
   [key: string]: unknown;
 }
 
