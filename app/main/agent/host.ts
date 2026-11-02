@@ -39,7 +39,8 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
-import { Reminders, type Reminder } from "./reminders";
+import { Reminders, whenWords, type Reminder } from "./reminders";
+import type { RoutineBook } from "./routines";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -132,6 +133,8 @@ export interface HostOptions {
   memory?: ConductorMemory & { forgetAll(): void };
   /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
   onReminder?: (r: Reminder) => void;
+  /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
+  routines?: RoutineBook;
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -697,8 +700,10 @@ export class AgentHost {
 
   private reminderDue(r: Reminder): void {
     this.o.log.info("agent.reminder_due", { late: Math.max(0, Date.now() - r.at) });
-    this.remember("ember", `Reminder: ${r.text}`);
-    this.noticeBoard.post({ title: "Reminder", thought: r.text, actions: [], mood: "attention" }, { ms: 60_000, emotion: "curious" });
+    // One that fell due while Ember was closed (a lasting reminder) says when it was due.
+    const text = r.missed ? `${r.text} (due ${whenWords(r.at, Date.now())})` : r.text;
+    this.remember("ember", `${r.missed ? "Missed reminder" : "Reminder"}: ${text}`);
+    this.noticeBoard.post({ title: r.missed ? "Missed reminder" : "Reminder", thought: text, actions: [], mood: "attention" }, { ms: 60_000, emotion: "curious" });
     this.o.onReminder?.(r);
   }
 
@@ -1074,6 +1079,7 @@ export class AgentHost {
         // What Ember remembered was about the account before, its person: none of it carries over.
         this.o.memory?.forgetAll();
         this.reminders.clear();
+        this.o.routines?.forgetAll();
         this.o.onAccountChanged?.();
       }
 
@@ -1202,9 +1208,11 @@ export class AgentHost {
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       const memory = this.memoryWanted() ? this.o.memory : undefined;
       this.memoryOn = !!memory;
+      const routines = this.keepRoutines();
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         reminders: this.reminders,
+        ...(routines ? { routines } : {}),
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1629,6 +1637,35 @@ export class AgentHost {
   /** Whether this conversation's conductor was given memory (memoryWanted() when it started). */
   private memoryOn = false;
 
+  /** Whether this conversation's conductor was given routines (routinesWanted() when it started). */
+  private routinesOn = false;
+  /** The kept reminders were put back this run (once: a reconnect doesn't put back what already fired). */
+  private remindersRestored = false;
+
+  /** Routines are on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
+  private routinesWanted(): boolean {
+    const r = this.o.settings.get().routines;
+    return !!this.o.routines && r.on && r.consent.version >= FEATURE_CONSENT_VERSION.routines;
+  }
+
+  /**
+   * Follows the routines switch as a conversation starts: on, reminders are kept in routines.json (and the ones kept
+   * from the last run come back, once); off, they are kept in memory only. The book to give the conductor, or none.
+   */
+  private keepRoutines(): RoutineBook | undefined {
+    const book = this.routinesWanted() ? this.o.routines : undefined;
+    this.routinesOn = !!book;
+    if (!book) { this.reminders.setOnChange(null); return undefined; }
+    try {
+      if (!this.remindersRestored) { this.remindersRestored = true; this.reminders.restore(book.reminders()); }
+      this.reminders.setOnChange(list => { try { book.setReminders(list); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); } });
+      book.setReminders(this.reminders.list());
+    } catch (err) {
+      this.o.log.warn("agent.routines_unreadable", { err });
+    }
+    return book;
+  }
+
   /** Memory is on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
   private memoryWanted(): boolean {
     const m = this.o.settings.get().memory;
@@ -1678,8 +1715,8 @@ export class AgentHost {
     }
     // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
     // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
-    if (this.status.phase === "ready" && this.memoryWanted() !== this.memoryOn && this.idle) {
-      this.o.log.info("agent.memory_changed", { on: this.memoryWanted() });
+    if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
+      this.o.log.info("agent.memory_changed", { on: this.memoryWanted(), routines: this.routinesWanted() });
       void this.launch(this.token, this.source);
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".
@@ -1795,6 +1832,7 @@ export class AgentHost {
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.o.memory?.forgetAll();
     this.reminders.clear();
+    this.o.routines?.forgetAll();
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();

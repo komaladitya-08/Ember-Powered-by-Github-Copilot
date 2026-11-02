@@ -542,7 +542,11 @@ Reminders (the first bounded interjection, after docs/ASSISTANT.md phase 6): the
 `list_reminders` and `cancel_reminder` (app/main/agent/reminders.ts). A reminder is set only from the user's own words
 in that turn (`ownWords`, as memory), is due by a plain timer, is shown and said, and never starts anything. Reminders
 are kept in memory only (nothing new on disk, so no consent change) and end when Ember quits or the user signs out;
-keeping them across restarts would need a consent bump.
+keeping them across restarts needs consent: Routines (app/main/agent/routines.ts) add it as their own card
+(`FEATURE_CONSENT_VERSION.routines`, off by default, admin key `features.routines`, off in LOCKDOWN). With them on,
+reminders are kept in routines.json (0600) and missed ones are told at the next start, and the conductor gains
+`save_routine`, `list_routines`, `run_routine` and `delete_routine`: a routine is saved only from the user's own words,
+and running one starts its steps as ordinary requests, so the policy still asks before every risky step.
 
 ---
 

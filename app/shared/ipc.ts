@@ -4,6 +4,9 @@ import type { EnvReport, FixId, TargetFixId } from "../main/environment";
 import type { Settings, SettingsPatch } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
+
+/** A routine as Home lists it. */
+export interface RoutineRow { id: string; name: string; steps: string[] }
 import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
@@ -41,6 +44,11 @@ export const IPC = {
   memoryChanged: "memory:changed",
   memoryForget: "memory:forget",
   memoryForgetAll: "memory:forget-all",
+  /** Routines and lasting reminders (app/main/agent/routines.ts): the routines kept, and deleting one or all of them. */
+  routinesList: "routines:list",
+  routinesChanged: "routines:changed",
+  routinesForget: "routines:forget",
+  routinesForgetAll: "routines:forget-all",
   /**
    * Main asks the settings window to show one of its sections ("conversation", "copilot", "privacy"), or a control in
    * one ("computers:host", "computers:wsl"; renderer/home/section-request.ts).
@@ -216,6 +224,11 @@ export interface EmberHomeApi {
   onMemory(fn: (items: MemoryItem[]) => void): () => void;
   forgetMemory(id: string): Promise<void>;
   forgetAllMemory(): Promise<void>;
+  /** The routines kept, and changes to them; deleting one, or all of them with the lasting reminders. */
+  routines(): Promise<RoutineRow[]>;
+  onRoutines(fn: (rows: RoutineRow[]) => void): () => void;
+  forgetRoutine(id: string): Promise<void>;
+  forgetAllRoutines(): Promise<void>;
   /** `phase` "unpacking": the last download is in, and is being checked and unpacked. */
   onVoiceProgress(fn: (p: { done: number; total: number; phase?: "unpacking" }) => void): () => void;
   /** The newest audit entries, newest first. */

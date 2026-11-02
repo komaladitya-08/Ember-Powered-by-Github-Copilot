@@ -169,6 +169,11 @@ export const SettingsSchema = z.object({
    * the settings (app/main/memory/store.ts).
    */
   memory: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  /**
+   * Routines and lasting reminders (app/main/agent/routines.ts): off until the user turns them on and agrees to their
+   * note in Settings › Conversation (`consent`, FEATURE_CONSENT_VERSION.routines). Kept in routines.json.
+   */
+  routines: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
