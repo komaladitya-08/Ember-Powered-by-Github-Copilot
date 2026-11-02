@@ -19,6 +19,13 @@ export type EnrolState =
   | { state: "done"; got: number; of: number; print: Float32Array }
   | { state: "cancelled"; got: number; of: number };
 
+/**
+ * The least voice a request needs for Voice Match to vouch for it (`verified`, what a spoken yes and turning "Work
+ * without asking" on need): VOICE_MATCH_THRESHOLD was tuned on requests of about 2.5 s (voiceprint.ts), and a bare
+ * "allow" (0.4 s) is too short to tell voices apart (security review of #127).
+ */
+export const APPROVAL_MIN_SECONDS = 1.5;
+
 export class VoiceGate {
   private owner: Float32Array | null = null;
   /** Requests waiting for their check finish in order (a later one never overtakes an earlier). */
@@ -73,7 +80,9 @@ export class VoiceGate {
       }
       // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
       // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
-      if (score >= this.threshold) { this.send({ ...e, verified: true }); return; }
+      // (Only with enough of the voice to go on, APPROVAL_MIN_SECONDS: the threshold was tuned on 2.5 s requests, and a
+      // bare "allow" is too short to tell voices apart reliably; such a match says `short`.)
+      if (score >= this.threshold) { this.send(audio.length >= APPROVAL_MIN_SECONDS * 16_000 ? { ...e, verified: true } : { ...e, short: true }); return; }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
     });

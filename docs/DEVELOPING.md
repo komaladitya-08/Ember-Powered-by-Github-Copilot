@@ -216,17 +216,22 @@ yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)
 it on shows its card first: what runs without asking, what still asks, that Ember says what it does, and that a stop
 always works (`FEATURE_CONSENT_VERSION.autonomy`). While it is on, Ember doesn't ask before its first step in an app,
 before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move), or before
-moving text between apps (it says which apps and how many characters, never the text); an ordinary command that asks
-only because it carries text read elsewhere runs after its Stop countdown. It says each such step in its bubble and on
-the task's card ("Working in Text Editor without asking: click the “Bold” button."), and **What Ember did** lists it
-(the audit entry has `autonomy: true`). Risky steps ask every time as before, with no "Always", and so do dangerous
-commands; a task that text on screen tried to steer, that went off-task or where you said no goes back to asking.
+moving text between apps (it says which apps and how many characters, never the text); an ordinary command on this
+computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
+as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
+the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
+typed text or words from the screen, and **What Ember did** lists it as "Without asking" (the audit entry has
+`autonomy: true`), and lists turning the mode on or off with how (Home, voice, typed). Risky steps ask every time as before, with no "Always", and so do dangerous
+commands; a task that text on screen tried to steer, that went off-task or where you said no (at any point in it) goes
+back to asking.
 Say “Ember, work without asking” (Voice Match must recognise you, and the card must already be agreed to: otherwise
 Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
 
 **Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
-(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you;
-otherwise the bubble says how to set it up and the question stays. “Not now” works for anyone. Ember never takes its
+(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you, from at least 1.5 s of your
+voice (say “Ember, yes, go ahead and allow it”; a bare “allow” is too short to be sure); otherwise the bubble says
+how, and the question stays. It counts only for the question that was up, and armed, when you started speaking, and
+once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
 own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
 “Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
 voice only as the approve key would: once all of it has been shown. The audit records `via: "voice"` and whether Voice

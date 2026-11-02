@@ -25,6 +25,8 @@ export type ActivityEvent =
   | { type: "tool-end"; id: string; ok: boolean }
   /** The worker's own note (report_progress): its text, and its few words for what it does now. */
   | { type: "note"; text: string; intent?: string }
+  /** A step taken without asking (Work without asking): policy's words (Decision.announce), never the model's. */
+  | { type: "announce"; text: string }
   /** A question of this task went up. */
   | { type: "question" }
   /** It was answered (or not). */
@@ -127,6 +129,12 @@ export class ActivityLog {
         if (!shown) return false;
         a.note = shown;
         if (text) this.push({ id: this.id("note"), kind: "note", at, state: "done", words: text, model: true });
+        return true;
+      }
+      case "announce": {
+        const words = clip(e.text, NOTE_MAX);
+        if (!words) return false;
+        this.push({ id: this.id("a"), kind: "announce", at, state: "done", words });
         return true;
       }
       case "question": {

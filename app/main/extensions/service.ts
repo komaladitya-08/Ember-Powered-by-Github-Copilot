@@ -514,9 +514,13 @@ export class ExtensionsService implements ExtensionsApi {
     if (verdict === "allow") return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
-    const answer = await confirmer.ask(gateQuestion(e!.item.name, e!.tool.name, input.toolArgs), this.stopAsks.signal).catch(() => null);
+    const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
+    const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     const yes = answer === "once" && gate.epoch === this.epoch && this.active();
-    try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : "deny" }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
+    // A spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
+    const how = confirmer.howAnswered?.(question);
+    const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {};
+    try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : "deny", ...channel }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
     if (yes) return { permissionDecision: "allow" };
     gate.refused.add(input.toolName);
     return deny(REFUSED);

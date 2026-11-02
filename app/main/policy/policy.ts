@@ -2093,22 +2093,32 @@ export class PolicyEngine {
     }
     // "Work without asking": a question whose only reason is in the scopes the user left on goes unasked, and is announced.
     // (Off-task steps and the administrator's "confirm every action" returned above; risky steps are never waivable.)
-    if (d.verdict === "confirm" && covers(this.o.autonomy?.() ?? null, d.waivable)) {
+    // Never in the system's own Settings or a security app (security review of #127): those steps keep asking.
+    const systemApp = !!SETTINGS_APP[this.os]?.test(appNameOf(r.app)) || !!SECURITY_APP[this.os]?.test(appNameOf(r.app));
+    if (d.verdict === "confirm" && !systemApp && covers(this.o.autonomy?.() ?? null, d.waivable)) {
       return { ...d, verdict: "allow", tier: "reversible", remember: false, autonomy: true, reason: `${d.reason}; the user lets Ember work without asking`, announce: this.announcement(r, d) };
     }
     return { ...d, remember };
   }
 
   /**
-   * What Ember says as it goes ahead without asking: the step in its question's words, made a statement; for text
-   * carried from elsewhere, only where from, where to and how much (never the text).
+   * What Ember says as it goes ahead without asking: the kind of step, the app and, for text, how much (never the text
+   * typed, nor any words from the screen: the bubble may be seen by others, and screen text is untrusted; security
+   * review of #127). For text carried from elsewhere: where from, where to and how much.
    */
   private announcement(r: ActionRequest, d: Decision): string {
     const here = r.app ? friendlyApp(r.app) : "this app";
-    if (d.carriedFrom) return movingWords(d.carriedFrom, here, r.kind === "text" || r.kind === "cursor_text" ? (r.value ?? "").length : undefined);
-    const step = describe(r, true, this.keys).replace(/\?$/, ".");
-    if (/^Borrow /.test(step)) return `${step.replace(/^Borrow /, "Borrowing ")} Move it to take it back.`;
-    return `Working in ${here} without asking: ${lowerFirst(describe(r, false, this.keys)).replace(/\?$/, ".")}`;
+    const chars = r.kind === "text" || r.kind === "cursor_text" ? (r.value ?? "").length : undefined;
+    if (d.carriedFrom) return movingWords(d.carriedFrom, here, chars);
+    const n = `${chars ?? 0} ${chars === 1 ? "character" : "characters"}`;
+    const key = r.kind === "keys" ? keyLabel(r.value ?? "", this.keys) ?? "a key" : "";
+    const verb: Record<ActionKind, string> = {
+      read: "Reading", click: "Clicking", toggle: "Changing a setting", text: `Typing ${n}`, select: "Choosing an option", value: "Setting a value",
+      setting: "Changing a setting", open_app: "Opening an app", cursor_click: "Using your mouse to click", cursor_text: `Using your keyboard to type ${n}`,
+      keys: `Using your keyboard to press ${key}`, scroll: "Using your mouse to scroll",
+    };
+    const borrowed = !r.onDesk && (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll");
+    return `${verb[r.kind]} in ${here}, without asking as you let me.${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
   }
 
   /**

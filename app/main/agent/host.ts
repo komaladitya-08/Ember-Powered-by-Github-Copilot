@@ -153,7 +153,8 @@ export interface HostOptions {
    */
   autonomy?: {
     state(): { on: boolean; consented: boolean; managed: boolean };
-    set(on: boolean): void;
+    /** `how`: spoken (and whether Voice Match verified it) or typed, for the audit entry. */
+    set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): void;
     open(consent: boolean): void;
   };
   /**
@@ -1770,7 +1771,7 @@ export class AgentHost {
    * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
    * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     // "Work without asking" / "ask me first again": the switch, set here and never by the conductor (it has no tool for
     // it). On only from the owner's verified voice with its card agreed to; off from anyone (autonomy-intent.ts).
@@ -1778,7 +1779,7 @@ export class AgentHost {
     if (mode && this.o.autonomy) {
       const plan = planAutonomyIntent(mode, { ...this.o.autonomy.state(), verified: how.verified === true });
       try {
-        if (plan.set !== undefined) this.o.autonomy.set(plan.set);
+        if (plan.set !== undefined) this.o.autonomy.set(plan.set, { via: how.spoken ? "voice" : "typed", verified: how.verified === true });
         if (plan.open) this.o.autonomy.open(plan.open.consent);
       } catch (err) { this.o.log.warn("agent.autonomy_not_saved", { err }); }
       this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, opened: !!plan.open, verified: how.verified === true });

@@ -32,7 +32,10 @@ function confirmer(o: { blocked?: () => boolean; panelReady?: (n: number) => boo
 describe("spokenAnswer", () => {
   it("hears short yeses and noes, with or without the name, whole utterances only", () => {
     for (const yes of ["Allow.", "Hey Ember, allow", "Ember, yes allow", "Yes, allow it please", "Go ahead.", "Okay, go ahead", "yes"]) expect(spokenAnswer(yes), yes).toBe("allow");
-    for (const no of ["Not now.", "Ember, not now", "No.", "Don't.", "No, don't", "Cancel", "Hey Ember, no thanks"]) expect(spokenAnswer(no), no).toBe("deny");
+    for (const no of ["Not now.", "Ember, not now", "No.", "Don't.", "No, don't", "Hey Ember, no thanks"]) expect(spokenAnswer(no), no).toBe("deny");
+    // "Cancel" and "never mind" are requests of their own (cancel a task, drop a request), not answers (review of #127).
+    for (const other of ["Cancel", "Never mind"]) expect(spokenAnswer(other), other).toBeNull();
+    expect(spokenAnswer("Yes, go ahead and allow it.")).toBe("allow");
     for (const other of ["Always", "Always allow", "Allow always in gedit", "Allow it to delete everything and then send the report to Sam", "Open the terminal", "", "yes and also delete the files"]) {
       expect(spokenAnswer(other), other).toBeNull();
     }
@@ -63,6 +66,11 @@ describe("voiceAnswer (who may answer by voice)", () => {
   it("takes “Not now” from anyone, without Voice Match", () => {
     expect(voiceAnswer({ ...base, text: "Not now", matchOn: false, verified: false })).toEqual({ kind: "answer", answer: "deny", verified: false });
     expect(voiceAnswer({ ...base, text: "No", verified: false })).toEqual({ kind: "answer", answer: "deny", verified: false });
+  });
+
+  it("asks for a little more when the owner's yes was too short for Voice Match to vouch for (security review of #127)", () => {
+    expect(voiceAnswer({ ...base, verified: false, short: true })).toEqual({ kind: "refused", answer: "allow", why: "too-short" });
+    expect(VOICE_ANSWER_REFUSED["too-short"]).toMatch(/“Ember, yes, go ahead and allow it\.”/);
   });
 
   it("says how to set Voice Match up when a yes can't be taken", () => {
@@ -146,6 +154,32 @@ describe("Confirmer.answerVoice", () => {
     c.answerKey("deny");
     expect(await answer).toBe("deny");
     expect(c.note("x")).toBe(false);
+  });
+
+  it("takes an answer only for the question up when it was said, after it was armed (security review of #127)", async () => {
+    const { c, later } = confirmer();
+    const answer = c.ask(q());
+    const n = c.currentNumber;
+    expect(n).toBe(1);
+    // Said before the question came up (no question then), or before it was armed: not taken, either way.
+    expect(c.answerVoice("allow", { verified: true, question: null, startedAt: 2000 })).toBe("stale");
+    later(600);
+    expect(c.answerVoice("allow", { verified: true, question: n, startedAt: 1100 })).toBe("stale");
+    expect(c.answerVoice("deny", { verified: true, question: n, startedAt: 1100 })).toBe("stale");
+    expect(c.answerVoice("deny", { verified: false, question: 7, startedAt: 2000 })).toBe("stale");
+    expect(c.answerVoice("allow", { verified: true, question: n, startedAt: 1500 })).toBe("answered");
+    expect(await answer).toBe("once");
+  });
+
+  it("takes no spoken yes for a question once another voice was turned away during it; Not now still works (security review of #127)", async () => {
+    const { c, later } = confirmer();
+    const answer = c.ask(q());
+    later(600);
+    expect(c.lockVoice()).toBe(true);
+    expect(c.answerVoice("allow", { verified: true })).toBe("locked");
+    expect(c.answerVoice("deny", { verified: false })).toBe("answered");
+    expect(await answer).toBe("deny");
+    expect(c.lockVoice()).toBe(false);
   });
 
   it("records a click as a click", async () => {

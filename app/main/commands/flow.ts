@@ -590,7 +590,9 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
  * Anything the classifier flags (deleting, publishing, secrets, system changes, download-and-run, unclear), root, the
  * administrator's or the user's "ask every", taint and another computer named still ask. Null: it asks as decided.
  */
-export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScopes | null; words: string; tainted: boolean; carried: { from: string[] } | null; elsewhere: boolean }): CommandDecision | null {
+export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScopes | null; words: string; tainted: boolean; carried: { from: string[] } | null; elsewhere: boolean; kind: TargetBinding["kind"] }): CommandDecision | null {
+  // This computer only for now: WSL and SSH commands ask as before (security review of #127).
+  if (o.kind !== "local") return null;
   if (d.verdict !== "ask" || !covers(o.scopes, ["commands", "crossWindow"]) || o.tainted || o.elsewhere || !o.carried || !o.words.trim()) return null;
   if (d.classes.length || d.rules.length !== 1 || d.rules[0] !== "carried") return null;
   const from = o.carried.from.length ? listOf(o.carried.from.slice(0, 3)) : "another window";
@@ -786,7 +788,7 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
   }
   // "Work without asking": an ordinary command that asks only for the text it carries announces instead (its Stop
   // countdown and the card still show where the text came from).
-  const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0 });
+  const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0, kind: binding.kind });
   if (autonomous) d = autonomous;
   // AI review: a command that asks only by the danger rules is shown to the reviewer with the user's words; one it finds
   // routine runs with its announcement (Stop countdown) instead. The hard asks are never reviewed (review.ts).

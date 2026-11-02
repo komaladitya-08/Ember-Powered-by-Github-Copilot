@@ -905,6 +905,8 @@ function start(): void {
     // A question with a panel (a command, a consent card) shows its window; the window goes with it. While a command
     // card is up, Ember and its bubble keep clear of the command window (review #125).
     commandCardUp = q?.question.panel?.kind === "command";
+    // The voice process hears a short "no" in a follow-up window as an answer while a question is up (engine.ts).
+    voice?.questionUp(q !== null);
     targets?.questionChanged(q);
     stepAside();
     if (!q) {
@@ -1078,7 +1080,7 @@ function start(): void {
     const ack = ackTimer;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) { unanswered(); return; }
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.verified ? { verified: true } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1259,8 +1261,36 @@ function start(): void {
     onChange: () => broadcast(IPC.routinesChanged, routineRows()),
   });
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
+  /**
+   * "Work without asking" turned on or off is an audit entry (security review of #127): by voice or typed words (the host's
+   * intent says which, just before it saves), else from Home's switch or card.
+   */
+  let autonomyChangedBy: { via: "voice" | "typed"; verified: boolean } | null = null;
+  let autonomyWasOn = autonomyInForce(settings.get().autonomy, policy) !== null;
+  settings.onChange(s => {
+    const on = autonomyInForce(s.autonomy, policy) !== null;
+    if (on === autonomyWasOn) return;
+    autonomyWasOn = on;
+    const how = autonomyChangedBy ?? { via: "home" as const, verified: false };
+    autonomyChangedBy = null;
+    try {
+      audit?.write({ event: "autonomy", on, via: how.via, verified: how.verified });
+    } catch (err) {
+      // Not recorded: it isn't turned on (fail closed); a turn off stands.
+      log.warn("autonomy.audit_failed", { err });
+      if (on) settings.update({ autonomy: { ...s.autonomy, on: false } });
+    }
+    log.info("autonomy.changed", { on, via: how.via });
+  });
   /** When the request being heard began (its wake, or a follow-up window opening): Ember's own voice since then is an echo. */
   let heardFrom = 0;
+  /**
+   * When the speech being heard started, and the question up then (Confirmer.currentNumber): a spoken answer counts only
+   * for the question that was up, and armed, before it was said (security review of #127).
+   */
+  let saidFrom = 0;
+  let questionWhenSaid: number | null = null;
+  const speechStarts = () => { saidFrom = Date.now(); questionWhenSaid = confirmer?.currentNumber ?? null; };
   /**
    * A spoken answer to the question up (voice-answer.ts judged the words): taken through the Confirmer, which holds a yes
    * to what the approve key may do; or, when it can't be taken, the question stays and its bubble says why (and how to
@@ -1268,7 +1298,7 @@ function start(): void {
    */
   const answerByVoice = (o: Exclude<VoiceAnswerOutcome, { kind: "none" }>) => {
     if (!confirmer) return;
-    const result = o.kind === "answer" ? confirmer.answerVoice(o.answer, { verified: o.verified }) : o.why;
+    const result = o.kind === "answer" ? confirmer.answerVoice(o.answer, { verified: o.verified, question: questionWhenSaid, startedAt: saidFrom }) : o.why;
     log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified });
     if (result === "answered" || result === "no-question") return;
     const words = VOICE_ANSWER_REFUSED[result];
@@ -1283,6 +1313,7 @@ function start(): void {
     switch (e.type) {
       case "wake":
         heardFrom = Date.now();
+        speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
         voice?.hush();
@@ -1291,7 +1322,7 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
+        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); speechStarts(); setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
         // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
         if (!e.on && !isCutNote(statusBy.listen)) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
@@ -1312,6 +1343,8 @@ function start(): void {
         }
         break;
       case "speech":
+        // In a follow-up window the speech itself starts later than the window: the answer is tied to then.
+        if (e.on && saidFrom < heardFrom + 1) speechStarts();
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
@@ -1329,7 +1362,7 @@ function start(): void {
         // Ember's own; voice-answer.ts). Anything else is a request, as ever.
         {
           const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
-          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
+          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, short: e.short === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
           if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
@@ -1342,6 +1375,13 @@ function start(): void {
       case "stop":
         // "Ember, stop": everything stops, locally, without asking the model.
         stopEverything("voice");
+        break;
+      case "rejected":
+        // Voice Match turned another voice away while a question was up: no spoken yes for that question any more.
+        if (e.reason === "voice" && confirmer?.lockVoice()) {
+          log.info("voice.answer_locked");
+          confirmer.note(VOICE_ANSWER_REFUSED.locked);
+        }
         break;
     }
   };
@@ -2185,7 +2225,7 @@ function start(): void {
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       autonomy: {
         state: () => ({ on: settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
-        set: on => { const a = settings.get().autonomy; settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); },
+        set: (on, how) => { autonomyChangedBy = how; const a = settings.get().autonomy; settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); },
         open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
       },
       onTaskFinished: t => {

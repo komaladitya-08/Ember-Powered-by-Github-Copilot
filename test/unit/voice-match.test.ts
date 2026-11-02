@@ -9,7 +9,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { fbank } from "../../app/voice/fbank";
-import { Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
+import { APPROVAL_MIN_SECONDS, Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, decodePrint, encodePrint, similarity, unit } from "../../app/voice/voiceprint";
 import { voiceprintStore } from "../../app/main/voiceprint-store";
 import type { VoiceEvent } from "../../app/voice/engine";
@@ -59,6 +59,8 @@ describe("voiceprints", () => {
 const fakePrinter = (fail = false): Printer => ({ print: async s => { if (fail) throw new Error("no model"); return unit(Float32Array.from([s[0], s[1]])); } });
 const owner = unit(Float32Array.from([1, 0]));
 const flush = () => new Promise(r => setTimeout(r, 0));
+/** The owner's voice (to fakePrinter: its first two samples), `seconds` of it at 16 kHz. */
+const ownerAudio = (seconds: number) => { const a = new Float32Array(Math.round(seconds * 16_000)); a[0] = 1; a[1] = 0.1; return a; };
 
 describe("VoiceGate", () => {
   const utterance = (text: string): VoiceEvent => ({ type: "utterance", text, ms: 100, window: "wake" });
@@ -75,7 +77,7 @@ describe("VoiceGate", () => {
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
     g.event(utterance("Someone else."), Float32Array.from([0, 1]));
-    g.event(utterance("The owner."), Float32Array.from([1, 0.1]));
+    g.event(utterance("The owner."), ownerAudio(APPROVAL_MIN_SECONDS));
     expect(sent).toEqual([]);
     await flush();
     expect(sent).toEqual([
@@ -85,6 +87,15 @@ describe("VoiceGate", () => {
       { ...utterance("The owner."), verified: true },
     ]);
     expect(similarity(Float32Array.from([1, 0.1]), owner)).toBeGreaterThanOrEqual(VOICE_MATCH_THRESHOLD);
+  });
+
+  it("vouches for the owner's voice only with enough of it: a short match is heard but marked short, never verified (security review of #127)", async () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    g.event(utterance("Allow."), ownerAudio(0.4));
+    await flush();
+    expect(sent).toEqual([{ ...utterance("Allow."), short: true }]);
   });
 
   it("never holds a stop, or anything that isn't a request", () => {

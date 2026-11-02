@@ -20,10 +20,12 @@ const TAIL = /(?:[,\s]+(?:please|thanks|thank you|ember))*$/;
 const YES = new Set([
   "allow", "allow it", "allow that", "yes allow", "yes allow it", "yes", "yes please", "yeah", "yep", "go ahead", "yes go ahead",
   "okay go ahead", "ok go ahead", "go for it", "do it", "yes do it", "you may", "approve", "approved", "sure", "sure go ahead",
+  // Longer ways to say it, so Voice Match has enough of the voice to vouch for it (match.ts APPROVAL_MIN_SECONDS).
+  "yes go ahead and allow it", "yes go ahead and allow that", "yes please allow it", "yes please allow that", "yes you can go ahead", "yes you may go ahead",
 ]);
 const NO = new Set([
   "not now", "no", "no thanks", "no thank you", "nope", "don't", "do not", "don't do it", "no don't", "no don't do it",
-  "deny", "cancel", "never mind", "nevermind", "not now thanks", "no not now",
+  "deny", "not now thanks", "no not now",
 ]);
 
 /** Lower case, straight apostrophes, no closing punctuation, single spaces. */
@@ -48,12 +50,14 @@ export interface VoiceAnswerInput {
   matchOn: boolean;
   /** The voice process verified this utterance as the owner's (VoiceEvent utterance `verified`). */
   verified: boolean;
+  /** It matched the owner's voice but was too short to vouch for (VoiceEvent utterance `short`). */
+  short?: boolean;
   /** Ember made sound while this was being said, or just before (VoiceService.selfSpokeSince). */
   selfSpoke: boolean;
 }
 
 /** Why a spoken answer wasn't taken. */
-export type VoiceAnswerRefusal = "voice-match-off" | "unverified" | "own-voice";
+export type VoiceAnswerRefusal = "voice-match-off" | "unverified" | "own-voice" | "too-short";
 
 export type VoiceAnswerOutcome =
   /** Not an answer: an ordinary request (no question up, or other words). */
@@ -71,15 +75,18 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
   const verified = i.matchOn && i.verified;
   if (answer === "deny") return { kind: "answer", answer, verified };
   if (!i.matchOn) return { kind: "refused", answer, why: "voice-match-off" };
-  if (!i.verified) return { kind: "refused", answer, why: "unverified" };
+  if (!i.verified) return { kind: "refused", answer, why: i.short ? "too-short" : "unverified" };
   return { kind: "answer", answer, verified: true };
 }
 
 /** What the bubble says under the question when a spoken answer wasn't taken (the question stays up). */
-export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerRefusal | "click-only" | "not-yet", string>> = {
+export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerRefusal | "click-only" | "not-yet" | "stale" | "locked", string>> = {
   "voice-match-off": "I can take a yes by voice only once Voice Match knows your voice: turn it on in Settings › Voice. Click Allow for now.",
   unverified: "That didn't sound like you, so I didn't take it as a yes. Click Allow, or say it again.",
   "own-voice": "I was still speaking, so I didn't take that as an answer. Say it again.",
   "click-only": "This one needs a click: I can't take a yes by voice here.",
   "not-yet": "Read it through first, then say “Allow” again.",
+  "too-short": "Say a little more so I can be sure it's you: “Ember, yes, go ahead and allow it.” Or click Allow.",
+  stale: "That was said before this question came up, so I didn't take it. Say it again.",
+  locked: "I heard a voice that isn't yours, so for this question I'll take a click or the keys only.",
 };

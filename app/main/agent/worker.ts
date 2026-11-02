@@ -224,6 +224,9 @@ const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
+const POSES_AS_ANNOUNCEMENT = /without\s+(asking|permission|approval)|as\s+you\s+let\s+me|didn'?t\s+(need\s+to\s+)?ask/i;
+
 /** report_progress's `intent`: a few words, one line of a card. */
 const INTENT_MAX = 60;
 /**
@@ -946,6 +949,12 @@ export class Worker {
   private agreed: Agreement[];
   /** The user said no to a question (or let it go unanswered), and nothing was done after that. */
   private declined = false;
+  /**
+   * The user said no to a question in this task (or let one expire), at any time: never cleared, unlike `declined`
+   * (which a later step resets for the task's outcome). "Work without asking" stays suspended for the rest of the task
+   * once this is set (security review of #127: a failed step after a "Not now" must not bring it back).
+   */
+  private saidNoThisTask = false;
   /** The last authorize() asked the user (the screen may have changed while the question was up). */
   private asked = false;
   /**
@@ -1061,6 +1070,8 @@ export class Worker {
       answer = await (this.clock ? this.clock.waiting(ask) : ask());
       return answer;
     } finally {
+      // Any question of this task answered no (or let go unanswered) holds it to asking for good (saidNoThisTask).
+      if (answer === null || answer === "deny") this.saidNoThisTask = true;
       this.activity({ type: "answer", answer: this.isOver ? "stopped" : answer === null ? "expired" : answer === "deny" ? "declined"
         : answer === "once" || answer === "always" ? "allowed" : "answered" });
     }
@@ -1072,7 +1083,13 @@ export class Worker {
    */
   private announce(words: string): void {
     try { this.d.presenter.progress(words); } catch (err) { this.d.log.warn("worker.announce_failed", { err }); }
-    this.activity({ type: "note", text: words, intent: "Working without asking" });
+    this.activity({ type: "announce", text: words });
+  }
+
+  /** How question `q` was answered, for its audit entry: a spoken answer says so, and whether Voice Match verified it. */
+  private channelOf(q: Question): { via?: "voice"; verified?: boolean } {
+    const how = this.d.confirmer.howAnswered?.(q);
+    return how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {};
   }
 
   /** Tells the task's activity (its card); a listener's fault never stops the task. */
@@ -1343,6 +1360,9 @@ export class Worker {
           now: z.number().int().min(0).max(VIEW_LIMITS.plan).optional().describe("The step under way now, counting from 0 (the plan's length: all done)"),
         }),
         async a => {
+          // Only Ember says what it does without asking (its own announcements, from policy): the model can't pass a
+          // note off as one (security review of #127).
+          if (POSES_AS_ANNOUNCEMENT.test(`${a.text} ${a.intent ?? ""}`)) return fail("Don't say you work without asking: Ember says that itself. Describe the step plainly.");
           if (a.plan) this.d.onUpdate?.({ plan: planSteps(a.plan, a.now ?? 0) });
           // The worker's own words: shown on its card as its note, never as Ember's (markdown stripped).
           this.activity({ type: "note", text: plainText(a.text), ...(a.intent ? { intent: plainText(a.intent) } : {}) });
@@ -1406,9 +1426,9 @@ export class Worker {
       service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal), howAnswered: q => this.d.confirmer.howAnswered?.(q) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
-      onDeclined: () => { this.declined = true; },
+      onDeclined: () => { this.declined = true; this.saidNoThisTask = true; },
       // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
-      autonomy: () => (this.tainted || this.declined ? null : this.d.autonomy?.() ?? null),
+      autonomy: () => (this.tainted || this.saidNoThisTask ? null : this.d.autonomy?.() ?? null),
       ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
     };
   }
@@ -2742,10 +2762,11 @@ export class Worker {
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
     const answer = await this.ask(question);
-    this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
+    this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
     this.declined = true;
+    this.saidNoThisTask = true;
     return denied("The user said no (or didn't answer). Don't retry or work around it; finish the task and say what wasn't done.");
   }
 
@@ -3587,7 +3608,7 @@ export class Worker {
     if (decision.aligned === false) this.tainted = true;
     // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
     // as it would have. A task that was steered or went off-task is held to asking just below, as before.
-    if (decision.autonomy && this.declined && !this.tainted) {
+    if (decision.autonomy && this.saidNoThisTask && !this.tainted) {
       const { autonomy: _a, announce: _n, ...asked } = decision;
       decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
     }
@@ -3640,9 +3661,7 @@ export class Worker {
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(decision.risky ? { risky: true } : {}) };
     const answer = await this.ask(question);
-    // How it was answered: a spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
-    const how = this.d.confirmer.howAnswered?.(question);
-    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...(how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {}) });
+    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {
       // Keyed by the task's target (a remote's apps are "ssh:<id>:<app>"): a yes on one computer is never another's.
@@ -3658,6 +3677,7 @@ export class Worker {
       return null;
     }
     this.declined = true;
+    this.saidNoThisTask = true;
     return denied("The user said no (or didn't answer). Don't retry or work around it; finish the task and say what wasn't done.");
   }
 }

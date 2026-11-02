@@ -70,7 +70,8 @@ export type VoiceEvent =
   | { type: "speech"; on: boolean }
   /** `window`: a wake's request or a follow-up (which gets no follow-up of its own); `cut`: the speaker was still talking when the request reached its length limit. */
   /** `verified`: Voice Match compared it with the owner's voiceprint and it matched (match.ts); absent otherwise. */
-  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true }
+  /** `short`: it matched, but was too short for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts). */
+  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true; short?: true }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 
@@ -234,6 +235,11 @@ export function isCloser(text: string, afterQuestion = false): boolean {
   const word = String.raw`(thanks(\s+(a\s+lot|so\s+much|a\s+bunch|again))?|thank\s+you(\s+(very|so)\s+much)?|cheers|much\s+appreciated|appreciate\s+it|great|perfect|cool|nice|awesome|wonderful|excellent|good|fine|okay|ok|alright|all\s+right|sounds\s+(good|great|fine)|that\s+works|works\s+for\s+me|got\s+it|that'?s\s+(all|it|everything|fine|great|good|perfect)|that\s+is\s+all|nothing(\s+else)?|no|nope|no\s+thanks|not\s+now|i'?m\s+(good|done|fine|all\s+set)|all\s+(good|set)|bye|goodbye)`;
   if (!new RegExp(String.raw`^((okay|ok|alright|all\s+right|oh|so|yeah|um|uh)[\s,.!]+)*${word}([\s,.!]+(${word}|ember|for\s+now|then|anyway))*[\s.!,]*$`, "i").test(text)) return false;
   return !afterQuestion || /^((okay|ok|alright|all\s+right|oh|so|um|uh|well)[\s,.!]+)*(no|nope|nah|not\s+now|nothing|that'?s\s+(all|it|everything)|that\s+is\s+all|i'?m\s+(good|done|fine|all\s+set)|all\s+set|bye|goodbye)\b/i.test(text);
+}
+
+/** "No.", "Not now.", "Nope.", "Don't.": a short answer to a question of Ember's (voice-answer.ts has the full list). */
+export function isAnswerWord(text: string): boolean {
+  return /^((okay|ok|oh|so|um|uh|well|ember)[\s,.!]+)*(no|nope|not\s+now|no\s+thanks?|no\s+thank\s+you|don'?t|do\s+not)([\s,.!]+(thanks|ember))*[\s.!,]*$/i.test(text.trim());
 }
 
 /** "Um." "Hmm.": a filler, not a request (the window keeps listening). */
@@ -504,6 +510,12 @@ export class VoiceEngine {
 
   get listening(): boolean {
     return this.mode.kind === "listening";
+  }
+
+  /** One of Ember's questions is up (main says so): a short "no" in a follow-up window is an answer, not a closer. */
+  private questionWaiting = false;
+  questionUp(on: boolean): void {
+    this.questionWaiting = on;
   }
 
   /**
@@ -1158,7 +1170,9 @@ export class VoiceEngine {
       this.endListening("stop");
       return;
     }
-    if (this.mode.reason === "follow-up" && isCloser(text, this.mode.afterQuestion)) {
+    // While one of Ember's questions is up, "No." or "Not now." in a follow-up window answers it (main's voice-answer.ts),
+    // so it is sent rather than taken for "that's all".
+    if (this.mode.reason === "follow-up" && !(this.questionWaiting && isAnswerWord(text)) && isCloser(text, this.mode.afterQuestion)) {
       // "Thanks.": nothing more to do (like a window that heard nothing).
       this.endListening("timeout");
       return;

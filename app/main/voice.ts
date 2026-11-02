@@ -287,6 +287,11 @@ export class VoiceService {
     return this.saidSpeaking || this.lastSelfSpeech >= t;
   }
 
+  /** One of Ember's questions is up, or no longer: a "no" said in a follow-up window then answers it (engine.ts). */
+  questionUp(up: boolean): void {
+    this.proc?.postMessage({ type: "question", up });
+  }
+
   get rejectsSpeakers(): boolean {
     return !!this.proc && this.monitorOn && (this.state === "waiting" || this.state === "active");
   }

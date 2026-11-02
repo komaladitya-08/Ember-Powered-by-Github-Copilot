@@ -43,7 +43,7 @@ export interface AnswerChannel { via: AnswerVia; verified?: boolean }
  * answers a question whose card only a click may allow ("click-only"), and waits as a key would for the question to be
  * armed, its whole text read, or its panel shown whole ("not-yet").
  */
-export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "click-only" | "not-yet";
+export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "click-only" | "not-yet" | "stale" | "locked";
 
 /** A question whose full content shows in a window of Ember's own (the command card, a consent card). */
 export type QuestionPanel =
@@ -88,7 +88,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
  * how many times the approve key asked for more, and when that key was last pressed (`keyAt`).
  */
 interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number }
-interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead; note?: string }
+interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead; note?: string; voiceLocked?: boolean }
 
 export interface ConfirmerTiming {
   /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
@@ -218,9 +218,12 @@ export class Confirmer {
    * Ember borrows the mouse, not on a click-only question (a consent card), not before the question is armed, its whole
    * text has been in view or its panel window shows all of it.
    */
-  answerVoice(which: "allow" | "deny", o: { verified: boolean }): VoiceAnswerResult {
+  answerVoice(which: "allow" | "deny", o: { verified: boolean; question?: number | null; startedAt?: number }): VoiceAnswerResult {
     const c = this.current;
     if (!c) return "no-question";
+    // Tied to this question (security review of #127): said for it, after it was up and armed, never for one before it.
+    if (o.question !== undefined && o.question !== c.n) return "stale";
+    if (o.startedAt !== undefined && o.startedAt < c.shownAt + this.armOf(c.q)) return "stale";
     if (which === "deny") {
       if (!c.q.options.some(x => x.id === "deny")) return "not-yet";
       this.channels.set(c.q, { via: "voice", verified: o.verified === true });
@@ -228,6 +231,7 @@ export class Confirmer {
       return "answered";
     }
     if (o.verified !== true) return "unverified";
+    if (c.voiceLocked) return "locked";
     if (c.q.clickOnly) return "click-only";
     const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
     if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
@@ -237,6 +241,21 @@ export class Confirmer {
     this.channels.set(c.q, { via: "voice", verified: true });
     this.finish(c, opt.id);
     return "answered";
+  }
+
+  /** The question up now (its number), or null: main notes it at a wake, so a spoken answer is tied to it. */
+  get currentNumber(): number | null {
+    return this.current?.n ?? null;
+  }
+
+  /**
+   * Another voice than the owner's was heard while this question was up (Voice Match turned it away): no spoken yes is
+   * taken for it from then on, only a click or the keys (security review of #127). False when no question is up.
+   */
+  lockVoice(): boolean {
+    if (!this.current) return false;
+    this.current.voiceLocked = true;
+    return true;
   }
 
   /**

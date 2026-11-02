@@ -25,6 +25,7 @@ export type StatusWord = keyof typeof STATUS_WORDS;
 export type ActivityKind =
   | "step" // one tool call, in Ember's words for its tool and the app it worked in
   | "note" // the worker's own short note (report_progress): model text
+  | "announce" // a step Ember took without asking (Work without asking), in Ember's own words from policy, never model text
   | "question" // Ember asked the user, and how they answered
   | "refused" // a step policy (or Ember itself) didn't allow
   | "hand" // how the task works changed: the background, Ember's desk, the user's mouse and keyboard
