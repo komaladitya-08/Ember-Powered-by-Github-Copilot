@@ -2108,6 +2108,8 @@ function start(): void {
       extensions,
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
       cornerTasks: true,
+      // Their views go to the overlay apart from the state (coalesced diffs, none while Ember is hidden).
+      showView: (id, view) => overlay?.setView(id, view),
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),

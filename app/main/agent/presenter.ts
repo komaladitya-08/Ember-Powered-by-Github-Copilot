@@ -446,6 +446,8 @@ export const TOOL_STEPS: Record<string, string> = {
   press_keys: "Pressing keys (your keyboard)",
   scroll: "Scrolling (your mouse)",
   report_progress: "Updating you",
+  show_view: "Showing what I found",
+  update_view: "Showing what I found",
   finish_task: "Wrapping up",
   run_command: "Running a command",
   list_computers: "Checking which computers I can use",

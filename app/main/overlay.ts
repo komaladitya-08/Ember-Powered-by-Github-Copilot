@@ -22,6 +22,8 @@ import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
 import { pageUrl } from "./page-url";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
 import type { SoundLevel } from "../shared/level";
+import type { ViewDoc } from "../shared/view";
+import { ViewHub } from "./agent/view-doc";
 
 const appDir = __dirname;
 
@@ -43,6 +45,10 @@ export class OverlayManager {
   private topTimer: NodeJS.Timeout | null = null;
   private last = performance.now();
   private hidden = false;
+  /** Tasks' views, carried to every overlay apart from the state: diffs, at most 4 a second a task, none while hidden. */
+  private readonly views = new ViewHub({
+    send: p => { for (const o of this.overlays.values()) if (!o.win.isDestroyed() && !o.win.webContents.isLoading()) o.win.webContents.send(OVERLAY.view, p); },
+  });
   /** While Ember borrows the cursor its windows never take clicks, so every click reaches the app. */
   private borrowing = false;
   private state: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null };
@@ -92,6 +98,12 @@ export class OverlayManager {
 
   setHidden(on: boolean): void {
     this.hidden = on;
+    this.views.setVisible(!on);
+  }
+
+  /** A task's view now (null: its card went). Checked in main before it gets here (view-schema.ts). */
+  setView(taskId: string, doc: ViewDoc | null): void {
+    this.views.set(taskId, doc);
   }
 
   isHidden(): boolean {
@@ -352,6 +364,8 @@ export class OverlayManager {
     win.webContents.on("did-finish-load", () => {
       win.webContents.send(OVERLAY.init, this.initFor(overlay));
       win.webContents.send(OVERLAY.state, this.state);
+      // Every view whole (a reloaded page has none).
+      for (const p of this.views.snapshots()) win.webContents.send(OVERLAY.view, p);
       this.lastFrame = null;
       win.showInactive();
       win.setBounds(display.bounds); // re-apply after map; some WMs adjust on first show

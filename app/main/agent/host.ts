@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
-import { viewText } from "../../shared/view";
+import { viewText, type ViewDoc } from "../../shared/view";
 import type { TaskActivity } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
@@ -155,6 +155,8 @@ export interface HostOptions {
   settings: SettingsStore;
   log: Logger;
   setState: (patch: Partial<EmberState>) => void;
+  /** A task's view for its card (null: the card went), carried apart from the state (the overlay's ViewHub). */
+  showView?: (taskId: string, view: ViewDoc | null) => void;
   /** How many times its usual time each bubble stays (the user's "More time to read and answer"; default 1). */
   readTime?: () => number;
   onStatus: (s: AgentStatus) => void;
@@ -510,7 +512,7 @@ const OUTCOME = {
 } as const;
 /** A finished task, as the conductor hears about it. */
 /** A finished task as the next turn hears it (in <task_results>): its summary, and what its card showed, as words. */
-const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.result?.view?.length ? `\n${viewText(t.result.view)}` : ""}`;
+const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.view ? `\n${viewText(t.view)}` : ""}`;
 /** Requests sent while the conversation was busy, kept at most (the runtime runs them one turn at a time). */
 const MAX_QUEUED = 20;
 /** Finished tasks kept for "what did I miss?" after their cards go (it names three and counts the rest). */
@@ -1148,6 +1150,7 @@ export class AgentHost {
         log: this.o.log.child("tasks"),
         currentWindow: hands?.currentWindow ?? (() => null),
         setCards: cards => this.o.setState({ tasks: cards }),
+        onView: (id, view) => this.o.showView?.(id, view),
         deleteSession: id => client.deleteSession(id),
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
@@ -1170,7 +1173,7 @@ export class AgentHost {
           const presenter = this.taskPresenters.get(task.id) ?? this.taskPresenter(task.id, task.goal, binding, false, task.mode !== "guide");
           this.taskPresenters.delete(task.id);
           // What it showed on its card goes to the conversation too, as words (and to the next turn's task results).
-          const view = task.result?.view?.length ? viewText(task.result.view) : "";
+          const view = task.view ? viewText(task.view) : "";
           const said = this.remember("task", view ? `${text}\n${view}` : text);
           if (summary) this.results.set(said, summary);
           // Stopped by the kill switch: its message is on screen and says it all (nothing shown or spoken per task).

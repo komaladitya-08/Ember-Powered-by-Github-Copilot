@@ -1,6 +1,6 @@
 /** Messages between the main process and the overlay / handle renderers. */
 
-import type { PlanStep, TaskHand, ViewBlock } from "./view";
+import type { PlanStep, TaskHand, ViewPatch } from "./view";
 import type { Emotion, Gesture } from "@ember/characters";
 import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
@@ -25,6 +25,11 @@ export const OVERLAY = {
   motion: "overlay:motion",
   /** The sound's level (app/shared/level.ts SoundLevel) for Ember's presence ring and voice meter, apart from the state. */
   level: "overlay:level",
+  /**
+   * A change to a task's view (app/shared/view.ts ViewPatch), apart from the state: the nodes that changed, at most 4
+   * times a second per task, and only while the overlay shows (main's ViewHub).
+   */
+  view: "overlay:view",
 } as const;
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -114,8 +119,11 @@ export interface TaskCard {
   hand?: TaskHand;
   /** Its plan, as it last reported it (report_progress): the card lists the steps. */
   plan?: PlanStep[];
-  /** What it found or made, as its worker showed it (finish_task's view, from app/shared/view.ts's catalog). */
-  view?: ViewBlock[];
+  /**
+   * The rev of the view it shows (show_view while it works, finish_task's at the end; app/shared/view.ts's catalog):
+   * the view itself comes apart from the state, as patches on OVERLAY.view.
+   */
+  viewRev?: number;
   /** What it is doing and has done, in Ember's words (app/shared/activity.ts), from the moment it starts to run. */
   activity?: CardActivity;
 }
@@ -165,6 +173,8 @@ export interface OverlayApi {
   setReducedMotion?(on: boolean): void;
   /** The sound's level for the presence ring (the microphone's while Ember hears) and the voice meter (its own voice). */
   onLevel?(fn: (l: SoundLevel) => void): void;
+  /** A change to a task's view (a whole one first, and after the overlay was hidden or reloaded). */
+  onView?(fn: (p: ViewPatch) => void): void;
 }
 
 export interface HandleApi {
