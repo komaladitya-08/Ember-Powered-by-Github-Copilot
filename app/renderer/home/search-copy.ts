@@ -6,18 +6,40 @@
  */
 
 /** One thing the search can find: a heading, a switch's label, a footnote, a button. */
-export interface Searchable { pane: string; text: string }
+export interface Searchable { pane: string; text: string; alias?: string }
 
 /** Lower case without accents or quote marks, so “Hey Ember” is found by hey ember. */
 export function searchFold(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[“”‘’"']/g, "").toLowerCase();
 }
 
-/** The items whose words hold every word of `query` (none for a blank query), in the page's order. */
+/**
+ * Other words people use for a pane (System Settings finds "Bluetooth" under its own name and "AirPods" alike): added
+ * to the pane's heading, so "mic" finds Voice. By the heading's id; words only, never shown.
+ */
+export const SEARCH_ALIASES: Readonly<Record<string, string>> = {
+  "copilot-h": "github account sign in sign out login model",
+  "voice-h": "mic microphone wake word hey ember speech speak listen voice match hearing",
+  "pick-h": "character avatar size handle",
+  "memory-h": "remember forget routines reminders",
+  "privacy-h": "permissions never look passwords autonomy work without asking always allow",
+  "access-h": "accessibility text size font bigger larger glass transparency contrast motion calm reduce motion keyboard",
+  "computers-h": "ssh wsl remote server linux windows",
+  "commands-h": "terminal shell command line run",
+  "extensions-h": "plugins marketplace connectors tools",
+  "checks-h": "doctor setup check diagnostics troubleshoot version",
+};
+
+/**
+ * The items whose words hold every word of `query` (none for a blank query), in the page's order: those whose own words
+ * hold it first, then those found only by a pane's other words (SEARCH_ALIASES), so Enter goes to the setting named.
+ */
 export function searchMatches<T extends Searchable>(query: string, items: readonly T[]): T[] {
   const words = searchFold(query).split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  return items.filter(i => { const t = searchFold(i.text); return words.every(w => t.includes(w)); });
+  const holds = (t: string) => { const f = searchFold(t); return words.every(w => f.includes(w)); };
+  const own = items.filter(i => holds(i.text));
+  return [...own, ...items.filter(i => !own.includes(i) && !!i.alias && holds(`${i.text} ${i.alias}`))];
 }
 
 /** What a screen reader hears as the search narrows the sidebar. */

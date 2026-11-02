@@ -47,6 +47,14 @@ export function cardTask(tasks: readonly TaskCard[], bubble?: Pick<BubbleState, 
 }
 
 /**
+ * The card shows Ember's own announcement of a step it took without asking (BubbleState.autonomous): its "Without
+ * asking" tag beside Ember's name, as the bubble shows it beside its state.
+ */
+export function cardAutonomous(b: Pick<BubbleState, "visible" | "autonomous">): boolean {
+  return b.visible && b.autonomous === true;
+}
+
+/**
  * The card shows a risky question (policy's risky, BubbleState.risky): its "Risky step" tag and a bordered Allow, as the
  * bubble shows one. Only a question on screen is one; a risky flag left on another bubble isn't.
  */

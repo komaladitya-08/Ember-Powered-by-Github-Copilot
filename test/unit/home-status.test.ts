@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "../../app/renderer/home/status-copy";
-import { searchFold, searchMatches, searchMessage } from "../../app/renderer/home/search-copy";
+import { SEARCH_ALIASES, searchFold, searchMatches, searchMessage } from "../../app/renderer/home/search-copy";
 import { checksNote, setupBadge, setupView, tagline } from "../../app/renderer/home/copy";
 import type { TaskEntry, TaskActivity } from "../../app/shared/activity";
 import { IPC, TASKS_PUSH_MS } from "../../app/shared/ipc";
@@ -91,6 +91,15 @@ describe("Search settings", () => {
     expect(searchMatches("  ", items)).toEqual([]);
     expect(searchMatches("nothing like this", items)).toEqual([]);
     expect(searchFold("Écran “Ember”")).toBe("ecran ember");
+  });
+
+  it("finds a pane by the other words people use for it, after the settings named by their own words (HIG search fields)", () => {
+    const panes = [{ pane: "voice", text: "Voice", alias: SEARCH_ALIASES["voice-h"] }, { pane: "access", text: "Comfort & access", alias: SEARCH_ALIASES["access-h"] }, { pane: "access", text: "Glass" }];
+    expect(searchMatches("mic", panes).map(i => i.text)).toEqual(["Voice"]);
+    expect(searchMatches("microphone", panes).map(i => i.text)).toEqual(["Voice"]);
+    // "glass" names a setting: it comes first (Enter goes there), and the pane found by its other words after it.
+    expect(searchMatches("glass", panes).map(i => i.text)).toEqual(["Glass", "Comfort & access"]);
+    for (const id of Object.keys(SEARCH_ALIASES)) expect(id).toMatch(/-h$/);
   });
 
   it("says how many it found and where, for a screen reader", () => {

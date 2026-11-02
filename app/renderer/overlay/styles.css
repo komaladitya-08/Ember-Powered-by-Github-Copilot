@@ -253,6 +253,9 @@ html.calm .presence .ring, html.calm .presence[data-state="acting"] .ring-now { 
 /* Windows contrast themes (forced colours; tokens and focus in ember.css): the cards' buttons and the where badge keep
    their edges (the cards, the status line and the bubble keep theirs: a border the system colours). */
 @media (forced-colors: active) {
+  /* The glass is gradients, which the system drops: the cards and the status line take the window's colour (as the
+     bubble does), so their words never sit on the app's, each on its own strip of backplate. */
+  .task, .task.more, .status { background: Canvas; }
   .task-actions button { border: 1px solid ButtonText; }
   .where { outline: 1px solid CanvasText; outline-offset: -1px; }
   .plan li::before { forced-color-adjust: none; box-shadow: inset 0 0 0 1.5px CanvasText; }

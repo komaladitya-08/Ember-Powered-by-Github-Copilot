@@ -565,3 +565,53 @@ describe("views (app/renderer/shared/view.css)", () => {
     expect(viewCss).toContain('[data-series="2"].vw-line { stroke-dasharray: 1.5 3; }');
   });
 });
+
+describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surface)", () => {
+  const page = (p: string) => read(`app/renderer/${p}/styles.css`);
+
+  it("gives every floating glass surface the window's colour in contrast themes, as the bubble has (its gradients are dropped)", () => {
+    expect(forced(page("overlay"), ".task")).toContain("background: Canvas;");
+    expect(forced(page("overlay"), ".status")).toContain("background: Canvas;");
+    expect(forced(page("handle"), ".handle")).toContain("background: Canvas;");
+    for (const sel of ["textarea", ".meta", ".cut", ".tip"]) expect(forced(page("ask"), sel), sel).toContain("background: Canvas;");
+    expect(forced(BUBBLE_CSS, ".ember-bubble")).toContain("background: Canvas;");
+    // A view's coloured timeline rule is a shadow, which the system drops: a real border instead.
+    expect(forced(viewCss, ".vw-timeline li[data-tone] .vw-what")).toContain("border-left: 2px solid CanvasText;");
+  });
+
+  it("keeps line heights on whole pixels at every text size, in every window but the Ask box (which main sizes exactly)", () => {
+    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
+  });
+
+  it("puts a tone's words in the label on Clear glass, where no state colour is both a colour and 4.5:1, and its mark in the colour", () => {
+    expect(viewCss).toContain('html[data-glass="clear"]:not(.calm) .vw [data-tone]:not([data-tone="neutral"]) { --vw-ink: var(--label); }');
+    expect(viewCss).toContain('html[data-glass="clear"]:not(.calm) .vw-delta[data-good="false"] .vw-sym { background: var(--red); }');
+    // Only while the glass is see-through: Increase Contrast and Reduce Transparency make it solid, where the inks pass.
+    expect(viewCss).toContain("@media (prefers-contrast: no-preference) and (prefers-reduced-transparency: no-preference) {");
+  });
+
+  it("fills a risky question's tag with the caution colour on Clear, so it stays unmistakably yellow", () => {
+    const fill = 'html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--on-accent, #1d1204); background: var(--yellow, #fff0a0); }';
+    expect(BUBBLE_CSS).toContain(fill);
+    // After the tags' darkening, which it replaces.
+    expect(BUBBLE_CSS.indexOf(fill)).toBeGreaterThan(BUBBLE_CSS.indexOf('html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { background-image'));
+  });
+
+  it("keeps Home's sidebar selection off when its link is out of a search, and grows the sidebar with the text (HIG sidebars)", () => {
+    const home = page("home");
+    expect(home).toContain(".jump:not(.has-hl) .jump-hl { display: none; }");
+    expect(home).toContain("html[data-text-size] body:not(.first-run) .home > .jump { width: calc(200px * var(--text-scale)); }");
+    expect(home).toContain("html[data-text-size] body:not(.first-run) .home { padding-left: calc(228px * var(--text-scale)); }");
+    expect(read("app/renderer/home/index.html")).toContain('<p class="search-none" id="search-none" aria-hidden="true" hidden></p>');
+  });
+
+  it("centres first run's steps in the window's height in a box of one size, so the title stays put from step to step (HIG onboarding)", () => {
+    const home = page("home");
+    expect(home).toMatch(/body\.first-run \.home \{[^}]*min-height: 100vh;[^}]*justify-content: center;/);
+    expect(home).toContain("body.first-run #welcome { min-height: min(560px, calc(100vh - 60px)); }");
+  });
+
+  it("rounds an inner corner concentrically: the command card's command at 6 px inside its 14 px card (HIG concentricity)", () => {
+    expect(page("command")).toMatch(/\.command \{\n {2}margin: 0; padding: 8px 10px; border-radius: var\(--r-xs\);/);
+  });
+});

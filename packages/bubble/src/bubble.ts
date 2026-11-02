@@ -383,6 +383,9 @@ export const BUBBLE_CSS = `
 html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk, html[data-glass="clear"] .ember-bubble .eb-auto { color: var(--label, #f5f2ef); }
 /* (Their tints darkened a little there, under the label's words: the lighter glass let them pale.) */
 html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }
+/* (A risky question's tag is the exception: there its tint paled to grey, so it is filled with Clear's light yellow
+   under dark words, unmistakably the caution colour; the brackets and Allow's edge match it.) */
+html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--on-accent, #1d1204); background: var(--yellow, #fff0a0); }
 .eb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--eb-mood); }
 /* The dot pulses only while Ember is busy; a finished answer sits still, and so does a question (it waits for you:
    nothing about it hurries you). */
