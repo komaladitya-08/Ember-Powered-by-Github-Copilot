@@ -1336,7 +1336,7 @@ export class Worker {
           // The worker's own words: shown on its card as its note, never as Ember's (markdown stripped).
           this.activity({ type: "note", text: plainText(a.text), ...(a.intent ? { intent: plainText(a.intent) } : {}) });
           this.d.onProgress(a.text);
-          this.d.presenter.progress(a.text);
+          this.d.presenter.note(a.text);
           return done("Shown.");
         }),
       this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a file you saved), also give it as `view`, drawn on the task's card; the summary still says it in words.",

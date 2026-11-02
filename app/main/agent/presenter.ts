@@ -1080,6 +1080,15 @@ export class Presenter {
   }
 
   /**
+   * The task's worker's own note (report_progress): shown as the task's words, quoted under its title in the quieter
+   * commentary of a working bubble, never as Ember's own thought (the model wrote it; markdown is stripped).
+   */
+  note(text: string): void {
+    const plain = plainText(text).replace(/\s+/g, " ").trim();
+    if (plain) this.progress(quoted(plain));
+  }
+
+  /**
    * A command the user's own words asked for is about to run (D4.4, §3.9.2): the announcement ("Pushing feature-x to
    * origin, as you asked.") shows now with one action, Stop (`stopId`, `ui:cmdstop:<runId>`), which stops only this
    * announcement. The command window's countdown is the authoritative Stop: this copy may wait behind a question.

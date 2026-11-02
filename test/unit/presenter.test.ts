@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
@@ -937,6 +938,17 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     q.userPrompt("hi");
     q.fail("fetch failed ECONNRESET");
     expect(q.retryRequest).toBe("hi");
+  });
+
+  it("shows a task worker's note quoted as the task's words, never as Ember's own thought (UI audit)", () => {
+    const states: Partial<EmberState>[] = [];
+    const task = new Presenter(s => states.push(s), undefined, () => "Tidy", new BubbleOwner(), undefined, false, { task: "t1" });
+    task.taskStarted();
+    task.note("Opening **Display** settings");
+    expect(states.at(-1)!.bubble).toMatchObject({ mood: "acting", thought: "“Opening Display settings”" });
+    const worker = readFileSync(new URL("../../app/main/agent/worker.ts", import.meta.url), "utf8");
+    expect(worker).toContain("this.d.presenter.note(a.text);");
+    expect(worker).not.toContain("this.d.presenter.progress(a.text);");
   });
 
   it("offers nothing for a runtime that stopped and reconnects by itself", () => {
