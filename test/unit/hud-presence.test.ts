@@ -1,7 +1,7 @@
 /** Ember's presence (docs/DESIGN.md "Presence"): the ring's states, the sound levels that drive it, and the handle's line. */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { LEVEL_MS, LEVEL_STEPS, LevelMeter, envelope, levelStep, readLevel, rms, voiceAt } from "../../app/shared/level";
+import { LEVEL_MS, LEVEL_STEPS, LevelMeter, NO_LEVEL, envelope, levelForOverlay, levelStep, readLevel, rms, voiceAt } from "../../app/shared/level";
 import { DONE_RING_MS, RING_TICKS, meterBars, presenceOf, ticksLit } from "../../app/shared/presence";
 import { handleLine } from "../../app/renderer/handle/line";
 import { IDLE_BUBBLE, type TaskCard } from "../../app/shared/overlay";
@@ -119,6 +119,16 @@ describe("sound levels for the presence (never audio)", () => {
     const mic = read("app/renderer/mic/main.ts");
     expect(mic).toContain("if (micLevels && ev.data instanceof ArrayBuffer) micMeter.push(");
     expect(mic).toContain("if (!on) micMeter.end();");
+  });
+
+  it("keep a meter's end while Ember is hidden, and start from nothing when it shows again (UI audit 4)", () => {
+    expect(levelForOverlay({ mic: 3 }, false)).toEqual({ mic: 3 });
+    expect(levelForOverlay({ mic: 3 }, true)).toBeNull();
+    // A level and an end together: the end still reaches the overlay, so that meter isn't left lit.
+    expect(levelForOverlay({ mic: 3, voice: null }, true)).toEqual({ voice: null });
+    expect(levelForOverlay({ voice: null }, true)).toEqual({ voice: null });
+    expect(NO_LEVEL).toEqual({ mic: null, voice: null });
+    expect(read("app/main/overlay.ts")).toContain("if (shows) this.setLevel({ ...NO_LEVEL });");
   });
 });
 

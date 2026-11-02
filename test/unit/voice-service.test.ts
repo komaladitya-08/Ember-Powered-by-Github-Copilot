@@ -265,7 +265,51 @@ describe("VoiceService", () => {
     await flush();
     expect(electron.windows).toHaveLength(1);
     v.hush();
+    await flush();
     expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.hush);
+  });
+
+  it("hushes speech queued while the speech-only window still loads after it, not before (the kill switch, voice audit V1)", async () => {
+    const { v } = service();
+    v.speak("A long answer.");
+    v.hush(); // the window hasn't loaded yet
+    await flush();
+    const speech = electron.windows.find(w => w.title === "Ember speech")!;
+    expect(speech.webContents.send.mock.calls.map(c => c[0])).toEqual([VOICE.speak, VOICE.hush]);
+  });
+
+  it("ends Ember's speaking when the page it spoke from goes: the meter stops and the wake word counts again (UI audit 4, voice audit V2)", async () => {
+    const levels: unknown[] = [];
+    const selfSpeaking: boolean[] = [];
+    root = modelsRoot(true);
+    const v = new VoiceService({ log, modelsRoot: root, monitor: false, onEvent: () => {}, onState: () => {}, native: false,
+      onLevel: l => levels.push(l), onSelfSpeaking: on => selfSpeaking.push(on) } as VoiceOptions);
+    services.push(v);
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    const mic = electron.windows.find(w => w.title === "Ember microphone")!;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    speaking(mic, true);
+    v.followUp(8000);
+    expect(posted(proc, "follow-up")).toEqual([]);
+    v.setMuted(true);
+    expect(mic.destroyed).toBe(true);
+    expect(levels).toContainEqual({ voice: null });
+    expect(levels).toContainEqual({ mic: null });
+    expect(selfSpeaking).toEqual([true, false]);
+    expect(posted(proc, "self-speaking").at(-1)).toEqual({ type: "self-speaking", on: false });
+    // The speech-only window too (listening off while it spoke, then locked).
+    v.setMuted(false);
+    await flush();
+    await v.setWanted(false);
+    v.speak("Hello.");
+    await flush();
+    const speech = electron.windows.filter(w => w.title === "Ember speech").at(-1)!;
+    speaking(speech, true);
+    levels.length = 0;
+    v.setLocked(true);
+    expect(levels).toContainEqual({ voice: null });
+    expect(selfSpeaking.at(-1)).toBe(false);
   });
 
   it("goes back from 'Downloading…' with the reason when the download fails, leaving nothing behind", async () => {
@@ -562,6 +606,16 @@ describe("VoiceService keeps listening going", () => {
   });
 });
 
+describe("the echo check (scripts/voice/echo-check.mjs)", () => {
+  it("counts the speech onsets main really logs, and deletes the room's recording when interrupted (voice audit V3)", () => {
+    const read = (f: string) => fs.readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
+    expect(read("app/main/main.ts")).toContain('log.info("voice.speech_heard", { on: e.on });');
+    const check = read("scripts/voice/echo-check.mjs");
+    expect(check).toContain('e.msg === "voice.speech_heard" && e.on === true');
+    expect(check).toContain('process.once("SIGINT", onInterrupt);');
+  });
+});
+
 describe("a failed download, in plain words", () => {
   it.each([
     ["net::ERR_CERT_AUTHORITY_INVALID", /can't verify the download site's certificate.*ask IT/],
@@ -683,6 +737,18 @@ describe("speech models", () => {
       const speech = electron.windows.find(w => w.title === "Ember speech")!;
       const sent = speech.webContents.send.mock.calls.filter(c => c[0] === VOICE.audio).map(c => (c[1] as { id: number }).id);
       expect(sent).toEqual([3]);
+    });
+
+    it("ends each reply on its way for its page when hushed, before the hush, so the page never waits for it speaking (voice audit V1)", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("A long answer.");
+      const [tts] = electron.procs;
+      tts.emit("message", audio(1));
+      v.hush();
+      await flush();
+      const speech = electron.windows.find(w => w.title === "Ember speech")!;
+      expect(speech.webContents.send.mock.calls.map(c => c[0])).toEqual([VOICE.audio, VOICE.audioDone, VOICE.hush]);
+      expect(speech.webContents.send).toHaveBeenCalledWith(VOICE.audioDone, 1);
     });
 
     it("lets the system's voice say what it hadn't, when it can't load, and from then on", async () => {

@@ -215,6 +215,8 @@ export class VoiceService {
   private switchVoice = false;
   /** Whether the log last said that Ember speaks (voice.self_speaking). */
   private saidSpeaking = false;
+  /** The page that last said Ember speaks (VOICE.speaking), while it does: destroying it ends Ember's speech too. */
+  private speakingPage: "mic" | "speaker" | null = null;
 
   constructor(private o: VoiceOptions) {
     this.naturalWanted = !!o.naturalVoice;
@@ -247,6 +249,7 @@ export class VoiceService {
     });
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      this.speakingPage = !on ? null : this.mic && e.sender === this.mic.webContents ? "mic" : "speaker";
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
       if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); this.o.onSelfSpeaking?.(!!on); }
       this.proc?.postMessage({ type: "self-speaking", on: !!on });
@@ -345,6 +348,8 @@ export class VoiceService {
     this.hush();
     this.cancelRetry();
     this.teardown();
+    // Nothing speaks while locked: not left "speaking" until a page that was hushed says so (or never does).
+    this.speakingEnded();
     if (this.wanted && !this.muted) this.setState("off", LOCKED_TEXT);
   }
 
@@ -479,10 +484,16 @@ export class VoiceService {
     this.speakingUntil = 0;
     if (this.ttsId > this.ttsHushed) {
       this.ttsHushed = this.ttsId;
+      // Each reply on its way is over for its page too (its Player would otherwise wait for it, "speaking", for good).
+      for (const [id, p] of this.ttsPending) p.send(VOICE.audioDone, id);
       this.ttsPending.clear();
       this.tts?.proc.postMessage({ type: "hush", id: this.ttsHushed });
     }
-    for (const w of [this.mic, this.speaker?.win]) if (w && !w.isDestroyed()) w.webContents.send(VOICE.hush);
+    if (this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.hush);
+    // The speech-only window may still be loading, with speech queued behind its load: the hush goes after that speech
+    // (sent straight away it would arrive first and be lost, and the page would then say the reply anyway).
+    const s = this.speaker;
+    if (s && !s.win.isDestroyed()) s.loaded.then(() => { if (!s.win.isDestroyed()) s.win.webContents.send(VOICE.hush); }, () => { /* it never loaded: it says nothing */ });
   }
 
   /**
@@ -789,6 +800,21 @@ export class VoiceService {
     const mic = this.mic;
     this.mic = null;
     if (mic && !mic.isDestroyed()) mic.destroy();
+    // Its meter goes with it (the page that sends the levels is gone, so no null would ever come), and its speech.
+    this.o.onLevel?.({ mic: null });
+    if (this.speakingPage === "mic") this.speakingEnded();
+  }
+
+  /**
+   * The page Ember spoke from is gone (or nothing may speak): Ember isn't speaking any more. The voice meter stops, the
+   * voice process stops discounting Ember's own voice, and a follow-up waits for nothing.
+   */
+  private speakingEnded(): void {
+    this.speakingPage = null;
+    this.speakingUntil = 0;
+    this.o.onLevel?.({ voice: null });
+    if (this.saidSpeaking) { this.saidSpeaking = false; this.o.log.info("voice.self_speaking", { on: false, listening: !!this.proc }); this.o.onSelfSpeaking?.(false); }
+    this.proc?.postMessage({ type: "self-speaking", on: false });
   }
 
   private teardown(): void {
@@ -822,6 +848,7 @@ export class VoiceService {
     this.speaker = null;
     if (this.speakerIdle) { clearTimeout(this.speakerIdle); this.speakerIdle = null; }
     if (s && !s.win.isDestroyed()) s.win.destroy();
+    if (s && (s.saying || this.speakingPage === "speaker")) this.speakingEnded();
   }
 
   private setState(s: MicState, detail?: string): void {

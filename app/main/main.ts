@@ -1296,6 +1296,8 @@ function start(): void {
         }
         break;
       case "speech":
+        // (Counted by scripts/voice/echo-check.mjs: speech heard while Ember's own voice plays is its echo.)
+        log.info("voice.speech_heard", { on: e.on });
         if (e.on) agent?.claimBubble();
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
