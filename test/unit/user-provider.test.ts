@@ -24,6 +24,7 @@ import { doctorChecks } from "../../app/main/doctor";
 import { wslConsent } from "../../app/main/targets/consent";
 
 const KEY = "sk-" + "k".repeat(40); // not a real key
+const STORED = { key: KEY, host: "models.example.com" };
 const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
 const policy = (p: object): LoadedAdminPolicy => parseAdminPolicy(JSON.stringify(p), "/etc/ember/policy.json");
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "ember-provider-"));
@@ -118,7 +119,7 @@ describe("which endpoint is in force", () => {
     const fixed = { kind: "admin" as const, config: { type: "azure" as const, baseUrl: "https://corp.openai.azure.com" } };
     expect(userProviderAllowed(admin.policy)).toBe(false);
     expect(userProviderInForce(withProvider(), admin)).toBeNull();
-    expect(activeProvider({ fixed, settings: withProvider(), admin, key: KEY })).toBe(fixed);
+    expect(activeProvider({ fixed, settings: withProvider(), admin, key: STORED })).toBe(fixed);
     expect(managedKeys(admin.policy)).toEqual(expect.arrayContaining(["provider", "userProvider"]));
     expect(applyAdminPolicy(withProvider(), admin.policy).provider.on).toBe(false);
   });
@@ -149,14 +150,14 @@ describe("which endpoint is in force", () => {
   });
 
   it("builds the runtime's provider config with the key only there, and summarises it by host alone", () => {
-    const p = activeProvider({ fixed: null, settings: withProvider({ wireApi: "responses" }), admin: NONE, key: KEY })!;
+    const p = activeProvider({ fixed: null, settings: withProvider({ wireApi: "responses" }), admin: NONE, key: STORED })!;
     expect(p).toEqual({ kind: "user", config: { type: "openai", baseUrl: "https://models.example.com/v1", apiKey: KEY, wireApi: "responses" }, models: { conductor: "gpt-4.1", worker: null } });
     expect(JSON.stringify(providerSummary(p))).not.toContain(KEY);
     expect(providerSummary(p)).toEqual({ kind: "user", host: "models.example.com" });
     // A local server that needs no key: none is sent.
     expect(userProviderConfig(withProvider({ baseUrl: "http://127.0.0.1:11434/v1" }).provider, null)).toEqual({ type: "openai", baseUrl: "http://127.0.0.1:11434/v1" });
-    expect(userProviderConfig(withProvider({ type: "azure", azureApiVersion: "2024-10-21" }).provider, KEY).azure).toEqual({ apiVersion: "2024-10-21" });
-    expect(userProviderConfig(withProvider({ type: "anthropic", wireApi: "responses" }).provider, KEY).wireApi).toBeUndefined();
+    expect(userProviderConfig(withProvider({ type: "azure", azureApiVersion: "2024-10-21" }).provider, STORED).azure).toEqual({ apiVersion: "2024-10-21" });
+    expect(userProviderConfig(withProvider({ type: "anthropic", wireApi: "responses" }).provider, STORED).wireApi).toBeUndefined();
   });
 
   it("is what the setup check reads from the settings file on disk", () => {
@@ -171,16 +172,16 @@ describe("the API key's store", () => {
   it("refuses to keep a key where the keyring is basic_text, saying why in plain words, and writes nothing", async () => {
     const dir = tmp();
     const store = new ProviderKeyStore(path.join(dir, "provider-key.bin"), box({ getSelectedStorageBackend: () => "basic_text" }));
-    expect(store.canPersist()).toBe(false);
-    expect(await store.save(KEY)).toEqual({ ok: false, why: KEY_NO_KEYRING });
+    expect(await store.canPersist()).toBe(false);
+    expect(await store.save(KEY, "models.example.com")).toEqual({ ok: false, why: KEY_NO_KEYRING });
     expect(KEY_NO_KEYRING).toMatch(/no keyring/);
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
   it("refuses where the keyring isn't available, or refuses to seal", async () => {
     const dir = tmp();
-    expect(await new ProviderKeyStore(path.join(dir, "k.bin"), box({ isEncryptionAvailable: () => false })).save(KEY)).toEqual({ ok: false, why: KEY_NO_KEYRING });
-    expect(await new ProviderKeyStore(path.join(dir, "k.bin"), box({ encryptString: () => { throw new Error("denied"); } })).save(KEY)).toEqual({ ok: false, why: KEY_NO_KEYRING });
+    expect(await new ProviderKeyStore(path.join(dir, "k.bin"), box({ isEncryptionAvailable: () => false })).save(KEY, "models.example.com")).toEqual({ ok: false, why: KEY_NO_KEYRING });
+    expect(await new ProviderKeyStore(path.join(dir, "k.bin"), box({ encryptString: () => { throw new Error("denied"); } })).save(KEY, "models.example.com")).toEqual({ ok: false, why: KEY_NO_KEYRING });
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
@@ -188,13 +189,14 @@ describe("the API key's store", () => {
     const dir = tmp();
     const file = path.join(dir, "provider-key.bin");
     const store = new ProviderKeyStore(file, box());
-    expect(await store.save(`  ${KEY}\n`)).toEqual({ ok: true });
-    expect(store.has()).toBe(true);
+    expect(await store.save(`  ${KEY}\n`, "models.example.com")).toEqual({ ok: true });
+    expect(store.savedHost()).toBe("models.example.com");
     expect(fs.readFileSync(file, "utf8")).not.toContain(KEY);
     if (process.platform !== "win32") expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    expect(await store.load()).toBe(KEY);
+    expect(await store.load()).toEqual(STORED);
     store.clear();
-    expect(store.has()).toBe(false);
+    expect(store.savedHost()).toBeNull();
+    expect(fs.readdirSync(dir)).toEqual([]);
     expect(await store.load()).toBeNull();
   });
 
@@ -209,7 +211,7 @@ describe("the API key's store", () => {
   it("gives null for a key the keyring won't open, keeping the file to try again", async () => {
     const dir = tmp();
     const file = path.join(dir, "k.bin");
-    await new ProviderKeyStore(file, box()).save(KEY);
+    await new ProviderKeyStore(file, box()).save(KEY, "models.example.com");
     expect(await new ProviderKeyStore(file, box({ decryptString: () => { throw new Error("locked"); } })).load()).toBeNull();
     expect(fs.existsSync(file)).toBe(true);
   });
@@ -222,7 +224,8 @@ describe("Home's provider channels", () => {
     const logs: unknown[] = [];
     const calls: string[] = [];
     const full: ProviderApi = {
-      state: () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null }),
+      state: () => ({ allowed: true, managed: null, keySaved: false, keyring: true, inForce: false, host: null, agreed: false }),
+      agree: () => { calls.push("agree"); return { ok: true }; },
       saveKey: async () => { calls.push("save"); return { ok: true }; },
       removeKey: () => { calls.push("remove"); return { ok: true }; },
       test: async () => ({ ok: true, host: "models.example.com", models: 3 }),
@@ -281,27 +284,27 @@ describe("Test connection", () => {
 
   it("makes one GET that refuses redirects, so the key goes nowhere but the address entered", async () => {
     const fetch = answer(200, { data: [{ id: "a" }, { id: "b" }] });
-    expect(await testConnection(settings(), KEY, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2 });
+    expect(await testConnection(settings(), STORED, fetch)).toEqual({ ok: true, host: "models.example.com", models: 2 });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0][1]).toMatchObject({ method: "GET", redirect: "error" });
   });
 
   it("says in one sentence why it failed, never with the service's raw text or the key", async () => {
-    expect(await testConnection(settings(), KEY, answer(401))).toEqual({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." });
+    expect(await testConnection(settings(), STORED, answer(401))).toEqual({ ok: false, why: "models.example.com didn't accept the API key. Check it, or replace it." });
     expect(await testConnection(settings(), null, answer(403))).toEqual({ ok: false, why: "models.example.com needs an API key." });
-    expect(await testConnection(settings(), KEY, answer(404))).toEqual({ ok: false, why: "models.example.com answered, but has no model list at that address. Check the endpoint and the provider." });
-    expect(await testConnection(settings(), KEY, answer(503))).toEqual({ ok: false, why: "Your model service had a problem on its side. Try again in a moment." });
+    expect(await testConnection(settings(), STORED, answer(404))).toEqual({ ok: false, why: "models.example.com answered, but has no model list at that address. Check the endpoint and the provider." });
+    expect(await testConnection(settings(), STORED, answer(503))).toEqual({ ok: false, why: "Your model service had a problem on its side. Try again in a moment." });
     const thrown = vi.fn<FetchLike>(async () => { throw Object.assign(new TypeError(`fetch failed for ${KEY}`), { cause: { code: "ECONNREFUSED" } }); });
-    const r = await testConnection(settings(), KEY, thrown);
+    const r = await testConnection(settings(), STORED, thrown);
     expect(r).toEqual({ ok: false, why: "Ember can't reach models.example.com. Check the address and the network." });
     expect(JSON.stringify(r)).not.toContain(KEY);
     const late = vi.fn<FetchLike>(async () => { throw new DOMException("The operation timed out.", "TimeoutError"); });
-    expect(await testConnection(settings(), KEY, late)).toEqual({ ok: false, why: "models.example.com didn't answer within 10 seconds." });
+    expect(await testConnection(settings(), STORED, late)).toEqual({ ok: false, why: "models.example.com didn't answer within 10 seconds." });
   });
 
   it("makes no request without a usable address", async () => {
     const fetch = answer(200);
-    expect(await testConnection({ ...settings(), baseUrl: "" }, KEY, fetch)).toEqual({ ok: false, why: "Enter the service's address first." });
+    expect(await testConnection({ ...settings(), baseUrl: "" }, STORED, fetch)).toEqual({ ok: false, why: "Enter the service's address first." });
     expect(fetch).not.toHaveBeenCalled();
   });
 });

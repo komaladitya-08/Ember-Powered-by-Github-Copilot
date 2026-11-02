@@ -426,6 +426,11 @@ const NO_MODEL = /^(None of the models|Copilot lists no models|Enter the model)/
 export const USER_PROVIDER_NO_MODEL = "Enter the model your provider should use in Ember's settings, under Copilot.";
 /** Every model the user named for their own provider is outside the administrator's allowed list. */
 export const USER_PROVIDER_NOT_ALLOWED = "None of the models you entered for your provider are allowed by your administrator.";
+/** A request held because the model service changed while a turn or a task was under way (it never goes to the one before). */
+export const PROVIDER_SWITCH_TITLE = "Switching model service";
+export const PROVIDER_SWITCH_WAIT = "You changed the model service, so I'll send this there once what I'm doing now has finished. It won't go to the one before.";
+/** A task that would have started on the model service the user switched away from. */
+export const PROVIDER_MOVED_TASK = "The model service changed before this task could start. Ask me again and I'll use the new one.";
 
 /** What a connection's endpoint is, to tell a change: its kind, config (key included: kept in memory only) and models. */
 function providerKey(p: ActiveProvider | null): string {
@@ -658,6 +663,10 @@ export class AgentHost {
   private active: ActiveProvider | null = null;
   /** What providerNow() said as this connection started (providerKey), to see a change since. */
   private startedProvider = "";
+  /** Requests asked after the model service changed while a turn or a task was under way: sent to the new one later. */
+  private held: { text: string; context: Parameters<AgentHost["ask"]>[1]; epoch: number; how: Parameters<AgentHost["ask"]>[3] }[] = [];
+  /** A release of the held requests is under way. */
+  private releasing = false;
   private models: ModelLike[] = [];
   /** The bubble is shared by the conversation and every task (see BubbleOwner). */
   private readonly owner: BubbleOwner;
@@ -1252,6 +1261,8 @@ export class AgentHost {
           this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
+          // Requests held for a model service the user switched to go there once nothing else is under way.
+          this.releaseHeldSoon();
           // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
           const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
           this.stoppedWhy.delete(task.id);
@@ -1292,6 +1303,9 @@ export class AgentHost {
         provider: kindOf(provider),
         actionsAllowed: () => this.actionsAllowed(),
         makeWorker: (spec, progress, update, activity) => {
+          // The model service changed since this connection started: no task starts on the one before (a queued task, or
+          // one a turn already under way asked for). Tasks running now finish where they started.
+          if (this.providerMoved()) return refusedWorker(spec, PROVIDER_MOVED_TASK);
           // The hands of the task's target now (its state may have changed while the task waited), or why it can't take
           // the task (it ends at once, saying so). Without a targets runtime (tests, the eval): this screen's, as before,
           // and only for a task on this computer: one bound elsewhere never runs on this screen's hands (fail closed).
@@ -1365,6 +1379,7 @@ export class AgentHost {
           // The hint a request asked for waits behind that turn's answer now (none for a turn that was stopped).
           if (this.hintOwed) { this.hintOwed = false; if (!aborted) this.hintCommands(); }
           this.o.onTurnEnd?.(aborted);
+          this.releaseHeldSoon();
         },
         turnStartMs: this.o.turnStartMs,
         turnSlowMs: this.o.turnSlowMs,
@@ -1780,6 +1795,29 @@ export class AgentHost {
     return kindOf(this.active ?? this.providerNow());
   }
 
+  /** Checks, once the current turn of events settles, whether the held requests can go (releaseHeld). */
+  private releaseHeldSoon(): void {
+    if (this.held.length) void Promise.resolve().then(() => this.releaseHeld());
+  }
+
+  /**
+   * Sends the requests held for a new model service once nothing is under way any more: Ember reconnects to the service
+   * in force, then asks each in order. A Stop pressed meanwhile drops them (their epoch is old). Nothing goes to the
+   * service before.
+   */
+  private async releaseHeld(): Promise<void> {
+    if (this.releasing || !this.held.length || !this.idle) return;
+    this.releasing = true;
+    try {
+      if (this.providerMoved()) await this.launch(this.token, this.source);
+      const held = this.held.splice(0);
+      this.o.log.info("agent.held_released", { requests: held.length });
+      for (const h of held) await this.ask(h.text, h.context, h.epoch, h.how);
+    } finally {
+      this.releasing = false;
+    }
+  }
+
   /** The endpoint in force is no longer the one this connection started with. */
   private providerMoved(): boolean {
     return providerKey(this.providerNow()) !== this.startedProvider;
@@ -1982,15 +2020,23 @@ export class AgentHost {
       this.o.log.info("agent.tasks_available");
       void this.launch(this.token, this.source);
     }
-    // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
-    // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
     // The model service in force changed since this connection started (the user's own provider turned on or off, or
-    // edited): reconnected first, so this request goes to the one in force now. Only between turns, with no task under
-    // way: tasks finish on the service they started with.
-    if (this.status.phase !== "starting" && this.providerMoved() && (this.status.phase !== "ready" || this.idle)) {
+    // edited): reconnected first, so this request goes to the one in force now. Tasks finish on the service they started
+    // with; while they (or a turn) are under way, the request is held for the new service instead.
+    if (this.status.phase === "ready" && this.providerMoved() && !this.idle) {
+      // A turn or a task is under way on the service before: this request goes to the one in force now, never to that
+      // one. It waits (saying so) until they are done, then Ember reconnects and sends it (releaseHeld).
+      this.o.log.info("agent.request_held", { kind: this.providerNow()?.kind ?? "copilot" });
+      this.held.push({ text, context, epoch, how });
+      this.presenter.notice({ title: PROVIDER_SWITCH_TITLE, text: PROVIDER_SWITCH_WAIT, mood: "attention" });
+      return true;
+    }
+    if (this.status.phase !== "starting" && this.providerMoved()) {
       this.o.log.info("agent.provider_changed", { kind: this.providerNow()?.kind ?? "copilot" });
       void this.launch(this.token, this.source);
     } else if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
+      // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
+      // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
       this.o.log.info("agent.memory_changed", { on: this.memoryWanted(), routines: this.routinesWanted() });
       void this.launch(this.token, this.source);
     } else if (this.status.phase === "ready" && this.o.extensions && this.o.extensions.generation !== this.extensionsGen && this.idle) {

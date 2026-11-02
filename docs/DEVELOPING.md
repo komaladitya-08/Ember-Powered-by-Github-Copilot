@@ -609,20 +609,36 @@ Anthropic), **Endpoint** (https, or plain http only for a server on this compute
 such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:1234/v1`), **API key**, the
 **Conversation model** and **Model for tasks** (the conversation's when empty; it must take images), and under
 **Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
-service's model list with the saved key, refusing redirects, and says in one sentence what came of it.
+service's model list with the saved key and says in one sentence what came of it. It is disabled, and main refuses it,
+until the card below is agreed for the endpoint's host: nothing at all goes to a host the user hasn't agreed to, with
+or without a key. It refuses redirects: a redirected fetch drops `Authorization` across origins but keeps custom
+headers, so Azure's `api-key` and Anthropic's `x-api-key` would reach whatever address the service named.
 
 - **Consent.** Turning it on with an address shows a card naming the endpoint's host and everything that goes there
   instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
-  only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again.
+  only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again. The
+  yes is recorded only by main (`PROVIDER_IPC.agree`, for the host the endpoint in settings names); Home's general
+  settings changes can't carry it (`settingsFromHome` drops `provider.consent`), and they merge into the user's own
+  settings (`withOwnProvider`), never writing back values the policy applied.
 - **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
-  from `settings.json`. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
+  from `settings.json`, together with the host it was entered for (also in `provider-key.host`, which isn't secret, so
+  no keyring is asked to know it). It goes only to that host: moving the endpoint to another host deletes it, and the
+  user enters it again. The keyring is asked only once the provider is on with a key saved for its host (never at a
+  start otherwise), and on macOS only asynchronously: a synchronous Keychain check on the main thread can block on a
+  headless Mac, and a second Ember handing over to a blocked first one hangs. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
   says why; a local server that needs no key still works. The key is never logged, audited, shown again (Home says
   "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
   runtime's provider config. **Remove** and **Sign out** delete it.
 - **Switching** applies from the next message, without a restart; tasks already running finish on the service they
-  started with. A conversation isn't carried to another service: a new one starts (memory stays). While the user's
+  started with. A request asked while a turn or a task is still under way on the service before is held, with a bubble
+  saying so ("Switching model service"), and sent to the new one once they are done; it never goes to the one before,
+  and no new task starts on it (a queued one ends saying the service changed). A conversation isn't carried to another service: a new one starts (memory stays). While the user's
   provider is in force, no GitHub sign-in is passed to the runtime, and the setup check's model row says
-  "Your own model provider (host)".
+  "Your own model provider (host)". The runtime gets the address as the URL parser writes it, and the agent's log has
+  the key replaced by `[key]` wherever an error quotes it.
+- **Images.** The user's models are taken to read images (the service doesn't say otherwise until it refuses one), so
+  tasks send screenshots; a model that refuses them ends the task with "This model can't read images" and where to
+  choose another, not the service's raw error.
 - **The administrator's** `provider` always wins, and `features.userProvider: false` or a lockdown turns the user's off.
 
 ### For administrators: `/etc/ember/policy.json`

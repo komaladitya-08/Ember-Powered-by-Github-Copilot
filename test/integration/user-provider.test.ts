@@ -56,7 +56,7 @@ describe("the user's own model provider on the real Copilot runtime", () => {
       },
     });
     const keys = new ProviderKeyStore(path.join(userData, "provider-key.bin"), box);
-    expect(await keys.save(KEY)).toEqual({ ok: true });
+    expect(await keys.save(KEY, endpointHost(mock.baseUrl)!)).toEqual({ ok: true });
     const key = await keys.load();
     const states: Partial<EmberState>[] = [];
     const host = new AgentHost({
@@ -86,9 +86,15 @@ describe("the user's own model provider on the real Copilot runtime", () => {
     }
   }, 120000);
 
-  it("tests the connection with one request to the model list", async () => {
+  it("tests the connection with one request to the model list, and sends nothing to a host not agreed to (B1)", async () => {
+    const host = endpointHost(mock.baseUrl)!;
     const p = { ...new SettingsStore(path.join(dir, "none.json")).get().provider, on: true, baseUrl: mock.baseUrl };
-    const r = await testConnection(p, KEY, globalThis.fetch as unknown as FetchLike);
-    expect(r).toEqual({ ok: true, host: endpointHost(mock.baseUrl), models: 1 });
+    const before = mock.requests.length;
+    const refused = await testConnection(p, { key: KEY, host }, globalThis.fetch as unknown as FetchLike);
+    expect(refused.ok).toBe(false);
+    expect(mock.requests.length).toBe(before);
+    const agreed = { ...p, consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host } };
+    const r = await testConnection(agreed, { key: KEY, host }, globalThis.fetch as unknown as FetchLike);
+    expect(r).toEqual({ ok: true, host, models: 1 });
   });
 });

@@ -12,9 +12,11 @@ import { MAX_API_KEY } from "../shared/provider";
 
 /** What main does for the channels (main.ts builds it over ProviderKeyStore, the settings and the host). */
 export interface ProviderApi {
-  state(): ProviderState;
+  state(): ProviderState | Promise<ProviderState>;
   saveKey(key: string): Promise<ProviderDone>;
   removeKey(): ProviderDone;
+  /** Records the card's yes for `host`; main refuses a host other than the one the endpoint in settings names. */
+  agree(host: string): ProviderDone;
   test(): Promise<ProviderTest>;
 }
 
@@ -27,6 +29,8 @@ export interface ProviderIpcEvent { sender: unknown; senderFrame?: { url: string
 
 /** saveKey's arguments: exactly one string, not empty, no longer than a key can be. */
 export const SaveKeyArgs = z.tuple([z.string().min(1).max(MAX_API_KEY)]);
+/** agree's argument: one host as endpointHost writes it (a name or address, with its port). */
+export const AgreeArgs = z.tuple([z.string().min(1).max(260).regex(/^[a-z0-9.\-[\]:]+$/)]);
 /** The other channels take nothing. */
 export const NoArgs = z.tuple([]);
 
@@ -63,5 +67,6 @@ export function registerProviderIpc(
   handle(PROVIDER_IPC.state, NoArgs, () => api.state(), () => null);
   handle(PROVIDER_IPC.saveKey, SaveKeyArgs, key => api.saveKey(key), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.removeKey, NoArgs, () => api.removeKey(), () => fail(PROVIDER_BAD_REQUEST));
+  handle(PROVIDER_IPC.agree, AgreeArgs, host => api.agree(host), () => fail(PROVIDER_BAD_REQUEST));
   handle(PROVIDER_IPC.test, NoArgs, () => api.test(), () => fail(PROVIDER_BAD_REQUEST));
 }

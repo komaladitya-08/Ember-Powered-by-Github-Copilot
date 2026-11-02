@@ -38,9 +38,12 @@ function say(text: string, error = false): void {
 /** The user agreed to the card for this very host. */
 const agreedFor = (p: Own, host: string | null) => !!host && p.consent.version >= FEATURE_CONSENT_VERSION.provider && p.consent.host === host;
 
-function change(patch: Partial<Own>): void {
-  if (!own) return;
-  void save({ provider: { ...own, ...patch } });
+/**
+ * Saves the fields changed, and only those: main merges them into the user's own settings (withOwnProvider), so values
+ * the organisation's policy applies here are never written back, and the card's record never travels this way.
+ */
+function change(patch: Partial<Omit<Own, "consent">>): Promise<boolean> {
+  return save({ provider: patch } as SettingsPatch);
 }
 
 function draw(): void {
@@ -59,6 +62,9 @@ function draw(): void {
   const asking = on && !!host && !agreedFor(p, host) && declinedFor !== host;
   $("byok-consent").hidden = !asking;
   if (asking) $("byok-consent-text").textContent = providerConsentText(host);
+  // Nothing goes to a host the card isn't agreed for, Test connection included: it waits for the yes.
+  const test = $("byok-test") as HTMLButtonElement;
+  test.disabled = !agreedFor(p, host) || !!managed;
   // Fields keep what is being typed: only one without the focus is rewritten from the settings.
   const fill = (id: string, v: string) => { const el = input(id); if (document.activeElement !== el) el.value = v; };
   if (document.activeElement !== select("byok-type")) select("byok-type").value = p.type;
@@ -104,42 +110,48 @@ export function startProvider(saveSettings: (patch: SettingsPatch) => Promise<bo
     const on = (e.target as HTMLInputElement).checked;
     declinedFor = null;
     say("");
-    change({ on });
+    void change({ on });
     if (on && own && endpointHost(own.baseUrl) && !agreedFor(own, endpointHost(own.baseUrl))) queueMicrotask(() => $("byok-yes").focus());
   });
   $("byok-yes").addEventListener("click", () => {
-    const host = own ? endpointHost(own.baseUrl) : null;
-    if (!host) return;
-    change({ on: true, consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host } });
-    $("byok-consent").hidden = true;
-    input("byok-url").focus();
+    // What the field says now (an edit whose save hasn't come back yet included), saved first, so the yes is for it.
+    const typed = input("byok-url").value.trim();
+    const host = endpointHost(typed);
+    if (!host) { say(endpointProblem(typed) ?? PROVIDER_WORDS.badAddress, true); input("byok-url").focus(); return; }
+    void (typed !== own?.baseUrl ? change({ baseUrl: typed }) : Promise.resolve(true))
+      .then(ok => (ok ? a.agree(host) : { ok: false as const, why: PROVIDER_WORDS.badAddress }))
+      .then(r => {
+        if (!r.ok) { say(r.why, true); return; }
+        $("byok-consent").hidden = true;
+        input("byok-url").focus();
+      });
   });
   $("byok-no").addEventListener("click", () => {
     declinedFor = own ? endpointHost(own.baseUrl) : null;
-    change({ on: false });
+    void change({ on: false });
     input("byok-on").focus();
   });
-  select("byok-type").addEventListener("change", e => change({ type: (e.target as HTMLSelectElement).value as ProviderType }));
+  select("byok-type").addEventListener("change", e => void change({ type: (e.target as HTMLSelectElement).value as ProviderType }));
   input("byok-url").addEventListener("change", e => {
     const v = (e.target as HTMLInputElement).value.trim();
     const problem = v ? endpointProblem(v) : null;
     if (problem) { say(problem, true); return; }
     say("");
-    change({ baseUrl: v });
+    void change({ baseUrl: v });
   });
   const model = (id: string, key: "conductor" | "worker") => input(id).addEventListener("change", e => {
     const v = (e.target as HTMLInputElement).value.trim();
     if (v && !MODEL_ID.test(v)) { say(PROVIDER_WORDS.badModel, true); return; }
     say("");
-    change({ [key]: v || null });
+    void change({ [key]: v || null });
   });
   model("byok-conductor", "conductor");
   model("byok-worker", "worker");
-  select("byok-wire").addEventListener("change", e => change({ wireApi: (e.target as HTMLSelectElement).value === "responses" ? "responses" : null }));
+  select("byok-wire").addEventListener("change", e => void change({ wireApi: (e.target as HTMLSelectElement).value === "responses" ? "responses" : null }));
   input("byok-azure").addEventListener("change", e => {
     const v = (e.target as HTMLInputElement).value.trim();
     if (v && !AZURE_API_VERSION.test(v)) { say(PROVIDER_WORDS.badAzure, true); return; }
-    change({ azureApiVersion: v || null });
+    void change({ azureApiVersion: v || null });
   });
   $("byok-key-form").addEventListener("submit", e => {
     e.preventDefault();

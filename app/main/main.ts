@@ -17,8 +17,8 @@ import { dataFolderProblem } from "./data-folder";
 import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
-import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnTrust, type SettingsPatch } from "./settings";
-import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal, userProviderAllowed } from "./admin";
+import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type SettingsPatch } from "./settings";
+import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
 import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
@@ -94,8 +94,8 @@ import { MemoryService } from "./memory/service";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
-import { PROVIDER_KEY_FILE, PROVIDER_MANAGED, PROVIDER_NO_CONSENT, ProviderKeyStore, activeProvider, testConnection, userProviderFromFile, userProviderInForce, type ActiveProvider, type FetchLike } from "./provider";
-import { PROVIDER_IPC, type ProviderState } from "../shared/ipc";
+import { PROVIDER_KEY_FILE, ProviderKeyStore, activeProvider, createProviderService, redactingLogger, userProviderFromFile, type ActiveProvider, type FetchLike } from "./provider";
+import { PROVIDER_IPC } from "../shared/ipc";
 import { endpointHost } from "../shared/provider";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
@@ -541,7 +541,7 @@ function start(): void {
     // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
     // (its audit entry says so; one found in the file otherwise is "file").
     if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
-    try { return settings.update(ownNeverLook(withOwnTrust(patch, settings.own().trust)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
+    try { return settings.update(ownNeverLook(withOwnProvider(withOwnTrust(patch, settings.own().trust), settings.own().provider)), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1431,13 +1431,22 @@ function start(): void {
   };
   let tokens: TokenStore | null = null;
   let currentToken: string | null = null;
-  // The user's own model provider's API key (app/main/provider.ts): sealed in provider-key.bin, apart from the settings,
-  // and held here, in memory only, for the runtime's provider config. Never logged, audited, shown or passed on.
-  const providerKeys = new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" });
-  let providerKey: string | null = null;
+  // The user's own model provider (app/main/provider.ts): its API key is sealed in provider-key.bin, apart from the
+  // settings, for the host it was entered for, and held by the service in memory only for the runtime's provider config.
+  // Never logged (the agent's log is redacted), audited, shown or passed on. The keyring is asked only once the user's
+  // provider is on with a key saved for its host: never otherwise, and on macOS only off the main thread (a Keychain
+  // prompt there would hold Ember, and a second Ember waiting to hand over to it).
+  const providers = createProviderService({
+    settings, admin: () => admin, consented: () => consented(),
+    keys: new ProviderKeyStore(path.join(userData, PROVIDER_KEY_FILE), safeStorage, { asyncKeyring: platform.os === "darwin" }),
+    // Electron's fetch follows the system's proxy, as the runtime does.
+    fetch: (url, init) => net.fetch(url, init) as unknown as ReturnType<FetchLike>,
+    log: log.child("provider"),
+    changed: () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); },
+  });
   /** The endpoint in force now: the administrator's (or a development test server) once main has set it, else the user's own. */
   let fixedProvider: ActiveProvider | null = null;
-  const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providerKey });
+  const providerNow = (): ActiveProvider | null => activeProvider({ fixed: fixedProvider, settings: settings.get(), admin, key: providers.key() });
   /** Sign-ins Copilot refused this run (a stale GH_TOKEN, an expired one): the next source is used instead, until Sign out (review #139). */
   const refusedTokens = new Set<string>();
   /**
@@ -1493,8 +1502,7 @@ function start(): void {
     currentToken = null;
     keeper.use(null);
     // Signing out forgets the user's own provider's key too (its other settings stay, without a key).
-    providerKeys.clear();
-    providerKey = null;
+    providers.forget();
     // Refusals don't outlive the sign-in: the account may have Copilot now, so the next sign-in tries every source afresh.
     refusedTokens.clear();
     askHistory = [];
@@ -1650,52 +1658,13 @@ function start(): void {
   const extensionsApi: ExtensionsApi | null = extensionsDemo ? demoExtensionsApi(extensionsDemo) : extensions;
   // The user's own model provider (Home › Copilot): the settings window's own page only, as guard. The key comes in once
   // (saveKey) and is never sent back; "Test connection" makes one request to the endpoint in settings, with the saved key.
-  const providerState = (): ProviderState => {
-    const s = settings.get();
-    const allowed = admin.error === undefined && userProviderAllowed(policy);
-    return {
-      allowed,
-      managed: allowed ? null : policy.provider ? "organisation" : "off",
-      keySaved: providerKeys.has(),
-      keyring: providerKeys.canPersist(),
-      inForce: userProviderInForce(s, admin) !== null,
-      host: endpointHost(s.provider.baseUrl),
-    };
-  };
-  const providerChanged = () => { void agent?.providerChanged(); sendToHome(PROVIDER_IPC.changed, null); };
   registerProviderIpc(ipcMain, event => {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
-  }, {
-    state: providerState,
-    saveKey: async key => {
-      if (!providerState().allowed) return { ok: false, why: PROVIDER_MANAGED };
-      const r = await providerKeys.save(key);
-      if (!r.ok) return r;
-      providerKey = key.trim();
-      log.info("provider.key_saved", {});
-      providerChanged();
-      return { ok: true };
-    },
-    removeKey: () => {
-      providerKeys.clear();
-      providerKey = null;
-      log.info("provider.key_removed", {});
-      providerChanged();
-      return { ok: true };
-    },
-    test: async () => {
-      if (!consented()) return { ok: false, why: PROVIDER_NO_CONSENT };
-      if (!providerState().allowed) return { ok: false, why: PROVIDER_MANAGED };
-      // Electron's fetch follows the system's proxy, as the runtime does.
-      const r = await testConnection(settings.get().provider, providerKey, net.fetch as unknown as FetchLike);
-      log.info("provider.tested", { ok: r.ok });
-      return r;
-    },
-  }, { log: log.child("provider") });
+  }, providers.api, { log: log.child("provider") });
   // Any settings change may move the endpoint in force (the switch, its address, its models, its card): the host
   // reconnects when nothing would be cut off, else before the next request between turns.
-  settings.onChange(() => { void agent?.providerChanged(); });
+  settings.onChange(() => { providers.settingsChanged(); void agent?.providerChanged(); });
   registerExtensionsIpc(ipcMain, event => {
     const url = event.senderFrame?.url ?? "";
     return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
@@ -2320,7 +2289,7 @@ function start(): void {
       readTime,
       // The bubble keeps its width while the text size grows its type: Read all counts the lines at that size (cross-review X2).
       textScale: () => textScale(settings.get().textSize),
-      userData, runtimePath: runtime.path, settings, log: log.child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
+      userData, runtimePath: runtime.path, settings, log: redactingLogger(log, () => providers.secret()).child("agent"), setState, provider: providerNow, admin: () => policy, signInWith: signInWith(),
       // A policy that can't be used: no model service at all, GitHub Copilot included (it may require its own endpoint).
       refuseConnect: () => modelServiceRefusal(admin), policyHeld: () => !!admin.held,
       // Not while this screen is locked: a turn still running then would read it for the model (cross-review X9).
@@ -2422,7 +2391,7 @@ function start(): void {
       // says what the prompt is for (review #241). Only on the first start of a new version: other starts read at once,
       // without the keychain words. The status lasts through both reads (renewing a sign-in that ran out reads it first).
       // The user's own provider's key, read once (the keychain may ask on macOS, as for the sign-in).
-      if (!provider && providerKeys.has()) providerKey = await providerKeys.load();
+      if (!provider) await providers.ensureKey();
       const keychain = !provider && platform.os === "darwin" && !!tokens?.firstReadSinceUpdate();
       if (keychain) {
         setStatus("keychain", "Reading your saved sign-in from the keychain…");

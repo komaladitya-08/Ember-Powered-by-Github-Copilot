@@ -400,6 +400,12 @@ export const PROVIDER_IPC = {
   changed: "provider:changed",
   saveKey: "provider:save-key",
   removeKey: "provider:remove-key",
+  /**
+   * The user said yes to the card for this host: main records it (FEATURE_CONSENT_VERSION.provider, with the host) only
+   * when the host is the one the endpoint in settings names now. Home's general settings changes never carry the card's
+   * record (settingsFromHome drops it).
+   */
+  agree: "provider:agree",
   /** One small request to the endpoint in settings (its model list), with the saved key: ProviderTest. */
   test: "provider:test",
 } as const;
@@ -418,6 +424,8 @@ export interface ProviderState {
   inForce: boolean;
   /** The endpoint's host in settings (with its port), or null when there is no usable address. */
   host: string | null;
+  /** The card was agreed to for that host: until then nothing goes there, Test connection included. */
+  agreed: boolean;
 }
 
 /** How a provider action went: `why` is one plain sentence for the page. */
@@ -433,5 +441,7 @@ export interface EmberProviderApi {
   /** Saves the API key, encrypted (refused without a keyring); it is never sent back. */
   saveKey(key: string): Promise<ProviderDone>;
   removeKey(): Promise<ProviderDone>;
+  /** Records the yes to the card for `host` (the endpoint's host in settings now), and turns the provider on. */
+  agree(host: string): Promise<ProviderDone>;
   test(): Promise<ProviderTest>;
 }

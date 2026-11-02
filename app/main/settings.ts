@@ -275,6 +275,22 @@ export function withOwnTrust(patch: SettingsPatch, own: Settings["trust"]): Sett
   return { ...patch, trust: { ...own, ...(sent.askedApps !== undefined ? { askedApps: sent.askedApps } : {}), ...(sent.reviewCommands !== undefined ? { reviewCommands: sent.reviewCommands } : {}) } };
 }
 
+/** The provider fields the settings window may change itself (its card's record only through PROVIDER_IPC.agree). */
+const PROVIDER_FIELDS = ["on", "type", "baseUrl", "wireApi", "azureApiVersion", "conductor", "worker"] as const;
+
+/**
+ * A change to `provider` from the settings window carries only the fields it changed: the rest, and always the card's
+ * record, are taken from the user's own settings (`own`, SettingsStore.own()), never from what Home shows with the
+ * administrator's values applied (they would otherwise be written into the user's file and outlive the policy).
+ */
+export function withOwnProvider(patch: SettingsPatch, own: Settings["provider"]): SettingsPatch {
+  const p = (patch as { provider?: unknown }).provider;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return patch;
+  const sent = p as Record<string, unknown>;
+  const picked = Object.fromEntries(PROVIDER_FIELDS.filter(k => Object.prototype.hasOwnProperty.call(sent, k)).map(k => [k, sent[k]]));
+  return { ...patch, provider: { ...own, ...picked, consent: own.consent } as Settings["provider"] };
+}
+
 export const DEFAULT_SETTINGS: Settings = SettingsSchema.parse({});
 
 export { CONSENT_VERSION };

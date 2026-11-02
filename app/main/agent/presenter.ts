@@ -82,6 +82,11 @@ export function friendlyError(raw: string, errorType?: string, ctx: { statusCode
   const service = mine ? "your model service" : ctx.provider ? "your organisation's model service" : "Copilot";
   // Before the policy rule: a filtered prompt mentions a "content management policy", not the user's seat.
   if (/content.?(management|filter)|content_filter|filtered due to|responsible ?ai/i.test(m)) return `${ctx.provider ? "The model service's" : "Copilot's"} content filter blocked that request. Try asking in other words.`;
+  // A model that takes no images was sent a screenshot (the user's own provider's models are taken to read them unless
+  // the service says otherwise, which it does only by refusing one).
+  if (/\b(image|images|image_url|vision|multimodal|multi-modal)\b/i.test(m) && /not (supported|support|allowed|enabled)|only supported|unsupported|doesn't support|does not support|cannot|can't|invalid/i.test(m)) {
+    return `This model can't read images. Choose a model for tasks that understands images ${inSettings(true)}.`;
+  }
   if (ctx.provider && (errorType === "authentication" || status === 401 || status === 403 || /authenticat|unauthori[sz]ed|forbidden/i.test(m))) {
     if (mine) return `Your model service refused the request. Check its API key ${inSettings(true)}.`;
     return "Your organisation's model service refused the request. Ask your administrator to check Ember's model service settings.";

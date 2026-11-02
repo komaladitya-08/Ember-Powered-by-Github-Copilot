@@ -94,7 +94,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { AgentHost, CUT_OFF, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import { AgentHost, CUT_OFF, PROVIDER_MOVED_TASK, PROVIDER_SWITCH_TITLE, idleWord, proxyFromChromium, startErrorReason, type AgentStatus, type HostOptions } from "../../app/main/agent/host";
+import type { ActiveProvider } from "../../app/main/provider";
 import { AdminPolicySchema } from "../../app/main/admin";
 import { Conductor } from "../../app/main/agent/conductor";
 import { Presenter, expandedBubble } from "../../app/main/agent/presenter";
@@ -2637,6 +2638,41 @@ describe("a notice saying why Ember couldn't answer goes once that no longer hol
     expect(screen().bubble).toMatchObject({ visible: true, title: "I need Copilot first", mood: "attention" });
     expect(await host.start(TOKEN, "stored")).toBe("ready");
     expect(screen().bubble?.visible).toBe(false);
+    await host.stop();
+  });
+});
+
+describe("the user's own model service changed while a task runs (PR #136 B2)", () => {
+  const at = (host: string): ActiveProvider => ({ kind: "user", config: { type: "openai", baseUrl: `https://${host}/v1`, apiKey: "sk-" + "k".repeat(40) }, models: { conductor: "m", worker: null } });
+
+  it("holds the next request for the new service, never sends it to the old one, starts no task on the old one, and sends it once the task ends", async () => {
+    let now: ActiveProvider | null = at("a.example");
+    const { host, patches } = makeHost({ hands: hands(), provider: () => now });
+    expect(await host.start(null)).toBe("ready");
+    const before = conductorSession();
+    expect(before.config.provider.baseUrl).toBe("https://a.example/v1");
+    const t = host.tasks!.start("tidy my desktop");
+    await vi.waitFor(() => expect(host.tasks!.get(t.id)?.status).toBe("running"));
+    // The user moves to b.example while the task runs: nothing reconnects under it.
+    now = at("b.example");
+    expect(host.providerChanged()).toBeNull();
+    const sent = before.sent.length;
+    expect(await host.ask("summarise my inbox")).toBe(true);
+    expect(before.sent.length).toBe(sent);
+    expect(before.sent.join("\n")).not.toContain("summarise my inbox");
+    expect(patches.some(p => p.bubble?.title === PROVIDER_SWITCH_TITLE)).toBe(true);
+    // A task asked for on the old connection never starts there: no session is made for it.
+    const t2 = host.tasks!.start("tidy my downloads");
+    await vi.waitFor(() => expect(host.tasks!.get(t2.id)?.status).toBe("failed"));
+    expect(host.tasks!.get(t2.id)?.result?.summary).toBe(PROVIDER_MOVED_TASK);
+    expect(sim.sessions.some(s => s.sessionId === `ember-task-${t2.id}`)).toBe(false);
+    // The running task ends: Ember reconnects to b.example and the held request goes there.
+    host.tasks!.cancel(t.id);
+    await vi.waitFor(() => expect(conductorSession()).not.toBe(before), { timeout: 3000 });
+    const after = conductorSession();
+    expect(after.config.provider.baseUrl).toBe("https://b.example/v1");
+    await vi.waitFor(() => expect(after.sent.join("\n")).toContain("summarise my inbox"), { timeout: 3000 });
+    expect(before.sent.join("\n")).not.toContain("summarise my inbox");
     await host.stop();
   });
 });
