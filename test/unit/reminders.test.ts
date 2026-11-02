@@ -114,7 +114,7 @@ describe("the conductor's reminder tools", () => {
   const settings = { get: () => ({}) } as unknown as SettingsStore;
 
   it("sets, lists and cancels with the user's words, and checks the arguments", async () => {
-    const store = new Reminders({ onDue: () => undefined, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    const store = new Reminders({ onDue: () => undefined, now: () => NOW, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
     let said = "remind me at 3:30 pm to call Priya";
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, { store, said: () => said, now: () => NOW });
     expect(tools.map(t => t.name)).toEqual(expect.arrayContaining(["set_reminder", "list_reminders", "cancel_reminder"]));
