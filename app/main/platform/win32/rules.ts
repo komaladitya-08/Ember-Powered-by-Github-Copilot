@@ -112,6 +112,23 @@ export function walkZOrder(first: number, next: (hwnd: number) => number, max = 
   return out;
 }
 
+/**
+ * A z-order walk no raise cut through: walks until two walks in a row agree (at most `tries`) and returns the last.
+ * GW_HWNDNEXT follows the live list, so a window raised during a walk from below the walk's place to above it (an
+ * asynchronous raise landing: activateWindow's last resort) is missed, and findWindow then found no window for its
+ * process (ci 41361281638, expected 393358, got 0). Measured on an i5-10300H: 5 of 224,102 walks made while two
+ * windows swapped places 170 times lacked one of them. A walk takes about 50 µs there.
+ */
+export function steadyZOrder(walk: () => number[], tries = 4): number[] {
+  let last = walk();
+  for (let i = 1; i < tries; i++) {
+    const again = walk();
+    if (again.length === last.length && again.every((h, j) => h === last[j])) return again;
+    last = again;
+  }
+  return last;
+}
+
 /** A window findWindow may pick: its id, title, process, and the names it can be asked for by (program, class). */
 export interface FindCandidate { id: number; title: string; pid: number | null; names: readonly string[] }
 

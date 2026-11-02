@@ -19,7 +19,7 @@ import {
   CONSOLE_HOST_PROGRAM, consoleClient, CORE_WINDOW_CLASS, hostedProgram, isConsoleWindow, isUwpFrame, programName,
   type CoreWindowSeen,
 } from "./names";
-import { walkZOrder, type WindowFacts } from "./rules";
+import { steadyZOrder, walkZOrder, type WindowFacts } from "./rules";
 
 /** The virtual desktop (every monitor's bounding box), in physical pixels; its origin may be negative. */
 export function virtualScreen(api: Win32Api): Rect {
@@ -29,9 +29,9 @@ export function virtualScreen(api: Win32Api): Rect {
   };
 }
 
-/** Every top-level window, top to bottom (GetTopWindow/GW_HWNDNEXT: no callbacks). */
+/** Every top-level window, top to bottom (GetTopWindow/GW_HWNDNEXT: no callbacks), from a walk no raise cut through. */
 export function topLevels(api: Win32Api): number[] {
-  return walkZOrder(api.topWindow(), h => api.nextWindow(h));
+  return steadyZOrder(() => walkZOrder(api.topWindow(), h => api.nextWindow(h)));
 }
 
 /** Program names by pid for one pass over the windows (many windows share a process; pids aren't kept longer). */
