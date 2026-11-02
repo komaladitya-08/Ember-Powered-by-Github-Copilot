@@ -117,6 +117,8 @@ export interface StartOptions {
   targetId?: TargetId;
   where?: string;
   commandWords?: string;
+  /** TaskSpec.typedOnly. */
+  typedOnly?: boolean;
 }
 
 /** A task the user may try again from its card: one that did work (not a guide) and failed. */
@@ -174,7 +176,7 @@ export class TaskManager {
     const target = opts.target ?? this.d.currentWindow() ?? {};
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
-      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}) } });
+      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,

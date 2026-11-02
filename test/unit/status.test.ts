@@ -222,6 +222,21 @@ describe("AgentHost's status answer", () => {
     expect(order).toEqual(["sent", "ask"]);
   });
 
+  it("arms no acknowledgement for a request queued behind a turn under way, so it isn't said over that turn's answer (review of #129)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a connected conversation, without Copilot
+    const inner = host as any;
+    inner.status = { ...inner.status, phase: "ready" };
+    inner.conductor = { sessionId: "s", ending: null, ask: async () => undefined };
+    inner.queued = [{ target: null, words: "open Mail", screen: [] }];
+    let sent = 0;
+    expect(await host.ask("open the quarterly report", null, host.stopEpoch, { onSent: () => { sent++; } })).toBe(true);
+    expect(sent).toBe(0);
+  });
+
   it("turns reading results aloud off and on by request, saved in settings, and says so", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
     const settings = new SettingsStore(path.join(dir, "settings.json"));

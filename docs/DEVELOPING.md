@@ -315,8 +315,13 @@ or cancel one. Reminders last while Ember runs, unless you turn on **Keep my rou
 and reminders** under **Conversation** (and agree to its note): then they are kept in `routines.json` (mode 0600) and a
 reminder that fell due while Ember was closed is told at the next start, also before Copilot connects. With it on you
 can also name a routine (“when I say start my day, open Mail and show today's calendar”); saying its name runs the steps
-as if you had just asked each one, and Ember still asks before anything risky, with the usual question. Only your own
-words make, run or delete a routine: its name and each of its steps must be in what you said. Home lists them with
+as if you had just asked each one, and Ember still asks before anything risky, with the usual question; a command a
+step names (“delete the build folder”) always asks too, since the step isn't what you said just now. Only your own
+words make, run or delete a routine: making one needs its name and each of its steps in what you said, running one
+needs your request to be its name (alone, or “run my start my day routine”), and deleting one “delete my start my day
+routine”; a reminder is cancelled only by words such as “cancel the reminder to call Priya”. Text written as instructions to an AI
+(“ignore your previous instructions”) in a window, in any open window's title, or in what Ember read on the screen
+before a task makes that task ask before every step. Home lists them with
 **Delete**, and signing out deletes them all, also while your organisation has routines turned off.
 “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all

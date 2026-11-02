@@ -191,6 +191,11 @@ export interface TaskSpec {
    */
   commandWords?: string;
   /**
+   * commandWords leaves out only the steps of a routine the user ran (they are in userWords for the policy, never words
+   * for commands), nothing heard by voice: the command card doesn't say they asked by voice.
+   */
+  typedOnly?: boolean;
+  /**
    * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
    * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
    */
@@ -991,7 +996,7 @@ export class Worker {
     // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
     this.commandWords = (spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
-    this.spokenOnly = spec.commandWords !== undefined;
+    this.spokenOnly = spec.commandWords !== undefined && !spec.typedOnly;
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
     if (spec.screen) {

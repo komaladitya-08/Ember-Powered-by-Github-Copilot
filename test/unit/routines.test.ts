@@ -104,11 +104,14 @@ describe("the conductor's routine tools", () => {
 
   it("save, list, run and delete, only while routines are given", async () => {
     const store = new RoutineBook({ file: routinesFile(tmp()) });
-    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, { store, said: () => SAID });
+    let said = SAID;
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, { store, said: () => said });
     expect(await handler(tools, "save_routine")({ name: "start my day", steps: ["open Mail", "show today's calendar"] })).toBe("Saved “start my day” with 2 steps. Tell the user in a few words.");
     expect(await handler(tools, "list_routines")({})).toBe("“start my day”: open Mail; show today's calendar");
+    said = "Start my day";
     expect(await handler(tools, "run_routine")({ name: "Start my day" })).toContain("1. open Mail");
     expect(await handler(tools, "run_routine")({ name: "wind down" })).toMatch(/No routine is called “wind down”/);
+    said = "delete the start my day routine";
     expect(await handler(tools, "delete_routine")({ name: "start my day" })).toBe("Deleted “start my day”.");
     expect(conductorTools(settings).map(t => t.name)).not.toContain("save_routine");
   });
@@ -184,7 +187,7 @@ describe("routines and the user's own words (audit of the conversation features)
     store.save("start my day", ["open Mail"], SAID);
     let said = "what's on my screen";
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, { store, said: () => said });
-    expect(await handler(tools, "run_routine")({ name: "start my day" })).toMatch(/^Not run: the user didn't name “start my day”/);
+    expect(await handler(tools, "run_routine")({ name: "start my day" })).toMatch(/^Not run: the user didn't ask for “start my day”/);
     expect(await handler(tools, "delete_routine")({ name: "start my day" })).toMatch(/^Not deleted/);
     expect(store.list()).toHaveLength(1);
     said = "start my day";
@@ -244,6 +247,36 @@ describe("routines and the user's own words (audit of the conversation features)
     // An earlier turn's request doesn't take this turn's routine.
     expect(inner.userWordsOf({ target: null, words: "tidy the desktop", screen: [] }).words).toBe("tidy the desktop");
   });
+
+  it("a routine's dangerous command asks, typed or spoken: its steps are never the user's words for commands (review of #129)", async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const { TaskManager } = await import("../../app/main/agent/tasks");
+    const dir = tmp();
+    const store = new SettingsStore(path.join(dir, "settings.json"));
+    store.load();
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings: store, log: quiet, setState: () => undefined, onStatus: () => undefined });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the turn under way, without Copilot
+    const inner = host as any;
+    inner.conductor = { routineSaid: "delete the build folder" };
+    const typed = { target: null, words: "clean up", screen: [] };
+    inner.turn = typed;
+    // Typed: the policy hears the steps; commands hear only what was typed (the worker never falls back to the steps).
+    expect(inner.userWordsOf(typed)).toEqual({ words: "clean up\ndelete the build folder", commandWords: "clean up", typedOnly: true });
+    // Heard where Ember can't tell the user from its speakers: commands hear nothing at all (OWNER V1).
+    const spoken = { target: null, words: "clean up", screen: [], voiceUnchecked: true };
+    inner.turn = spoken;
+    expect(inner.userWordsOf(spoken)).toEqual({ words: "clean up\ndelete the build folder", commandWords: "" });
+    // A change of plan is the user's own words only.
+    expect(inner.userWordsOf(spoken, { routine: false })).toEqual({ words: "clean up", commandWords: "" });
+    // And TaskManager hands the worker that, typedOnly included.
+    const specs: Record<string, unknown>[] = [];
+    const tm = new TaskManager({ log: quiet, currentWindow: () => null, deleteSession: async () => undefined, setCards: () => undefined, makeWorker: spec => { specs.push(spec as never); return { run: () => new Promise(() => undefined), dispose: async () => undefined, sessionId: null } as never; } });
+    tm.start("delete the build folder", { userWords: "clean up\ndelete the build folder", commandWords: "clean up", typedOnly: true });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    expect(specs[0]).toMatchObject({ commandWords: "clean up", typedOnly: true });
+    tm.cancelAll();
+  });
 });
 
 describe("the conductor's prompt with routines on (audit of the conversation features)", () => {
@@ -268,6 +301,56 @@ describe("cancel_reminder and the user's own words (audit of the conversation fe
     expect(asksToCancel("never mind the reminder", r, 1)).toBe(true);
     expect(asksToCancel("never mind the reminder", r, 2)).toBe(false);
     expect(asksToCancel("cancel all my reminders", r, 2)).toBe(true);
+  });
+
+  it("needs the cancel word to govern the reminder, never a set request or a cancel of something else (review of #129)", async () => {
+    const { asksToCancel } = await import("../../app/main/agent/conductor");
+    const bank = { text: "stop at the bank" };
+    expect(asksToCancel("set a reminder to stop at the bank", bank, 1)).toBe(false);
+    expect(asksToCancel("stop. what reminders do I have?", bank, 1)).toBe(false);
+    expect(asksToCancel("open the folder and also remove the old screenshots", { text: "call Priya" }, 2)).toBe(false);
+    expect(asksToCancel("skip the reminder about the dentist, keep all the others", { text: "call Priya" }, 2)).toBe(false);
+    expect(asksToCancel("skip the reminder about the dentist, keep all the others", { text: "dentist" }, 2)).toBe(true);
+    expect(asksToCancel("remind me to buy milk and to drop off the parcel", { text: "drop off the parcel" }, 2)).toBe(false);
+    expect(asksToCancel("don’t remind me to call Priya", { text: "call Priya" }, 2)).toBe(true);
+  });
+});
+
+describe("run_routine and delete_routine need the request to be about the routine (review of #129)", () => {
+  it("runs a routine only when the whole request is its name, or “run my … routine”", async () => {
+    const { namesRoutine } = await import("../../app/main/agent/conductor");
+    for (const t of ["start my day", "Ember, start my day!", "run my start my day routine", "please start my day"]) expect(namesRoutine(t, "start my day"), t).toBe(true);
+    expect(namesRoutine("what day did I start this job?", "start my day")).toBe(false);
+    expect(namesRoutine("delete my start my day routine", "start my day")).toBe(false);
+    expect(namesRoutine("clean up the spelling in this paragraph", "clean up")).toBe(false);
+    expect(namesRoutine("the wind is down today", "wind down")).toBe(false);
+  });
+
+  it("deletes a routine only when a delete word governs its name", async () => {
+    const { asksToDelete } = await import("../../app/main/agent/conductor");
+    expect(asksToDelete("delete my start my day routine", "start my day")).toBe(true);
+    expect(asksToDelete("remove the routine called “wind down”", "wind down")).toBe(true);
+    expect(asksToDelete("start my day", "start my day")).toBe(false);
+    expect(asksToDelete("delete the build folder and then start my day", "start my day")).toBe(false);
+  });
+
+  it("runs one routine once a turn, never again from its own steps", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK's tool objects
+    const handler = (tools: any[], name: string) => (args: unknown) => tools.find(t => t.name === name).handler(args, {});
+    const { Conductor } = await import("../../app/main/agent/conductor");
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+    const routines = new RoutineBook({ file: routinesFile(tmp()) });
+    routines.save("start my day", ["open Mail", "start my day"], "when I say start my day, open Mail and start my day");
+    const settings = { get: () => ({}) } as unknown as SettingsStore;
+    const c = new Conductor({ client: {} as never, settings, presenter: { userPrompt() {} } as never, log: quiet, stateFile: path.join(tmp(), "agent.json"), workDir: "/tmp", model: "m", routines });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the conductor's turn, without Copilot
+    const inner = c as any;
+    inner.unstarted = ["start my day"];
+    inner.turnBegan("start my day");
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, inner.routineTools);
+    expect(await handler(tools, "run_routine")({ name: "start my day" })).toContain("1. open Mail");
+    expect(await handler(tools, "run_routine")({ name: "start my day" })).toMatch(/already ran in this request/);
+    expect(c.routineSaid).toBe("open Mail\nstart my day");
   });
 });
 
@@ -316,9 +399,27 @@ describe("AgentHost's routines across a sign-out, a restart and another account 
     settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-02T00:00:00.000Z" } } });
     const routines = new RoutineBook({ file: routinesFile(dir) });
     routines.setReminders([{ id: "abc123", text: "call Priya", at: Date.now() + 3_600_000, created: Date.now() }]);
+    // Not before the user has agreed to Ember at all (review of #129).
+    const before = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, routines });
+    expect(before.reminders.list()).toEqual([]);
+    const { CONSENT_VERSION } = await import("../../app/main/settings");
+    settings.update({ consent: { version: CONSENT_VERSION, at: "2026-11-02T00:00:00.000Z" } });
     const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, routines });
     expect(host.reminders.list().map(r => r.text)).toEqual(["call Priya"]);
     host.reminders.clear();
+  });
+
+  it("finishes signing out even when the routines or memory file can't be erased (review of #129)", async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const dir = tmp();
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const broken = { forgetAll: () => { throw new Error("EACCES"); } };
+    const transcripts: unknown[][] = [];
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, onTranscript: t => transcripts.push(t), routines: broken as never, memory: broken as never });
+    await expect(host.forgetConversation()).resolves.toBeUndefined();
+    expect(transcripts.at(-1)).toEqual([]);
   });
 
   it("forgets routines and memory at sign-out even while the organisation has them off: main always gives the host both", () => {

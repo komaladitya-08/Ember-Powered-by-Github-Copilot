@@ -19,7 +19,7 @@ import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type Present
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
 import type { AdminPolicy } from "../admin";
 import type { Logger } from "../logger";
-import type { SettingsStore } from "../settings";
+import { hasConsent, type SettingsStore } from "../settings";
 import type { BubbleState, EmberState } from "../../shared/overlay";
 import { TaskManager, statusWord, taskOutcome, titleOf, type Task, type WorkerLike } from "./tasks";
 import { LINUX_WORKER_SYSTEM, Worker, type TaskSpec, type WorkerDeps, type WorkerSystem } from "./worker";
@@ -712,8 +712,11 @@ export class AgentHost {
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
     // Reminders kept from the last run come back now, not once Copilot connects: one due while Ember was offline or
-    // signed out is still told on time (a reminder never needs Copilot).
-    if (this.routinesWanted()) this.keepRoutines();
+    // signed out is still told on time (a reminder never needs Copilot). Not before the user has agreed to Ember at
+    // all: nothing is read or told until then (they come back with the conversation, once it starts).
+    let agreed = false;
+    try { agreed = hasConsent(o.settings.get()); } catch { /* settings unread: nothing comes back yet */ }
+    if (agreed && this.routinesWanted()) this.keepRoutines();
   }
 
   /**
@@ -918,8 +921,10 @@ export class AgentHost {
    *
    * `commandWords`: the same words without those heard where Ember can't tell the user from its speakers (OWNER V1:
    * a call or a video can say "delete the build folder"), present only when some were left out. Commands hear these.
+   * `typedOnly`: commandWords leaves out only a routine's steps, nothing heard by voice (the command card doesn't say
+   * the user asked by voice).
    */
-  private userWordsOf(r: UserRequest | null): { words?: string; agreed?: Agreement[]; commandWords?: string } {
+  private userWordsOf(r: UserRequest | null, o: { routine?: boolean } = {}): { words?: string; agreed?: Agreement[]; commandWords?: string; typedOnly?: boolean } {
     if (!r) return {};
     const said = [r.words];
     const typed = r.voiceUnchecked ? [] : [r.words];
@@ -942,11 +947,19 @@ export class AgentHost {
       if (!this.voiceUnchecked.has(before)) typed.unshift(said[0]);
       at = k;
     }
+    const voiced = typed.length < said.length;
     // The steps of a routine this turn ran (run_routine): the user's own words when they saved it, so its tasks' risky
-    // steps get the usual question rather than "you didn't ask for this".
-    const routine = r === this.turn ? this.conductor?.routineSaid ?? "" : "";
-    if (routine) { said.push(routine); typed.push(routine); }
-    return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}), ...(typed.length < said.length ? { commandWords: typed.join("\n") } : {}) };
+    // steps get the usual question rather than "you didn't ask for this". Never words for commands: a step saved as
+    // "delete the build folder" must not make `rm -rf build` the user's own request now (it asks, as any dangerous
+    // command they didn't say does), so commandWords is always given then, without them (the worker would otherwise
+    // fall back to the words, steps and all). `routine`: false leaves them out (a steer).
+    const steps = o.routine !== false && r === this.turn ? this.conductor?.routineSaid ?? "" : "";
+    if (steps) said.push(steps);
+    return {
+      words: said.join("\n"), ...(agreed.length ? { agreed } : {}),
+      ...(voiced || steps ? { commandWords: typed.join("\n") } : {}),
+      ...(steps && !voiced ? { typedOnly: true } : {}),
+    };
   }
 
   private remember(who: TranscriptEntry["who"], text: string): TranscriptEntry {
@@ -1333,7 +1346,7 @@ export class AgentHost {
           const where = binding ? whereWords(binding) : undefined;
           const t = tasks.start(goal, {
             target: this.contextFor(r, binding), userWords: said.words, agreed: said.agreed, screen: r?.screen.join("\n") || undefined,
-            ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}),
+            ...(said.commandWords !== undefined ? { commandWords: said.commandWords } : {}), ...(said.typedOnly ? { typedOnly: true } : {}),
             ...(binding ? { targetId: binding.id } : {}), ...(where ? { where } : {}),
           });
           if (binding) this.taskBindings.set(t.id, binding);
@@ -1374,7 +1387,8 @@ export class AgentHost {
           list: () => tasks.list().map(t => ({ id: t.id, title: t.title, status: t.status, detail: t.detail })),
           cancel: id => { const t = tasks.get(id); if (!t || (t.status !== "running" && t.status !== "queued")) return false; tasks.cancel(id); return true; },
           // What the user said for the change, as for a task started in this turn ("work" answering "Which account?").
-          steer: (id, text) => { const said = this.userWordsOf(this.turn); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords); },
+          // (A change of plan is the user's own words: a routine run this turn doesn't steer a task.)
+          steer: (id, text) => { const said = this.userWordsOf(this.turn, { routine: false }); return tasks.steer(id, text, said.words, this.turn?.screen.join("\n") || undefined, said.agreed, said.commandWords); },
         } : undefined,
       });
       await this.conductor.start();
@@ -1756,11 +1770,15 @@ export class AgentHost {
    * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
    */
   /**
-   * `how.onSent`: called once the request goes to Copilot (never for one answered here, dropped or left unsent), just
-   * before it is sent: main's acknowledgement waits for it, so "On it." never comes while the request still waits.
+   * `how.onSent`: called once the request goes to Copilot (never for one answered here, dropped, left unsent, or queued
+   * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
+   * while the request still waits, nor over another turn's answer.
    */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; onSent?: () => void } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
+    // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
+    // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
+    const first = this.betweenTurns();
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
@@ -1868,7 +1886,7 @@ export class AgentHost {
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
-      how.onSent?.();
+      if (first) how.onSent?.();
       await this.conductor.ask(text, context?.text, this.trustedLine());
     } catch (err) {
       // Never sent: no turn of its own will come (nor its hint).
@@ -1975,9 +1993,7 @@ export class AgentHost {
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
-    this.o.memory?.forgetAll();
-    this.reminders.clear();
-    this.o.routines?.forgetAll();
+    this.forgetKept();
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();
@@ -2001,12 +2017,20 @@ export class AgentHost {
     this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     // What Ember remembered was about the account before, its person: none of it carries over.
-    this.o.memory?.forgetAll();
-    this.reminders.clear();
-    this.o.routines?.forgetAll();
+    this.forgetKept();
     // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
     this.finishedLately = [];
     this.o.onAccountChanged?.();
+  }
+
+  /**
+   * Forgets what Ember kept about the person (memory, reminders, routines). A file that can't be erased is logged, never
+   * thrown: sign-out and an account change always finish.
+   */
+  private forgetKept(): void {
+    try { this.o.memory?.forgetAll(); } catch (err) { this.o.log.warn("agent.memory_not_forgotten", { err: err instanceof Error ? err.message : String(err) }); }
+    this.reminders.clear();
+    try { this.o.routines?.forgetAll(); } catch (err) { this.o.log.warn("agent.routines_not_forgotten", { err: err instanceof Error ? err.message : String(err) }); }
   }
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
