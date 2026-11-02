@@ -75,6 +75,13 @@ export const IPC = {
   /** The handle menu's Ask Ember… and Stop everything, from the settings window (a keyboard's way to them). */
   openAsk: "ember:open-ask",
   stopEverything: "ember:stop-everything",
+  /** Everything was stopped (first run's stop rehearsal hears the shortcut): the source, "hotkey" for the keys. */
+  homeStopped: "ember:home-stopped",
+  /** First run's "Hey Ember" meter: the window asks for the microphone's level while it shows, and gets it (0–8, null at the end). */
+  watchLevel: "ember:watch-level",
+  homeLevel: "ember:home-level",
+  /** Copies a sign-in code or a setup command for the settings window (pages get no clipboard permission). */
+  copyText: "ember:copy-text",
 } as const;
 
 export interface SignInProgress {
@@ -247,6 +254,14 @@ export interface EmberHomeApi {
   openAsk(): Promise<void>;
   /** Stops everything, as the handle menu's Stop everything does. */
   stopEverything(): Promise<void>;
+  /** Everything was just stopped, and how ("hotkey", "voice", "menu" or "settings"). */
+  onStopped(fn: (source: string) => void): () => void;
+  /** Send the microphone's level here while first run's "Hey Ember" try shows (true), or stop (false). */
+  watchLevel(on: boolean): Promise<void>;
+  /** The microphone's level (0–LEVEL_STEPS) while Ember hears a request, and null when it stops hearing. */
+  onLevel(fn: (level: number | null) => void): () => void;
+  /** Puts `text` (a sign-in code or a setup command, at most 4096 characters) on the clipboard. */
+  copyText(text: string): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;

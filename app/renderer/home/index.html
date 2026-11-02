@@ -26,16 +26,92 @@
     <p id="managed" class="managed" hidden></p>
     <p id="settings-notice" class="managed error" role="status" hidden></p>
 
-    <section id="welcome" class="welcome" aria-labelledby="welcome-h" hidden>
-      <h2 id="welcome-h">Before Ember starts</h2>
-      <ul class="terms">
-        <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already. <span id="permissions-note" hidden></span></li>
-        <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
-        <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span data-key-held="stop"><span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</span><span data-key-taken="stop" hidden>Stop everything, in Ember's handle menu and in settings, stops everything at once.</span></li>
-        <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (<span id="retention">kept 30 days</span>), in <code id="data-dir">~/.config/ember</code>. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.</li>
-        <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.</li>
-        <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
-      </ul>
+    <section id="welcome" class="welcome" aria-labelledby="w-title" data-step="hello" hidden>
+      <div class="w-arc" id="w-arc" aria-hidden="true"></div>
+      <div class="w-head">
+        <div class="w-stage" id="w-stage"></div>
+        <div class="w-heading">
+          <p class="w-count" id="w-count">Step 1 of 7</p>
+          <h2 id="w-title" tabindex="-1">Hi, I'm Ember.</h2>
+          <p class="w-lead" id="w-lead"></p>
+        </div>
+      </div>
+
+      <div class="w-pane" data-pane="character" hidden>
+        <div class="w-cards" id="w-cards"></div>
+        <p class="hint">You can change who I am, and my size, later in Settings › Your Ember.</p>
+      </div>
+
+      <div class="w-pane" data-pane="consent" hidden>
+        <ul class="terms w-points" id="w-points" aria-label="What Ember does, in short"></ul>
+        <details class="w-more" id="w-full">
+          <summary>Read the full text</summary>
+          <h3 id="welcome-h">Before Ember starts</h3>
+          <ul class="terms">
+            <li data-icon="eye"><b>It reads the window you're working in</b> through the desktop's accessibility service, and for tasks it may take a screenshot of it. App windows on your never-look list and password prompts are never read. The list is in settings, and common password managers are on it already. <span id="permissions-note" hidden></span></li>
+            <li data-icon="send"><b>When you ask something</b>, your request and what Ember read from the screen go to <span id="model-service">GitHub Copilot</span> to work out the answer. Nothing is sent before you ask.</li>
+            <li data-icon="hand"><b>It asks before acting</b> in an app, and always before anything hard to undo. It never types passwords. <span data-key-held="stop"><span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> stops everything at once.</span><span data-key-taken="stop" hidden>Stop everything, in Ember's handle menu and in settings, stops everything at once.</span></li>
+            <li data-icon="lock"><b>On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for and how it went (<span id="retention">kept 30 days</span>), in <code id="data-dir">~/.config/ember</code>. The rest of your conversation with Ember is kept only while it runs. It sends no usage statistics.</li>
+            <li data-icon="mic"><b>The microphone stays off</b> unless you turn on “Hey Ember” in settings.</li>
+            <li data-icon="plug"><b>Other computers and commands</b><span id="targets-note"> are off until you turn them on: Ember can work on computers you reach over SSH, and run commands in its own window. Each asks you first.</span></li>
+          </ul>
+        </details>
+        <p class="w-note" id="w-consent-note" role="status"></p>
+      </div>
+
+      <div class="w-pane" data-pane="sign-in" hidden>
+        <p class="w-status" id="w-signin-line" role="status"></p>
+        <div class="w-code" id="w-code" aria-live="polite" hidden></div>
+        <p class="w-code-row" id="w-signin-more" hidden><button type="button" class="btn quiet small" id="w-open-page" hidden></button><button type="button" class="btn quiet small" id="w-check-again">Check again</button></p>
+        <p class="hint" id="w-signin-later" hidden></p>
+      </div>
+
+      <div class="w-pane" data-pane="checks" hidden>
+        <p class="w-status" id="w-checks-head" role="status"></p>
+        <ul class="w-checks" id="w-checks" aria-labelledby="w-checks-head"></ul>
+        <p class="hint" id="w-checks-later"></p>
+        <p class="sr" id="w-checks-msg" role="status"></p>
+        <details class="w-more" id="w-checks-more">
+          <summary>Show the details</summary>
+          <dl class="w-detail" id="w-checks-all"></dl>
+        </details>
+      </div>
+
+      <div class="w-pane" data-pane="try" hidden>
+        <ul class="w-tries">
+          <li class="w-try" id="w-try-stop">
+            <i class="w-tick" aria-hidden="true"></i>
+            <div class="w-try-text"><b>Stop me</b> <span class="w-keys chord" id="w-stop-keys"></span>
+              <p id="w-try-stop-text">Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.</p></div>
+          </li>
+          <li class="w-try" id="w-try-voice" hidden>
+            <i class="w-tick" aria-hidden="true"></i>
+            <div class="w-try-text"><b>Say “Hey Ember”</b>
+              <p id="w-try-voice-text"></p></div>
+            <span class="w-meter" id="w-meter" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          </li>
+          <li class="w-try" id="w-try-ask">
+            <i class="w-tick" aria-hidden="true"></i>
+            <div class="w-try-text"><b>Ask me something</b> <span class="w-keys chord" id="w-ask-keys"></span>
+              <p id="w-try-ask-text"></p></div>
+            <button type="button" class="btn quiet small" id="w-ask" aria-describedby="w-try-ask-text">Open the ask box</button>
+          </li>
+        </ul>
+        <p class="sr" id="w-try-live" role="status"></p>
+        <p class="hint" id="w-voice-later" hidden></p>
+      </div>
+
+      <div class="w-pane" data-pane="done" hidden>
+        <dl class="w-card" id="w-summary" aria-label="Your Ember"></dl>
+        <p class="hint" id="w-summary-note"></p>
+      </div>
+
+      <div class="w-nav">
+        <button type="button" class="btn quiet" id="w-back">Back</button>
+        <p class="w-why" id="w-why" role="status"></p>
+        <button type="button" class="btn quiet" id="w-alt" hidden></button>
+        <button type="button" class="btn" id="w-next" aria-describedby="w-why">Get started</button>
+      </div>
     </section>
 
     <section class="pick" aria-labelledby="pick-h">
@@ -286,11 +362,6 @@
       </details>
     </section>
 
-    <div class="start-row" id="start-row" hidden>
-      <label class="switch-row" id="agree-row"><input type="checkbox" id="agree"><span>I've read how Ember works and I agree</span></label>
-      <button type="button" id="start" class="start" disabled aria-describedby="start-hint">Start Ember</button>
-      <p class="hint" id="start-hint">Agree first, then start.</p>
-    </div>
   </main>
   <script src="main.js"></script>
 </body>
