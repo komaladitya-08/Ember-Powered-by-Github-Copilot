@@ -22,20 +22,28 @@ const AGENT = String.raw`(?:ai|a\.i\.|llms?|language models?|(?:ai |virtual |dig
  */
 const AI = String.raw`(?:ai|a\.i\.|llms?|language models?|(?:ai |virtual |digital )assistants?|ai agents?|chatbots?|copilot|chatgpt|gpt(?:-?\d)?)`;
 
-/** What an order to an agent starts with, after "AI agents:" (not a heading's words: "AI agents: the future of work"). */
-const COMMAND = String.raw`(?:ignore|disregard|forward|send|delete|remove|open|click|press|reply|respond|run|execute|type|enter|go|navigate|visit|download|install|share|copy|paste|transfer|pay|submit|post|email|tell|change|turn|disable|enable|summari[sz]e|include|add|write|follow|stop|do)`;
+/**
+ * What an order to an agent starts with, after "AI agents:" (not a heading's words: "AI agents: the future of work",
+ * "AI Agents: Stop Worrying", "LLMs: tell me why", "AI agents: do they work?").
+ */
+const COMMAND = String.raw`(?:ignore|disregard|forward|send|delete|remove|open|click|press|reply|respond|run|execute|type|enter|navigate|visit|download|install|share|copy|paste|transfer|pay|submit|post|email|change|disable|enable|summari[sz]e|include|write|follow)`;
 
-/** Up to `n` words between two that matter, each after any space or line break (never across a full stop). */
-const GAP = (n: number) => String.raw`(?:\s+[^\s.]{1,30}){0,${n}}?`;
+/** Between two words of a phrase: spaces, tabs or hyphens ("ignore-all-previous-instructions"), never a line break. */
+const SEP = String.raw`[ \t-]+`;
+/** Up to `n` words between two that matter, on the same line (never across a full stop or from one line to the next). */
+const GAP = (n: number) => String.raw`(?:${SEP}[^\s.-]{1,30}){0,${n}}?`;
 
 /** Each signal: a name (logged, never the text) and its pattern. */
 const SIGNALS: { name: string; re: RegExp }[] = [
-  // "Ignore your previous instructions", "disregard all prior rules", "disregard the instructions above", "Ignore
-  // everything above. Instead…". The words may be split across lines (a page can put each word on a line of its own),
-  // never across a full stop.
-  { name: "override", re: new RegExp(String.raw`\b(?:ignore|disregard|forget|override|bypass)\b${GAP(4)}\s+(?:previous|prior|earlier|above|original|all|your|any|system)\b${GAP(3)}\s+(?:instructions?|prompts?|rules|directions|guidelines|orders)\b|\b(?:ignore|disregard|forget)\b${GAP(4)}\s+(?:instructions?|prompts?|rules|directions|guidelines)\s+(?:above|before this|you were given|you have been given)\b|\b(?:ignore|disregard|forget)\s+(?:everything|anything|all(?:\s+the\s+text)?)\s+(?:above|before(?:\s+this)?|(?:written|said)\s+above)(?=\s*(?:[.,;:!]|and\b|instead\b|$))`, "i") },
+  // "Ignore your previous instructions", "disregard all prior rules", "Do not follow your previous instructions",
+  // "disregard the instructions above and…", "Ignore everything above. Instead…", "Ignore the above and instead…",
+  // "Forget everything you were told". Not "If you've already installed it, ignore the instructions above.": a plain
+  // "the instructions above" counts only when an order follows it.
+  { name: "override", re: new RegExp(String.raw`\b(?:ignore|disregard|forget|override|bypass|(?:do${SEP}not|don't|stop)${SEP}follow(?:ing)?)\b${GAP(4)}${SEP}(?:previous|prior|earlier|above|original|all|your|any|system)\b${GAP(3)}${SEP}(?:instructions?|prompts?|rules|directions|guidelines|orders)\b`
+    + String.raw`|\b(?:ignore|disregard|forget)\b${GAP(4)}${SEP}(?:instructions?|prompts?|rules|directions|guidelines)${SEP}(?:above|before this|you were given|you have been given)\b(?=[ \t,]*(?:and|then|instead|now)\b)`
+    + String.raw`|\b(?:ignore|disregard|forget)${SEP}(?:(?:everything|anything|all(?:${SEP}the${SEP}text)?)${SEP}(?:above|before(?:${SEP}this)?|(?:written|said)${SEP}above)|the${SEP}above|everything${SEP}you${SEP}(?:were|have${SEP}been)${SEP}told(?:${SEP}before)?)(?=[ \t]*(?:[.,;:!]|and\b|instead\b|$))`, "i") },
   // "Important notice for AI assistants", "Attention AI agents", "If you are an AI".
-  { name: "addressed", re: new RegExp(String.raw`\b(?:(?:notice|message|note|instructions?|attention|reminder)\s+(?:to|for)\s+(?:all\s+|any\s+)?${AI}\b|(?:attention|dear|hey|hello),?\s+(?:all\s+)?${AI}\b|if you(?:'re|\s+are)\s+an?\s+${AGENT}\b|${AGENT}\s+(?:reading|processing|viewing) this\b|\b(?:ai|a\.i\.)\s+(?:agents?|assistants|bots)\s*:\s*(?:please\s+)?(?:you\s+(?:must|should)\s+|do\s+not\s+|don't\s+|never\s+)?${COMMAND}\b|\bllms\s*:\s*(?:please\s+)?${COMMAND}\b)`, "i") },
+  { name: "addressed", re: new RegExp(String.raw`\b(?:(?:notice|message|note|instructions?|attention|reminder)\s+(?:to|for)\s+(?:all\s+|any\s+)?${AI}\b|(?:notice|message|note|instructions?|reminder)\s+(?:to|for)\s+the\s+${AI}\s*:|(?:attention|dear|hey|hello),?\s+(?:all\s+)?${AI}\b|if you(?:'re|\s+are)\s+(?:an?\s+${AGENT}|copilot|chatgpt|gpt(?:-?\d)?)\b|${AGENT}\s+(?:reading|processing|viewing) this\b|\b(?:ai|a\.i\.)\s+(?:agents?|assistants?|bots)\s*:\s*(?:please\s+)?(?:you\s+(?:must|should)\s+|do\s+not\s+|don't\s+|never\s+)?${COMMAND}\b|\bllms\s*:\s*(?:please\s+)?${COMMAND}\b)`, "i") },
   // "You are now in developer mode", "new instructions:", "system prompt:".
   // (Not "you are now…" alone: "You are now a premium member" is ordinary page text.)
   { name: "role", re: /\b(?:you are now (?:in )?(?:developer|jailbreak|unrestricted|god|dan) mode\b|new instructions\s*:|(?:system|developer|admin) (?:prompt|message|override|instructions?)\s*:|act as (?:a|an) (?:different|new|unrestricted) (?:ai|assistant|agent|model)\b)/i },
@@ -47,18 +55,43 @@ const SIGNALS: { name: string; re: RegExp }[] = [
   { name: "hide", re: /\b(?:do not|don't|never|without)\s+(?:tell(?:ing)?|inform(?:ing)?|alert(?:ing)?|ask(?:ing)?|notify(?:ing)?|confirm(?:ing)? with)\s+the user\b|\bthe user (?:has already|already) (?:approved|authori[sz]ed|consented|agreed)\b/i },
 ];
 
-/** The signals found in `text` (their names, each once), empty when it reads as ordinary app text. */
-export function injectionSignals(text: string): string[] {
-  if (!text) return [];
-  // Full-width letters ("ｉｇｎｏｒｅ") and ligatures read as their plain letters (NFKC), curly apostrophes as straight
-  // ones, and invisible format characters (zero-width spaces and joiners, soft hyphens, bidi marks) go: each can hide
-  // the words from a pattern while a model reads them as usual.
-  text = text.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(/[\u2018\u2019]/g, "'");
-  // Long reads are scanned in full but in pieces, so one pathological string can't make a pattern slow.
+/**
+ * Latin look-alikes from Cyrillic and Greek ("іgnore" with a Cyrillic і): NFKC leaves them be, and a model reads them as
+ * the Latin letters.
+ */
+const CONFUSABLE: Record<string, string> = {
+  а: "a", в: "b", е: "e", ё: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t", у: "y", х: "x", і: "i", ї: "i", ј: "j", ѕ: "s", ԁ: "d", ԛ: "q", ԝ: "w", һ: "h",
+  А: "A", В: "B", Е: "E", К: "K", М: "M", Н: "H", О: "O", Р: "P", С: "C", Т: "T", У: "Y", Х: "X", І: "I", Ј: "J", Ѕ: "S",
+  α: "a", ε: "e", ι: "i", κ: "k", ν: "v", ο: "o", ρ: "p", τ: "t", υ: "u", χ: "x",
+  Α: "A", Β: "B", Ε: "E", Ζ: "Z", Η: "H", Ι: "I", Κ: "K", Μ: "M", Ν: "N", Ο: "O", Ρ: "P", Τ: "T", Υ: "Y", Χ: "X",
+};
+const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLE).join("")}]`, "gu");
+
+/** Text as the patterns read it: plain letters, no invisible characters, straight apostrophes. */
+function plain(text: string): string {
+  // Full-width letters ("ｉｇｎｏｒｅ") and ligatures read as their plain letters (NFKC), look-alike letters as Latin ones,
+  // curly apostrophes as straight ones, and invisible format characters (zero-width spaces and joiners, soft hyphens,
+  // bidi marks) go: each can hide the words from a pattern while a model reads them as usual.
+  return text.normalize("NFKC").replace(/\p{Cf}/gu, "").replace(CONFUSABLE_RE, c => CONFUSABLE[c] ?? c).replace(/[\u2018\u2019]/g, "'");
+}
+
+/**
+ * The signals found in `text` (their names, each once), empty when it reads as ordinary app text. A phrase's words never
+ * span a line break in a string: the lines of a screen read are separate controls ("Ignore", "All", "Rules" side by
+ * side). Pass several pieces (each control's name and text, each window's title) as an array instead: a line break
+ * inside a piece (text wrapped in a mail or a page) is a space, and nothing spans from one piece to the next.
+ */
+export function injectionSignals(text: string | readonly string[]): string[] {
+  const pieces = typeof text === "string" ? [text] : text.map(t => t.replace(/[ \t]*\r?\n[ \t]*/g, " "));
   const found = new Set<string>();
-  for (let i = 0; i < text.length; i += 20_000) {
-    const part = text.slice(Math.max(0, i - 200), i + 20_000);
-    for (const s of SIGNALS) if (!found.has(s.name) && s.re.test(part)) found.add(s.name);
+  for (const raw of pieces) {
+    if (!raw) continue;
+    const t = plain(raw);
+    // Long reads are scanned in full but in pieces, so one pathological string can't make a pattern slow.
+    for (let i = 0; i < t.length; i += 20_000) {
+      const part = t.slice(Math.max(0, i - 200), i + 20_000);
+      for (const s of SIGNALS) if (!found.has(s.name) && s.re.test(part)) found.add(s.name);
+    }
   }
   return [...found];
 }

@@ -1009,7 +1009,7 @@ export class Worker {
    * text on screen tried to give Ember instructions (also when an earlier unasked-for step had already tainted it).
    * Whether it found any.
    */
-  private flagInjection(text: string, where: "window" | "windows" | "described", app?: string): boolean {
+  private flagInjection(text: string | readonly string[], where: "window" | "windows" | "described", app?: string): boolean {
     const signals = injectionSignals(text);
     if (!signals.length) return false;
     this.tainted = true;
@@ -1186,7 +1186,7 @@ export class Worker {
         // Their titles reach the model (an email's subject, a file's name): text typed elsewhere may carry them.
         for (const w of wins) this.remember(w, [w.name], true);
         // A title written as instructions to an AI agent (a page's or a mail's) steers as the window's text would.
-        const flagged = this.flagInjection(wins.map(w => w.name).join("\n"), "windows");
+        const flagged = this.flagInjection(wins.map(w => w.name), "windows");
         // A busy app's window is listed as last seen: it is still there, so the model waits instead of giving up on it.
         const lines = wins.map(w => `- ${q(w.app, 60)}: ${q(w.name, 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
         return done(lines.length ? `<windows untrusted="true">\n${lines.join("\n")}\n</windows>${flagged ? INJECTION_NOTE : ""}` : "No windows found.");
@@ -1835,8 +1835,9 @@ export class Worker {
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
-    // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped.
-    const flagged = this.flagInjection(readText.join("\n"), "window", p.window.app);
+    // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
+    // control on its own: a phrase never runs from one control's name into the next ("Ignore", "All", "Rules").
+    const flagged = this.flagInjection(readText, "window", p.window.app);
     const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
