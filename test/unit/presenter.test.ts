@@ -913,6 +913,32 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     expect(lastQ().bubble!.actions).toEqual([]);
   });
 
+  it("never offers Try again for a turn that started a task when a newer request was asked meanwhile (UI audit 3)", () => {
+    const { p, last } = setup();
+    p.userPrompt("rename my screenshots");
+    p.event({ type: "user.message", data: { content: "rename my screenshots" } });
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.userPrompt("what's the weather");
+    p.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(last().bubble!.actions).toEqual([]);
+    expect(p.retryRequest).toBeNull();
+  });
+
+  it("offers the failed turn's own request again, not a newer one asked while it ran (UI audit 3)", () => {
+    const { p, last } = setup();
+    p.userPrompt("what time is it in Tokyo");
+    p.event({ type: "user.message", data: { content: "<context untrusted=\"true\"></context>\nwhat time is it in Tokyo" } });
+    p.userPrompt("and in Paris");
+    p.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(last().bubble!.actions).toEqual([{ id: "ui:retry", label: "Try again" }]);
+    expect(p.retryRequest).toBe("what time is it in Tokyo");
+    // A request whose turn never began (the send failed) is the one offered.
+    const { p: q } = setup();
+    q.userPrompt("hi");
+    q.fail("fetch failed ECONNRESET");
+    expect(q.retryRequest).toBe("hi");
+  });
+
   it("offers nothing for a runtime that stopped and reconnects by itself", () => {
     const { p, last } = setup();
     p.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");

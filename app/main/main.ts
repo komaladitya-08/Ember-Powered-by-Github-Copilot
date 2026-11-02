@@ -1047,8 +1047,11 @@ function start(): void {
    * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
    * hide doesn't wipe it, and given back after, so a task still at work shows its progress again (review #81).
    */
-  /** The latest request asked, and how, for a problem's Try again (presenter TRY_AGAIN): the same words, the same caution. */
-  let lastAsk: { text: string; voiceUnchecked?: boolean } | null = null;
+  /**
+   * The latest requests asked, and how, for a problem's Try again (presenter TRY_AGAIN): the request the problem offers
+   * (AgentHost.retryRequest, its own turn's, not a newer one) goes again in the same words, with the same caution.
+   */
+  let recentAsks: { text: string; voiceUnchecked?: boolean }[] = [];
   const showNotice = (n: { title: string; thought: string }, ms: number) => {
     const time = ms * readTime();
     return holdNotice<EmberState["bubble"]>({
@@ -1059,7 +1062,7 @@ function start(): void {
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
-    lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
+    recentAsks = [...recentAsks, { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) }].slice(-4);
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
@@ -1566,7 +1569,13 @@ function start(): void {
     // The conversation's Stop while Copilot keeps it waiting (its turn ends; tasks go on), and a problem's Try again
     // (the same request, as it was asked: offered only where its turn ran no tool).
     if (id === "ui:stop") { void agent?.stopAnswer(); return; }
-    if (id === "ui:retry") { if (lastAsk) { captureContext(); void askEmber(lastAsk.text, { voiceUnchecked: lastAsk.voiceUnchecked }); } return; }
+    if (id === "ui:retry") {
+      const again = agent?.retryRequest() ?? null;
+      // Its caution as it was asked; one no longer remembered here is treated as heard unchecked (never the user's words for commands).
+      const how = again === null ? undefined : [...recentAsks].reverse().find(a => a.text === again);
+      if (again !== null) { captureContext(); void askEmber(again, { voiceUnchecked: how ? how.voiceUnchecked : true }); }
+      return;
+    }
     if (id === "ui:settings") { openSettings(); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }

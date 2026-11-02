@@ -1918,6 +1918,14 @@ export class AgentHost {
   }
 
   /**
+   * The request the conversation's problem on screen offers to ask again (its Try again): that turn's own request, never
+   * a newer one asked while it ran. Null when the bubble offers none.
+   */
+  retryRequest(): string | null {
+    return this.presenter.retryRequest;
+  }
+
+  /**
    * The user pressed Try again on a failed task's card: it starts again with what it was asked with, on the same
    * computer (which must still take it: its worker refuses otherwise). Nothing starts while the organisation has
    * turned acting off. Returns whether it started.
