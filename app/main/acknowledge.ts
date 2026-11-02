@@ -17,6 +17,17 @@ const SHOW = /^(?:show me|how do i|how can i|where(?:'s| is)|teach me|walk me th
 const DO = /^(?:please |can you |could you |would you )?(?:open|close|turn|switch|set|change|make|create|add|put|send|write|draft|type|fill|move|copy|rename|save|find|search|look up|start|run|tidy|clean|sort|organi[sz]e|delete|remove|empty|check|go to|take|play|pause|mute|unmute|install|update|edit|fix|reply|book|schedule|remind)\b/;
 const NOTE = /^(?:remember|note|forget)\b/;
 
+/**
+ * The answer's first words to speak once `ack` was said: without the acknowledgement it starts with ("On it." then "On
+ * it, opening Mail." would say it twice). "" when nothing is left.
+ */
+export function afterAck(chunk: string, ack: string | null): string {
+  if (!ack) return chunk;
+  const words = ack.replace(/[.!…]+$/u, "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  const m = new RegExp(`^\\s*${words}(?:[.!,…:;-]+|\\s*$)\\s*`, "iu").exec(chunk);
+  return m ? chunk.slice(m[0].length) : chunk;
+}
+
 /** The acknowledgement that fits `request` (its words as heard), or null when none clearly does. */
 export function acknowledgement(request: string): string | null {
   const t = request.trim().toLowerCase().replace(/[‘’]/g, "'").replace(/^(?:hey |ok |okay |so )?(?:ember[, ]+)?/, "");

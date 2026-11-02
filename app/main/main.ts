@@ -87,7 +87,7 @@ import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
-import { ACK_MS, acknowledgement } from "./acknowledge";
+import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
@@ -948,9 +948,16 @@ function start(): void {
   let answerSpoken = false;
   /** How long each spoken request takes to be answered aloud, step by step: one `voice.latency` line, times only. */
   const turnLatency = new TurnLatency({ log: times => log.info("voice.latency", { ...times }) });
+  /** The acknowledgement said for the answer now streaming (its first words don't say it again: afterAck). */
+  let ackSaid: string | null = null;
   const sayStreamed = (chunks: string[]) => {
     if (!maySpeak()) return;
-    for (const c of chunks) { turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true; }
+    for (const chunk of chunks) {
+      const c = afterAck(chunk, ackSaid);
+      ackSaid = null;
+      if (!c.trim()) continue;
+      turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true;
+    }
     if (!answerSpeech.started) answerSpoken = false;
   };
   /**
@@ -967,8 +974,10 @@ function start(): void {
       ackTimer = null;
       if (!maySpeak() || answerSpoken) return;
       turnLatency.mark("ack");
-      voice?.speak(ack);
+      // After whatever Ember is saying (a reminder, a task's result), not cutting it off.
+      voice?.speak(ack, { append: true });
       answerSpoken = true;
+      ackSaid = ack;
     }, ACK_MS);
     ackTimer.unref?.();
   };
@@ -1071,13 +1080,15 @@ function start(): void {
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
-    if (how.spoken) { turnLatency.mark("sent"); ackLater(text); }
-    // Unanswered (not connected, stopped, never sent): this request's acknowledgement isn't said ("On it." after
-    // "Connect your GitHub account" would promise what won't happen). A later request's is left alone.
-    const ack = ackTimer;
+    if (how.spoken) turnLatency.mark("sent");
+    // The acknowledgement is armed only once the request goes to Copilot (onSent): not while it waits for a silent turn
+    // to end or for Copilot to connect, nor for one answered here. Unanswered after all (never sent): it isn't said ("On
+    // it." after "Connect your GitHub account" would promise what won't happen). A later request's is left alone.
+    let ack: ReturnType<typeof setTimeout> | null = null;
+    const sent = how.spoken ? () => { ackLater(text); ack = ackTimer; } : undefined;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
-    if (!agent) { unanswered(); return; }
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    if (!agent) return;
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(sent ? { onSent: sent } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -2137,6 +2148,7 @@ function start(): void {
         if (aborted || !answerSpoken) turnLatency.end();
         answerSpeech.reset();
         answerSpoken = false;
+        ackSaid = null;
         if (lastAskByVoice && !aborted) voice?.followUp(8000, { afterQuestion: endsWithQuestion(turnAnswer) });
         lastAskByVoice = false;
         turnAnswer = "";

@@ -42,7 +42,7 @@ import { SessionToolsTimeoutError, type SessionExtensions } from "./session-conf
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -1153,6 +1153,8 @@ export class AgentHost {
           // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
           const why = task.status === "cancelled" ? this.stoppedWhy.get(task.id) : undefined;
           this.stoppedWhy.delete(task.id);
+          // ("What did I miss?" then says why, not "you stopped it".)
+          if (why) task.stopReason = why;
           const summary = why ?? task.result?.summary ?? "";
           // A task failed on a refused sign-in: is it still signed in (checkSignIn)?
           if (task.status === "failed" && summary === SIGN_IN_REFUSED) void this.checkSignIn(gen);
@@ -1753,16 +1755,25 @@ export class AgentHost {
    * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
    * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<boolean> {
+  /**
+   * `how.onSent`: called once the request goes to Copilot (never for one answered here, dropped or left unsent), just
+   * before it is sent: main's acknowledgement waits for it, so "On it." never comes while the request still waits.
+   */
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; onSent?: () => void } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
     const results = resultsRequest(text);
     if (results && this.betweenTurns()) {
-      try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
-      this.o.log.info("agent.results_switch", { on: results === "loud" });
-      this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
+      let saved = true;
+      try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { saved = false; this.o.log.warn("agent.results_not_saved", { err }); }
+      // Said from what happens now: the switch as applied (the organisation's policy too) and whether Ember speaks at all.
+      let on = false;
+      try { on = this.o.settings.get().speakResults; } catch { /* unread: said as not read out */ }
+      const speaks = this.o.health?.().speaks ?? false;
+      this.o.log.info("agent.results_switch", { on, saved, speaks });
+      this.answerLocally(text, resultsReply(results, { saved, on, speaks }), how.voiceUnchecked);
       return true;
     }
     // "Systems check": Ember's report on itself, which works when Copilot doesn't.
@@ -1785,7 +1796,7 @@ export class AgentHost {
     if (status && this.betweenTurns()) {
       const tasks = this.tasksLately();
       this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
-      this.answerLocally(text, statusReply(status, tasks, Date.now()), how.voiceUnchecked);
+      this.answerLocally(text, statusReply(status, tasks, Date.now(), id => this.tasks?.holdUp(id)), how.voiceUnchecked);
       return true;
     }
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
@@ -1857,6 +1868,7 @@ export class AgentHost {
     this.queued.push(request);
     this.queued.splice(0, this.queued.length - MAX_QUEUED);
     try {
+      how.onSent?.();
       await this.conductor.ask(text, context?.text, this.trustedLine());
     } catch (err) {
       // Never sent: no turn of its own will come (nor its hint).

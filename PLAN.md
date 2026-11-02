@@ -560,6 +560,15 @@ reminders are kept in routines.json (0600) and missed ones are told at the next 
 `save_routine`, `list_routines`, `run_routine` and `delete_routine`: a routine is saved only from the user's own words,
 and running one starts its steps as ordinary requests, so the policy still asks before every risky step.
 
+An audit of these conversation features (2026-11-02) tightened them: a routine's name and each of its steps must be
+the user's words (a planted step can't ride along); `run_routine` and `delete_routine` need the routine's name in the
+user's words, and `cancel_reminder` a cancel word and the reminder's; the steps of a routine run in a turn count as the
+user's words for that turn (its reminders, and the risky steps of its tasks, which get the usual question); a request
+that is a routine's name, or the names saved, reach the conductor in a `<routines>` line. The injection scanner
+normalises text (NFKC, no format characters) and also scans list_windows' titles and the screen text a task starts or
+is steered with. Kept reminders come back when Ember starts, and sign-out forgets routines and memory also while the
+organisation has them off. "Status?" says a task waits for the user's answer or is stopping.
+
 ---
 
 ## 10. Progress

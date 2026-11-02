@@ -4,8 +4,19 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { acknowledgement } from "../../app/main/acknowledge";
+import { acknowledgement, afterAck } from "../../app/main/acknowledge";
 import { TurnLatency, type TurnTimes } from "../../app/main/turn-latency";
+
+describe("afterAck", () => {
+  it("drops an answer's opening “On it” once “On it.” was said, so it isn't said twice (audit of the conversation features)", () => {
+    expect(afterAck("On it, opening Mail now.", "On it.")).toBe("opening Mail now.");
+    expect(afterAck("On it.", "On it.")).toBe("");
+    expect(afterAck("On it… ", "On it.")).toBe("");
+    expect(afterAck("Let me look. Firefox and Files are open.", "Let me look.")).toBe("Firefox and Files are open.");
+    expect(afterAck("Online banking is open.", "On it.")).toBe("Online banking is open.");
+    expect(afterAck("On it, opening Mail now.", null)).toBe("On it, opening Mail now.");
+  });
+});
 
 describe("acknowledgement", () => {
   it("says it is on a request to do something", () => {

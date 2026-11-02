@@ -30,8 +30,15 @@ export interface Task {
   status: TaskStatus;
   detail: string;
   result: WorkerResult | null;
+  /** When it was asked for (it may wait in the queue), and when it began to run (absent until then). */
   started: number;
+  ranAt?: number;
   finished: number | null;
+  /**
+   * Why it stopped when the user didn't stop it (its computer went, or someone there pressed Stop): set by AgentHost,
+   * so a catch-up doesn't say "you stopped it".
+   */
+  stopReason?: string;
   mode?: "do" | "guide";
   /** The target it acts on, fixed for its life (absent: this computer). */
   targetId?: TargetId;
@@ -207,6 +214,17 @@ export class TaskManager {
     return [...this.tasks.values()];
   }
 
+  /**
+   * What a running task is held up by: its question waiting for the user's answer ("answer"), or a Stop it is winding
+   * down from ("stopping"); null otherwise (as its card says: "waiting" and TASK_STOPPING).
+   */
+  holdUp(id: string): "answer" | "stopping" | null {
+    const t = this.tasks.get(id);
+    if (t?.status !== "running") return null;
+    if (this.stopping.has(id)) return "stopping";
+    return this.logs.get(id)?.log.asking ? "answer" : null;
+  }
+
   cancel(id: string): void {
     const q = this.queue.findIndex(x => x.task.id === id);
     if (q >= 0) {
@@ -347,6 +365,7 @@ export class TaskManager {
     if (task.mode === "do") task.hand ??= "background";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
+    task.ranAt = Date.now();
     task.detail = "Working…";
     this.publish();
     this.d.log.info("task.started", { id: task.id });

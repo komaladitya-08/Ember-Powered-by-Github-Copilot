@@ -462,6 +462,9 @@ export const TOOL_STEPS: Record<string, string> = {
   delete_routine: "Deleting a routine",
 };
 
+/** The step for a tool without words of its own (an extension's): never its raw name ("github-list_issues"). */
+export const OTHER_STEP = "Using a tool";
+
 /** What a borrowed hand does, as the card says it while it does it (its tool's step may have named another thing). */
 export const HAND_STEPS = {
   click: "Clicking (your mouse)",
@@ -1169,7 +1172,7 @@ export class Presenter {
         const guiding = name === "wait_for_click" || name === "point_at";
         this.apply({
           emotion: guiding ? "happy" : "focused", talking: false, gesture: TOOL_GESTURES[name] ?? "rest",
-          bubble: { ...this.state.bubble, visible: true, mood: guiding ? "guiding" : "acting", step: stepOf(name, this.onDesk) ?? name, streaming: !guiding },
+          bubble: { ...this.state.bubble, visible: true, mood: guiding ? "guiding" : "acting", step: stepOf(name, this.onDesk) ?? OTHER_STEP, streaming: !guiding },
         });
         break;
       }
