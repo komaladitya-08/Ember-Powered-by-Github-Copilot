@@ -158,6 +158,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   presence.setHearing(s.mic === "active");
   bubble.setMood(b.mood);
   bubble.setRisky(b.risky === true);
+  bubble.setAutonomous(b.autonomous === true);
   showWhere(b.where, b.title);
   bubble.setTitle(b.title);
   // The finished answer arrives plain; the tail shown while it streams may still carry markdown.

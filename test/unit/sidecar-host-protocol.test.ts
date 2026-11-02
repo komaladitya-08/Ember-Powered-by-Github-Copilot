@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Host } from "../../app/sidecar-host/host";
 import { FakeProvider, benchDesktop, type FakeWindowSpec } from "../../app/sidecar-host/providers/fake";
 import { UnsupportedProvider, isPackaged, openProvider, providerKind } from "../../app/sidecar-host/providers";
@@ -250,6 +250,21 @@ describe("read_window", () => {
     const timed = await harness(late, 5000).call<Read>("read_window", {});
     expect(timed).toMatchObject({ truncated: true, slow: true });
     expect(timed.busy).toBeUndefined();
+  });
+
+  it("says slow when the time ran out even if the wall clock lags the timers (CI's Windows runner)", async () => {
+    // A timer can end before Date.now() reaches the deadline it was set for; a wall clock running 1% slow makes that
+    // certain, and the window's last elements were then read "in time", with no "time" cut.
+    const realNow = Date.now.bind(Date);
+    const origin = realNow();
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => Math.floor(origin + (realNow() - origin) * 0.99));
+    try {
+      const late = benchDesktop();
+      late[0].children![5].slowMs = 2000;
+      expect(await harness(late, 5000).call<Read>("read_window", {})).toMatchObject({ truncated: true, slow: true });
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("stops at maxNodes and says what was left out", async () => {

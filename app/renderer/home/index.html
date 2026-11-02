@@ -281,6 +281,14 @@
             <label class="switch-row"><input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>Ask only about dangerous commands</span></label>
             <p class="row-note" id="trust-commands-hint">A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.</p>
           </div>
+          <div class="noted-row">
+            <label class="switch-row"><input type="checkbox" id="autonomy-on" role="switch" aria-describedby="autonomy-hint"><span>Work without asking</span></label>
+            <p class="row-note" id="autonomy-hint"></p>
+          </div>
+          <div id="autonomy-consent" class="consent" role="group" aria-label="Before Ember works without asking" hidden>
+            <p id="autonomy-consent-text"></p>
+            <div class="agent-actions"><button type="button" id="autonomy-yes" class="btn" aria-describedby="autonomy-consent-text">I agree, work without asking</button><button type="button" id="autonomy-no" class="btn quiet">Not now</button></div>
+          </div>
         </div>
         <h3 class="sub">Apps Ember may act in without asking first</h3>
         <p class="hint grants-off" id="grants-off" hidden>Not in effect: your organisation has Ember ask before every action, in these apps too.</p>

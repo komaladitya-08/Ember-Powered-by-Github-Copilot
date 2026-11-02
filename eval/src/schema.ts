@@ -64,7 +64,9 @@ export const TaskSchema = z.object({
     answers: z.array(z.object({ prompt: z.string(), answer: z.enum(["allow", "always", "deny"]) }).strict()).default([]),
     /** Apps the user already lets Ember act in. */
     grants: z.array(z.string()).default([]),
-  }).strict().default({ answer: "allow", answers: [], grants: [] }),
+    /** "Work without asking" is on, its card agreed to, all four scopes (app/main/policy/autonomy.ts). */
+    autonomy: z.boolean().default(false),
+  }).strict().default({ answer: "allow", answers: [], grants: [], autonomy: false }),
   /** Tools available beyond accessibility: the user's mouse (tier 3), Ember's desk (tier 2). */
   hands: z.array(z.enum(["cursor", "desk"])).default([]),
   script: z.array(z.object({ tool: z.string(), args: z.record(z.string(), Arg).default({}) }).strict()).default([]),

@@ -193,6 +193,19 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
  */
 export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It keeps this on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers. You can see and forget everything here, and signing out forgets it all.";
 
+/**
+ * "Work without asking"'s card (Apps & privacy, FEATURE_CONSENT_VERSION.autonomy; app/main/policy/autonomy.ts): what runs
+ * without asking, what still asks, that Ember says what it does, and that a stop always works. Change it only with a bump
+ * of that version.
+ */
+export const AUTONOMY_CONSENT_TEXT = "Ember will use your apps, borrow your mouse and keyboard, run ordinary commands and move text between apps for what you ask, without asking you first each time. It says what it is doing as it goes, in its bubble and on the task's card, and keeps a record under What Ember did. It still asks every time before anything risky: sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing out, security settings and dangerous commands. It never types passwords and never acts in sign-in prompts, and if a page or file tries to give it instructions, that task goes back to asking. Saying “Ember, stop”, or Ember's stop shortcut, stops everything at once, and moving your mouse takes it back.";
+
+/** Under the "Work without asking" switch: what changes, and that questions can be answered by voice (Voice Match). */
+export function autonomyHint(managed: boolean): string {
+  if (managed) return "Managed by your organisation: Ember asks before its first step in an app, before using your mouse and keyboard, and before moving text between apps.";
+  return "Off, Ember asks before its first step in an app, before using your mouse and keyboard, and before moving text between apps. On, it tells you what it's doing instead, and still asks before anything risky. You can answer a question by voice too: “Ember, allow” (with Voice Match on) or “Ember, not now”.";
+}
+
 /** The routines note (FEATURE_CONSENT_VERSION.routines): change it only with a bump of that version. */
 export const ROUTINES_CONSENT_TEXT = "Ember will keep the routines you name and the reminders you set after it closes, in your own words. It keeps them on this computer only, in its data folder, where only you can read it. When you say a routine's name, its steps go to Copilot as if you had just asked each one, and Ember still asks before anything risky. You can see and delete them here, and signing out deletes them all.";
 
@@ -515,7 +528,8 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
         const fill = [deskless(`Fill ${e.batch} cells (your keyboard)`), where].filter(Boolean).join(" ");
         return { tag: e.batchVerdict === "deny" ? "Refused" : "Asked you", cls: e.batchVerdict === "deny" ? "no" : "ask", what: fill, why: typeof e.batchReason === "string" ? userWords(e.batchReason) : undefined };
       }
-      if (e.verdict === "allow") return null; // the action line that follows says it
+      // Gone ahead without asking (Work without asking): said, so the record shows which steps weren't asked about.
+      if (e.verdict === "allow") return e.autonomy === true ? { tag: "Without asking", cls: "", what } : null; // (otherwise the action line says it)
       return { tag: e.verdict === "deny" ? "Refused" : "Asked you", cls: e.verdict === "deny" ? "no" : "ask", what, why: userWords(e.reason) };
     case "confirm":
       return { ...answerTag(e.answer), what };
@@ -527,6 +541,10 @@ export function describeEntry(e: ActivityEntry, words: EntryWords = LINUX_ENTRY_
       if (e.source === "policy") return { tag: "Stopped", cls: "no", what: "Everything stopped: your organisation changed Ember's policy" };
       const how = e.source === "hotkey" ? "stop shortcut" : e.source === "voice" ? "“Ember, stop”" : e.source === "settings" ? "settings" : e.source === "menu" ? "menu" : null;
       return { tag: "Stopped", cls: "no", what: how ? `Everything stopped (${how})` : "Everything stopped" };
+    }
+    case "autonomy": {
+      const by = e.via === "voice" ? (e.verified === true ? " (by your voice, Voice Match)" : " (by voice)") : e.via === "typed" ? " (asked in words)" : "";
+      return { tag: "Setting", cls: "", what: `${e.on === true ? "Work without asking turned on" : "Work without asking turned off"}${by}` };
     }
     case "command":
       return commandLine(e);
