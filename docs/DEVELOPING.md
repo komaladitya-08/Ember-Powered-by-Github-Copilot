@@ -302,10 +302,17 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
 - `asrMs` is what transcribing the request took.
 - The other fields count from when its transcript arrived:
   - `sentMs`: the request handed to Copilot, after the screen read of up to 3 s;
+  - `ackMs`: Ember's acknowledgement handed to the voice (below), when it gave one;
   - `firstTokenMs`: the answer's first words;
   - `firstChunkMs`: its first piece handed to the voice;
-  - `firstAudioMs`: Ember's first sound.
+  - `firstAudioMs`: Ember's first sound (the acknowledgement's, when there was one).
 - A step that didn't happen is left out: a stop, or speaking off.
+
+When Copilot hasn't started answering a spoken request within 0.7 s, Ember acknowledges it in a few words that fit
+the request ("On it." for something to do, "Let me look." for a question about the screen, "Let me check." for other
+questions, "Let me show you." for "show me how", "Got it." for something to remember), and the answer follows it. A
+request that fits none of these (or isn't in English) gets no acknowledgement: a generic filler helps no one
+(app/main/acknowledge.ts).
 
 A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
 report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).

@@ -87,6 +87,7 @@ import { afterFix, type FixId } from "./environment";
 import { settingsSection, setupIdle } from "../shared/setup-attention";
 import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
+import { ACK_MS, acknowledgement } from "./acknowledge";
 import { MemoryService } from "./memory/service";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
@@ -941,6 +942,25 @@ function start(): void {
     for (const c of chunks) { turnLatency.mark("firstChunk"); voice?.speak(c, { append: answerSpoken }); answerSpoken = true; }
     if (!answerSpeech.started) answerSpoken = false;
   };
+  /**
+   * The acknowledgement waiting for the spoken request in flight (acknowledge.ts): said if Copilot hasn't started
+   * answering within ACK_MS, and the answer then follows it rather than cutting it off.
+   */
+  let ackTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelAck = () => { if (ackTimer) { clearTimeout(ackTimer); ackTimer = null; } };
+  const ackLater = (request: string) => {
+    cancelAck();
+    const ack = acknowledgement(request);
+    if (!ack || !maySpeak()) return;
+    ackTimer = setTimeout(() => {
+      ackTimer = null;
+      if (!maySpeak() || answerSpoken) return;
+      turnLatency.mark("ack");
+      voice?.speak(ack);
+      answerSpoken = true;
+    }, ACK_MS);
+    ackTimer.unref?.();
+  };
 
   // ───── Copilot brain ─────
   /** The ask box's window as last given the keyboard (an X window on Linux; 0: not yet, or it can't be told). */
@@ -1037,7 +1057,7 @@ function start(): void {
     // A slow screen read never holds a request for long: it goes without context after 3 s (the first read after
     // Ember starts also starts the accessibility helper).
     const context = await Promise.race([callContext, new Promise<null>(r => setTimeout(() => r(null), 3000))]);
-    if (how.spoken) turnLatency.mark("sent");
+    if (how.spoken) { turnLatency.mark("sent"); ackLater(text); }
     return agent?.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked })?.catch(err => log.error("ask.failed", { err }));
   };
   /**
@@ -1102,6 +1122,8 @@ function start(): void {
   ], log.child("killswitch"), () => audit);
   /** Ctrl+Alt+X, "Ember, stop", Stop in the handle's menu or in settings: everything stops at once. */
   const stopEverything = (source: "hotkey" | "voice" | "menu" | "settings") => {
+    // An acknowledgement still waiting isn't said after a stop.
+    cancelAck();
     const pulled = killSwitch.pull(source);
     // A failure card stays about a minute (longer than others, so it can be read; the settings window's Conversation
     // keeps the result) and its Close needs a click: Stop everything clears it at once too (the keyboard's way, and the
@@ -2025,11 +2047,12 @@ function start(): void {
       signedOutWhy: () => (tokens?.unreadable ? sys.words.savedSignInRefused ?? null : null),
       // Spoken without code or full addresses ("code shown in the bubble"), which nobody wants read out, sentence by
       // sentence as the answer streams in: Ember starts talking while Copilot is still writing, as a voice assistant does.
-      onAnswerDelta: delta => { turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
-      onAnswerEnd: text => sayStreamed(answerSpeech.finish(text)),
-      onAnswer: text => { turnAnswer = text; sayStreamed(answerSpeech.finish(text)); },
+      onAnswerDelta: delta => { cancelAck(); turnLatency.mark("firstToken"); sayStreamed(answerSpeech.push(delta)); },
+      onAnswerEnd: text => { cancelAck(); sayStreamed(answerSpeech.finish(text)); },
+      onAnswer: text => { cancelAck(); turnAnswer = text; sayStreamed(answerSpeech.finish(text)); },
       // A spoken request gets a short follow-up window: no need to say "Hey Ember" again.
       onTurnEnd: aborted => {
+        cancelAck();
         // Nothing will be heard of a turn that was stopped, or not spoken: it is logged as it stands.
         if (aborted || !answerSpoken) turnLatency.end();
         answerSpeech.reset();
