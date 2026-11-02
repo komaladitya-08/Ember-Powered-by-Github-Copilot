@@ -142,7 +142,7 @@ export interface HostOptions {
    * decided by Ember's gate. When `generation` moves (an install, a change, a stop), Copilot is reconnected between
    * turns, the conversation resumed as it was.
    */
-  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number };
+  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
@@ -1985,6 +1985,8 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversation = null;
+    // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
+    this.o.extensions?.conversationEnded?.();
     this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);

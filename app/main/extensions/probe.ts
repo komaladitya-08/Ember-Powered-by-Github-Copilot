@@ -54,7 +54,7 @@ async function listTools(rpc: Rpc, notify: (method: string) => Promise<void>): P
 }
 
 /** Probes a stdio server: `command` started with exactly `env`, in `cwd`, no shell; stopped afterwards. */
-export function probeStdio(o: { command: string; args: string[]; env: Record<string, string>; cwd: string; timeoutMs?: number }): Promise<ProbeResult> {
+export function probeStdio(o: { command: string; args: string[]; env: Record<string, string>; cwd: string; timeoutMs?: number; signal?: AbortSignal }): Promise<ProbeResult> {
   return new Promise(resolve => {
     let done = false, buf = "", bytes = 0, id = 0;
     const waiting = new Map<number, { ok: (v: unknown) => void; no: (e: Error) => void }>();
@@ -74,6 +74,10 @@ export function probeStdio(o: { command: string; args: string[]; env: Record<str
       resolve(r);
     };
     const timer = setTimeout(() => finish({ ok: false, why: "It didn't answer in time." }), o.timeoutMs ?? 20_000);
+    // The kill switch ends a probe too.
+    const stopped = () => finish({ ok: false, why: "It was stopped." });
+    if (o.signal?.aborted) { stopped(); return; }
+    o.signal?.addEventListener("abort", stopped, { once: true });
     child.on("error", () => finish({ ok: false, why: "It didn't start." }));
     child.on("exit", () => finish({ ok: false, why: "It stopped before saying what it offers." }));
     child.stdout!.setEncoding("utf8");
@@ -120,10 +124,29 @@ export function rpcAnswer(contentType: string, body: string, id: number): { resu
   try { return pick(JSON.parse(body)); } catch { return null; }
 }
 
+/** A response's text, read only up to MAX_BYTES (a server can't make Ember hold an endless body). */
+async function capped(res: Response): Promise<string> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done || !value) break;
+    const room = MAX_BYTES - n;
+    parts.push(value.length > room ? value.subarray(0, room) : value);
+    n += Math.min(value.length, room);
+    if (n >= MAX_BYTES) { try { await reader.cancel(); } catch { /* already closed */ } break; }
+  }
+  return Buffer.concat(parts).toString("utf8");
+}
+
 /** Probes a streamable-HTTP server at `url` with `headers`. A 401 or 403 means it needs the user to sign in. */
-export async function probeHttp(o: { url: string; headers: Record<string, string>; fetch: typeof fetch; timeoutMs?: number }): Promise<ProbeResult> {
+export async function probeHttp(o: { url: string; headers: Record<string, string>; fetch: typeof fetch; timeoutMs?: number; signal?: AbortSignal }): Promise<ProbeResult> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), o.timeoutMs ?? 20_000);
+  if (o.signal?.aborted) ac.abort();
+  o.signal?.addEventListener("abort", () => ac.abort(), { once: true });
   let session: string | null = null, id = 0;
   class NeedsAuth extends Error {}
   const post = async (msg: object, wantId?: number): Promise<unknown> => {
@@ -133,7 +156,7 @@ export async function probeHttp(o: { url: string; headers: Record<string, string
     if (res.status === 401 || res.status === 403) throw new NeedsAuth();
     if (!res.ok && res.status !== 202) throw new Error(`HTTP ${res.status}`);
     session = res.headers.get("mcp-session-id") ?? session;
-    const body = (await res.text()).slice(0, MAX_BYTES);
+    const body = await capped(res);
     if (wantId === undefined) return undefined;
     const a = rpcAnswer(res.headers.get("content-type") ?? "", body, wantId);
     if (!a || a.error) throw new Error("no answer");

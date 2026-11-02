@@ -158,6 +158,12 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
   time with a question built by `gateQuestion()` (no Always); a deny is final for the turn; every decision and result
   is audited with sizes only; a call that can't be recorded is denied.
 - **Results** are rewritten by `wrapResult()` (untrusted, `<` escaped, capped, no images) and scanned by injection.ts.
+  Failures can't be rewritten: `onPostToolUseFailure` adds `failureNote()` and taints the conversation. Taint lives on
+  the service for the whole conversation (reconnects included), never on one session.
+- **Check pins at every call**, against the session's live tool list (`bind`), not only at load: a server can change
+  a tool mid-session. A session without a live list denies every call.
+- **Read-only** is `isReadOnly()` (readOnlyHint, and neither destructiveHint nor openWorldHint) on a stdio server only;
+  a remote server's tools always ask.
 - **Pins** (pin.ts) are checked at install, start and re-enable, and against what the session shows; a changed tool
   stays off until `reagree`.
 - **Servers start through the launcher** (launch.ts) with `appEnv()`'s allowlist, never the runtime's environment.

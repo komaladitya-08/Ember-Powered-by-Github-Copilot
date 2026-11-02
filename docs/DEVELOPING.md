@@ -231,12 +231,21 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
+- **Checked at every call, not only at load.** A server can change a tool mid-session (`notifications/tools/list_changed`),
+  so `verifySessionTools` binds the gate to the session's live tool list, and every call compares what the model is
+  shown now with the pin; a tool that differs is denied and marked changed for good (off until the user agrees again).
+  A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
   differently, or refused this turn: deny. A tool whose `readOnlyHint` is true (and not `destructiveHint`) in an
   agreed item, with no injected text seen: allow. Anything else: the Confirmer asks every time ("Use “post_message”
   from Slack? With "{…}"."), with Allow and Not now, never Always. Every decision, answer and result is an
   `extension` audit entry, with sizes only.
+- **Read-only means read-only.** `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, and only
+  for a stdio server: every call to a remote (HTTP) server's tools asks, since it sends its arguments there.
+- **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
+  note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
+- **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
   later call ask.
@@ -246,7 +255,12 @@ it builds on:
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
-  in `extensions/run/`. A server that needs a `${VAR}` from the user's environment is refused. `node` is Ember's own
+  in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
+  it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
+  proxy addresses reach it without their user name and password. This keeps Ember's sign-in out of the server's own
+  environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
+  environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
+  (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
   `generation`; the host reconnects between turns (the conversation resumed), as memory does.
