@@ -17,6 +17,8 @@ import { AdminPolicySchema, applyAdminPolicy, lockedDown, managedKeys } from "..
 import { DEFAULT_SETTINGS, type Settings } from "../../app/main/settings";
 import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { CopilotSession } from "@github/copilot-sdk";
+import crypto from "node:crypto";
+import { consentCard } from "../../app/renderer/home/extensions-copy";
 
 const FIXTURE = path.resolve("test/fixtures/mcp-fake.mjs");
 const LOOKUP: ServedTool = { name: "lookup", description: "Looks something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } }, annotations: { readOnlyHint: true } };
@@ -285,7 +287,7 @@ describe("asking a server for its tools", () => {
   });
 
   it("says plainly when a server doesn't start", async () => {
-    expect(await probeStdio({ command: path.join(os.tmpdir(), "no-such-server"), args: [], env: {}, cwd: os.tmpdir(), timeoutMs: 5000 })).toMatchObject({ ok: false, why: expect.stringMatching(/^It didn't start/) });
+    expect(await probeStdio({ command: path.join(os.tmpdir(), "no-such-server"), args: [], env: {}, cwd: os.tmpdir(), timeoutMs: 5000 })).toMatchObject({ ok: false, why: "It didn't start." });
   });
 
   it("starts only a well-formed launch spec", () => {
@@ -543,5 +545,36 @@ describe("ExtensionsService", () => {
     expect(await s.install("local-market", "fake")).toMatchObject({ ok: true });
     expect((await s.list())[0]).toMatchObject({ status: "failed", detail: "Ember can't run programs for extensions on this computer yet." });
     expect(s.forSession()).toBeUndefined();
+  });
+});
+
+describe("extensions' first-use card", () => {
+  it("is pinned to FEATURE_CONSENT_VERSION.extensions: change its words only with a bump of that version", () => {
+    const hash = (kind: "plugin" | "connector") => {
+      const c = consentCard({ name: "N", kind, source: "S", marketplace: "M" });
+      return crypto.createHash("sha256").update([c.title, ...c.lines, c.yes, c.no].join("\n")).digest("hex");
+    };
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(1);
+    expect([hash("plugin"), hash("connector")]).toEqual(["2d9aae9f0014bb83a1c9c607589136b50285bf75e4008d25a5f4f0b5a037efea", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88"]);
+  });
+
+  it("is recorded only by agree(), from Home, and only while the organisation allows extensions", async () => {
+    let s: Settings = DEFAULT_SETTINGS;
+    let admin = AdminPolicySchema.parse({});
+    const svc = new ExtensionsService({
+      dir: fs.mkdtempSync(path.join(os.tmpdir(), "ember-agree-")), copilotHome: "/nonexistent", os: "linux", launcher: null,
+      settings: { get: () => s, update: patch => { s = { ...s, ...patch }; } }, admin: () => admin,
+      client: () => null, confirmer: () => null, audit: () => null,
+      log: { info: () => undefined, warn: () => undefined } as never,
+    });
+    expect(svc.consented()).toBe(false);
+    admin = AdminPolicySchema.parse({ features: { extensions: false } });
+    await svc.agree();
+    expect(svc.consented()).toBe(false);
+    admin = AdminPolicySchema.parse({});
+    await svc.agree();
+    expect(svc.consented()).toBe(true);
+    expect(s.extensions.on).toBe(true);
+    expect(svc.active()).toBe(true);
   });
 });

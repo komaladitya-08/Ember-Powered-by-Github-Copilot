@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IPC, type EmberHomeApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, type EmberExtensionsApi, type EmberHomeApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
@@ -63,3 +63,22 @@ const targets: EmberTargetsApi = {
   act: a => ipcRenderer.invoke(TARGETS_IPC.act, a),
 };
 contextBridge.exposeInMainWorld("emberTargets", targets);
+
+// Extensions, plugins and connectors: EXTENSIONS_IPC's channels only; main takes them only from this window and checks
+// every argument (app/main/extensions-ipc.ts).
+const extensions: EmberExtensionsApi = {
+  state: () => ipcRenderer.invoke(EXTENSIONS_IPC.state),
+  onChanged: fn => listen<null>(EXTENSIONS_IPC.changed, () => fn()),
+  browse: marketplace => ipcRenderer.invoke(EXTENSIONS_IPC.browse, marketplace),
+  connectors: () => ipcRenderer.invoke(EXTENSIONS_IPC.connectors),
+  addMarketplace: source => ipcRenderer.invoke(EXTENSIONS_IPC.addMarketplace, source),
+  removeMarketplace: name => ipcRenderer.invoke(EXTENSIONS_IPC.removeMarketplace, name),
+  install: (marketplace, name) => ipcRenderer.invoke(EXTENSIONS_IPC.install, marketplace, name),
+  uninstall: id => ipcRenderer.invoke(EXTENSIONS_IPC.uninstall, id),
+  setEnabled: (id, on) => ipcRenderer.invoke(EXTENSIONS_IPC.setEnabled, id, on),
+  connect: name => ipcRenderer.invoke(EXTENSIONS_IPC.connect, name),
+  disconnect: id => ipcRenderer.invoke(EXTENSIONS_IPC.disconnect, id),
+  reagree: id => ipcRenderer.invoke(EXTENSIONS_IPC.reagree, id),
+  agree: () => ipcRenderer.invoke(EXTENSIONS_IPC.agree),
+};
+contextBridge.exposeInMainWorld("emberExtensions", extensions);

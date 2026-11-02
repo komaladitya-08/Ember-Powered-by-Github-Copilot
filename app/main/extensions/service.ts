@@ -27,7 +27,7 @@ import { appEnv } from "../hands/system";
 import type { Logger } from "../logger";
 import { injectionSignals } from "../perception/injection";
 import type { AuditLog } from "../policy/audit";
-import type { Settings } from "../settings";
+import type { Settings, SettingsPatch } from "../settings";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import type { OS } from "../../shared/shortcuts";
@@ -42,7 +42,7 @@ export interface ExtensionsDeps {
   dir: string;
   /** `<userData>/copilot` (the runtime's home: its marketplace cache and plugin installs). */
   copilotHome: string;
-  settings: { get(): Settings };
+  settings: { get(): Settings; update?(patch: SettingsPatch): unknown };
   admin: () => AdminPolicy;
   /** The connected runtime, for marketplaces (null while Ember isn't connected). */
   client: () => CopilotClient | null;
@@ -109,6 +109,19 @@ export class ExtensionsService implements ExtensionsApi {
   active(): boolean {
     const e = this.o.settings.get().extensions;
     return this.allowed() && e.on && e.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+  }
+
+  /** The user agreed to extensions' first-use card at its current version. */
+  consented(): boolean {
+    return this.o.settings.get().extensions.consent.version >= FEATURE_CONSENT_VERSION.extensions;
+  }
+
+  /** The card's yes in Home (a click there, never the model): records the agreement and turns extensions on. */
+  async agree(): Promise<void> {
+    if (!this.allowed() || !this.o.settings.update) return;
+    this.o.settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
+    try { this.audit({ phase: "agreed", version: FEATURE_CONSENT_VERSION.extensions }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    this.changed();
   }
 
   onChange(fn: () => void): () => void {

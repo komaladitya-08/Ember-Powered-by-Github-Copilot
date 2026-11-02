@@ -61,8 +61,8 @@ export function probeStdio(o: { command: string; args: string[]; env: Record<str
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true });
-    } catch (err) {
-      resolve({ ok: false, why: `It didn't start (${(err as NodeJS.ErrnoException).code ?? "error"}).` });
+    } catch {
+      resolve({ ok: false, why: "It didn't start." });
       return;
     }
     const finish = (r: ProbeResult) => {
@@ -74,7 +74,7 @@ export function probeStdio(o: { command: string; args: string[]; env: Record<str
       resolve(r);
     };
     const timer = setTimeout(() => finish({ ok: false, why: "It didn't answer in time." }), o.timeoutMs ?? 20_000);
-    child.on("error", err => finish({ ok: false, why: `It didn't start (${(err as NodeJS.ErrnoException).code ?? "error"}).` }));
+    child.on("error", () => finish({ ok: false, why: "It didn't start." }));
     child.on("exit", () => finish({ ok: false, why: "It stopped before saying what it offers." }));
     child.stdout!.setEncoding("utf8");
     child.stdout!.on("data", (chunk: string) => {
