@@ -453,6 +453,13 @@ export const TOOL_STEPS: Record<string, string> = {
   remember: "Remembering that",
   recall: "Thinking back",
   forget_memory: "Forgetting that",
+  set_reminder: "Setting a reminder",
+  list_reminders: "Checking your reminders",
+  cancel_reminder: "Cancelling a reminder",
+  save_routine: "Saving your routine",
+  list_routines: "Checking your routines",
+  run_routine: "Starting your routine",
+  delete_routine: "Deleting a routine",
 };
 
 /** What a borrowed hand does, as the card says it while it does it (its tool's step may have named another thing). */

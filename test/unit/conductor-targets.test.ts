@@ -12,7 +12,7 @@ import { z } from "zod";
 import { Conductor, conductorTools, type ConductorDeps } from "../../app/main/agent/conductor";
 import { Reminders } from "../../app/main/agent/reminders";
 import { emberSystemMessage, NO_CAPS } from "../../app/main/agent/persona";
-import { Presenter } from "../../app/main/agent/presenter";
+import { Presenter, stepOf } from "../../app/main/agent/presenter";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 import type { EmberState } from "../../app/shared/overlay";
 import { PLATFORM_WORDS } from "../../app/shared/words";
@@ -139,6 +139,17 @@ describe("a request that never went (cross-review X5)", () => {
     expect(await failed({ settingsKey: () => "Win+Alt+E", shortcuts: SHORTCUTS.darwin })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Win+Alt+E).");
     // Without the check (tests, the eval): the OS's own table, as before.
     expect(await failed({ shortcuts: SHORTCUTS.darwin })).toBe("Copilot reported a problem. Try again; if it keeps happening, check Copilot in Ember's settings (Control+Shift+Command+E).");
+  });
+});
+
+describe("the conversation's tools in the bubble", () => {
+  it("each have a step in words, never the tool's own name (run_routine)", () => {
+    const said = () => "";
+    const all = conductorTools(settings, async () => "", () => "", () => "", {} as never, PLATFORM_WORDS.linux,
+      { caps: TARGETS, listComputers: () => "", offerConnect: () => "" }, { store: {} as never, said },
+      { store: new Reminders({ onDue: () => undefined }), said }, { store: {} as never, said });
+    expect(all.map(t => t.name)).toEqual(expect.arrayContaining(["remember", "set_reminder", "run_routine", "list_computers", "list_tasks"]));
+    expect(all.map(t => t.name).filter(n => stepOf(n) === undefined)).toEqual([]);
   });
 });
 
