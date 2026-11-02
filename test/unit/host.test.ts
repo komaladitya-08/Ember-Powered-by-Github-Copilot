@@ -1255,6 +1255,21 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     await stop(host);
   });
 
+  it("“what did I miss?” and “status?” still name a finished task after its card has gone, and not after sign-out", async () => {
+    const { host, screen } = await resultUp();
+    // The card goes 15 s after the task finished.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(host.tasks!.list()).toEqual([]);
+    await host.ask("what did I miss?");
+    expect(screen().bubble?.thought).toBe("One task finished. “turn on night light”: done. Night light is on.");
+    await host.ask("status?");
+    expect(screen().bubble?.thought).toBe("Nothing's running right now. The last thing was “turn on night light”: done.");
+    await host.forgetConversation();
+    await host.ask("what did I miss?");
+    expect(screen().bubble?.thought).toBe("Nothing new: no tasks finished in the last two hours.");
+    await stop(host);
+  });
+
   it("signed in as another account from the error state: the first account's conversation is deleted, not resumed", async () => {
     const transcripts: unknown[][] = [];
     // (Main clears the ask box's history then, as at sign-out.)
@@ -1716,7 +1731,8 @@ describe("review round 7: a request the runtime takes but never begins", () => {
     await host.ask("what time is it?", { target: { pid: 1, title: "Mail" }, text: "<screen>Mail</screen>" });
     expect((host as any).queued).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(19_000);
-    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…" });
+    // Ten seconds with nothing from Copilot: it says it is still waiting, and offers Stop (UI audit #4).
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Still waiting for Copilot…", actions: [{ id: "ui:stop", label: "Stop" }] });
     expect(sim.clients).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1500);
     expect(screen().bubble).toMatchObject({ mood: "error", thought: NOT_ANSWERING });
@@ -1895,13 +1911,16 @@ describe("review round 8: a turn that began and then hears nothing from Copilot"
     sim.holdTurns = true;
     await host.ask("are you there?");
     expect((host as any).queued).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(29_000);
-    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", thought: "“are you there?”" });
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", thought: "“are you there?”", actions: [] });
+    // Nothing from Copilot for 10 s of "Thinking…": still waiting, with Stop (UI audit #4); and so at 30 s of silence.
     await vi.advanceTimersByTimeAsync(1500);
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: STILL, thought: "“are you there?”", streaming: true, actions: [{ id: "ui:stop", label: "Stop" }] });
+    await vi.advanceTimersByTimeAsync(20_000);
     expect(screen().bubble).toMatchObject({ mood: "thinking", title: STILL, thought: "“are you there?”", streaming: true });
     // Heard from again: the note goes, and the waits start over.
     first.emit("assistant.reasoning_delta", { deltaContent: "Tokyo is" });
-    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…" });
+    expect(screen().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", actions: [] });
     await vi.advanceTimersByTimeAsync(179_000);
     expect(screen().bubble).toMatchObject({ title: STILL });
     expect(sim.clients).toHaveLength(1);

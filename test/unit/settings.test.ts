@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SettingsStore, DEFAULT_SETTINGS } from "../../app/main/settings";
+import { SettingsStore, DEFAULT_SETTINGS, MAX_HOME_PATCH, checkHomePatch } from "../../app/main/settings";
 
 let dir: string;
 let file: string;
@@ -195,5 +195,21 @@ describe("settings keep what the user set (review fixes)", () => {
     s.update({ size: 70 }, { soon: true });
     s.flush();
     expect(JSON.parse(fs.readFileSync(file, "utf8")).size).toBe(70);
+  });
+});
+
+describe("a change sent from the settings window", () => {
+  it("is refused in plain words unless it is an object (CLAUDE.md IPC: type)", () => {
+    for (const bad of [null, undefined, 5, "x", [1, 2], true]) expect(() => checkHomePatch(bad)).toThrow("That change isn't a setting Ember knows.");
+    expect(checkHomePatch({ size: 70 })).toEqual({ size: 70 });
+  });
+
+  it("is refused when too large to be one the window makes, so it never reaches settings.json (CLAUDE.md IPC: size)", () => {
+    const grants = Object.fromEntries(Array.from({ length: 50_000 }, (_, i) => [`app${i}`, "act"]));
+    expect(() => checkHomePatch({ grants })).toThrow("That change is too large to save.");
+    // The largest real one, a full never-look list, still fits.
+    const neverLook = Array.from({ length: 100 }, (_, i) => `${i}`.padEnd(100, "x"));
+    expect(JSON.stringify({ privacy: { neverLook } }).length).toBeLessThan(MAX_HOME_PATCH);
+    expect(checkHomePatch({ privacy: { neverLook } })).toEqual({ privacy: { neverLook } });
   });
 });

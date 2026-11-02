@@ -10,9 +10,11 @@
 
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { reminderTime, whenWords, type Reminders } from "./reminders";
+import { MAX_STEPS, routineSteps, type RoutineBook } from "./routines";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
-import { hardenedSessionConfig, verifySessionTools } from "./session-config";
+import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
 import { friendlyError, type Presenter } from "./presenter";
 import type { Logger } from "../logger";
@@ -92,10 +94,19 @@ export interface ConductorDeps {
   caps?: PromptCaps;
   /** Long-term memory while it is on: its tools, and a `<memory>` block before each request. Absent: today's tools. */
   memory?: ConductorMemory;
+  /** The user's reminders (reminders.ts): set_reminder, list_reminders and cancel_reminder. Absent: no reminder tools. */
+  reminders?: Reminders;
+  /** The user's routines (routines.ts), while they are on: save_routine, list_routines, run_routine, delete_routine. */
+  routines?: RoutineBook;
   /** list_computers's answer (TargetsForAgent.describeTargets); offered only with caps.targets. */
   listComputers?: () => string;
   /** offer_connect: shows the user a Connect button for a host their words named; returns what to tell the model. */
   offerConnect?: (name: string) => string;
+  /**
+   * The extension tools the user agreed to (ExtensionsService.forSession), each call decided by Ember's gate. Absent:
+   * today's tools exactly.
+   */
+  extensions?: SessionExtensions;
 }
 
 /** The tools that come with other computers (§2.6): only with PromptCaps.targets. */
@@ -145,7 +156,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; now?: () => number }, routines?: { store: RoutineBook; said: () => string }): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -229,6 +240,78 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
         async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
     ] : []),
+    ...(reminders ? reminderTools(reminders) : []),
+    ...(routines ? routineTools(routines) : []),
+  ];
+}
+
+/**
+ * The routine tools (routines.ts), while routines are on: a routine is saved only from the user's own words, and running
+ * one starts its steps as ordinary requests, so every risky step still asks.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+function routineTools(r: { store: RoutineBook; said: () => string }): Tool<any>[] {
+  return [
+    checkedTool("save_routine", "Save a routine when the user asks you to (\"when I say start my day, open Mail and show today's calendar\"): a name and a few steps, each a request in their own words. Saying the name later runs the steps. One with the same name is replaced.",
+      z.object({
+        name: z.string().min(1).max(60).describe("The routine's name, as the user said it (\"start my day\")"),
+        steps: z.array(z.string().min(1).max(200)).min(1).max(MAX_STEPS).describe("Each step as a request, in the user's words (\"open Mail\")"),
+      }),
+      async ({ name, steps }) => {
+        const saved = r.store.save(name, steps, r.said());
+        return typeof saved === "string" ? saved : `Saved “${saved.name}” with ${saved.steps.length} step${saved.steps.length === 1 ? "" : "s"}. Tell the user in a few words.`;
+      }),
+    checkedTool("list_routines", "List the user's saved routines and their steps.",
+      z.object({}),
+      async () => {
+        const list = r.store.list();
+        return list.length ? list.map(x => `“${x.name}”: ${x.steps.join("; ")}`).join("\n") : "No routines are saved.";
+      }),
+    checkedTool("run_routine", "Run one of the user's saved routines when they say its name or ask for it. Returns its steps to do in order.",
+      z.object({ name: z.string().min(1).max(60).describe("The routine's name") }),
+      async ({ name }) => {
+        const found = r.store.find(name);
+        return found ? routineSteps(found) : `No routine is called “${name.slice(0, 60)}”. Use list_routines, or ask the user.`;
+      }),
+    checkedTool("delete_routine", "Delete a saved routine the user asks you to delete, by its name.",
+      z.object({ name: z.string().min(1).max(60) }),
+      async ({ name }) => {
+        const found = r.store.find(name);
+        return found && r.store.forget(found.id) ? `Deleted “${found.name}”.` : `No routine is called “${name.slice(0, 60)}”.`;
+      }),
+  ];
+}
+
+/**
+ * The reminder tools (reminders.ts): a reminder only tells the user something when it is due, in the user's own words;
+ * it never starts a task. Reminders last while Ember runs.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+function reminderTools(r: { store: Reminders; said: () => string; now?: () => number }): Tool<any>[] {
+  const now = r.now ?? Date.now;
+  return [
+    checkedTool("set_reminder", "Remind the user of something later, when they ask (\"remind me in 20 minutes to call Priya\", \"at 3 pm tell me to stand up\"). Ember shows and says it when it's due; it never acts on it. Use the user's own words for what to remind them of. Give minutes from now, or a clock time. Reminders last while Ember runs: if they ask for one days ahead, say so.",
+      z.object({
+        text: z.string().min(1).max(200).describe("What to remind them of, in their words (\"call Priya\")"),
+        minutes: z.number().int().min(1).max(10_080).optional().describe("Minutes from now"),
+        at: z.string().min(1).max(20).optional().describe("A clock time today or tomorrow, 24-hour \"15:30\" or \"3:30 pm\""),
+      }),
+      async ({ text, minutes, at }) => {
+        const when = reminderTime({ ...(minutes !== undefined ? { minutes } : {}), ...(at !== undefined ? { at } : {}) }, now());
+        if (typeof when === "string") return when;
+        const set = r.store.add(text, when, r.said());
+        if (typeof set === "string") return set;
+        return `Set [${set.id}] for ${whenWords(set.at, now())}. Tell the user in a few words, with the time.`;
+      }),
+    checkedTool("list_reminders", "List the reminders waiting.",
+      z.object({}),
+      async () => {
+        const list = r.store.list();
+        return list.length ? list.map(x => `[${x.id}] ${whenWords(x.at, now())}: ${x.text}`).join("\n") : "No reminders are waiting.";
+      }),
+    checkedTool("cancel_reminder", "Cancel a reminder the user asks you to cancel, by its id from set_reminder or list_reminders.",
+      z.object({ id: z.string().min(1).max(20).describe("The reminder's id, without brackets") }),
+      async ({ id }) => r.store.cancel(id.replace(/^\[|\]$/g, "")) ? `Cancelled ${id}.` : `No reminder has the id ${id}. Use list_reminders to find it.`),
   ];
 }
 
@@ -462,15 +545,48 @@ export class Conductor {
   private settleEnding: ((ended: boolean) => void) | null = null;
 
   constructor(private deps: ConductorDeps) {
-    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools).map(t => t.name);
+    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools).map(t => t.name);
   }
 
-  /** What the user said in the turn under way: a fact saved now counts as theirs only if it is in their words. */
+  /**
+   * What the user said in the turn under way: a fact, reminder or routine saved now counts as theirs only if it is in
+   * their words. Set when that turn begins (its user.message), not when the request is sent: a request sent during a
+   * turn waits for it, and its words must not stand for the turn still running.
+   */
   private said = "";
+  /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
+  private unstarted: string[] = [];
+
+  /**
+   * A turn began with `content` (the prompt ask() sent, which ends with the user's words): the oldest request it
+   * matches gives the turn its words, and those before it never ran. A message that is none of them (nothing the user
+   * asked) gives the turn none.
+   */
+  private turnBegan(content: string): void {
+    const said = content.trimEnd();
+    const i = this.unstarted.findIndex(t => said.endsWith(t.trim()));
+    this.said = i < 0 ? "" : this.unstarted[i];
+    this.unstarted.splice(0, i + 1);
+    // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
+    // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
+    this.deps.extensions?.newTurn?.();
+  }
 
   /** Memory's tools, while memory is on (deps.memory). */
   private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
     const store = this.deps.memory;
+    return store ? { store, said: () => this.said } : undefined;
+  }
+
+  /** The routine tools, while routines are on (deps.routines). */
+  private get routineTools(): { store: RoutineBook; said: () => string } | undefined {
+    const store = this.deps.routines;
+    return store ? { store, said: () => this.said } : undefined;
+  }
+
+  /** The reminder tools, when the deps give reminders. */
+  private get reminderTools(): { store: Reminders; said: () => string } | undefined {
+    const store = this.deps.reminders;
     return store ? { store, said: () => this.said } : undefined;
   }
 
@@ -505,10 +621,11 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools),
+      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools),
       systemMessage: emberSystemMessage(d.words, d.memory ? { ...(d.caps ?? NO_CAPS), memory: true } : d.caps),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
+      ...(d.extensions ? { extensions: d.extensions } : {}),
     });
     if (d.resume) {
       try {
@@ -532,7 +649,7 @@ export class Conductor {
       writeAgentState(d.stateFile, { forget: undefined });
       d.log.info("conductor.leftovers_deleted", { count: leftovers.length });
     }
-    const tools = await verifySessionTools(this.session, this.toolNames);
+    const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions);
     d.log.info("conductor.tools", { tools });
     const ms = d.turnStartMs ?? TURN_START_MS;
     const silentMs = d.turnSilentMs ?? TURN_SILENT_MS;
@@ -544,6 +661,10 @@ export class Conductor {
     this.watch = watch;
     this.session.on(e => {
       watch.event(e);
+      if (e.type === "user.message" && !(e as { agentId?: string }).agentId) {
+        const content = (e.data as { content?: unknown } | undefined)?.content;
+        this.turnBegan(typeof content === "string" ? content : "");
+      }
       if (this.stuck) {
         // The silent turn being ended has ended (Ember said so already): the conversation goes on.
         if (e.type === "session.idle") this.settleEnding?.(true);
@@ -584,7 +705,7 @@ export class Conductor {
     this.deps.presenter.userPrompt(text);
     this.deps.log.info("conductor.ask", { chars: text.length });
     const reports = this.deps.takeReports?.() ?? [];
-    this.said = text;
+    this.unstarted.push(text);
     // What Ember remembers that bears on the request (while memory is on): before it, as information.
     let remembered = "";
     try { remembered = this.deps.memory?.context(text) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
@@ -605,6 +726,8 @@ export class Conductor {
     } catch (err) {
       watch?.unsent();
       this.busy = false;
+      // No turn will come for it.
+      this.unstarted = this.unstarted.filter(t => t !== text);
       // The finished tasks' results were in the request that never went: they wait for the next one.
       if (reports.length) this.deps.returnReports?.(reports);
       // The runtime went away (crash, restart): say so instead of "Thinking…" forever. Not when this
@@ -628,6 +751,7 @@ export class Conductor {
     if (this.session && this.busy) this.stopping = true;
     // The runtime drops the requests waiting behind the turn: no turn is owed for them.
     this.watch?.clear();
+    this.unstarted = [];
     await this.session?.abort();
   }
 

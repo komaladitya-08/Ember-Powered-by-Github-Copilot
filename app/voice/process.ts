@@ -21,7 +21,7 @@ type FromMain =
   /** `dev`: an unpackaged (development) build. */
   /** `voiceprint`: the owner's (Voice Match on), base64 (voiceprint.ts). */
   /** `wasm`: run on WebAssembly (a voice process before this one died loading natively; runtime.ts). */
-  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null; wasm?: boolean }
+  | { type: "init"; models: ModelPaths; monitor: boolean; dev: boolean; voiceprint?: string | null; wasm?: boolean; capiDir?: string }
   /** Voice Match turned on (the owner's voiceprint) or off (null). */
   | { type: "voiceprint"; print: string | null }
   /** Enrolment: listen for the owner's phrases (nothing heard meanwhile is a request), or stop doing so. */
@@ -155,7 +155,7 @@ parent.on("message", e => {
     if (m.dev && process.env.EMBER_VOICE_DUMP) dump = fs.createWriteStream(process.env.EMBER_VOICE_DUMP);
     try {
       const t0 = Date.now();
-      const recognizers = sherpaBackend(m.models, { monitor: m.monitor, onError: failed, ...(m.wasm ? { runtime: { prefer: "wasm" as const } } : {}) });
+      const recognizers = sherpaBackend(m.models, { monitor: m.monitor, onError: failed, ...(m.wasm ? { runtime: { prefer: "wasm" as const } } : m.capiDir ? { runtime: { capiDir: m.capiDir } } : {}) });
       backend = recognizers;
       speakerModel = m.models.speaker;
       gate.setOwner(decodePrint(m.voiceprint));

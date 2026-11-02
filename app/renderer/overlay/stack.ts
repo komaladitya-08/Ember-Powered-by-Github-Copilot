@@ -1,21 +1,63 @@
 /** The task cards' stack above the handle: their order and what folds away when they don't fit (pure, so it is unit-tested). */
 
 import { TASK_STOPPING, type TaskCard } from "../../shared/overlay";
+import { STATUS_WORDS, telemetryItems } from "../../shared/activity";
 
 /** A task still under way (running, in line, or waiting for the user): its card has Stop. */
 export const underWay = (t: TaskCard): boolean => t.status === "running" || t.status === "queued" || t.status === "waiting";
 
-/** A card's state in words, for screen readers (its symbol says it to the eye): a task in line doesn't need the user. */
+/**
+ * A card's state in words, for screen readers (its symbol says it to the eye), from the one table of state words
+ * (app/shared/activity.ts): a task in line doesn't need the user; one whose question is up waits for them.
+ */
 export const STATE_WORD: Record<TaskCard["status"], string> = {
-  running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: ",
+  running: `${STATUS_WORDS.running}: `, queued: `${STATUS_WORDS.queued}: `, waiting: `${STATUS_WORDS.waiting}: `,
+  done: `${STATUS_WORDS.done}: `, failed: `${STATUS_WORDS.failed}: `, stopped: `${STATUS_WORDS.stopped}: `,
 };
+
+/** What a card's lines say (app/shared/activity.ts has the words); null hides a line. */
+export interface CardLines {
+  /** What it is doing now, in Ember's words (while it is under way). */
+  live: string | null;
+  /** The worker's own words: its latest note while it works, its summary once it ended (or what Ember said before it ran). */
+  detail: string;
+  /** The telemetry row: the state's word once it ended, the plan's step, then one more item; the clock sits between. */
+  tele: { state: string | null; step: string | null; extra: string | null } | null;
+  /** The steps so far in one sentence. */
+  summary: string | null;
+}
+
+/**
+ * A card's lines (audit #2: not just "Working…", and never the same words twice): with its activity, a live line in
+ * Ember's words, the worker's note apart from it, a telemetry row and a summary of its steps; without (a task in line),
+ * its detail as before. `stopPressed`: its Stop was pressed and Ember hasn't said yet that it is stopping.
+ */
+export function cardLines(t: TaskCard, stopPressed = false): CardLines {
+  const a = t.activity;
+  const stopping = stopPressed || t.detail === TASK_STOPPING;
+  if (!a) return { live: null, detail: stopPressed ? TASK_STOPPING : t.detail, tele: null, summary: null };
+  const ended = !underWay(t);
+  const { step, extra } = telemetryItems(a, t.plan, ended);
+  const word = !ended ? null : t.status === "done" ? STATUS_WORDS.done : t.status === "failed" ? STATUS_WORDS.failed : STATUS_WORDS.stopped;
+  // Never the same words twice (audit #2): a result that is only the state's word ("Stopped.") goes, and one that
+  // starts with it ("Stopped before it started.") says it for the row.
+  const said = ended ? t.detail.trim() : "";
+  const same = !!word && said.replace(/[.!]$/, "").toLowerCase() === word.toLowerCase();
+  const state = word && !same && said.toLowerCase().startsWith(word.toLowerCase()) ? null : word;
+  return {
+    live: ended ? null : stopping ? TASK_STOPPING : a.live,
+    detail: ended ? (same ? "" : t.detail) : stopping ? "" : a.note ?? "",
+    tele: { state, step, extra },
+    summary: a.summary ?? null,
+  };
+}
 
 /**
  * What the handle says while tasks run and nothing else is to be said ("Working on 2 tasks…"), so it never says
  * Ready under a card that says Working; null when no task is running or in line.
  */
 export function busyLine(tasks: readonly TaskCard[]): string | null {
-  const n = tasks.filter(t => t.status === "running" || t.status === "queued").length;
+  const n = tasks.filter(underWay).length;
   return n === 0 ? null : `Working on ${n === 1 ? "1 task" : `${n} tasks`}…`;
 }
 

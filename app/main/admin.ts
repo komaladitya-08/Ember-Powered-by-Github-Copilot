@@ -52,6 +52,10 @@ export const AdminPolicySchema = z.object({
     aiReview: z.boolean().optional(),
     /** Long-term memory (docs/MEMORY.md): false, Ember remembers nothing between runs and keeps no memory file. */
     memory: z.boolean().optional(),
+    /** Routines and lasting reminders (app/main/agent/routines.ts): false, none are kept, and reminders end at quit. */
+    routines: z.boolean().optional(),
+    /** Extensions (plugins' MCP tools, app/main/extensions/): false, none load or run, and none can be installed. */
+    extensions: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -112,7 +116,7 @@ export interface LoadedAdminPolicy {
 
 /** Everything off that could act or listen: used when the policy file is broken. */
 const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, extensions: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },
@@ -211,7 +215,8 @@ export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);
   if (admin.features.voice === false) s.wakeWord = false;
-  if (admin.features.speak === false) { s.speak = false; s.speakWithScreenReader = false; }
+  // Results aren't read out either: Home's "Read finished tasks out loud" shows off (and managed), not on.
+  if (admin.features.speak === false) { s.speak = false; s.speakWithScreenReader = false; s.speakResults = false; }
   if (admin.neverLook.length) {
     const have = new Set(s.privacy.neverLook.map(x => x.toLowerCase()));
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };
@@ -222,6 +227,8 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   if (!admin.allowGrants) s.trust = { ...s.trust, askedApps: false };
   if (admin.features.aiReview === false) s.trust = { ...s.trust, reviewCommands: false };
   if (admin.features.memory === false) s.memory = { ...s.memory, on: false };
+  if (admin.features.routines === false) s.routines = { ...s.routines, on: false };
+  if (admin.features.extensions === false) s.extensions = { ...s.extensions, on: false };
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
@@ -237,6 +244,8 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (!admin.allowGrants) keys.push("grants", "askedApps");
   if (admin.features.aiReview === false) keys.push("reviewCommands");
   if (admin.features.memory === false) keys.push("memory");
+  if (admin.features.routines === false) keys.push("routines");
+  if (admin.features.extensions === false) keys.push("extensions");
   if (admin.provider) keys.push("provider");
   return keys;
 }

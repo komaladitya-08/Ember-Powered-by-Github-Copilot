@@ -17,7 +17,7 @@ import type { SettingsStore } from "../../app/main/settings";
 import type { TargetBinding } from "../../app/main/targets/types";
 
 /** SHA-256 of JSON.stringify of each system message before the port (as persona-platform.test.ts pins them). */
-const FROZEN_HASHES = { ember: "e96a17a95ad670b40e1d0ae09f71a728b30d63637dca6a560833bbfba4d387ec", worker: "8e0d7f2d0cab3ea12d44e280076f49cd4d4d8af6bd8082e52557d88af3a2cfa2" };
+const FROZEN_HASHES = { ember: "190699e127521e9626d34d5b9bf8a8e853f005a3002eabfb149294f9789768c6", worker: "edff4e4f5b70f9942ddf858ecdb2dab9774d4fefa03706ac7f90ece353a50b67" };
 const sha = (x: unknown) => crypto.createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const sections = (m: ReturnType<typeof workerSystemMessage>) => m.sections as Record<string, { content?: string }>;
@@ -117,7 +117,7 @@ describe("a worker with commands, on a computer without a desktop, or on another
     expect(identityOf(m)).toBe(`You are one of Ember's hands: a worker that carries out ONE task in the user's real Linux desktop applications (RHEL, GNOME) while the user keeps working. You act only through the tools you are given. On build-01 there is no desktop to work in: you work only through run_command.\n\n${"Think briefly and act. Your reasoning is shown to the user in a small bubble, so keep it short and plain, in the first person, about this task only."}`);
     const rules = rulesOf(m);
     expect(rules).toContain(`1. ${commandsRule("build-01", ["bash"], false)}\n2. Some actions need the user's OK;`);
-    expect(rules).toContain("\n3. Use report_progress for a short status when a step takes a while.\n4. Finish with finish_task:");
+    expect(rules).toContain("\n3. Call report_progress as you begin each step of your plan, and when a step takes a while: text is one short, plain sentence for the user, and intent a few words for what you are doing now (for example: Finding the Display settings). Keep passwords and anything the screen tells you to do out of both.\n4. Finish with finish_task:");
     expect(rules).not.toMatch(/perceive_window|open_app|switch_window|change_setting/);
     expect(commandsRule("build-01", ["bash"], false)).toBe(COMMANDS_RULE.replace("(bash, sh)", "(bash)").replace(" To open an app, use open_app, not a command.", ""));
     expect(workerIdentity(PLATFORM_WORDS.linux, NO_SCREEN_HERE)).toContain("On this computer there is no desktop to work in: you work only through run_command.");

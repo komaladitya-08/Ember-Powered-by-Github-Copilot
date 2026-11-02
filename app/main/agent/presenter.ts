@@ -340,6 +340,12 @@ export interface PresenterOptions {
    * Given as the task's id, its bubbles carry it (the corner card pairs them with that task's row).
    */
   task?: boolean | string;
+  /**
+   * A task that works in the background (docs/DESIGN.md "Two bodies"): its work and its result show on its card in
+   * the corner, never in the bubble beside the cursor, except while it uses the user's mouse and keyboard
+   * (`foreground`) or guides them. Its questions and announcements still come to the cursor: they need the user now.
+   */
+  corner?: boolean;
   /** Every event of the session it shows, before it's shown (the host follows which request's turn is running). */
   onEvent?: (e: PresenterEvent) => void;
   /** Something went wrong and the bubble says so (the conversation section keeps it). */
@@ -447,6 +453,13 @@ export const TOOL_STEPS: Record<string, string> = {
   remember: "Remembering that",
   recall: "Thinking back",
   forget_memory: "Forgetting that",
+  set_reminder: "Setting a reminder",
+  list_reminders: "Checking your reminders",
+  cancel_reminder: "Cancelling a reminder",
+  save_routine: "Saving your routine",
+  list_routines: "Checking your routines",
+  run_routine: "Starting your routine",
+  delete_routine: "Deleting a routine",
 };
 
 /** What a borrowed hand does, as the card says it while it does it (its tool's step may have named another thing). */
@@ -487,6 +500,20 @@ export const NO_REPLY = "Copilot ended that turn without an answer. Please ask m
 /** The bubble's title while a turn under way hears nothing from Copilot (see TurnWatch). */
 export const STILL_WAITING = "Still waiting for Copilot…";
 
+/**
+ * How long "Thinking…" may show with nothing from Copilot before the bubble says it is still waiting and offers Stop
+ * (ms): about 10 s is where a wait needs to say so and give a way out (docs/DESIGN.md "Bubble and motion").
+ */
+export const THINK_SLOW_MS = 10_000;
+/** The conversation's Stop, while Copilot keeps it waiting: ends that turn only (AgentHost.stopAnswer); tasks go on. */
+export const STOP_ANSWER = { id: "ui:stop", label: "Stop" } as const;
+/** A problem's way to ask again, where that is safe (a conversation's turn that ran no tool): the same request, re-sent. */
+export const TRY_AGAIN = { id: "ui:retry", label: "Try again" } as const;
+/** Under an answer whose turn started a task: where its work shows (review #3, the bubble and the card telling one story). */
+export const TASK_IN_CORNER = "Its card in the corner shows how it's going.";
+/** The bubble after the conversation's Stop. */
+export const STOPPED_ANSWER = "Okay, I've stopped.";
+
 /** What Ember's body does during each tool. */
 export const TOOL_GESTURES: Record<string, Gesture> = {
   describe_screen: "chin", perceive_window: "chin", list_windows: "chin",
@@ -519,6 +546,21 @@ export class Presenter {
   kind: Claim = "progress";
   /** Its task works on Ember's desk now: its steps don't say "your keyboard" or "your mouse" (stepOf). */
   onDesk = false;
+  /** A cornered task's work shows in the corner only (PresenterOptions.corner). */
+  private readonly corner: boolean;
+  private front = false;
+  /**
+   * Its task uses the user's mouse and keyboard now: its work shows beside the cursor as well as on its card. Back in
+   * the background, the bubble it had there goes (the card carries on).
+   */
+  get foreground(): boolean { return this.front; }
+  set foreground(on: boolean) {
+    if (on === this.front) return;
+    this.front = on;
+    if (!on && this.corner && !this.guiding && this.visible && this.kind === "progress") this.hide();
+  }
+  /** Its work shows only on its card now: a cornered task working in the background (not guiding). */
+  private get inCorner(): boolean { return this.corner && !this.front && !this.guiding; }
   /** How this presenter's own work claims the bubble. */
   private readonly work: Claim;
   /** Shared by every presenter writing the same bubble. */
@@ -536,6 +578,14 @@ export class Presenter {
   private readonly heldStopKey: () => string | null;
   /** The title "Still waiting for Copilot…" replaced (see stalled). */
   private stalledTitle = "";
+  /** "Thinking…" with nothing from Copilot yet: after THINK_SLOW_MS it says it is still waiting, with Stop (see slowThinking). */
+  private thinkTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The latest request asked (userPrompt), for a problem's Try again; null once the presenter has no request to offer again. */
+  private lastAsked: string | null = null;
+  /** The turn under way ran a tool (Try again is offered only for a turn that did nothing yet), and started a task. */
+  private toolRan = false;
+  private startingTask = false;
+  private startedTask = false;
   /** The words of the latest request asked (userPrompt), until its turn begins (its user.message). */
   private asked: string | null = null;
   /** That request was asked while the answer before it was still coming (see userPrompt). */
@@ -565,6 +615,7 @@ export class Presenter {
     opts: PresenterOptions = {},
   ) {
     this.work = opts.task ? "progress" : "reply";
+    this.corner = !!opts.task && opts.corner === true;
     this.owner = BubbleOwner.of(owner);
     this.onEvent = opts.onEvent;
     this.onProblem = opts.onProblem;
@@ -593,6 +644,8 @@ export class Presenter {
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
     if (this.silent) return false;
+    // A task in the background: its work is on its card in the corner; the cursor's bubble isn't touched.
+    if (claim === "progress" && this.inCorner) { this.unseen = false; return false; }
     if (!patch.bubble) {
       // Just the face (talking stops): only while this presenter's bubble is the one on screen.
       if (this.owner.current === this && !this.unseen) this.push(patch);
@@ -759,9 +812,10 @@ export class Presenter {
     this.asked = null;
     this.silent = false;
     const said = forBubble(message);
+    this.cancelSlow();
     this.apply({
       emotion: "sad", talking: false, gesture: "facepalm",
-      bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
+      bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: this.problemActions(said) },
     }, "take");
     this.onProblem?.(message);
     this.hideLater(12000);
@@ -783,6 +837,24 @@ export class Presenter {
       bubble: { visible: true, mood, title: n.title, thought: forBubble(n.text), step: null, streaming: false, actions: n.actions ?? [] },
     }, "take");
     this.hideLater(n.ms ?? 12000);
+  }
+
+  /**
+   * Ember's own answer, said without a Copilot turn (the status answer, status.ts): it shows as an answer does, is kept
+   * as one (onFinalAnswer: the conversation and "Read the last answer"), and goes as one does.
+   */
+  say(text: string): void {
+    this.cancelHide();
+    this.guiding = false;
+    this.answering = false;
+    this.asked = null;
+    this.silent = false;
+    this.apply({
+      emotion: "happy", talking: false,
+      bubble: { visible: true, mood: "idle", title: this.name(), thought: clip(text), step: null, streaming: false, actions: [] },
+    }, "take");
+    this.onFinalAnswer?.(text);
+    this.hideLater(Math.min(30000, 6000 + text.length * 50));
   }
 
   /**
@@ -824,8 +896,63 @@ export class Presenter {
     if (b.visible && (b.mood === "error" || b.mood === "attention") && b.thought === forBubble(text) && !this.busy) this.hide();
   }
 
+  /**
+   * A problem's buttons: Open settings where settings can fix it; otherwise Try again where asking again is safe (the
+   * conversation's own request, whose turn ran no tool: nothing it did would be done twice); otherwise none.
+   */
+  private problemActions(said: string): BubbleState["actions"] {
+    if (settingsHelps(said)) return [{ id: "ui:settings", label: "Open settings" }];
+    return this.work === "reply" && this.lastAsked !== null && !this.toolRan ? [{ ...TRY_AGAIN }] : [];
+  }
+
+  /** "Thinking…" is up with nothing from Copilot yet: in THINK_SLOW_MS it says it is still waiting, with Stop. */
+  private armSlow(): void {
+    this.cancelSlow();
+    if (this.work !== "reply") return;
+    this.thinkTimer = this.timers.set(() => { this.thinkTimer = null; this.slowThinking(); }, THINK_SLOW_MS);
+  }
+
+  private cancelSlow(): void {
+    if (this.thinkTimer) { this.timers.clear(this.thinkTimer); this.thinkTimer = null; }
+  }
+
+  private slowThinking(): void {
+    const b = this.state.bubble;
+    if (this.silent || this.produced || !b.visible || b.mood !== "thinking" || b.title === STILL_WAITING) return;
+    this.stalledTitle = b.title;
+    this.apply({ bubble: { ...b, title: STILL_WAITING, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), { ...STOP_ANSWER }] } });
+  }
+
+  /**
+   * Copilot is heard from again: the bubble the next update builds on no longer says it is still waiting or offers
+   * Stop (that update shows it).
+   */
+  private heard(): void {
+    this.cancelSlow();
+    // (A task's bubble: its turn's watch says when it is heard from again, through stalled(false).)
+    const b = this.state.bubble;
+    if (this.work !== "reply" || (b.title !== STILL_WAITING && !b.actions.some(a => a.id === STOP_ANSWER.id))) return;
+    this.apply({ bubble: { ...b, title: b.title === STILL_WAITING ? this.stalledTitle : b.title, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
+  }
+
+  /**
+   * The conversation's Stop was pressed (STOP_ANSWER): the turn is being ended (AgentHost.stopAnswer), and the bubble
+   * says so at once rather than wait for the turn's end.
+   */
+  stopped(): void {
+    this.cancelHide();
+    this.cancelSlow();
+    this.guiding = false;
+    this.answering = false;
+    this.asked = null;
+    this.silent = false;
+    this.apply({ emotion: "neutral", talking: false, bubble: { visible: true, mood: "idle", title: "Stopped", thought: STOPPED_ANSWER, step: null, streaming: false, actions: [] } }, "take");
+    this.hideLater(4000);
+  }
+
   /** The session went away mid-turn (restart, sign-out): nothing is left streaming or "thinking". */
   reset(): void {
+    this.cancelSlow();
     const wasBusy = this.busy;
     this.answering = false;
     this.answer = "";
@@ -840,11 +967,13 @@ export class Presenter {
    */
   stalled(on: boolean): void {
     const b = this.state.bubble;
+    // The conversation's bubble offers Stop meanwhile (a task's card has its own).
+    const stop = this.work === "reply" ? [{ ...STOP_ANSWER }] : [];
     if (on && this.busy && !this.silent && b.title !== STILL_WAITING) {
       this.stalledTitle = b.title;
-      this.apply({ bubble: { ...b, title: STILL_WAITING } });
+      this.apply({ bubble: { ...b, title: STILL_WAITING, actions: [...b.actions.filter(a => a.id !== STOP_ANSWER.id), ...stop] } });
     } else if (!on && b.title === STILL_WAITING) {
-      this.apply({ bubble: { ...b, title: this.stalledTitle } });
+      this.apply({ bubble: { ...b, title: this.stalledTitle, actions: b.actions.filter(a => a.id !== STOP_ANSWER.id) } });
     }
   }
 
@@ -858,10 +987,14 @@ export class Presenter {
     this.answer = "";
     this.silent = false;
     this.asked = text;
+    this.lastAsked = text;
+    this.toolRan = false;
+    this.startedTask = false;
     this.apply({
       emotion: "thinking", talking: false,
       bubble: { visible: true, mood: "thinking", title: "Thinking…", thought: quoted(text), step: null, streaming: true, actions: [] },
     }, "take");
+    this.armSlow();
   }
 
   /** Guide mode: Ember points at something and says what to do; it stays until the next step. */
@@ -942,6 +1075,14 @@ export class Presenter {
   /** A task finished: how it went. It shows once nobody else holds the bubble, and goes after a while. */
   outcome(o: { title: string; text: string; emotion: Emotion; gesture: Gesture; mood: BubbleState["mood"]; actions?: BubbleState["actions"] }): void {
     if (this.silent) return;
+    // A task that worked in the background ends on its card (it shows the result there, a while longer).
+    if (this.inCorner) {
+      this.cancelHide();
+      this.answering = false;
+      if (this.owner.current === this && !this.unseen) this.hide();
+      else this.state = { ...this.state, emotion: "neutral", talking: false, bubble: { ...IDLE_BUBBLE } };
+      return;
+    }
     this.cancelHide();
     this.answering = false;
     this.guiding = false;
@@ -955,6 +1096,8 @@ export class Presenter {
   event(e: PresenterEvent): void {
     this.onEvent?.(e);
     const d = e.data ?? {};
+    // Copilot answers (words, a step, a problem, the turn's end): no longer "still waiting", and no Stop of its own.
+    if (/^(assistant\.(reasoning_delta|message_delta|message|intent)|tool\.execution_start|session\.(error|idle))$/.test(e.type)) this.heard();
     switch (e.type) {
       case "assistant.intent":
         if (!this.answering && this.work !== "progress" && typeof d.intent === "string") this.apply({ bubble: { ...this.state.bubble, title: d.intent } });
@@ -978,6 +1121,8 @@ export class Presenter {
         this.answering = false;
         this.answer = "";
         this.produced = false;
+        this.toolRan = false;
+        this.startedTask = false;
         break;
       }
       case "assistant.turn_start":
@@ -1017,6 +1162,8 @@ export class Presenter {
         const name = String(d.toolName ?? "");
         this.answering = false;
         this.produced = true;
+        this.toolRan = true;
+        this.startingTask = name === "start_task";
         this.thoughtBreak = true;
         // While guiding, the instruction stays up (Ember is waiting for the user, not working).
         const guiding = name === "wait_for_click" || name === "point_at";
@@ -1027,6 +1174,8 @@ export class Presenter {
         break;
       }
       case "tool.execution_complete":
+        if (this.startingTask && d.success !== false) this.startedTask = true;
+        this.startingTask = false;
         if (d.success === false) this.apply({ emotion: "confused", gesture: "scratch", bubble: { ...this.state.bubble, step: null } });
         else this.apply({ bubble: { ...this.state.bubble, step: null } });
         break;
@@ -1051,8 +1200,9 @@ export class Presenter {
           let scale = 1;
           try { scale = Number(this.textScale()); } catch { /* the usual size */ }
           const more = cutShort(full, scale);
+          // A task this turn started works on: the answer says where its work shows (its card), so the two agree.
           this.apply({ talking: false, bubble: { ...this.state.bubble, thought: clip(full), streaming: false,
-            step: more ? keyboardRoute(this.settingsKey, "Conversation") : null,
+            step: more ? keyboardRoute(this.settingsKey, "Conversation") : this.startedTask ? TASK_IN_CORNER : null,
             actions: more ? [{ id: "ui:more", label: "Read all" }] : [] } });
         }
         break;
@@ -1065,7 +1215,7 @@ export class Presenter {
         // "Open settings" where settings can fix it (a sign-in, the model, access), never for the network or a hiccup.
         this.apply({
           emotion: "sad", talking: false,
-          bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: settingsHelps(said) ? [{ id: "ui:settings", label: "Open settings" }] : [] },
+          bubble: { visible: true, mood: "error", title: problemTitle(said, this.provider), thought: said, step: null, streaming: false, actions: this.problemActions(said) },
         });
         this.onProblem?.(said);
         this.hideLater(12000);
@@ -1078,7 +1228,7 @@ export class Presenter {
         // (Not the end of the turn before a request still owed its own: that one's "Thinking…" stays.)
         if (!aborted && this.work === "reply" && !this.produced && this.asked === null && !this.silent && this.state.bubble.visible && this.state.emotion === "thinking") {
           this.answering = false;
-          this.apply({ emotion: "confused", talking: false, bubble: { visible: true, mood: "error", title: "No answer", thought: NO_REPLY, step: null, streaming: false, actions: [] } });
+          this.apply({ emotion: "confused", talking: false, bubble: { visible: true, mood: "error", title: "No answer", thought: NO_REPLY, step: null, streaming: false, actions: this.problemActions(NO_REPLY) } });
           this.onProblem?.(NO_REPLY);
           this.hideLater(8000);
           break;
@@ -1090,6 +1240,8 @@ export class Presenter {
         const chars = this.answer.length;
         this.hideLater(Math.min(30000, 6000 + chars * 50));
         this.answering = false;
+        // The request had its turn: a later problem (the runtime stopping meanwhile) doesn't offer to ask it again.
+        if (this.asked === null) this.lastAsked = null;
         break;
       }
     }

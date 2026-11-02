@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -882,13 +882,35 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     return last().bubble!;
   };
 
-  it("offers Open settings where settings can fix it (sign-in, model, access), never for the network or a hiccup", () => {
+  it("offers Open settings where settings can fix it (sign-in, model, access), and Try again for the network or a hiccup (UI audit #4)", () => {
     expect(errorOf({ message: "401 Unauthorized", errorType: "authentication" }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
     expect(errorOf({ message: "model_not_supported" }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
     expect(errorOf({ message: "403", statusCode: 403 }).actions).toEqual([{ id: "ui:settings", label: "Open settings" }]);
-    expect(errorOf({ message: "fetch failed ECONNRESET" }).actions).toEqual([]);
-    expect(errorOf({ message: "503 Service Unavailable" }).actions).toEqual([]);
-    expect(errorOf({ message: "429 rate limited", statusCode: 429 }).actions).toEqual([]);
+    expect(errorOf({ message: "fetch failed ECONNRESET" }).actions).toEqual([{ id: "ui:retry", label: "Try again" }]);
+    expect(errorOf({ message: "503 Service Unavailable" }).actions).toEqual([{ id: "ui:retry", label: "Try again" }]);
+    expect(errorOf({ message: "429 rate limited", statusCode: 429 }).actions).toEqual([{ id: "ui:retry", label: "Try again" }]);
+  });
+
+  it("never offers Try again for a turn that already did something (a tool ran), or for a task", () => {
+    const { p, last } = setup();
+    p.userPrompt("rename my screenshots");
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(last().bubble!.actions).toEqual([]);
+    const states: Partial<EmberState>[] = [];
+    const task = new Presenter(s => states.push(s), undefined, () => "Tidy", new BubbleOwner(), undefined, false, { task: "t1" });
+    task.taskStarted();
+    task.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(states.at(-1)!.bubble!.actions).toEqual([]);
+    // A runtime that stops after the answer came: nothing to ask again.
+    const { p: q, last: lastQ } = setup();
+    q.userPrompt("hi");
+    q.event({ type: "user.message", data: { content: "hi" } });
+    q.event({ type: "assistant.message_delta", data: { deltaContent: "Hello." } });
+    q.event({ type: "assistant.message", data: { content: "Hello." } });
+    q.event({ type: "session.idle", data: {} });
+    q.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
+    expect(lastQ().bubble!.actions).toEqual([]);
   });
 
   it("offers nothing for a runtime that stopped and reconnects by itself", () => {
@@ -1074,5 +1096,78 @@ describe("More time scales a bubble's time once, also when it waited or was cove
     expect(visible()).toBe(true);
     vi.advanceTimersByTime(20);
     expect(visible()).toBe(false);
+  });
+});
+
+describe("a wait for Copilot says so and can be stopped (UI audit #4)", () => {
+  it("turns Thinking… into Still waiting for Copilot… with Stop after 10 s of nothing, and back when Copilot speaks", () => {
+    const { p, last } = setup();
+    p.userPrompt("are you there?");
+    vi.advanceTimersByTime(THINK_SLOW_MS - 1);
+    expect(last().bubble).toMatchObject({ title: "Thinking…", actions: [] });
+    vi.advanceTimersByTime(1);
+    expect(last().bubble).toMatchObject({ mood: "thinking", title: STILL_WAITING, streaming: true, actions: [STOP_ANSWER] });
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Checking" } });
+    expect(last().bubble).toMatchObject({ mood: "thinking", title: "Thinking…", actions: [] });
+  });
+
+  it("never says it is still waiting once Copilot has said something", () => {
+    const { p, states } = setup();
+    p.userPrompt("hi");
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "Hel" } });
+    vi.advanceTimersByTime(THINK_SLOW_MS * 3);
+    expect(states.some(s => s.bubble?.title === STILL_WAITING)).toBe(false);
+  });
+
+  it("says Stopped at once when its Stop is pressed, with no buttons left", () => {
+    const { p, last } = setup();
+    p.userPrompt("are you there?");
+    vi.advanceTimersByTime(THINK_SLOW_MS);
+    p.stopped();
+    expect(last()).toMatchObject({ emotion: "neutral", bubble: { visible: true, mood: "idle", title: "Stopped", thought: STOPPED_ANSWER, actions: [], streaming: false } });
+    expect(p.busy).toBe(false);
+  });
+
+  it("offers Stop when a turn goes quiet for 30 s, but a task's bubble keeps its card's Stop", () => {
+    const { p, last } = setup();
+    p.userPrompt("hi");
+    p.event({ type: "assistant.reasoning_delta", data: { deltaContent: "Thinking about" } });
+    p.stalled(true);
+    expect(last().bubble).toMatchObject({ title: STILL_WAITING, actions: [STOP_ANSWER] });
+    p.stalled(false);
+    expect(last().bubble!.actions).toEqual([]);
+    const states: Partial<EmberState>[] = [];
+    const task = new Presenter(s => states.push(s), undefined, () => "Tidy", new BubbleOwner(), undefined, false, { task: "t1" });
+    task.taskStarted();
+    task.stalled(true);
+    expect(states.at(-1)!.bubble).toMatchObject({ title: STILL_WAITING, actions: [] });
+  });
+
+  it("keeps Try again a plain retry of the user's request, never the model's words", () => {
+    expect(TRY_AGAIN).toEqual({ id: "ui:retry", label: "Try again" });
+  });
+});
+
+describe("an answer whose turn started a task says where its work shows (UI audit #3)", () => {
+  it("points to the task's card instead of reading as if it were done", () => {
+    const { p, last } = setup();
+    p.userPrompt("rename my screenshots by date");
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.event({ type: "tool.execution_complete", data: { success: true } });
+    p.event({ type: "assistant.message_delta", data: { deltaContent: "I've started renaming them." } });
+    p.event({ type: "assistant.message", data: { content: "I've started renaming them." } });
+    expect(last().bubble).toMatchObject({ thought: "I've started renaming them.", step: TASK_IN_CORNER });
+  });
+
+  it("says nothing of a card when the task couldn't start, or none was asked for", () => {
+    const { p, last } = setup();
+    p.userPrompt("rename my screenshots by date");
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.event({ type: "tool.execution_complete", data: { success: false } });
+    p.event({ type: "assistant.message", data: { content: "I couldn't start that." } });
+    expect(last().bubble!.step).toBeNull();
+    p.userPrompt("what time is it?");
+    p.event({ type: "assistant.message", data: { content: "Half past three." } });
+    expect(last().bubble!.step).toBeNull();
   });
 });

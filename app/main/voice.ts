@@ -24,6 +24,7 @@ import { nativePackage } from "../voice/runtime";
 import { NATURAL_COST, NATURAL_MAX_RTF } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
+import { readLevel, type SoundLevel } from "../shared/level";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
 import type { Logger } from "./logger";
 import { pageUrl } from "./page-url";
@@ -82,6 +83,11 @@ export interface VoiceOptions {
   onSpeech?: (ok: boolean) => void;
   /** Ember started (true) or stopped (false) making sound, as the page that speaks tells it (turn-latency.ts). */
   onSelfSpeaking?: (on: boolean) => void;
+  /**
+   * The sound's level for Ember's presence (app/shared/level.ts): the microphone's only while Ember hears a request,
+   * its own voice's while that plays; null when that stream ended. A level in eight steps, never audio.
+   */
+  onLevel?: (l: SoundLevel) => void;
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
   /**
@@ -90,6 +96,19 @@ export interface VoiceOptions {
    * with setNaturalVoice.
    */
   naturalVoice?: boolean;
+  /**
+   * A folder with sherpa-onnx's C API libraries (app/voice/capi.ts): speech runs natively through them (Linux), and
+   * falls back to WebAssembly as the addon does if a process dies loading. Development builds only, for now
+   * (EMBER_SHERPA_CAPI, filled by scripts/voice/fetch-capi.mjs).
+   */
+  capiDir?: string;
+  /**
+   * How the mic page plays Ember's voice: "context", Web Audio straight to the speakers (the default), or "element",
+   * Web Audio into a media stream played by an <audio> element. Chromium's echo cancellation is documented to cover
+   * media elements and not Web Audio, which matters before barge-in without the wake word (docs/ASSISTANT.md 2.3);
+   * scripts/voice/echo-check.mjs measures both on a real computer. Development builds only, for now (EMBER_TTS_OUTPUT).
+   */
+  playback?: "context" | "element";
   /**
    * Speech can run on sherpa-onnx's native addon here (default: Windows and macOS, runtime.ts). A voice or speech
    * process that dies before it is ready is then started again on WebAssembly: a damaged model aborts the addon's
@@ -217,6 +236,14 @@ export class VoiceService {
     ipcMain.on(VOICE.played, (e, p: SpeechPlayed) => {
       const page = this.mic && e.sender === this.mic.webContents ? "mic" : e.sender === this.speaker?.wc ? "speaker" : null;
       if (page) this.o.log.info("voice.audio_played", { id: Number(p?.id), seconds: Number(p?.seconds), page });
+    });
+    ipcMain.on(VOICE.level, (e, v: unknown) => {
+      if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      const l = readLevel(v);
+      if (!l) return;
+      // The microphone's level counts only while Ember hears a request (a late one after that is dropped).
+      if (l.mic !== undefined && l.mic !== null && this.state !== "active") delete l.mic;
+      if (Object.keys(l).length) this.o.onLevel?.(l);
     });
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
@@ -484,7 +511,7 @@ export class VoiceService {
 
   /** Speech can run natively here (runtime.ts). */
   private get native(): boolean {
-    return this.o.native ?? nativePackage() !== null;
+    return this.o.native ?? (nativePackage() !== null || !!this.o.capiDir);
   }
 
   /** Ember's voice process, started (and its voice loaded) on first use. */
@@ -522,7 +549,7 @@ export class VoiceService {
       this.switchWhenIdle();
     });
     const natural = this.naturalWanted && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
-    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : {}) });
+    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
     return proc;
   }
 
@@ -575,11 +602,16 @@ export class VoiceService {
     }
   }
 
+  /** The mic page's address, saying how it plays Ember's voice (VoiceOptions.playback). */
+  private micPage(): string {
+    return pageUrl(path.join(appDir, "renderer", "mic", "index.html"), this.o.playback === "element" ? { playback: "element" } : {});
+  }
+
   private speakerWindow(): Speaker {
     if (this.speaker && !this.speaker.win.isDestroyed()) return this.speaker;
     // The mic page without its audio port: it speaks, and never asks for the microphone.
     const win = hiddenWindow("Ember speech");
-    this.speaker = { win, wc: win.webContents, loaded: win.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))), saying: false };
+    this.speaker = { win, wc: win.webContents, loaded: win.loadURL(this.micPage()), saying: false };
     this.idleSpeaker();
     return this.speaker;
   }
@@ -681,7 +713,7 @@ export class VoiceService {
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.wasmOnly.voice ? { wasm: true } : {}) }, [port1]);
+    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;
@@ -690,7 +722,7 @@ export class VoiceService {
     mic.webContents.on("render-process-gone", (_e, d) => {
       if (this.mic === mic) { this.o.log.warn("voice.mic_gone", { reason: d.reason }); this.restartLater("The microphone page stopped."); }
     });
-    await mic.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))).catch(() => undefined);
+    await mic.loadURL(this.micPage()).catch(() => undefined);
     if (mic.isDestroyed() || this.mic !== mic) return;
     mic.webContents.postMessage(VOICE.port, null, [port2]);
   }
@@ -793,6 +825,12 @@ export class VoiceService {
   }
 
   private setState(s: MicState, detail?: string): void {
+    const hearing = s === "active";
+    if (hearing !== (this.state === "active")) {
+      // The mic page sends the microphone's level only while Ember hears a request; the meter stops at once after.
+      if (this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.levelOn, hearing);
+      if (!hearing) this.o.onLevel?.({ mic: null });
+    }
     this.state = s;
     this.o.onState(s, detail);
   }

@@ -1,0 +1,276 @@
+/**
+ * The settings window's Extensions section, as pure functions: what each installed item, marketplace, catalog entry and
+ * connector says and offers, the consent card shown before anything is added, and every message and error sentence.
+ * The page (extensions.ts) draws exactly this; ui-copy.test.ts and home-extensions.test.ts pin the words. Main uses
+ * the error sentences too (extensions-ipc.ts), so no raw runtime text ever reaches the page. Kept apart from copy.ts,
+ * as computers-copy.ts is. Sentence case, British spelling, curly quotes around names. Renderer-safe.
+ */
+
+import type { Installed, Kind, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
+
+export const EXTENSIONS_HEADING = "Extensions";
+export const EXTENSIONS_INTRO = "Extensions give Ember more tools: plugins from marketplaces you add, and connectors to services such as Slack or Notion, through GitHub. Only you can add them, here.";
+
+/** Why the section shows nothing to use. */
+export const EXTENSIONS_UNAVAILABLE = "Extensions aren't available in this version of Ember yet.";
+export const EXTENSIONS_MANAGED = "Your organisation has turned off extensions.";
+export const EXTENSIONS_LOCKDOWN = "Extensions are off while Ember is locked down by your organisation's policy.";
+export const EXTENSIONS_LOADING = "Loading…";
+
+/** The line that says why nothing can be added: unavailable, locked down or turned off; null when extensions may be used. */
+export function extensionsBlocked(s: { available: boolean; allowed: boolean; lockdown: boolean }): string | null {
+  if (!s.available) return EXTENSIONS_UNAVAILABLE;
+  if (s.lockdown) return EXTENSIONS_LOCKDOWN;
+  return s.allowed ? null : EXTENSIONS_MANAGED;
+}
+
+// ───── Errors: one plain sentence, never the runtime's own text ─────
+
+export const EXTENSIONS_FAILED = "That didn't work. Try again in a moment.";
+export const EXTENSIONS_BAD_REQUEST = "Ember couldn't do that: something in the request wasn't right.";
+export const EXTENSIONS_OFFLINE = "Ember couldn't reach that address. Check the network, then try again.";
+export const EXTENSIONS_NOT_FOUND = "Ember couldn't find anything there. Check the address, then try again.";
+export const EXTENSIONS_TIMED_OUT = "That took too long. Try again in a moment.";
+export const EXTENSIONS_REFUSED_URL = "GitHub's page didn't come back as a GitHub address, so Ember didn't open it.";
+
+/** Words that mark text as an error's own (a code, a stack, a type), not a sentence for a person. */
+const RAW = /\b(?:[A-Z][a-z]+Error|Exception|ECONN\w*|ENOTFOUND|ENOENT|EACCES|EAI_AGAIN|ETIMEDOUT|stack|undefined|null|at \S+ \(|HTTP\/\d|status code)\b|[{}<>[\]\\`]|\n/;
+
+/** One plain sentence for a thrown error or a refusal: what it says when that is a sentence, else what it means. */
+export function extensionsError(raw: unknown): string {
+  const text = raw instanceof Error ? raw.message : typeof raw === "string" ? raw : "";
+  const m = text.replace(/^Error invoking remote method '[^']+': /, "");
+  if (/ECONN|ENOTFOUND|EAI_AGAIN|network|fetch failed|getaddrinfo|socket hang up|offline/i.test(m)) return EXTENSIONS_OFFLINE;
+  if (/timed? ?out|timeout|ETIMEDOUT/i.test(m)) return EXTENSIONS_TIMED_OUT;
+  if (/\b404\b|not found/i.test(m)) return EXTENSIONS_NOT_FOUND;
+  const s = m.replace(/\s+/g, " ").trim();
+  if (s.length >= 8 && s.length <= 200 && /^[A-Z“"]/.test(s) && /[.!?]$/.test(s) && !RAW.test(s)) return s;
+  return EXTENSIONS_FAILED;
+}
+
+// ───── Words for kinds, states and tools ─────
+
+const KIND: Readonly<Record<Kind, string>> = { plugin: "Plugin", connector: "Connector", extension: "Extension" };
+/** "Plugin", "Connector", "Extension". */
+export const kindLabel = (k: Kind): string => KIND[k] ?? "Extension";
+
+/** A tool's badge: its words and its tint (a class in styles.css). */
+export interface ToolBadge { label: string; tone: "ok" | "ask" | "no" }
+export function toolBadge(t: ToolInfo): ToolBadge {
+  if (t.changed) return { label: "Changed", tone: "no" };
+  return t.readOnly ? { label: "Read-only", tone: "ok" } : { label: "Can change things", tone: "ask" };
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** "2 read-only tools, 1 that can change things", "No tools". */
+export function toolCounts(tools: readonly ToolInfo[]): string {
+  const read = tools.filter(t => t.readOnly).length;
+  const change = tools.length - read;
+  if (!tools.length) return "No tools";
+  const parts = [...(read ? [plural(read, "read-only tool", "read-only tools")] : []), ...(change ? [`${plural(change, "tool", "tools")} that can change things`] : [])];
+  return parts.join(", ");
+}
+
+/** An installed item's status, as words beside its symbol (never colour alone). */
+export function installedStatus(i: Installed): { text: string; tone: "ok" | "wait" | "fail" | "off" } {
+  if (i.tools.some(t => t.changed)) return { text: "Changed since you agreed", tone: "fail" };
+  if (!i.consented) return { text: "Waiting for you to agree", tone: "wait" };
+  if (!i.enabled || i.status === "disabled") return { text: "Off", tone: "off" };
+  switch (i.status) {
+    case "ready": return { text: i.kind === "connector" ? "Connected" : "Ready", tone: "ok" };
+    case "starting": return { text: "Starting…", tone: "wait" };
+    case "needs-auth": return { text: "Needs you to sign in again", tone: "fail" };
+    default: return { text: "Didn't start", tone: "fail" };
+  }
+}
+
+/** One button on an installed item. */
+export interface ItemAction { act: "reagree" | "uninstall" | "disconnect" | "connect"; label: string; ariaLabel: string; confirm?: string; danger?: boolean }
+
+/** An installed item as its row shows it. */
+export interface InstalledRow {
+  id: string;
+  name: string;
+  /** "Plugin · by Octo Labs · octo/tools · 1.2.0" */
+  meta: string;
+  status: { text: string; tone: "ok" | "wait" | "fail" | "off" };
+  /** What to do next, under the status (a changed tool, a failed start, a sign-in). */
+  note: string | null;
+  toggle: { checked: boolean; disabled: boolean; ariaLabel: string };
+  tools: { name: string; description: string; badge: ToolBadge }[];
+  toolSummary: string;
+  actions: ItemAction[];
+}
+
+/** What a failed item's detail may say: a plain sentence only (extensionsError's rule), else nothing. */
+const detailLine = (d: string | undefined): string | null => {
+  if (!d) return null;
+  const s = extensionsError(d);
+  return s === EXTENSIONS_FAILED ? null : s;
+};
+
+export function installedRow(i: Installed): InstalledRow {
+  const status = installedStatus(i);
+  const changed = i.tools.some(t => t.changed);
+  const meta = [kindLabel(i.kind), ...(i.publisher ? [`by ${i.publisher}`] : []), i.source, ...(i.version ? [i.version] : [])].join(" · ");
+  const note = changed ? "Its tools changed since you agreed, so Ember stopped using the ones that changed. Check what they do now, then agree again."
+    : !i.consented ? "Ember uses none of its tools until you agree."
+    : i.status === "needs-auth" ? `Connect “${i.name}” again to sign in on GitHub's page.`
+    : i.status === "failed" && i.enabled ? detailLine(i.detail) ?? "Turn it off and on again, or remove it and add it again."
+    : null;
+  const actions: ItemAction[] = [];
+  if (changed || !i.consented) actions.push({ act: "reagree", label: "Agree again", ariaLabel: `Agree again: ${i.name}` });
+  if (i.kind === "connector" && i.status === "needs-auth") actions.push({ act: "connect", label: "Connect again", ariaLabel: `Connect again: ${i.name}` });
+  actions.push(i.kind === "connector"
+    ? { act: "disconnect", label: "Disconnect", ariaLabel: `Disconnect ${i.name}`, confirm: disconnectQuestion(i.name), danger: true }
+    : { act: "uninstall", label: "Remove", ariaLabel: `Remove ${i.name}`, confirm: removeQuestion(i.name), danger: true });
+  return {
+    id: i.id, name: i.name, meta, status, note,
+    toggle: { checked: i.enabled, disabled: !i.consented, ariaLabel: `Use ${i.name}` },
+    tools: i.tools.map(t => ({ name: t.name, description: t.description, badge: toolBadge(t) })),
+    toolSummary: toolCounts(i.tools),
+    actions,
+  };
+}
+
+export const removeQuestion = (name: string) => `Remove “${name}”? Ember stops using its tools at once.`;
+export const disconnectQuestion = (name: string) => `Disconnect “${name}”? Ember stops using its tools at once.`;
+
+export const INSTALLED_HEADING = "Added";
+export const INSTALLED_EMPTY = "Nothing added yet. Browse a marketplace or connect a service below.";
+
+// ───── Marketplaces ─────
+
+export const MARKETPLACES_HEADING = "Marketplaces";
+export const MARKETPLACES_EMPTY = "No marketplaces yet. Add one by its GitHub repository or its address.";
+/** Short enough to show whole in a narrow window (the field is labelled for screen readers). */
+export const MARKETPLACE_PLACEHOLDER = "owner/repo or https://…";
+export const MARKETPLACE_FIELD_LABEL = "Marketplace's GitHub repository or address";
+export const MARKETPLACE_ADD = "Add";
+export const MARKETPLACE_INVALID = "Type a GitHub repository as owner/repo, or an address that starts with https://.";
+export const MARKETPLACES_HINT = "Ember fetches each marketplace's list from the address you add, and nothing from it runs until you add an item and agree.";
+export const addingMarketplace = (source: string) => `Adding ${source}…`;
+export const addedMarketplace = (source: string) => `Added ${source}.`;
+export const removeMarketplaceQuestion = (name: string) => `Remove the marketplace “${name}”? What you added from it stays until you remove it.`;
+export const browseLabel = (name: string) => `Browse ${name}`;
+export const removeMarketplaceLabel = (name: string) => `Remove the marketplace ${name}`;
+
+/** The browsing panel's heading, and what it says while loading or when empty. */
+export const browsingHeading = (name: string) => `In “${name}”`;
+export const browsingLoading = (name: string) => `Loading “${name}”…`;
+export const BROWSE_EMPTY = "This marketplace lists nothing yet.";
+export const BROWSE_DONE = "Done";
+
+/** A catalog entry as its card shows it. */
+export interface EntryCard {
+  key: string;
+  name: string;
+  kind: string;
+  description: string;
+  /** "By Octo Labs · octo/tools · 1.2.0" */
+  meta: string;
+  installed: boolean;
+  /** The card's button: Add (a plugin or extension) or Connect; none once added. */
+  action: { label: string; ariaLabel: string } | null;
+}
+
+/** Descriptions come from the marketplace: kept to a few lines, whole words. */
+export const DESCRIPTION_MAX = 240;
+export function shortDescription(d: string): string {
+  const s = d.replace(/\s+/g, " ").trim();
+  if (s.length <= DESCRIPTION_MAX) return s;
+  const cut = s.slice(0, DESCRIPTION_MAX);
+  return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), DESCRIPTION_MAX - 20)).replace(/[\s,;:.]+$/, "")}…`;
+}
+
+export function entryCard(e: MarketplaceEntry): EntryCard {
+  const meta = [...(e.publisher ? [`By ${e.publisher}`] : []), e.source, ...(e.version ? [e.version] : [])].join(" · ");
+  const connector = e.kind === "connector";
+  return {
+    key: `${e.marketplace}\u0000${e.name}`,
+    name: e.name, kind: kindLabel(e.kind), description: shortDescription(e.description), meta, installed: e.installed,
+    action: e.installed ? null : connector ? { label: "Connect", ariaLabel: `Connect ${e.name}` } : { label: "Add", ariaLabel: `Add ${e.name}` },
+  };
+}
+export const INSTALLED_TAG = "Added";
+
+// ───── Connectors ─────
+
+export const CONNECTORS_HEADING = "Connectors";
+export const CONNECTORS_EMPTY = "GitHub lists no connectors for your account yet.";
+export const CONNECTORS_HINT = "Connectors go through GitHub's Copilot service: you sign in to each service on GitHub's page, in your browser.";
+
+/** A connector's row: its state and its one button. */
+export interface ConnectorRow {
+  name: string;
+  description: string;
+  state: "off" | "pending" | "connected" | "needs-auth" | "failed";
+  status: string;
+  /** The installed item's id, once there is one (Disconnect needs it). */
+  id: string | null;
+  action: ItemAction | null;
+}
+
+/** A catalog connector with what is installed and which ones wait for the user in the browser. */
+export function connectorRow(e: MarketplaceEntry, installed: readonly Installed[], pending: ReadonlySet<string>): ConnectorRow {
+  const i = installed.find(x => x.kind === "connector" && x.name === e.name);
+  const base = { name: e.name, description: shortDescription(e.description), id: i?.id ?? null };
+  const connect = (label = "Connect"): ItemAction => ({ act: "connect", label, ariaLabel: `${label} ${e.name}` });
+  if (i && i.status === "ready" && i.enabled) {
+    return { ...base, state: "connected", status: "Connected", action: { act: "disconnect", label: "Disconnect", ariaLabel: `Disconnect ${e.name}`, confirm: disconnectQuestion(e.name), danger: true } };
+  }
+  if (pending.has(e.name)) return { ...base, state: "pending", status: "Waiting for you to finish in your browser", action: connect("Check again") };
+  if (i && i.status === "needs-auth") return { ...base, state: "needs-auth", status: "Needs you to sign in again", action: connect("Connect again") };
+  if (i && i.status === "failed") return { ...base, state: "failed", status: "Didn't connect", action: connect("Try again") };
+  if (i) return { ...base, state: "connected", status: installedStatus(i).text, action: null };
+  return { ...base, state: "off", status: "Not connected", action: connect() };
+}
+
+export const connectOpened = (name: string) => `Finish connecting “${name}” on GitHub's page, in your browser. Then come back here.`;
+export const connectPending = (name: string) => `Waiting for GitHub to finish connecting “${name}”…`;
+export const connected = (name: string) => `Connected “${name}”.`;
+export const added = (name: string) => `Added “${name}”. Turn it off here any time.`;
+export const removed = (name: string) => `Removed “${name}”.`;
+export const disconnected = (name: string) => `Disconnected “${name}”.`;
+export const agreedAgain = (name: string) => `Ember uses “${name}” again.`;
+
+// ───── The consent card, before anything is added or connected ─────
+
+/** Bump FEATURE_CONSENT_VERSION.extensions with any change to these words (CLAUDE.md "Consent"). */
+export interface ConsentCard { title: string; lines: string[]; yes: string; no: string }
+
+/**
+ * The card shown before each add or connect: what Ember will and won't do with the item, and where it reaches. The
+ * marketplace's own description isn't in it (it is the publisher's text, not Ember's promise).
+ */
+export function consentCard(e: Pick<MarketplaceEntry, "name" | "kind" | "source" | "marketplace">): ConsentCard {
+  const connector = e.kind === "connector";
+  const reach = connector
+    ? `It connects to “${e.name}” through GitHub's Copilot service. You sign in to it on GitHub's page, in your browser, and what its tools send and receive goes through GitHub.`
+    : `It comes from ${e.source}, listed in the marketplace “${e.marketplace}” you added. Its tools may run on this computer and reach the internet.`;
+  return {
+    title: connector ? `Before you connect “${e.name}”` : `Before you add “${e.name}”`,
+    lines: [
+      "Only you add, turn off and remove extensions, here in settings. Ember never adds one by itself.",
+      "Once you agree, Ember may use its read-only tools when they help with what you ask. It asks you every time before a tool that changes or sends anything.",
+      "What its tools return is treated as information, never as instructions, and every use is in What Ember did.",
+      "If its tools change later, Ember stops using them until you agree again.",
+      reach,
+    ],
+    yes: connector ? "Agree and connect" : "Agree and add",
+    no: "Not now",
+  };
+}
+
+/** The re-agree card for an item whose tools changed: the same promises, and the tools as they are now. */
+export function reagreeCard(i: Installed): ConsentCard {
+  return {
+    title: `Agree again to “${i.name}”`,
+    lines: [
+      `Its tools now: ${toolCounts(i.tools)}.`,
+      "Ember asks you every time before a tool that changes or sends anything, and treats what its tools return as information, never as instructions.",
+    ],
+    yes: "Agree again",
+    no: "Not now",
+  };
+}

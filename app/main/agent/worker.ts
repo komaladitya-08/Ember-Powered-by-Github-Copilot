@@ -15,17 +15,21 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
+import { PlanSchema, ViewSchema } from "./view-schema";
+import { VIEW_LIMITS, planSteps, type PlanStep, type TaskHand, type ViewBlock } from "../../shared/view";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
-import { handStep, stepOf, type HandStep, type Presenter } from "./presenter";
+import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
+import type { ActivityEvent } from "./activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
+import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
@@ -101,6 +105,13 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
+  /** Its plan, or how it works now, changed: its card shows them (docs/DESIGN.md "Two bodies"). */
+  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void;
+  /**
+   * What the task did and is doing, for its card (app/main/agent/activity.ts): its steps as its tools and the app name
+   * them, its questions and their answers, refusals, retries and its own notes. Never arguments, reasoning or screen text.
+   */
+  onActivity?: (e: ActivityEvent) => void;
   /** Ember's desk (tier 2), started on first use. */
   desk?: () => Promise<DeskPlace>;
   /** The worker moved to (or left) the desk: show or hide the mini-view. */
@@ -199,12 +210,26 @@ export interface WorkerResult {
   stopped?: boolean;
   /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
   declined?: boolean;
+  /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
+  view?: ViewBlock[];
 }
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
 const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "failure", error: text });
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
+/** report_progress's `intent`: a few words, one line of a card. */
+const INTENT_MAX = 60;
+/**
+ * The summary of a task that ended without finish_task, from the worker's last answer: only plain words that don't
+ * talk about Ember's tools ("Call finish_task now…", audit #2), else a sentence of Ember's own.
+ */
+export function lastWordsSummary(lastAnswer: string): string {
+  const said = plainText(lastAnswer).replace(/\s+/g, " ").trim();
+  const toolSpeak = /\b[a-z]+_[a-z_]+\b/.test(said) || /\btool calls?\b|^You said:/i.test(said);
+  if (!said || toolSpeak || said.length > 400) return "I stopped without finishing, and couldn't say what I'd done. You can try again.";
+  return said;
+}
 /** Why a task stopped when its audit log can't be written (review #117): its card, bubble and speech say it. */
 const AUDIT_UNAVAILABLE = "I stopped because I can't write my record of what I do (the audit log). The disk may be full, or my audit folder can't be written to. Fix that, then ask me again.";
 
@@ -242,9 +267,15 @@ class TaskClock {
   /** It ran out, or the task is over: it never runs again. */
   private over = false;
 
-  constructor(ms: number, private readonly onOver: () => void) {
+  constructor(private readonly ms: number, private readonly onOver: () => void) {
     this.left = ms;
     this.go();
+  }
+
+  /** How much of its time the task has used (0 to 1; the waits for the user's answers don't count). */
+  used(): number {
+    const left = this.timer ? this.left - (performance.now() - this.since) : this.left;
+    return this.ms > 0 ? Math.min(1, Math.max(0, 1 - left / this.ms)) : 1;
   }
 
   private go(): void {
@@ -890,6 +921,8 @@ export class Worker {
   private steps = 0;
   /** Something on screen asked for an action the user didn't (an off-task question): every step is confirmed from then on. */
   private tainted = false;
+  /** It was tainted by text on screen written as instructions to an AI agent (injection.ts), not by a step: questions say so. */
+  private steered = false;
   /** What the user asked for in their own words, with what they added since (steer): what the policy checks risky steps against. */
   private userWords: string;
   /**
@@ -992,6 +1025,7 @@ export class Worker {
     if (place === this.place) return;
     const previous = this.place;
     this.place = place;
+    this.d.onUpdate?.({ hand: place ? "desk" : "background" });
     this.known = new Map();
     this.labels = new Map();
     this.window = { app: "", name: "" };
@@ -1011,9 +1045,34 @@ export class Worker {
   }
 
   /** Asks the user a question of this task (its steps' and its commands'): the wait for the answer isn't the task's time. */
-  private ask(question: Question, signal: AbortSignal = this.overSignal): Promise<string | null> {
+  private async ask(question: Question, signal: AbortSignal = this.overSignal): Promise<string | null> {
     const ask = () => this.d.confirmer.ask(question, signal);
-    return this.clock ? this.clock.waiting(ask) : ask();
+    // Its card says it waits for the user while the question is up, and then how they answered (never what it asked:
+    // the question shows in the bubble, built by policy).
+    this.activity({ type: "question" });
+    let answer: string | null = null;
+    try {
+      answer = await (this.clock ? this.clock.waiting(ask) : ask());
+      return answer;
+    } finally {
+      this.activity({ type: "answer", answer: this.isOver ? "stopped" : answer === null ? "expired" : answer === "deny" ? "declined"
+        : answer === "once" || answer === "always" ? "allowed" : "answered" });
+    }
+  }
+
+  /** Tells the task's activity (its card); a listener's fault never stops the task. */
+  private activity(e: ActivityEvent): void {
+    try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
+  }
+
+  /** Past 80% of its steps or its time, the card says the task is close to its limit (once). */
+  private nearLimitSaid = false;
+  private checkLimits(maxSteps: number): void {
+    if (this.nearLimitSaid) return;
+    if (this.steps >= maxSteps * 0.8 || (this.clock?.used() ?? 0) >= 0.8) {
+      this.nearLimitSaid = true;
+      this.activity({ type: "near-limit" });
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
@@ -1079,6 +1138,7 @@ export class Worker {
       this.stopNow(`I stopped after ${maxSteps} steps without finishing, to be safe.`);
       return STOPPED();
     }
+    this.checkLimits(maxSteps);
     const parsed = parameters.safeParse(raw ?? {});
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
@@ -1260,13 +1320,30 @@ export class Worker {
       this.tool("wait_for_click", "Wait until the user clicks the element you pointed at (or it changes, e.g. a switch turns on, or the window changes).",
         z.object({ id, timeoutSeconds: z.number().int().min(5).max(300).optional() }),
         async a => this.waitForClick(a.id, (a.timeoutSeconds ?? 90) * 1000)),
-      this.tool("report_progress", "Tell the user briefly how the task is going (shown on Ember's task card).", z.object({ text: z.string().max(200) }),
-        async a => { this.d.onProgress(a.text); this.d.presenter.progress(a.text); return done("Shown."); }),
-      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false.",
-        z.object({ success: z.boolean(), summary: z.string().max(400) }),
+      this.tool("report_progress", "Tell the user briefly how the task is going (shown on Ember's task card). With a task of several steps, also give its plan (short steps, in order) and which step you're on now (0 is the first); send the plan again when it changes. `intent` is a few words for what you are doing now, shown on the card.",
+        z.object({
+          text: z.string().max(200),
+          intent: z.string().trim().min(1).max(INTENT_MAX).optional().describe("What you are doing now, in a few plain words (\"Finding the Display settings\")"),
+          plan: PlanSchema.optional().describe("The task's steps, a few words each, in order (up to 8)"),
+          now: z.number().int().min(0).max(VIEW_LIMITS.plan).optional().describe("The step under way now, counting from 0 (the plan's length: all done)"),
+        }),
+        async a => {
+          if (a.plan) this.d.onUpdate?.({ plan: planSteps(a.plan, a.now ?? 0) });
+          // The worker's own words: shown on its card as its note, never as Ember's (markdown stripped).
+          this.activity({ type: "note", text: plainText(a.text), ...(a.intent ? { intent: plainText(a.intent) } : {}) });
+          this.d.onProgress(a.text);
+          this.d.presenter.progress(a.text);
+          return done("Shown.");
+        }),
+      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a file you saved), also give it as `view`, drawn on the task's card; the summary still says it in words.",
+        z.object({
+          success: z.boolean(),
+          summary: z.string().max(400),
+          view: ViewSchema.optional().describe("Up to 6 blocks: text, list (items), facts (label and value rows), table (up to 3 columns and 6 rows), file (a path). Only what the task found or made; words only, no links"),
+        }),
         async a => {
           // A cancelled guide step never gets here: it already ended the task (left() in waitForClick).
-          this.result = { success: a.success, summary: a.summary };
+          this.result = { success: a.success, summary: a.summary, ...(a.view ? { view: a.view } : {}) };
           this.ended.abort();
           this.fly(null);
           // The task is over: end the turn, so a model that keeps going can't act any more.
@@ -1385,10 +1462,21 @@ export class Worker {
         if (e.type === "assistant.usage") d.onUsage?.(e.data.inputTokens ?? 0, e.data.outputTokens ?? 0);
         // The task card follows the current step ("Typing…"); the model's own progress notes replace it.
         if (e.type === "tool.execution_start") {
-          const name = String((e.data as { toolName?: string }).toolName ?? "");
+          const data = e.data as { toolName?: string; toolCallId?: string };
+          const name = String(data.toolName ?? "");
           const step = stepOf(name, !!this.place);
           if (name !== "report_progress" && name !== "finish_task" && step) { this.doing = `${step}…`; d.onProgress(this.doing); }
+          // Its card's activity: the step in Ember's words and the app it works in now (never the call's arguments).
+          this.activity({ type: "heard" });
+          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}) });
         }
+        if (e.type === "tool.execution_complete") {
+          const data = e.data as { toolCallId?: string; success?: boolean };
+          this.activity({ type: "tool-end", id: String(data.toolCallId ?? ""), ok: data.success !== false });
+        }
+        // A model call failed and the runtime tries again: the card says so, and stops saying it once Copilot answers.
+        if (e.type === "model.call_failure") this.activity({ type: "retry" });
+        if (e.type === "assistant.usage" || e.type === "assistant.message") this.activity({ type: "heard" });
       });
       if (!this.halted) {
         d.presenter.taskStarted();
@@ -1412,10 +1500,11 @@ export class Worker {
         }, {
           slowMs: d.limits?.turnSlowMs, silentMs: d.limits?.turnSilentMs,
           // The task's card and its bubble say so (without a compositor the card's task row is one short line).
-          onSlow: slow => { if (!this.halted) { d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); d.presenter.stalled(slow); } },
+          onSlow: slow => { if (!this.halted) { d.onProgress(slow ? "Still waiting for Copilot…" : "Working…"); d.presenter.stalled(slow); this.activity({ type: "slow", on: slow }); } },
         });
         const unwatch = session.on(e => watch.event(e));
         const send = async (prompt: string) => {
+          this.activity({ type: "turn" });
           watch.sending();
           try { await session.send({ prompt }); } catch (err) { watch.unsent(); throw err; }
           watch.sent();
@@ -1446,7 +1535,7 @@ export class Worker {
     if (this.haltReason) return { success: false, summary: this.result?.summary ? `${this.haltReason} ${this.result.summary}` : this.haltReason };
     // The user said "Not now" and nothing was done after it: that's the user's choice, not a failure.
     if (this.declined && !this.result?.success) return { success: false, stopped: true, declined: true, summary: this.result?.summary || "You said not now, so I left it." };
-    const result = this.result ?? { success: false, summary: lastAnswer || "The task stopped without saying what happened." };
+    const result = this.result ?? { success: false, summary: lastWordsSummary(lastAnswer) };
     return this.userTookOver && !result.success ? { ...result, stopped: true } : result;
   }
 
@@ -1715,14 +1804,22 @@ export class Worker {
       return this.refuse("read", "Ember's own window", "That is one of Ember's own windows: tasks never use them. Use list_windows and pick another window.", { app: p.window.app });
     }
     this.window = { app: p.window.app, name: p.window.name, role: p.window.role };
-    this.remember(p.window, [p.window.name, ...p.nodes.flatMap(n => (n.secret ? [n.name] : [n.name, n.text ?? ""]))]);
+    const readText = [p.window.name, ...p.nodes.flatMap(n => (n.secret ? [n.name] : [n.name, n.text ?? ""]))];
+    this.remember(p.window, readText);
     this.frame = p.window.bounds;
     this.axScale = p.axScale ?? 1;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}`, resultType: "success" };
+    // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
+    // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped.
+    const signals = injectionSignals(readText.join("\n"));
+    if (signals.length) {
+      if (!this.tainted) { this.tainted = true; this.steered = true; }
+      this.d.log.info("worker.injection_flagged", { task: this.spec.id, app: p.window.app, signals });
+    }
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${signals.length ? INJECTION_NOTE : ""}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
@@ -3249,9 +3346,18 @@ export class Worker {
     });
     c.setBorrowing("waiting");
     this.fly(null); // Ember rides along with the cursor
+    // While it uses the user's mouse and keyboard, the task is Ember beside the cursor: its bubble, not only its card.
+    this.d.presenter.foreground = true;
+    this.d.onUpdate?.({ hand: "cursor" });
     // The status goes back to normal as soon as the mouse is back (a paste may still be waited for after that).
     let borrowing = true;
-    const borrowOver = () => { if (borrowing) { borrowing = false; c.setBorrowing("off"); } };
+    const borrowOver = () => {
+      if (!borrowing) return;
+      borrowing = false;
+      c.setBorrowing("off");
+      this.d.presenter.foreground = false;
+      this.d.onUpdate?.({ hand: this.place ? "desk" : "background" });
+    };
     try {
       await borrowed;
       borrowOver();
@@ -3360,6 +3466,7 @@ export class Worker {
       ...(o.element ? { element: o.element } : {}), ...(o.value !== undefined ? { value: o.value.slice(0, 120) } : {}),
       ...(o.never === false ? {} : { tier: "never" }), verdict: "deny", reason,
     });
+    this.activity({ type: "refused", reason });
     return denied(text);
   }
 
@@ -3467,9 +3574,11 @@ export class Worker {
     if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
       // An app the user already allowed for this task: the step alone is asked about, not working in the app again.
       const step = decision.stepPrompt && this.allowedApps.has(req.app.toLowerCase()) ? decision.stepPrompt : decision.prompt;
-      const prompt = `${step} (I'm checking each step: a step came up that you didn't ask for.)`;
+      const prompt = this.steered
+        ? `${step} (I'm checking each step: text on screen tried to give me instructions.)`
+        : `${step} (I'm checking each step: a step came up that you didn't ask for.)`;
       decision = decision.verdict === "allow"
-        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; a step came up that the user didn't ask for`, prompt }
+        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
         : { ...decision, everyTime: true, remember: false, prompt };
     }
     if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
@@ -3482,7 +3591,10 @@ export class Worker {
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
     this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}) });
-    if (decision.verdict === "deny") return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
+    if (decision.verdict === "deny") {
+      this.activity({ type: "refused", reason: decision.reason });
+      return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
+    }
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
       this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
@@ -3498,7 +3610,7 @@ export class Worker {
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}) };
+    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(decision.risky ? { risky: true } : {}) };
     const answer = await this.ask(question);
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();

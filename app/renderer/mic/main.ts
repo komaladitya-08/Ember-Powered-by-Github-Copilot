@@ -11,15 +11,27 @@
 
 import type { MicApi } from "../../shared/voice";
 import { Capture } from "./capture";
-import { Player, type PlayerAudio } from "./player";
+import { Player, playerAudio, type PlayerContext } from "./player";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
 import { bestVoice } from "./voices";
+import { LEVEL_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rms, voiceAt, type VoiceSpan } from "../../shared/level";
 
 declare global { interface Window { emberMic: MicApi } }
 
 const api = window.emberMic;
 let port: MessagePort | null = null;
 let capture: Capture | null = null;
+
+/**
+ * The microphone's level for Ember's presence, only while main asks for it (Ember hears a request): a step of eight,
+ * sent at most 20 times a second and only when it changed (app/shared/level.ts). Never the audio itself.
+ */
+let micLevels = false;
+const micMeter = new LevelMeter(l => api.level({ mic: l }));
+api.onLevelOn(on => {
+  micLevels = on;
+  if (!on) micMeter.end();
+});
 
 window.addEventListener("message", e => {
   if (e.data === "ember-voice-port" && e.ports[0] && !capture) {
@@ -43,7 +55,10 @@ async function graph(stream: MediaStream): Promise<AudioContext> {
     const src = ctx.createMediaStreamSource(stream);
     const node = new AudioWorkletNode(ctx, "ember-frames", { numberOfInputs: 1, numberOfOutputs: 0 });
     // Copied, not transferred: ports that cross into a utility process can't carry transferables.
-    node.port.onmessage = ev => port?.postMessage(ev.data);
+    node.port.onmessage = ev => {
+      port?.postMessage(ev.data);
+      if (micLevels && ev.data instanceof ArrayBuffer) micMeter.push(rms(new Float32Array(ev.data)), performance.now());
+    };
     src.connect(node);
     if (ctx.state !== "running") await ctx.resume();
     return ctx;
@@ -75,11 +90,35 @@ function update(): void {
   api.speaking(on);
 }
 
+/**
+ * Ember's own voice level as it plays, for its presence: each chunk's envelope (one RMS per 50 ms) is kept with when it
+ * starts, and while the voice plays a timer reads the level at the audio clock's time (only then: none runs while Ember
+ * is quiet). The system's voice has no samples to read, so it shows no meter: never one that moves on nothing.
+ */
+let spans: VoiceSpan[] = [];
+let voiceTimer: ReturnType<typeof setInterval> | undefined;
+// (Read on a 100 ms timer: a little slack, so a tick that comes a hair early is not held back to the next. Between two
+// chunks it reads silence: the meter rests, and goes only when the voice has stopped.)
+const voiceMeter = new LevelMeter(l => api.level({ voice: l }), VOICE_LEVEL_MS - 5);
+function voicePlaying(on: boolean): void {
+  clearInterval(voiceTimer);
+  voiceTimer = undefined;
+  if (!on) { spans = []; voiceMeter.end(); return; }
+  voiceTimer = setInterval(() => {
+    const t = player.time;
+    if (t === null) return;
+    spans = spans.filter(s => s.at + s.env.length * s.stepS > t);
+    const v = voiceAt(spans, t);
+    voiceMeter.push(v ?? 0, performance.now());
+  }, VOICE_LEVEL_MS);
+}
+
 /** Ember's own voice: main sends each reply's audio as it is made; the first chunk of sound says speech works. */
-const player = new Player(() => new AudioContext({ latencyHint: "interactive" }) as unknown as PlayerAudio, on => {
+const player = new Player(() => playerAudio(new AudioContext({ latencyHint: "interactive" }) as unknown as PlayerContext, new URLSearchParams(location.search).get("playback") === "element"), on => {
   if (on) api.speech(true);
+  voicePlaying(on);
   update();
-});
+}, (at, samples, rate) => { spans.push({ at, env: envelope(samples, rate), stepS: LEVEL_MS / 1000 }); });
 api.onAudio(a => {
   const seconds = player.chunk(a.id, a.samples, a.rate);
   if (seconds) api.played({ id: a.id, seconds: Math.round(seconds * 100) / 100 });

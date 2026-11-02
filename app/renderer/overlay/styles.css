@@ -5,6 +5,61 @@ body { font: var(--type-callout); color: var(--label); }
 #stage { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; will-change: transform; z-index: 1; pointer-events: none; }
 #bubble-host { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 
+/* ── Ember's presence (presence.ts; docs/DESIGN.md "Presence"): a ring of 24 ticks round Ember that says its state,
+   a steady microphone mark while it hears a request, and a five-bar meter while its own voice plays. Under Ember (it
+   draws over the ring), decorative (aria-hidden; the words say every state), and never takes a click. ── */
+/* The wrapper main.ts moves with Ember (an unstyled box: only its transform changes as Ember moves). */
+.presence { position: absolute; left: 0; top: 0; width: 0; height: 0; z-index: 0; pointer-events: none; will-change: transform; }
+.presence[hidden] { display: none; }
+/* The ring: centred on Ember, its ticks placed once by a static transform (one every 15°: nothing ever rotates). */
+.ring { position: absolute; left: 0; top: 0; display: none; }
+.presence:not([data-state="idle"]) .ring { display: block; }
+.tick, .ring-now {
+  position: absolute; left: -1px; top: -3px; width: 2px; height: 6px; border-radius: 1px; background: var(--hud-dim);
+  transform: rotate(calc(var(--i, 0) * 15deg)) translateY(calc(var(--size, 60px) * -0.66));
+}
+/* Listening: the ticks the microphone's level lights, clockwise from the top (presence.ts toggles data-on, at most 20
+   times a second while the microphone is open). A level changes only their opacity: the ring's small area repaints
+   (measured cheaper under software compositing than 24 layers of their own: 7.6% against 9.1% of the GPU process at
+   20 changes a second). Unlit ticks are the dim ink, so a ring on silence shows nothing lit, never a meter moving on
+   nothing. */
+.presence[data-state="listening"] .tick { background: var(--accent); opacity: 0.28; }
+.presence[data-state="listening"] .tick[data-on] { opacity: 1; }
+/* Thinking: the ring in Ember's warmer light, breathing three times as the state begins, then still. */
+.presence[data-state="thinking"] .tick { background: var(--accent-2); }
+.presence[data-state="thinking"] .ring { animation: ring-glow 1.6s ease-in-out 3; }
+/* Acting (with your mouse and keyboard, or showing you): the ring dim, its top segment the one small pulse. */
+.presence[data-state="acting"] .tick { background: var(--accent); opacity: 0.4; }
+.ring-now { display: none; width: 3px; left: -1.5px; height: 9px; top: -4.5px; background: var(--accent-2); }
+.presence[data-state="acting"] .ring-now { display: block; animation: ring-pulse 1.4s ease-in-out infinite; }
+/* Needs you: the full ring, still (a question never pulses or counts down: it waits for you). */
+.presence[data-state="needs"] .tick { background: var(--accent); }
+/* A problem: red, with a notch at the top (its shape says it as well as its colour). */
+.presence[data-state="error"] .tick { background: var(--red); }
+.presence[data-state="error"] .tick:is(:nth-child(1), :nth-child(2), :nth-child(24)) { opacity: 0; }
+/* Done: the ring completes once and fades (presence.ts takes it away after DONE_RING_MS, in Calm too). */
+.presence[data-state="done"] .tick { background: var(--green); }
+.presence[data-state="done"] .ring { animation: ring-done 2.2s ease 1 forwards; }
+/* The microphone mark (a trust light: it says the microphone hears you, whatever the level), at Ember's lower left. */
+.mic-mark {
+  display: none; position: absolute; left: calc(var(--size, 60px) * -0.78 - 8px); top: calc(var(--size, 60px) * 0.2 - 8px);
+  width: 16px; height: 16px; border-radius: 50%; background: var(--glass-solid); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55), inset 0 0 0 1px var(--hud-line);
+}
+.mic-mark::before { content: ""; position: absolute; inset: 0; background: var(--accent); -webkit-mask: var(--sym-mic) center / 11px no-repeat; }
+.presence[data-mic] .mic-mark { display: block; }
+/* Ember's own voice: five bars at its upper left, scaled (scale only) by the voice's level as it plays; a steady mark
+   in Calm. Only while its own voice plays (the system's voice gives no level, so it shows none). */
+.meter {
+  display: none; position: absolute; left: calc(var(--size, 60px) * -0.78 - 11px); top: calc(var(--size, 60px) * -0.5 - 9px);
+  height: 18px; padding: 0 3px; border-radius: var(--r-xs); align-items: center; gap: 2px;
+  background: var(--glass-solid); box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.55), inset 0 0 0 1px var(--hud-line);
+}
+.presence[data-voice] .meter { display: inline-flex; }
+.meter i { width: 2px; height: 12px; border-radius: 1px; background: var(--accent); transform-origin: 50% 50%; scale: 1 0.15; }
+@keyframes ring-glow { 50% { opacity: 0.5; } }
+@keyframes ring-pulse { 50% { opacity: 0.3; } }
+@keyframes ring-done { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+
 /* The status line ("Using your mouse: move it to take over"): a glass capsule at the top of the screen (40 px down:
    layout.ts's PILL_TOP), or at the bottom while the control Ember works on is under it at the top (main.ts sets
    .low and how far up). It fades in from just above and out in place (main.ts keeps its words until it has gone). */
@@ -24,7 +79,7 @@ body { font: var(--type-callout); color: var(--label); }
    (main.ts places them exactly, in the other bottom corner while the control Ember works on is under them there);
    above Ember, which keeps off them. */
 .tasks {
-  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: 270px; z-index: 3;
+  position: absolute; right: 12px; bottom: 80px; margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; width: calc(270px * var(--text-scale)); z-index: 3;
 }
 .tasks.left { right: auto; left: 12px; }
 /* More tasks under way than fit above the handle (main.ts folds the ended ones first): the stack scrolls. The
@@ -48,12 +103,105 @@ body { font: var(--type-callout); color: var(--label); }
 @starting-style { .task[data-fresh] { opacity: 0; } }
 .task.gone { position: fixed; z-index: 3; margin: 0; box-sizing: border-box; pointer-events: none; }
 .task b, .task span { overflow-wrap: anywhere; }
-.task b { font: var(--type-headline); letter-spacing: -0.006em; }
+/* The title (the request, up to 72 characters: tasks.ts titleOf) on at most two lines; the whole of it stays for screen readers. */
+.task b { font: var(--type-headline); letter-spacing: -0.006em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .task span { color: var(--label-2); font: var(--type-callout); }
 .task span[hidden] { display: none; }
 /* A long result is kept to four lines, so one card never folds the others away (the whole text stays for screen
    readers, and goes to the conversation). */
 .task .detail { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
+/* How a task works now (docs/DESIGN.md "Two bodies"): in the background, on Ember's desk, or with your mouse and
+   keyboard, which is said in the accent so a task at your cursor is told apart at a glance. */
+.task .hand { font: var(--type-footnote); color: var(--label-2); }
+.task[data-cursor] .hand { color: var(--accent); font-weight: 600; }
+/* What it is doing now, in Ember's own words (app/shared/activity.ts): the card's main line while it works. The
+   worker's own note under it (.detail) stays in the secondary label, so its words never read as Ember's. */
+.task .live { color: var(--label); font: var(--type-callout); font-weight: 500; }
+/* The telemetry row: the state's word once it ended, the plan's step, the clock (written once a second by main.ts as
+   text, in tabular figures, so nothing moves), then one more item. Never more than one line. */
+.task .tele { display: block; margin-top: 2px; font: var(--type-footnote); font-weight: 500; color: var(--label-2); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task .tele > span { font: inherit; color: inherit; }
+.task .tele > span:not([hidden]) ~ span:not([hidden])::before { content: "·" / ""; margin: 0 6px; color: var(--label-3); }
+/* The steps so far in one sentence ("Clicked 3 times and read the window 2 times"), at most two lines. */
+.task .sum { font: var(--type-footnote); color: var(--label-2); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* While it works the state symbol is a ring round a lit dot, which reads as live, not as a spinner that froze (audit #14). */
+.tasks, .task.gone {
+  --sym-live: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9.5' fill='none' stroke='black' stroke-opacity='0.45' stroke-width='2'/%3E%3Ccircle cx='12' cy='12' r='5'/%3E%3C/svg%3E");
+  --sym-warn: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M10.3 2.9a2 2 0 0 1 3.4 0l9 15.6a2 2 0 0 1-1.7 3H3a2 2 0 0 1-1.7-3zM12 8a1.2 1.2 0 0 0-1.2 1.2v4.6a1.2 1.2 0 0 0 2.4 0V9.2A1.2 1.2 0 0 0 12 8zm0 8.4a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z'/%3E%3C/svg%3E");
+}
+.task[data-status="running"] { --sym: var(--sym-live); }
+/* Details: what it did, a row per step (or steps of one kind folded together), at most six, each with its state as a
+   symbol (and in words for screen readers), when it happened and its words. Rows don't take clicks and never animate. */
+.rows { list-style: none; margin: 8px 0 0; padding: 8px 0 0; display: grid; gap: 3px; box-shadow: inset 0 1px 0 var(--separator); font: var(--type-footnote); min-width: 0; }
+.rows[hidden] { display: none; }
+.rows li { position: relative; display: grid; grid-template-columns: 2.9em minmax(0, 1fr); gap: 6px; padding-left: 18px; min-width: 0; }
+.rows li::before { content: ""; position: absolute; left: 0; top: 0.18em; width: 12px; height: 12px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 12px no-repeat; }
+.rows li[data-state="running"] { --sym-tint: var(--accent); --sym: var(--sym-live); }
+.rows li[data-state="done"] { --sym-tint: var(--green); --sym: var(--sym-done); }
+.rows li[data-state="failed"] { --sym-tint: var(--red); --sym: var(--sym-failed); }
+.rows li[data-state="waiting"] { --sym-tint: var(--purple); --sym: var(--sym-waiting); }
+.rows li[data-state="stopped"] { --sym-tint: var(--gray); --sym: var(--sym-stopped); }
+.rows .at { font: inherit; font-weight: 500; color: var(--label-3); font-variant-numeric: tabular-nums; }
+.rows .words { font: inherit; color: var(--label); overflow-wrap: anywhere; }
+/* The worker's own note: its words, in the secondary label (never Ember's voice). */
+.rows li[data-model] .words { color: var(--label-2); }
+/* Its plan: a dot per step (filled when done, the accent for the step under way, a ring for the ones to come), with the
+   state's word for screen readers (never colour alone: the step under way is also set in weight 600). */
+.plan { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; font: var(--type-footnote); min-width: 0; }
+.plan[hidden] { display: none; }
+.plan li { position: relative; padding-left: 16px; color: var(--label-2); min-width: 0; overflow-wrap: anywhere; }
+.plan li::before { content: ""; position: absolute; left: 2px; top: 0.45em; width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-3); }
+.plan li[data-state="done"] { color: var(--label-3); }
+.plan li[data-state="done"]::before { background: var(--green); box-shadow: none; }
+.plan li[data-state="now"] { color: var(--label); font-weight: 600; }
+.plan li[data-state="now"]::before { background: var(--accent); box-shadow: none; }
+/* Where a task that ended without finishing got to: the step it was on, marked as it ended (not in the accent, which
+   says it is under way). */
+.task[data-status="failed"] .plan li[data-state="now"]::before { background: var(--red); }
+.task[data-status="stopped"] .plan li[data-state="now"]::before { background: var(--gray); }
+/* What it found or made (app/shared/view.ts's catalog, drawn as text by view.ts): flat rows on the glass, no glass on
+   glass, kept to a card's height so one result never folds the others away (the whole of it goes to the
+   conversation as words). */
+.view { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; box-shadow: inset 0 1px 0 var(--separator); max-height: calc(240px * var(--text-scale)); overflow: hidden; font: var(--type-footnote); color: var(--label); min-width: 0; }
+.view[hidden] { display: none; }
+.view p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.view ul, .view ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.view li { overflow-wrap: anywhere; }
+.view dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+.view dt { color: var(--label-2); overflow-wrap: anywhere; }
+.view dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.view table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+.view th { text-align: left; font-weight: 600; color: var(--label-2); }
+.view th, .view td { padding: 3px 6px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
+.view tbody tr { box-shadow: inset 0 1px 0 var(--separator); }
+.view .file code { font-family: var(--ember-mono); font-size: inherit; overflow-wrap: anywhere; }
+.view .file-label { font: inherit; color: var(--label-2); }
+/* A checklist: a tick for what is done, a ring for what isn't (and the words for screen readers). */
+.view .checklist { list-style: none; padding-left: 0; }
+.view .checklist li { position: relative; padding-left: 18px; }
+.view .checklist li::before { content: ""; position: absolute; left: 0; top: 0.2em; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-3); }
+.view .checklist li[data-done="true"]::before { box-shadow: none; background: var(--green); -webkit-mask: var(--sym-done) center / 12px no-repeat; }
+.view .checklist li[data-done="false"] { color: var(--label-2); }
+/* Progress: the words ("3 of 5"), then a static bar set once from checked whole numbers (no transition). */
+.view .progress p { display: flex; justify-content: space-between; gap: 10px; }
+.view .progress-label { min-width: 0; overflow-wrap: anywhere; }
+.view .progress-n { flex: none; font-weight: 500; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.view .bar { height: 4px; margin-top: 4px; border-radius: var(--r-capsule); background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.view .bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+/* Compare: two columns of values beside each row's label. */
+.view .compare th[scope="row"] { font-weight: 400; color: var(--label-2); }
+/* An excerpt: a few lines of a file as text, its path above (no link: nothing opens from a card). */
+.view .excerpt { margin: 0; min-width: 0; }
+.view .excerpt figcaption { color: var(--label-2); font-family: var(--ember-mono); overflow-wrap: anywhere; }
+.view .excerpt pre { margin: 4px 0 0; padding: 6px 8px; border-radius: var(--r-xs); background: rgba(0, 0, 0, 0.22); box-shadow: inset 0 0 0 1px var(--separator); font-family: var(--ember-mono); font-size: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* A status: its symbol (a tick, a warning, a mark) beside its words, never colour alone. */
+.view .status-block { position: relative; padding-left: 20px; }
+.view .status-block::before { content: ""; position: absolute; left: 0; top: 0.1em; width: 14px; height: 14px; background: var(--green); -webkit-mask: var(--sym-done) center / 14px no-repeat; }
+.view .status-block[data-tone="warn"]::before { background: var(--yellow); -webkit-mask-image: var(--sym-warn); }
+.view .status-block[data-tone="fail"]::before { background: var(--red); -webkit-mask-image: var(--sym-failed); }
+/* A card with a result is a little wider, so a small table reads (main.ts measures the stack where it is); so is a
+   failed one, so Details, Try again and Close stay on one line. */
+.tasks:has(.has-view, .task[data-status="failed"]) { width: calc(320px * var(--text-scale)); }
 /* Where a task acts when it isn't this computer (§2.4): a small capsule before the title, on the bubble and the cards. */
 .where {
   display: inline-block; max-width: 136px; margin-right: 6px; padding: 0 6px; border-radius: var(--r-capsule); vertical-align: 1px;
@@ -115,15 +263,29 @@ body { font: var(--type-callout); color: var(--label); }
 .focus[hidden] { display: block; opacity: 0; }
 .focus[hidden]::after { animation: none; }
 @keyframes focus-glow { 50% { opacity: 0.35; } }
-@media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .focus { transition: none; } .focus::after, .status i, .ring, .ring-now { animation: none; } }
 html.calm .focus { transition: none; }
 html.calm .focus::after, html.calm .status i { animation: none; }
+/* Calm: the presence ring holds still (thinking stays lit, the acting segment steady, done shown whole until it goes). */
+html.calm .presence .ring, html.calm .presence[data-state="acting"] .ring-now { animation: none; }
 
 /* Windows contrast themes (forced colours; tokens and focus in ember.css): the cards' buttons and the where badge keep
    their edges (the cards, the status line and the bubble keep theirs: a border the system colours). */
 @media (forced-colors: active) {
   .task-actions button { border: 1px solid ButtonText; }
   .where { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .plan li::before { forced-color-adjust: none; box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .plan li[data-state="done"]::before, .plan li[data-state="now"]::before { background: CanvasText; }
+  .view { border-top: 1px solid CanvasText; box-shadow: none; }
+  .rows { border-top: 1px solid CanvasText; box-shadow: none; }
+  .rows li::before, .view .status-block::before, .view .checklist li[data-done="true"]::before { forced-color-adjust: none; background: CanvasText; }
+  .view .checklist li::before { forced-color-adjust: none; box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .view .bar { outline: 1px solid CanvasText; }
+  .view .bar i { forced-color-adjust: none; background: Highlight; }
+  .view .excerpt pre { border: 1px solid CanvasText; }
+  /* The presence ring and its marks keep their paint, in the system colours the tokens become (ember.css). */
+  .tick, .ring-now, .mic-mark, .mic-mark::before, .meter, .meter i { forced-color-adjust: none; }
+  .mic-mark, .meter { background: Canvas; outline: 1px solid CanvasText; outline-offset: -1px; }
 }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type

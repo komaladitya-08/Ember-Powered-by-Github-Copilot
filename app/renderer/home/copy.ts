@@ -193,6 +193,17 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
  */
 export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It keeps this on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers. You can see and forget everything here, and signing out forgets it all.";
 
+/** The routines note (FEATURE_CONSENT_VERSION.routines): change it only with a bump of that version. */
+export const ROUTINES_CONSENT_TEXT = "Ember will keep the routines you name and the reminders you set after it closes, in your own words. It keeps them on this computer only, in its data folder, where only you can read it. When you say a routine's name, its steps go to Copilot as if you had just asked each one, and Ember still asks before anything risky. You can see and delete them here, and signing out deletes them all.";
+
+/** The routines list when it's empty: what to say to make one, or that routines are off. */
+export function routinesEmptyText(on: boolean): string {
+  return on ? "No routines yet. Say “When I say start my day, open Mail and show today's calendar”." : "Routines are off.";
+}
+
+/** A routine's Delete button, for screen readers: which routine. */
+export const deleteRoutineLabel = (name: string) => `Delete the routine “${name}”`;
+
 /** The memory list while it is empty: `on`, memory is on. */
 export function memoryEmptyText(on: boolean): string {
   return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";

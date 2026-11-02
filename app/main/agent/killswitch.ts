@@ -49,7 +49,7 @@ export class KillSwitch {
 
 /** The parts the bubble names when they are late, in plain words (the overlay's own motion is never named). */
 const PART_WORDS: Readonly<Record<string, string | null>> = {
-  borrow: "the borrowed mouse", speech: "speaking", listening: "listening", agent: "tasks", targets: "commands", desk: "Ember's desk", motion: null,
+  borrow: "the borrowed mouse", speech: "speaking", listening: "listening", agent: "tasks", targets: "commands", desk: "Ember's desk", extensions: "extensions", motion: null,
 };
 
 /** "a", "a and b", "a, b and c". */

@@ -8,15 +8,20 @@
  * while it dozes, and not at all while it is hidden or on another display.
  */
 
+import { activityItems, planItems, viewNodes } from "./view";
+import { HAND_WORDS } from "../../shared/view";
+import { clockText } from "../../shared/activity";
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
 import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
-import { STATE_WORD, STOP_ACK_MS, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
+import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
 import { TASK_ARM_MS } from "../handle/arm";
 import { shortWhere, whereText } from "../handle/badge";
 import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
+import { presenceOf } from "../../shared/presence";
+import { PresenceView } from "./presence";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -39,6 +44,8 @@ bubble.onWholeSeen = n => api.bubbleAction(wholeSeenAction(n));
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
+/** Ember's presence ring, microphone mark and voice meter (presence.ts), drawn under Ember. */
+const presence = new PresenceView(document.body);
 
 const characters: Record<string, Character> = Object.fromEntries(FACTORIES.map(f => { const c = f(); return [c.id, c]; }));
 const rig = new Rig();
@@ -87,6 +94,8 @@ function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
   // Calm mode also stills the CSS pulses (the bubble's dot, the status dot, the focus glow).
   document.documentElement.classList.toggle("calm", settings?.reduceMotion === true);
+  // The presence ring holds still too: no level on its ticks, a steady mark for the voice meter.
+  presence.setCalm(rig.reducedMotion);
 }
 reducedMotionQuery.addEventListener("change", () => {
   applyReducedMotion();
@@ -120,6 +129,8 @@ api.onInit((i: OverlayInit) => {
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
+// The sound's level, apart from the state (up to 20 a second while the microphone hears or Ember's voice plays).
+api.onLevel?.(l => presence.setLevel(l));
 api.onFrame(f => {
   frame = f;
   // Away (hidden, or on another display): one more draw clears Ember, then nothing until it is back.
@@ -142,7 +153,10 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   rig.setTalking(s.talking);
   if (s.talking || s.bubble.visible) rig.wake();
   const b = s.bubble;
+  presence.setState(presenceOf(s));
+  presence.setHearing(s.mic === "active");
   bubble.setMood(b.mood);
+  bubble.setRisky(b.risky === true);
   showWhere(b.where, b.title);
   bubble.setTitle(b.title);
   // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
@@ -311,7 +325,25 @@ function measureTasks(): void {
 }
 
 /** `said`: the detail Ember last sent; `stopAt`: when its Stop was pressed (0: not pressed, or it works again). */
-interface CardEls { li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number }
+interface CardEls {
+  li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number;
+  /** How it works now ("In the background"), its plan, and its result view (docs/DESIGN.md "Two bodies"), each redrawn only when it changed. */
+  hand: HTMLElement; plan: HTMLOListElement; view: HTMLDivElement; planKey: string; viewKey: string;
+  /**
+   * Its activity (app/shared/activity.ts): the live line in Ember's words, the telemetry row (its clock, `clock`, is the
+   * one text the shared tick writes), the steps' summary, and the details' rows (`rowsKey`: as last drawn).
+   */
+  live: HTMLElement; tele: HTMLElement; teleState: HTMLElement; teleStep: HTMLElement; clock: HTMLElement; teleExtra: HTMLElement;
+  sum: HTMLElement; rows: HTMLOListElement; rowsKey: string;
+  /** The card as last drawn. */
+  card: TaskCard | null;
+}
+
+/** The renderer's own Details button on a card (never sent to main). */
+const DETAILS = "ui:details";
+/** Cards whose details the user opened (by task id): closed until then, so one card never folds the others away. */
+const detailsOpen = new Map<string, boolean>();
+const isOpen = (t: TaskCard) => detailsOpen.get(t.id) ?? false;
 /** What the bubble keeps off besides the cards: the windows main names and the control Ember works on. */
 const keepOffKey = (s: (EmberState & { avoid?: Rect[] }) | null) => JSON.stringify([s?.avoid ?? null, s?.focus ?? null]);
 const cards = new Map<string, CardEls>();
@@ -373,11 +405,64 @@ function fitTasks(): void {
   if (scrolls && !was) tasksEl.scrollTop = tasksEl.scrollHeight;
 }
 
-/** The card's detail: what Ember last said, or "Stopping…" from the moment its Stop is pressed. */
+/** Sets an element's words and hides it when there are none (writing only what changed). */
+function say(el: HTMLElement, words: string | null): void {
+  if (el.textContent !== (words ?? "")) el.textContent = words ?? "";
+  el.hidden = !words;
+}
+
+/**
+ * The card's lines (stack.ts cardLines): what Ember is doing now, the worker's note or summary, the telemetry row and the
+ * steps' summary; "Stopping…" from the moment its Stop is pressed.
+ */
 function showDetail(c: CardEls): void {
-  const detail = c.stopAt ? TASK_STOPPING : c.said;
-  if (c.detail.textContent !== detail) c.detail.textContent = detail;
-  c.detail.hidden = !detail;
+  const lines = c.card ? cardLines({ ...c.card, detail: c.said }, c.stopAt > 0) : { live: null, detail: c.stopAt ? TASK_STOPPING : c.said, tele: null, summary: null };
+  say(c.live, lines.live);
+  say(c.detail, lines.detail);
+  say(c.sum, lines.summary);
+  c.tele.hidden = !lines.tele;
+  say(c.teleState, lines.tele?.state ?? null);
+  say(c.teleStep, lines.tele?.step ?? null);
+  say(c.teleExtra, lines.tele?.extra ?? null);
+  writeClock(c, Date.now());
+}
+
+// ── The cards' clocks: one shared one-second tick writes each running card's clock as text, and nothing else (no
+// re-render, no layout: the row keeps its line). It runs only while a card under way is shown. ──
+
+let tick: ReturnType<typeof setInterval> | null = null;
+
+function writeClock(c: CardEls, now: number): void {
+  const a = c.card?.activity;
+  const text = a ? clockText(a, now) : "";
+  if (c.clock.textContent !== text) c.clock.textContent = text;
+  c.clock.hidden = !text;
+}
+
+function ticking(): void {
+  const live = [...cards.values()].some(c => c.card?.activity && c.card.activity.endedAt === undefined && c.li.isConnected && !c.li.hidden);
+  if (live && !tick) {
+    tick = setInterval(() => {
+      const now = Date.now();
+      for (const c of cards.values()) if (c.card?.activity && c.card.activity.endedAt === undefined && !c.li.hidden) writeClock(c, now);
+    }, 1000);
+  } else if (!live && tick) {
+    clearInterval(tick);
+    tick = null;
+  }
+}
+
+/** Opens or closes a card's details (kept by task id, so updates never close what the user opened). */
+function showRows(c: CardEls): void {
+  const t = c.card;
+  const open = !!t?.activity && isOpen(t);
+  c.rows.hidden = !open;
+  for (const b of c.actions.querySelectorAll<HTMLButtonElement>("button.details")) b.setAttribute("aria-expanded", String(open));
+  if (!open || !t?.activity) return;
+  // Before its first step, the one row is what it is doing.
+  const rows = t.activity.rows.length ? t.activity.rows : [{ at: 0, state: "running" as const, words: t.activity.live }];
+  const key = JSON.stringify(rows);
+  if (key !== c.rowsKey) { c.rowsKey = key; c.rows.replaceChildren(...activityItems(rows)); }
 }
 
 /** A Stop being carried out takes no second press (it says so to screen readers too). */
@@ -479,12 +564,27 @@ function renderTasks(tasks: TaskCard[]): boolean {
       const state = Object.assign(document.createElement("span"), { className: "sr" });
       const where = Object.assign(document.createElement("span"), { className: "where", hidden: true });
       const title = document.createElement("b");
+      const hand = Object.assign(document.createElement("span"), { className: "hand", hidden: true });
+      const live = Object.assign(document.createElement("span"), { className: "live", hidden: true });
       const detail = Object.assign(document.createElement("span"), { className: "detail" });
+      const span = (className: string) => Object.assign(document.createElement("span"), { className, hidden: true });
+      const tele = span("tele");
+      const teleState = span("tele-state");
+      const teleStep = span("tele-step");
+      const clock = span("t");
+      const teleExtra = span("tele-extra");
+      tele.append(teleState, teleStep, clock, teleExtra);
+      const sum = span("sum");
+      const plan = Object.assign(document.createElement("ol"), { className: "plan", hidden: true });
+      const view = Object.assign(document.createElement("div"), { className: "view", hidden: true });
+      const rows = Object.assign(document.createElement("ol"), { className: "rows", hidden: true });
+      rows.setAttribute("aria-label", "What it did");
       const actions = document.createElement("div");
       actions.className = "task-actions";
       actions.hidden = true;
-      li.append(state, where, title, detail, actions);
-      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0 };
+      li.append(state, where, title, hand, live, detail, tele, sum, plan, view, rows, actions);
+      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0, hand, plan, view, planKey: "", viewKey: "",
+        live, tele, teleState, teleStep, clock, teleExtra, sum, rows, rowsKey: "", card: null };
       cards.set(t.id, c);
     }
     c.li.dataset.status = t.status;
@@ -493,11 +593,22 @@ function renderTasks(tasks: TaskCard[]): boolean {
     if (c.where.textContent !== where) c.where.textContent = where;
     c.where.hidden = !where;
     if (c.title.textContent !== t.title) c.title.textContent = t.title;
+    const hand = t.hand ? HAND_WORDS[t.hand] : "";
+    if (c.hand.textContent !== hand) c.hand.textContent = hand;
+    c.hand.hidden = !hand;
+    c.li.toggleAttribute("data-cursor", t.hand === "cursor");
+    const planKey = JSON.stringify(t.plan ?? []);
+    if (planKey !== c.planKey) { c.planKey = planKey; c.plan.replaceChildren(...planItems(t.plan ?? [])); c.plan.hidden = !t.plan?.length; }
+    const viewKey = JSON.stringify(t.view ?? []);
+    if (viewKey !== c.viewKey) { c.viewKey = viewKey; c.view.replaceChildren(...viewNodes(t.view ?? [])); c.view.hidden = !t.view?.length; }
+    c.li.classList.toggle("has-view", !!t.view?.length);
     c.said = t.detail;
+    c.card = t;
     // A pressed Stop keeps saying so until Ember does (or the task has ended, or the press didn't land).
     if (c.stopAt && (!underWay(t) || !stopPending(c.stopAt, performance.now(), t.detail))) c.stopAt = 0;
     showDetail(c);
-    const list = t.actions ?? [];
+    // Details first: what it did, then Try again or Stop, then Close (the renderer's own button: never sent to main).
+    const list = [...(t.activity ? [{ id: DETAILS, label: "Details" }] : []), ...(t.actions ?? [])];
     const actionsKey = JSON.stringify([list, t.title]);
     if (actionsKey !== c.actionsKey) {
       c.actionsKey = actionsKey;
@@ -514,6 +625,18 @@ function renderTasks(tasks: TaskCard[]): boolean {
         const card = c!;
         const stop = /:stop$/.test(a.id);
         if (stop) b.className = "stop";
+        if (a.id === DETAILS) {
+          b.className = "details";
+          b.setAttribute("aria-expanded", "false");
+          onPress(b, () => {
+            if (performance.now() < card.armedAt || !card.card) return;
+            detailsOpen.set(card.card.id, !isOpen(card.card));
+            showRows(card);
+            fitTasks();
+            measureTasks();
+          });
+          return b;
+        }
         onPress(b, () => {
           if (performance.now() < card.armedAt || (stop && card.stopAt)) return;
           if (stop) pressedStop(card);
@@ -522,16 +645,18 @@ function renderTasks(tasks: TaskCard[]): boolean {
         return b;
       }));
     }
+    showRows(c);
     showStopping(c);
     return c.li;
   });
   const ids = new Set(tasks.map(t => t.id));
-  for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); }
+  for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); detailsOpen.delete(id); }
   // The "+N more" line heads the stack whenever there are ended cards that could fold.
   const all = stacked.some(t => !underWay(t)) ? [more.li, ...items] : items;
   const same = all.length === tasksEl.children.length && all.every((li, i) => tasksEl.children[i] === li);
   if (!same) tasksEl.replaceChildren(...all);
   fitTasks();
+  ticking();
   if (before) slideCards(before);
   return true;
 }
@@ -654,6 +779,8 @@ function draw(now: number): void {
     ctx.scale(scale, scale);
     character.draw(ctx, pose);
     showStage(true);
+    presence.place(lx, ly, size);
+    presence.show(true);
     // With no room beside the settings window, a bubble that asks nothing hides rather than cover it (the window's
     // Conversation section has its words); a question stays, wherever it must go.
     // (An answer opened in full is pinned: it stays on screen too.)
@@ -674,6 +801,7 @@ function draw(now: number): void {
   } else {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);
+    presence.show(false);
     drawnAt = null;
     setBody(null);
   }

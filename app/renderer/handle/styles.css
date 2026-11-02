@@ -9,8 +9,20 @@ body { font: var(--type-callout); letter-spacing: -0.003em; color: var(--label);
   box-shadow: var(--glass-spec), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18);
 }
 @media (hover: hover) { .handle:hover { box-shadow: var(--glass-spec), inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.18); } }
-.menu { all: unset; flex: none; display: block; cursor: pointer; border-radius: 50%; }
+.menu { all: unset; flex: none; display: block; position: relative; cursor: pointer; border-radius: 50%; }
 .menu:focus-visible { box-shadow: var(--focus-ring); }
+/* Ember's presence ring round its face (app/shared/presence.ts; docs/DESIGN.md "Presence"): the dim ink at rest, the
+   state's colour otherwise, a notch at the top on a problem. Always still on the handle (it is on screen all day), and
+   decorative: the line beside it says the state in words. */
+.menu::before {
+  content: ""; position: absolute; inset: 1px; border-radius: 50%; pointer-events: none;
+  border: 1.5px solid var(--hud-dim);
+}
+body:is([data-presence="listening"], [data-presence="acting"], [data-presence="needs"]) .menu::before { border-color: var(--accent); }
+body[data-presence="needs"] .menu::before { border-width: 2px; }
+body[data-presence="thinking"] .menu::before { border-color: var(--accent-2); }
+body[data-presence="done"] .menu::before { border-color: var(--green); }
+body[data-presence="error"] .menu::before { border-color: var(--red); -webkit-mask: conic-gradient(from -20deg, transparent 0 40deg, #000 40deg); }
 #face { display: block; width: 46px; height: 46px; }
 .text { display: grid; min-width: 0; }
 /* Ember's name, and beside it the computer Ember works on when that isn't this one (§8.1): a small capsule with a dot
@@ -111,9 +123,15 @@ body.fallback .task {
 }
 body.fallback .task[hidden] { display: none; }
 body.fallback .task::before { content: ""; flex: none; width: 16px; height: 16px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 16px no-repeat; }
-.task-text { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: var(--type-callout); }
-.task-text b { margin-right: 2px; font-weight: 600; }
-#task-detail { color: var(--label-2); }
+/* While it works: a ring round a lit dot, as on the overlay's cards (it reads as live, not as a spinner that froze). */
+body.fallback .task[data-status="running"] { --sym: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9.5' fill='none' stroke='black' stroke-opacity='0.45' stroke-width='2'/%3E%3Ccircle cx='12' cy='12' r='5'/%3E%3C/svg%3E"); }
+/* Two lines: the task's title, then what it is doing now (stack.ts cardLines), each cut with an ellipsis only at the
+   card's edge: on one line the step was cut to "Re…" behind a long title (audit #14). */
+.task-text { flex: 1; min-width: 0; display: grid; font: var(--type-callout); }
+.task-text > b, #task-detail { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-text > b { font-weight: 600; }
+#task-detail { color: var(--label-2); font: var(--type-footnote); }
+#task-detail:empty { display: none; }
 .task-actions { flex: none; display: flex; gap: 6px; }
 .task-actions button { min-height: calc(24px * var(--text-scale)); padding: 3px 12px; font-size: 12px; line-height: 16px; }
 /* Microphone: a badge on the face's lower right, a symbol on a dark disc (so it never reads as part of the character,

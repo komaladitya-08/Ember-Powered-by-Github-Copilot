@@ -2,15 +2,17 @@
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
 import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
-import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
+import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
-import { idleLine as tasksLine } from "../overlay/stack";
+import { STATE_WORD, cardLines } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
-import { idleLine, micBadge } from "../../shared/mic";
+import { micBadge } from "../../shared/mic";
+import { presenceOf } from "../../shared/presence";
 import { HandleLive } from "./live";
+import { handleLine } from "./line";
 
 declare global { interface Window { emberHandle: HandleApi } }
 
@@ -66,8 +68,6 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
   }));
 }
 
-/** The task row's state in words, for screen readers (its symbol says it to the eye). */
-const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 
 const thoughtEl = $("thought");
 let wasStreaming = false;
@@ -89,7 +89,7 @@ function announce(b: BubbleState, status: string | null, micNews: string | null)
   const parts: string[] = [];
   // What was said while the card showed nothing new isn't repeated when it shows again.
   if (b.visible) {
-    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}) };
+    const view: BubbleView = { visible: true, mood: b.mood, title: b.title, thought: b.thought, streaming: b.streaming, where: b.where, step: b.step, ...(b.whole ? { whole: b.whole.text, wholeSeen: b.whole.seen } : {}), ...(b.risky ? { risky: true } : {}) };
     const text = announcement(view, name);
     // The same question, its whole text now all shown: only that news, not the question and its text again.
     if (text && text !== announced) { parts.push(wholeReadNews(announcedView, view) ?? text); announced = text; announcedView = view; }
@@ -189,13 +189,20 @@ api.onState(s => {
   mic.title = micState?.label ?? "";
   mic.setAttribute("aria-label", micState?.label ?? "Microphone");
   const micNews = live.micNews(s.mic);
-  // "Ready", or why Ember can't answer, or why "Hey Ember" can't work; while tasks run, their count in place of Ready.
-  const idle = tasksLine(idleLine(s.idle, s.mic), s.tasks) ?? "Ready";
+  // The presence ring round the face says Ember's state at a glance (still: the handle never animates it), dim at rest.
+  const ring = presenceOf(s);
+  if (document.body.dataset.presence !== ring) document.body.dataset.presence = ring;
+  // The most urgent thing that is true now: a task that needs you, why Ember can't answer, the tasks under way, a
+  // failure, the setup row that holds Ember back (by name), the microphone, else Ready (line.ts, review #5).
+  const idle = handleLine(s);
   if (!fallback) {
     if (micNews) $("live").textContent = micNews;
     // The pill: one line. An answer's title is the character's name, already shown above: the line shows what it said.
     const said = b.visible ? (b.title === name ? (b.streaming ? plainStream(b.thought) : b.thought) : b.title) : "";
-    $("line").textContent = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
+    const line = s.status ?? (said.replace(/\s+/g, " ").trim() || idle);
+    $("line").textContent = line;
+    // Hovering the pill shows the whole line (it is cut off with an ellipsis when long).
+    $("handle").title = line;
     return;
   }
   announce(b, s.status ?? null, micNews);
@@ -237,11 +244,15 @@ api.onState(s => {
   $("task").hidden = !task;
   if (task) {
     $("task").dataset.status = task.status;
-    $("task-state").textContent = TASK_WORD[task.status];
+    // The task row's state in words for screen readers (its symbol says it to the eye), from the cards' one table.
+    $("task-state").textContent = STATE_WORD[task.status];
     const at = whereText(task.where);
     $("task-title").textContent = at ? `${task.title} (${at})` : task.title;
-    $("task-detail").textContent = task.detail;
-    $("task").title = `${task.title}${task.detail ? `: ${task.detail}` : ""}`;
+    // Under it, what it is doing now in Ember's words ("Clicking in Text Editor…"), else what it last said.
+    const lines = cardLines(task);
+    const doing = lines.live ?? lines.detail;
+    $("task-detail").textContent = doing;
+    $("task").title = `${task.title}${doing ? `: ${doing}` : ""}`;
   }
   buttons($("task-actions"), task?.actions ?? [], a => `${a.label}: ${task?.title ?? ""}`);
   requestAnimationFrame(fitCard);

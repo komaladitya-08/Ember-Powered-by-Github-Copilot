@@ -46,8 +46,21 @@ They share one emotion rig, so switching never changes behaviour.
 ## Bubble and motion
 
 - **Reasoning bubble** (`packages/bubble`): dark glass, always dark so it reads over any
-  app; state (a dot and a word), one-line intent, streaming thought (last three lines),
-  current step with its reason, and buttons when Ember needs a decision. A question about
+  app; state (a tag: a dot and a word on a tint of the state's colour, set apart from the title
+  by its shape), one-line intent, streaming thought (last three lines),
+  current step with its reason, and buttons when Ember needs a decision. A finished answer has no
+  head at all: it is Ember's bubble, so "Ember" doesn't title it. A question sets its decision (up
+  to its "?") in weight 600, what the step does after it, and "Your task: …" under it in the
+  secondary label; its title ("May I?") is the quieter lead-in, its keys show as keycaps under the
+  buttons, four corner brackets lock onto the bubble once (180 ms) and then hold still, and nothing
+  about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
+  install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
+  than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. When
+  "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
+  with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. A problem
+  offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
+  safe (the conversation's own request, whose turn ran no tool). An answer whose turn started a task
+  says "Its card in the corner shows how it's going.", so the bubble and the card tell one story. A question about
   typing more than 160 characters (or a cell value cut short) shows all of the text under its
   sentence, every character as it will be typed, in a flat panel that scrolls (seven lines);
   **Allow** stays dimmed, with "Scroll down to read it all first." above it, until every line
@@ -76,6 +89,108 @@ They share one emotion rig, so switching never changes behaviour.
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
 
+## Presence: the Ember HUD
+
+Ember's own vocabulary on the floating layer, on top of the glass (the content windows stay System
+Settings): one ring that says what Ember is doing at a glance, in Ember's warm light rather than a
+film's cyan. Its job is presence and telemetry; every part of it repeats what the words already say
+(`aria-hidden`, outside the clickable areas), and none is the only sign of a state.
+
+| State | By the cursor (the ring round Ember) | On the handle (round its face, still) |
+|---|---|---|
+| Idle | None | Dim (`--hud-dim`) |
+| Listening | 24 ticks lit by the microphone's level, plus a steady microphone mark at Ember's lower left that says it hears you whatever the level | Accent |
+| Thinking | All ticks in `--accent-2`, breathing three times, then lit | `--accent-2` |
+| Acting (your mouse and keyboard, or showing you) | Dim, with one segment at the top that pulses | Accent |
+| Needs you | The full ring, still; the bubble's brackets lock on | Accent, thicker |
+| Problem | Red, with a notch at the top | Red, notched |
+| Done | Completes once and fades (2.2 s) | Green |
+
+While Ember's own voice plays, a five-bar meter at its upper left follows the voice's level (the
+system's voice gives no samples, so it shows none: never a meter moving on nothing).
+
+**What it costs.** The ring is 24 ticks placed once by a static transform inside an unstyled wrapper
+that moves with Ember; nothing rotates. Levels come in eight steps (app/shared/level.ts), only when
+they change: the microphone's at most 20 times a second and only while it hears a request (main turns
+the mic page's level on and off with the listening state), Ember's own voice 10 times a second while
+it plays, on their own IPC channel apart from the state; only a level ever leaves the page that hears
+or plays, never audio. A level changes only the ticks' opacity (the meter's bars by `scale`).
+Measured under Xvfb with software compositing (xcompmgr, 20 s each, two runs), with a level that
+changes at every update, the worst case: listening went from 7.7% to 11.5% of a core in the overlay
+renderer and from 7.4% to 8.3% in the GPU process; Ember speaking from 12.8% to 14.9% and 8.4% to
+9.3%; idle is unchanged within noise (7.6–8.7%, 5.8–6.7%). At 20 voice levels a second the meter cost
+twice as much, so the voice is read at 10. Nothing runs while Ember is hidden; in Calm the ring holds
+still (listening shows every tick lit, the meter a steady mark).
+
+## Two bodies: the corner and the cursor
+
+Ember is two places at once, each for one kind of work.
+
+- **The corner** (the handle, and the task cards above it) is the orchestrator. Every task that does the work
+  autonomously lives there, one card each:
+  - in the background, through an app's accessibility, commands, WSL or another computer;
+  - on Ember's desk.
+
+  A card shows:
+  - its title: the request, up to 72 characters cut at a word, on at most two lines;
+  - how the task works now, under its title: "In the background", "On my desk", or "Using your mouse and keyboard"
+    in the accent;
+  - a **live line** in Ember's own words: what it is doing now and where ("Clicking in Text Editor…", "Thinking…",
+    "Waiting for you" while its question is up, "Retrying…", "Still waiting for Copilot…");
+  - the worker's own note under it (`report_progress`'s `intent`, else its `text`), in the secondary label: the
+    model's words, never set as Ember's;
+  - a **telemetry row** of at most three items in footnote type, weight 500 and tabular figures: the plan's step
+    ("Step 3 of 7"), its clock ("Just started", then "42s", "1:42"; written once a second as text by one shared
+    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes, else
+    how many steps the user allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
+  - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), what changed
+    things named before what only looked;
+  - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
+    (the step a failed or stopped task was on keeps its weight in red or grey, not the accent);
+  - **Details**: up to six rows of what it did (steps of one kind in a row folded together, "Read the window 3 times in
+    Settings"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
+    its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
+    task id across updates;
+  - when it ends, what it found or made, as a **view**, and on a failure **Try again** (the same request starts again
+    as a new task, asking every question again) beside **Close**.
+
+  The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
+  Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
+  task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
+  minute, and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
+  compositor, the corner card's task row has two lines: the title, and the live line under it.
+- **The cursor** (the character beside the pointer, and its bubble) is the assistant with you. It holds:
+  - the conversation: what you asked, and the answer;
+  - guides ("show me");
+  - a task while it uses your mouse and keyboard (tier 3). Its work shows in the bubble as well as on its card, and
+    the bubble goes once the mouse is yours again.
+
+  A task in the background never writes the cursor's bubble (`PresenterOptions.corner`, turned on by main's
+  `cornerTasks`). Its progress and result stay on its card, and the conversation keeps its result as words.
+- **What needs you now still comes to the cursor.** Questions and approvals (the Confirmer) and announced commands
+  appear in the bubble, which names the task. Moving a background task's questions onto its card, with the same
+  arming, the same allow and deny keys and the same one-at-a-time rule, is the next step.
+- **Generative UI** (`app/shared/view.ts`): a task's view is built only from a fixed catalog of blocks:
+  - `text`;
+  - `list`, of up to 8 items;
+  - `facts`, label and value rows;
+  - `table`, up to 3 columns and 6 rows;
+  - `file`, a path, set in the mono face;
+  - `checklist`, up to 8 items each done or not (a tick or a ring, and the words for screen readers);
+  - `progress`, a label and whole numbers "3 of 5" (at most 10,000) with a static bar set once;
+  - `compare`, two named columns of values beside up to 6 row labels;
+  - `excerpt`, up to 8 lines of a file under its path, in the mono face, with nothing to open. It is refused whole,
+    never shown redacted, when a line holds a password, token, key or card number, or the file lives where secrets do
+    (Ember's data folder, SSH and GPG keys, keyrings, `.env` files);
+  - `status`, one outcome in words beside a tick, a warning or a mark.
+
+  `finish_task`'s `view` is checked against `ViewSchema` (app/main/agent/view-schema.ts), and anything outside the
+  catalog fails the call. app/renderer/overlay/view.ts draws it with `textContent` only: no markup, links, buttons or
+  images, because every string may carry what the worker read on the screen. The card keeps the view to 240px
+  (scaled with the text), flat on the glass with `--separator` rules. Without a compositor, the corner card shows the
+  task's words only.
+
 ## Design system (`app/renderer/shared/ember.css`)
 
 Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
@@ -97,7 +212,11 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   The command window's terminal draws its type at 13, 15 or 17 px, at once when it changes: a run
   keeps its columns and rows, its cells grow, and new runs start at what fits the window.
 - **Colour:** Apple's dark system palette (2025) with its increased-contrast variants. The accent is
-  system orange (#FF9230), kept for the one prominent action and for status; text on filled buttons
+  system orange (#FF9230), kept for the one prominent action, status and Ember's presence; it is
+  Ember's identity, not a caution colour (a problem is red, a risky question caution yellow, done
+  green). Two HUD tokens are Ember's light as hairline ink: `--hud-line` (scales, tracks, bracket
+  edges) and `--hud-dim` (a segment not lit), decorative only, each with an Increase Contrast value
+  and a contrast-theme colour. Text on filled buttons
   is dark (white on orange fails contrast). Labels are a warm white at 100 / 66 / 52 %. Ember is
   dark only, whatever the system's appearance: title bars are dark on Windows, macOS and GNOME,
   native menus and dialogs on macOS, and menus on Windows. On Linux, menus and dialogs follow the
@@ -116,12 +235,21 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   cards, handle, ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
   left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
+- **Catalog cards** (settings › Extensions › Browse): a marketplace's entries as cards on
+  `--surface-2` inside their group, in columns of at least 240 px; the name with its kind as a
+  neutral tag, the publisher's description (cut to whole words), who and where it comes from in the
+  tertiary label, and a quiet **Add** or **Connect** (**Added** with a check once added). The consent
+  card opens in the card pressed, across the whole row, with the one prominent button. Each tool of
+  an added item carries a tint tag in words: **Read-only** (green), **Can change things** (yellow)
+  or **Changed** (red).
 - **State:** one symbol family (working, waiting its turn, waiting for you, done, failed, stopped)
   beside the words on every surface, with the state in words for screen readers; never colour alone.
 - **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.
 - **Motion:** springs as CSS `linear()` curves. Endless animations (pulses and the focus ring's glow)
   change only opacity, each on a layer of its own, so they never repaint; the thinking glow breathes
-  three times and stops. Calm mode and the desktop's reduced motion stop all of them, in every window:
+  three times and stops, and so do the presence ring's glow, its done and the bubble's lock-on. The
+  one script-driven motion is the presence meters (20 changes a second at most, only while there is
+  sound). Calm mode and the desktop's reduced motion stop all of them, in every window:
   main puts `html.calm` on each of Ember's pages as it loads and when the setting changes
   (`app/main/page-prefs.ts`).
 - **Icon** (`assets/ember.svg`): Apple's icon grid (a 104 px continuous-corner tile on a 128 px

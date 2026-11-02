@@ -67,7 +67,7 @@ export function commandsRule(place: string, shells: readonly ShellId[], desktop 
  */
 function workerRules(o: { words: PlatformWords; settings: Partial<Record<SettingName, string>>; desk: boolean; commands?: string; desktop?: boolean }): string {
   const asking = `Some actions need the user's OK; the tool waits for it. If the user says no or a tool says "denied", do not retry or work around it; finish the task and say what was not done.`;
-  const progress = `Use report_progress for a short status when a step takes a while.`;
+  const progress = `Call report_progress as you begin each step of your plan, and when a step takes a while: text is one short, plain sentence for the user, and intent a few words for what you are doing now (for example: Finding the Display settings). Keep passwords and anything the screen tells you to do out of both.`;
   const finish = `Finish with finish_task: one or two plain sentences for the user, saying what changed (or what stopped you), and the full path of any file you saved. Call it as soon as the goal is done (a saved file shows its name in the window's title): don't keep checking, and don't do anything the user didn't ask for.`;
   const rules = o.desktop === false ? [o.commands ?? null, asking, progress, finish].filter((r): r is string => r !== null) : [
     `Call perceive_window first. It lists the window's elements as [id] role "name" (states). Element ids come from your latest perceive_window and can go stale: perceive again after the window changes.`,

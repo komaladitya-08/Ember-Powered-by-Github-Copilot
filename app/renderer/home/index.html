@@ -20,7 +20,7 @@
     </header>
 
     <nav class="jump after-setup" id="jump" aria-label="Settings sections">
-      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
+      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#extensions-h">Extensions</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
     </nav>
 
     <p id="managed" class="managed" hidden></p>
@@ -92,6 +92,17 @@
       <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
+      <h3 class="sub" id="routines-h">Routines and reminders</h3>
+      <div class="group">
+        <label class="switch-row"><input type="checkbox" id="routines-on" role="switch" aria-describedby="routines-hint"><span>Keep my routines and reminders</span></label>
+        <div id="routines-consent" class="consent" role="group" aria-label="Before Ember keeps routines" hidden>
+          <p id="routines-consent-text"></p>
+          <div class="agent-actions"><button type="button" id="routines-yes" class="btn" aria-describedby="routines-consent-text">I agree, keep them</button><button type="button" id="routines-no" class="btn quiet">Not now</button></div>
+        </div>
+      </div>
+      <ul class="plain-list" id="routines-list" aria-labelledby="routines-h"></ul>
+      <p class="hint" id="routines-hint">Off, reminders last until Ember closes and routines aren't kept. On, saying a routine's name runs its steps, and Ember still asks before anything risky.</p>
+      <div class="agent-actions"><button type="button" id="routines-forget-all" class="btn quiet" hidden>Delete all routines and reminders</button></div>
     </section>
 
     <section class="after-setup" aria-labelledby="voice-h">
@@ -121,9 +132,10 @@
           <label for="speak">Speak replies, questions and results out loud</label>
           <select id="speak"><option value="reader">When a screen reader runs</option><option value="always">Always</option><option value="never">Never</option></select>
         </div>
+        <label class="switch-row"><input type="checkbox" id="speak-results" role="switch"><span>Read finished tasks out loud, not only on screen</span></label>
       </div>
       <p class="hint" id="speak-note" role="status" hidden></p>
-      <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything.</p>
+      <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything. “Ember?” on its own tells you what Ember is doing, “What did I miss?” what finished while you were away, and “Ember, just show me” keeps results on screen.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="privacy-h">
@@ -180,6 +192,37 @@
         <p class="hint" id="commands-managed" hidden></p>
         <p class="hint"><button type="button" id="open-commands" class="link">Open the command window</button></p>
         <p class="hint" id="commands-msg" role="status"></p>
+      </div>
+    </section>
+
+    <section class="after-setup" id="extensions" aria-labelledby="extensions-h">
+      <h2 id="extensions-h" tabindex="-1">Extensions</h2>
+      <div class="stack">
+        <p class="intro" id="extensions-intro">Extensions give Ember more tools: plugins from marketplaces you add, and connectors to services such as Slack or Notion, through GitHub. Only you can add them, here.</p>
+        <p class="managed" id="extensions-blocked" role="status" hidden></p>
+        <div class="stack" id="extensions-body" hidden>
+          <h3 class="sub" id="ext-installed-h">Added</h3>
+          <ul class="plain-list ext-list" id="ext-installed" aria-labelledby="ext-installed-h"></ul>
+          <h3 class="sub" id="ext-markets-h">Marketplaces</h3>
+          <ul class="plain-list ext-list" id="ext-markets" aria-labelledby="ext-markets-h"></ul>
+          <form class="add-row" id="ext-market-form" autocomplete="off" hidden>
+            <label for="ext-market-add" class="sr">Marketplace's GitHub repository or address</label>
+            <input id="ext-market-add" type="text" maxlength="2048" spellcheck="false" placeholder="owner/repo or https://…" aria-describedby="extensions-msg ext-markets-hint">
+            <button type="submit" class="btn quiet" data-key="market-add">Add</button>
+          </form>
+          <p class="hint" id="ext-markets-hint">Ember fetches each marketplace's list from the address you add, and nothing from it runs until you add an item and agree.</p>
+          <div class="ext-browse" id="ext-browse" role="region" aria-labelledby="ext-browse-h" hidden>
+            <div class="ext-browse-head"><h3 class="sub" id="ext-browse-h" tabindex="-1"></h3><button type="button" id="ext-browse-done" class="btn quiet small">Done</button></div>
+            <p class="hint" id="ext-browse-status" role="status"></p>
+            <ul class="ext-cards" id="ext-cards" aria-labelledby="ext-browse-h"></ul>
+          </div>
+          <div class="stack" id="ext-connectors-group">
+            <h3 class="sub" id="ext-connectors-h">Connectors</h3>
+            <ul class="plain-list ext-list" id="ext-connectors" aria-labelledby="ext-connectors-h"></ul>
+            <p class="hint">Connectors go through GitHub's Copilot service: you sign in to each service on GitHub's page, in your browser.</p>
+          </div>
+        </div>
+        <p class="hint" id="extensions-msg" role="status"></p>
       </div>
     </section>
 

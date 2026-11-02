@@ -1,5 +1,7 @@
 /** Voice: channel names and types shared by main, the mic window and the voice process. */
 
+import type { SoundLevel } from "./level";
+
 export const VOICE = {
   port: "voice:port",
   status: "voice:mic-status",
@@ -13,6 +15,10 @@ export const VOICE = {
   audioDone: "voice:audio-done",
   /** The speaking page scheduled a chunk of Ember's own voice to play (SpeechPlayed): said in the log. */
   played: "voice:played",
+  /** The page's sound level for Ember's presence (app/shared/level.ts SoundLevel): never audio, at most 20 a second. */
+  level: "voice:level",
+  /** Main tells the mic page to send the microphone's level (true while Ember hears a request) or to stop. */
+  levelOn: "voice:level-on",
 } as const;
 
 /** What the system's voice is to say; `append`: after what it is saying (the next sentence of a streamed answer), not instead. */
@@ -48,6 +54,10 @@ export interface MicApi {
   onAudioDone(fn: (id: number) => void): void;
   /** A chunk of Ember's own voice was scheduled to play (said in main's log). */
   played(p: SpeechPlayed): void;
+  /** The sound's level in steps (app/shared/level.ts): the microphone's while main asked for it, Ember's voice while it plays. */
+  level(l: SoundLevel): void;
+  /** Main asks for the microphone's level (true: Ember hears a request) or says to stop sending it. */
+  onLevelOn(fn: (on: boolean) => void): void;
 }
 
 /** What the user sees about the microphone. */

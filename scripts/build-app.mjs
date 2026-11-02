@@ -1,6 +1,6 @@
 // Builds the Electron app into dist/app:
 //   main.cjs (main process), preload/*.cjs (sandboxed preloads), renderer/<page>/ (bundled pages),
-//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs and job-host.cjs (helpers Ember runs
+//   desk-agent.cjs, voice.cjs, voiceprint.cjs, tts.cjs, ax-sidecar.cjs, askpass.cjs, remote-link.cjs, job-host.cjs and mcp-launch.cjs (helpers Ember runs
 //   as plain Node)
 // and the remote agent into dist/remote: ember-remote.cjs (plain Node, run on computers reached over SSH) and
 // meta.json (esbuild's metafile, which the agent's bundle test checks).
@@ -83,7 +83,7 @@ await Promise.all([
     external: ["electron", "koffi", "sharp"],
   }),
   // The voice utility process (sherpa-onnx WASM stays external: it loads its .wasm beside itself; the native addon is
-  // required at run time from its platform package, app/voice/runtime.ts).
+  // required at run time from its platform package, app/voice/runtime.ts; koffi stays external for the C API, capi.ts).
   build({
     ...common,
     entryPoints: ["app/voice/process.ts"],
@@ -91,7 +91,7 @@ await Promise.all([
     platform: "node",
     format: "cjs",
     target: "node24",
-    external: ["electron", "sherpa-onnx"],
+    external: ["electron", "sherpa-onnx", "koffi"],
   }),
   // Voice Match's voiceprint model, a worker thread of the voice process (onnxruntime-web stays external: it loads its
   // WebAssembly from its own folder).
@@ -112,7 +112,7 @@ await Promise.all([
     platform: "node",
     format: "cjs",
     target: "node24",
-    external: ["electron", "sherpa-onnx"],
+    external: ["electron", "sherpa-onnx", "koffi"],
   }),
   // SSH's askpass helper (Linux and macOS PCs), the link worker thread, and the Windows job host for commands: plain
   // Node, never electron.
@@ -120,6 +120,8 @@ await Promise.all([
     ["app/askpass/main.ts", "dist/app/askpass.cjs"],
     ["app/main/remote/link-worker.ts", "dist/app/remote-link.cjs"],
     ["app/main/commands/run/job-host.ts", "dist/app/job-host.cjs"],
+    // The launcher for extensions' MCP servers (app/main/extensions/launch.ts), on every OS.
+    ["app/main/extensions/launch.ts", "dist/app/mcp-launch.cjs"],
   ].map(([entry, outfile]) => build({
     ...common,
     entryPoints: [entry],
