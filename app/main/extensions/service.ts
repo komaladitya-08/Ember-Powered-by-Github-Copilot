@@ -32,7 +32,7 @@ import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import type { ConnectResult, ExtensionsApi, Installed, MarketplaceEntry, ToolInfo } from "../../shared/extensions";
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, gateQuestion, wrapResult } from "./gate";
-import { readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
+import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { checkPins, isReadOnly, pinAll, shownHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, type ProbeResult } from "./probe";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
@@ -250,7 +250,7 @@ export class ExtensionsService implements ExtensionsApi {
           let reaches: string[] = [];
           try { reaches = readPlugin(p.folder).servers.filter(s => s.spec).map(s => reachOf(s.spec!, p.folder)); } catch { continue; }
           if (!reaches.length) continue;
-          out.push({ ...base, source: path.relative(root, p.folder) || ".", reaches });
+          out.push({ ...base, source: pluginPath(root, p.folder) ?? ".", reaches });
         } else if (p.elsewhere) {
           out.push({ ...base, source: p.elsewhere });
         }

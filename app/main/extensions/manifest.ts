@@ -186,14 +186,25 @@ export function readMarketplace(root: string): { name: string; publisher?: strin
 }
 
 /**
+ * `file` relative to the plugin folder `root`, with "/" between its parts on every OS, or null when it lies outside.
+ * `${CLAUDE_PLUGIN_ROOT}/server.mjs` joins the root with a "/", so on Windows the two separators are mixed; comparing
+ * through `relative` copes with that where a prefix check doesn't.
+ */
+export function pluginPath(root: string, file: string, p: path.PlatformPath = path): string | null {
+  const rel = p.relative(root, file);
+  if (rel === "") return ".";
+  return rel.startsWith("..") || p.isAbsolute(rel) ? null : rel.split(p.sep).join("/");
+}
+
+/**
  * Where a server reaches, in plain words for the consent card: the command it runs (paths in the plugin's folder `root`
  * relative to it), or the address's host.
  */
-export function reachOf(spec: ServerSpec, root?: string): string {
+export function reachOf(spec: ServerSpec, root?: string, p: path.PlatformPath = path): string {
   const short = (a: string) => {
-    const r = root && (a === root || a.startsWith(root + path.sep)) ? path.relative(root, a) || "." : a;
+    const r = (root && p.isAbsolute(a) && pluginPath(root, a, p)) || a;
     return r.length > 60 ? `${r.slice(0, 60)}…` : r;
   };
-  if (spec.type === "stdio") return `Runs ${path.basename(spec.command)}${spec.args.length ? ` ${spec.args.map(short).join(" ")}` : ""} on this computer`;
+  if (spec.type === "stdio") return `Runs ${p.basename(spec.command)}${spec.args.length ? ` ${spec.args.map(short).join(" ")}` : ""} on this computer`;
   return `Reaches ${new URL(spec.url).host}`;
 }

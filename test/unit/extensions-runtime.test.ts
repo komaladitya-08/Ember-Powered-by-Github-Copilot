@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { classify, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, type GateInput } from "../../app/main/extensions/gate";
 import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, type ServedTool } from "../../app/main/extensions/pin";
-import { readMarketplace, readPlugin, serverSpec, inside } from "../../app/main/extensions/manifest";
+import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
 import { parseLaunchSpec } from "../../app/main/extensions/launch";
 import { ExtensionsService, type ExtensionsDeps } from "../../app/main/extensions/service";
@@ -354,6 +354,15 @@ describe("ExtensionsService", () => {
   };
   const call = (ext: SessionExtensions, toolName: string, toolArgs: unknown = {}) => ext.preToolUse({ toolName, toolArgs, sessionId: "s", timestamp: new Date(), workingDirectory: "/" });
   const shown = (ext: SessionExtensions) => ext.verify([LOOKUP, POST].map(t => ({ name: `fake-${t.name}`, mcpServerName: "fake", mcpToolName: t.name, description: t.description, input_schema: t.inputSchema })));
+
+  it("names a server's files inside its plugin relative to it with Windows paths too, where the root var joins with “/” (CI windows-2022)", () => {
+    const root = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\market\\plugins\\fake";
+    const spec = { type: "stdio" as const, command: "node", args: [`${root}/server.mjs`, "--port", "C:\\elsewhere\\x.js"], env: {} };
+    expect(reachOf(spec, root, path.win32)).toBe("Runs node server.mjs --port C:\\elsewhere\\x.js on this computer");
+    expect(pluginPath("C:\\m", "C:\\m\\plugins\\fake", path.win32)).toBe("plugins/fake");
+    expect(pluginPath("/m", "/m/plugins/fake", path.posix)).toBe("plugins/fake");
+    expect(pluginPath("/m", "/other", path.posix)).toBeNull();
+  });
 
   it("lists only plugins with a server Ember can run, and where each reaches", async () => {
     const s = new ExtensionsService(deps());
