@@ -538,6 +538,12 @@ Ember's two bodies (docs/DESIGN.md "Two bodies"): background tasks live on their
 plan and a checked generative view of their result; the cursor's bubble is the conversation, guides and borrowing. Next:
 a background task's questions on its card.
 
+Reminders (the first bounded interjection, after docs/ASSISTANT.md phase 6): the conductor's `set_reminder`,
+`list_reminders` and `cancel_reminder` (app/main/agent/reminders.ts). A reminder is set only from the user's own words
+in that turn (`ownWords`, as memory), is due by a plain timer, is shown and said, and never starts anything. Reminders
+are kept in memory only (nothing new on disk, so no consent change) and end when Ember quits or the user signs out;
+keeping them across restarts would need a consent bump.
+
 ---
 
 ## 10. Progress

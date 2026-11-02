@@ -234,7 +234,8 @@ works offline too. “Ember, just show me” (or “stop telling me”) keeps fi
 reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
 **Voice**). “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
 how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
-whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
+whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken, and sends a notification if you are away. Only your own words set one, and reminders last while Ember runs (they are kept nowhere on disk).
+“Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no

@@ -39,6 +39,7 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
+import { Reminders, type Reminder } from "./reminders";
 import { catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
@@ -130,6 +131,8 @@ export interface HostOptions {
    * with its consent) and the administrator allows it. Signing out, or another account signing in, erases it.
    */
   memory?: ConductorMemory & { forgetAll(): void };
+  /** A reminder the user set is due: main says it aloud (when replies are spoken) and notifies if the user is away. */
+  onReminder?: (r: Reminder) => void;
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
@@ -690,6 +693,19 @@ export class AgentHost {
   }
 
   /**
+   * The user's reminders (reminders.ts): set only from their own words, kept in memory only, and when one is due it is
+   * shown in the bubble (main also says it and notifies): it never starts anything.
+   */
+  readonly reminders = new Reminders({ onDue: r => this.reminderDue(r) });
+
+  private reminderDue(r: Reminder): void {
+    this.o.log.info("agent.reminder_due", { late: Math.max(0, Date.now() - r.at) });
+    this.remember("ember", `Reminder: ${r.text}`);
+    this.noticeBoard.post({ title: "Reminder", thought: r.text, actions: [], mood: "attention" }, { ms: 60_000, emotion: "curious" });
+    this.o.onReminder?.(r);
+  }
+
+  /**
    * Where the targets runtime's bubbles go (a connection, an offer, a loss): through the shared bubble, so the
    * conversation's and the tasks' bubbles wait behind them as behind a question, and no presenter's timer hides them.
    */
@@ -1060,6 +1076,7 @@ export class AgentHost {
         this.o.onTranscript?.([]);
         // What Ember remembered was about the account before, its person: none of it carries over.
         this.o.memory?.forgetAll();
+        this.reminders.clear();
         this.o.onAccountChanged?.();
       }
 
@@ -1190,6 +1207,7 @@ export class AgentHost {
       this.memoryOn = !!memory;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
+        reminders: this.reminders,
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1829,6 +1847,7 @@ export class AgentHost {
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.o.memory?.forgetAll();
+    this.reminders.clear();
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();
