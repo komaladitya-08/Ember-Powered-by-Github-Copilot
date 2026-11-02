@@ -199,7 +199,10 @@ cache (test/temp-folder.ts).
 - **Comfort & access** in settings has **Calm mode** (no hops, bounces or fidgets). It is also on when GNOME's
   animations are off or the desktop asks for reduced motion. Its **Text size** (Default, Large, Larger) changes the text
   in settings, Ember's bubble, task cards and handle, the ask box, the desk window's bar, the command window and its
-  terminal, and Ember's password and consent cards. **More time to read and answer** keeps every bubble ten times as long
+  terminal, and Ember's password and consent cards. **Glass** (Clear, Regular, Solid; `settings.glass`, put on the floating pages as
+  `html[data-glass]`) sets how much of the screen shows through the bubble, task cards, handle and ask box: Clear is an even,
+  lighter tint, and Calm mode, Reduce Transparency and Increase Contrast make it solid.
+  **More time to read and answer** keeps every bubble ten times as long
   (Ember's own notices, and a bubble that waited behind another or was covered for a while, included), a question waits
   20 minutes instead of 2 before it counts as **Not now**, and an offer to bring Ember to a computer 250 seconds instead
   of 25.

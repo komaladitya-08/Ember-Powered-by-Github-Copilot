@@ -8,6 +8,10 @@ import { targetChipParts } from "../handle/badge";
 import { AskHistory } from "./history";
 import { CUT_NOTE, WAIT_TIP, atLimit, boxRows, enterAction, fieldHeight, fieldLines, historyKey, sendKey, textScaleOf } from "./field";
 import { liveWords, seesView, type SeesView } from "./chips";
+import { watchPixels } from "../shared/pixels";
+
+// Hairlines of one device pixel at any scale (ember.css --glass-hairline reads --dpx).
+watchPixels();
 
 declare global { interface Window { emberAsk: EmberAskApi } }
 
@@ -146,6 +150,12 @@ window.emberAsk.onContext(c => {
   // Main opens the window one line tall, a row taller when this opening says to wait for the box (review #78). Said
   // before the window is shown, so the tip is there from the first frame.
   if (c.opened) {
+    // It grows out of Ember as it shows: from 0.98 and transparent, released once it has been drawn so (a timer too, in
+    // case the hidden window gets no frames: it must never stay transparent).
+    form.classList.add("opening");
+    const grown = () => form.classList.remove("opening");
+    requestAnimationFrame(() => requestAnimationFrame(grown));
+    setTimeout(grown, 250);
     tip.hidden = c.tip !== true;
     tip.textContent = tip.title = c.tip === true ? WAIT_TIP : "";
     shownRows = c.tip === true ? 2 : 1;

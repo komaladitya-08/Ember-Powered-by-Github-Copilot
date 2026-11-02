@@ -1,6 +1,7 @@
 /**
  * Ember's own display settings in every page of its: Calm mode (html.calm, by which ember.css and each page's styles
- * stop springs, slides and pulses) and the text size (html[data-text-size], by which ember.css scales the type). The
+ * stop springs, slides and pulses), the text size (html[data-text-size], by which ember.css scales the type) and the
+ * glass on the floating pages (html[data-glass]: clear or solid; regular is the default and sets nothing). The
  * overlay, the handle and the settings window are sent the settings, but the ask box, the command and prompt windows
  * and the desk view are sent none, so main applies both to each page of Ember's as the page loads and again whenever
  * they change (review #248, #57). Plain Node: a page comes in structurally, and only Ember's own bundled pages are
@@ -13,7 +14,12 @@ import type { Settings } from "./settings";
 export interface PagePrefs {
   calm: boolean;
   textSize: Settings["textSize"];
+  glass: Settings["glass"];
 }
+
+const GLASS: readonly Settings["glass"][] = ["clear", "regular", "solid"];
+/** The pages drawn on glass over other apps: the only ones the Glass setting changes (the windows are opaque). */
+const GLASS_PAGES = new Set(["overlay", "handle", "ask"]);
 
 const TEXT_SIZES: readonly Settings["textSize"][] = ["default", "large", "larger"];
 /** The pages whose type keeps its size: the microphone's page, which shows no words. */
@@ -63,9 +69,13 @@ export function rescaledBounds(now: Bounds, from: number, to: number, area: Boun
   };
 }
 
-/** The display settings to apply, from Ember's settings (an unknown text size is the default). */
-export function pagePrefs(s: Pick<Settings, "reduceMotion" | "textSize">): PagePrefs {
-  return { calm: s.reduceMotion === true, textSize: TEXT_SIZES.includes(s.textSize) ? s.textSize : "default" };
+/** The display settings to apply, from Ember's settings (an unknown text size is the default, an unknown glass regular). */
+export function pagePrefs(s: Pick<Settings, "reduceMotion" | "textSize"> & { glass?: Settings["glass"] }): PagePrefs {
+  return {
+    calm: s.reduceMotion === true,
+    textSize: TEXT_SIZES.includes(s.textSize) ? s.textSize : "default",
+    glass: s.glass !== undefined && GLASS.includes(s.glass) ? s.glass : "regular",
+  };
 }
 
 /**
@@ -79,13 +89,15 @@ export function pageOf(url: string): string | null {
 }
 
 /**
- * The code that applies `prefs` to `page`: built from a boolean and one of the three sizes only, never from text that
- * came from anywhere.
+ * The code that applies `prefs` to `page`: built from a boolean, one of the three sizes and one of the three glasses
+ * only, never from text that came from anywhere.
  */
 export function prefsScript(prefs: PagePrefs, page: string): string {
   const size = FIXED_TYPE.has(page) ? "default" : TEXT_SIZES.find(t => t === prefs.textSize) ?? "default";
+  const glass = GLASS_PAGES.has(page) ? GLASS.find(g => g === prefs.glass) ?? "regular" : "regular";
   return `document.documentElement.classList.toggle("calm", ${prefs.calm ? "true" : "false"});`
-    + (size === "default" ? ` delete document.documentElement.dataset.textSize;` : ` document.documentElement.dataset.textSize = "${size}";`);
+    + (size === "default" ? ` delete document.documentElement.dataset.textSize;` : ` document.documentElement.dataset.textSize = "${size}";`)
+    + (glass === "regular" ? ` delete document.documentElement.dataset.glass;` : ` document.documentElement.dataset.glass = "${glass}";`);
 }
 
 /** A page as Electron's webContents has it. */

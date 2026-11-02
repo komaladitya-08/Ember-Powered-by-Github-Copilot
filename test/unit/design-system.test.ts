@@ -192,7 +192,8 @@ describe("every window", () => {
     for (const p of ["overlay", "handle"]) {
       const css = read(`app/renderer/${p}/styles.css`);
       const endless = [...css.matchAll(/([^{}]+)\{[^}]*animation: [\w-]+ [\d.]+s [\w-]+ infinite/g)].map(m => m[1].trim());
-      expect(endless.length, p).toBeGreaterThan(0);
+      // The overlay has endless pulses (the handle's steady microphone halo has none left).
+      if (p === "overlay") expect(endless.length, p).toBeGreaterThan(0);
       for (const sel of endless) {
         const el = sel.split(",").pop()!.trim().replace(/\[data-state="active"\]/, "");
         expect(css, `${p}: ${sel}`).toMatch(new RegExp(`html\\.calm [^{]*${el.replace(/[.[\]()*:"=]/g, "\\$&").replace(/^\\\./, "\\.")}`));
@@ -204,10 +205,12 @@ describe("every window", () => {
   it("lists every keyframe, and lets only small opacity pulses run forever (the HUD's lock-on, ring glow and done are finite)", () => {
     const sheets = [BUBBLE_CSS, shared, viewCss, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
     const names = sheets.flatMap(css => [...css.matchAll(/@keyframes ([\w-]+)/g)].map(m => m[1])).sort();
-    expect(names).toEqual(["eb-blink", "eb-glow", "eb-lock", "eb-pulse", "focus-glow", "mic-pulse", "pulse", "ring-done", "ring-glow", "ring-pulse"]);
+    expect(names).toEqual(["dot-fill", "eb-blink", "eb-glow", "eb-lock", "eb-pulse", "focus-glow", "pulse", "ring-done", "ring-glow", "ring-pulse", "tick-pop"]);
     const endless = sheets.flatMap(css => [...css.matchAll(/animation: ([\w-]+) [^;]*infinite/g)].map(m => m[1])).sort();
-    expect(endless).toEqual(["eb-blink", "eb-pulse", "focus-glow", "mic-pulse", "pulse", "ring-pulse"]);
-    for (const [name, css] of [["eb-lock", BUBBLE_CSS], ["ring-glow", read("app/renderer/overlay/styles.css")], ["ring-done", read("app/renderer/overlay/styles.css")]] as const) {
+    // The handle's microphone halo holds steady while it hears you (R6): a pulse on silence read as a meter.
+    expect(endless).toEqual(["eb-blink", "eb-pulse", "focus-glow", "pulse", "ring-pulse"]);
+    const overlay = read("app/renderer/overlay/styles.css");
+    for (const [name, css] of [["eb-lock", BUBBLE_CSS], ["ring-glow", overlay], ["ring-done", overlay], ["dot-fill", overlay], ["tick-pop", overlay]] as const) {
       expect(css, name).toMatch(new RegExp(`animation: ${name} [^;]* [1-3]( forwards)?;`));
     }
   });
@@ -310,6 +313,221 @@ describe("Windows contrast themes (forced colours)", () => {
     for (const sel of [".w-checks", ".w-tries", ".w-card", ".w-code"]) expect(forced(home, sel), sel).toMatch(/outline: 1px solid CanvasText/);
     for (const sel of [".w-status::before", ".w-sym", ".w-tick::after", ".w-state::before"]) expect(forced(home, sel), sel).toContain("background: CanvasText;");
     expect(forced(home, ".w-tick")).toContain("border: 1.5px solid CanvasText;");
+  });
+});
+
+describe("Liquid Glass on the floating layer (see-through, measured over a white page)", () => {
+  const WHITE = "#ffffff";
+  const alpha = (name: string) => Number(token(name));
+  /** The regular glass's lightest stop (its top) at --glass-a, with the sheen at its brightest inside the body. */
+  const regular = (bg = WHITE) => {
+    const m = /--glass-fill: linear-gradient\(180deg, rgba\((\d+), (\d+), (\d+), var\(--glass-a\)\)/.exec(shared)!;
+    const body = over(`rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha("glass-a")})`, bg);
+    // The sheen peaks above the top edge: where the first line of text starts (12 px in) it is at most 0.03 (a 300 px
+    // card; 0.022 on a 130 px bubble, 0.009 on the status line).
+    return over("rgba(255, 255, 255, 0.03)", `rgba(${body.map(Math.round).join(", ")}, 1)`);
+  };
+  /** The clear glass's plate (behind words) over `bg`. */
+  const plate = (bg = WHITE) => {
+    const m = /rgba\((\d+), (\d+), (\d+), var\(--glass-plate-a\)\)/.exec(shared)!;
+    return over(`rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha("glass-plate-a")})`, bg);
+  };
+  const hex = (c: RGB) => `rgba(${c.map(Math.round).join(", ")}, 1)`;
+
+  it("lets the screen show through: regular glass at 0.88, clear at 0.55, never mixed (Apple's regular and clear)", () => {
+    expect(alpha("glass-a")).toBe(0.88);
+    expect(alpha("glass-clear-a")).toBe(0.55);
+    // Words never sit on less than 0.82 (the localised plate).
+    expect(alpha("glass-plate-a")).toBeGreaterThanOrEqual(0.82);
+    // The body is painted once (in the padding box): painted twice, 0.88 became 0.99 and nothing showed through.
+    expect(token("glass")).toBe("var(--glass-sheen) padding-box, var(--glass-fill) padding-box, var(--glass-edge) border-box, var(--glass-under) border-box");
+    expect(token("glass-under")).toBe("linear-gradient(transparent, transparent)");
+  });
+
+  it("keeps every label on glass readable with a white page behind it (WCAG 1.4.3: 4.5:1)", () => {
+    for (const [surface, g] of [["regular", regular()], ["the handle's plate", plate()]] as const) {
+      for (const label of ["label", "glass-label-2", "glass-label-3"]) expect(contrast(over(token(label), hex(g)), g), `${label} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      for (const c of ["accent", "green", "yellow", "green-text", "red-text", "purple-text", "accent-2"]) expect(contrast(solid(token(c)), g), `${c} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      for (const c of ["red", "blue", "purple", "gray"]) expect(contrast(solid(token(c)), g), `${c} on ${surface}`).toBeGreaterThanOrEqual(3);
+      // "Without asking" (#127) and "Working": words in Ember's warmer light on the accent's tint.
+      const auto = over(`rgba(${solid(token("accent")).join(", ")}, 0.16)`, hex(g));
+      expect(contrast(solid(token("accent-2")), auto), `the "Without asking" tag on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(BUBBLE_CSS).toContain('.ember-bubble[data-mood="acting"] { --eb-chip-text: var(--accent-2, #ffb340); }');
+      // A tag: its tint at 16 % behind its word.
+      for (const [text, tint] of [["green-text", "green"], ["red-text", "red"], ["purple-text", "purple"]]) {
+        const tag = over(`rgba(${solid(token(tint)).join(", ")}, 0.16)`, hex(g));
+        expect(contrast(solid(token(text)), tag), `${text} on its tint on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  /** The Glass setting's Clear: its own tokens, and its body (an even tint, the sheen included) over `bg`. */
+  const clearRule = () => /:root:where\(\[data-glass="clear"\]\) \{([^}]*)\}/.exec(shared)![1];
+  const clearToken = (name: string) => new RegExp(`--${name}: ([^;]+);`).exec(clearRule())?.[1].trim() ?? token(name);
+  const clearGlass = (bg = WHITE) => {
+    const m = /--glass-fill: linear-gradient\(180deg, rgba\((\d+), (\d+), (\d+), var\(--glass-a\)\)/.exec(shared)!;
+    const body = over(`rgba(${m[1]}, ${m[2]}, ${m[3]}, ${Number(clearToken("glass-a"))})`, bg);
+    return over("rgba(255, 255, 255, 0.03)", hex(body));
+  };
+
+  it("makes Clear an even smoky tint, the same everywhere, with no plates or halos behind the words (the Glass setting)", () => {
+    const a = Number(clearToken("glass-a"));
+    expect(a).toBeGreaterThan(0.55);
+    expect(a).toBeLessThan(alpha("glass-a"));
+    // Even: the handle's face end and the words' density are the same tint.
+    expect(clearToken("glass-clear-a")).toBe(String(a));
+    expect(clearToken("glass-plate-a")).toBe(String(a));
+    for (const css of [shared, BUBBLE_CSS, ...["overlay", "handle", "ask"].map(p => read(`app/renderer/${p}/styles.css`))]) {
+      expect(css).not.toMatch(/--glass-plate:|text-shadow:/);
+    }
+  });
+
+  it("keeps every label, word colour, mark and control edge on Clear readable with a white page behind it (WCAG 1.4.3, 1.4.11)", () => {
+    const g = clearGlass();
+    for (const label of ["label", "glass-label-2", "glass-label-3", "accent-text-on-glass"]) {
+      expect(contrast(over(clearToken(label), hex(g)), g), label).toBeGreaterThanOrEqual(4.5);
+    }
+    // Marks (state symbols, a tag's dot, the ring): 3:1, in Clear's light tints.
+    for (const c of ["accent-2", "green", "red", "purple", "blue", "gray", "yellow", "accent-text-on-glass"]) expect(contrast(solid(clearToken(c)), g), c).toBeGreaterThanOrEqual(3);
+    expect(contrast(over(clearToken("control-edge"), hex(g)), g)).toBeGreaterThanOrEqual(3);
+    // Stop's label on its red tint.
+    const fill = /html\[data-glass="clear"\] \.task-actions button\.stop \{ background: (rgba\([^)]*\)); \}/.exec(read("app/renderer/overlay/styles.css"))![1];
+    const stop = over(fill, hex(g));
+    expect(contrast(solid(token("label")), stop)).toBeGreaterThanOrEqual(4.5);
+    // The tags' words take the label's colour there (the state's colours fall under 4.5:1); their dots keep the colour.
+    expect(BUBBLE_CSS).toContain('html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk, html[data-glass="clear"] .ember-bubble .eb-auto { color: var(--label, #f5f2ef); }');
+    // ("Without asking" in the label's colour on its accent tint, there.)
+    // The tags' tints darken a little on Clear; each word in the label's colour passes on every tint.
+    for (const tint of ["accent", "accent-2", "yellow", "purple", "red", "green"]) {
+      const tag = over("rgba(0, 0, 0, 0.2)", hex(over(`rgba(${solid(clearToken(tint)).join(", ")}, 0.16)`, hex(g))));
+      expect(contrast(solid(token("label")), tag), tint).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(BUBBLE_CSS).toContain('html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }');
+    expect(BUBBLE_CSS).toMatch(/\.eb-auto \{[^}]*color: var\(--accent-2, #ffb340\);/);
+    // Ember's accent as words and marks on glass goes through the token.
+    expect(read("app/renderer/overlay/styles.css")).toContain(".task[data-cursor] .hand { color: var(--accent-text-on-glass);");
+    expect(shared).toContain("[data-status] { --sym-tint: var(--accent-text-on-glass, var(--accent));");
+    expect(token("accent-text-on-glass")).toBe("var(--accent)");
+    // And a system colour in contrast themes, as every word colour is.
+    expect(forced(shared, ":root")).toContain("--accent-text-on-glass: CanvasText;");
+    // The Ask box's note of a cut paste takes the label's colour on Clear.
+    expect(read("app/renderer/ask/styles.css")).toContain('html[data-glass="clear"] .cut { color: var(--label); }');
+  });
+
+  it("keeps a view's words and marks readable on a card's glass, Regular and Clear, with a white page behind (views v2)", () => {
+    // view.css: each tone's ink (its words) and mark, on the view's faint tile, a badge's tint (16 %) and a callout's (10 %).
+    const TONES: [string, string][] = [["gray", "glass-label-2"], ["blue", "label"], ["green", "green-text"], ["yellow", "yellow"], ["red", "red-text"], ["purple", "purple-text"]];
+    expect(viewCss).toContain("--vw-fill: color-mix(in srgb, var(--fill) 55%, transparent);");
+    expect(viewCss).toContain('html[data-glass="clear"] :is(.vw-badge, .vw-callout) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }');
+    for (const [glass, g, tok] of [["regular", regular(), token], ["clear", clearGlass(), clearToken]] as const) {
+      const fill = parse(tok("fill"));
+      const tile = over(`rgba(${fill.rgb.join(", ")}, ${fill.a * 0.55})`, hex(g));
+      for (const [tone, ink] of TONES) {
+        const inkC = (bg: RGB) => contrast(over(tok(ink), hex(bg)), bg);
+        // (On Clear the tints darken by 0.2 black under their words.)
+        const tint = (a: number) => { const t = over(`rgba(${solid(tok(tone)).join(", ")}, ${a})`, hex(g)); return glass === "clear" ? over("rgba(0, 0, 0, 0.2)", hex(t)) : t; };
+        const badge = tint(0.16), callout = tint(0.1);
+        for (const [where, bg] of [["glass", g], ["tile", tile], ["badge", badge], ["callout", callout]] as const) expect(inkC(bg), `${tone} words on ${where} (${glass})`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(solid(tok(tone)), g), `${tone} mark (${glass})`).toBeGreaterThanOrEqual(3);
+      }
+    }
+  });
+
+  it("lets Increase Contrast, Reduce Transparency and Calm win over Clear (they always make it solid)", () => {
+    // :root:where(…) has :root's weight, so the media blocks after it win; html.calm outweighs it.
+    expect(shared.indexOf(':root:where([data-glass="clear"])')).toBeLessThan(shared.indexOf("@media (prefers-contrast: more)"));
+    expect(shared.indexOf(':root:where([data-glass="clear"])')).toBeLessThan(shared.indexOf("@media (prefers-reduced-transparency: reduce)"));
+    expect(/:root:where\(\[data-glass="solid"\]\) \{([^}]*)\}/.exec(shared)![1]).toContain("--glass-a: 1;");
+  });
+
+  it("keeps control edges on glass at 3:1 over a white page (WCAG 1.4.11)", () => {
+    for (const g of [regular(), plate()]) expect(contrast(over(token("control-edge"), hex(g)), g)).toBeGreaterThanOrEqual(3);
+  });
+
+  it("keeps the page's own text behind the glass faint, so it never competes with Ember's words (≤ 1.5:1)", () => {
+    // Black text on the white page, seen through the glass, against the white around it.
+    expect(contrast(regular("#000000"), regular())).toBeLessThanOrEqual(1.5);
+  });
+
+  it("uses the glass labels on every floating page and in the bubble, never the dimmer window labels", () => {
+    for (const p of ["overlay", "handle", "ask"]) expect(read(`app/renderer/${p}/styles.css`), p).toContain(":root { --label-2: var(--glass-label-2); --label-3: var(--glass-label-3); }");
+    expect(BUBBLE_CSS).toContain("--label-2: var(--glass-label-2, rgba(245, 240, 236, 0.74));");
+    expect(BUBBLE_CSS).toContain("--label-3: var(--glass-label-3, rgba(245, 240, 236, 0.66));");
+  });
+
+  it("turns solid under Reduce Transparency and Calm, and solid with a light border under Increase Contrast (Apple's glass settings)", () => {
+    const rt = /@media \(prefers-reduced-transparency: reduce\) \{\s*:root \{([^}]*)\}/.exec(shared)![1];
+    const calm = /html\.calm \{([^}]*)\}/.exec(shared)![1];
+    const ic = /@media \(prefers-contrast: more\) \{\s*:root \{([^}]*)\}/.exec(shared)![1];
+    for (const block of [rt, calm, ic]) {
+      for (const a of ["glass-a", "glass-clear-a", "glass-plate-a"]) expect(block, a).toContain(`--${a}: 1;`);
+      expect(block).toMatch(/--glass-under: linear-gradient\((#\w+|var\(--glass-solid\)), \1\);/);
+    }
+    expect(ic).toContain("--glass-edge: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5));");
+  });
+
+  it("gives every system colour and Ember's lights an Increase Contrast value (Apple's increased-contrast palette)", () => {
+    const ic = /@media \(prefers-contrast: more\) \{\s*:root \{([^}]*)\}/.exec(shared)![1];
+    for (const [t, v] of [["yellow", "#fedf43"], ["blue", "#5cb8ff"], ["gray", "#aeaeb2"], ["accent", "#ffa056"], ["red", "#ff6165"], ["green", "#4ad968"], ["purple", "#ea8dff"]]) expect(ic, t).toContain(`--${t}: ${v};`);
+    for (const t of ["accent-2", "glow"]) expect(ic, t).toMatch(new RegExp(`--${t}: #[0-9a-f]{6};`));
+  });
+
+  it("draws hairlines of one device pixel, not 0.5 px smeared over two at 125 % and 150 %", () => {
+    // The bubble's every shadow, its thinking and listening bloom too, takes the glass's edges and hairline.
+    for (const [, shadow] of BUBBLE_CSS.matchAll(/\.ember-bubble[^{]*\{[^}]*?box-shadow: ([^;]+);/g)) {
+      if (/0 0 0 0\.5px/.test(shadow)) expect(shadow.startsWith("var(--glass-spec, ") && shadow.includes("var(--glass-hairline, "), shadow).toBe(true);
+    }
+    expect(BUBBLE_CSS).not.toMatch(/box-shadow: inset 0 1px 0 rgba\(255, 255, 255, 0\.08\), 0 0 0 0\.5px/);
+    expect(token("glass-hairline")).toBe("0 0 0 var(--dpx, 0.5px) rgba(0, 0, 0, 0.6)");
+    expect(token("glass-depth")).toMatch(/^var\(--glass-hairline\),/);
+    for (const p of ["overlay", "handle", "ask"]) expect(read(`app/renderer/${p}/styles.css`), p).not.toMatch(/0 0 0 0\.5px/);
+    for (const p of ["overlay", "handle", "ask"]) expect(read(`app/renderer/${p}/main.ts`), p).toMatch(/watchPixels\(/);
+  });
+
+  it("nests corners concentrically: the bubble's whole-text panel is its 18 px corner less its 14 px padding, at least 6 px", () => {
+    expect(/\.eb-whole \{[^}]*border-radius: ([^;]+);/.exec(BUBBLE_CSS)![1]).toBe("var(--r-xs, 6px)");
+  });
+});
+
+describe("the motion system (docs/DESIGN.md \"Motion\")", () => {
+  const ms = (t: string) => Number(/^(\d+)ms$/.exec(token(t))![1]);
+
+  it("has Apple's three springs and the durations, each paired curve ending at rest", () => {
+    for (const s of ["spring-smooth-0", "spring-brisk", "spring-reward", "spring-snappy", "spring-smooth", "spring-bouncy"]) expect(token(s), s).toMatch(/^linear\(0, .*, 1\)$/);
+    // Bounce: none for smooth, a little for brisk, a reward's 0.3 at most (it overshoots under 5 %).
+    const peak = (s: string) => Math.max(...[...token(s).matchAll(/(?:^linear\(|, )([\d.]+)/g)].map(m => Number(m[1])));
+    expect(peak("spring-smooth-0")).toBe(1);
+    expect(peak("spring-brisk")).toBeLessThan(1.01);
+    expect(peak("spring-reward")).toBeLessThan(1.05);
+    expect(ms("t-fade-out")).toBeLessThan(ms("t-fade-in"));
+    expect(ms("t-press")).toBeLessThan(ms("t-fast"));
+    expect(ms("t-fast")).toBeLessThan(ms("t-move"));
+    expect(ms("t-move")).toBeLessThan(ms("t-glide"));
+  });
+
+  it("keeps one fade in Calm, opacity only and no longer than 150 ms (R1)", () => {
+    expect(ms("t-calm-fade")).toBeLessThanOrEqual(150);
+    const rules = [...shared.matchAll(/\.calm-fade \{([^}]*)\}/g), ...BUBBLE_CSS.matchAll(/html\.calm \.ember-bubble \{([^}]*)\}/g)].map(m => m[1]);
+    expect(rules.length).toBeGreaterThanOrEqual(3);
+    for (const r of rules) {
+      const list = /transition: ([^;]+?) !important;/.exec(r)![1];
+      for (const part of selectors(list)) expect(part, r).toMatch(/^(opacity|visibility|display) var\(--t-calm-fade(, 150ms)?\)( ease| allow-discrete)?$/);
+      expect(r).toMatch(/translate: none !important;/);
+      expect(r).toMatch(/scale: none !important;/);
+    }
+    // The surfaces that come and go carry it.
+    expect(read("app/renderer/overlay/index.html")).toContain('class="status calm-fade"');
+    expect(read("app/renderer/ask/index.html")).toContain('class="ask grow calm-fade"');
+    expect(read("app/renderer/overlay/main.ts")).toContain('li.className = "task calm-fade";');
+  });
+
+  it("grows the bubble out of Ember, but brings a question in by its opacity alone (nothing near a decision moves)", () => {
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*scale: 0\.96;/);
+    expect(BUBBLE_CSS).toMatch(/transition: [^;]*scale var\(--t-move, 420ms\) var\(--spring-brisk, ease-out\);/);
+    expect(BUBBLE_CSS).toContain('.ember-bubble[data-mood="attention"], .ember-bubble[data-mood="attention"][data-hidden="true"] { translate: none; scale: none; }');
+    // A card waiting for you doesn't fill its plan's dot; a question's dot never pulses.
+    expect(read("app/renderer/overlay/styles.css")).toContain('.task:not([data-status="waiting"]) .plan li[data-state="now"]::before { animation: dot-fill');
+    expect(BUBBLE_CSS).toMatch(/:not\(\[data-mood="attention"\]\) \.eb-dot \{\s*animation: eb-pulse/);
   });
 });
 

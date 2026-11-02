@@ -130,6 +130,9 @@ details.vw-section > summary::-webkit-details-marker { display: none; }
 .vw-kv dd .vw-sym { margin-right: 4px; }
 /* A tag, not a button: a tint behind its words (a rounded rectangle, never the capsule a floating button is). */
 .vw-badge { justify-self: start; display: inline-flex; gap: 4px; align-items: center; max-width: 100%; padding: 1px 6px; border-radius: var(--r-xs); font: var(--type-caption); color: var(--vw-ink); background: color-mix(in srgb, var(--vw-tone) 16%, transparent); overflow-wrap: anywhere; }
+/* On Clear glass (the Glass setting) a tone's tint darkens a little under its words, as Ember's own tags do: the lighter
+   glass let them pale below 4.5:1. */
+html[data-glass="clear"] :is(.vw-badge, .vw-callout) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }
 .vw-badge .vw-sym { width: 11px; height: 11px; background: var(--vw-ink); }
 .vw-callout { display: flex; gap: 8px; min-width: 0; padding: 7px 10px 7px 9px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--vw-tone) 10%, transparent); box-shadow: inset 3px 0 0 var(--vw-tone); }
 .vw-callout > .vw-sym { margin-top: 1px; }

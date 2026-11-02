@@ -4,8 +4,10 @@
  * Ember is drawn on a small canvas that moves with it (a full-screen canvas
  * would ship a screen-sized bitmap to the compositor every frame), and only as
  * often as it needs to be: every frame while Ember moves or changes expression,
- * ~30 fps while it talks or its hands are busy, ~15 fps while it rests, ~8 fps
- * while it dozes, and not at all while it is hidden or on another display.
+ * ~30 fps while it talks or its hands are busy, ~15 fps while it rests, and
+ * not at all once it has dozed off and settled, or while it is hidden or on
+ * another display. Everything that moves is placed on device pixels, so it stays
+ * crisp at 125 % and 150 % scaling (app/renderer/shared/pixels.ts).
  */
 
 import { activityItems, planItems } from "./view";
@@ -13,7 +15,9 @@ import { HAND_WORDS, applyViewPatch, diffViews, type ViewDoc } from "../../share
 import { ViewRenderer, fitView } from "../shared/view-dom";
 import { clockText } from "../../shared/activity";
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
-import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
+import { ReasoningBubble, onPress, plainStream, snapToDevice } from "@ember/bubble";
+import { canvasSize, watchPixels } from "../shared/pixels";
+import { LEVEL_STEPS } from "../../shared/level";
 import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
@@ -31,7 +35,14 @@ declare global { interface Window { emberOverlay: OverlayApi } }
 
 /** Frame gaps (plus the wait for the next display frame) while nothing moves quickly. */
 const LIVELY_MS = 22;
+/**
+ * Talking (its hands may be busy too, but nothing else moves): the mouth follows a voice level that changes ten times a
+ * second, so 30 frames a second shows it fully. Measured: at the lively rate, speaking over the see-through glass cost
+ * 10-16 % more of a core than over the old opaque glass (blending what is under the glass at 45 frames a second).
+ */
+const TALKING_MS = 33;
 const RESTING_MS = 55;
+/** Dozing: the face still settling into sleep. Once it has, nothing is drawn until something happens. */
 const DOZING_MS = 110;
 /** Fall asleep after this long with nothing happening (no cursor movement, no state change). */
 const SLEEP_AFTER_S = 180;
@@ -133,8 +144,18 @@ api.onInit((i: OverlayInit) => {
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
-// The sound's level, apart from the state (up to 20 a second while the microphone hears or Ember's voice plays).
-api.onLevel?.(l => presence.setLevel(l));
+// The sound's level, apart from the state (up to 20 a second while the microphone hears or Ember's voice plays). Ember's
+// own voice also moves its mouth and glow (the system's voice gives no level: the mouth keeps its flap then).
+api.onLevel?.(l => {
+  presence.setLevel(l);
+  // (No draw of its own: while Ember talks it is drawn at the lively rate anyway, and the rig smooths between levels;
+  // a draw on each level cost about two points of a core more while it spoke.)
+  // As Ember shows again main sends NO_LEVEL (app/shared/level.ts): the voice's null drops a level from before it hid at
+  // once, so the mouth never moves on a stale one (the rig's own 1.5 s limit is for a voice that stopped unannounced).
+  if (l.voice !== undefined) rig.setTalkLevel(l.voice === null ? null : l.voice / LEVEL_STEPS);
+});
+// The scale changed (another monitor, or the desktop's scale): hairlines and the stage canvas follow at once.
+watchPixels(() => requestDraw());
 api.onFrame(f => {
   frame = f;
   // Away (hidden, or on another display): one more draw clears Ember, then nothing until it is back.
@@ -147,6 +168,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   const g = s.gesture ?? null;
   const fresh = g !== gestureSeen;
   gestureSeen = g;
+  // A question is up (in the bubble, whatever emotion it shows): Ember holds still but for its blinks.
+  rig.setQuestion(s.bubble.visible && s.bubble.mood === "attention");
   if (s.emotion !== emotion) {
     emotion = s.emotion;
     rig.setEmotion(s.emotion, fresh && g ? { gesture: g } : {});
@@ -159,20 +182,25 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   const b = s.bubble;
   presence.setState(presenceOf(s));
   presence.setHearing(s.mic === "active");
-  bubble.setMood(b.mood);
-  bubble.setRisky(b.risky === true);
-  bubble.setAutonomous(b.autonomous === true);
-  showWhere(b.where, b.title);
-  bubble.setTitle(b.title);
-  // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
-  bubble.setThought(b.streaming ? plainStream(b.thought) : b.thought);
-  bubble.setStreaming(b.streaming);
-  bubble.setStep(b.step);
-  bubble.setExpanded(b.expanded === true);
-  // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
-  bubble.setWhole(b.whole ?? null);
+  // Its buttons are armed from when they show (and disarmed while it is hidden), whatever it keeps while it fades.
   bubbleArm.shown(b.visible ? b.actions.map(a => a.id) : [], performance.now());
-  bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => { if (bubbleArm.ready(a.id, performance.now())) api.bubbleAction(a.id); } })) : null);
+  // Going away, it keeps what it said while it fades out, the way it came in: emptied at once, it collapsed to a thin bar
+  // as it faded. (Hidden, nothing in it takes a click: interactiveRects is empty.)
+  if (b.visible) {
+    bubble.setMood(b.mood);
+    bubble.setRisky(b.risky === true);
+    bubble.setAutonomous(b.autonomous === true);
+    showWhere(b.where, b.title);
+    bubble.setTitle(b.title);
+    // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
+    bubble.setThought(b.streaming ? plainStream(b.thought) : b.thought);
+    bubble.setStreaming(b.streaming);
+    bubble.setStep(b.step);
+    bubble.setExpanded(b.expanded === true);
+    // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
+    bubble.setWhole(b.whole ?? null);
+    bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => { if (bubbleArm.ready(a.id, performance.now())) api.bubbleAction(a.id); } })) : null);
+  }
   const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;
   if (f) {
@@ -565,7 +593,8 @@ function renderTasks(tasks: TaskCard[]): boolean {
     let c = cards.get(t.id);
     if (!c) {
       const li = document.createElement("li");
-      li.className = "task";
+      // calm-fade: in Calm it still fades in, rather than pop (ember.css R1).
+      li.className = "task calm-fade";
       // New: it fades in once (a card only moved in the stack is re-inserted, and must not blink).
       li.dataset.fresh = "";
       setTimeout(() => { delete li.dataset.fresh; }, 400);
@@ -594,6 +623,12 @@ function renderTasks(tasks: TaskCard[]): boolean {
       c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0, hand, plan, view, planKey: "", views: null,
         live, tele, teleState, teleStep, clock, teleExtra, sum, rows, rowsKey: "", card: null };
       cards.set(t.id, c);
+    }
+    // Just finished: its tick settles in once (styles.css tick-pop); a card moved in the stack later doesn't play it again.
+    if (t.status === "done" && c.li.dataset.status && c.li.dataset.status !== "done") {
+      c.li.dataset.justDone = "";
+      const li = c.li;
+      setTimeout(() => { delete li.dataset.justDone; }, 700);
     }
     c.li.dataset.status = t.status;
     if (c.state.textContent !== STATE_WORD[t.status]) c.state.textContent = STATE_WORD[t.status];
@@ -772,13 +807,15 @@ function draw(now: number): void {
     const dpr = window.devicePixelRatio || 1;
     if (box.width !== stage.width || box.height !== stage.height || dpr !== stage.dpr) {
       stage = { width: box.width, height: box.height, dpr };
-      canvas.width = Math.round(box.width * dpr);
-      canvas.height = Math.round(box.height * dpr);
-      canvas.style.width = `${box.width}px`;
-      canvas.style.height = `${box.height}px`;
+      // Whole device pixels, and a CSS size that maps them 1:1 (at 125 % a whole CSS size isn't: it was resampled).
+      const w = canvasSize(box.width, dpr), h = canvasSize(box.height, dpr);
+      canvas.width = w.backing;
+      canvas.height = h.backing;
+      canvas.style.width = `${w.css}px`;
+      canvas.style.height = `${h.css}px`;
     }
-    // Whole pixels for the canvas (no resampling blur); the fraction goes into the drawing.
-    const ox = Math.round(lx - box.padX), oy = Math.round(ly - box.padTop);
+    // On device pixels for the canvas (no resampling blur); the fraction goes into the drawing.
+    const ox = snapToDevice(lx - box.padX, dpr), oy = snapToDevice(ly - box.padTop, dpr);
     if (stageAt?.x !== ox || stageAt.y !== oy) {
       stageAt = { x: ox, y: oy };
       canvas.style.transform = `translate(${ox}px, ${oy}px)`;
@@ -789,7 +826,7 @@ function draw(now: number): void {
     ctx.scale(scale, scale);
     character.draw(ctx, pose);
     showStage(true);
-    presence.place(lx, ly, size);
+    presence.place(lx, ly, size, dpr);
     presence.show(true);
     // With no room beside the settings window, a bubble that asks nothing hides rather than cover it (the window's
     // Conversation section has its words); a question stays, wherever it must go.
@@ -806,8 +843,13 @@ function draw(now: number): void {
     setBody((f || (!!state?.bubble.visible && asks)) && !onTarget ? body : null);
 
     const urgent = moving || looking || rig.motion === "brisk";
-    const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;
-    requestDraw(urgent ? 0 : lively ? LIVELY_MS : rig.asleep ? DOZING_MS : RESTING_MS);
+    const talking = !!state?.talking || pose.talk > 0.01;
+    // While it talks, its busy hands (a wave) go at the talking rate too: 30 frames a second still reads as a wave.
+    const busy = rig.motion === "gentle" || (BRISK.has(pose.gesture) && !talking);
+    const lively = busy || talking;
+    // Asleep and settled: the last frame stays, and nothing is drawn until Ember or the cursor moves or the state
+    // changes (onFrame, onState). Drawing on at 110 ms cost idle wakeups for a picture that didn't change.
+    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : busy ? LIVELY_MS : talking ? TALKING_MS : rig.asleep ? DOZING_MS : RESTING_MS);
   } else {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);

@@ -63,10 +63,17 @@ Name these patterns when you design something new. Vague direction such as "make
 ## Layers and glass
 
 - **Where glass goes.** Glass is for the floating layer only: the bubble, overlay task cards, the status pill, the handle and the Ask box. Home, the command window and the prompt window build on opaque `--surface-*`. The desk view is a black picture area under a `--glass-solid` bar with a `--separator` edge.
-- **How it is drawn.** Never use `backdrop-filter`, and never animate a blur: a blur costs about a core, and a transparent window can't sample other apps anyway. A button's `filter: brightness()` hover and press are not blurs; "What may animate" says where those may transition. Ember's glass is an opaque frost: `--glass-fill` is 97–98.5% opaque, so the app's text never shows through. Apply it as `border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth);`, and keep the layer order inside `--glass`.
+- **How it is drawn.** Never use `backdrop-filter`, and never animate a blur: a blur costs about a core, and a transparent window can't sample other apps anyway. A button's `filter: brightness()` hover and press are not blurs; "What may animate" says where those may transition. Nor sample the screen to tint the glass. Ember's glass is Liquid Glass without the blur: the screen shows through a dense tint. Apply it as `border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth);`, and keep the layer order inside `--glass` (sheen, fill in the padding box, the lit edge in the border box, `--glass-under`). Paint the body once: a fill in both the padding box and the border box made 0.88 into 0.99.
+- **Two densities, never mixed on one surface.**
+  - **Regular** (`--glass-a` 0.88) under anything with sentences: the bubble, cards, the status line, the Ask box. At 0.88 a white page's black text shows through at under 1.5:1.
+  - **Clear** (`--glass-clear-a` 0.55, `--glass-clear`) only where nothing is written: the handle's face end. Words beside it sit on the plate (`--glass-plate-a` 0.86 or more), never on the clear part.
+  - **The Glass setting** (`settings.glass`: Clear, Regular, Solid; Comfort & access; `html[data-glass]`, which page-prefs.ts puts on the overlay, handle and Ask pages only). Clear is an even smoky tint (0.68), the same everywhere: no plates, halos or `text-shadow` behind words (the owner rejected both). Its secondary labels are near-white (95% and 90%: hierarchy from weight and size), a tag's words take `--label` (its dot and tint keep the colour), Ember's accent as words or marks is `--accent-text-on-glass` (#FFE4CC on Clear, the accent itself on Regular), the system colours take light tints so marks keep 3:1, and Stop keeps a deep red fill. Solid shows nothing through. A new coloured word on floating glass uses `--accent-text-on-glass` or `--label`, never a system colour.
+  - Reduce Transparency and Calm make every glass solid (`--glass-a: 1`, `--glass-under` solid, no plate); Increase Contrast makes it solid with a 1px light border. Those blocks win over the Glass setting (written `:root:where([data-glass=…])`).
+  - `--glass-a` and its kin are read where `:root` resolves `--glass-fill`: a page changes them on `:root` (or `html[…]`) only, never on an element.
+- **Labels on glass.** The floating pages and the bubble set `--label-2` and `--label-3` to `--glass-label-2` (74%) and `--glass-label-3` (66%): one step firmer than in windows, so they pass over a white page. Every label, text colour, tag and control edge on glass is tested against white behind the glass (design-system.test.ts), in Regular and in Clear.
 - **No glass on glass.** Buttons, rows and panels on glass use flat neutral fills with an inset `--control-edge` or `--separator` line.
 - **Edges and shadows.**
-  - Give floating surfaces the dark 0.5px outer hairline in their shadow: it keeps the edge crisp over white documents. The Ask box's hint capsule (`.meta`) is the one without. Draw hairlines as `box-shadow` spreads, never as 0.5px borders.
+  - Give floating surfaces the dark outer hairline in their shadow (`--glass-hairline`, one device pixel: `--dpx`, which each floating page sets through app/renderer/shared/pixels.ts `watchPixels()`): it keeps the edge crisp over white documents. The Ask box's hint capsule (`.meta`) is the one without. Draw hairlines as `box-shadow` spreads, never as 0.5px borders or a literal 0.5px spread (smeared over two pixels at 125% and 150%).
   - Don't use `mix-blend-mode`, `text-shadow`, `background-clip: text`, `@property` animations or SVG filters, because each re-rasters on the CPU.
   - Shadows on surfaces that move with Ember are tight, with a negative spread (the bubble's `0 12px 28px -8px`). The larger `--glass-depth` is for surfaces that stay put.
 - **Without a compositor.** A transparent window paints black there, so the whole window becomes one opaque panel: `var(--glass-solid)` plus `box-shadow: var(--glass-rim)`, with no outer shadows (`html.opaque` in Ask, `body.fallback` in the handle's corner card). Ember switches between the two on its own when the compositor comes or goes (Linux only: Windows and macOS always composite).
@@ -117,7 +124,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - `--red`, `--blue`, `--purple` and `--gray` only mark things (3:1). Red or purple words use `--red-text` or `--purple-text`.
   - A tag is its system colour at 14–18% behind a word in its `-text` tint. Yellow has no tint: its word is `--yellow` itself (Home's `--warn`).
 - **Outlines.** Outline every unfilled control with `inset 0 0 0 1px var(--control-edge)` (WCAG 1.4.11, 3:1); checkboxes use 1.5px. That covers quiet buttons, the off switch, checkboxes, fields, pop-up buttons and floating capsules.
-- **New colour tokens.** Give each one an override in ember.css's `@media (prefers-contrast: more)` block, using the HIG's Increased Contrast value, and a mapping in its `@media (forced-colors: active)` block (`CanvasText`, `GrayText` or `Highlight`), and keep the default definitions first in `:root`. One the bubble uses also needs its `var(--x, fallback)` there. `--yellow`, `--blue`, `--accent-2`, `--glow` and `--gray` have no override. That gap is known, so leave it unless the task is about Increase Contrast.
+- **New colour tokens.** Give each one an override in ember.css's `@media (prefers-contrast: more)` block, using the HIG's Increased Contrast value, and a mapping in its `@media (forced-colors: active)` block (`CanvasText`, `GrayText` or `Highlight`), and keep the default definitions first in `:root`. One the bubble uses also needs its `var(--x, fallback)` there. Every system colour and Ember's lights have their override (yellow #FEDF43, blue #5CB8FF, gray #AEAEB2, `--accent-2` #FFC266, `--glow` #FFA056).
 
 ## Type
 
@@ -144,7 +151,12 @@ Name these patterns when you design something new. Vague direction such as "make
   - one token per corner;
   - `calc(var(--r-x) + Npx)` for a ring outside a shape;
   - `50%`, `0`, `inherit` and `1px`.
-- **Concentric corners.** The inner radius is the outer radius minus the padding. A ring outside a shape adds its offset, and a pseudo-element on the same edge uses `border-radius: inherit`.
+- **Concentric corners.** The inner radius is `max(outer − padding, 6px)`, rounded to a radius token: the bubble (18, padding 14) and a card (18, padding 11–14) give an inner panel `--r-xs`, never `--r-md`, which flared. A ring outside a shape adds its offset, and a pseudo-element on the same edge uses `border-radius: inherit`.
+- **Crisp at every scale** (100%, 125%, 150%, 200%).
+  - Place anything that moves on device pixels: `snapToDevice(v, devicePixelRatio)` (@ember/bubble), never `Math.round` to CSS px (half a device pixel at 150%). The bubble's mount, Ember's stage canvas and the presence ring do.
+  - Size a canvas's backing store in whole device pixels and derive its CSS size from it (`canvasSize()`, app/renderer/shared/pixels.ts), and draw again when the scale changes: `watchPixels()` listens to a `resolution` media query (moving to another monitor changes the scale without a resize).
+  - Don't centre with `translateX(-50%)`: an odd width lands on half a pixel. Centre by layout (`left: 0; right: 0; margin: 0 auto; width: max-content`).
+  - Line heights are whole pixels: every `html[data-text-size]` twin rounds as the type tokens do (Type, above), but for the Ask box's, whose window main sizes by the exact scale (ask.ts `askSize`, ui-place.test.ts).
 - **Button shapes.**
   - In-window push buttons are rounded rectangles: `.btn` is 28px at `--r-sm`, and `.btn.small` is 24px at `--r-xs` (at the default text size; their heights scale with `--text-scale`).
   - Home's single large Start is its only capsule button.
@@ -223,35 +235,40 @@ Name these patterns when you design something new. Vague direction such as "make
 
 ## Motion and performance
 
-- **Springs.** Ease with the springs, which are SwiftUI springs written as CSS `linear()` curves:
-  - `--spring-snappy` (`--t-snappy`) for presses, switches, chevrons and entrances;
-  - `--spring-bouncy` only for a selection or completion flourish, once, never on a question or an error (the character card's check, the checkbox tick; first run's try check uses its successor `--spring-reward`, defined in `.welcome` until ember.css carries the motion tokens);
-  - `--spring-smooth` only for the overlay focus ring.
+- **Springs.** Ease with the springs, Apple's `Spring(duration, bounce)` written as CSS `linear()` curves (a curve is the shape; pair it with a `--t-*` duration):
+  - `--spring-smooth-0` (bounce 0) for what glides: setup's step, the sidebar's selection, Ember's arrival;
+  - `--spring-brisk` (bounce 0.15) for entrances from their source (the bubble grows out of Ember, the Ask box out of Ember below it, a disclosure's content) and dots filling;
+  - `--spring-reward` (bounce 0.3) only for a completion or selection flourish, once: a card's done tick, the checkbox tick, the character card's check, first run's try check (`--spring-bouncy` is its older alias). Never on a question or an error;
+  - `--spring-snappy` (`--t-snappy`) for presses, switches and chevrons; `--spring-smooth` for the overlay focus ring.
 
-  Plain `ease` is for opacity and colour fades.
+  Durations: `--t-press` 220, `--t-fast` 300, `--t-move` 420, `--t-glide` 600, `--t-fade-in` 180 (ease-out), `--t-fade-out` 130 (ease-in), `--t-calm-fade` 150 ms; `--stagger` 30 ms an item (six at most) and `--stagger-plan` 40. Exits are faster than entrances, opacity first. Plain `ease` is for opacity and colour fades.
+- **Nothing near a pending question moves.** A question comes and goes by its opacity alone (no growth, no slide under the pointer: its translate and scale aren't transitioned, as it arrives on a bubble posed as before; bubble-motion-live.test.ts checks it frame by frame), its dot and the ring hold still, a card waiting for you doesn't fill its plan dot, and Ember holds still but for its blinks whatever emotion the question shows (the overlay calls `rig.setQuestion()`: no pop, hop, fidget or saccade).
+- **Frequent things move least.** Streamed text is drawn at most 15 times a second (`STREAM_MS`, in ReasoningBubble: each drawing lays out and re-rasters the bubble); a card's text swaps without motion; numbers never count up.
 - **Entrances and exits.** Build entrances from transitions plus `@starting-style`. To hide something, fade its opacity, then set `visibility: hidden` or `display: none` (with `allow-discrete`), so it takes no clicks or focus. Animate the separate `translate` and `scale` properties, so they compose with a positioning `transform`.
 - **What may animate.**
   - In `@keyframes`, change only `opacity`, `transform`, `translate` or `scale`.
   - Colour and `filter` transitions are fine only on a button's hover, press or checked state, in a window or on the floating layer.
   - Never transition `box-shadow`, `filter`, `background`, size or position on a surface that moves with Ember, or on anything that updates while scrolling or on every data chunk: a box-shadow transition repainted the whole bubble on every frame.
   - The overlay focus ring's left/top/width/height glide and the switch knob's press stretch (`width`) are the only geometry transitions; don't add another. HUD brackets and leaders are placed without a transition, and a lock-on is a `scale`, which keeps it that way.
-- **Endless animations.** Use `infinite` only for small opacity pulses on their own element (`.status i`, `.eb-dot`, the streaming caret, `.mic::after`, `.focus::after`, the acting ring's `.ring-now`), and stop each pulse when its element hides. Large or masked effects run a fixed number of times: the thinking glow is `eb-glow 1.6s ease-in-out 3`, because running endlessly it cost 60% more compositor time; the ring's glow, its done and the bubble's lock-on are finite too. design-system.test.ts lists every `@keyframes` and every endless one, so a new one is a deliberate change there.
-- **Meters driven by script** are the one exception: the ring's ticks (opacity) and the voice meter's bars (`scale`), changed at most 20 times a second for the microphone and 10 for Ember's own voice (app/shared/level.ts `LevelMeter`), and only while the microphone hears a request or Ember's own voice plays; a level crosses IPC only when it changed, on its own channel (`overlay:level`), never in the state. The stream's end sends null and the meter stops at once (hud-presence.test.ts), nothing runs while Ember is hidden, and in Calm the ring shows every tick lit and the meter a steady mark. Measured at a level changing on every update: about 4 points of a core in the overlay renderer and 1 in the GPU process while listening, 2 and 1 while speaking (docs/DESIGN.md "Presence"). Don't give the ticks layers of their own: 24 layers cost the GPU process more than repainting the ring.
+- **Endless animations.** Use `infinite` only for small opacity pulses on their own element (`.status i`, `.eb-dot`, the streaming caret, `.focus::after`, the acting ring's `.ring-now`), and stop each pulse when its element hides. The handle's microphone halo holds steady while it hears you (R6): it never pulses, which read as a meter on silence. The finite ones: the plan's `dot-fill` and the done card's `tick-pop`. Large or masked effects run a fixed number of times: the thinking glow is `eb-glow 1.6s ease-in-out 3`, because running endlessly it cost 60% more compositor time; the ring's glow, its done and the bubble's lock-on are finite too. design-system.test.ts lists every `@keyframes` and every endless one, so a new one is a deliberate change there.
+- **Meters driven by script** are the one exception: the ring's ticks (opacity) and the voice meter's bars (`scale`), changed at most 20 times a second for the microphone and 10 for Ember's own voice (app/shared/level.ts `LevelMeter`), and only while the microphone hears a request or Ember's own voice plays; a level crosses IPC only when it changed (but Ember's voice level, sent again every `VOICE_KEEP_ALIVE_MS` while it holds: the character's mouth follows the voice for as long as levels keep coming, and lets go of one older than `VOICE_STALE_S`), on its own channel (`overlay:level`), never in the state. The stream's end sends null and the meter stops at once (hud-presence.test.ts), nothing runs while Ember is hidden, and in Calm the ring shows every tick lit and the meter a steady mark. Measured at a level changing on every update: about 4 points of a core in the overlay renderer and 1 in the GPU process while listening, 2 and 1 while speaking (docs/DESIGN.md "Presence"). Don't give the ticks layers of their own: 24 layers cost the GPU process more than repainting the ring.
 - **Calm mode** is `html.calm` (`settings.reduceMotion`), alongside `prefers-reduced-motion`.
   - ember.css's `html.calm *` rule stops every transition and animation on every page.
   - Every `infinite` animation in the overlay and handle stylesheets needs its own `html.calm …` rule.
+  - The one motion Calm keeps (R1): a surface that comes and goes carries `.calm-fade` (the bubble, a card, the status line, the Ask box) and fades over `--t-calm-fade`, opacity only, with no translate or scale. Nothing else is exempt from `html.calm *`.
+  - Calm also makes the glass solid.
   - Motion driven from script needs Calm too: set `rig.reducedMotion`, scroll with `behavior: calm ? "auto" : "smooth"`, and pass it to the follower.
   - State stays readable when still: the mic halo holds, the glow stays lit, and the presence ring holds its state (listening all lit, acting's segment steady).
 - **Moving and drawing.**
   - To move anything that follows Ember, write `transform` on an empty, unstyled wrapper (`.eb-mount`, `#stage`), never an inline transform, left or top on the styled glass element: that cost about 25% more overlay CPU.
-  - Draw character canvases on demand with `requestDraw()` at the rig's frame gaps, never in a free-running loop.
+  - Draw character canvases on demand with `requestDraw()` at the rig's frame gaps, never in a free-running loop. Once Ember has dozed off and its face has settled, draw nothing until something happens.
   - Code that runs every frame sends IPC only when its value changed.
 
 ## Scrollbars, icon and the bubble
 
 - **Scrollbars.** Never set `scrollbar-width` or `scrollbar-color`: Chromium then ignores ember.css's `::-webkit-scrollbar` rules (a slim capsule thumb with no arrows) and draws arrows. The one exception is `scrollbar-width: none` on Home's narrow section-link row (`.jump`); the wide sidebar sets it back to `auto`. A scroller drawn over other apps gets a dark track (`.tasks.scroll`).
 - **App icon.** Edit `assets/ember.svg` (48px and up) and `assets/ember-small.svg` (32px and below; app-icon.test.ts). The PNG, .ico and iconset are rendered from them (scripts/package/icon.mjs, and build-app.mjs for Linux's window icon). Keep Apple's icon grid (a 104px continuous-corner tile on a 128px canvas), and check that the small one still reads at 16px.
-- **The bubble's CSS fallbacks.** `BUBBLE_CSS` also runs without ember.css, in the character lab, so every token it uses is written `var(--token, <value>)`. When you change a token in ember.css, update its fallback in bubble.ts. Some fallbacks are approximations today: `--control-edge`, `--separator`, `--scroll-thumb`, `--spring-snappy` and `--glass`.
+- **The bubble's CSS fallbacks.** `BUBBLE_CSS` also runs without ember.css, in the character lab, so every token it uses is written `var(--token, <value>)`. When you change a token in ember.css, update its fallback in bubble.ts. Some fallbacks are approximations today: `--control-edge`, `--separator`, `--scroll-thumb`, `--spring-snappy`, `--spring-brisk` (ease-out) and `--glass` (Regular, without `--glass-under`).
 - **The bubble's clickable area.** The overlay takes clicks only inside the rectangles `interactiveRects()` reports (the `hot` boxes in bubble.ts). A new clickable part of the bubble must be added there, or it never receives a click. Its HUD parts (the brackets, `.eb-lock`) take no pointer and stay out of it.
 - **The bubble's hierarchy.** The state is a tag (a capsule, a tint behind its word) and the title the bold line beside it; an answer has neither (its "Ember" title is hidden: the bubble is Ember's). A wait that hears nothing from Copilot for 10 s says "Still waiting for Copilot…" with Stop (`ui:stop`, the conversation's turn only); a problem offers Open settings where settings can fix it, else Try again (`ui:retry`) where asking again is safe (the conversation's own request, whose turn ran no tool); an answer whose turn started a task says its card shows how it's going.
 
@@ -264,13 +281,15 @@ Name these patterns when you design something new. Vague direction such as "make
   - shared CSS linked first;
   - no `backdrop-filter` on the floating layer;
   - keyframe properties and the finite glow, and the list of every keyframe and every endless one;
+  - the glass over a white page (Regular and Clear: every label, text colour, tag and control edge; the page's own text under 1.5:1), the glass labels on every floating page, the solid fallbacks and Increase Contrast's palette;
+  - one-device-pixel hairlines, the concentric whole-text panel, the motion tokens, Calm's one fade and a question that doesn't move;
   - Calm rules for endless animations;
   - the Ask box fitting its window;
   - the focus ring's gap;
   - forced-colours edges, outlines and symbols.
 
   `ui-copy.test.ts` pins copy, wrapping, the section links and the placeholder's contrast. page-prefs.test.ts and text-size-windows.test.ts check text-size scaling. `packages/bubble/src/bubble.test.ts` covers placement, the keyboard, Calm and the bubble's hierarchy (the question's parts, keycaps, the risky tag, the lock-on). hud-presence.test.ts covers the ring's states, the level stream and the handle's line.
-- **What nothing checks.** Glass on content windows, literal colours, transition properties, the Increase Contrast (`prefers-contrast`) overrides and the BUBBLE_CSS fallbacks. Keep those right yourself.
+- **What nothing checks.** Glass on content windows, literal colours, transition properties and most BUBBLE_CSS fallbacks. Keep those right yourself.
 - **CSS the tests parse.** The tests read CSS with regular expressions:
   - Keep one space after each colon and end every declaration with `;`.
   - Write tested colours as `#rrggbb` or `rgba(r, g, b, a)`.
@@ -294,6 +313,7 @@ Name these patterns when you design something new. Vague direction such as "make
   Screenshot every changed window:
   - over light, dark and photo backdrops;
   - with and without Increase Contrast;
+  - for the floating layer, over a white document and a busy screen too, in each Glass setting, and at 125% and 150% scaling (`--force-device-scale-factor`);
   - in Calm mode;
   - at the Default, Large and Larger text sizes;
   - under forced colours (`emulateMedia({ forcedColors: "active" })`);

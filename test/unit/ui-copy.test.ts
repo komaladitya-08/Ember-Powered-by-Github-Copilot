@@ -790,3 +790,12 @@ describe("every new SSH, WSL and commands string", () => {
     expect(NEW_STRINGS.join(" ")).toMatch(/recognises/);
   });
 });
+
+describe("Comfort & access › Glass (the Glass setting)", () => {
+  it("names the three glasses and says what each does, in Ember's words", async () => {
+    const { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL } = await import("../../app/renderer/home/copy");
+    expect(GLASS_LABEL).toBe("How much shows through");
+    expect(GLASS_CHOICES).toEqual([{ value: "clear", label: "Clear" }, { value: "regular", label: "Regular" }, { value: "solid", label: "Solid" }]);
+    expect(GLASS_HINT).toBe("How much of your screen shows through Ember's bubble, task cards, handle and ask box. Clear is an even, lighter tint, with Ember's words kept easy to read; Solid shows nothing through. Calm mode, and your desktop's settings to reduce transparency or increase contrast, make it solid.");
+  });
+});

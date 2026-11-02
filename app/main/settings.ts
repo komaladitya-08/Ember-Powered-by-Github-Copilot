@@ -133,6 +133,12 @@ export const SettingsSchema = z.object({
   /** Text size in Ember's windows, bubble and cards (main's page-prefs.ts applies it): larger is 30% bigger. */
   textSize: z.enum(["default", "large", "larger"]).default("default"),
   /**
+   * How much of the screen shows through Ember's floating glass (Comfort & access › Glass; main's page-prefs.ts puts it
+   * on every page as html[data-glass], ember.css draws it): clear, regular or solid. Calm mode and the desktop's reduce
+   * transparency and increase contrast make it solid whatever this says.
+   */
+  glass: z.enum(["clear", "regular", "solid"]).default("regular"),
+  /**
    * The primary display's corner Ember's handle sits in, and its task cards above it (Comfort & access › Handle
    * position, and the handle menu's "Move to the other side"; review #75). A file from before it reads as the bottom right.
    */

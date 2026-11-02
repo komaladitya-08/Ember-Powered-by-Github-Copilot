@@ -8,7 +8,7 @@
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
-import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
+import { GLASS_CHOICES, GLASS_HINT, GLASS_LABEL, SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
 import { AUTONOMY_CONSENT_TEXT, autonomyHint, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
@@ -152,6 +152,7 @@ function applySettings(s: Settings): void {
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
   ($("text-size") as HTMLSelectElement).value = s.textSize;
+  ($("glass") as HTMLSelectElement).value = s.glass ?? "regular";
   ($("handle-position") as HTMLSelectElement).value = s.handlePosition;
   // The copy that names the handle's corner follows Handle position (review #75).
   const corner = handleCornerText(s.handlePosition);
@@ -183,6 +184,11 @@ $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
 $("text-size").addEventListener("change", e => { void save({ textSize: (e.target as HTMLSelectElement).value as Settings["textSize"] }); });
+// Comfort & access › Glass: its choices and words from copy.ts.
+$("glass-label").textContent = GLASS_LABEL;
+$("glass-hint").textContent = GLASS_HINT;
+$("glass").replaceChildren(...GLASS_CHOICES.map(c => Object.assign(document.createElement("option"), { value: c.value, textContent: c.label })));
+$("glass").addEventListener("change", e => { void save({ glass: (e.target as HTMLSelectElement).value as Settings["glass"] }); });
 // The handle (and its task cards) moves as main hears the change (handle.ts, overlay/main.ts).
 $("handle-position").addEventListener("change", e => { void save({ handlePosition: (e.target as HTMLSelectElement).value as Settings["handlePosition"] }); });
 

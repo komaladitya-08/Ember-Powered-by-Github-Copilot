@@ -20,7 +20,8 @@
 
   /* Type: Apple's text styles at a Linux desktop's size (body 14 rather than 13), on a 4 px line grid. Hierarchy
      comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). All of
-     it grows with the text size (Settings > Comfort & access): main sets html[data-text-size] (page-prefs.ts). */
+     it grows with the text size (Settings > Comfort & access): main sets html[data-text-size] (page-prefs.ts). Line
+     heights are rounded to whole pixels: 18 px × 1.15 is 20.7 px, and fractional baselines blur at 100 % scale. */
   --text-scale: 1;
   --type-large-title: 700 calc(28px * var(--text-scale))/round(calc(34px * var(--text-scale)), 1px) var(--ember-font);
   --type-title-2: 600 calc(17px * var(--text-scale))/round(calc(22px * var(--text-scale)), 1px) var(--ember-font);
@@ -64,7 +65,7 @@
   --gray: #8e8e93;
   /* System colours as small text on dark: lighter, 4.5:1 or more on every surface and on their own tints. */
   --green-text: #5be37d;
-  --red-text: #ff7a71;
+  --red-text: #ff9189;
   --purple-text: #eea2ff;
   /* Ember's HUD (the presence ring, its meter, lock-on brackets): Ember's own light as hairline ink. Decorative only,
      never the one carrier of a state (words say it), so not held to a text or control contrast. --hud-line is the warm
@@ -82,19 +83,45 @@
   --r-capsule: 999px;
   --r-icon: 22.4%;
 
-  /* Materials. Glass for what floats over other apps: Apple's regular glass where nothing behind it can be sampled,
-     so an opaque frost (a translucent body would leave the app's text readable behind Ember's). Static layers,
-     rastered once: a sheen from above, the body, a rim lit from the top left over the body, and depth below.
+  /* Materials. Liquid Glass for what floats over other apps, without a blur (nothing behind can be sampled, and a
+     blur costs a core): the screen shows through a dense tint, measured so that every label passes over a white page
+     (design-system.test.ts). Two densities, never mixed on one surface (Apple's "never mix variants"):
+     - regular (--glass-a 0.88) under anything with sentences: the bubble, cards, the status line, the Ask box. At 0.88
+       the black text of a white page behind shows at under 1.5:1, so it never competes with Ember's words;
+     - clear (--glass-clear-a 0.55) only where nothing is written: the handle's face end. Words beside it sit on a
+       localised plate (--glass-plate-a 0.86, Apple's "localized dimming"), never on the clear part.
+     Static layers, rastered once: a sheen from above, the body, and a rim lit from the top left in the 1 px border
+     (the body is painted once, in the padding box: painted twice, as before, 0.88 became 0.99). Then the lit inner top
+     edge, the darker bottom edge, a dark hairline of one device pixel (--dpx, which each floating page sets) and tight
+     shadows. The --glass-a values are read where :root resolves --glass-fill, so a page changes them only on :root.
      Use: border: 1px solid transparent; background: var(--glass); box-shadow: var(--glass-spec), var(--glass-depth). */
-  --glass-sheen: radial-gradient(140% 90% at 50% -30%, rgba(255, 255, 255, 0.075), transparent 60%);
-  --glass-fill: linear-gradient(180deg, rgba(46, 42, 44, 0.97), rgba(26, 23, 25, 0.985));
-  --glass-edge: linear-gradient(160deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.08) 35%, rgba(255, 255, 255, 0.05) 65%, rgba(255, 255, 255, 0.14));
-  --glass: var(--glass-sheen) padding-box, var(--glass-fill) padding-box, var(--glass-edge) border-box, var(--glass-fill) border-box;
-  --glass-spec: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --glass-a: 0.88;
+  --glass-clear-a: 0.55;
+  --glass-plate-a: 0.86;
+  --glass-sheen: radial-gradient(140% 90% at 50% -30%, rgba(255, 255, 255, 0.08), transparent 60%);
+  --glass-fill: linear-gradient(180deg, rgba(26, 23, 25, var(--glass-a)), rgba(18, 15, 17, min(1, calc(var(--glass-a) + 0.04))));
+  --glass-edge: linear-gradient(160deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.1) 35%, rgba(255, 255, 255, 0.06) 65%, rgba(255, 255, 255, 0.18));
+  /* Under the rim: nothing (the rim is lit glass); a solid body under Reduce Transparency, Increase Contrast and Calm. */
+  --glass-under: linear-gradient(transparent, transparent);
+  --glass: var(--glass-sheen) padding-box, var(--glass-fill) padding-box, var(--glass-edge) border-box, var(--glass-under) border-box;
+  /* Clear glass: see-through where the face sits (the first --glass-clear-to of the surface), the plate behind words. */
+  --glass-clear-fill: linear-gradient(90deg, rgba(20, 17, 18, var(--glass-clear-a)) 0 var(--glass-clear-to, 34px), rgba(20, 17, 18, var(--glass-plate-a)) calc(var(--glass-clear-to, 34px) + 18px));
+  --glass-clear: var(--glass-sheen) padding-box, var(--glass-clear-fill) padding-box, var(--glass-edge) border-box, var(--glass-under) border-box;
+  /* Ember's accent as words and status marks on glass (the cursor hand's line, a working card's symbol, the Ask box's
+     computer): the accent itself on Regular, a light tint of it on Clear, where the orange is under 3:1 over a white page. */
+  --accent-text-on-glass: var(--accent);
+  /* Labels on glass, one step firmer than on opaque surfaces (Apple's vibrancy, without sampling): the floating pages
+     and the bubble use these as their --label-2 and --label-3. */
+  --glass-label-2: rgba(245, 240, 236, 0.74);
+  --glass-label-3: rgba(245, 240, 236, 0.66);
+  /* The inner edges: lit along the top, darker along the bottom (glass is thicker there). */
+  --glass-spec: inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
   /* For glass drawn without a border (an inner rim instead). */
   --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.13), inset 0 0 0 1px rgba(255, 255, 255, 0.065);
+  /* One device pixel (pages set --dpx to 1/devicePixelRatio): a 0.5 px spread smeared over two pixels at 125 % and 150 %. */
+  --glass-hairline: 0 0 0 var(--dpx, 0.5px) rgba(0, 0, 0, 0.6);
   /* The outer hairline keeps the edge crisp over white documents; the two shadows give it lift. */
-  --glass-depth: 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.16), 0 14px 34px rgba(0, 0, 0, 0.34);
+  --glass-depth: var(--glass-hairline), 0 2px 6px rgba(0, 0, 0, 0.18), 0 14px 34px rgba(0, 0, 0, 0.36);
   /* Without transparency (no compositor, or the user asked for less of it). */
   --glass-solid: #242022;
 
@@ -114,7 +141,30 @@
   --sym-mic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='8.5' y='2' width='7' height='12.5' rx='3.5'/%3E%3Cpath d='M5 11.5a7 7 0 0 0 14 0M12 18.5V22' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
   --sym-mic-off: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3Cmask id='m'%3E%3Crect width='24' height='24' fill='white'/%3E%3Cpath d='M3.5 3l17 18' stroke='black' stroke-width='6.5'/%3E%3C/mask%3E%3C/defs%3E%3Cg mask='url(%23m)'%3E%3Crect x='8.5' y='2' width='7' height='12.5' rx='3.5'/%3E%3Cpath d='M5 11.5a7 7 0 0 0 14 0M12 18.5V22' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3C/g%3E%3Cpath d='M3.5 3l17 18' stroke='black' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E");
 
-  /* Motion: springs (SwiftUI's response / damping), as CSS linear() curves. */
+  /* Motion (docs/DESIGN.md "Motion"). Springs as CSS linear() curves: a curve is the shape only, paired with a --t-*
+     duration that covers its tail. Apple's Spring(duration, bounce): mass 1, damping ratio 1 − bounce.
+     - --spring-smooth-0 (bounce 0): what glides, the general spring;
+     - --spring-brisk (bounce 0.15): entrances from their source (the bubble from Ember, the Ask box from the handle),
+       small presses and dots filling;
+     - --spring-reward (bounce 0.3): a completion or selection flourish, once; never on a question or an error.
+     The three older curves keep their names (their overshoot gives the bounce): --spring-snappy ≈ bounce 0.14 with
+     --t-snappy, presses and switches; --spring-bouncy ≈ bounce 0.28 with --t-bouncy, the checkbox tick and the
+     character card's check; --spring-smooth ≈ bounce 0, the overlay's focus ring. */
+  --spring-smooth-0: linear(0, 0.01 2%, 0.045 4.5%, 0.12 8%, 0.45 20.5%, 0.575 26%, 0.678 31.5%, 0.766 37.5%, 0.837 44%, 0.895 51.5%, 0.939 60.5%, 0.971 72.5%, 0.991 91.5%, 1);
+  --spring-brisk: linear(0, 0.013 2.5%, 0.047 5%, 0.119 8.5%, 0.262 14%, 0.491 22.5%, 0.621 28%, 0.728 33.5%, 0.813 39%, 0.881 45%, 0.933 51.5%, 0.972 59.5%, 0.997 70%, 1.006 87.5%, 1);
+  --spring-reward: linear(0, 0.009 2%, 0.043 4.5%, 0.107 7.5%, 0.218 11.5%, 0.562 22.5%, 0.698 27.5%, 0.801 32%, 0.882 36.5%, 0.95 41.5%, 1 47%, 1.031 53%, 1.046 61%, 1.037 74%, 1.005 99.5%, 1);
+  /* Durations, tail included. Exits run about two thirds of their entrance, opacity first. */
+  --t-press: 220ms;
+  --t-fast: 300ms;
+  --t-move: 420ms;
+  --t-glide: 600ms;
+  --t-fade-in: 180ms;
+  --t-fade-out: 130ms;
+  /* The one motion Calm keeps: an opacity fade, no longer than this (R1; .calm-fade below). */
+  --t-calm-fade: 150ms;
+  /* Per item, at most six items (150 ms in all); plan dots refilling on a retry. */
+  --stagger: 30ms;
+  --stagger-plan: 40ms;
   --spring-snappy: linear(0, 0.046, 0.152, 0.284, 0.418, 0.542, 0.651, 0.741, 0.814, 0.871, 0.913, 0.945, 0.967, 0.982, 0.992, 0.999, 1.002, 1.004, 1.005, 1.005, 1.005, 1.004, 1.003, 1.003, 1);
   --spring-smooth: linear(0, 0.068, 0.208, 0.363, 0.505, 0.625, 0.721, 0.795, 0.852, 0.893, 0.924, 0.946, 0.962, 0.974, 0.982, 0.987, 0.991, 0.994, 0.996, 0.997, 1);
   --spring-bouncy: linear(0, 0.025, 0.088, 0.175, 0.276, 0.381, 0.485, 0.583, 0.673, 0.752, 0.82, 0.876, 0.923, 0.959, 0.987, 1.008, 1.022, 1.031, 1.036, 1.038, 1.038, 1.036, 1.033, 1.029, 1.025, 1.021, 1.017, 1.014, 1.01, 1.008, 1.005, 1.003, 1);
@@ -126,14 +176,46 @@
   --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
+/* The Glass setting (Settings › Comfort & access › Glass; main puts html[data-glass] on every page, page-prefs.ts).
+   Regular is the default above. Clear is an even smoky tint (0.68), the same everywhere, with no plates or halos
+   behind the words: just dense enough that near-white labels pass 4.5:1 with a white page behind (tested), so the
+   secondary labels are near-white too (hierarchy from weight and size), the coloured words of a tag take the label's
+   colour (the tag's dot and tint keep the colour), and Ember's accent and the system colours that mark state take
+   their light tints (3:1 or more as marks, 4.5:1 as words). Solid shows nothing through. Written as :root:where(…) so
+   that Increase Contrast, Reduce Transparency and Calm, which always make it solid, win. */
+:root:where([data-glass="clear"]) {
+  --glass-a: 0.68; --glass-clear-a: 0.68; --glass-plate-a: 0.68;
+  --glass-label-2: rgba(250, 247, 244, 0.95);
+  --glass-label-3: rgba(250, 247, 244, 0.9);
+  --control-edge: rgba(255, 255, 255, 0.7);
+  --accent-text-on-glass: #ffe4cc;
+  --accent-2: #ffc266;
+  --green: #7ef09a;
+  --red: #ffaaa4;
+  --purple: #f3c2ff;
+  --blue: #9ad3ff;
+  --gray: #c7c7cc;
+  --yellow: #fff0a0;
+  /* Words in a state's colour (views' inks, tags elsewhere take the label): light enough for 4.5:1 here. */
+  --green-text: #c8fad3;
+  --red-text: #ffe6e3;
+  --purple-text: #fbe8ff;
+}
+:root:where([data-glass="solid"]) { --glass-a: 1; --glass-clear-a: 1; --glass-plate-a: 1; --glass-under: linear-gradient(var(--glass-solid), var(--glass-solid)); }
+
 /* Increase contrast (the desktop's high-contrast preference): Apple's increased-contrast colours, firmer edges and
    secondary text, solid glass with a contrasting border, a full-strength focus ring (still set off by its gap). */
 @media (prefers-contrast: more) {
   :root {
     --accent: #ffa056;
+    --accent-2: #ffc266;
+    --glow: #ffa056;
     --red: #ff6165;
     --purple: #ea8dff;
     --green: #4ad968;
+    --yellow: #fedf43;
+    --blue: #5cb8ff;
+    --gray: #aeaeb2;
     --green-text: #7ef09a;
     --red-text: #ff9a93;
     --purple-text: #f3c2ff;
@@ -145,7 +227,15 @@
     --group-edge: 0 0 0 1px rgba(255, 255, 255, 0.3);
     --control-edge: rgba(255, 255, 255, 0.66);
     --scroll-thumb: rgba(255, 255, 255, 0.6);
+    --glass-label-2: rgba(245, 240, 236, 0.84);
+    --glass-label-3: rgba(245, 240, 236, 0.74);
+    /* Solid, with a contrasting 1 px border (Apple: "predominantly black or white with a contrasting border"). */
+    --glass-a: 1;
+    --glass-clear-a: 1;
+    --glass-plate-a: 1;
     --glass-fill: linear-gradient(#141112, #141112);
+    --glass-clear-fill: linear-gradient(#141112, #141112);
+    --glass-under: linear-gradient(#141112, #141112);
     --glass-sheen: linear-gradient(transparent, transparent);
     --glass-rim: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
     --glass-edge: linear-gradient(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5));
@@ -155,10 +245,12 @@
 /* Text size: the type tokens above (and each page's own sizes, in its html[data-text-size] rules) grow by this. */
 html[data-text-size="large"] { --text-scale: 1.15; }
 html[data-text-size="larger"] { --text-scale: 1.3; }
-/* Reduce transparency: glass becomes a solid panel. */
+/* Reduce transparency, and Calm (Ember's own setting asks for a quieter screen): glass becomes a solid panel, the
+   screen no longer showing through it (Increase Contrast's solid body and border above win over this). */
 @media (prefers-reduced-transparency: reduce) {
-  :root { --glass-fill: linear-gradient(var(--glass-solid), var(--glass-solid)); --glass-sheen: linear-gradient(transparent, transparent); }
+  :root { --glass-a: 1; --glass-clear-a: 1; --glass-plate-a: 1; --glass-under: linear-gradient(var(--glass-solid), var(--glass-solid)); --glass-sheen: linear-gradient(transparent, transparent); }
 }
+html.calm { --glass-a: 1; --glass-clear-a: 1; --glass-plate-a: 1; --glass-under: linear-gradient(var(--glass-solid), var(--glass-solid)); }
 
 /* Type: Inter's optical sizes, antialiased, no faux bold or italic (the UI sets no italics: only the upright face ships). */
 html {
@@ -183,7 +275,7 @@ html {
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* A state symbol beside its words (never colour alone): set data-status, size it, and it draws in the state's colour. */
-[data-status] { --sym-tint: var(--accent); --sym: var(--sym-working); }
+[data-status] { --sym-tint: var(--accent-text-on-glass, var(--accent)); --sym: var(--sym-working); }
 [data-status="queued"] { --sym-tint: var(--gray); --sym: var(--sym-queued); }
 [data-status="waiting"] { --sym-tint: var(--purple); --sym: var(--sym-waiting); }
 [data-status="done"] { --sym-tint: var(--green); --sym: var(--sym-done); }
@@ -196,7 +288,7 @@ html {
   all: unset; box-sizing: border-box; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: calc(28px * var(--text-scale)); padding: 4px 13px; border-radius: var(--r-sm);
-  font: 600 calc(13px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font); letter-spacing: -0.003em; text-align: center;
+  font: 600 calc(13px * var(--text-scale))/round(calc(18px * var(--text-scale)), 1px) var(--ember-font); letter-spacing: -0.003em; text-align: center;
   color: var(--on-accent); background: var(--accent);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 2px rgba(0, 0, 0, 0.3);
   transition: filter 160ms ease, background-color 160ms ease, transform 220ms var(--spring-snappy);
@@ -208,7 +300,7 @@ html {
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
 @media (hover: hover) { .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); filter: none; } }
-.btn.small { min-height: calc(24px * var(--text-scale)); padding: 3px 10px; border-radius: var(--r-xs); font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+.btn.small { min-height: calc(24px * var(--text-scale)); padding: 3px 10px; border-radius: var(--r-xs); font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
 .btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
 .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 .btn.quiet:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
@@ -264,7 +356,7 @@ input[type="checkbox"]:not([role="switch"]):checked:focus-visible { box-shadow: 
 /* ───── Keys: keycaps ───── */
 kbd {
   display: inline-block; min-width: 1.6em; padding: 0 5px; border-radius: var(--r-xs); text-align: center;
-  font: 600 calc(11px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font); letter-spacing: 0.01em; color: var(--label);
+  font: 600 calc(11px * var(--text-scale))/round(calc(18px * var(--text-scale)), 1px) var(--ember-font); letter-spacing: 0.01em; color: var(--label);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.07));
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.16), 0 1px 0 rgba(0, 0, 0, 0.5);
   vertical-align: 1px;
@@ -274,6 +366,12 @@ kbd {
 html.calm *, html.calm *::before, html.calm *::after { transition-duration: 0s !important; animation: none !important; scroll-behavior: auto !important; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }
+}
+/* What Calm keeps (R1): a surface that comes and goes (.calm-fade: the bubble, a card, the status line) fades over
+   --t-calm-fade instead of popping in, which read as a jolt. Opacity only: no slide, no scale, no bounce. */
+html.calm .calm-fade { transition: opacity var(--t-calm-fade) ease, visibility var(--t-calm-fade), display var(--t-calm-fade) allow-discrete !important; translate: none !important; scale: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .calm-fade { transition: opacity var(--t-calm-fade) ease, visibility var(--t-calm-fade), display var(--t-calm-fade) allow-discrete !important; translate: none !important; scale: none !important; }
 }
 
 /* Windows contrast themes (forced colours): the system paints with a few colours of its own and drops every
@@ -295,6 +393,7 @@ html.calm *, html.calm *::before, html.calm *::after { transition-duration: 0s !
     --gray: GrayText;
     --hud-line: CanvasText;
     --hud-dim: GrayText;
+    --accent-text-on-glass: CanvasText;
     --control-edge: ButtonText;
     --scroll-thumb: CanvasText;
     /* A shadow ring would be dropped, and on the controls drawn as they are it would sit under the outline below. */

@@ -3,6 +3,12 @@
  * parameters that move on springs, and an always-on liveliness layer adds
  * breathing, blinking, gaze, hops, talking and idle fidgets. Renderers only
  * draw a Pose; they never decide how Ember feels.
+ *
+ * Its life follows how people look (docs/DESIGN.md "The rig"): blinks close fast
+ * and open slower, rarer while thinking or working (as when reading); the eyes jump
+ * to a new point (a saccade) and then follow it smoothly; a long "got it" blink
+ * when the user's request ends; and fidgets grow rarer the longer Ember idles, never
+ * more frequent. All of it is a few numbers a frame: no extra drawing.
  */
 
 export type Emotion =
@@ -106,6 +112,35 @@ export interface Pose {
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+/** A blink closes in BLINK_CLOSE s and opens in BLINK_OPEN s (closing is the faster half). */
+export const BLINK_CLOSE = 0.06;
+export const BLINK_OPEN = 0.11;
+/** The long blink that says "got it" as the user's request ends (Hömke et al. 2018), in seconds. */
+export const GOT_IT_BLINK = 0.25;
+/**
+ * Seconds between blinks: about 17 a minute at rest, fewer while thinking or working (people blink about 4.5 times a
+ * minute while reading). Sleep has none.
+ */
+export function blinkGap(e: Emotion): [number, number] {
+  return e === "thinking" || e === "focused" ? [6, 10] : [2.5, 5];
+}
+/** Seconds between idle fidgets: 5–10 in the first minute of idling, then 8–15 (rarer, never more insistent). */
+export function fidgetGap(idleFor: number): [number, number] {
+  return idleFor < 60 ? [5, 10] : [8, 15];
+}
+/** How open the eyes are `t` s into a blink of `close` + `open` s (1 open, 0 shut). */
+export function blinkAt(t: number, close = BLINK_CLOSE, open = BLINK_OPEN): number {
+  if (t <= 0 || t >= close + open) return 1;
+  return t < close ? 1 - t / close : (t - close) / open;
+}
+/**
+ * How long a voice level holds (s): Ember's voice sends one at least every half second while it plays
+ * (app/shared/level.ts VOICE_KEEP_ALIVE_MS), so one older than this means the voice stopped without saying so.
+ */
+export const VOICE_STALE_S = 1.5;
+/** Emotions entered without the anticipation pop: listening must start at once, and a pop reads as alarm on a question. */
+const NO_POP: ReadonlySet<Emotion> = new Set(["listening", "worried"]);
+
 /** Longest frame the rig accepts, and the step it integrates in (so 15 fps moves like 60 fps). */
 const MAX_DT = 0.1;
 const STEP = 1 / 30;
@@ -131,6 +166,18 @@ export class Rig {
   private gazeOverride: { x: number; y: number } | null = null;
   private blinkIn = rand(1, 4);
   private blinkT = -1;
+  /** The blink under way: its closing and opening times (a got-it blink is the long one). */
+  private blinkClose = BLINK_CLOSE;
+  private blinkOpen = BLINK_OPEN;
+  /** Seconds left of a saccade's quick jump (then the soft spring follows). */
+  private saccade = 0;
+  /** The level of Ember's own voice while it plays (0–1), or null: then the mouth keeps its synthetic flap. */
+  private voiceLevel: number | null = null;
+  /** When the level last came (rig time, s). */
+  private voiceAt = -Infinity;
+  private voice = 0;
+  /** A question is up (setQuestion): nothing about Ember jumps, pops, hops or fidgets until it is answered. */
+  private question = false;
   private hopY = 0;
   private hopV = 0;
   private talking = false;
@@ -158,6 +205,8 @@ export class Rig {
   setEmotion(e: Emotion, opts: { gesture?: Gesture } = {}): void {
     const p = PRESETS[e];
     const changed = e !== this.emotion;
+    // The user's request has ended (Ember heard it): one long blink, "got it".
+    if (changed && this.emotion === "listening") this.gotIt();
     this.emotion = e;
     this.dozing = false;
     this.target = { ...NEUTRAL, ...p.face };
@@ -166,14 +215,35 @@ export class Rig {
       this.emoteAge = 0;
       this.setGesture(opts.gesture ?? p.gesture);
       this.gazeOverride = p.gaze ?? null;
-      if (!this.reducedMotion) {
-        this.vel.squash += 2.2;   // anticipation pop on every change
+      if (!this.reducedMotion && !NO_POP.has(e) && !this.question) {
+        this.vel.squash += 2.2;   // anticipation pop on a change
         this.vel.tilt += rand(-0.6, 0.6);
       }
       if (p.hop) this.hop(p.hop);
+      if (this.question) this.fidget = null;
+      // The next blink comes at the new emotion's rate (thinking's is slower), not the last one's.
+      const [lo, hi] = blinkGap(e);
+      this.blinkIn = Math.min(Math.max(this.blinkIn, 0.3), rand(lo, hi));
       this.fidget = null;
       this.idleFor = 0;
     }
+  }
+
+  /** One long, slow blink: "got it" (the user's request ended), in place of any blink under way. Not while asleep. */
+  gotIt(): void {
+    if (this.emotion === "sleepy") return;
+    this.blinkT = 0;
+    this.blinkClose = GOT_IT_BLINK * 0.4;
+    this.blinkOpen = GOT_IT_BLINK * 0.6;
+  }
+
+  /**
+   * The loudness of Ember's own voice as it plays (0 quiet … 1 loud; null when it stops, or for the system's voice,
+   * which gives none): the mouth opens with it, and the glow brightens a little with it, instead of a made-up flap.
+   */
+  setTalkLevel(v: number | null): void {
+    this.voiceLevel = v === null || !Number.isFinite(v) ? null : Math.max(0, Math.min(1, v));
+    this.voiceAt = this.t;
   }
 
   /** Something happened (the user moved, Ember was spoken to): restart the idle clock and wake from a doze. */
@@ -190,13 +260,16 @@ export class Rig {
   /**
    * How much passing motion there is, so a renderer can draw less often when little moves:
    * "brisk" (a hop, a fresh gesture or emote, a fast change of face or gaze), "gentle" (a
-   * blink, an idle fidget, springs still settling) or "still". Steady motion, like talking
-   * or a waving hand, is the renderer's call.
+   * blink, an idle fidget, a saccade, springs still settling) or "still". Steady motion, like
+   * talking or a waving hand, is the renderer's call.
    */
   get motion(): "brisk" | "gentle" | "still" {
     const look = Math.abs(this.lookVel.x) + Math.abs(this.lookVel.y);
     const face = Math.max(...KEYS.map(k => Math.abs(this.vel[k])));
-    if (this.hopY !== 0 || this.gestureAge < 0.8 || this.emoteAge < 0.8 || look > 1.5 || face > 1.5) return "brisk";
+    // A saccade is fast but tiny (the pupils jump a few px): drawn at the lively rate, not every frame (measured: idle
+    // saccades at every frame cost the overlay about a point of a core).
+    const glancing = look > 1.5 && this.saccade <= 0;
+    if (this.hopY !== 0 || this.gestureAge < 0.8 || this.emoteAge < 0.8 || glancing || face > 1.5) return "brisk";
     if (this.fidget || this.blinkT >= 0 || look > 0.05 || face > 0.05) return "gentle";
     return "still";
   }
@@ -210,9 +283,11 @@ export class Rig {
     if (g !== this.gesture) { this.gesture = g; this.gestureAge = 0; }
   }
 
-  /** Look toward a direction; components roughly -1 … 1. */
+  /** Look toward a direction; components roughly -1 … 1. A far new point is reached by a quick jump, then followed. */
   lookAt(x: number, y: number): void {
-    this.lookTarget = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
+    const next = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
+    if (!this.question && Math.hypot(next.x - this.lookTarget.x, next.y - this.lookTarget.y) > 0.5) this.saccade = 0.12;
+    this.lookTarget = next;
     this.lookTargetAge = 0;
   }
 
@@ -222,12 +297,27 @@ export class Rig {
   }
 
   hop(strength = 1): void {
-    if (this.reducedMotion) return;
+    if (this.reducedMotion || this.question) return;
     if (this.hopY > -1) this.hopV = -150 * strength;
   }
 
+  /**
+   * Talking or not, as the words go (the syllable flap of the system's voice). Ember's own voice moves the mouth by its
+   * level (setTalkLevel) for as long as it plays, which outlasts the words: the last sentence is spoken after them.
+   */
   setTalking(on: boolean): void {
     this.talking = on;
+  }
+
+  /**
+   * A question is up, whatever the emotion it shows (Confirmer's is "curious"): until it is answered nothing about Ember
+   * jumps, pops, hops, fidgets or glances away (design-system.md "Nothing near a pending question moves"); blinks stay,
+   * and the eyes still follow the pointer smoothly.
+   */
+  setQuestion(on: boolean): void {
+    if (on === this.question) return;
+    this.question = on;
+    if (on) { this.fidget = null; this.saccade = 0; }
   }
 
   /** Tell the rig where the character is on screen, so it can lean and jiggle. */
@@ -249,6 +339,8 @@ export class Rig {
     const face = { ...this.face };
     face.open = Math.max(0, face.open * this.blink);
     face.mouthOpen = Math.min(1, face.mouthOpen + this.talk * 0.55);
+    // The glow follows Ember's own voice.
+    face.energy += 0.2 * this.voice;
     face.squash += breath * 0.025;
 
     return {
@@ -262,7 +354,7 @@ export class Rig {
       t: this.t,
       dt: Math.min(dt, MAX_DRAW_DT),
       breath,
-      lift: this.hopY + (this.reducedMotion ? 0 : Math.sin(this.t * 2.1) * face.bounce * 3),
+      lift: this.hopY + (this.reducedMotion || this.question ? 0 : Math.sin(this.t * 2.1) * face.bounce * 3),
       lean: this.lean,
       accel: this.reducedMotion ? { x: 0, y: 0 } : { ...this.accel },
       talk: this.talk,
@@ -283,13 +375,14 @@ export class Rig {
       if (this.sleepAfter && this.idleFor > this.sleepAfter) {
         this.setEmotion("sleepy");
         this.dozing = true;
-      } else if (this.fidgetIn <= 0 && !this.fidget && !this.reducedMotion) {
+      } else if (this.fidgetIn <= 0 && !this.fidget && !this.reducedMotion && !this.question) {
         const r = Math.random();
         this.fidget = r < 0.5
           ? { kind: "glance", age: 0, dur: 1.2, dir: { x: rand(-1, 1), y: rand(-0.6, 0.6) } }
           : r < 0.8 ? { kind: "yawn", age: 0, dur: 1.6 } : { kind: "hop", age: 0, dur: 0.6 };
         if (this.fidget.kind === "hop") this.hop(0.6);
-        this.fidgetIn = rand(5, 10);
+        const [lo, hi] = fidgetGap(this.idleFor);
+        this.fidgetIn = rand(lo, hi);
       }
     } else if (this.emotion !== "sleepy") {
       this.idleFor = 0;
@@ -309,11 +402,12 @@ export class Rig {
       if (f.age >= f.dur) this.fidget = null;
     }
 
-    // Springs: wobbly for body (settling without wobble in calm mode), snappier for face.
+    // Springs: wobbly for body, snappier for face; in calm mode every one settles without overshoot.
     for (const k of KEYS) {
       const wobbly = k === "squash" || k === "tilt";
       const stiff = wobbly ? 160 : 110;
-      const damp = 2 * Math.sqrt(stiff) * (wobbly ? (this.reducedMotion ? 1 : 0.32) : 0.8);
+      // (A question holds the body still too: its tilt and squash settle without wobbling.)
+      const damp = 2 * Math.sqrt(stiff) * (this.reducedMotion || (wobbly && this.question) ? 1 : wobbly ? 0.32 : 0.8);
       this.vel[k] += (stiff * (target[k] - this.face[k]) - damp * this.vel[k]) * dt;
       this.face[k] += this.vel[k] * dt;
     }
@@ -322,37 +416,46 @@ export class Rig {
     this.lookTargetAge += dt;
     this.saccadeIn -= dt;
     let goal = this.lookTarget;
-    if (this.gazeOverride) {
+    // Asleep: the eyes stay where they are (nothing to look at; a dozing Ember draws nothing).
+    if (this.emotion === "sleepy") goal = this.look;
+    else if (this.gazeOverride) {
       goal = { x: this.gazeOverride.x + Math.sin(this.t * 1.3) * 0.08, y: this.gazeOverride.y };
     } else if (this.fidget?.kind === "glance" && this.fidget.dir) {
       goal = this.fidget.dir;
-    } else if (this.lookTargetAge > 2.5) {
+    } else if (this.lookTargetAge > 2.5 && !this.question) {
       if (this.saccadeIn <= 0) {
         this.lookTarget = { x: rand(-0.5, 0.5), y: rand(-0.3, 0.3) };
         this.saccadeIn = rand(0.7, 2.2);
+        this.saccade = 0.12;
       }
       goal = this.lookTarget;
     }
-    const ls = 260, ld = 2 * Math.sqrt(ls) * 0.9;
+    // A saccade is ballistic (about 60 ms, a stiff spring without overshoot); following is the soft spring.
+    this.saccade = Math.max(0, this.saccade - dt);
+    const ls = this.saccade > 0 ? 900 : 260, ld = 2 * Math.sqrt(ls) * (this.saccade > 0 ? 1 : 0.9);
     this.lookVel.x += (ls * (goal.x - this.look.x) - ld * this.lookVel.x) * dt;
     this.lookVel.y += (ls * (goal.y - this.look.y) - ld * this.lookVel.y) * dt;
     this.look.x += this.lookVel.x * dt;
     this.look.y += this.lookVel.y * dt;
 
-    // Blinks (sometimes double).
+    // Blinks: quick to close, slower to open, sometimes double; rarer while thinking or working.
     let blink = 1;
     if (this.emotion !== "sleepy") {
       this.blinkIn -= dt;
       if (this.blinkIn <= 0 && this.blinkT < 0) {
         this.blinkT = 0;
-        this.blinkIn = Math.random() < 0.2 ? 0.28 : rand(2, 5);
+        this.blinkClose = BLINK_CLOSE;
+        this.blinkOpen = BLINK_OPEN;
+        const [lo, hi] = blinkGap(this.emotion);
+        this.blinkIn = Math.random() < 0.2 ? 0.28 : rand(lo, hi);
       }
       if (this.blinkT >= 0) {
         this.blinkT += dt;
-        const b = this.blinkT / 0.16;
-        blink = b < 0.5 ? 1 - b * 2 : (b - 0.5) * 2;
-        if (b >= 1) { this.blinkT = -1; blink = 1; }
+        blink = blinkAt(this.blinkT, this.blinkClose, this.blinkOpen);
+        if (this.blinkT >= this.blinkClose + this.blinkOpen) { this.blinkT = -1; blink = 1; }
       }
+    } else {
+      this.blinkT = -1;
     }
     this.blink = blink;
 
@@ -365,9 +468,15 @@ export class Rig {
       this.hopV = 0;
     }
 
-    // Talking flaps the mouth with a syllable rhythm.
+    // Talking: with Ember's own voice the mouth follows its loudness (opening fast, closing a little slower, with a
+    // touch of syllable rhythm between the level's ten updates a second); with the system's voice, a syllable flap.
     const syl = Math.max(0, Math.sin(this.t * 17) * 0.6 + Math.sin(this.t * 7.3) * 0.4);
-    this.talk += ((this.talking ? syl : 0) - this.talk) * Math.min(1, dt * 25);
+    // A level not refreshed for VOICE_STALE_S is dropped: the voice stopped without its null (its page closed).
+    if (this.voiceLevel !== null && this.t - this.voiceAt > VOICE_STALE_S) this.voiceLevel = null;
+    const level = this.voiceLevel ?? 0;
+    this.voice += (level - this.voice) * Math.min(1, dt * (level > this.voice ? 40 : 11));
+    const mouth = this.voiceLevel !== null ? this.voice * (0.8 + 0.2 * syl) : this.talking ? syl : 0;
+    this.talk += (mouth - this.talk) * Math.min(1, dt * 25);
 
     this.lean += ((Math.max(-1, Math.min(1, this.posVel.x / 900)) * 0.35) - this.lean) * Math.min(1, dt * 8);
   }

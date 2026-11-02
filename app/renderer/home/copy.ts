@@ -635,3 +635,12 @@ export function homePatches(p: StatusPlatform): HomePatch[] {
 export function rereadsStatusOnFocus(p: StatusPlatform | undefined): boolean {
   return p !== undefined && p.os !== "linux";
 }
+
+/** Comfort & access › Glass (settings.glass): how much of the screen shows through Ember's floating glass. */
+export const GLASS_CHOICES: readonly { value: "clear" | "regular" | "solid"; label: string }[] = [
+  { value: "clear", label: "Clear" },
+  { value: "regular", label: "Regular" },
+  { value: "solid", label: "Solid" },
+];
+export const GLASS_LABEL = "How much shows through";
+export const GLASS_HINT = "How much of your screen shows through Ember's bubble, task cards, handle and ask box. Clear is an even, lighter tint, with Ember's words kept easy to read; Solid shows nothing through. Calm mode, and your desktop's settings to reduce transparency or increase contrast, make it solid.";
