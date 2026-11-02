@@ -84,6 +84,17 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 
   "Always in <app>" is a click only, never bound to a key, because a global key could take an app's own shortcut and grant for good.
 
+## Views (show_view, update_view, finish_task's view)
+
+- **Checked whole, fail closed.** Every view, and every update_view batch applied to a copy, goes through
+  `checkDoc()` (app/main/agent/view-schema.ts): the closed catalog and its limits, `mimicRefusal()` (Ember's control
+  words, shortcut chords, "Ember: …") and `memoryRefusal()` on every string, private paths on files and quotes. A
+  refusal for what a view says (`why`) is audited as a `decision` with `kind: "view"`, shown on the card as a refusal,
+  and the model is told not to try another way. A quote's caption names an app only if the task read it.
+- **Never in the audit:** a view's words. It records "showed a view" with its blocks, charts and rev.
+- **To the page apart from the state.** TaskManager's `onView` → main's `ViewHub` (app/main/agent/view-doc.ts): diffs
+  only, at most 4 a second a task, nothing while Ember is hidden, every view whole to a page that reloads.
+
 ## Untrusted text, secrets and never-look windows
 
 - **Untrusted text.** Wrap text from the screen, apps, files, the web or other tasks in an element marked `untrusted="true"`: `<screen>`, `<context>`, `<windows>`, `<options>`, `<task_results>`, `<tasks>` or `<command_output>` (built only by `shapeOutput()`). Quote it with `quoteUntrusted()`, and escape role and action names with `screenWord()`.
