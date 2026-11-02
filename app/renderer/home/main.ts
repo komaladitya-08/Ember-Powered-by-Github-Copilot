@@ -8,7 +8,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { MEMORY_CONSENT_TEXT, forgetMemoryLabel, handleCornerText, memoryEmptyText } from "./copy";
+import { CONNECTORS_EMPTY, MEMORY_CONSENT_TEXT, connectorConsentText, forgetMemoryLabel, handleCornerText, memoryEmptyText, removeConnectorLabel, splitArgs } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
@@ -133,6 +133,7 @@ function applySettings(s: Settings): void {
   }
   if (!sliding && document.activeElement !== size) showSize(s.size);
   applyMemorySettings(s);
+  renderConnectors(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -435,7 +436,7 @@ function renderAdmin(a: Status["admin"]): void {
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
   if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["connector-name", "connectors"], ["connector-command", "connectors"], ["connector-args", "connectors"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -778,6 +779,54 @@ $("memory-forget-all").addEventListener("click", () => { memoryFocus = 0; void w
 window.ember.onSettingsChanged(applyMemorySettings);
 void window.ember.memory().then(renderMemory);
 window.ember.onMemory(renderMemory);
+
+// ───── Connectors (app/main/connectors/): MCP servers the user adds, each agreed to as it is added, read only ─────
+/** The connector waiting for its note to be answered. */
+let pendingConnector: { name: string; command: string; args: string[] } | null = null;
+function renderConnectors(s: Settings): void {
+  const list = $("connectors-list");
+  const rows = s.connectors;
+  list.replaceChildren(...(rows.length
+    ? rows.map(c => {
+      const li = document.createElement("li");
+      li.append(Object.assign(document.createElement("span"), { textContent: `${c.name}: ${[c.command, ...c.args].join(" ")}` }));
+      const btn = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Remove" });
+      btn.setAttribute("aria-label", removeConnectorLabel(c.name));
+      btn.addEventListener("click", () => { void save({ connectors: (settings?.connectors ?? []).filter(x => x.id !== c.id) }); $("connector-name").focus(); });
+      li.append(btn);
+      return li;
+    })
+    : [Object.assign(document.createElement("li"), { className: "empty", textContent: CONNECTORS_EMPTY })]));
+}
+$("connector-form").addEventListener("submit", e => {
+  e.preventDefault();
+  const name = ($("connector-name") as HTMLInputElement).value.trim();
+  const command = ($("connector-command") as HTMLInputElement).value.trim();
+  const args = splitArgs(($("connector-args") as HTMLInputElement).value);
+  const note = $("connector-note");
+  if (!name || !command) { note.textContent = "Give the connector a name and its program."; return; }
+  if (!args) { note.textContent = "A quote in the arguments isn't closed."; return; }
+  if ((settings?.connectors ?? []).some(c => c.name.toLowerCase() === name.toLowerCase())) { note.textContent = `A connector is already called “${name}”.`; return; }
+  pendingConnector = { name, command, args };
+  $("connector-consent-text").textContent = connectorConsentText(name, command);
+  $("connector-consent").hidden = false;
+  $("connector-yes").focus();
+});
+$("connector-yes").addEventListener("click", () => {
+  const p = pendingConnector;
+  $("connector-consent").hidden = true;
+  pendingConnector = null;
+  if (!p) return;
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, "0")).join("");
+  const added = { id, ...p, consent: { version: FEATURE_CONSENT_VERSION.connectors, at: new Date().toISOString() } };
+  void save({ connectors: [...(settings?.connectors ?? []), added] }).then(() => {
+    for (const f of ["connector-name", "connector-command", "connector-args"]) ($(f) as HTMLInputElement).value = "";
+    $("connector-note").textContent = `Added “${p.name}”. Ask me about what it holds.`;
+    $("connector-name").focus();
+  });
+});
+$("connector-no").addEventListener("click", () => { pendingConnector = null; $("connector-consent").hidden = true; $("connector-name").focus(); });
+window.ember.onSettingsChanged(renderConnectors);
 
 // ───── Section links ─────
 // A sidebar in a wide window (beside the content, so nothing scrolls under it), a row of links in a narrow one.

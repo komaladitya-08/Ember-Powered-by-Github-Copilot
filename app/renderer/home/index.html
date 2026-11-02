@@ -92,6 +92,22 @@
       <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
+      <h3 class="sub" id="connectors-h">Connectors</h3>
+      <ul class="plain-list" id="connectors-list" aria-labelledby="connectors-h"></ul>
+      <form class="add-row connector-form" id="connector-form" autocomplete="off">
+        <label for="connector-name" class="sr">Connector name</label>
+        <input id="connector-name" type="text" maxlength="40" spellcheck="false" placeholder="Name, e.g. Calendar" aria-describedby="connector-note">
+        <label for="connector-command" class="sr">The connector's program</label>
+        <input id="connector-command" type="text" maxlength="400" spellcheck="false" placeholder="Program, e.g. /usr/local/bin/calendar-mcp" aria-describedby="connector-note">
+        <label for="connector-args" class="sr">Its arguments</label>
+        <input id="connector-args" type="text" maxlength="2000" spellcheck="false" placeholder="Arguments (optional)" aria-describedby="connector-note">
+        <button type="submit" class="btn quiet">Add…</button>
+      </form>
+      <div id="connector-consent" class="consent" role="group" aria-label="Before Ember adds this connector" hidden>
+        <p id="connector-consent-text"></p>
+        <div class="agent-actions"><button type="button" id="connector-yes" class="btn" aria-describedby="connector-consent-text">I agree, add it</button><button type="button" id="connector-no" class="btn quiet">Not now</button></div>
+      </div>
+      <p class="hint" id="connector-note" role="status">A connector is an MCP server on this computer: Ember starts its program when you ask about what it holds, and only reads.</p>
     </section>
 
     <section class="after-setup" aria-labelledby="voice-h">

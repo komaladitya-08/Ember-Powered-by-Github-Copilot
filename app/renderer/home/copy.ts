@@ -193,6 +193,38 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
  */
 export const MEMORY_CONSENT_TEXT = "Ember will remember what you tell it about yourself, your work, the people and apps in it, and how you like things done, after it closes. It keeps this on this computer only, in its data folder, where only you can read it. With each request, the few facts that bear on it go to Copilot with it. Ember never keeps passwords, codes or card numbers. You can see and forget everything here, and signing out forgets it all.";
 
+/**
+ * A connector's note, shown before it is added (FEATURE_CONSENT_VERSION.connectors): change it only with a bump of that
+ * version. `name` and `program` are the user's own words.
+ */
+export function connectorConsentText(name: string, program: string): string {
+  return `Ember will start “${program}” on this computer when you ask about what “${name}” holds, and send what it reads to Copilot with your question. Ember uses only its tools that read, never ones that send, delete or change anything, and treats what comes back as information, never instructions. You can remove it here at any time.`;
+}
+
+/** A connector's Remove button, for screen readers. */
+export const removeConnectorLabel = (name: string) => `Remove the connector “${name}”`;
+
+/** The connectors list when it's empty. */
+export const CONNECTORS_EMPTY = "No connectors. Add an MCP server you have on this computer to let Ember read your mail, calendar or chat when you ask.";
+
+/**
+ * A connector's arguments as typed in one field: split on spaces, with "double" or 'single' quotes keeping spaces
+ * inside one argument. Never run through a shell. null when a quote isn't closed.
+ */
+export function splitArgs(line: string): string[] | null {
+  const out: string[] = [];
+  let cur = "", quote: string | null = null, any = false;
+  for (const ch of line) {
+    if (quote) { if (ch === quote) quote = null; else cur += ch; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; any = true; continue; }
+    if (/\s/.test(ch)) { if (any || cur) out.push(cur); cur = ""; any = false; continue; }
+    cur += ch;
+  }
+  if (quote) return null;
+  if (any || cur) out.push(cur);
+  return out;
+}
+
 /** The memory list while it is empty: `on`, memory is on. */
 export function memoryEmptyText(on: boolean): string {
   return on ? "Nothing yet. Tell Ember about yourself, or say “Remember that…”." : "Nothing remembered.";

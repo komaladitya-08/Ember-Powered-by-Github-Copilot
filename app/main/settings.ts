@@ -169,6 +169,17 @@ export const SettingsSchema = z.object({
    * the settings (app/main/memory/store.ts).
    */
   memory: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  /**
+   * Connectors the user added (app/main/connectors/): MCP servers on this computer, each a program and its arguments
+   * (never a shell line) with its own consent (FEATURE_CONSENT_VERSION.connectors), agreed when it was added.
+   */
+  connectors: z.array(z.object({
+    id: z.string().regex(/^[a-z0-9]{6,12}$/),
+    name: z.string().min(1).max(40).regex(NO_CONTROL),
+    command: z.string().min(1).max(400).regex(NO_CONTROL),
+    args: z.array(z.string().max(400).regex(NO_CONTROL)).max(20).default([]),
+    consent: ConsentRecord,
+  })).max(10).default([]),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

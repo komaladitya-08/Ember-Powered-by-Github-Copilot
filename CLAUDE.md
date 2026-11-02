@@ -122,7 +122,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
   - Audio stays on the machine and is never written to disk.
 - **Privacy.**
   - There is no telemetry.
-  - Network calls go only to Copilot (or the admin's BYOK provider), GitHub sign-in, the user-approved, SHA-256-pinned model download, and, once the user turns SSH on, the computers they name and the pinned Node.js download for them. Ember listens on no network port.
+  - Network calls go only to Copilot (or the admin's BYOK provider), GitHub sign-in, the user-approved, SHA-256-pinned model download, and, once the user turns SSH on, the computers they name and the pinned Node.js download for them. Ember listens on no network port. Connectors the user adds (PLAN.md §2) are programs on this computer that Ember starts: what they reach is theirs, read only through Ember, and each needs its own consent.
   - Ember's data folder is created mode 0700 and the audit files are 0600. Typed text appears in the audit log only as a character count.
   - Never log window titles, typed text or the user's words anywhere more widely readable.
   - The GitHub token is stored only with `safeStorage`, and never when its backend is `basic_text`.

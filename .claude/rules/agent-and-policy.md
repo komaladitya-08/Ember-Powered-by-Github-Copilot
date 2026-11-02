@@ -145,6 +145,18 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
   Typed text appears only as a character count. On Linux the journald copy (`journalctl -t ember-audit`, built by `journalLine()`) replaces goals, summaries, window titles, element names, chosen values, errors, folders and command text with their sizes; reasons, app names and shortcuts stay. Windows and macOS keep only the file.
 - **Tokens.** Store the GitHub token only with `safeStorage`, and never when its backend is `basic_text`. Accept `gho_`, `ghu_` and `github_pat_` tokens; refuse classic `ghp_` tokens.
 
+## Connectors
+
+app/main/connectors/ (PLAN.md §2 "Connectors"). Keep these true:
+- **Only the user adds one**, in Home, with its consent (`FEATURE_CONSENT_VERSION.connectors`); no tool or model adds,
+  changes or removes a connector. A connector is a program and its arguments, never a shell (`connectorRefusal`).
+- **Read only.** `ConnectorService.read()` calls only tools whose `readOnlyHint` is true. Writing through a connector
+  needs its own policy and questions first.
+- **Results are data:** `<connector_result untrusted="true">` with "<" escaped, capped at `RESULT_MAX`, never the
+  user's own words, never a reason to start a task.
+- **Started lazily, stopped by the kill switch** (`connectors` StopPart), with `appEnv()`; every call is audited
+  (`event: "connector"`, sizes only). `features.connectors: false` and LOCKDOWN leave none usable.
+
 ## Long-term memory
 
 docs/MEMORY.md is the design. The core (app/main/memory/) is pure and has no Electron. Keep it that way.

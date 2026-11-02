@@ -52,6 +52,8 @@ export const AdminPolicySchema = z.object({
     aiReview: z.boolean().optional(),
     /** Long-term memory (docs/MEMORY.md): false, Ember remembers nothing between runs and keeps no memory file. */
     memory: z.boolean().optional(),
+    /** Connectors (app/main/connectors/): false, Ember starts none and reads nothing through them. */
+    connectors: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -112,7 +114,7 @@ export interface LoadedAdminPolicy {
 
 /** Everything off that could act or listen: used when the policy file is broken. */
 const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, connectors: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },
@@ -237,6 +239,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (!admin.allowGrants) keys.push("grants", "askedApps");
   if (admin.features.aiReview === false) keys.push("reviewCommands");
   if (admin.features.memory === false) keys.push("memory");
+  if (admin.features.connectors === false) keys.push("connectors");
   if (admin.provider) keys.push("provider");
   return keys;
 }

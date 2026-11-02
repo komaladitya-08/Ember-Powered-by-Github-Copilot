@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText } from "../../shared/view";
-import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
+import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorConnectors, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
 import { chooseModels, costOf, mayUseRuntimeDefault, type ModelLike } from "./models";
@@ -129,6 +129,8 @@ export interface HostOptions {
    * with its consent) and the administrator allows it. Signing out, or another account signing in, erases it.
    */
   memory?: ConductorMemory & { forgetAll(): void };
+  /** Connectors (app/main/connectors/): given to the conductor while at least one is usable. */
+  connectors?: ConductorConnectors & { usable(): unknown[]; stopAll(): void };
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -1185,8 +1187,11 @@ export class AgentHost {
       const caps = this.conversation && this.convoCaps ? this.convoCaps : targets?.caps() ?? NO_CAPS;
       const memory = this.memoryWanted() ? this.o.memory : undefined;
       this.memoryOn = !!memory;
+      const connectors = this.connectorsWanted() ? this.o.connectors : undefined;
+      this.connectorsOn = !!connectors;
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
+        ...(connectors ? { connectors } : {}),
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1611,6 +1616,14 @@ export class AgentHost {
   /** Whether this conversation's conductor was given memory (memoryWanted() when it started). */
   private memoryOn = false;
 
+  /** Whether this conversation's conductor was given connectors (connectorsWanted() when it started). */
+  private connectorsOn = false;
+
+  /** At least one connector is added, agreed to and allowed. */
+  private connectorsWanted(): boolean {
+    return (this.o.connectors?.usable().length ?? 0) > 0;
+  }
+
   /** Memory is on, agreed to, and allowed (settings.get() has the administrator's switch applied). */
   private memoryWanted(): boolean {
     const m = this.o.settings.get().memory;
@@ -1660,7 +1673,7 @@ export class AgentHost {
     }
     // Memory was turned on or off since the conversation's tools were made: Copilot is reconnected first (the
     // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
-    if (this.status.phase === "ready" && this.memoryWanted() !== this.memoryOn && this.idle) {
+    if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.connectorsWanted() !== this.connectorsOn) && this.idle) {
       this.o.log.info("agent.memory_changed", { on: this.memoryWanted() });
       void this.launch(this.token, this.source);
     }
@@ -1776,6 +1789,8 @@ export class AgentHost {
     await this.forgetCurrent(RUNTIME_WAIT_MS);
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.o.memory?.forgetAll();
+    // Their connectors' programs stop (the connectors stay in settings, as the user's own choice).
+    this.o.connectors?.stopAll();
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();

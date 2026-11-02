@@ -52,7 +52,9 @@ import { remoteSurfaceCheck } from "./policy/remote-surface";
 import { restartOptions, watchAdminPolicy } from "./policy/admin-watch";
 import { Confirmer, guardWhileAsking } from "./agent/confirm";
 import { CursorBorrow } from "./hands/borrow";
-import { isTerminalWindowApp } from "./hands/system";
+import { appEnv, isTerminalWindowApp } from "./hands/system";
+import { ConnectorService } from "./connectors/service";
+import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { freshAskPress, holdShortcuts } from "./hotkey";
 import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type ShortcutDef, type ShortcutId } from "../shared/shortcuts";
 import type { DeskPlace } from "./desk/place";
@@ -1096,6 +1098,8 @@ function start(): void {
     { name: "agent", stop: () => agent?.abortAll() },
     // Every command stops, on every target, and every remote is told to stop (at once, whatever the network does).
     { name: "targets", stop: () => targets?.stopAll() },
+    // Every connector's program stops; the next question that needs one starts it again.
+    { name: "connectors", stop: () => connectors.stopAll() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -1184,6 +1188,15 @@ function start(): void {
   const memoryAllowed = () => policy.features.memory !== false;
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
+  // Connectors (app/main/connectors/): MCP servers the user added in settings, each agreed to, started on first use,
+  // read only. Nothing starts before Ember's own consent, and the organisation can turn them off.
+  const connectors = new ConnectorService({
+    list: () => settings.get().connectors, consentVersion: FEATURE_CONSENT_VERSION.connectors,
+    allowed: () => policy.features.connectors !== false && hasConsent(settings.get()),
+    env: () => appEnv(process.env, { os: sys.os }), audit: e => audit?.write(e), log: log.child("connectors"),
+  });
+  // A connector removed (or no longer allowed) stops at once.
+  settings.onChange(() => connectors.prune());
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
@@ -2011,6 +2024,7 @@ function start(): void {
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
       ...(memoryAllowed() ? { memory } : {}),
+      connectors,
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
       cornerTasks: true,
       readTime,
