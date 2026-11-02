@@ -307,7 +307,8 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
       // JavaScript can catch it), so main starts a voice process that died loading again on WebAssembly, which says the
       // models are damaged (VoiceService.nativeFailed).
       expect(() => sherpaBackend({ ...models, asr }, { runtime: { prefer: "wasm" } })).toThrow(ModelLoadError);
-      if (backend.info.backend === "native") {
+      // (The addon's: on the C API, EMBER_SHERPA_CAPI, there is no addon to load in a process of its own.)
+      if (backend.info.backend === "native" && !capiDir) {
         const file = addonFile ?? createRequire(import.meta.url).resolve(`${nativePackage()}/sherpa-onnx.node`);
         const make = `const a = require(process.env.ADDON), d = process.env.ASR; a.createOfflineRecognizer({ featConfig: { sampleRate: 16000, featureDim: 80 }, modelConfig: { moonshine: { encoder: d + "/encoder_model.ort", mergedDecoder: d + "/decoder_model_merged.ort" }, tokens: d + "/tokens.txt", numThreads: 1, provider: "cpu", debug: 0 } }); console.log("loaded");`;
         const r = spawnSync(process.execPath, ["-e", make], { env: { ...process.env, ADDON: file, ASR: asr }, encoding: "utf8", timeout: 30_000 });
