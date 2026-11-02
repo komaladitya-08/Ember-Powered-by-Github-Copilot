@@ -39,7 +39,7 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
-import { catchUpQuestion, catchUpReply, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
+import { catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -130,6 +130,8 @@ export interface HostOptions {
    * with its consent) and the administrator allows it. Signing out, or another account signing in, erases it.
    */
   memory?: ConductorMemory & { forgetAll(): void };
+  /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
+  health?: () => Pick<Health, "mic" | "speaks">;
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -1667,6 +1669,16 @@ export class AgentHost {
       try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
       this.o.log.info("agent.results_switch", { on: results === "loud" });
       this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
+      return;
+    }
+    // "Systems check": Ember's report on itself, which works when Copilot doesn't.
+    if (healthQuestion(text) && this.betweenTurns()) {
+      const health: Health = {
+        phase: this.status.phase, ...(this.status.detail ? { detail: this.status.detail } : {}),
+        mic: "off", speaks: false, ...this.o.health?.(), tasks: this.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0,
+      };
+      this.o.log.info("agent.health_local", { phase: health.phase, mic: health.mic });
+      this.answerLocally(text, healthReply(health), how.voiceUnchecked);
       return;
     }
     // "What did I miss?": the tasks that finished lately, from Ember's own record.

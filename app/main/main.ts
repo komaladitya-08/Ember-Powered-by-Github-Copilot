@@ -2050,6 +2050,8 @@ function start(): void {
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
       onAccountChanged: () => { askHistory = []; },
+      // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
+      health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
         if (maySpeak() && settings.get().speakResults) voice?.speak(spokenText(t.text));

@@ -157,3 +157,45 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
   const head = finished.length === 1 ? "One task finished." : `${finished.length} tasks finished.`;
   return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
 }
+
+/** "Systems check", "are you working?", "is everything OK?": Ember reports on itself. */
+const HEALTH_RE = new RegExp(String.raw`^${LEAD}(?:(?:run (?:a )?)?(?:systems? check|diagnostics?|self[- ]check)|system status|are you (?:ok|okay|alright|all right|working(?: properly)?)|is everything (?:ok|okay|alright|all right|working))${TAIL}$`, "i");
+
+/** Whether `text` asks Ember how it is doing as a system. */
+export function healthQuestion(text: string): boolean {
+  const t = norm(text);
+  return !!t && t.length <= 60 && HEALTH_RE.test(t);
+}
+
+/** What Ember knows of itself for a systems check (AgentStatus and main's voice). */
+export interface Health {
+  /** The agent's phase, and the plain sentence it has for a problem (AgentStatus.detail). */
+  phase: "signed-out" | "starting" | "ready" | "error";
+  detail?: string;
+  /** The microphone, as VoiceService says it ("off" also when listening is turned off). */
+  mic: "off" | "needs-models" | "downloading" | "starting" | "waiting" | "active" | "muted" | "error";
+  /** Replies are spoken now. */
+  speaks: boolean;
+  /** Tasks running or waiting. */
+  tasks: number;
+}
+
+/**
+ * Ember's report on itself (the Jarvis research's J1: JARVIS saying "I may be malfunctioning" rather than failing
+ * silently), from its own state only: whether Copilot is reachable, whether it listens and speaks, and what is under way.
+ */
+export function healthReply(h: Health): string {
+  const brain = h.phase === "ready" ? "Copilot is connected."
+    : h.phase === "starting" ? "I'm still connecting to Copilot."
+      : h.phase === "signed-out" ? "I'm not signed in to GitHub yet, so I can't reach Copilot."
+        : `I can't reach Copilot right now.${h.detail ? ` ${h.detail.trim().replace(/([^.!?])$/, "$1.")}` : ""}`;
+  const ears: Record<Health["mic"], string> = {
+    active: "I'm listening for “Hey Ember”.", waiting: "I'm listening for “Hey Ember”.", starting: "Listening is starting.",
+    muted: "The microphone is off.", off: "Listening for “Hey Ember” is off.", "needs-models": "Listening needs its speech models, in settings.",
+    downloading: "The speech models are downloading.", error: "Listening has a problem: settings says what.",
+  };
+  const mouth = h.speaks ? "" : " Replies show on screen only.";
+  const work = h.tasks ? ` ${h.tasks === 1 ? "One task is" : `${h.tasks} tasks are`} under way.` : "";
+  const fine = h.phase === "ready" && h.mic !== "error";
+  return `${fine ? "All working." : "Something needs attention."} ${brain} ${ears[h.mic]}${mouth}${work}`;
+}

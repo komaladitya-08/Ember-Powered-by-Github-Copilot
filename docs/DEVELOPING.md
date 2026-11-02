@@ -233,7 +233,8 @@ record of its tasks (the step each one is on, how many wait, how the last one we
 works offline too. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
 reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
 **Voice**). “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
-how each went, from the same record. “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
+how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
+whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no

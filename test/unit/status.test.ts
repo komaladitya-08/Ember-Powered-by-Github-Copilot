@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -125,6 +125,24 @@ describe("catch-up", () => {
     const many = [1, 2, 3, 4, 5].map(i => task({ id: `t${i}`, title: `Task ${i}`, status: "done", finished: NOW - i * 1000 }));
     expect(catchUpReply(many, NOW)).toBe("5 tasks finished. “Task 1”: done. “Task 2”: done. “Task 3”: done. And 2 more.");
     expect(catchUpReply([], NOW)).toBe("Nothing new: no tasks finished in the last two hours.");
+  });
+});
+
+describe("systems check", () => {
+  it("hears a systems check, and leaves small talk and “are you there?” to Copilot", () => {
+    for (const t of ["Ember, systems check", "run diagnostics", "are you OK?", "Are you working properly", "is everything okay", "system status"]) expect(healthQuestion(t), t).toBe(true);
+    for (const t of ["how are you", "are you there?", "check the system logs", "is everything ready for the meeting"]) expect(healthQuestion(t), t).toBe(false);
+  });
+
+  it("says all is working when Copilot is connected and listening is fine", () => {
+    expect(healthReply({ phase: "ready", mic: "waiting", speaks: true, tasks: 0 })).toBe("All working. Copilot is connected. I'm listening for “Hey Ember”.");
+    expect(healthReply({ phase: "ready", mic: "off", speaks: false, tasks: 2 })).toBe("All working. Copilot is connected. Listening for “Hey Ember” is off. Replies show on screen only. 2 tasks are under way.");
+  });
+
+  it("says plainly what needs attention (JARVIS's “I may be malfunctioning”)", () => {
+    expect(healthReply({ phase: "error", detail: "The network seems to be down.", mic: "error", speaks: true, tasks: 0 }))
+      .toBe("Something needs attention. I can't reach Copilot right now. The network seems to be down. Listening has a problem: settings says what.");
+    expect(healthReply({ phase: "signed-out", mic: "muted", speaks: true, tasks: 0 })).toBe("Something needs attention. I'm not signed in to GitHub yet, so I can't reach Copilot. The microphone is off.");
   });
 });
 
