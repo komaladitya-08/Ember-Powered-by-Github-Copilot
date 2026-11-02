@@ -161,7 +161,7 @@ parent.on("message", e => {
       backend = recognizers;
       speakerModel = m.models.speaker;
       gate.setOwner(decodePrint(m.voiceprint));
-      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : e.type === "wake" ? made.wakeAudio : null));
+      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : e.type === "wake" ? made.wakeAudio : null, e.type === "utterance" && made.requestWithWake));
       engine = made;
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0, backend: recognizers.info });

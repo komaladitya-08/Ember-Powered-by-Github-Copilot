@@ -7,7 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { spokenAnswer, voiceAnswer, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
-import { autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
+import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -210,6 +210,12 @@ describe("“Work without asking” by voice (autonomy-intent.ts)", () => {
     expect(planAutonomyIntent("on", { ...ready, on: true }).set).toBeUndefined();
   });
 
+  it("asks for a little more, not for Voice Match's set-up, when the owner's voice was too short to vouch for (review of #127)", () => {
+    const plan = planAutonomyIntent("on", { on: false, consented: true, managed: false, verified: false, short: true });
+    expect(plan).toEqual({ reply: expect.stringMatching(/^Say a little more/) });
+    expect(plan.reply).not.toMatch(/Voice Match/);
+  });
+
   it("turns it off for anyone, verified or not", () => {
     expect(planAutonomyIntent("off", { on: true, consented: true, managed: false, verified: false })).toEqual({ set: false, reply: "Okay, I'll ask you first again." });
     expect(planAutonomyIntent("off", { on: false, consented: false, managed: true, verified: false })).toEqual({ reply: "I already ask you first." });
@@ -228,7 +234,7 @@ describe("AgentHost's “Work without asking” switch by voice (no conductor to
       userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t),
       autonomy: {
         state: () => ({ on: settings.get().autonomy.on, consented: autonomyConsented(settings.get().autonomy), managed: false }),
-        set: on => settings.update({ autonomy: { ...settings.get().autonomy, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }),
+        set: on => { settings.update({ autonomy: { ...settings.get().autonomy, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); return true; },
         open: consent => { opened.push(consent); },
       },
     });
@@ -240,6 +246,19 @@ describe("AgentHost's “Work without asking” switch by voice (no conductor to
     expect(await h.ask("Ember, work without asking", null, h.stopEpoch, { verified: true })).toBe(true);
     expect(settings.get().autonomy.on).toBe(false);
     expect(opened).toEqual([true]);
+  });
+
+  it("never says it works without asking when the change couldn't be recorded (review of #127)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-autonomy-voice-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const answers: string[] = [];
+    const h = new AgentHost({
+      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t),
+      autonomy: { state: () => ({ on: false, consented: true, managed: false }), set: () => false, open: () => undefined },
+    });
+    await h.ask("Ember, work without asking", null, h.stopEpoch, { verified: true, spoken: true });
+    expect(answers).toEqual([AUTONOMY_NOT_SAVED]);
   });
 
   it("turns it on only from a verified voice once agreed to, and off for anyone", async () => {

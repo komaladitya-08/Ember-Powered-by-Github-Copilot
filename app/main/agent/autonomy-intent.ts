@@ -49,10 +49,15 @@ export interface AutonomyIntentState {
   managed: boolean;
   /** Heard, and verified by Voice Match as the owner's voice. */
   verified: boolean;
+  /** Voice Match matched the owner's voice, but on too little of it to vouch for it (match.ts APPROVAL_MIN_SECONDS). */
+  short?: boolean;
 }
 
 /** What to do: change the setting (`set`), open its switch in Settings (`open`, with its card when `consent`), and say `reply`. */
 export interface AutonomyIntentPlan { set?: boolean; open?: { consent: boolean }; reply: string }
+
+/** Said instead of the plan's reply when the change couldn't be saved or recorded (a turn on is then undone). */
+export const AUTONOMY_NOT_SAVED = "I couldn't save or record that change, so I'll keep asking you first.";
 
 /** The plan for `intent` (pure: the host carries it out). */
 export function planAutonomyIntent(intent: "on" | "off", s: AutonomyIntentState): AutonomyIntentPlan {
@@ -62,6 +67,7 @@ export function planAutonomyIntent(intent: "on" | "off", s: AutonomyIntentState)
   if (s.managed) return { reply: "Your organisation doesn't allow that, so I'll keep asking first." };
   if (s.on) return { reply: "I'm already working without asking. I still ask before anything risky, and “Ember, stop” stops me." };
   if (!s.consented) return { open: { consent: true }, reply: "First have a look at what that means: I've opened it in Settings. Agree there, and I'll work without asking." };
+  if (!s.verified && s.short) return { reply: "Say a little more so I can be sure it's you: “Ember, please work without asking from now on.”" };
   if (!s.verified) return { open: { consent: false }, reply: "I can turn that on by voice only once Voice Match knows your voice. I've opened the switch in Settings." };
   return {
     set: true,

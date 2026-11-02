@@ -9,7 +9,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 import { fbank } from "../../app/voice/fbank";
-import { APPROVAL_MIN_SECONDS, Enrolment, VoiceGate, type EnrolState, type Printer } from "../../app/voice/match";
+import { APPROVAL_MIN_SECONDS, Enrolment, VoiceGate, afterWakePhrase, voicedSeconds, type EnrolState, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, averagePrint, consistentPrints, decodePrint, encodePrint, similarity, unit } from "../../app/voice/voiceprint";
 import { voiceprintStore } from "../../app/main/voiceprint-store";
 import type { VoiceEvent } from "../../app/voice/engine";
@@ -59,8 +59,10 @@ describe("voiceprints", () => {
 const fakePrinter = (fail = false): Printer => ({ print: async s => { if (fail) throw new Error("no model"); return unit(Float32Array.from([s[0], s[1]])); } });
 const owner = unit(Float32Array.from([1, 0]));
 const flush = () => new Promise(r => setTimeout(r, 0));
-/** The owner's voice (to fakePrinter: its first two samples), `seconds` of it at 16 kHz. */
-const ownerAudio = (seconds: number) => { const a = new Float32Array(Math.round(seconds * 16_000)); a[0] = 1; a[1] = 0.1; return a; };
+/** `seconds` of a voice at 16 kHz, as fakePrinter hears it (its first two samples: [1, 0.1] the owner's, [0, 1] another's). */
+const voice = (seconds: number, [x, y] = [1, 0.1]) => { const a = new Float32Array(Math.round(seconds * 16_000)); for (let i = 0; i + 1 < a.length; i += 2) { a[i] = x; a[i + 1] = y; } return a; };
+const ownerAudio = (seconds: number) => voice(seconds);
+const joined = (...parts: Float32Array[]) => { const a = new Float32Array(parts.reduce((n, p) => n + p.length, 0)); let at = 0; for (const p of parts) { a.set(p, at); at += p.length; } return a; };
 
 describe("VoiceGate", () => {
   const utterance = (text: string): VoiceEvent => ({ type: "utterance", text, ms: 100, window: "wake" });
@@ -77,7 +79,7 @@ describe("VoiceGate", () => {
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
     g.event(utterance("Someone else."), Float32Array.from([0, 1]));
-    g.event(utterance("The owner."), ownerAudio(APPROVAL_MIN_SECONDS));
+    g.event(utterance("The owner."), ownerAudio(APPROVAL_MIN_SECONDS + 0.1));
     expect(sent).toEqual([]);
     await flush();
     expect(sent).toEqual([
@@ -96,6 +98,44 @@ describe("VoiceGate", () => {
     g.event(utterance("Allow."), ownerAudio(0.4));
     await flush();
     expect(sent).toEqual([{ ...utterance("Allow."), short: true }]);
+  });
+
+  it("counts voiced frames, not samples: half a second of the owner's voice padded with silence is short (security review of #127)", async () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    g.event(utterance("Allow."), joined(ownerAudio(0.5), new Float32Array(16_000 * 1.1)));
+    await flush();
+    expect(sent).toEqual([{ ...utterance("Allow."), short: true }]);
+    expect(voicedSeconds(joined(ownerAudio(0.5), new Float32Array(16_000 * 1.1)))).toBeLessThan(0.6);
+    expect(voicedSeconds(ownerAudio(1.6))).toBeGreaterThanOrEqual(APPROVAL_MIN_SECONDS);
+  });
+
+  it("vouches only for what follows the wake phrase, on its own: a recorded “Hey Ember” can't make up the voice (security review of #127)", async () => {
+    // The owner's "Hey Ember" (0.8 s) then a short "allow": what follows isn't enough.
+    const short: VoiceEvent[] = [];
+    const g1 = new VoiceGate(() => fakePrinter(), e => short.push(e), () => undefined);
+    g1.setOwner(owner);
+    g1.event(utterance("Allow."), joined(ownerAudio(0.8), ownerAudio(0.6)), true);
+    await flush();
+    expect(short).toEqual([{ ...utterance("Allow."), short: true }]);
+    // The owner's "Hey Ember", then another voice at length: heard (the clip starts as the owner's), never verified.
+    const other: VoiceEvent[] = [];
+    const g2 = new VoiceGate(() => fakePrinter(), e => other.push(e), () => undefined);
+    g2.setOwner(owner);
+    g2.event(utterance("Yes, go ahead and allow it."), joined(ownerAudio(0.8), voice(1.8, [0, 1])), true);
+    await flush();
+    expect(other).toEqual([{ ...utterance("Yes, go ahead and allow it."), short: true }]);
+    // The owner throughout, at length: verified.
+    const own: VoiceEvent[] = [];
+    const g3 = new VoiceGate(() => fakePrinter(), e => own.push(e), () => undefined);
+    g3.setOwner(owner);
+    g3.event(utterance("Yes, go ahead and allow it."), ownerAudio(2.6), true);
+    await flush();
+    expect(own).toEqual([{ ...utterance("Yes, go ahead and allow it."), verified: true }]);
+    // Without the wake phrase in the clip, all of it counts.
+    expect(afterWakePhrase(ownerAudio(2), false).length).toBe(32_000);
+    expect(voicedSeconds(afterWakePhrase(ownerAudio(2), true))).toBeCloseTo(1.2, 1);
   });
 
   it("never holds a stop, or anything that isn't a request", () => {

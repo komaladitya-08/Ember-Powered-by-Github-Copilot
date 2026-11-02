@@ -20,7 +20,7 @@ import { friendlyApp } from "../../shared/apps";
 import { roleWord } from "../../shared/role-words";
 import { visibleText } from "../../shared/visible-text";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
 import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
@@ -2093,8 +2093,10 @@ export class PolicyEngine {
     }
     // "Work without asking": a question whose only reason is in the scopes the user left on goes unasked, and is announced.
     // (Off-task steps and the administrator's "confirm every action" returned above; risky steps are never waivable.)
-    // Never in the system's own Settings or a security app (security review of #127): those steps keep asking.
-    const systemApp = !!SETTINGS_APP[this.os]?.test(appNameOf(r.app)) || !!SECURITY_APP[this.os]?.test(appNameOf(r.app));
+    // Never in the system's own Settings, a security app or a system-administration app (security review of #127):
+    // those steps keep asking. By the program's name and by the name people know it by.
+    const names = [appNameOf(r.app), friendlyApp(r.app).trim()];
+    const systemApp = names.some(n => !!SETTINGS_APP[this.os]?.test(n) || !!SECURITY_APP[this.os]?.test(n) || ADMIN_APP[this.os].test(n));
     if (d.verdict === "confirm" && !systemApp && covers(this.o.autonomy?.() ?? null, d.waivable)) {
       return { ...d, verdict: "allow", tier: "reversible", remember: false, autonomy: true, reason: `${d.reason}; the user lets Ember work without asking`, announce: this.announcement(r, d) };
     }

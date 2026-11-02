@@ -877,6 +877,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
         // Its page crashed or the window closed during the countdown: the user didn't stop it (cross-review S2).
         const unshown = announceGone(svc.window, runId);
         audit({ phase: "answered", answer: unshown ? "unseen" : "deny", q: "announce" });
+        // The user stopped it: a no, which holds the task to asking from now on (Work without asking too; review of #127).
+        if (!unshown) ctx.onDeclined?.();
         return denied(unshown ? UNSHOWN_BEFORE : STOPPED_BEFORE);
       }
     }

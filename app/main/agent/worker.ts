@@ -31,7 +31,7 @@ import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
-import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
+import { canonicalKeys, foldLabel, normalizeLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
 import { BorrowStopped, CursorBorrow, UserTookOver, typeableText, type Hand, type HandChecks } from "../hands/borrow";
@@ -225,7 +225,14 @@ const fail = (text: string): ToolResultObject => ({ textResultForLlm: text, resu
 const denied = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "denied" });
 const STOPPED = (): ToolResultObject => denied("Stopped. Do nothing more.");
 /** Words only Ember's own announcements use (Work without asking): a model note that says them is refused. */
-const POSES_AS_ANNOUNCEMENT = /without\s+(asking|permission|approval)|as\s+you\s+let\s+me|didn'?t\s+(need\s+to\s+)?ask/i;
+const POSES_AS_ANNOUNCEMENT = new RegExp([
+  String.raw`without\s+(asking|checking|permission|approval|confirm\w*|a\s+question)`, String.raw`as\s+you\s+(let|allow\w*|permit\w*)`,
+  String.raw`as\s+you('ve|\s+have)\s+(allow|permit|let)`, String.raw`as\s+you\s+said\s+i\s+(could|can|may)`, String.raw`on\s+my\s+own`,
+  String.raw`no\s+need\s+to\s+(ask|check|confirm)`, String.raw`(didn'?t|don'?t|did\s+not|do\s+not|won'?t)\s+(need\s+to\s+|have\s+to\s+)?(ask|check|confirm)`,
+  String.raw`you\s+(allowed|let|permitted)\s+me`, String.raw`autonomous`, String.raw`pre-?approved`, String.raw`already\s+(allowed|approved)`,
+].join("|"), "i");
+/** Does a model note pass itself off as Ember's announcement? Judged after NFKC and Latin look-alikes are folded ("withоut"). */
+const posesAsAnnouncement = (text: string): boolean => POSES_AS_ANNOUNCEMENT.test(normalizeLabel(text).replace(/\s+/g, " "));
 
 /** report_progress's `intent`: a few words, one line of a card. */
 const INTENT_MAX = 60;
@@ -1082,7 +1089,7 @@ export class Worker {
    * the request (Decision.announce), never from model text. A listener's fault never stops the task.
    */
   private announce(words: string): void {
-    try { this.d.presenter.progress(words); } catch (err) { this.d.log.warn("worker.announce_failed", { err }); }
+    try { this.d.presenter.workedWithoutAsking(words); } catch (err) { this.d.log.warn("worker.announce_failed", { err }); }
     this.activity({ type: "announce", text: words });
   }
 
@@ -1362,7 +1369,7 @@ export class Worker {
         async a => {
           // Only Ember says what it does without asking (its own announcements, from policy): the model can't pass a
           // note off as one (security review of #127).
-          if (POSES_AS_ANNOUNCEMENT.test(`${a.text} ${a.intent ?? ""}`)) return fail("Don't say you work without asking: Ember says that itself. Describe the step plainly.");
+          if (posesAsAnnouncement(`${a.text} ${a.intent ?? ""}`)) return fail("Don't say you work without asking: Ember says that itself. Describe the step plainly.");
           if (a.plan) this.d.onUpdate?.({ plan: planSteps(a.plan, a.now ?? 0) });
           // The worker's own words: shown on its card as its note, never as Ember's (markdown stripped).
           this.activity({ type: "note", text: plainText(a.text), ...(a.intent ? { intent: plainText(a.intent) } : {}) });

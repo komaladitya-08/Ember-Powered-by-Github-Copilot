@@ -435,6 +435,8 @@ export class VoiceEngine {
   private mode: Mode = { kind: "idle" };
   /** What was heard for the request just emitted ("utterance"), for Voice Match; it never goes to main. */
   requestAudio: Float32Array | null = null;
+  /** That audio starts with the wake phrase (heard with it in one breath): Voice Match vouches only for what follows it. */
+  requestWithWake = false;
   /** What was heard up to the wake just emitted (the pre-roll with the wake phrase), for Voice Match's first look. */
   wakeAudio: Float32Array | null = null;
   private ring: Ring;
@@ -1152,6 +1154,9 @@ export class VoiceEngine {
       return;
     }
     let text = stripWake(heard, this.mode.first);
+    // The clip holds the wake phrase before the request ("Hey Ember, allow" in one breath): Voice Match then vouches only
+    // for what follows it (match.ts afterWakePhrase).
+    const withWake = text.trim() !== heard.trim();
     this.mode.first = false;
     if (clip.own && saysSomething(text) && !saysSomething(stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, ""))) {
       // "Hey Ember." and then only others' talk (a TV, colleagues: under the wake phrase's loudness): the user hasn't
@@ -1189,6 +1194,7 @@ export class VoiceEngine {
     if (window === "wake") this.voice = this.peak;
     this.afterFollowUp = window === "follow-up";
     this.requestAudio = clip.audio;
+    this.requestWithWake = withWake;
     this.emit({ type: "utterance", text, ms: this.now() - t0, window, ...(cut ? { cut } : {}) });
     this.endListening("done");
   }

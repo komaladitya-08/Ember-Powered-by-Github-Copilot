@@ -527,8 +527,10 @@ function start(): void {
     const { patch, dropped } = settingsFromHome(checkHomePatch(sent));
     if (dropped.length) log.warn("settings.update_refused", { keys: dropped });
     const sizeOnly = !!patch && typeof patch === "object" && Object.keys(patch).length === 1 && "size" in patch;
-    // A save that failed reaches the window as one plain sentence (review #84).
-    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); }
+    // A save that failed reaches the window as one plain sentence (review #84). A change to Work without asking is Home's
+    // (its audit entry says so; one found in the file otherwise is "file").
+    if (patch && typeof patch === "object" && "autonomy" in patch) autonomyChangedBy = { via: "home", verified: false };
+    try { return settings.update(ownNeverLook(patch), { soon: sizeOnly }); } catch (err) { throw plainSaveError(err); } finally { autonomyChangedBy = null; }
   }));
   // Only the fixes this OS offers (Linux: turning on GNOME's accessibility switch), and the targets runtime's
   // wsl-a11y:<distro> (§8.8); any other id is refused before anything runs.
@@ -1061,7 +1063,7 @@ function start(): void {
     }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
   };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean } = {}) => {
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean; short?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
     lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
@@ -1080,7 +1082,7 @@ function start(): void {
     const ack = ackTimer;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) { unanswered(); return; }
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.spoken ? { spoken: true } : {}), ...(how.verified ? { verified: true } : {}), ...(how.short ? { short: true } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1265,20 +1267,26 @@ function start(): void {
    * "Work without asking" turned on or off is an audit entry (security review of #127): by voice or typed words (the host's
    * intent says which, just before it saves), else from Home's switch or card.
    */
-  let autonomyChangedBy: { via: "voice" | "typed"; verified: boolean } | null = null;
+  let autonomyChangedBy: { via: "voice" | "typed" | "home"; verified: boolean } | null = null;
   let autonomyWasOn = autonomyInForce(settings.get().autonomy, policy) !== null;
+  /** Turned off before the audit log was opened (before the app was ready): written once it is. */
+  const autonomyBeforeAudit: { on: boolean; via: string; verified: boolean }[] = [];
   settings.onChange(s => {
     const on = autonomyInForce(s.autonomy, policy) !== null;
+    // Whoever marked a change takes it with them, whether or not it changed anything (review of #127).
+    const how = autonomyChangedBy ?? { via: "file" as const, verified: false };
+    autonomyChangedBy = null;
     if (on === autonomyWasOn) return;
     autonomyWasOn = on;
-    const how = autonomyChangedBy ?? { via: "home" as const, verified: false };
-    autonomyChangedBy = null;
+    const entry = { on, via: how.via, verified: how.verified };
     try {
-      audit?.write({ event: "autonomy", on, via: how.via, verified: how.verified });
+      // No audit log yet: a turn on is refused (it can't be recorded), a turn off is kept for the log.
+      if (!audit) { if (on) throw new Error("the audit log isn't open yet"); autonomyBeforeAudit.push(entry); } else audit.write({ event: "autonomy", ...entry });
     } catch (err) {
       // Not recorded: it isn't turned on (fail closed); a turn off stands.
       log.warn("autonomy.audit_failed", { err });
       if (on) settings.update({ autonomy: { ...s.autonomy, on: false } });
+      return;
     }
     log.info("autonomy.changed", { on, via: how.via });
   });
@@ -1368,7 +1376,7 @@ function start(): void {
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
           // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
           turnLatency.heard(e.ms);
-          void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}) });
+          void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}), ...(matchOn && e.short === true ? { short: true } : {}) });
         }
         break;
       }
@@ -1971,6 +1979,15 @@ function start(): void {
     // Hands: the policy engine decides every action; the confirmer asks the user with bubble buttons.
     audit = new AuditLog(path.join(userData, "audit"), undefined, sys.auditSink(err => log.warn("audit.journal_failed", { err })),
       err => log.warn("audit.write_failed", { err }));
+    // Work without asking as the log opens: turned off before now, and on as found in settings.json at start (by hand, or
+    // from the last run): recorded, or else turned off (fail closed).
+    for (const e of autonomyBeforeAudit.splice(0)) { try { audit.write({ event: "autonomy", ...e }); } catch (err) { log.warn("autonomy.audit_failed", { err }); } }
+    if (autonomyWasOn) {
+      try { audit.write({ event: "autonomy", on: true, via: "file", verified: false, atStart: true }); } catch (err) {
+        log.warn("autonomy.audit_failed", { err });
+        settings.update({ autonomy: { ...settings.get().autonomy, on: false } });
+      }
+    }
     // Nothing is pruned while the policy can't be used: its retention can't be read then.
     const keepDays = auditRetentionDays(admin);
     try { if (keepDays !== null) audit.prune(keepDays); } catch (err) { log.warn("audit.prune_failed", { err }); }
@@ -2225,7 +2242,13 @@ function start(): void {
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
       autonomy: {
         state: () => ({ on: settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
-        set: (on, how) => { autonomyChangedBy = how; const a = settings.get().autonomy; settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); },
+        // True once it is as asked and recorded (a turn on whose audit entry can't be written is undone: say so, not "Okay").
+        set: (on, how) => {
+          autonomyChangedBy = how;
+          const a = settings.get().autonomy;
+          try { settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); } finally { autonomyChangedBy = null; }
+          return (autonomyInForce(settings.get().autonomy, policy) !== null) === on;
+        },
         open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
       },
       onTaskFinished: t => {

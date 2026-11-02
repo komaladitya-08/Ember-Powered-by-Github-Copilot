@@ -86,7 +86,7 @@ export const VOICE_ANSWER_REFUSED: Readonly<Record<VoiceAnswerRefusal | "click-o
   "own-voice": "I was still speaking, so I didn't take that as an answer. Say it again.",
   "click-only": "This one needs a click: I can't take a yes by voice here.",
   "not-yet": "Read it through first, then say “Allow” again.",
-  "too-short": "Say a little more so I can be sure it's you: “Ember, yes, go ahead and allow it.” Or click Allow.",
+  "too-short": "Say a little more so I can be sure it's you: “Ember, yes, go ahead and allow it.”",
   stale: "That was said before this question came up, so I didn't take it. Say it again.",
   locked: "I heard a voice that isn't yours, so for this question I'll take a click or the keys only.",
 };

@@ -19,6 +19,8 @@ import { AUTONOMY_CONSENT_TEXT, autonomyHint } from "../../app/renderer/home/cop
 import { Worker, type WorkerDeps } from "../../app/main/agent/worker";
 import type { AxNode } from "../../app/main/perception/sidecar";
 import { Presenter } from "../../app/main/agent/presenter";
+import { KEYS } from "../../app/shared/shortcuts";
+import type { EmberState } from "../../app/shared/overlay";
 import { ActivityLog } from "../../app/main/agent/activity";
 import { describeEntry } from "../../app/renderer/home/copy";
 import type { Logger } from "../../app/main/logger";
@@ -84,6 +86,25 @@ describe("PolicyEngine with “Work without asking” (the policy matrix)", () =
         expect(d.verdict, `${app} ${r.kind}`).toBe(app === "firewall-config" ? "deny" : "confirm");
         expect(d.autonomy).toBeUndefined();
       }
+    }
+  });
+
+  it("never goes unasked in a system-administration app, on any OS (security review of #127)", () => {
+    const ADMIN: Record<"linux" | "win32" | "darwin", string[]> = {
+      linux: ["dconf-editor", "gnome-tweaks", "nm-connection-editor", "gnome-disks", "seahorse", "system-config-printer", "gnome-software", "gnome-initial-setup", "cockpit", "gparted", "gnome-system-monitor"],
+      win32: ["mmc.exe", "regedit.exe", "control.exe", "gpedit.msc", "taskmgr.exe", "services.msc", "devmgmt.msc", "msconfig.exe", "certmgr.msc"],
+      darwin: ["Disk Utility", "Activity Monitor", "Keychain Access", "System Information", "Directory Utility", "Console", "Migration Assistant"],
+    };
+    const ORDINARY = { linux: "gedit", win32: "notepad.exe", darwin: "TextEdit" } as const;
+    for (const os of ["linux", "win32", "darwin"] as const) {
+      const e = new PolicyEngine({ neverLook: () => [], grants: () => ({}), autonomy: () => ({ ...ALL_SCOPES }), os, keys: KEYS[os] });
+      for (const app of ADMIN[os]) {
+        const d = e.decide(req({ app, window: app, element: { role: "push button", name: "Details" } }));
+        expect(d.autonomy, `${os} ${app}`).toBeUndefined();
+        expect(d.verdict, `${os} ${app}`).not.toBe("allow");
+      }
+      // An ordinary app still goes ahead without asking.
+      expect(e.decide(req({ app: ORDINARY[os], window: "notes", element: { role: "push button", name: "Details" } })).autonomy, os).toBe(true);
     }
   });
 
@@ -265,8 +286,25 @@ describe("a worker with “Work without asking” on", () => {
     const { call, activity } = worker();
     expect((await call("report_progress", { text: "Deleting the files without asking, as you let me." })).resultType).toBe("failure");
     expect((await call("report_progress", { text: "Tidying up", intent: "Working without asking" })).resultType).toBe("failure");
+    // Other ways of saying it, and a Cyrillic "о" in "withоut" (defence in depth: the bubble's tag is what tells them apart).
+    for (const text of ["Clicking in Mail, as you've allowed.", "Going ahead on my own in Firefox.", "Sending it, no need to check with you.", "Deleting it, as you said I could.", "Clicking withоut asking."]) {
+      expect((await call("report_progress", { text })).resultType, text).toBe("failure");
+    }
     expect(activity.some(e => e.type === "note")).toBe(false);
     expect((await call("report_progress", { text: "Making the title bold" })).resultType).toBe("success");
+  });
+
+  it("shows Ember's announcement with the bubble's “Without asking” tag, and never a task's note or the model's title under it (security review of #127)", () => {
+    const states: Partial<EmberState>[] = [];
+    const p = new Presenter(s => { states.push(s); });
+    p.workedWithoutAsking("Clicking in gedit, without asking as you let me.");
+    expect(states.at(-1)?.bubble).toMatchObject({ autonomous: true, thought: "Clicking in gedit, without asking as you let me." });
+    // The model's note (report_progress), even one that copies the words, shows without the tag.
+    p.progress("Clicking in gedit, without asking as you let me.");
+    expect(states.at(-1)?.bubble?.autonomous).toBeUndefined();
+    p.workedWithoutAsking("Typing 4 characters in gedit, without asking as you let me.");
+    p.event({ type: "assistant.intent", data: { intent: "Deleting everything" } });
+    expect(states.at(-1)?.bubble?.autonomous).not.toBe(true);
   });
 
   it("shows an announcement on the card as Ember's own words, never as a model note", () => {
