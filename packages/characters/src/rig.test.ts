@@ -355,3 +355,14 @@ describe("Rig mouth and Ember's own voice (re-review: the last sentence plays af
     expect(overTilt).toBeLessThan(0.005);
   });
 });
+
+describe("Rig mouth when Ember shows again (the overlay's level reset, NO_LEVEL)", () => {
+  it("closes the mouth at once on the reset's null, without waiting for the stale limit", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    for (let i = 0; i < 60; i++) { if (i % 6 === 0) rig.setTalkLevel(0.9); rig.update(1 / 60); }
+    rig.setTalkLevel(null);
+    // Well inside VOICE_STALE_S: a quarter of a second.
+    expect(settle(rig, 0.25).talk).toBeLessThan(0.05);
+  });
+});

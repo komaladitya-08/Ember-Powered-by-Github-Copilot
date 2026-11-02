@@ -1307,6 +1307,28 @@ describe("the bare name before it shows", () => {
     expect(e.listening).toBe(false);
   });
 
+  it("says no end of speech it never said began, when Ember starts speaking over a bare name not shown yet (voice audit)", () => {
+    const { events, e } = byName([], 2, 0);
+    e.selfSpeaking(true);
+    expect(events.filter(ev => ev.type === "speech")).toEqual([]);
+  });
+
+  it("becomes the follow-up window when one opens over a bare name not shown yet, so a reply without the name counts (voice audit)", () => {
+    const b = fake(["Turn on night light."]);
+    const spot = b.spot;
+    b.spot = f => (f[0] === 3 ? ["ember"] : spot(f));
+    const events: VoiceEvent[] = [];
+    const c = { t: 0 };
+    const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+    e.feed(frame(0));
+    c.t += 32; e.feed(frame(3));
+    e.followUp(8000);
+    expect(events).toEqual([{ type: "listening", on: true, reason: "follow-up", window: "follow-up" }]);
+    for (let i = 0; i < 3; i++) { c.t += 32; e.feed(frame(0, true)); }
+    for (let i = 0; i < 40; i++) { c.t += 32; e.feed(frame(0)); }
+    expect(events).toContainEqual(expect.objectContaining({ type: "utterance", text: "Turn on night light.", window: "follow-up" }));
+  });
+
   it("after the name alone, listens for the request and times out back to idle (stuck listening)", () => {
     const { events, e } = byName(["Ember."]);
     expect(events.map(ev => ev.type)).toEqual(["wake", "listening", "listening"]);

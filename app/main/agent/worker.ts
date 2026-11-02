@@ -24,6 +24,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
+import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
@@ -1215,7 +1216,10 @@ export class Worker {
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
     }
-    return handler(parsed.data);
+    const result = await handler(parsed.data);
+    // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
+    if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
+    return result;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
@@ -1409,7 +1413,7 @@ export class Worker {
           // The worker's own words: shown on its card as its note, never as Ember's (markdown stripped).
           this.activity({ type: "note", text: plainText(a.text), ...(a.intent ? { intent: plainText(a.intent) } : {}) });
           this.d.onProgress(a.text);
-          this.d.presenter.progress(a.text);
+          this.d.presenter.note(a.text);
           return done("Shown.");
         }),
       this.tool("show_view", `Show a view on the task's card while you work: what you have found so far, at a glance (figures, a table, a chart, a list of steps), drawn by Ember from its catalog. It replaces the view shown before; change parts of it with update_view. The user sees it on the card, under Ember's line saying the task found it.\n${viewCatalogPrompt()}`,
@@ -1603,7 +1607,7 @@ export class Worker {
           if (name !== "report_progress" && name !== "finish_task" && step) { this.doing = `${step}…`; d.onProgress(this.doing); }
           // Its card's activity: the step in Ember's words and the app it works in now (never the call's arguments).
           this.activity({ type: "heard" });
-          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}) });
+          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: cardApp(friendlyApp(this.window.app), this.d.target?.kind === "ssh") } : {}) });
         }
         if (e.type === "tool.execution_complete") {
           const data = e.data as { toolCallId?: string; success?: boolean };
@@ -3655,9 +3659,10 @@ export class Worker {
     }
   }
 
-  /** Every audit entry goes through here: an action (tried or done) after a "Not now" means the task went on. */
+  /** Every audit entry goes through here: an action done (or a command started) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
-    if (e.event === "action" || (e.event === "command" && e.phase === "started")) this.declined = false;
+    // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
+    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) this.declined = false;
     try {
       this.d.audit.write(e);
     } catch (err) {
@@ -3755,7 +3760,9 @@ export class Worker {
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(decision.risky ? { risky: true } : {}) };
+    // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
+    const risky = !!decision.risky || this.steered;
+    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();

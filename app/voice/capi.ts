@@ -24,6 +24,9 @@ export const CAPI_LIBS = ["libonnxruntime.so", "libsherpa-onnx-c-api.so"] as con
 /** Whether `dir` holds the C API's libraries. */
 export const hasCapi = (dir: string): boolean => CAPI_LIBS.every(f => fs.existsSync(path.join(dir, f)));
 
+/** koffi's error for a type defined twice ("Duplicate type name 'X'"): the struct was defined by an earlier capiSherpa(). */
+export const isDuplicateType = (err: unknown): boolean => /^Duplicate type name\b/.test(String((err as Error)?.message ?? err));
+
 /* eslint-disable @typescript-eslint/no-explicit-any -- koffi's functions are untyped */
 type Fn = (...a: any[]) => any;
 
@@ -35,7 +38,8 @@ export function capiSherpa(dir: string): Sherpa {
   const lib = koffi.load(path.join(dir, CAPI_LIBS[1]));
   for (const s of CAPI_STRUCTS) {
     // Defined once per process: a second capiSherpa() in the same process finds them.
-    try { koffi.struct(s.name, Object.fromEntries(s.fields)); } catch { /* already defined */ }
+    // Any other error (a layout koffi refuses) is real: it propagates, and speech runs on WebAssembly (runtime.ts).
+    try { koffi.struct(s.name, Object.fromEntries(s.fields)); } catch (err) { if (!isDuplicateType(err)) throw err; }
   }
   const fn = (decl: string): Fn => lib.func(decl) as Fn;
   const freeJson = fn("void SherpaOnnxFreeKeywordResultJson(void *s)");

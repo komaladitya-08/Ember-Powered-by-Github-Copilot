@@ -38,6 +38,10 @@ body[data-presence="error"] .menu::before { border-color: var(--red); -webkit-ma
 }
 .target[hidden] { display: none; }
 .target > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A risky question's tag beside Ember's name on the card (as the bubble's beside "Needs you"): the caution colour on
+   its tint, which has no tint token of its own. Never on the pill (the bubble shows it there). */
+.risk { display: none; flex: none; padding: 0 8px; border-radius: var(--r-capsule); font: var(--type-caption); font-weight: 600; color: var(--yellow); background: color-mix(in srgb, var(--yellow) 16%, transparent); }
+body.fallback[data-risky="true"] .risk { display: inline-flex; }
 .target-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 .target:not([data-state="ready"]) .target-dot { width: 10px; height: 10px; border-radius: 0; }
 .target[data-state="connecting"] .target-dot { background: var(--yellow); -webkit-mask: var(--sym-working) center / 10px no-repeat; }
@@ -118,6 +122,11 @@ body.fallback .step[hidden] { display: none; }
 .actions button.primary { background: var(--accent); color: var(--on-accent); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3); }
 .actions button:focus-visible, .task-actions button:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 .actions button.primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring); }
+/* A risky question's Allow isn't the one that stands out (nothing invites a reflex yes): bordered in the caution
+   colour on the quiet fill, as in the bubble. */
+body[data-risky="true"] .actions button.primary { background: rgba(255, 255, 255, 0.08); color: var(--label); box-shadow: inset 0 0 0 1.5px var(--yellow); }
+body[data-risky="true"] .actions button.primary:focus-visible { box-shadow: inset 0 0 0 1.5px var(--yellow), var(--focus-ring); }
+@media (hover: hover) { body[data-risky="true"] .actions button.primary:hover { background: rgba(255, 255, 255, 0.15); } }
 /* The task under way, with its Stop (or a failure with Close), at the bottom of the card: its state as the
    overlay cards show it, a symbol beside the words. */
 body.fallback .task {
@@ -165,6 +174,16 @@ body.fallback .mic { left: 82px; top: 90px; }
   .target { outline: 1px solid CanvasText; outline-offset: -1px; }
   .actions button[aria-disabled="true"], .actions button.primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
   body.fallback .whole { border: 1px solid CanvasText; }
+  /* A risky question: its Allow a plain button with a firmer edge (not the highlight's fill), its tag an edged word. */
+  body[data-risky="true"] .actions button.primary { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }
+  .risk { forced-color-adjust: auto; color: CanvasText; background: Canvas; border: 1px solid CanvasText; }
+}
+
+/* Increase Contrast: the risky Allow's caution edge and the tag's tint are firmer (no token reaches them). */
+@media (prefers-contrast: more) {
+  body[data-risky="true"] .actions button.primary { box-shadow: inset 0 0 0 2px var(--yellow); }
+  body[data-risky="true"] .actions button.primary:focus-visible { box-shadow: inset 0 0 0 2px var(--yellow), var(--focus-ring); }
+  .risk { background: color-mix(in srgb, var(--yellow) 26%, transparent); box-shadow: inset 0 0 0 1px var(--yellow); }
 }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type.

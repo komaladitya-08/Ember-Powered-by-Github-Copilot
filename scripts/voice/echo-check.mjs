@@ -65,6 +65,9 @@ async function measure(mode) {
     wakeWord: true, speak: true, voice: { consent: true, speakerRejection: false, muted: false, match: false },
   }));
   const dump = path.join(userData, "heard.f32");
+  // Interrupted (Ctrl+C), the recording of what the room heard goes too, as it does after a finished run.
+  const onInterrupt = () => { rmSync(userData, { recursive: true, force: true }); process.exit(130); };
+  process.once("SIGINT", onInterrupt);
   const env = {
     ...process.env, EMBER_USER_DATA: userData, EMBER_LOG_STDOUT: "1", EMBER_TEST_HOOKS: "1", EMBER_VOICE_MODELS: models,
     EMBER_VOICE_DUMP: dump, EMBER_TTS_OUTPUT: mode,
@@ -122,13 +125,14 @@ async function measure(mode) {
       mode, sentences: windows.length, speakingSeconds: Math.round(n * 10) / 10,
       roomDb: Math.round(dB(room) * 10) / 10, speakingDb: Math.round(dB(speaking) * 10) / 10,
       echoAboveRoomDb: Math.round((dB(speaking) - dB(room)) * 10) / 10,
-      wakes: count(e => e.msg === "voice.wake"), speechOnsets: count(e => e.msg === "voice.speech" && e.on === true),
+      wakes: count(e => e.msg === "voice.wake"), speechOnsets: count(e => e.msg === "voice.speech_heard" && e.on === true),
       utterances: count(e => e.msg === "voice.utterance"),
     };
   } finally {
     await app.close().catch(() => undefined);
     // The recording held what the room heard: it goes now.
     rmSync(userData, { recursive: true, force: true });
+    process.off("SIGINT", onInterrupt);
   }
 }
 

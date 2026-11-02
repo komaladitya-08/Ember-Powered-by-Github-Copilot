@@ -2,7 +2,8 @@
  * The real recognizers on synthesized speech: the clips in test/fixtures/voice. They run on the build Ember picks
  * (runtime.ts: the native addon on Windows and macOS, WebAssembly elsewhere); EMBER_VOICE_BACKEND=wasm forces
  * WebAssembly, and EMBER_SHERPA_ADDON=<path to a sherpa-onnx.node> runs an addon where none is installed (Linux:
- * sherpa-onnx-linux-x64's, to try the native path there). Needs the models from `node scripts/voice/prepare.mjs`
+ * sherpa-onnx-linux-x64's, to try the native path there), and EMBER_SHERPA_CAPI=<folder> runs sherpa-onnx's C API
+ * through koffi (the folder scripts/voice/fetch-capi.mjs prints). Needs the models from `node scripts/voice/prepare.mjs`
  * (skipped otherwise; EMBER_VOICE_TEST=1 requires them).
  */
 
@@ -24,7 +25,9 @@ const clips = path.resolve("test/fixtures/voice");
 const ready = modelsReady(path.join(dir, "models")) && fs.existsSync(path.join(clips, "wake.wav"));
 const sherpa = createRequire(import.meta.url)("sherpa-onnx");
 const addonFile = process.env.EMBER_SHERPA_ADDON ? path.resolve(process.env.EMBER_SHERPA_ADDON) : undefined;
-const runtime: RuntimeOptions | undefined = addonFile ? { prefer: "native", addonFile } : undefined;
+// EMBER_SHERPA_CAPI=<the folder scripts/voice/fetch-capi.mjs prints>: the C API through koffi (Linux x64).
+const capiDir = process.env.EMBER_SHERPA_CAPI ? path.resolve(process.env.EMBER_SHERPA_CAPI) : undefined;
+const runtime: RuntimeOptions | undefined = addonFile ? { prefer: "native", addonFile } : capiDir ? { capiDir } : undefined;
 
 // Real recognizers on a loaded CI machine: a clip can take several seconds, so each test gets 20.
 describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real models", { timeout: 20_000 }, () => {
@@ -74,7 +77,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
   };
 
   it("runs on the native addon on Windows and macOS (WebAssembly on Linux)", () => {
-    const native = !!addonFile || ((process.platform === "win32" || process.platform === "darwin") && process.env.EMBER_VOICE_BACKEND !== "wasm");
+    const native = !!addonFile || !!capiDir || ((process.platform === "win32" || process.platform === "darwin") && process.env.EMBER_VOICE_BACKEND !== "wasm");
     expect(backend.info).toMatchObject({ backend: native ? "native" : "wasm" });
     expect(backend.info.threads).toBe(native ? Math.max(1, Math.min(2, os.availableParallelism() - 1)) : 1);
   });
@@ -304,7 +307,8 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
       // JavaScript can catch it), so main starts a voice process that died loading again on WebAssembly, which says the
       // models are damaged (VoiceService.nativeFailed).
       expect(() => sherpaBackend({ ...models, asr }, { runtime: { prefer: "wasm" } })).toThrow(ModelLoadError);
-      if (backend.info.backend === "native") {
+      // (The addon's: on the C API, EMBER_SHERPA_CAPI, there is no addon to load in a process of its own.)
+      if (backend.info.backend === "native" && !capiDir) {
         const file = addonFile ?? createRequire(import.meta.url).resolve(`${nativePackage()}/sherpa-onnx.node`);
         const make = `const a = require(process.env.ADDON), d = process.env.ASR; a.createOfflineRecognizer({ featConfig: { sampleRate: 16000, featureDim: 80 }, modelConfig: { moonshine: { encoder: d + "/encoder_model.ort", mergedDecoder: d + "/decoder_model_merged.ort" }, tokens: d + "/tokens.txt", numThreads: 1, provider: "cpu", debug: 0 } }); console.log("loaded");`;
         const r = spawnSync(process.execPath, ["-e", make], { env: { ...process.env, ADDON: file, ASR: asr }, encoding: "utf8", timeout: 30_000 });

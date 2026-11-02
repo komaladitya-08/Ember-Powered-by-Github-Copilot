@@ -21,7 +21,10 @@ import { LEVEL_STEPS } from "../../shared/level";
 import { TASK_STOPPING, waitsForWhole, wholeSeenAction, type OverlayApi, type OverlayFrame, type OverlayInit, type EmberState, type Rect, type TaskCard } from "../../shared/overlay";
 import type { Settings } from "../../main/settings";
 import { STATE_WORD, STOP_ACK_MS, cardLines, foldCount, foldedLine, slides, stackOrder, stopPending, underWay } from "./stack";
-import { TASK_ARM_MS } from "../handle/arm";
+import { ArmClock, TASK_ARM_MS } from "../handle/arm";
+
+/** The bubble's Try again and Stop ignore presses for a moment after they come up, as a task card's buttons do. */
+const bubbleArm = new ArmClock();
 import { shortWhere, whereText } from "../handle/badge";
 import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
@@ -147,6 +150,8 @@ api.onLevel?.(l => {
   presence.setLevel(l);
   // (No draw of its own: while Ember talks it is drawn at the lively rate anyway, and the rig smooths between levels;
   // a draw on each level cost about two points of a core more while it spoke.)
+  // As Ember shows again main sends NO_LEVEL (app/shared/level.ts): the voice's null drops a level from before it hid at
+  // once, so the mouth never moves on a stale one (the rig's own 1.5 s limit is for a voice that stopped unannounced).
   if (l.voice !== undefined) rig.setTalkLevel(l.voice === null ? null : l.voice / LEVEL_STEPS);
 });
 // The scale changed (another monitor, or the desktop's scale): hairlines and the stage canvas follow at once.
@@ -177,6 +182,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   const b = s.bubble;
   presence.setState(presenceOf(s));
   presence.setHearing(s.mic === "active");
+  // Its buttons are armed from when they show (and disarmed while it is hidden), whatever it keeps while it fades.
+  bubbleArm.shown(b.visible ? b.actions.map(a => a.id) : [], performance.now());
   // Going away, it keeps what it said while it fades out, the way it came in: emptied at once, it collapsed to a thin bar
   // as it faded. (Hidden, nothing in it takes a click: interactiveRects is empty.)
   if (b.visible) {
@@ -192,7 +199,7 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
     bubble.setExpanded(b.expanded === true);
     // A question's whole text (a long typed text), and its Allow waiting until all of it has been in view.
     bubble.setWhole(b.whole ?? null);
-    bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => api.bubbleAction(a.id) })) : null);
+    bubble.setActions(b.actions.length ? b.actions.map(a => ({ key: a.id, label: a.label, primary: a.primary, needsWhole: waitsForWhole(a.id, b.whole), onClick: () => { if (bubbleArm.ready(a.id, performance.now())) api.bubbleAction(a.id); } })) : null);
   }
   const f = s.focus && s.focus.width > 2 && s.focus.height > 2 ? s.focus : null;
   focusEl.hidden = !f;

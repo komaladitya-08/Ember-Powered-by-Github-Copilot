@@ -45,6 +45,7 @@ function makeWorker(o: {
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
   const asked: string[] = [];
+  const questions: { prompt: string; risky?: boolean }[] = [];
   const guided: string[] = [];
   const activity: Record<string, unknown>[] = [];
   const window = { app: "gedit", pid: 1, name: o.windowName ?? "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
@@ -78,7 +79,7 @@ function makeWorker(o: {
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" } }),
-    confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); o.onAsk?.(); return o.answer ?? "once"; } } as never,
+    confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter,
@@ -92,7 +93,7 @@ function makeWorker(o: {
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode, ...(o.specScreen ? { screen: o.specScreen } : {}) });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, asked, call, flown, guided, activity };
+  return { w, audit, events, asked, questions, call, flown, guided, activity };
 }
 
 describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
@@ -116,6 +117,20 @@ describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
     await declined.call("perceive_window", {});
     await declined.call("click", { id: 1 });
     expect(declined.activity.filter(e => e.type === "answer")).toEqual([{ type: "answer", answer: "declined" }]);
+    // The step it asked about was turned down: its card shows it stopped, not failed (UI audit).
+    expect(declined.activity.at(-1)).toEqual({ type: "denied" });
+  });
+
+  it("stays declined after a \"Not now\" until a step really happens, not when a later one only failed (UI audit)", async () => {
+    const { w, call } = makeWorker({ grants: {}, answer: "deny" });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const inner = w as unknown as { declined: boolean; audit(e: Record<string, unknown>): void };
+    expect(inner.declined).toBe(true);
+    inner.audit({ event: "action", task: "t1", kind: "click", app: "gedit", ok: false, error: "the control a click goes to can't be found" });
+    expect(inner.declined).toBe(true);
+    inner.audit({ event: "action", task: "t1", kind: "click", app: "gedit", ok: true });
+    expect(inner.declined).toBe(false);
   });
 
   it("says a step wasn't allowed, with policy's reason", async () => {
@@ -136,6 +151,17 @@ describe("worker tools on a window with text aimed at an AI agent (injection.ts)
     expect((await call("click", { id: 1 })).resultType).toBe("success");
     expect(asked).toEqual([expect.stringMatching(/\(I'm checking each step: text on screen tried to give me instructions\.\)$/)]);
     expect(audit.find(e => e.event === "decision" && e.kind !== "read")?.reason).toMatch(/text on screen tried to give Ember instructions/);
+  });
+
+  it("marks each question after text on screen tried to steer it as risky, and an ordinary one not (UI audit 6)", async () => {
+    const steered = makeWorker({ more: [INJECTED] });
+    await steered.call("perceive_window", {});
+    await steered.call("click", { id: 1 });
+    expect(steered.questions.map(q => q.risky)).toEqual([true]);
+    const plain = makeWorker({ grants: {} });
+    await plain.call("perceive_window", {});
+    await plain.call("click", { id: 1 });
+    expect(plain.questions.map(q => q.risky)).toEqual([undefined]);
   });
 
   it("asks before every step when what the conversation read before the task holds such text (audit of the conversation features)", async () => {

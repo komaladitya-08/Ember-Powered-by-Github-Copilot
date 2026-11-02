@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { SettingsStore, DEFAULT_SETTINGS, MAX_HOME_PATCH, checkHomePatch } from "../../app/main/settings";
+import { SettingsStore, DEFAULT_SETTINGS, MAX_HOME_PATCH, checkHomePatch, withOwnTrust, type SettingsPatch } from "../../app/main/settings";
 
 let dir: string;
 let file: string;
@@ -211,5 +211,21 @@ describe("a change sent from the settings window", () => {
     const neverLook = Array.from({ length: 100 }, (_, i) => `${i}`.padEnd(100, "x"));
     expect(JSON.stringify({ privacy: { neverLook } }).length).toBeLessThan(MAX_HOME_PATCH);
     expect(checkHomePatch({ privacy: { neverLook } })).toEqual({ privacy: { neverLook } });
+  });
+
+  it("is measured in the bytes written, not UTF-16 units: three-byte characters count three times (UI audit)", () => {
+    const neverLook = Array.from({ length: 30 }, () => "€".repeat(1000));
+    expect(JSON.stringify({ privacy: { neverLook } }).length).toBeLessThan(MAX_HOME_PATCH);
+    expect(() => checkHomePatch({ privacy: { neverLook } })).toThrow("That change is too large to save.");
+  });
+
+  it("changes only the trust switch flipped, never writing the administrator's forced value of the other (UI audit)", () => {
+    const own = { askedApps: true, reviewCommands: false };
+    expect(withOwnTrust({ trust: { reviewCommands: true } } as SettingsPatch, own)).toEqual({ trust: { askedApps: true, reviewCommands: true } });
+    expect(withOwnTrust({ trust: { askedApps: false } } as SettingsPatch, own)).toEqual({ trust: { askedApps: false, reviewCommands: false } });
+    expect(withOwnTrust({ size: 70 }, own)).toEqual({ size: 70 });
+    const home = fs.readFileSync(new URL("../../app/renderer/home/main.ts", import.meta.url), "utf8");
+    expect(home).toContain("void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch);");
+    expect(fs.readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8")).toContain("settings.update(ownNeverLook(withOwnTrust(patch, settings.own().trust))");
   });
 });

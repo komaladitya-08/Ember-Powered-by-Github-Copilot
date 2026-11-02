@@ -1,9 +1,9 @@
 /** Handle: Ember's face and status in the corner; click for Ember's menu. */
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
-import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
+import { RISKY_TAG, WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
 import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
-import { cardTask, cardText } from "./card";
+import { cardRisky, cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
@@ -73,6 +73,8 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
 
 
 const thoughtEl = $("thought");
+// A risky question's tag beside Ember's name (shown by styles.css only while body[data-risky="true"], on the card).
+$("risk").textContent = RISKY_TAG;
 let wasStreaming = false;
 /**
  * Without a compositor nothing else speaks for Ember: finished answers, questions and problems are said once
@@ -226,6 +228,10 @@ api.onState(s => {
   thoughtEl.dataset.overflow = String(b.streaming && thoughtEl.scrollHeight > thoughtEl.clientHeight + 1);
   wasStreaming = b.visible && b.streaming;
   document.body.dataset.mood = b.visible ? b.mood : "idle";
+  // A risky question (policy's risky, as the bubble marks it): its tag, and an Allow that is bordered, not filled, so
+  // nothing invites a reflex yes. Only how it looks: it is answered as any question.
+  const risky = String(cardRisky(b));
+  if (document.body.dataset.risky !== risky) document.body.dataset.risky = risky;
   document.body.classList.toggle("streaming", b.visible && b.streaming);
   const actions = b.visible ? b.actions : [];
   // A question (not just "Read all" or "Open settings", which are Ember's own buttons).
