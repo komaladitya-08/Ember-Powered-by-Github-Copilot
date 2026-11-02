@@ -643,6 +643,9 @@ export class Presenter {
   /** Updates what this presenter shows; it reaches the screen only if the bubble is its to write. Returns whether it did. */
   private apply(patch: Partial<EmberState>, claim: Claim = this.guiding ? "reply" : this.work): boolean {
     this.state = { ...this.state, ...patch, bubble: { ...this.state.bubble, ...(patch.bubble ?? {}), ...(this.taskId ? { task: this.taskId } : {}), ...(this.where ? { where: this.where } : {}) } };
+    // Ember's "Without asking" tag goes with its own announcement only: any other change of the bubble drops it (a task's
+    // note, the model's title, a question), even one that copies the bubble it replaces (security review of #127).
+    if (patch.bubble && !this.announcing) delete this.state.bubble.autonomous;
     if (this.silent) return false;
     // A task in the background: its work is on its card in the corner; the cursor's bubble isn't touched.
     if (claim === "progress" && this.inCorner) { this.unseen = false; return false; }
@@ -1038,6 +1041,25 @@ export class Presenter {
     this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: needsYou ? "attention" : "acting", thought: clip(note), streaming: !needsYou,
       ...(more?.actions ? { actions: more.actions } : {}), ...(more && "step" in more ? { step: more.step ?? null } : {}) } });
   }
+
+  /**
+   * Ember went ahead without asking (Work without asking): policy's announcement (Decision.announce, built from the
+   * request), shown with the bubble's own "Without asking" tag (BubbleState.autonomous). Only the worker calls it, with
+   * policy's words: a task's note (progress) can never carry the tag.
+   */
+  workedWithoutAsking(text: string): void {
+    const said = text.replace(/\s+/g, " ").trim();
+    if (!said) return;
+    this.announcing = true;
+    try {
+      this.apply({ emotion: "focused", bubble: { ...this.state.bubble, visible: true, mood: "acting", title: this.name(), thought: clip(said), step: null, streaming: false, actions: [], autonomous: true } });
+    } finally {
+      this.announcing = false;
+    }
+  }
+
+  /** workedWithoutAsking is applying its announcement: the only bubble that may carry the "Without asking" tag. */
+  private announcing = false;
 
   /**
    * A command the user's own words asked for is about to run (D4.4, §3.9.2): the announcement ("Pushing feature-x to

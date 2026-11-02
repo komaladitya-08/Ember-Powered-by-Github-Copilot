@@ -1272,6 +1272,8 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(r).toMatchObject({ resultType: "denied", textResultForLlm: "The user stopped it before it ran. Don't run it again; finish the task saying so." });
     expect(h.starts).toEqual([]);
     expect(h.ended).toHaveLength(1);
+    // A Stop is a no: the task is marked declined, which holds it to asking (Work without asking too; review of #127).
+    expect(h.declined()).toBe(1);
   });
 
   it("the command window couldn't show the countdown to the end: nothing runs, and the model doesn't hear the user stopped it (cross-review S2)", async () => {
@@ -1283,6 +1285,8 @@ describe("refuse, ask and announce (§3.8.3 steps 8-11)", () => {
     expect(asked).toEqual([h.windowAnnounce[0].card.runId]);
     expect(h.starts).toEqual([]);
     expect(h.audit.find(e => e.phase === "answered")).toMatchObject({ answer: "unseen", q: "announce" });
+    // Nobody said no: the task isn't marked declined.
+    expect(h.declined()).toBe(0);
     // The user's Stop, or a window that can't say (says something else, or throws): the user stopped it, as before.
     for (const announceGone of [() => false, () => "yes", () => { throw new Error("x"); }]) {
       const g = harness({ words: "push it", announce: false, announceGone });

@@ -243,6 +243,31 @@ type (accents, other layouts) is pasted, and your clipboard is put back afterwar
 **Commands** section), a task can also run commands, in Ember's own **Ember commands** window rather than a terminal of
 yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)).
 
+**Work without asking** (Apps & privacy, off by default; owner decision of 2026-11-02, PLAN.md §2 "Approvals"). Turning
+it on shows its card first: what runs without asking, what still asks, that Ember says what it does, and that a stop
+always works (`FEATURE_CONSENT_VERSION.autonomy`). While it is on, Ember doesn't ask before its first step in an app,
+before borrowing your mouse and keyboard (it still waits until you're still and lets go when you move), or before
+moving text between apps (it says which apps and how many characters, never the text); an ordinary command on this
+computer that asks only because it carries text read elsewhere runs after its Stop countdown (WSL and SSH commands ask
+as before). Steps in the system's Settings and security apps always ask. It says each such step in its bubble and on
+the task's card by its kind, app and size ("Clicking in Text Editor, without asking as you let me."), never with
+typed text or words from the screen, and **What Ember did** lists it as "Without asking" (the audit entry has
+`autonomy: true`), and lists turning the mode on or off with how (Home, voice, typed). Risky steps ask every time as before, with no "Always", and so do dangerous
+commands; a task that text on screen tried to steer, that went off-task or where you said no (at any point in it) goes
+back to asking.
+Say “Ember, work without asking” (Voice Match must recognise you, and the card must already be agreed to: otherwise
+Ember opens the switch or its card here) or “Ember, ask me first again” (anyone) to switch it by voice.
+
+**Answering by voice.** While a question is up, “Ember, allow” (or “yes”, “go ahead”) answers it, and “Ember, not now”
+(or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you, from at least 1.5 s of your
+voice (say “Ember, yes, go ahead and allow it”; a bare “allow” is too short to be sure); otherwise the bubble says
+how, and the question stays. It counts only for the question that was up, and armed, when you started speaking, and
+once Voice Match turned another voice away during a question, that question takes a click or the keys only. “Not now” works for anyone, also in a follow-up window (“Cancel” and “never mind” aren't answers). Ember never takes its
+own voice as an answer (nothing it hears while it speaks, or that started before it last spoke, counts), never says
+“Always” by voice, and never takes a spoken yes for a consent card. A command card or a long typed text is allowed by
+voice only as the approve key would: once all of it has been shown. The audit records `via: "voice"` and whether Voice
+Match verified it.
+
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
 
@@ -602,6 +627,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left untouched and unused. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
+| `features.autonomy` | `false`: "Work without asking" is off and managed; Ember asks before a first step in an app, a borrow and moving text between apps, as before. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN turn it off too. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
 | `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
@@ -981,7 +1007,8 @@ policy; anything else Ember can't trust locks it down (§5: no actions, commands
 is fixed: a value it can't read, of another type, over 256 KiB, not JSON, or not valid for the schema.
 `provider.apiKeyFile` isn't supported on Windows and locks Ember down too: put the key in a `ProviderApiKey` string
 value beside `PolicyJson`, or in the `EMBER_PROVIDER_API_KEY` environment variable. Ember reads the value again every
-10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
+10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5). Every key
+in §5's table works here too, `features.autonomy` ("Work without asking") among them.
 
 From an elevated Windows PowerShell:
 
@@ -1299,8 +1326,8 @@ The folder must be a real folder, not a link, that belongs to root and only root
 not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
 else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads the file
 again every 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
-Ember reads this file only, not managed preferences, so deploy it as a file (a package or a script from your
-management tool):
+Every key in §5's table works here too, `features.autonomy` ("Work without asking") among them. Ember reads this file
+only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
 
 ```bash
 sudo mkdir -p "/Library/Application Support/Ember"
