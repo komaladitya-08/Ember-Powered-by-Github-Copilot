@@ -159,9 +159,12 @@ export class ViewHub {
   private flush(taskId: string, e: Entry): void {
     if (!this.visible || !e.latest || e.latest === e.sent) return;
     const patch = diffViews(taskId, e.sent, e.latest);
+    // A change that changed nothing (a set to the same value) still moves the rev on. The page isn't sent it, so `sent`
+    // stays what the page holds: advancing it would make the next patch's base a rev the page never had, and the page
+    // would drop every later patch as a gap until it reloaded.
+    if (e.sent && patch.root === e.sent.root && !Object.keys(patch.nodes).length && !patch.removed.length) return;
     e.sent = e.latest;
     e.lastAt = this.now();
-    if (patch.base !== null && !Object.keys(patch.nodes).length && !patch.removed.length) return;
     try { this.o.send(patch); } catch { /* a page that went away mid-send: the next load gets snapshots() */ }
   }
 }
