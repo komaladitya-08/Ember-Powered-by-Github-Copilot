@@ -527,6 +527,11 @@ SSH every desktop step is asked, and the remote checks every step again under it
    - **Later:** a root-owned remote package for hardened hosts (L24); a JPEG encoder on remotes (L16); approval
      fatigue on remotes and after output taint (every step or command asks), revisited with SX's view.
 
+Native speech on Linux (docs/ASSISTANT.md 1.1), development builds: sherpa-onnx's C API through koffi
+(app/voice/capi.ts), from the release's own prebuilt libraries (GLIBC_2.17), turned on with `EMBER_SHERPA_CAPI`.
+Piper's first audio 137 ms against WebAssembly's 551 on a 4-thread Xeon. Not yet packaged: shipping it needs the
+libraries in the RPM and AppImage (with their Apache-2.0 and MIT notices) and check-symvers over them.
+
 Voice playback (§2 "TTS" corrected, 2026-11-02): the row said echo cancellation removes Ember's voice. That was
 written for `speechSynthesis`; Ember's own voice now plays through Web Audio, which Chromium's echo cancellation is
 documented not to cover. `EMBER_TTS_OUTPUT=element` (development builds) plays it through an `<audio>` element instead,

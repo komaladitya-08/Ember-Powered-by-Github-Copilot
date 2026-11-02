@@ -18,6 +18,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { capiSherpa, hasCapi } from "./capi";
 
 export type SherpaBackend = "native" | "wasm";
 
@@ -274,6 +275,11 @@ export interface RuntimeOptions {
   arch?: string;
   /** A sherpa-onnx.node to load (tests on Linux, where no addon is installed). */
   addonFile?: string;
+  /**
+   * A folder holding sherpa-onnx's C API libraries (capi.ts): native speech without the addon, on Linux. Main gives it
+   * only from Ember's own files, or from EMBER_SHERPA_CAPI in development builds.
+   */
+  capiDir?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -285,6 +291,15 @@ export function sherpaRuntime(o: RuntimeOptions = {}): Sherpa {
   const env = o.env ?? process.env;
   const prefer = o.prefer && o.prefer !== "auto" ? o.prefer : env.EMBER_VOICE_BACKEND === "wasm" ? "wasm" : o.prefer ?? "auto";
   if (prefer === "wasm") return wasmSherpa("WebAssembly asked for");
+  // The C API's libraries, where main gave them (Linux): native speech through koffi, else WebAssembly as before.
+  if (o.capiDir) {
+    try {
+      if (!hasCapi(o.capiDir)) return wasmSherpa(`no C API libraries in ${o.capiDir}`);
+      return capiSherpa(o.capiDir);
+    } catch (err) {
+      return wasmSherpa(`the C API didn't load: ${String((err as Error)?.message ?? err).split("\n")[0]}`);
+    }
+  }
   const pkg = nativePackage(o.platform, o.arch);
   if (!pkg && !o.addonFile) return wasmSherpa(`no native build for ${o.platform ?? process.platform}-${o.arch ?? process.arch}`);
   try {

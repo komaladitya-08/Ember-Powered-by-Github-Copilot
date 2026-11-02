@@ -91,6 +91,12 @@ export interface VoiceOptions {
    */
   naturalVoice?: boolean;
   /**
+   * A folder with sherpa-onnx's C API libraries (app/voice/capi.ts): speech runs natively through them (Linux), and
+   * falls back to WebAssembly as the addon does if a process dies loading. Development builds only, for now
+   * (EMBER_SHERPA_CAPI, filled by scripts/voice/fetch-capi.mjs).
+   */
+  capiDir?: string;
+  /**
    * How the mic page plays Ember's voice: "context", Web Audio straight to the speakers (the default), or "element",
    * Web Audio into a media stream played by an <audio> element. Chromium's echo cancellation is documented to cover
    * media elements and not Web Audio, which matters before barge-in without the wake word (docs/ASSISTANT.md 2.3);
@@ -491,7 +497,7 @@ export class VoiceService {
 
   /** Speech can run natively here (runtime.ts). */
   private get native(): boolean {
-    return this.o.native ?? nativePackage() !== null;
+    return this.o.native ?? (nativePackage() !== null || !!this.o.capiDir);
   }
 
   /** Ember's voice process, started (and its voice loaded) on first use. */
@@ -529,7 +535,7 @@ export class VoiceService {
       this.switchWhenIdle();
     });
     const natural = this.naturalWanted && this.native && !this.naturalOff && this.rootOf("natural") !== null ? this.paths().natural : null;
-    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : {}) });
+    proc.postMessage({ type: "init", model: this.paths().tts, natural, ...(this.wasmOnly.speech ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) });
     return proc;
   }
 
@@ -693,7 +699,7 @@ export class VoiceService {
       this.o.onEvent(m);
     });
     const { port1, port2 } = new MessageChannelMain();
-    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.wasmOnly.voice ? { wasm: true } : {}) }, [port1]);
+    proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);
 
     this.mic = hiddenWindow("Ember microphone");
     const mic = this.mic;

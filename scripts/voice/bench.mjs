@@ -4,7 +4,7 @@
 // computer can try. Run it as the computer usually is (other apps open): a real-time factor (rtf) below 1 keeps up;
 // Kokoro speaks in Ember only at 0.5 or less. Prints a table, and the same as JSON for pasting into an issue.
 // Needs the models from `node scripts/voice/prepare.mjs`; --kokoro also fetches Kokoro (320 MB, verified) into the
-// same folder.
+// same folder. On Linux, EMBER_SHERPA_CAPI=<folder from fetch-capi.mjs> times the C API as the native build.
 //   usage: node scripts/voice/bench.mjs [--kokoro] [models dir]   (default: .cache/voice/models)
 import { build } from "esbuild";
 import fs from "node:fs";
@@ -30,7 +30,7 @@ fs.writeFileSync(entry, [
   `export { piperSpec, kokoroSpec } from ${JSON.stringify(path.join(root, "app/voice/tts-spec.ts"))};`,
 ].join("\n"));
 const bundle = path.join(root, "node_modules", ".ember-bench.cjs");
-await build({ entryPoints: [entry], outfile: bundle, bundle: true, platform: "node", format: "cjs", logLevel: "error", external: ["sherpa-onnx", "sherpa-onnx-*"] });
+await build({ entryPoints: [entry], outfile: bundle, bundle: true, platform: "node", format: "cjs", logLevel: "error", external: ["sherpa-onnx", "sherpa-onnx-*", "koffi"] });
 const m = require(bundle);
 fs.rmSync(tmp, { recursive: true, force: true });
 
@@ -58,15 +58,19 @@ function readWav(file) {
   throw new Error(`no data in ${file}`);
 }
 
-const picked = m.sherpaRuntime().backend;
+// EMBER_SHERPA_CAPI: the native build is sherpa-onnx's C API in that folder (app/voice/capi.ts; Linux: fetch-capi.mjs).
+const capiDir = process.env.EMBER_SHERPA_CAPI;
+const nativeOpts = capiDir ? { capiDir } : {};
+const runtimeFor = prefer => (prefer === "native" ? { prefer: "native", ...nativeOpts } : { prefer });
+const picked = m.sherpaRuntime(nativeOpts).backend;
 console.log(`${os.cpus()[0]?.model ?? "cpu"}, ${os.availableParallelism()} threads, ${process.platform}-${process.arch}, load average ${os.loadavg().map(x => x.toFixed(1)).join(" ")}`);
-console.log(`Ember picks: ${picked} (${m.sherpaRuntime().detail})\n`);
+console.log(`Ember picks: ${picked} (${m.sherpaRuntime(nativeOpts).detail})\n`);
 
 // Listening: the wake clip and 2 s of silence through the engine, as the microphone sends it (32 ms frames).
 const clip = readWav(path.join(root, "test/fixtures/voice/wake.wav"));
 for (const prefer of picked === "native" ? ["native", "wasm"] : ["wasm"]) {
   const t0 = performance.now();
-  const backend = m.sherpaBackend(paths, { runtime: { prefer } });
+  const backend = m.sherpaBackend(paths, { runtime: runtimeFor(prefer) });
   const loadMs = Math.round(performance.now() - t0);
   const audio = new Float32Array(clip.length + 32_000);
   audio.set(clip);
@@ -81,7 +85,7 @@ for (const prefer of picked === "native" ? ["native", "wasm"] : ["wasm"]) {
 const SENTENCES = ["I opened the terminal,", "ran the tests, and all twenty-four of them passed on the first try.", "Night Light is on."];
 /** One voice: its load time, the first chunk's time (the first words' delay) and the real-time factor over three sentences. */
 function speak(what, prefer, spec, provider, threads, sid) {
-  const sherpa = m.sherpaRuntime({ prefer });
+  const sherpa = m.sherpaRuntime(runtimeFor(prefer));
   if (sherpa.backend !== prefer) return;
   let tts;
   const t0 = performance.now();

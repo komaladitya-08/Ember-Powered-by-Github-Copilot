@@ -2170,6 +2170,8 @@ function start(): void {
     if (speechModels.bundled) log.info("voice.models_bundled", { root: speechModels.root });
     voice = new VoiceService({
       log: log.child("voice"),
+      // Native speech through sherpa-onnx's C API (app/voice/capi.ts): a development switch until it ships with Ember.
+      ...(devEnv("EMBER_SHERPA_CAPI") ? { capiDir: devEnv("EMBER_SHERPA_CAPI") } : {}),
       // How Ember's voice is played (VoiceOptions.playback): a development switch until echo-check.mjs has measured it.
       ...(devEnv("EMBER_TTS_OUTPUT") === "element" ? { playback: "element" as const } : {}),
       modelsRoot: speechModels.root,
