@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { reminderTime, whenWords, type Reminders } from "./reminders";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
@@ -92,6 +93,8 @@ export interface ConductorDeps {
   caps?: PromptCaps;
   /** Long-term memory while it is on: its tools, and a `<memory>` block before each request. Absent: today's tools. */
   memory?: ConductorMemory;
+  /** The user's reminders (reminders.ts): set_reminder, list_reminders and cancel_reminder. Absent: no reminder tools. */
+  reminders?: Reminders;
   /** list_computers's answer (TargetsForAgent.describeTargets); offered only with caps.targets. */
   listComputers?: () => string;
   /** offer_connect: shows the user a Connect button for a host their words named; returns what to tell the model. */
@@ -145,7 +148,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; now?: () => number }): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -229,6 +232,40 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
         async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
     ] : []),
+    ...(reminders ? reminderTools(reminders) : []),
+  ];
+}
+
+/**
+ * The reminder tools (reminders.ts): a reminder only tells the user something when it is due, in the user's own words;
+ * it never starts a task. Reminders last while Ember runs.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+function reminderTools(r: { store: Reminders; said: () => string; now?: () => number }): Tool<any>[] {
+  const now = r.now ?? Date.now;
+  return [
+    checkedTool("set_reminder", "Remind the user of something later, when they ask (\"remind me in 20 minutes to call Priya\", \"at 3 pm tell me to stand up\"). Ember shows and says it when it's due; it never acts on it. Use the user's own words for what to remind them of. Give minutes from now, or a clock time. Reminders last while Ember runs: if they ask for one days ahead, say so.",
+      z.object({
+        text: z.string().min(1).max(200).describe("What to remind them of, in their words (\"call Priya\")"),
+        minutes: z.number().int().min(1).max(10_080).optional().describe("Minutes from now"),
+        at: z.string().min(1).max(20).optional().describe("A clock time today or tomorrow, 24-hour \"15:30\" or \"3:30 pm\""),
+      }),
+      async ({ text, minutes, at }) => {
+        const when = reminderTime({ ...(minutes !== undefined ? { minutes } : {}), ...(at !== undefined ? { at } : {}) }, now());
+        if (typeof when === "string") return when;
+        const set = r.store.add(text, when, r.said());
+        if (typeof set === "string") return set;
+        return `Set [${set.id}] for ${whenWords(set.at, now())}. Tell the user in a few words, with the time.`;
+      }),
+    checkedTool("list_reminders", "List the reminders waiting.",
+      z.object({}),
+      async () => {
+        const list = r.store.list();
+        return list.length ? list.map(x => `[${x.id}] ${whenWords(x.at, now())}: ${x.text}`).join("\n") : "No reminders are waiting.";
+      }),
+    checkedTool("cancel_reminder", "Cancel a reminder the user asks you to cancel, by its id from set_reminder or list_reminders.",
+      z.object({ id: z.string().min(1).max(20).describe("The reminder's id, without brackets") }),
+      async ({ id }) => r.store.cancel(id.replace(/^\[|\]$/g, "")) ? `Cancelled ${id}.` : `No reminder has the id ${id}. Use list_reminders to find it.`),
   ];
 }
 
@@ -462,7 +499,7 @@ export class Conductor {
   private settleEnding: ((ended: boolean) => void) | null = null;
 
   constructor(private deps: ConductorDeps) {
-    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools).map(t => t.name);
+    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools, this.reminderTools).map(t => t.name);
   }
 
   /** What the user said in the turn under way: a fact saved now counts as theirs only if it is in their words. */
@@ -471,6 +508,12 @@ export class Conductor {
   /** Memory's tools, while memory is on (deps.memory). */
   private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
     const store = this.deps.memory;
+    return store ? { store, said: () => this.said } : undefined;
+  }
+
+  /** The reminder tools, when the deps give reminders. */
+  private get reminderTools(): { store: Reminders; said: () => string } | undefined {
+    const store = this.deps.reminders;
     return store ? { store, said: () => this.said } : undefined;
   }
 
@@ -505,7 +548,7 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools),
+      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools, this.reminderTools),
       systemMessage: emberSystemMessage(d.words, d.memory ? { ...(d.caps ?? NO_CAPS), memory: true } : d.caps),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),

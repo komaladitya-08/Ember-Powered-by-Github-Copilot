@@ -2050,6 +2050,11 @@ function start(): void {
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
       onAccountChanged: () => { askHistory = []; },
+      // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
+      onReminder: r => {
+        if (maySpeak()) voice?.speak(spokenText(`Reminder: ${r.text}`));
+        if (userAway()) notify("Ember: reminder", r.text);
+      },
       onTaskFinished: t => {
         if (maySpeak()) voice?.speak(spokenText(t.text));
         if (userAway() && t.status !== "cancelled") notify(t.status === "done" ? `Ember finished: ${t.title}` : `Ember couldn't finish: ${t.title}`, t.summary);

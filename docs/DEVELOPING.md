@@ -228,7 +228,10 @@ arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Ma
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
+“OK” is the answer). “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
+reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken, and sends a notification if
+you are away. Only your own words set one, and reminders last while Ember runs (they are kept nowhere on disk).
+“Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
