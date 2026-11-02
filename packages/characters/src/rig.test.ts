@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { Rig, PRESETS, type Emotion } from "./rig";
+import { BLINK_CLOSE, BLINK_OPEN, Rig, PRESETS, blinkAt, blinkGap, fidgetGap, type Emotion } from "./rig";
 
 function settle(rig: Rig, seconds: number) {
   let pose = rig.update(0);
@@ -155,5 +155,111 @@ describe("Rig reduced motion", () => {
     calm.setPosition(0, 0, 1 / 60);
     calm.setPosition(10, 0, 1 / 60);
     expect(calm.update(1 / 60).accel).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("Rig liveliness (motion notes §4.4)", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("closes a blink faster than it opens it", () => {
+    expect(BLINK_CLOSE).toBeLessThan(BLINK_OPEN);
+    expect(blinkAt(0)).toBe(1);
+    expect(blinkAt(BLINK_CLOSE)).toBeCloseTo(0, 5);
+    expect(blinkAt(BLINK_CLOSE / 2)).toBeCloseTo(0.5, 5);
+    expect(blinkAt(BLINK_CLOSE + BLINK_OPEN / 2)).toBeCloseTo(0.5, 5);
+    expect(blinkAt(BLINK_CLOSE + BLINK_OPEN)).toBe(1);
+  });
+
+  it("blinks less while thinking or working, as people do while reading", () => {
+    expect(blinkGap("thinking")[0]).toBeGreaterThanOrEqual(6);
+    expect(blinkGap("focused")[0]).toBeGreaterThanOrEqual(6);
+    expect(blinkGap("neutral")).toEqual([2.5, 5]);
+    // Counted over a minute: fewer blinks thinking than at rest.
+    const count = (e: Emotion) => {
+      const rig = new Rig();
+      rig.alive = false;
+      rig.setEmotion(e);
+      let n = 0, was = 1;
+      for (let i = 0; i < 60 * 60; i++) { const o = rig.update(1 / 60).face.open; if (o < 0.3 && was >= 0.3) n++; was = o; }
+      return n;
+    };
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    expect(count("thinking")).toBeLessThan(count("neutral"));
+  });
+
+  it("gives one long \"got it\" blink when the user's request ends", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    rig.setEmotion("listening");
+    settle(rig, 1.5);
+    rig.setEmotion("thinking");
+    let closedFor = 0;
+    for (let i = 0; i < 60; i++) if (rig.update(1 / 60).face.open < 0.5 * PRESETS.thinking.face.open!) closedFor += 1 / 60;
+    // A plain blink is closed for well under 0.1 s; this one longer.
+    expect(closedFor).toBeGreaterThan(0.1);
+  });
+
+  it("enters listening and \"Needs you\" without the anticipation pop", () => {
+    // The pop is a kick to the squash spring: in the first frame after the change, the body jumps up.
+    const kick = (e: Emotion) => {
+      const rig = new Rig();
+      rig.alive = false;
+      settle(rig, 2);
+      const before = rig.update(0).face.squash;
+      rig.setEmotion(e);
+      return rig.update(1 / 60).face.squash - before;
+    };
+    expect(kick("listening")).toBeLessThan(0.01);
+    expect(kick("worried")).toBeLessThan(0.01);
+    expect(kick("curious")).toBeGreaterThan(0.025);
+  });
+
+  it("fidgets less often after a minute of idling, never more", () => {
+    expect(fidgetGap(10)).toEqual([5, 10]);
+    expect(fidgetGap(120)[0]).toBeGreaterThan(fidgetGap(10)[0]);
+  });
+
+  it("moves its mouth and glow with the loudness of its own voice, and keeps the flap for the system's voice", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    rig.setTalking(true);
+    rig.setTalkLevel(0);
+    const quiet = settle(rig, 0.5);
+    rig.setTalkLevel(1);
+    const loud = settle(rig, 0.3);
+    expect(loud.talk).toBeGreaterThan(quiet.talk + 0.5);
+    expect(loud.face.energy).toBeGreaterThan(quiet.face.energy + 0.1);
+    // Silence closes it.
+    rig.setTalkLevel(0);
+    expect(settle(rig, 0.5).talk).toBeLessThan(0.05);
+    // No level (the system's voice): the syllable flap.
+    rig.setTalkLevel(null);
+    let flap = 0;
+    for (let i = 0; i < 60; i++) flap = Math.max(flap, rig.update(1 / 60).talk);
+    expect(flap).toBeGreaterThan(0.3);
+  });
+
+  it("holds still once asleep, so the overlay can stop drawing", () => {
+    const rig = new Rig();
+    rig.sleepAfter = 2;
+    settle(rig, 3);
+    expect(rig.asleep).toBe(true);
+    settle(rig, 4);
+    expect(rig.settled).toBe(true);
+    // And stays so: no saccades or blinks while asleep.
+    let still = true;
+    for (let i = 0; i < 60 * 5; i++) { rig.update(1 / 60); if (!rig.settled) still = false; }
+    expect(still).toBe(true);
+  });
+
+  it("settles every spring without overshoot in Calm", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    rig.reducedMotion = true;
+    settle(rig, 2);
+    rig.setEmotion("sad");
+    let low = Infinity;
+    for (let i = 0; i < 60 * 3; i++) low = Math.min(low, rig.update(1 / 60).face.mouth);
+    expect(low).toBeGreaterThanOrEqual(PRESETS.sad.face.mouth! - 0.01);
   });
 });
