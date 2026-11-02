@@ -24,6 +24,7 @@ import { nativePackage } from "../voice/runtime";
 import { NATURAL_COST, NATURAL_MAX_RTF } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
+import { readLevel, type SoundLevel } from "../shared/level";
 import { VOICE, type MicState, type MicStatus, type SpeakRequest, type SpeechAudio, type SpeechPlayed } from "../shared/voice";
 import type { Logger } from "./logger";
 import { pageUrl } from "./page-url";
@@ -82,6 +83,11 @@ export interface VoiceOptions {
   onSpeech?: (ok: boolean) => void;
   /** Ember started (true) or stopped (false) making sound, as the page that speaks tells it (turn-latency.ts). */
   onSelfSpeaking?: (on: boolean) => void;
+  /**
+   * The sound's level for Ember's presence (app/shared/level.ts): the microphone's only while Ember hears a request,
+   * its own voice's while that plays; null when that stream ended. A level in eight steps, never audio.
+   */
+  onLevel?: (l: SoundLevel) => void;
   /** Speak in Ember's own neural voice once its model is in (app/voice/tts.ts); otherwise always the system's voice. */
   neuralVoice?: boolean;
   /**
@@ -230,6 +236,14 @@ export class VoiceService {
     ipcMain.on(VOICE.played, (e, p: SpeechPlayed) => {
       const page = this.mic && e.sender === this.mic.webContents ? "mic" : e.sender === this.speaker?.wc ? "speaker" : null;
       if (page) this.o.log.info("voice.audio_played", { id: Number(p?.id), seconds: Number(p?.seconds), page });
+    });
+    ipcMain.on(VOICE.level, (e, v: unknown) => {
+      if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
+      const l = readLevel(v);
+      if (!l) return;
+      // The microphone's level counts only while Ember hears a request (a late one after that is dropped).
+      if (l.mic !== undefined && l.mic !== null && this.state !== "active") delete l.mic;
+      if (Object.keys(l).length) this.o.onLevel?.(l);
     });
     ipcMain.on(VOICE.speaking, (e, on: boolean) => {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
@@ -811,6 +825,12 @@ export class VoiceService {
   }
 
   private setState(s: MicState, detail?: string): void {
+    const hearing = s === "active";
+    if (hearing !== (this.state === "active")) {
+      // The mic page sends the microphone's level only while Ember hears a request; the meter stops at once after.
+      if (this.mic && !this.mic.isDestroyed()) this.mic.webContents.send(VOICE.levelOn, hearing);
+      if (!hearing) this.o.onLevel?.({ mic: null });
+    }
     this.state = s;
     this.o.onState(s, detail);
   }

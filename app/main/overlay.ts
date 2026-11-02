@@ -21,6 +21,7 @@ import { applyAllWorkspaces } from "./platform/compose";
 import { linuxOverlayShaper } from "./platform/linux/overlay-shaper";
 import { pageUrl } from "./page-url";
 import { OVERLAY, IDLE_BUBBLE, type EmberState, type OverlayInit, type Rect } from "../shared/overlay";
+import type { SoundLevel } from "../shared/level";
 
 const appDir = __dirname;
 
@@ -186,6 +187,15 @@ export class OverlayManager {
 
   getState(): EmberState {
     return this.state;
+  }
+
+  /**
+   * The sound's level for Ember's presence ring and voice meter (app/shared/level.ts): passed straight on, apart from the
+   * state, so a level 20 times a second never resends the bubble and the cards. Not while Ember is hidden.
+   */
+  setLevel(l: SoundLevel): void {
+    if (this.hidden && Object.values(l).some(v => v !== null)) return;
+    for (const o of this.overlays.values()) if (!o.win.isDestroyed()) o.win.webContents.send(OVERLAY.level, l);
   }
 
   broadcastSettings(s: Settings): void {

@@ -41,11 +41,16 @@ export function settingsSection(phase: string | undefined, rows: readonly SetupR
 }
 
 /**
- * The word on Ember's handle while Copilot is ready but a row holds Ember back (review #95): "Ready" would say there is
- * nothing to do. null: the agent's own word (idleWord), which says more while Copilot isn't ready.
+ * What Ember's handle says while Copilot is ready but a row holds Ember back (review #95: "Ready" would say there is
+ * nothing to do): the row by name ("Fix “Screen reading”"), or how many when several do, so it says what the problem
+ * is (UI audit #5). The handle says it only when nothing more urgent is going on (handle/line.ts). null: nothing holds
+ * Ember back, or Copilot isn't ready (the agent's own word, idleWord, says more then).
  */
 export function setupIdle(phase: string | undefined, rows: readonly SetupRow[]): string | null {
-  return phase === "ready" && rows.some(holdsBack) ? "Setup needed" : null;
+  if (phase !== "ready") return null;
+  const held = rows.filter(holdsBack);
+  if (!held.length) return null;
+  return held.length === 1 ? `Fix “${held[0].label}”` : `${held.length} setup checks to fix`;
 }
 
 /**
