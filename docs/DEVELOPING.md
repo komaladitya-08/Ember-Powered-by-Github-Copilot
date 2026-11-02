@@ -228,7 +228,13 @@ arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Ma
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
+“OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
+record of its tasks (the step each one is on, how many wait, how the last one went), with no Copilot request, so it
+works offline too. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
+reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
+**Voice**). “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
+whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
 reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken, and sends a notification if
 you are away. Only your own words set one. Reminders last while Ember runs, unless you turn on **Keep my routines
 and reminders** under **Conversation** (and agree to its note): then they are kept in `routines.json` (mode 0600) and a

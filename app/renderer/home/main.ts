@@ -440,7 +440,7 @@ function renderAdmin(a: Status["admin"]): void {
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
   if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -1166,6 +1166,7 @@ function applyVoiceSettings(s: Status["settings"]): void {
   voiceSettings = { wakeWord: s.wakeWord, consent: s.voice.consent };
   ($("wake") as HTMLInputElement).checked = s.wakeWord && s.voice.consent;
   ($("speak") as HTMLSelectElement).value = speakChoice(s);
+  ($("speak-results") as HTMLInputElement).checked = s.speakResults;
   ($("natural") as HTMLInputElement).checked = s.voice.natural;
   if (voice) renderVoice(voice);
 }
@@ -1188,6 +1189,7 @@ $("natural").addEventListener("change", e => {
   void save({ voice: { ...(settings?.voice ?? { consent: false, speakerRejection: true, muted: false, match: false }), natural: on } });
 });
 $("speak").addEventListener("change", e => { void save(speakSettings((e.target as HTMLSelectElement).value as SpeakChoice)); });
+$("speak-results").addEventListener("change", e => { void save({ speakResults: (e.target as HTMLInputElement).checked }); });
 $("voice-download").addEventListener("click", () => {
   void window.ember.downloadVoice();
   // The button goes while it downloads: focus stays in the section.

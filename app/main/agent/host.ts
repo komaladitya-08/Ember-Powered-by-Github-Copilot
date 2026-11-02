@@ -41,6 +41,7 @@ import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
+import { catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -135,6 +136,8 @@ export interface HostOptions {
   onReminder?: (r: Reminder) => void;
   /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
   routines?: RoutineBook;
+  /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
+  health?: () => Pick<Health, "mic" | "speaks">;
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -1681,6 +1684,23 @@ export class AgentHost {
     return this.tasks?.list().some(t => t.status === "running" || t.status === "queued") ?? false;
   }
 
+  /** No conversation turn is under way or owed: a request answered here can't cut into one. */
+  private betweenTurns(): boolean {
+    return !this.presenter.busy && !this.queued.length;
+  }
+
+  /**
+   * Answers `text` with Ember's own `reply`, without a Copilot turn: kept in the conversation, shown and spoken as an
+   * answer, and (asked by voice) followed by the usual follow-up window.
+   */
+  private answerLocally(text: string, reply: string, voiceUnchecked?: boolean): void {
+    const asked = this.remember("you", text);
+    if (voiceUnchecked) this.voiceUnchecked.add(asked);
+    this.presenter.say(reply);
+    this.o.onAnswer?.(reply);
+    this.o.onTurnEnd?.(false);
+  }
+
   /** Requests sent whose turn hasn't started yet, oldest first (a request sent during a turn waits for it to end). */
   private queued: UserRequest[] = [];
   /**
@@ -1696,6 +1716,39 @@ export class AgentHost {
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (UserRequest.voiceUnchecked). */
   async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<void> {
     if (epoch !== this.stopEpoch) return;
+    // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
+    // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
+    // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
+    const results = resultsRequest(text);
+    if (results && this.betweenTurns()) {
+      try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
+      this.o.log.info("agent.results_switch", { on: results === "loud" });
+      this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
+      return;
+    }
+    // "Systems check": Ember's report on itself, which works when Copilot doesn't.
+    if (healthQuestion(text) && this.betweenTurns()) {
+      const health: Health = {
+        phase: this.status.phase, ...(this.status.detail ? { detail: this.status.detail } : {}),
+        mic: "off", speaks: false, ...this.o.health?.(), tasks: this.tasks?.list().filter(t => t.status === "running" || t.status === "queued").length ?? 0,
+      };
+      this.o.log.info("agent.health_local", { phase: health.phase, mic: health.mic });
+      this.answerLocally(text, healthReply(health), how.voiceUnchecked);
+      return;
+    }
+    // "What did I miss?": the tasks that finished lately, from Ember's own record.
+    if (catchUpQuestion(text) && this.betweenTurns()) {
+      this.o.log.info("agent.catch_up_local");
+      this.answerLocally(text, catchUpReply(this.tasks?.list() ?? [], Date.now()), how.voiceUnchecked);
+      return;
+    }
+    const status = statusQuestion(text);
+    if (status && this.betweenTurns()) {
+      const tasks = this.tasks?.list() ?? [];
+      this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
+      this.answerLocally(text, statusReply(status, tasks, Date.now()), how.voiceUnchecked);
+      return;
+    }
     // The conversation's last turn went silent and is being ended (a moment): the request waits to see whether the
     // conversation goes on, or Copilot is being reconnected (then it waits for that below).
     const ending = this.conductor?.ending;
