@@ -102,6 +102,12 @@ describe("Search settings", () => {
     for (const id of Object.keys(SEARCH_ALIASES)) expect(id).toMatch(/-h$/);
   });
 
+  it("finds the Model provider group by the words people use for bringing their own key", () => {
+    const items = [{ pane: "copilot", text: "Model provider", alias: SEARCH_ALIASES["byok-h"] }, { pane: "voice", text: "Voice", alias: SEARCH_ALIASES["voice-h"] }];
+    for (const q of ["byok", "api key", "provider", "openai", "ollama", "LM Studio"]) expect(searchMatches(q, items).map(i => i.text), q).toEqual(["Model provider"]);
+    expect(fs.readFileSync("app/renderer/home/index.html", "utf8")).toContain('<h3 class="sub" id="byok-h">Model provider</h3>');
+  });
+
   it("says how many it found and where, for a screen reader", () => {
     expect(searchMessage("", 0, 0)).toBe("");
     expect(searchMessage("zzz", 0, 0)).toBe("Nothing found. Try another word.");
