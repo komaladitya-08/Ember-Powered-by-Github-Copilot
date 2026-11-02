@@ -5,6 +5,8 @@ import { BUBBLE_CSS } from "@ember/bubble";
 
 const read = (f: string) => readFileSync(new URL(`../../${f}`, import.meta.url), "utf8");
 const shared = read("app/renderer/shared/ember.css");
+/** Views' own sheet (app/renderer/shared/view.css), linked by every page that shows views. */
+const viewCss = read("app/renderer/shared/view.css");
 const PAGES = ["home", "overlay", "handle", "ask", "desk", "command", "prompt"];
 
 /** A token's value in the shared stylesheet's :root (the first one: the dark appearance). */
@@ -144,7 +146,7 @@ describe("the keyboard focus ring", () => {
 
 describe("shape", () => {
   it("rounds corners only from the radius tokens (or a circle, a capsule's half, or what a parent passes on)", () => {
-    const sources = [shared, BUBBLE_CSS, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
+    const sources = [shared, viewCss, BUBBLE_CSS, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
     // A capsule's half grows with the text size too, as the field it rounds does (the ask box's: review #57).
     const ok = /^(var\(--r-[a-z]+(, \d+px)?\)( var\(--r-[a-z]+\))*|calc\(var\(--r-[a-z]+\) \+ \d+px\)|calc\(\(var\(--r-[a-z]+\) \+ \d+px\) \* var\(--text-scale\)\)|50%|0|inherit|1px)$/;
     for (const css of sources) for (const [, v] of css.matchAll(/border-radius: ([^;]+);/g)) expect(v, v).toMatch(ok);
@@ -178,7 +180,7 @@ describe("every window", () => {
 
   it("animates only opacity and transforms, and the bubble's glow breathes a few times, not forever", () => {
     // Under software compositing anything else animated repaints its layer every frame.
-    for (const css of [BUBBLE_CSS, shared, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))]) {
+    for (const css of [BUBBLE_CSS, shared, viewCss, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))]) {
       for (const [, body] of css.matchAll(/@keyframes [\w-]+ \{((?:[^{}]*\{[^}]*\})*)[^}]*\}/g)) {
         for (const [, prop] of body.matchAll(/([\w-]+):/g)) expect(["opacity", "transform", "translate", "scale"], body).toContain(prop);
       }
@@ -201,7 +203,7 @@ describe("every window", () => {
   });
 
   it("lists every keyframe, and lets only small opacity pulses run forever (the HUD's lock-on, ring glow and done are finite)", () => {
-    const sheets = [BUBBLE_CSS, shared, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
+    const sheets = [BUBBLE_CSS, shared, viewCss, ...PAGES.map(p => read(`app/renderer/${p}/styles.css`))];
     const names = sheets.flatMap(css => [...css.matchAll(/@keyframes ([\w-]+)/g)].map(m => m[1])).sort();
     expect(names).toEqual(["dot-fill", "eb-blink", "eb-glow", "eb-lock", "eb-pulse", "focus-glow", "pulse", "ring-done", "ring-glow", "ring-pulse", "tick-pop"]);
     const endless = sheets.flatMap(css => [...css.matchAll(/animation: ([\w-]+) [^;]*infinite/g)].map(m => m[1])).sort();
@@ -408,9 +410,27 @@ describe("Liquid Glass on the floating layer (see-through, measured over a white
     expect(token("accent-text-on-glass")).toBe("var(--accent)");
     // And a system colour in contrast themes, as every word colour is.
     expect(forced(shared, ":root")).toContain("--accent-text-on-glass: CanvasText;");
-    // The Ask box's note of a cut paste: the caution colour is under 4.5:1 on Clear, so its words take the label's.
-    expect(contrast(solid(clearToken("yellow")), g)).toBeLessThan(4.5);
+    // The Ask box's note of a cut paste takes the label's colour on Clear.
     expect(read("app/renderer/ask/styles.css")).toContain('html[data-glass="clear"] .cut { color: var(--label); }');
+  });
+
+  it("keeps a view's words and marks readable on a card's glass, Regular and Clear, with a white page behind (views v2)", () => {
+    // view.css: each tone's ink (its words) and mark, on the view's faint tile, a badge's tint (16 %) and a callout's (10 %).
+    const TONES: [string, string][] = [["gray", "glass-label-2"], ["blue", "label"], ["green", "green-text"], ["yellow", "yellow"], ["red", "red-text"], ["purple", "purple-text"]];
+    expect(viewCss).toContain("--vw-fill: color-mix(in srgb, var(--fill) 55%, transparent);");
+    expect(viewCss).toContain('html[data-glass="clear"] :is(.vw-badge, .vw-callout) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }');
+    for (const [glass, g, tok] of [["regular", regular(), token], ["clear", clearGlass(), clearToken]] as const) {
+      const fill = parse(tok("fill"));
+      const tile = over(`rgba(${fill.rgb.join(", ")}, ${fill.a * 0.55})`, hex(g));
+      for (const [tone, ink] of TONES) {
+        const inkC = (bg: RGB) => contrast(over(tok(ink), hex(bg)), bg);
+        // (On Clear the tints darken by 0.2 black under their words.)
+        const tint = (a: number) => { const t = over(`rgba(${solid(tok(tone)).join(", ")}, ${a})`, hex(g)); return glass === "clear" ? over("rgba(0, 0, 0, 0.2)", hex(t)) : t; };
+        const badge = tint(0.16), callout = tint(0.1);
+        for (const [where, bg] of [["glass", g], ["tile", tile], ["badge", badge], ["callout", callout]] as const) expect(inkC(bg), `${tone} words on ${where} (${glass})`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(solid(tok(tone)), g), `${tone} mark (${glass})`).toBeGreaterThanOrEqual(3);
+      }
+    }
   });
 
   it("lets Increase Contrast, Reduce Transparency and Calm win over Clear (they always make it solid)", () => {
@@ -508,5 +528,40 @@ describe("the motion system (docs/DESIGN.md \"Motion\")", () => {
     // A card waiting for you doesn't fill its plan's dot; a question's dot never pulses.
     expect(read("app/renderer/overlay/styles.css")).toContain('.task:not([data-status="waiting"]) .plan li[data-state="now"]::before { animation: dot-fill');
     expect(BUBBLE_CSS).toMatch(/:not\(\[data-mood="attention"\]\) \.eb-dot \{\s*animation: eb-pulse/);
+  });
+});
+
+describe("views (app/renderer/shared/view.css)", () => {
+  const plain = viewCss.replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("are linked after the design system and before the page's own styles, wherever views are drawn", () => {
+    const html = read("app/renderer/overlay/index.html");
+    const at = html.indexOf('href="../shared/view.css"');
+    expect(at).toBeGreaterThan(html.indexOf('href="../shared/ember.css"'));
+    expect(at).toBeLessThan(html.indexOf('href="styles.css"'));
+  });
+
+  it("never take Ember's accent, its glass, a blur or its status symbols: a view is the task's, read-only", () => {
+    expect(plain).not.toMatch(/--accent|--glow|--glass|backdrop-filter|--sym-(working|waiting|queued|done|failed|stopped)|--r-capsule/);
+  });
+
+  it("don't move: no animation, and the one transition is the fade of a replaced node, which Calm stops", () => {
+    expect(plain).not.toMatch(/animation|@keyframes/);
+    const transitions = [...plain.matchAll(/([^{}]+)\{[^}]*transition: ([^;]+);/g)].map(m => [m[1].trim(), m[2]]);
+    expect(transitions.map(([, v]) => v)).toEqual(["opacity 120ms ease", "none"]);
+    for (const [sel] of transitions) expect(sel).toMatch(/\.vw-fresh$|prefers-reduced-motion/);
+    expect(shared).toMatch(/html\.calm \*, html\.calm \*::before, html\.calm \*::after \{[^}]*transition-duration: 0s !important/);
+  });
+
+  it("keep every group and mark visible in forced colours, the tones as the text colour (WCAG 1.4.1, 1.4.11)", () => {
+    expect(forced(viewCss, ".vw [data-tone]")).toContain("--vw-tone: CanvasText;");
+    for (const sel of [".vw-card", ".vw-metric", ".vw-callout", ".vw-badge"]) expect(forced(viewCss, sel), sel).toMatch(/border: 1px solid CanvasText/);
+    expect(forced(viewCss, ".vw-sym")).toContain("background: CanvasText;");
+    expect(forced(viewCss, ".vw-fill")).toContain("fill: Highlight;");
+  });
+
+  it("tell a chart's series apart by a dash as well as a tone (never colour alone)", () => {
+    expect(viewCss).toContain('[data-series="1"].vw-line { stroke-dasharray: 5 3; }');
+    expect(viewCss).toContain('[data-series="2"].vw-line { stroke-dasharray: 1.5 3; }');
   });
 });

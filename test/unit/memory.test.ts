@@ -49,6 +49,9 @@ describe("what memory never keeps", () => {
     ["token ghp_" + "a".repeat(36)],
     ["Card 4111 1111 1111 1111 for the hotel"],
     ["api_key=sk-12345678"],
+    // A private key's first line alone, with no END line (audit of main's view checks).
+    ["-----BEGIN OPENSSH PRIVATE KEY-----"],
+    ["my key: -----BEGIN RSA PRIVATE KEY----- b3BlbnNzaC1rZXktdjEAAAAA"],
   ])("refuses %j", text => {
     expect(memoryRefusal(text)).not.toBeNull();
   });
@@ -57,6 +60,10 @@ describe("what memory never keeps", () => {
     ["Uses a password manager"],
     ["Order number 1234 5678 9012 3456 shipped"],
     ["Works on the Atlas project with Priya"],
+    // A secret's name with no value after it (re-review of #126).
+    ["Password: changed yesterday"],
+    ["Pin: the tab is pinned"],
+    ["The passcode is required at sign-in"],
   ])("keeps %j", text => {
     expect(memoryRefusal(text)).toBeNull();
   });

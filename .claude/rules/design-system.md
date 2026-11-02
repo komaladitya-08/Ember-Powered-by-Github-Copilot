@@ -224,10 +224,13 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Task state.** It is `data-status="running|queued|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Waiting its turn: ", "Waiting for you: " …). Every surface takes its state words from the one table, `STATUS_WORDS` in app/shared/activity.ts. Show selection with a ring plus a check.
 - **Task activity on cards.** A card's live line, telemetry row, summary and Details rows are built from the task's activity (app/shared/activity.ts, app/main/agent/activity.ts) in Ember's own words, never from the model's arguments, reasoning or screen text. The worker's own note is the one model text, in `--label-2`, never styled as Ember's voice. The clock is written as text by one shared one-second tick that runs only while a card under way shows: no re-render and no animation.
 - **Task activity in Home.** The same words, a group per task (app/renderer/home/tasks.ts, tasks-copy.ts), opaque and still, from main's in-memory list (`tasks:activity`, pushed at most every `TASKS_PUSH_MS`). It may also show what a question asked, in Ember's words built from the step's kind and app only (`askedWords`: never the typed text or names from the screen), and where it is answered (the bubble, the command window or a consent card), which the cards never show. Home never answers a question: it says where it is asked and which keys answer it. Its result view goes through the one `resultView` function.
-- **Generative views on cards.** A task's result `view` comes only from app/shared/view.ts's catalog, checked by
-  `ViewSchema`, and is drawn by app/renderer/overlay/view.ts with `textContent` alone. It has no links, buttons,
-  images or markup. A new block kind needs all of these: the type, the schema, the drawing, `viewText`, the
-  forced-colours rule and a test.
+- **Views** (docs/DESIGN.md "Views"). A task's view comes only from app/shared/view.ts's catalog (`ember.view/2`),
+  checked whole by app/main/agent/view-schema.ts, and is drawn by app/renderer/shared/view-dom.ts (one module for the
+  card and, next, Home) with `textContent` and static SVG alone, styled only by app/renderer/shared/view.css. It has no
+  links, buttons, images, markup or inline styles, never takes the accent, glass, a capsule or a status symbol, and
+  doesn't move except the one fade of a replaced node. Ember writes its frame ("Found by …") and a quote's caption. A
+  new block kind needs all of these: the type, the schema (`VIEW_KINDS`, which also writes the model's instructions),
+  the drawing, `nodeLines` (its text form), the forced-colours rule and tests (view-schema, view-dom).
 - **Failed tasks.** A failed task's card stays longer so it can be read: 60 s (TaskManager's `failureCardMs`), against 15 s (`cardMs`) for done and stopped cards. Then it leaves on its own. Close, Close all or Stop everything removes it sooner. A failed task that did work (not a guide) offers Try again, a click only: the same request starts again as a new task and asks every question again.
 
 ## Motion and performance

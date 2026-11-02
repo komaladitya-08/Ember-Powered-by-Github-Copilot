@@ -1,13 +1,14 @@
 /**
  * The generative UI catalog's newer blocks (app/shared/view.ts, app/main/agent/view-schema.ts, app/renderer/overlay/
  * view.ts): checklist, progress, compare, excerpt and status. Each is checked against its limits, said as text for the
- * conversation, and drawn with textContent only (a small fake document records what the drawing does). An excerpt is
- * refused whole when a line holds a secret or its file lives where secrets do.
+ * conversation, and drawn (upgraded to the catalog's second version) with textContent only (a small fake document records
+ * what the drawing does). An excerpt is refused whole when a line holds a secret or its file lives where secrets do.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ViewSchema, excerptRefusal } from "../../app/main/agent/view-schema";
-import { TONE_WORD, VIEW_LIMITS, viewText, type ViewBlock } from "../../app/shared/view";
+import { TONE_WORD, VIEW_LIMITS, upgradeView, viewText, type ViewBlock } from "../../app/shared/view";
+import { useFakeDocument, type FakeEl } from "./view-dom-fake";
 
 const ok = (v: unknown) => ViewSchema.safeParse(v).success;
 
@@ -60,7 +61,7 @@ describe("an excerpt that would show a secret", () => {
 });
 
 describe("the newer blocks as text (the conversation, speech, the corner card without a compositor)", () => {
-  it("says each one in lines", () => {
+  it("says each one in lines, as the catalog's second version upgrades it", () => {
     const view: ViewBlock[] = [
       { kind: "checklist", items: [{ text: "Night Light on", done: true }, { text: "Schedule", done: false }] },
       { kind: "progress", label: "Renamed", value: 3, total: 12 },
@@ -68,63 +69,41 @@ describe("the newer blocks as text (the conversation, speech, the corner card wi
       { kind: "excerpt", path: "~/todo.txt", lines: ["Milk", "Eggs"] },
       { kind: "status", tone: "fail", text: "One file couldn't be renamed" },
     ];
-    expect(viewText(view)).toBe("[x] Night Light on\n[ ] Schedule\nRenamed: 3 of 12\nBefore / After\nSize: 4 MB / 1 MB\n~/todo.txt\nMilk\nEggs\nProblem: One file couldn't be renamed");
+    expect(viewText(view)).toBe("Done: Night Light on\nTo do: Schedule\nRenamed: 3 of 12\nBefore / After\nSize: 4 MB / 1 MB\n~/todo.txt\nMilk\nEggs\nProblem: One file couldn't be renamed");
     expect(TONE_WORD).toEqual({ ok: "OK: ", warn: "Worth a look: ", fail: "Problem: " });
   });
 });
 
-/** A fake document: elements record their tag, properties and children, and refuse innerHTML outright. */
-interface FakeEl { tag: string; props: Record<string, unknown>; children: (FakeEl | string)[]; style: Record<string, string>; dataset: Record<string, string>; attrs: Record<string, string> }
-function fakeDocument() {
-  const make = (tag: string): FakeEl => {
-    const e: FakeEl & Record<string, unknown> = {
-      tag, props: {}, children: [], style: {}, dataset: {}, attrs: {},
-      append: (...c: (FakeEl | string)[]) => { e.children.push(...c); },
-      setAttribute: (k: string, v: string) => { e.attrs[k] = v; },
-      tHead: null, tBodies: [] as FakeEl[],
-    };
-    return new Proxy(e, {
-      set(t, k, v) {
-        if (k === "innerHTML" || k === "outerHTML") throw new Error("markup is never set");
-        if (["tHead", "tBodies"].includes(String(k))) { (t as Record<string, unknown>)[String(k)] = v; return true; }
-        t.props[String(k)] = v;
-        return true;
-      },
-      get(t, k) {
-        if (k === "append" && tag === "table") return (...c: FakeEl[]) => { t.children.push(...c); t.tHead = c.find(x => x.tag === "thead") ?? t.tHead; t.tBodies = c.filter(x => x.tag === "tbody"); };
-        return k in t ? (t as Record<string, unknown>)[String(k)] : t.props[String(k)];
-      },
-    }) as unknown as FakeEl;
-  };
-  return { createElement: make, createTextNode: (s: string) => s };
-}
-const text = (e: FakeEl | string): string => (typeof e === "string" ? e : `${(e.props.textContent as string | undefined) ?? ""}${e.children.map(text).join("")}`);
-
 describe("drawing the newer blocks", () => {
-  const saved = (globalThis as { document?: unknown }).document;
-  beforeEach(() => { (globalThis as { document?: unknown }).document = fakeDocument(); });
-  afterEach(() => { (globalThis as { document?: unknown }).document = saved; });
+  let restore = () => {};
+  beforeEach(() => { restore = useFakeDocument(); });
+  afterEach(() => restore());
 
-  it("sets every string as text, a progress bar's width from its numbers, and each state in words for screen readers", async () => {
-    const { viewNodes, activityItems } = await import("../../app/renderer/overlay/view");
-    const [check, progress, compare, excerpt, status] = viewNodes([
+  it("sets every string as text, a progress bar's length as SVG geometry, and each state in words for screen readers", async () => {
+    const { renderView } = await import("../../app/renderer/shared/view-dom");
+    const root = renderView(upgradeView([
       { kind: "checklist", items: [{ text: "<b>on</b>", done: true }] },
       { kind: "progress", label: "Renamed", value: 3, total: 12 },
       { kind: "compare", columns: ["Before", "After"], rows: [{ label: "Size", a: "4 MB", b: "1 MB" }] },
       { kind: "excerpt", path: "~/todo.txt", lines: ["Milk", "Eggs"] },
       { kind: "status", tone: "ok", text: "All renamed" },
-    ]) as unknown as FakeEl[];
-    expect(text(check)).toBe("Done: <b>on</b>");
-    expect(text(progress)).toBe("Renamed3 of 12");
-    const bar = (progress.children[1] as FakeEl);
+    ]), { profile: "card" }) as unknown as FakeEl;
+    const [check, progress, compare, excerpt, status] = root.find("vw-stack")!.children;
+    expect(check.textContent).toBe("Done: <b>on</b>");
+    expect(progress.textContent).toBe("Renamed3 of 12");
+    const bar = progress.find("vw-bar")!;
     expect(bar.attrs["aria-hidden"]).toBe("true");
-    expect((bar.children[0] as FakeEl).style.width).toBe("25%");
-    expect(compare.props.className).toBe("compare");
-    expect(text(excerpt)).toBe("~/todo.txtMilk\nEggs");
-    expect(status.dataset.tone).toBe("ok");
-    expect(text(status)).toBe("OK: All renamed");
+    expect(bar.find("vw-fill")!.attrs.width).toBe("25");
+    expect(compare.className).toContain("vw-compare");
+    expect(excerpt.textContent).toBe("~/todo.txtMilk\nEggs");
+    expect(status.getAttribute("data-tone")).toBe("positive");
+    expect(status.textContent).toBe("OK: All renamed");
+  });
+
+  it("draws the card's activity rows with their state in words", async () => {
+    const { activityItems } = await import("../../app/renderer/overlay/view");
     const [row, note] = activityItems([{ at: 12_000, state: "failed", words: "Clicked once" }, { at: 14_000, state: "done", words: "Trying the search", model: true }]) as unknown as FakeEl[];
-    expect(text(row)).toBe("Didn't work: 12sClicked once");
-    expect(text(note)).toBe("Note: 14sTrying the search");
+    expect(row.textContent).toBe("Didn't work: 12sClicked once");
+    expect(note.textContent).toBe("Note: 14sTrying the search");
   });
 });

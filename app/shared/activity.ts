@@ -7,7 +7,7 @@
  * reasoning, tool arguments, screen text and error messages never reach these words.
  */
 
-import type { PlanStep, TaskHand, ViewBlock } from "./view";
+import type { PlanStep, TaskHand, ViewDoc } from "./view";
 
 /** A task's state in words, one table for every surface, so a state reads the same wherever it is seen or heard. */
 export const STATUS_WORDS = {
@@ -86,7 +86,8 @@ export interface TaskEntry {
   plan?: PlanStep[];
   /** How it ended, in the worker's words (finish_task's summary), and what it found or made. */
   summary?: string;
-  view?: ViewBlock[];
+  /** What it shows: its live view while it works (show_view), what it found or made once it ended. */
+  view?: ViewDoc;
   activity: TaskActivity;
 }
 
@@ -151,7 +152,7 @@ export interface CardActivity {
 export const ACTIVITY_LIMIT = 40;
 export const DETAIL_ROWS = 6;
 
-/** Each tool's kind of step (tools not listed are "other"; report_progress and finish_task make no step). */
+/** Each tool's kind of step (tools not listed are "other"; report_progress, the view tools and finish_task make no step). */
 export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   perceive_window: "read", describe_screen: "read",
   list_windows: "windows", switch_window: "switch",
@@ -165,8 +166,8 @@ export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   point_at: "point", wait_for_click: "wait",
 };
 
-/** Tools that are the task talking, not working: no step row for them. */
-export const NOT_STEPS: ReadonlySet<string> = new Set(["report_progress", "finish_task"]);
+/** Tools that are the task talking, not working: no step row for them (its views are on its card already). */
+export const NOT_STEPS: ReadonlySet<string> = new Set(["report_progress", "show_view", "update_view", "finish_task"]);
 
 /** A step kind's words once done: one step, and several. */
 const DONE_WORDS: Readonly<Record<StepGroup, { one: string; many: (n: number) => string }>> = {

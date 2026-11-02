@@ -199,9 +199,9 @@ describe("the command flow hears the user's own words only (critique security-1)
 });
 
 describe("tools by desktop access (§2.6)", () => {
-  it("no desktop: run_command, report_progress and finish_task only", () => {
-    expect(makeWorker({ target: HEADLESS, commands: commandService(HEADLESS) }).names()).toEqual(["run_command", "report_progress", "finish_task"]);
-    expect(makeWorker({ target: HEADLESS, commands: null }).names()).toEqual(["report_progress", "finish_task"]);
+  it("no desktop: run_command, report_progress, the view tools and finish_task only", () => {
+    expect(makeWorker({ target: HEADLESS, commands: commandService(HEADLESS) }).names()).toEqual(["run_command", "report_progress", "show_view", "update_view", "finish_task"]);
+    expect(makeWorker({ target: HEADLESS, commands: null }).names()).toEqual(["report_progress", "show_view", "update_view", "finish_task"]);
   });
 
   it("text: perceive_window without its image parameter", () => {

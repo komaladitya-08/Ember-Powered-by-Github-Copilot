@@ -12,7 +12,7 @@ import { TaskManager } from "../../app/main/agent/tasks";
 import type { Worker, WorkerResult } from "../../app/main/agent/worker";
 import type { Logger } from "../../app/main/logger";
 import type { EmberState, TaskCard } from "../../app/shared/overlay";
-import { HAND_WORDS, PLAN_WORD, planSteps, viewText, type PlanStep, type TaskHand } from "../../app/shared/view";
+import { HAND_WORDS, PLAN_WORD, planSteps, upgradeView, viewText, type PlanStep, type TaskHand, type ViewDoc } from "../../app/shared/view";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
 
@@ -67,19 +67,21 @@ describe("the view catalog", () => {
 });
 
 describe("a task's card", () => {
-  function setup(run: (update: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void) => Promise<WorkerResult>) {
+  function setup(run: (update: (u: { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }) => void) => Promise<WorkerResult>) {
     const cards: TaskCard[][] = [];
+    const views: [string, ViewDoc | null][] = [];
     const tm = new TaskManager({
       log: quiet, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0,
+      onView: (id, v) => views.push([id, v]),
       cardMs: 15_000, failureCardMs: 60_000,
       makeWorker: (_spec, _progress, update) => ({ run: () => run(update!), dispose: async () => undefined, sessionId: "s" }) as unknown as Worker,
     });
-    return { tm, cards };
+    return { tm, cards, views };
   }
 
   it("says how a task works and shows its plan while it works", async () => {
     let finish!: (r: WorkerResult) => void;
-    const { tm, cards } = setup(update => new Promise(resolve => {
+    const { tm, cards, views } = setup(update => new Promise(resolve => {
       finish = resolve;
       update({ plan: planSteps(["Open the sheet", "Find overdue rows"], 0) });
       update({ hand: "cursor" });
@@ -87,12 +89,14 @@ describe("a task's card", () => {
     const t = tm.start("Find the overdue invoices");
     await vi.waitFor(() => expect(cards.at(-1)?.[0].hand).toBe("cursor"));
     expect(cards.at(-1)?.[0].plan?.map(p => p.state)).toEqual(["now", "todo"]);
-    finish({ success: true, summary: "Two are overdue.", view: [{ kind: "list", items: ["Acme", "Globex"] }] });
+    finish({ success: true, summary: "Two are overdue.", view: upgradeView([{ kind: "list", items: ["Acme", "Globex"] }]) });
     await vi.waitFor(() => expect(tm.get(t.id)?.status).toBe("done"));
     const done = cards.at(-1)![0];
     expect(done.hand).toBeUndefined();
     expect(done.plan?.every(p => p.state === "done")).toBe(true);
-    expect(done.view).toEqual([{ kind: "list", items: ["Acme", "Globex"] }]);
+    // The view goes apart from the cards (main's ViewHub); the card says which rev it shows.
+    expect(done.viewRev).toBe(1);
+    expect(views.at(-1)?.[1] && viewText(views.at(-1)![1]!)).toBe("- Acme\n- Globex");
   });
 
   it("starts a task that does the work in the background", async () => {
@@ -104,13 +108,15 @@ describe("a task's card", () => {
   it("keeps a card with a result on screen as long as a failure, so it can be read", async () => {
     vi.useFakeTimers();
     try {
-      const { tm, cards } = setup(async () => ({ success: true, summary: "Done.", view: [{ kind: "text", text: "Three files moved." }] }));
-      tm.start("Move the files");
+      const { tm, cards, views } = setup(async () => ({ success: true, summary: "Done.", view: upgradeView([{ kind: "text", text: "Three files moved." }]) }));
+      const t = tm.start("Move the files");
       await vi.waitFor(() => expect(cards.at(-1)?.[0]?.status).toBe("done"));
       vi.advanceTimersByTime(20_000);
       expect(cards.at(-1)).toHaveLength(1);
       vi.advanceTimersByTime(41_000);
       expect(cards.at(-1)).toEqual([]);
+      // Its view goes with its card.
+      expect(views.at(-1)).toEqual([t.id, null]);
     } finally {
       vi.useRealTimers();
     }
@@ -146,5 +152,72 @@ describe("the bubble beside the cursor", () => {
     const { p, bubbles } = presenter(false);
     p.progress("Finding the button…");
     expect(bubbles().at(-1)).toMatchObject({ visible: true, thought: "Finding the button…" });
+  });
+});
+
+describe("a task's live view", () => {
+  it("shows on its card while it works, one rev on at the end, and finish_task's view takes its place", async () => {
+    let finish!: (r: WorkerResult) => void;
+    let update!: (u: { view?: ViewDoc }) => void;
+    const cards: TaskCard[][] = [];
+    const views: [string, ViewDoc | null][] = [];
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: c => cards.push(c), deleteSession: async () => undefined, keepMs: 0,
+      onView: (id, v) => views.push([id, v]),
+      makeWorker: (_spec, _progress, u) => { update = u!; return { run: () => new Promise<WorkerResult>(r => { finish = r; }), dispose: async () => undefined, sessionId: "s" } as unknown as Worker; },
+    });
+    const t = tm.start("Count the overdue invoices");
+    await vi.waitFor(() => expect(update).toBeDefined());
+    update({ view: { ...upgradeView([{ kind: "text", text: "Checked 3 of 12" }]), rev: 4 } });
+    await vi.waitFor(() => expect(cards.at(-1)?.[0].viewRev).toBe(4));
+    expect(cards.at(-1)?.[0].status).toBe("running");
+    finish({ success: true, summary: "Two are overdue.", view: upgradeView([{ kind: "text", text: "Two overdue" }]) });
+    await vi.waitFor(() => expect(tm.get(t.id)?.status).toBe("done"));
+    expect(cards.at(-1)?.[0].viewRev).toBe(5);
+    expect(viewText(views.at(-1)![1]!)).toBe("Two overdue");
+  });
+
+  it("stays as the result when finish_task gives none", async () => {
+    let update!: (u: { view?: ViewDoc }) => void;
+    let finish!: (r: WorkerResult) => void;
+    const views: [string, ViewDoc | null][] = [];
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, onView: (id, v) => views.push([id, v]),
+      makeWorker: (_spec, _progress, u) => { update = u!; return { run: () => new Promise<WorkerResult>(r => { finish = r; }), dispose: async () => undefined, sessionId: "s" } as unknown as Worker; },
+    });
+    const t = tm.start("Tally it");
+    await vi.waitFor(() => expect(update).toBeDefined());
+    update({ view: upgradeView([{ kind: "text", text: "12 rows" }]) });
+    finish({ success: true, summary: "Done." });
+    await vi.waitFor(() => expect(tm.get(t.id)?.status).toBe("done"));
+    expect(tm.get(t.id)?.view && viewText(tm.get(t.id)!.view!)).toBe("12 rows");
+  });
+
+  it("reaches Home's Task activity too, live while the task works", async () => {
+    let update!: (u: { view?: ViewDoc }) => void;
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0,
+      makeWorker: (_spec, _progress, u) => { update = u!; return { run: () => new Promise<WorkerResult>(() => undefined), dispose: async () => undefined, sessionId: "s" } as unknown as Worker; },
+    });
+    const t = tm.start("Tally it");
+    await vi.waitFor(() => expect(update).toBeDefined());
+    update({ view: upgradeView([{ kind: "text", text: "12 rows so far" }]) });
+    const entry = tm.activities().find(e => e.id === t.id)!;
+    expect(entry.status).toBe("running");
+    expect(entry.view && viewText(entry.view)).toBe("12 rows so far");
+  });
+
+  it("isn't sent once its manager has closed, from a worker still winding down (review S6)", async () => {
+    let update!: (u: { view?: ViewDoc }) => void;
+    const views: [string, ViewDoc | null][] = [];
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0, onView: (id, v) => views.push([id, v]),
+      makeWorker: (_spec, _progress, u) => { update = u!; return { run: () => new Promise<WorkerResult>(() => undefined), dispose: async () => undefined, sessionId: "s" } as unknown as Worker; },
+    });
+    tm.start("Tally it");
+    await vi.waitFor(() => expect(update).toBeDefined());
+    tm.close();
+    update({ view: upgradeView([{ kind: "text", text: "late" }]) });
+    expect(views).toEqual([]);
   });
 });

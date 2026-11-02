@@ -1,0 +1,257 @@
+/*
+ * Ember's views (catalog ember.view/2: app/shared/view.ts, drawn by view-dom.ts): one stylesheet for every page that
+ * shows them (the overlay's task cards now, Home's Task activity next), linked after ember.css and before the page's
+ * own styles. It uses ember.css's semantic tokens only, so Increase Contrast, forced colours, Calm and the text size
+ * reach views as they reach the rest.
+ *
+ * The rules a view keeps (docs/DESIGN.md "Views"):
+ * - Flat: on the glass card a view is flat fills and hairlines, never glass on glass, and in a window it sits on the
+ *   window's surfaces. Inner corners are concentric: 6 px on a card, 8 px in a window.
+ * - Read-only: nothing looks like a button, a capsule control, a question or Ember's accent (the accent is never a
+ *   view's colour: tones are the six semantic ones, each beside a symbol or words).
+ * - Static: no animation, no transition, no filter; a node a change replaced fades in once (.vw-fresh), never in Calm.
+ * - Contained: a view's layout is its own (contain), so a change relayouts only the view.
+ */
+
+/* The fixed symbols a view may show (VIEW_SYMBOLS, plus a metric's arrows), outlined so they never read as Ember's
+   filled state symbols: black masks on Apple's 24-unit grid, drawn in a tone's colour. */
+:root {
+  --vw-sym-info: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 11v5.5' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='12' cy='7.6' r='1.4'/%3E%3C/svg%3E");
+  --vw-sym-tip: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9.5 18h5M10.5 21h3M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.2h5c0-.9.4-1.7 1.1-2.2A6 6 0 0 0 12 3z' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-caution: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.8 2.9 19.6h18.2z' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 9.6v4.6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='12' cy='17' r='1.4'/%3E%3C/svg%3E");
+  --vw-sym-problem: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8.3 3h7.4L21 8.3v7.4L15.7 21H8.3L3 15.7V8.3z' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 7.6v5.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3Ccircle cx='12' cy='16.4' r='1.4'/%3E%3C/svg%3E");
+  --vw-sym-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m5 12.6 4.4 4.4L19 7.4' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3C/svg%3E");
+  --vw-sym-cross: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6.5 6.5 11 11m0-11-11 11' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3C/svg%3E");
+  --vw-sym-clock: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='9' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M12 7v5l3.2 2' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-file: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 3h8l4 4v14H6z' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M14 3v4h4' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-folder: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 6.5V18a1.5 1.5 0 0 0 1.5 1.5h15A1.5 1.5 0 0 0 21 18V9a1.5 1.5 0 0 0-1.5-1.5H11L9 5H4.5A1.5 1.5 0 0 0 3 6.5z' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-app: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='4' y='4' width='16' height='16' rx='4.5' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-person: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='8' r='3.6' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-calendar: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='3.5' y='5' width='17' height='15.5' rx='2.5' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M3.5 10h17M8 3v4m8-4v4' stroke='black' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --vw-sym-chart: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 20v-8m7 8V5m7 15v-6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.6'/%3E%3C/svg%3E");
+  --vw-sym-up: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 19V5m-6 6 6-6 6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3C/svg%3E");
+  --vw-sym-down: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 5v14m-6-6 6 6 6-6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3C/svg%3E");
+  --vw-sym-flat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12h14m-6-6 6 6-6 6' stroke='black' fill='none' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.4'/%3E%3C/svg%3E");
+}
+
+.vw {
+  display: grid; gap: 6px; min-width: 0; contain: layout paint;
+  font: var(--type-footnote); color: var(--label);
+  font-variant-numeric: tabular-nums;
+  /* The fill of a tile or a code block: faint, so on the clear glass a view stays part of its card, not a dark island
+     (Increase Contrast and forced colours give tiles an edge instead). */
+  --vw-fill: color-mix(in srgb, var(--fill) 55%, transparent);
+}
+.vw[data-profile="window"] { font: var(--type-callout); gap: 8px; }
+/* Inner corners: 6 px inside a card (18 px, padded 12), 8 px in a window's group. */
+.vw[data-profile="window"] :is(.vw-card, .vw-metric, .vw-callout, .vw-code pre, .vw-file pre) { border-radius: var(--r-sm); }
+.vw [hidden], .vw [data-cut] { display: none; }
+/* Ember's frame: where the words came from (Ember's own words, never the model's), in a secondary label (tertiary
+   labels aren't allowed on glass). */
+.vw-from { margin: 0; font: var(--type-caption); color: var(--label-2); overflow-wrap: anywhere; }
+.vw-body { display: grid; gap: 8px; min-width: 0; }
+/* A card's view is at most a card's height: blocks that would pass it are left out whole, never cut through
+   (view-dom.ts fitView), and Ember says "More in Home". */
+.vw[data-profile="card"] .vw-body { max-height: calc(300px * var(--text-scale)); }
+.vw-more, .vw-cut { margin: 0; font: var(--type-caption); color: var(--label-2); }
+.vw-cutwrap { display: grid; gap: 4px; min-width: 0; }
+
+/* Tones: a system colour to mark with, and an ink that passes 4.5:1 as text. */
+.vw [data-tone="neutral"] { --vw-tone: var(--gray); --vw-ink: var(--label-2); }
+.vw [data-tone="info"] { --vw-tone: var(--blue); --vw-ink: var(--label); }
+.vw [data-tone="positive"] { --vw-tone: var(--green); --vw-ink: var(--green-text); }
+.vw [data-tone="caution"] { --vw-tone: var(--yellow); --vw-ink: var(--yellow); }
+.vw [data-tone="negative"] { --vw-tone: var(--red); --vw-ink: var(--red-text); }
+.vw [data-tone="special"] { --vw-tone: var(--purple); --vw-ink: var(--purple-text); }
+
+/* Symbols: masks from the fixed set, in the tone's colour (or the label's). */
+.vw-sym { display: inline-block; flex: none; width: 1.15em; height: 1.15em; vertical-align: -0.2em; background: var(--vw-tone, var(--label-2)); -webkit-mask: var(--vw-sym-info) center / contain no-repeat; }
+.vw-sym[data-symbol="tip"] { -webkit-mask-image: var(--vw-sym-tip); }
+.vw-sym[data-symbol="caution"] { -webkit-mask-image: var(--vw-sym-caution); }
+.vw-sym[data-symbol="problem"] { -webkit-mask-image: var(--vw-sym-problem); }
+.vw-sym[data-symbol="check"] { -webkit-mask-image: var(--vw-sym-check); }
+.vw-sym[data-symbol="cross"] { -webkit-mask-image: var(--vw-sym-cross); }
+.vw-sym[data-symbol="clock"] { -webkit-mask-image: var(--vw-sym-clock); }
+.vw-sym[data-symbol="file"] { -webkit-mask-image: var(--vw-sym-file); }
+.vw-sym[data-symbol="folder"] { -webkit-mask-image: var(--vw-sym-folder); }
+.vw-sym[data-symbol="app"] { -webkit-mask-image: var(--vw-sym-app); }
+.vw-sym[data-symbol="person"] { -webkit-mask-image: var(--vw-sym-person); }
+.vw-sym[data-symbol="calendar"] { -webkit-mask-image: var(--vw-sym-calendar); }
+.vw-sym[data-symbol="chart"] { -webkit-mask-image: var(--vw-sym-chart); }
+.vw-sym[data-symbol="up"] { -webkit-mask-image: var(--vw-sym-up); }
+.vw-sym[data-symbol="down"] { -webkit-mask-image: var(--vw-sym-down); }
+.vw-sym[data-symbol="flat"] { -webkit-mask-image: var(--vw-sym-flat); }
+
+/* Layout. */
+.vw-stack { display: grid; gap: 8px; min-width: 0; }
+.vw-stack[data-gap="tight"] { gap: 4px; }
+.vw-stack[data-gap="loose"] { gap: 12px; }
+.vw-row { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; align-items: flex-start; }
+.vw-row > * { flex: 1 1 0; min-width: 0; }
+.vw-row > .vw-badge { flex: none; }
+.vw-row[data-align="center"] { align-items: center; }
+.vw-row[data-align="end"] { align-items: flex-end; }
+.vw-row[data-justify="between"] { justify-content: space-between; }
+.vw-row[data-justify="end"] { justify-content: flex-end; }
+.vw-row > [data-weight="2"] { flex-grow: 2; }
+.vw-row > [data-weight="3"] { flex-grow: 3; }
+.vw-row > [data-weight="4"] { flex-grow: 4; }
+/* A narrow place stacks a row (a card's content is about 270 px wide; at the larger text sizes, more). */
+@container vw (max-width: 239px) { .vw-row { flex-direction: column; align-items: stretch; } }
+.vw-body { container: vw / inline-size; }
+.vw-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; min-width: 0; }
+.vw-grid[data-columns="3"] { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.vw-card { display: grid; gap: 6px; min-width: 0; padding: 8px 10px; border-radius: var(--r-xs); background: var(--vw-fill); box-shadow: inset 0 0 0 1px var(--separator); }
+.vw-card[data-tone] { box-shadow: inset 3px 0 0 var(--vw-tone), inset 0 0 0 1px var(--separator); padding-left: 13px; }
+.vw-section { display: grid; gap: 6px; min-width: 0; margin: 0; }
+.vw-section-title { margin: 0; font: var(--type-caption); font-weight: 600; color: var(--label-2); overflow-wrap: anywhere; }
+.vw-section-body { display: grid; gap: 8px; min-width: 0; }
+details.vw-section > summary { list-style: none; display: flex; gap: 4px; align-items: center; min-height: 24px; }
+details.vw-section > summary::before { content: "" / ""; width: 10px; height: 10px; background: var(--label-2); -webkit-mask: var(--sym-chevron) center / 10px no-repeat; }
+details.vw-section[open] > summary::before { rotate: 90deg; }
+details.vw-section > summary::-webkit-details-marker { display: none; }
+.vw-divider { height: 1px; margin: 0; border: 0; background: var(--separator); }
+
+/* Content. */
+.vw-heading { margin: 0; color: var(--label); overflow-wrap: anywhere; text-wrap: balance; }
+.vw-h1 { font: var(--type-headline); }
+.vw-h2 { font: var(--type-footnote); font-weight: 600; }
+.vw[data-profile="window"] .vw-h1 { font: var(--type-title-2); }
+.vw[data-profile="window"] .vw-h2 { font: var(--type-headline); }
+.vw-text { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.vw-text[data-tone="secondary"] { color: var(--label-2); }
+.vw-text strong { font-weight: 600; }
+.vw-mono { font-family: var(--ember-mono); font-size: 0.95em; overflow-wrap: anywhere; }
+.vw-text code { padding: 0 3px; border-radius: var(--r-xs); background: var(--vw-fill); }
+.vw-kv { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 2px 10px; margin: 0; }
+.vw-kv dt { color: var(--label-2); overflow-wrap: anywhere; }
+.vw-kv dd { margin: 0; overflow-wrap: anywhere; }
+.vw-kv dd[data-tone] { color: var(--vw-ink); }
+.vw-kv dd .vw-sym { margin-right: 4px; }
+/* A tag, not a button: a tint behind its words (a rounded rectangle, never the capsule a floating button is). */
+.vw-badge { justify-self: start; display: inline-flex; gap: 4px; align-items: center; max-width: 100%; padding: 1px 6px; border-radius: var(--r-xs); font: var(--type-caption); color: var(--vw-ink); background: color-mix(in srgb, var(--vw-tone) 16%, transparent); overflow-wrap: anywhere; }
+/* On Clear glass (the Glass setting) a tone's tint darkens a little under its words, as Ember's own tags do: the lighter
+   glass let them pale below 4.5:1. */
+html[data-glass="clear"] :is(.vw-badge, .vw-callout) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }
+.vw-badge .vw-sym { width: 11px; height: 11px; background: var(--vw-ink); }
+.vw-callout { display: flex; gap: 8px; min-width: 0; padding: 7px 10px 7px 9px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--vw-tone) 10%, transparent); box-shadow: inset 3px 0 0 var(--vw-tone); }
+.vw-callout > .vw-sym { margin-top: 1px; }
+.vw-callout-words { display: grid; gap: 2px; min-width: 0; }
+.vw-callout-words p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.vw-callout-title { font-weight: 600; overflow-wrap: anywhere; }
+/* Words copied from elsewhere: Ember's caption above, a grey rule, the secondary label; no tone, no symbol. */
+.vw-quote { display: grid; gap: 2px; margin: 0; min-width: 0; }
+.vw-quote figcaption { font: var(--type-caption); color: var(--label-2); }
+.vw-quote blockquote { margin: 0; padding-left: 9px; box-shadow: inset 2px 0 0 var(--gray); color: var(--label-2); overflow-wrap: anywhere; text-wrap: pretty; white-space: pre-line; }
+
+/* Data. */
+.vw-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.vw-list li { overflow-wrap: anywhere; }
+.vw-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.vw-table caption { text-align: left; padding-bottom: 2px; font: var(--type-caption); color: var(--label-2); }
+.vw-table th { text-align: left; font-weight: 600; color: var(--label-2); }
+.vw-table th, .vw-table td { padding: 3px 6px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
+.vw-table .num { text-align: right; }
+.vw-table tbody tr { box-shadow: inset 0 1px 0 var(--separator); }
+.vw-compare th[scope="row"] { font-weight: 400; }
+.vw-better { font-weight: 600; }
+.vw-better .vw-sym { --vw-tone: var(--green); margin-right: 3px; width: 12px; height: 12px; }
+.vw-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.vw-steps li { display: flex; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.vw-mark { flex: none; width: 12px; height: 12px; margin-top: 2px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-2); }
+.vw-steps li[data-state="done"] .vw-mark { box-shadow: none; background: var(--green); -webkit-mask: var(--vw-sym-check) center / 12px no-repeat; }
+.vw-steps li[data-state="now"] { font-weight: 600; }
+.vw-steps li[data-state="now"] .vw-mark { box-shadow: inset 0 0 0 1.5px var(--label), inset 0 0 0 4px transparent; background: radial-gradient(circle, var(--label) 0 2.5px, transparent 3px); }
+.vw-steps li[data-state="skipped"], .vw-steps li[data-state="todo"] { color: var(--label-2); }
+.vw-steps li[data-state="skipped"] .vw-mark { box-shadow: none; background: var(--gray); -webkit-mask: var(--vw-sym-flat) center / 12px no-repeat; }
+.vw-steps li[data-state="failed"] .vw-mark { box-shadow: none; background: var(--red); -webkit-mask: var(--vw-sym-cross) center / 12px no-repeat; }
+.vw-timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.vw-timeline li { display: grid; grid-template-columns: minmax(0, 4.5em) minmax(0, 1fr); gap: 8px; }
+.vw-when { color: var(--label-2); overflow-wrap: anywhere; }
+.vw-timeline li[data-tone] .vw-what { box-shadow: inset 2px 0 0 var(--vw-tone); padding-left: 6px; }
+.vw-what { overflow-wrap: anywhere; }
+.vw-progress { display: grid; gap: 4px; }
+.vw-progress p { display: flex; justify-content: space-between; gap: 10px; margin: 0; }
+.vw-label { min-width: 0; overflow-wrap: anywhere; }
+.vw-n { flex: none; font-weight: 500; color: var(--label-2); }
+.vw-bar { display: block; width: 100%; height: 4px; }
+.vw-track { fill: var(--fill); }
+.vw-fill { fill: var(--vw-tone); }
+.vw-metric { display: grid; align-content: start; gap: 1px; min-width: 0; padding: 7px 10px; border-radius: var(--r-xs); background: var(--vw-fill); box-shadow: inset 0 0 0 1px var(--separator); }
+.vw-metric-label { font: var(--type-caption); color: var(--label-2); overflow-wrap: anywhere; }
+.vw-metric-value { font: var(--type-title-2); color: var(--label); overflow-wrap: anywhere; }
+.vw-delta { display: inline-flex; gap: 3px; align-items: center; font: var(--type-caption); color: var(--label-2); }
+.vw-delta .vw-sym { width: 11px; height: 11px; background: currentColor; }
+.vw-delta[data-good="true"] { color: var(--green-text); }
+.vw-delta[data-good="false"] { color: var(--red-text); }
+.vw-spark { display: block; width: 100%; height: calc(20px * var(--text-scale)); margin-top: 2px; }
+.vw-spark .vw-line { stroke: var(--label-2); }
+
+/* Charts and gauges: static SVG, Ember's geometry, the numbers in a hidden table too. Text in a chart is caption-size in
+   the chart's own units (its font-size attribute, view-dom.ts), so it grows with the card (and the text size). Each series is told apart by a dash as well as
+   a tone, never by colour alone. */
+.vw-chart, .vw-gauge { display: grid; gap: 4px; margin: 0; min-width: 0; }
+.vw-chart-title { font: var(--type-caption); font-weight: 600; color: var(--label-2); }
+.vw-plot, .vw-dial { display: block; width: 100%; height: auto; overflow: visible; }
+.vw-gauge { justify-items: center; }
+.vw-dial { max-width: calc(180px * var(--text-scale)); }
+.vw-gauge figcaption { text-align: center; color: var(--label-2); }
+.vw-grid-line, .vw-grid { stroke: var(--separator); stroke-width: 1; }
+.vw-base { stroke: var(--label-2); stroke-width: 1; }
+.vw-axis { fill: var(--label-2); font-family: var(--ember-font); font-variant-numeric: tabular-nums; }
+.vw-mark-bar { fill: var(--vw-tone); }
+.vw-line { fill: none; stroke: var(--vw-tone); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.vw-area { fill: color-mix(in srgb, var(--vw-tone) 22%, transparent); stroke: none; }
+[data-series="1"].vw-line { stroke-dasharray: 5 3; }
+[data-series="2"].vw-line { stroke-dasharray: 1.5 3; }
+[data-series="1"].vw-mark-bar { fill-opacity: 0.78; }
+[data-series="2"].vw-mark-bar { fill-opacity: 0.56; }
+.vw-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 10px; font: var(--type-caption); color: var(--label-2); }
+.vw-legend li { display: inline-flex; gap: 4px; align-items: center; }
+.vw-swatch { width: 12px; height: 3px; border-radius: 1px; background: var(--vw-tone); }
+.vw-legend li[data-series="1"] .vw-swatch { background: linear-gradient(90deg, var(--vw-tone) 0 5px, transparent 5px 7px, var(--vw-tone) 7px); }
+.vw-legend li[data-series="2"] .vw-swatch { background: linear-gradient(90deg, var(--vw-tone) 0 2px, transparent 2px 5px, var(--vw-tone) 5px 7px, transparent 7px 10px, var(--vw-tone) 10px); }
+.vw-track-arc { fill: none; stroke: var(--fill); stroke-width: 10; stroke-linecap: round; }
+.vw-value-arc { fill: none; stroke: var(--vw-tone); stroke-width: 10; stroke-linecap: round; }
+.vw-band { fill: none; stroke: var(--vw-tone); stroke-width: 3; }
+.vw-dial-value { fill: var(--label); font-family: var(--ember-font); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Code and files: text in the mono face, never highlighted; nothing opens them. */
+.vw-code, .vw-file { display: grid; gap: 3px; margin: 0; min-width: 0; }
+.vw-code figcaption, .vw-file figcaption { display: flex; gap: 6px; align-items: baseline; color: var(--label-2); overflow-wrap: anywhere; min-width: 0; }
+.vw-file figcaption .vw-mono { color: var(--label); }
+.vw-lang { font: var(--type-caption); color: var(--label-2); }
+.vw-code pre, .vw-file pre { margin: 0; padding: 6px 8px; border-radius: var(--r-xs); background: var(--vw-fill); box-shadow: inset 0 0 0 1px var(--separator); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* A node a change replaced fades in once (an opacity transition from its starting style; Calm stops every transition,
+   ember.css's html.calm rule). Nothing else in a view moves. */
+.vw-fresh { transition: opacity 120ms ease; }
+@starting-style { .vw-fresh { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .vw-fresh { transition: none; } }
+
+/* Text size: sizes this sheet sets in px grow with the type. */
+html[data-text-size] .vw-badge .vw-sym, html[data-text-size] .vw-delta .vw-sym { width: calc(11px * var(--text-scale)); height: calc(11px * var(--text-scale)); }
+html[data-text-size] .vw-mark { width: calc(12px * var(--text-scale)); height: calc(12px * var(--text-scale)); }
+
+/* Windows contrast themes: every group and mark keeps an edge or a system colour, series keep their dashes, the tones
+   collapse to the text colour (the symbols and words still say them). */
+@media (forced-colors: active) {
+  .vw [data-tone] { --vw-tone: CanvasText; --vw-ink: CanvasText; }
+  .vw-sym, .vw-mark, .vw-swatch, .vw-plot, .vw-dial, .vw-bar, .vw-spark { forced-color-adjust: none; }
+  .vw-sym { background: CanvasText; }
+  .vw-card, .vw-metric, .vw-callout, .vw-badge { border: 1px solid CanvasText; }
+  .vw-quote blockquote { border-left: 2px solid CanvasText; box-shadow: none; }
+  .vw-code pre, .vw-file pre { border: 1px solid CanvasText; }
+  .vw-mark { box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .vw-steps li[data-state="done"] .vw-mark, .vw-steps li[data-state="failed"] .vw-mark, .vw-steps li[data-state="skipped"] .vw-mark { background: CanvasText; }
+  .vw-track, .vw-track-arc { fill: Canvas; stroke: GrayText; }
+  .vw-track-arc { fill: none; }
+  .vw-fill, .vw-mark-bar { fill: Highlight; }
+  .vw-value-arc, .vw-line, .vw-band { stroke: Highlight; }
+  .vw-area { fill: Canvas; }
+  .vw-axis, .vw-dial-value { fill: CanvasText; }
+  .vw-grid { stroke: GrayText; }
+  .vw-base, .vw-spark .vw-line { stroke: CanvasText; }
+  .vw-swatch { background: Highlight; }
+  .vw-table tbody tr { border-top: 1px solid CanvasText; box-shadow: none; }
+}

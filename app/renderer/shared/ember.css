@@ -195,7 +195,11 @@
   --purple: #f3c2ff;
   --blue: #9ad3ff;
   --gray: #c7c7cc;
-  --yellow: #fedf43;
+  --yellow: #fff0a0;
+  /* Words in a state's colour (views' inks, tags elsewhere take the label): light enough for 4.5:1 here. */
+  --green-text: #c8fad3;
+  --red-text: #ffe6e3;
+  --purple-text: #fbe8ff;
 }
 :root:where([data-glass="solid"]) { --glass-a: 1; --glass-clear-a: 1; --glass-plate-a: 1; --glass-under: linear-gradient(var(--glass-solid), var(--glass-solid)); }
 

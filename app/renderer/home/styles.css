@@ -358,35 +358,8 @@ progress[hidden] { display: none; }
 .step-list .at { text-align: left; min-width: 3.2em; line-height: inherit; }
 .task-result { display: grid; gap: 8px; }
 .task-result .summary { margin: 0; color: var(--muted); font: var(--type-callout); overflow-wrap: anywhere; text-wrap: pretty; }
-/* A result view (app/shared/view.ts's catalog, drawn by overlay/view.ts): flat in its group, as on the card. */
-.view { display: grid; gap: 6px; font: var(--type-callout); min-width: 0; }
-.view p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
-.view ul, .view ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
-.view li { overflow-wrap: anywhere; }
-.view dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 2px 14px; margin: 0; }
-.view dt { color: var(--muted); overflow-wrap: anywhere; }
-.view dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-.view table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
-.view th { text-align: left; font-weight: 600; color: var(--muted); }
-.view th, .view td { padding: 3px 6px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
-.view tbody tr { box-shadow: inset 0 1px 0 var(--separator); }
-.view .file code { font: 12px/18px var(--ember-mono); overflow-wrap: anywhere; }
-.view .file-label { color: var(--muted); }
-.view .checklist { list-style: none; padding-left: 0; }
-.view .checklist li { position: relative; padding-left: 18px; }
-.view .checklist li::before { content: ""; position: absolute; left: 0; top: 0.25em; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-3); }
-.view .checklist li[data-done="true"]::before { box-shadow: none; background: var(--green); -webkit-mask: var(--sym-done) center / 12px no-repeat; }
-.view .progress p { display: flex; justify-content: space-between; gap: 10px; }
-.view .progress-n { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
-.view .bar { height: 4px; margin-top: 4px; border-radius: var(--r-capsule); background: rgba(255, 255, 255, 0.12); overflow: hidden; }
-.view .bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
-.view .excerpt { margin: 0; min-width: 0; }
-.view .excerpt figcaption { color: var(--muted); font: 12px/18px var(--ember-mono); overflow-wrap: anywhere; }
-.view .excerpt pre { margin: 4px 0 0; padding: 6px 8px; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); font: 12px/18px var(--ember-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.view .status-block { position: relative; padding-left: 20px; }
-.view .status-block::before { content: ""; position: absolute; left: 0; top: 0.15em; width: 14px; height: 14px; background: var(--green); -webkit-mask: var(--sym-done) center / 14px no-repeat; }
-.view .status-block[data-tone="warn"]::before { background: var(--yellow); -webkit-mask-image: var(--sym-warn); }
-.view .status-block[data-tone="fail"]::before { background: var(--red); -webkit-mask-image: var(--sym-failed); }
+/* A task's view: drawn by ../shared/view-dom.ts in the window profile and styled by ../shared/view.css. */
+.task-view { min-width: 0; }
 
 /* ───── What Ember did: time, a fixed-width state tag, the step ───── */
 .activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
