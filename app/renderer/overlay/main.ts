@@ -8,8 +8,9 @@
  * while it dozes, and not at all while it is hidden or on another display.
  */
 
-import { activityItems, planItems, viewNodes } from "./view";
-import { HAND_WORDS } from "../../shared/view";
+import { activityItems, planItems } from "./view";
+import { HAND_WORDS, applyViewPatch, diffViews, type ViewDoc } from "../../shared/view";
+import { ViewRenderer, fitView } from "../shared/view-dom";
 import { clockText } from "../../shared/activity";
 import { Rig, FACTORIES, PRESETS, type Character, type Emotion, type Gesture, type Pose } from "@ember/characters";
 import { ReasoningBubble, onPress, plainStream } from "@ember/bubble";
@@ -333,7 +334,9 @@ function measureTasks(): void {
 interface CardEls {
   li: HTMLLIElement; state: HTMLElement; where: HTMLElement; title: HTMLElement; detail: HTMLElement; actions: HTMLDivElement; actionsKey: string; armedAt: number; said: string; stopAt: number;
   /** How it works now ("In the background"), its plan, and its result view (docs/DESIGN.md "Two bodies"), each redrawn only when it changed. */
-  hand: HTMLElement; plan: HTMLOListElement; view: HTMLDivElement; planKey: string; viewKey: string;
+  hand: HTMLElement; plan: HTMLOListElement; view: HTMLDivElement; planKey: string;
+  /** Its view (app/renderer/shared/view-dom.ts), made when its first view arrives. */
+  views: ViewRenderer | null;
   /**
    * Its activity (app/shared/activity.ts): the live line in Ember's words, the telemetry row (its clock, `clock`, is the
    * one text the shared tick writes), the steps' summary, and the details' rows (`rowsKey`: as last drawn).
@@ -588,7 +591,7 @@ function renderTasks(tasks: TaskCard[]): boolean {
       actions.className = "task-actions";
       actions.hidden = true;
       li.append(state, where, title, hand, live, detail, tele, sum, plan, view, rows, actions);
-      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0, hand, plan, view, planKey: "", viewKey: "",
+      c = { li, state, where, title, detail, actions, actionsKey: "", armedAt: 0, said: "", stopAt: 0, hand, plan, view, planKey: "", views: null,
         live, tele, teleState, teleStep, clock, teleExtra, sum, rows, rowsKey: "", card: null };
       cards.set(t.id, c);
     }
@@ -604,9 +607,8 @@ function renderTasks(tasks: TaskCard[]): boolean {
     c.li.toggleAttribute("data-cursor", t.hand === "cursor");
     const planKey = JSON.stringify(t.plan ?? []);
     if (planKey !== c.planKey) { c.planKey = planKey; c.plan.replaceChildren(...planItems(t.plan ?? [])); c.plan.hidden = !t.plan?.length; }
-    const viewKey = JSON.stringify(t.view ?? []);
-    if (viewKey !== c.viewKey) { c.viewKey = viewKey; c.view.replaceChildren(...viewNodes(t.view ?? [])); c.view.hidden = !t.view?.length; }
-    c.li.classList.toggle("has-view", !!t.view?.length);
+    c.li.classList.toggle("has-view", t.viewRev !== undefined);
+    if (t.viewRev === undefined && c.views) { c.views = null; c.view.replaceChildren(); c.view.hidden = true; }
     c.said = t.detail;
     c.card = t;
     // A pressed Stop keeps saying so until Ember does (or the task has ended, or the press didn't land).
@@ -656,6 +658,9 @@ function renderTasks(tasks: TaskCard[]): boolean {
   });
   const ids = new Set(tasks.map(t => t.id));
   for (const [id, c] of [...cards]) if (!ids.has(id)) { if (before) fadeCard(c.li); cards.delete(id); detailsOpen.delete(id); }
+  // Views only for tasks with a card now (a view whose card never came, or went, is not kept).
+  for (const id of [...views.keys()]) if (!ids.has(id)) views.delete(id);
+  drawViews();
   // The "+N more" line heads the stack whenever there are ended cards that could fold.
   const all = stacked.some(t => !underWay(t)) ? [more.li, ...items] : items;
   const same = all.length === tasksEl.children.length && all.every((li, i) => tasksEl.children[i] === li);
@@ -815,3 +820,47 @@ function draw(now: number): void {
   reportInteractive();
 }
 requestDraw();
+
+// ── Views (app/shared/view.ts): a task's live view and its result, kept apart from the state ──
+
+/** Each task's view as main last sent it (patches applied in order; a gap waits for the whole view main sends next). */
+const views = new Map<string, ViewDoc>();
+let viewsQueued = false;
+
+api.onView?.(p => {
+  const next = applyViewPatch(views.get(p.taskId), p);
+  if (!next) return;
+  views.set(p.taskId, next);
+  drawViews();
+});
+
+/**
+ * Draws the views that changed, in one frame, on the cards that show: a folded or hidden card keeps its task's latest
+ * view and draws it when it shows again (renderTasks calls this). Each card's view changes only the nodes that changed.
+ */
+function drawViews(): void {
+  if (viewsQueued) return;
+  viewsQueued = true;
+  requestAnimationFrame(() => {
+    viewsQueued = false;
+    let drew = false;
+    for (const [id, doc] of views) {
+      const c = cards.get(id);
+      if (!c || c.li.hidden || !c.card || c.card.viewRev === undefined) continue;
+      if (!c.views) {
+        c.views = new ViewRenderer({ profile: "card" });
+        c.view.replaceChildren(c.views.el);
+      }
+      // The card says what the task did just above (its summary line): the frame says only who found it.
+      if (c.views.current?.rev === doc.rev) continue;
+      c.views.patch(doc, diffViews(id, c.views.current, doc));
+      c.view.hidden = false;
+      drew = true;
+    }
+    if (!drew) return;
+    // Whether each card's view is cut by the card's height ("More in Home"), then the stack as it is now.
+    for (const c of cards.values()) if (c.views && !c.view.hidden) fitView(c.views);
+    fitTasks();
+    measureTasks();
+  });
+}

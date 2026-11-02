@@ -175,25 +175,41 @@ Ember is two places at once, each for one kind of work.
 - **What needs you now still comes to the cursor.** Questions and approvals (the Confirmer) and announced commands
   appear in the bubble, which names the task. Moving a background task's questions onto its card, with the same
   arming, the same allow and deny keys and the same one-at-a-time rule, is the next step.
-- **Generative UI** (`app/shared/view.ts`): a task's view is built only from a fixed catalog of blocks:
-  - `text`;
-  - `list`, of up to 8 items;
-  - `facts`, label and value rows;
-  - `table`, up to 3 columns and 6 rows;
-  - `file`, a path, set in the mono face;
-  - `checklist`, up to 8 items each done or not (a tick or a ring, and the words for screen readers);
-  - `progress`, a label and whole numbers "3 of 5" (at most 10,000) with a static bar set once;
-  - `compare`, two named columns of values beside up to 6 row labels;
-  - `excerpt`, up to 8 lines of a file under its path, in the mono face, with nothing to open. It is refused whole,
-    never shown redacted, when a line holds a password, token, key or card number, or the file lives where secrets do
-    (Ember's data folder, SSH and GPG keys, keyrings, `.env` files);
-  - `status`, one outcome in words beside a tick, a warning or a mark.
-
-  `finish_task`'s `view` is checked against `ViewSchema` (app/main/agent/view-schema.ts), and anything outside the
-  catalog fails the call. app/renderer/overlay/view.ts draws it with `textContent` only: no markup, links, buttons or
-  images, because every string may carry what the worker read on the screen. The card keeps the view to 240px
-  (scaled with the text), flat on the glass with `--separator` rules. Without a compositor, the corner card shows the
-  task's words only.
+- **Views** (`app/shared/view.ts`, catalog `ember.view/2`): Ember draws a task's view itself by composing blocks from
+  a closed catalog; the model chooses structure and words, never HTML, colours, sizes, URLs, icons or controls.
+  - **Blocks.** Layout: `stack`, `row` (stacks below 240px), `grid` (2 or 3 columns; a card caps it at 2), `card` (a
+    faint inset group), `section`, `divider`. Content: `heading`, `text`, `rich` (bold and code runs, no links),
+    `keyvalue`, `badge` (a tag, a rounded rectangle, never a capsule button), `callout`, `quote`. Data: `list`,
+    `table`, `steps`, `timeline`, `progress`, `gauge`, `metric` (a tile with an optional change and spark), `chart`
+    (`bar`, `hbar`, `line`, `area`, `spark`), `compare`, `code`, `file`. The first catalog's blocks are upgraded on
+    arrival (`upgradeView`: `facts` → `keyvalue`, `checklist` → `steps`, `excerpt` → `file`, `status` → `callout`).
+  - **Tones and symbols.** Six semantic tones (neutral, info, positive, caution, negative, special) map to the system
+    colours, each beside a symbol or words; Ember's accent is never a view's colour. Symbols come from a fixed set of
+    outlined masks (view.css), so none reads as a task's filled state symbol.
+  - **Limits** (`VIEW_PROFILES`): a window takes depth 5, 120 nodes, 12 children a node, 8,000 characters, 6 charts or
+    gauges and 6 × 20 tables; a card draws the first 40 nodes, 2 charts as pictures (the rest as words), 3 × 6 tables,
+    8 items and 12 code lines, and says what it left out in Ember's words ("3 more rows"). A card's view is at most
+    300px (scaled with the text): blocks past it are left out whole, never cut through, and "More in Home" says so.
+  - **Ember's frame.** Above every view Ember writes "Found by this task" (in a window, "Found by “<title>”" and what
+    the task did). A `quote` holds words copied from a page, a file, an app or a command, under Ember's caption
+    ("From Firefox", "From a command"), with a grey rule, in the secondary label, never toned; the caption names an
+    app only if the task read it, and a command only if it ran one.
+  - **Checks** (app/main/agent/view-schema.ts, whole document, fail closed): each node against its kind's strict schema;
+    references, one parent, no cycles and the limits; no invisible or direction-changing character anywhere; no
+    string, label with its value, row or whole view that imitates Ember's controls or voice ("Allow" however it is
+    spelt, with look-alike letters folded, a shortcut chord written any way, "Ember: …", "I'm Ember"); no secret
+    anywhere (also split across a label and its value), no private key header, and no path into a place where secrets
+    live in any string. One failure refuses the whole view. A finished task's view reaches the conductor only as words
+    inside its untrusted `<task_results>`.
+  - **Drawing** (app/renderer/shared/view-dom.ts, view.css): `textContent` and static SVG only, no inline styles (a
+    bar's length and a chart's shapes are SVG geometry), so Home's `style-src 'self'` needs no exception. Charts get an
+    Ember-written accessible name and a hidden table of the same numbers; series differ by dash as well as tone.
+    Nothing in a view animates except the one 120 ms fade of a node an update replaced, which Calm stops.
+  - **Updates.** `show_view` draws a live view while the task works, `update_view` changes it by node id, and
+    `finish_task`'s view takes its place (without one, the live view stays as the result). Main sends a page only
+    the changed nodes, at most 4 times a second a task, and nothing while Ember is hidden (`ViewHub`); the page
+    applies them in one frame on the cards that show. Without a compositor, the corner card shows the task's words
+    only, and the conversation always gets the view as words (`viewText`).
 
 ## Home: the settings window
 

@@ -38,7 +38,7 @@ describe("every task script", () => {
       const schema = tools.get(call.tool);
       expect(schema, `${where}: no such tool for this task (mode ${t.mode}, hands ${t.hands.join(", ") || "none"})`).toBeDefined();
       // {find: regex} stands for an element id from the latest screen read.
-      const args = Object.fromEntries(Object.entries(call.args).map(([k, v]) => [k, v && typeof v === "object" && "find" in v ? 1 : v]));
+      const args = Object.fromEntries(Object.entries(call.args).map(([k, v]) => [k, v && typeof v === "object" && !Array.isArray(v) && Object.hasOwn(v, "find") ? 1 : v]));
       const parsed = schema!.safeParse(args);
       expect(parsed.success, `${where}: ${parsed.success ? "" : parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`).toBe(true);
       // A misspelt optional argument would otherwise just be ignored.

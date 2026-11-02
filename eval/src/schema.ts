@@ -9,7 +9,8 @@
 import { z } from "zod";
 
 /** "{find: regex}" stands for the id of the first element in the latest screen read whose line matches. */
-const Arg = z.union([z.string(), z.number(), z.boolean(), z.object({ find: z.string() }).strict()]);
+/** A tool argument: a value, "{find: regex}" (below), or any JSON (a view's tree, update_view's changes). */
+const Arg = z.union([z.string(), z.number(), z.boolean(), z.object({ find: z.string() }).strict(), z.json()]);
 
 const Atspi = z.object({
   /** Window title (substring). */

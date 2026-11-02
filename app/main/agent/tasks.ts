@@ -17,7 +17,7 @@ import type { AuditEntry, AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
-import type { PlanStep, TaskHand } from "../../shared/view";
+import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
 import type { TaskActivity, TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
@@ -40,7 +40,12 @@ export interface Task {
   /** How it works now, and its plan (its worker's onUpdate): shown on its card while it works. */
   hand?: TaskHand;
   plan?: PlanStep[];
+  /** What it shows on its card: its live view (show_view, update_view) while it works, then finish_task's (or the live one). */
+  view?: ViewDoc;
 }
+
+/** What a worker tells its card besides its steps: its plan, how it works now, its live view. */
+export interface TaskUpdate { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }
 
 /**
  * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
@@ -54,12 +59,17 @@ export interface TaskManagerDeps {
    * Builds the worker for a task (with its own presenter and tools). `activity` takes what the worker tells of its
    * steps, questions and problems (app/main/agent/activity.ts): its card shows them.
    */
-  makeWorker: (spec: TaskSpec, progress: (text: string) => void, update?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void, activity?: (e: ActivityEvent) => void) => WorkerLike;
+  makeWorker: (spec: TaskSpec, progress: (text: string) => void, update?: (u: TaskUpdate) => void, activity?: (e: ActivityEvent) => void) => WorkerLike;
   /** Deletes a worker's Copilot session (conversation and files). */
   deleteSession: (sessionId: string) => Promise<void>;
   /** The window the user is in right now. */
   currentWindow: () => (WindowTarget & { app?: string }) | null;
   setCards: (cards: TaskCard[]) => void;
+  /**
+   * A task's view changed (null: its card went): main carries it to the overlay apart from the cards (ViewHub), checked
+   * already (view-schema.ts). Its card says which rev it shows (TaskCard.viewRev).
+   */
+  onView?: (taskId: string, view: ViewDoc | null) => void;
   onFinished?: (task: Task) => void;
   /** A finished card went: the user closed it (`byUser`), or its time was up. */
   onRemoved?: (task: Task, byUser: boolean) => void;
@@ -210,7 +220,7 @@ export class TaskManager {
         ...(t.hand && !ended ? { hand: t.hand } : {}),
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan.map(p => ({ ...p })) } : {}),
         ...(ended && t.result?.summary ? { summary: t.result.summary } : {}),
-        ...(ended && t.result?.view?.length ? { view: t.result.view } : {}),
+        ...(t.view ? { view: t.view } : {}),
         activity,
       };
     });
@@ -273,12 +283,27 @@ export class TaskManager {
   /** A finished card the user closed. */
   dismiss(id: string): void {
     const t = this.tasks.get(id);
-    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.specs.delete(id); this.publish(); this.d.onRemoved?.(t, true); }
+    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.specs.delete(id); this.dropView(t); this.publish(); this.d.onRemoved?.(t, true); }
+  }
+
+  /** A task's view, to its card (a listener's fault never stops the task). */
+  private showView(task: Task, view: ViewDoc): void {
+    // A closed manager's cards are gone for good: a worker still winding down shows nothing more.
+    if (this.closed) return;
+    task.view = view;
+    try { this.d.onView?.(task.id, view); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
+  }
+
+  /** Its card went: so does its view. */
+  private dropView(task: Task): void {
+    if (!task.view) return;
+    try { this.d.onView?.(task.id, null); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
   }
 
   /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
   close(): void {
     this.closed = true;
+    for (const t of this.tasks.values()) this.dropView(t);
     this.d.setCards([]);
   }
 
@@ -359,6 +384,7 @@ export class TaskManager {
         if (u.plan) task.plan = u.plan;
         if (u.hand && u.hand !== (task.hand ?? "background")) log.add({ type: "hand", hand: u.hand }, Date.now());
         if (u.hand) task.hand = u.hand;
+        if (u.view) this.showView(task, u.view);
         this.publish();
       }, e => { if (log.add(e, Date.now())) this.publish(); });
     } catch (err) {
@@ -418,6 +444,9 @@ export class TaskManager {
     if (status !== "failed") this.specs.delete(task.id);
     task.status = status;
     task.result = result;
+    // finish_task's view takes the live view's place (one rev on, so the card draws only what changed); without one,
+    // the live view stays as the result.
+    if (result.view) this.showView(task, task.view ? { ...result.view, rev: task.view.rev + 1 } : result.view);
     // The card shows a card's worth; the whole summary goes to the conversation (task.result).
     task.detail = detailOf(result.summary);
     task.finished = Date.now();
@@ -428,8 +457,8 @@ export class TaskManager {
     // Finished cards stay on screen briefly, then go; a failure, or a result shown as a view, stays longer so it can be
     // read (and closed sooner).
     const timer = setTimeout(() => {
-      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.specs.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
-    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : result.view?.length ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
+      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.specs.delete(task.id); this.dropView(task); this.publish(); this.d.onRemoved?.(task, false); }
+    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
     timer.unref?.();
     this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
@@ -478,10 +507,10 @@ export class TaskManager {
             ? [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }]
             : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
         ...(t.where ? { where: t.where } : {}),
-        // While it works: how, and its plan. Once it ended: what it found or made, and its plan (each step as it got).
+        // While it works: how, its plan and its live view. Once it ended: what it found or made, and its plan (each step as it got).
         ...(t.hand && (t.status === "running" || t.status === "queued") ? { hand: t.hand } : {}),
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan } : {}),
-        ...(t.result?.view?.length && (t.status === "done" || t.status === "failed") ? { view: t.result.view } : {}),
+        ...(t.view ? { viewRev: t.view.rev } : {}),
         ...(log ? { activity: log.card() } : {}),
       };
     });

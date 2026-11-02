@@ -1,0 +1,126 @@
+{
+  "id": "views-live-card",
+  "title": "Shows its work as a live view, then a result view",
+  "instruction": "Put my name, Ada Lovelace, in the Name field of the test bench, and show me how it goes.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "grants": [
+      "gtk3_bench.py"
+    ]
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "show_view",
+      "args": {
+        "view": {
+          "kind": "stack",
+          "id": "top",
+          "children": [
+            { "kind": "heading", "text": "Filling in the test bench", "level": 2 },
+            { "kind": "progress", "id": "fields", "label": "Fields filled", "value": 0, "max": 1 },
+            { "kind": "steps", "id": "plan", "items": [{ "text": "Find the Name field", "state": "done" }, { "text": "Type the name", "state": "now" }] }
+          ]
+        }
+      }
+    },
+    {
+      "tool": "type_text",
+      "args": {
+        "id": {
+          "find": "^text \"Name\""
+        },
+        "text": "Ada Lovelace",
+        "mode": "replace"
+      }
+    },
+    {
+      "tool": "update_view",
+      "args": {
+        "ops": [
+          { "op": "set", "id": "fields", "props": { "value": 1 } },
+          { "op": "set", "id": "plan", "props": { "items": [{ "text": "Find the Name field", "state": "done" }, { "text": "Type the name", "state": "done" }] } }
+        ]
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Your name is in.",
+        "view": {
+          "kind": "stack",
+          "children": [
+            { "kind": "keyvalue", "rows": [{ "label": "Name", "value": "Ada Lovelace", "tone": "positive" }] },
+            { "kind": "chart", "type": "bar", "title": "Fields", "categories": ["Filled", "Left"], "series": [{ "name": "Fields", "values": [1, 0] }] }
+          ]
+        }
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "text",
+        "name": "Name",
+        "value": "Ada Lovelace"
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "view",
+        "verdict": "allow",
+        "rev": 1
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "view",
+        "verdict": "allow",
+        "rev": 2
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "view",
+        "verdict": "allow",
+        "rev": 3,
+        "charts": 1
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "kind": "view",
+        "verdict": "deny"
+      },
+      "absent": true
+    },
+    {
+      "answer": {
+        "success": true
+      }
+    }
+  ],
+  "unchanged": [
+    {
+      "event": {
+        "event": "toggled",
+        "name": "Night Light"
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1",
+    "views"
+  ]
+}
