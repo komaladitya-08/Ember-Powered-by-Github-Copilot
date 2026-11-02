@@ -114,7 +114,9 @@ describe("sound levels for the presence (never audio)", () => {
     expect(voice).toContain('if (l.mic !== undefined && l.mic !== null && this.state !== "active") delete l.mic;');
     expect(voice).toContain("this.mic.webContents.send(VOICE.levelOn, hearing);");
     expect(voice).toContain("if (!hearing) this.o.onLevel?.({ mic: null });");
-    expect(read("app/main/main.ts")).toContain("onLevel: l => overlay?.setLevel(l),");
+    expect(read("app/main/main.ts")).toContain("        overlay?.setLevel(l);\n");
+    // First run's "Hey Ember" meter gets the microphone's level only while that step asks for it and the window shows.
+    expect(read("app/main/main.ts")).toContain("if (homeWantsLevel && l.mic !== undefined && home && !home.isDestroyed() && home.isVisible()) home.webContents.send(IPC.homeLevel, l.mic);");
     // The mic page measures only while asked to, and ends the meter when told to stop.
     const mic = read("app/renderer/mic/main.ts");
     expect(mic).toContain("if (micLevels && ev.data instanceof ArrayBuffer) micMeter.push(");

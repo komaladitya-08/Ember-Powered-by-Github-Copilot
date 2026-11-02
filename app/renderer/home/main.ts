@@ -1,8 +1,8 @@
 /**
- * Settings window: first-run consent, pick your Ember, Copilot sign-in, the
+ * Settings window: first-run setup, pick your Ember, Copilot sign-in, the
  * conversation, voice, apps & privacy, comfort & access (where Ember is), what
- * Ember did, setup checks and build facts. Until Start, only the welcome, the
- * character picker and Start show.
+ * Ember did, setup checks and build facts. Until Start, only first run's steps
+ * show (welcome.ts).
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
@@ -25,7 +25,7 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
-import { followStartRow } from "./start-row";
+import { startWelcome } from "./welcome";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -147,19 +147,12 @@ function applySettings(s: Settings): void {
   const corner = handleCornerText(s.handlePosition);
   if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
   if (presence) renderPresence(presence);
-  // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
-  // everything else waits until Ember has started.
-  const consented = s.consent.version >= CONSENT_VERSION;
-  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // First run (or changed terms): its steps come first, the consent among them (welcome.ts); everything else waits
+  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Ember says it started
   // (review #50), rather than dropping to the page.
-  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
+  const started = welcome.settings(s);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
-  $("welcome").hidden = consented;
-  $("start-row").hidden = s.onboarded;
-  $("agree-row").hidden = consented;
-  ($("start") as HTMLButtonElement).disabled = !consented && !($("agree") as HTMLInputElement).checked;
-  $("start-hint").hidden = consented;
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
@@ -169,16 +162,11 @@ function applySettings(s: Settings): void {
     $("pick-h").focus({ preventScroll: true });
   }
 }
-// First run's Start row stays at the window's foot: focus scrolls clear of it at its height now (start-row.ts).
-followStartRow($("start-row"), document.documentElement);
+// First run, one step at a time: it borrows the character and the cards until Start, and its fixes reach the setup check.
+const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } } });
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
-$("agree").addEventListener("change", e => {
-  const on = (e.target as HTMLInputElement).checked;
-  ($("start") as HTMLButtonElement).disabled = !on;
-  $("start-hint").hidden = on;
-});
 $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
@@ -191,14 +179,6 @@ size.addEventListener("input", () => {
   sizeLabel(v);
   void save({ size: v });
 });
-$("start").addEventListener("click", () => {
-  const already = (settings?.consent.version ?? 0) >= CONSENT_VERSION;
-  if (!already && !($("agree") as HTMLInputElement).checked) return;
-  void save({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true }).then(ok => {
-    // Start did nothing visible: the notice at the top says why (review #84).
-    if (!ok) $("settings-notice").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  });
-});
 /**
  * Saves a change made in this window. One that can't be saved says why (main's plain sentence, in the notice at the
  * top) and the controls go back to the settings still in use, instead of nothing happening (review #84).
@@ -210,12 +190,6 @@ function save(patch: SettingsPatch): Promise<boolean> {
     if (agent) renderAgent(agent);
     return false;
   });
-}
-/** Something needs the user's agreement first: take them to the checkbox. */
-function focusAgree(): void {
-  const agree = $("agree");
-  agree.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  agree.focus({ preventScroll: true });
 }
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
@@ -326,6 +300,7 @@ function render(status: Status): void {
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
+  welcome.status(status);
   const v = status.environment.versions;
   const facts: [string, string][] = [
     ["Ember", status.appVersion],
@@ -643,8 +618,8 @@ $("sign-in").addEventListener("click", () => {
   $("cancel-sign-in").focus();
   window.ember.signIn().catch(err => {
     setSigningIn(false);
-    // Not agreed yet: the way forward is the checkbox at the top, so go there.
-    if (settings && settings.consent.version < CONSENT_VERSION) { focusAgree(); return; }
+    // Not agreed yet: the way forward is first run's consent step, so go there.
+    if (settings && settings.consent.version < CONSENT_VERSION) { welcome.toConsent(); return; }
     signInMsg(ipcErrorText(err), true);
   });
 });

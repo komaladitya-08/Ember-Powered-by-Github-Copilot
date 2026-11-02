@@ -110,6 +110,16 @@ cache (test/temp-folder.ts).
 
 ### Using Ember
 
+- **First run** is seven steps in the settings window, one decision each (`app/renderer/home/welcome.ts`, its words
+  in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
+  lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
+  and offers **Quit Ember**; you sign in to GitHub (the device flow, or **Skip for now**); the setup check shows only
+  the rows that need you, in plain words, with their fix button or the command to copy (**Show the details** has every
+  row); you try the stop shortcut, “Hey Ember” with a live level meter (only while it is on and listening) and a first
+  request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
+  **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
+  step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in
+  settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
   **Handle position** in settings' **Comfort & access**. Click the handle for **Ask Ember…**, **Stop everything**,
   **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
