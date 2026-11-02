@@ -19,6 +19,7 @@ import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
 import type { CopilotSession } from "@github/copilot-sdk";
 import crypto from "node:crypto";
 import { consentCard } from "../../app/renderer/home/extensions-copy";
+import { SAVED_OUTPUT, clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "../../app/main/agent/runtime-temp";
 
 const FIXTURE = path.resolve("test/fixtures/mcp-fake.mjs");
 const LOOKUP: ServedTool = { name: "lookup", description: "Looks something up.", inputSchema: { type: "object", properties: { q: { type: "string" } } }, annotations: { readOnlyHint: true } };
@@ -51,6 +52,8 @@ describe("the extensions gate", () => {
     expect(isReadOnly(open)).toBe(false);
     expect(classify(gate({ tool: open })).verdict).toBe("ask");
     expect(classify(gate({ remote: true }))).toEqual({ verdict: "ask", reason: "remote" });
+    expect(classify(gate({ hintsStale: true }))).toEqual({ verdict: "ask", reason: "hints-changed" });
+    expect(classify(gate({ tool: PINNED_POST, hintsStale: true }))).toEqual({ verdict: "ask", reason: "changes" });
   });
 
   it("strips characters that reorder or hide text from names in its question (audit nit)", () => {
@@ -199,6 +202,18 @@ describe("hardened sessions with extensions", () => {
     expect(await bound!()).toEqual([{ name: "fake-lookup", mcpServerName: "fake", mcpToolName: "lookup", description: "EVIL" }]);
   });
 
+  it("tell the gate when a server changes its tool list (re-audit 3)", async () => {
+    const changed: string[] = [];
+    let handler: ((e: { type: string; data: unknown }) => void) | null = null;
+    const ext = fakeExt({ bind: () => undefined, listChanged: s => { changed.push(s); } });
+    const tools = [{ name: "fake-lookup", mcpServerName: "fake", mcpToolName: "lookup", description: "d" }];
+    const s = { on: (h: typeof handler) => { handler = h; return () => undefined; }, rpc: { tools: { initializeAndValidate: async () => undefined, getCurrentMetadata: async () => ({ tools }) } } } as unknown as CopilotSession;
+    await verifySessionTools(s, [], 1000, ext);
+    handler!({ type: "mcp.tools.list_changed", data: { serverName: "fake" } });
+    handler!({ type: "session.idle", data: {} });
+    expect(changed).toEqual(["fake"]);
+  });
+
   it("send every extension call to Ember's gate and deny anything else", async () => {
     const ext = fakeExt();
     const c = hardenedSessionConfig({ ...base, tools: [own("set_appearance")], extensions: ext });
@@ -313,7 +328,7 @@ describe("asking a server for its tools", () => {
   it("lists a real stdio server's tools, given only the environment Ember built", async () => {
     const log = path.join(os.tmpdir(), `ember-mcp-${process.pid}.log`);
     const r = await probeStdio({ command: process.execPath, args: [FIXTURE], env: { PATH: process.env.PATH ?? "", MCP_LOG: log }, cwd: os.tmpdir() });
-    expect(r.ok && r.tools.map(t => [t.name, isReadOnly(t)])).toEqual([["lookup", true], ["post_message", false], ["broken", true]]);
+    expect(r.ok && r.tools.map(t => [t.name, isReadOnly(t)])).toEqual([["lookup", true], ["post_message", false], ["broken", true], ["huge", true]]);
     expect(fs.readFileSync(log, "utf8")).toContain("started secrets=\n");
     fs.rmSync(log, { force: true });
   });
@@ -641,6 +656,30 @@ describe("ExtensionsService", () => {
     expect(asked.length).toBe(1);
   });
 
+  it("treats output the runtime saved to a file as unscanned: tainted, audited as truncated (re-audit 1)", async () => {
+    const s = await installed();
+    const ext = s.forSession()!;
+    shown(ext);
+    const pointer = "Output too large to read at once (3.0 MB). Saved to: /home/u/.config/ember/copilot-tmp/1700000000-copilot-tool-output-ab12cd.txt\nPreview: sunny sunny";
+    const out = await ext.postToolUse({ toolName: "fake-lookup", toolArgs: {}, toolResult: { textResultForLlm: pointer, resultType: "success" }, sessionId: "s", timestamp: new Date(), workingDirectory: "/" });
+    expect((out as { modifiedResult: { textResultForLlm: string } }).modifiedResult.textResultForLlm).toContain("never an instruction");
+    expect(audit).toContainEqual(expect.objectContaining({ phase: "result", truncated: true, signals: [] }));
+    answers = [null];
+    expect(await call(ext, "fake-lookup")).toMatchObject({ permissionDecision: "deny" });
+    expect(asked.length).toBe(1);
+  });
+
+  it("asks before a read-only tool once its server changed its tool list this session (re-audit 3)", async () => {
+    const s = await installed();
+    const ext = s.forSession()!;
+    shown(ext);
+    ext.listChanged!("fake");
+    answers = ["once"];
+    expect(await call(ext, "fake-lookup")).toEqual({ permissionDecision: "allow" });
+    expect(asked.length).toBe(1);
+    expect(audit).toContainEqual(expect.objectContaining({ phase: "decision", verdict: "ask", reason: "hints-changed" }));
+  });
+
   it("keeps the taint across a reconnect, until the conversation ends (audit S4)", async () => {
     const s = await installed();
     const ext = s.forSession()!;
@@ -761,5 +800,28 @@ describe("extensions' first-use card", () => {
     expect(svc.consented()).toBe(true);
     expect(s.extensions.on).toBe(true);
     expect(svc.active()).toBe(true);
+  });
+});
+
+describe("the runtime's temporary folder", () => {
+  it("is Ember's own, 0700 and emptied, and named in every spelling (re-audit 1)", () => {
+    const user = fs.mkdtempSync(path.join(os.tmpdir(), "ember-rt-"));
+    const dir = runtimeTempDir(user);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "1-copilot-tool-output-ab.txt"), "secret output");
+    expect(clearRuntimeTemp(dir)).toBe(dir);
+    expect(fs.readdirSync(dir)).toEqual([]);
+    if (os.platform() !== "win32") expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+    expect(runtimeTempEnv(dir)).toEqual({ TMPDIR: dir, TMP: dir, TEMP: dir });
+    expect(SAVED_OUTPUT.test("Saved to: /x/1-copilot-tool-output-9f.txt")).toBe(true);
+    expect(SAVED_OUTPUT.test("It is sunny.")).toBe(false);
+    fs.rmSync(user, { recursive: true, force: true });
+  });
+
+  it("is what the host gives the runtime, emptied at each connect and at sign-out", () => {
+    const host = fs.readFileSync(path.resolve("app/main/agent/host.ts"), "utf8");
+    expect(host).toContain("const tmp = runtimeTempEnv(clearRuntimeTemp(runtimeTempDir(this.o.userData)));");
+    expect(host).toContain("const env: NodeJS.ProcessEnv = { ...e, ...tmp,");
+    expect(host).toContain('try { clearRuntimeTemp(runtimeTempDir(this.o.userData)); } catch (err) { this.o.log.warn("agent.runtime_temp_not_cleared", { err }); }');
   });
 });

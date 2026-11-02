@@ -237,21 +237,31 @@ it builds on:
   A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
-  differently, or refused this turn: deny. A tool whose `readOnlyHint` is true (and not `destructiveHint`) in an
-  agreed item, with no injected text seen: allow. Anything else: the Confirmer asks every time ("Use “post_message”
-  from Slack? With "{…}"."), with Allow and Not now, never Always. Every decision, answer and result is an
-  `extension` audit entry, with sizes only.
-- **Read-only means read-only.** `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, and only
-  for a stdio server: every call to a remote (HTTP) server's tools asks, since it sends its arguments there.
+  differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
+  Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
+  tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
+  arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
+  Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
+  answer and result is an `extension` audit entry, with sizes only.
+- **Hints changed mid-session.** The runtime's tool list has no hints, so a change of hints alone (`readOnlyHint` to
+  `destructiveHint`) can't be compared with the pin during a session. When a server sends `tools/list_changed`
+  (`mcp.tools.list_changed`), every tool of that server asks for the rest of the session; the next start's check
+  (`refresh()`) re-pins nothing and turns the changed tool off.
 - **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
   note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
 - **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
-  later call ask.
+  later call ask. Output over about 2.5 MB the runtime saves to a file in its temporary folder and passes as a pointer
+  ("Saved to: …copilot-tool-output-….txt") and a preview: Ember can't scan the rest, so it treats such a result as
+  flagged and audits it as `truncated`. The runtime's temporary folder is `copilot-tmp/` in Ember's data folder
+  (`TMPDIR`, `TMP` and `TEMP`, 0700, emptied at each connect and at sign-out), never the shared /tmp, where those files
+  would be readable by every user.
 - **Pins.** At install and at each start (and when an item is turned on) Ember lists each server's tools itself
-  (`probe.ts`) and compares SHA-256 pins of name, description, schema and hints (`pin.ts`); a changed tool is off
-  until the user agrees again in Home.
+  (`probe.ts`, in its own process group, ended whole) and compares SHA-256 pins of name, description, schema and hints
+  (`pin.ts`); a changed tool is off until the user agrees again in Home. Known gap: **Agree again** (and install)
+  pins the tools the server serves at that moment without showing them to the user first; the card naming the served
+  tools, with a hash carried back on the yes, is a follow-up.
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
@@ -495,6 +505,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
 | Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest

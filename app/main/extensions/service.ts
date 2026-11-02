@@ -36,6 +36,7 @@ import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
 import { checkPins, isReadOnly, pinAll, shownHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, type ProbeResult } from "./probe";
+import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
 
 export interface ExtensionsDeps {
@@ -104,6 +105,8 @@ interface SessionGate {
   refused: Set<string>;
   shown: Map<string, boolean>;
   live: (() => Promise<ShownTool[]>) | null;
+  /** Server keys that changed their tool list this session (their hints can't be re-checked). */
+  listChanged: Set<string>;
   epoch: number;
   tools: Map<string, { item: StoredItem; server: StoredServer; tool: PinnedTool }>;
 }
@@ -393,7 +396,7 @@ export class ExtensionsService implements ExtensionsApi {
     if (this.o.probe) return this.o.probe(spec, cwd);
     // The kill switch ends a probe under way (its signal is replaced at each stop).
     const signal = this.stopAsks.signal;
-    if (spec.type === "stdio") return this.o.launcher ? probeStdio({ ...this.command(spec), cwd, signal }) : Promise.resolve({ ok: false, why: "Ember can't run programs for extensions on this computer yet." });
+    if (spec.type === "stdio") return this.o.launcher ? probeStdio({ ...this.command(spec), cwd, signal, group: this.o.os !== "win32" }) : Promise.resolve({ ok: false, why: "Ember can't run programs for extensions on this computer yet." });
     if (spec.type === "sse") return Promise.resolve({ ok: false, why: "Ember can't reach this kind of server yet." });
     return probeHttp({ url: spec.url, headers: spec.headers, fetch: this.o.fetch ?? fetch, signal });
   }
@@ -526,7 +529,7 @@ export class ExtensionsService implements ExtensionsApi {
   /** The extension tools for a new session (the conductor's), or undefined while extensions aren't active or none is ready. */
   forSession(): SessionExtensions | undefined {
     if (!this.active()) return undefined;
-    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, epoch: this.epoch, tools: new Map() };
+    const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, tools: new Map() };
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
       if (!item.enabled || item.consentedAt === null) continue;
@@ -547,6 +550,7 @@ export class ExtensionsService implements ExtensionsApi {
       postToolUseFailure: input => this.failure(gate, input),
       verify: shown => this.verify(gate, shown),
       bind: live => { gate.live = live; },
+      listChanged: server => { gate.listChanged.add(server); this.o.log.info("extensions.list_changed", { server }); },
       newTurn: () => gate.refused.clear(),
     };
   }
@@ -604,6 +608,7 @@ export class ExtensionsService implements ExtensionsApi {
       ...(tool ? { tool } : {}),
       shownAsPinned: await this.shownNow(gate, name),
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
+      hintsStale: !!e && gate.listChanged.has(e.server.key),
     });
   }
 
@@ -644,7 +649,7 @@ export class ExtensionsService implements ExtensionsApi {
     const text = typeof input.error === "string" ? input.error : "";
     const signals = injectionSignals(text);
     this.tainted = true;
-    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    try { this.audit({ phase: "failed", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(SAVED_OUTPUT.test(text) ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
     return { additionalContext: failureNote(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName) };
   }
 
@@ -652,10 +657,13 @@ export class ExtensionsService implements ExtensionsApi {
     const e = gate.tools.get(input.toolName);
     const text = typeof input.toolResult?.textResultForLlm === "string" ? input.toolResult.textResultForLlm : "";
     const signals = injectionSignals(text);
-    if (signals.length) this.tainted = true;
-    try { this.audit({ phase: "result", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
+    // Output too big to pass on: the runtime saved it to a file and passes a pointer and a preview, so most of it was
+    // never scanned. Treated as flagged.
+    const truncated = SAVED_OUTPUT.test(text);
+    if (signals.length || truncated) this.tainted = true;
+    try { this.audit({ phase: "result", ext: e?.item.id ?? null, tool: input.toolName, chars: text.length, signals, ...(truncated ? { truncated: true } : {}) }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
     // Text only (the conductor is never sent images), wrapped as untrusted.
     // Only Ember's own fields: the server's raw text (contents, its log) never rides along.
-    return { modifiedResult: { textResultForLlm: wrapResult(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, text, signals.length > 0), resultType: input.toolResult?.resultType ?? "success", binaryResultsForLlm: [] } };
+    return { modifiedResult: { textResultForLlm: wrapResult(e?.item.name ?? "an extension", e?.tool.name ?? input.toolName, text, signals.length > 0 || truncated), resultType: input.toolResult?.resultType ?? "success", binaryResultsForLlm: [] } };
   }
 }

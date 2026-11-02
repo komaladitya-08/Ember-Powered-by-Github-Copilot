@@ -39,6 +39,7 @@ import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
+import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
@@ -1429,7 +1430,9 @@ export class AgentHost {
   private async runtimeEnv(): Promise<NodeJS.ProcessEnv> {
     const e = process.env;
     const noProxy = (v: string | undefined, more: string[] = []) => [v, "127.0.0.1", "localhost", ...more].filter(Boolean).join(",");
-    const env: NodeJS.ProcessEnv = { ...e, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
+    // Its own temporary folder (0700, emptied at each connect): large tool output it saves there stays private.
+    const tmp = runtimeTempEnv(clearRuntimeTemp(runtimeTempDir(this.o.userData)));
+    const env: NodeJS.ProcessEnv = { ...e, ...tmp, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
     this.proxy = undefined;
     if (e.HTTPS_PROXY || e.https_proxy || !this.o.resolveProxy) return env;
     const resolve = this.o.resolveProxy;
@@ -1967,6 +1970,8 @@ export class AgentHost {
     await this.tasks?.drain(2500);
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
+    // The runtime's saved tool output goes with the conversation.
+    try { clearRuntimeTemp(runtimeTempDir(this.o.userData)); } catch (err) { this.o.log.warn("agent.runtime_temp_not_cleared", { err }); }
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.o.memory?.forgetAll();
     this.reminders.clear();

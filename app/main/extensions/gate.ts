@@ -42,6 +42,8 @@ export interface GateInput {
    * Ember asks before anything that sends, so even its read-only tools ask.
    */
   remote?: boolean;
+  /** Its server changed its tool list this session: its hints can't be checked any more, so even read-only tools ask. */
+  hintsStale?: boolean;
 }
 
 /** The decision for one call, and why (the reason goes to the model and the audit log, in Ember's own words). */
@@ -52,8 +54,8 @@ export function classify(g: GateInput): { verdict: GateVerdict; reason: string }
   if (!g.item.enabled || !g.item.consented) return { verdict: "deny", reason: "The user turned this extension off." };
   if (g.tool.changed || !g.shownAsPinned) return { verdict: "deny", reason: "This tool changed since the user agreed to it. It stays off until they agree again in Ember's settings." };
   if (g.refused) return { verdict: "deny", reason: "The user said no to this tool. Don't try it again or try another way." };
-  if (isReadOnly(g.tool) && !g.tainted && !g.remote) return { verdict: "allow", reason: "read-only" };
-  return { verdict: "ask", reason: g.tainted ? "tainted" : g.remote && isReadOnly(g.tool) ? "remote" : "changes" };
+  if (isReadOnly(g.tool) && !g.tainted && !g.remote && !g.hintsStale) return { verdict: "allow", reason: "read-only" };
+  return { verdict: "ask", reason: g.tainted ? "tainted" : !isReadOnly(g.tool) ? "changes" : g.remote ? "remote" : "hints-changed" };
 }
 
 /** Characters that reorder or hide text: bidi controls, zero-width marks, the soft hyphen, the byte-order mark. */

@@ -54,13 +54,14 @@ async function listTools(rpc: Rpc, notify: (method: string) => Promise<void>): P
 }
 
 /** Probes a stdio server: `command` started with exactly `env`, in `cwd`, no shell; stopped afterwards. */
-export function probeStdio(o: { command: string; args: string[]; env: Record<string, string>; cwd: string; timeoutMs?: number; signal?: AbortSignal }): Promise<ProbeResult> {
+export function probeStdio(o: { command: string; args: string[]; env: Record<string, string>; cwd: string; timeoutMs?: number; signal?: AbortSignal; group?: boolean }): Promise<ProbeResult> {
   return new Promise(resolve => {
     let done = false, buf = "", bytes = 0, id = 0;
     const waiting = new Map<number, { ok: (v: unknown) => void; no: (e: Error) => void }>();
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true });
+      // Its own process group (Linux and macOS), as the launcher runs servers: everything it starts ends with it.
+      child = spawn(o.command, o.args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "ignore"], shell: false, windowsHide: true, detached: o.group === true });
     } catch {
       resolve({ ok: false, why: "It didn't start." });
       return;
@@ -70,7 +71,12 @@ export function probeStdio(o: { command: string; args: string[]; env: Record<str
       done = true;
       clearTimeout(timer);
       for (const w of waiting.values()) w.no(new Error("ended"));
-      try { child.kill("SIGTERM"); } catch { /* already gone */ }
+      try {
+        if (o.group && child.pid) process.kill(-child.pid, "SIGTERM");
+        else child.kill("SIGTERM");
+      } catch {
+        try { child.kill("SIGTERM"); } catch { /* already gone */ }
+      }
       resolve(r);
     };
     const timer = setTimeout(() => finish({ ok: false, why: "It didn't answer in time." }), o.timeoutMs ?? 20_000);

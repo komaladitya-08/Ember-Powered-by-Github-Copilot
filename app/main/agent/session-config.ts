@@ -61,6 +61,11 @@ export interface SessionExtensions {
    * (notifications/tools/list_changed), so every call is checked against what the model is shown at that moment.
    */
   bind?(shown: () => Promise<ShownTool[]>): void;
+  /**
+   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime's metadata has no hints, so a change
+   * of hints alone can't be checked against the pin: that server's tools ask from then on in this session.
+   */
+  listChanged?(serverName: string): void;
   /** A new request from the user: the tools they refused in the last turn may be asked about again. */
   newTurn?(): void;
 }
@@ -167,6 +172,9 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
         if (!Array.isArray(now.tools)) throw new Error("the runtime did not report its tools");
         return now.tools.filter(isAdmitted);
       });
+      if (ext.listChanged && typeof session.on === "function") {
+        session.on(e => { if (e.type === "mcp.tools.list_changed") ext.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? "")); });
+      }
     }
     return names;
   })(), timeoutMs);

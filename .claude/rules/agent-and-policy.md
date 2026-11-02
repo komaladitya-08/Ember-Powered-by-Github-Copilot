@@ -163,7 +163,9 @@ docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/mai
 - **Check pins at every call**, against the session's live tool list (`bind`), not only at load: a server can change
   a tool mid-session. A session without a live list denies every call.
 - **Read-only** is `isReadOnly()` (readOnlyHint, and neither destructiveHint nor openWorldHint) on a stdio server only;
-  a remote server's tools always ask.
+  a remote server's tools always ask, and so do a server's tools once it changes its tool list mid-session.
+- **The runtime's TMPDIR** is `copilot-tmp/` in the data folder (runtime-temp.ts, 0700, emptied at connect and
+  sign-out): it saves large tool output there. A result carrying its "Saved to:" pointer counts as flagged.
 - **Pins** (pin.ts) are checked at install, start and re-enable, and against what the session shows; a changed tool
   stays off until `reagree`.
 - **Servers start through the launcher** (launch.ts) with `appEnv()`'s allowlist, never the runtime's environment.
