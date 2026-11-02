@@ -115,6 +115,9 @@ describe("finished tasks' activity, for Home", () => {
       const kept = tm.activities();
       expect(kept.length).toBe(20);
       expect(kept[0]).toMatchObject({ id: ids[21], title: "Task 21", activity: { live: "Done" } });
+      // With what its card showed: its state and how it ended, for Home's Task activity.
+      expect(kept[0]).toMatchObject({ status: "done", summary: "Done." });
+      expect(kept[0]).not.toHaveProperty("hand");
       expect(tm.activity(ids[0])).toBeNull();
       expect(tm.activity(ids[21])?.endedAt).toBeDefined();
     } finally {

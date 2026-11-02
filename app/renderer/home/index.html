@@ -10,18 +10,35 @@
 </head>
 <body class="loading">
   <main class="home">
-    <header class="hero">
-      <canvas id="buddy" width="132" height="132" aria-label="Your Ember character"></canvas>
-      <div class="hero-text">
-        <h1>Ember</h1>
-        <p id="tagline" role="status">Starting…</p>
-        <p class="sr" id="home-live" role="status"></p>
-      </div>
-    </header>
-
     <nav class="jump after-setup" id="jump" aria-label="Settings sections">
-      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#extensions-h">Extensions</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
+      <div class="search" role="search"><label for="search" class="sr">Search settings</label><input id="search" type="search" maxlength="60" spellcheck="false" autocomplete="off" placeholder="Search settings" aria-describedby="search-msg"><p class="sr" id="search-msg" role="status"></p></div>
+      <a href="#home-h">Home</a><a href="#copilot-h">Copilot</a><a href="#voice-h">Voice</a><a href="#pick-h">Your Ember</a><a href="#memory-h">Memory</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#access-h">Comfort &amp; access</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#extensions-h">Extensions</a><a href="#checks-h">Setup &amp; about</a>
     </nav>
+
+    <section class="status-panel" data-pane="home" aria-labelledby="home-h">
+      <div class="hero">
+        <div class="ring" id="ring" aria-hidden="true"><canvas id="buddy" width="132" height="132" aria-label="Your Ember character"></canvas></div>
+        <div class="hero-text">
+          <h1 id="home-h" tabindex="-1">Ember</h1>
+          <p class="state-word after-setup"><span id="state-word">Starting…</span> <button type="button" id="p-waiting" class="link" hidden>Show the question</button></p>
+          <p id="tagline" role="status">Starting…</p>
+          <p class="sr" id="home-live" role="status"></p>
+          <button type="button" id="p-setup" class="link setup-link after-setup" hidden></button>
+        </div>
+      </div>
+      <dl class="status-facts after-setup">
+        <div><dt>Features</dt><dd id="whats-on">Listening off · Memory off · Commands off</dd></div>
+        <div><dt>Today</dt><dd id="today">No tasks yet</dd></div>
+      </dl>
+      <div class="status-actions after-setup">
+        <div class="agent-actions">
+          <button type="button" id="p-connect" class="btn" hidden>Connect Copilot…</button>
+          <button type="button" id="p-ask" class="btn">Ask Ember…</button>
+          <button type="button" id="p-stop" class="btn quiet">Stop everything</button>
+        </div>
+        <p class="stop-hint"><span data-key-held="stop">Or press <span class="chord" data-shortcut="stop"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>X</kbd></span> to stop everything at once.</span><span data-key-taken="stop" hidden>Another app has the stop shortcut: use Stop everything, here or in Ember's handle menu.</span></p>
+      </div>
+    </section>
 
     <p id="managed" class="managed" hidden></p>
     <p id="settings-notice" class="managed error" role="status" hidden></p>
@@ -38,7 +55,33 @@
       </ul>
     </section>
 
-    <section class="pick" aria-labelledby="pick-h">
+    <section class="after-setup" data-pane="home" aria-labelledby="conversation-h">
+      <h2 id="conversation-h" tabindex="-1">Conversation</h2>
+      <div class="convo">
+        <button type="button" id="conversation-earlier" class="btn quiet small earlier" hidden>Show earlier messages</button>
+        <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="Nothing yet. Press Ctrl+Alt+Space and ask Ember something."></ol>
+      </div>
+      <p class="hint">Kept only while Ember runs: closing Ember forgets it. Signing out forgets it too.</p>
+    </section>
+
+    <section class="after-setup" data-pane="home" aria-labelledby="tasks-h">
+      <h2 id="tasks-h" tabindex="-1">Task activity</h2>
+      <p class="asking" id="tasks-asking" tabindex="-1" hidden><span data-question-keys="both">Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow or <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now, or answer there.</span><span data-question-keys="allow" hidden>Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="allow"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Y</kbd></span> to allow, or answer there.</span><span data-question-keys="deny" hidden>Ember is asking you something in its bubble. Press <span class="chord" data-shortcut="deny"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>N</kbd></span> for not now, or answer there.</span><span data-question-keys="none" hidden>Ember is asking you something in its bubble: answer there.</span></p>
+      <div class="task-filter agent-actions" id="task-filter" role="group" aria-label="Show tasks" hidden></div>
+      <div class="task-groups" id="tasks" aria-labelledby="tasks-h"></div>
+      <p class="hint" id="tasks-note">Kept until you quit Ember. Every decision and action is also in What Ember did.</p>
+      <p class="sr" id="tasks-live" role="status"></p>
+    </section>
+
+    <section class="after-setup fold-section" data-pane="home" aria-labelledby="activity-h">
+      <details class="fold" id="activity-fold" aria-labelledby="activity-h">
+        <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
+        <ol class="activity" id="activity"></ol>
+        <p class="hint">Every decision and action is also in <code id="audit-dir">~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
+      </details>
+    </section>
+
+    <section class="pick" data-pane="pick" aria-labelledby="pick-h">
       <h2 id="pick-h" tabindex="-1">Your Ember</h2>
       <div class="cards" id="cards" role="radiogroup" aria-labelledby="pick-h"></div>
       <div class="group">
@@ -51,9 +94,21 @@
       <p class="hint after-setup" id="settings-taken" data-key-taken="settings" hidden>Open Ember again from your apps any time to come back here, or click Ember's handle.</p>
       <p class="hint after-setup" id="autostart-note" hidden></p>
       <p class="hint after-setup">Press <span class="chord" data-shortcut="settings"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>E</kbd></span> any time to come back here, or click Ember's handle in the <span id="handle-corner">bottom-right corner</span>.</p>
+      <h3 class="sub after-setup" id="screen-h">Ember on screen</h3>
+      <div class="group after-setup" role="group" aria-labelledby="screen-h">
+        <label class="switch-row"><span>Handle position</span><select id="handle-position">
+          <option value="bottom-right">Bottom right</option>
+          <option value="bottom-left">Bottom left</option>
+        </select></label>
+        <label class="switch-row" id="follow-row"><input type="checkbox" id="p-follow" role="switch"><span>Follow my cursor</span></label>
+        <label class="switch-row" id="hide-row"><input type="checkbox" id="p-hide" role="switch"><span>Hide Ember until it needs me</span></label>
+      </div>
+      <p class="hint after-setup" id="presence-text" role="status"></p>
+      <p class="hint after-setup">Ember's handle and its task cards sit in this corner of your main screen. “Move to the other side” in the handle's menu switches it too.</p>
+      <div class="agent-actions after-setup"><button type="button" id="p-quit" class="btn quiet">Quit Ember</button></div>
     </section>
 
-    <section class="after-setup" aria-labelledby="copilot-h">
+    <section class="after-setup" data-pane="copilot" aria-labelledby="copilot-h">
       <h2 id="copilot-h" tabindex="-1">Copilot</h2>
       <div class="copilot">
         <p class="agent-line" role="status"><i id="agent-dot" class="dot" aria-hidden="true"></i><span id="agent-text">Checking…</span></p>
@@ -74,14 +129,11 @@
         <p class="usage" id="usage"></p>
       </div>
       <p class="hint" data-key-held="ask">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
-      <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember…, under Comfort &amp; access, or from Ember's handle.</p>
+      <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember… on Home, or from Ember's handle.</p>
     </section>
 
-    <section class="after-setup" aria-labelledby="conversation-h">
-      <h2 id="conversation-h" tabindex="-1">Conversation</h2>
-      <ol class="conversation" id="conversation" aria-labelledby="conversation-h" data-empty="Nothing yet. Press Ctrl+Alt+Space and ask Ember something."></ol>
-      <p class="hint">Kept only while Ember runs: closing Ember forgets it. Signing out forgets it too.</p>
-      <h3 class="sub" id="memory-h">Memory</h3>
+    <section class="after-setup" data-pane="memory" aria-labelledby="memory-h">
+      <h2 id="memory-h" tabindex="-1">Memory</h2>
       <div class="group">
         <label class="switch-row"><input type="checkbox" id="memory-on" role="switch" aria-describedby="memory-hint"><span>Remember what I tell you</span></label>
         <div id="memory-consent" class="consent" role="group" aria-label="Before Ember remembers" hidden>
@@ -105,7 +157,7 @@
       <div class="agent-actions"><button type="button" id="routines-forget-all" class="btn quiet" hidden>Delete all routines and reminders</button></div>
     </section>
 
-    <section class="after-setup" aria-labelledby="voice-h">
+    <section class="after-setup" data-pane="voice" aria-labelledby="voice-h">
       <h2 id="voice-h" tabindex="-1">Voice</h2>
       <div class="group voice">
         <label class="switch-row"><input type="checkbox" id="wake" role="switch"><span>Listen for “Hey Ember”</span></label>
@@ -138,15 +190,21 @@
       <p class="hint">Say “Ember, …” (or “Hey Ember, …”) and your request, or “Ember, stop” to stop everything. “Ember?” on its own tells you what Ember is doing, “What did I miss?” what finished while you were away, and “Ember, just show me” keeps results on screen.</p>
     </section>
 
-    <section class="after-setup" aria-labelledby="privacy-h">
+    <section class="after-setup" data-pane="privacy" aria-labelledby="privacy-h">
       <h2 id="privacy-h" tabindex="-1">Apps &amp; privacy</h2>
       <div class="stack">
         <h3 class="sub">When Ember asks first</h3>
         <span id="trust-managed" hidden>Managed by your organisation</span>
-        <label class="switch-row"><input type="checkbox" id="trust-apps" role="switch" aria-describedby="trust-apps-hint"><span>Don't ask before working in an app I asked for help with</span></label>
-        <p class="hint" id="trust-apps-hint">The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.</p>
-        <label class="switch-row"><input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>Ask only about dangerous commands</span></label>
-        <p class="hint" id="trust-commands-hint">A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.</p>
+        <div class="group">
+          <div class="noted-row">
+            <label class="switch-row"><input type="checkbox" id="trust-apps" role="switch" aria-describedby="trust-apps-hint"><span>Don't ask before working in an app I asked for help with</span></label>
+            <p class="row-note" id="trust-apps-hint">The app you were in when you asked, or one your request names. Ember still asks before anything hard to undo, such as sending or deleting.</p>
+          </div>
+          <div class="noted-row">
+            <label class="switch-row"><input type="checkbox" id="trust-commands" role="switch" aria-describedby="trust-commands-hint"><span>Ask only about dangerous commands</span></label>
+            <p class="row-note" id="trust-commands-hint">A command Ember would ask about is first reviewed by Copilot against your request. A routine one runs in Ember's command window, where you can stop it during its countdown. Commands that touch passwords or keys or change the system always ask.</p>
+          </div>
+        </div>
         <h3 class="sub">Apps Ember may act in without asking first</h3>
         <p class="hint grants-off" id="grants-off" hidden>Not in effect: your organisation has Ember ask before every action, in these apps too.</p>
         <ul class="plain-list" id="grants" aria-label="Apps Ember may act in without asking"></ul>
@@ -163,7 +221,7 @@
       </div>
     </section>
 
-    <section class="after-setup" id="computers" aria-labelledby="computers-h" hidden>
+    <section class="after-setup" id="computers" data-pane="computers" aria-labelledby="computers-h" hidden>
       <h2 id="computers-h" tabindex="-1">Computers</h2>
       <div class="stack">
         <p class="intro" id="computers-intro">Ember can work on this computer and on computers you reach over SSH. Your voice and your GitHub sign-in always stay here.</p>
@@ -184,7 +242,7 @@
       </div>
     </section>
 
-    <section class="after-setup" id="commands" aria-labelledby="commands-h" hidden>
+    <section class="after-setup" id="commands" data-pane="commands" aria-labelledby="commands-h" hidden>
       <h2 id="commands-h" tabindex="-1">Commands</h2>
       <div class="stack">
         <p class="intro">Ember runs commands in its own command window, where you can watch and stop them. It asks first before anything that deletes, publishes, touches secrets or changes the system.</p>
@@ -195,7 +253,7 @@
       </div>
     </section>
 
-    <section class="after-setup" id="extensions" aria-labelledby="extensions-h">
+    <section class="after-setup" id="extensions" data-pane="extensions" aria-labelledby="extensions-h">
       <h2 id="extensions-h" tabindex="-1">Extensions</h2>
       <div class="stack">
         <p class="intro" id="extensions-intro">Extensions give Ember more tools: plugins from marketplaces you add, and connectors to services such as Slack or Notion, through GitHub. Only you can add them, here.</p>
@@ -226,25 +284,9 @@
       </div>
     </section>
 
-    <section class="after-setup" aria-labelledby="access-h">
+    <section class="after-setup" data-pane="access" aria-labelledby="access-h">
       <h2 id="access-h" tabindex="-1">Comfort &amp; access</h2>
       <div class="stack">
-        <h3 class="sub">Ember on screen</h3>
-        <div class="group">
-          <p class="presence-line" id="presence-text" role="status"></p>
-          <div class="agent-actions" id="presence-actions">
-            <button type="button" id="p-ask" class="btn quiet">Ask Ember…</button>
-            <button type="button" id="p-stop" class="btn quiet">Stop everything</button>
-            <button type="button" id="p-hide" class="btn quiet">Hide Ember</button>
-            <button type="button" id="p-follow" class="btn quiet">Stay put</button>
-            <button type="button" id="p-quit" class="btn quiet">Quit Ember</button>
-          </div>
-          <label class="switch-row"><span>Handle position</span><select id="handle-position">
-            <option value="bottom-right">Bottom right</option>
-            <option value="bottom-left">Bottom left</option>
-          </select></label>
-        </div>
-        <p class="hint">Ember's handle and its task cards sit in this corner of your main screen. “Move to the other side” in the handle's menu switches it too.</p>
         <h3 class="sub">Text</h3>
         <div class="group">
           <label class="switch-row"><span>Text size</span><select id="text-size">
@@ -263,15 +305,7 @@
       </div>
     </section>
 
-    <section class="after-setup fold-section" aria-labelledby="activity-h">
-      <details class="fold" id="activity-fold" aria-labelledby="activity-h">
-        <summary><h2 id="activity-h">What Ember did</h2><span class="fold-note" id="activity-note"></span></summary>
-        <ol class="activity" id="activity"></ol>
-        <p class="hint">Every decision and action is also in <code id="audit-dir">~/.config/ember/audit/</code><span id="journal-hint"> and in the system journal (<code>journalctl -t ember-audit</code>)</span>.</p>
-      </details>
-    </section>
-
-    <section class="after-setup fold-section" aria-labelledby="checks-h">
+    <section class="after-setup fold-section" data-pane="checks" aria-labelledby="checks-h">
       <details class="fold" id="checks-fold" aria-labelledby="checks-h">
         <summary><h2 id="checks-h">Setup check</h2><span class="fold-note" id="checks-note"></span></summary>
         <ul class="checks" id="checks"></ul>
@@ -279,7 +313,7 @@
       </details>
     </section>
 
-    <section class="after-setup fold-section" aria-labelledby="about-h">
+    <section class="after-setup fold-section" data-pane="checks" aria-labelledby="about-h">
       <details class="fold" id="about-fold" aria-labelledby="about-h">
         <summary><h2 id="about-h">About this build</h2><span class="fold-note" id="about-note"></span></summary>
         <dl class="facts" id="facts"></dl>

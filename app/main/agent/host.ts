@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText } from "../../shared/view";
-import type { TaskActivity } from "../../shared/activity";
+import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
@@ -1913,7 +1913,7 @@ export class AgentHost {
    * What each kept task did and is doing, newest first (TaskManager.activities): Home's "Task activity" reads it. In
    * memory only; empty while no TaskManager runs.
    */
-  taskActivities(): { id: string; title: string; activity: TaskActivity }[] {
+  taskActivities(): TaskEntry[] {
     return this.tasks?.activities() ?? [];
   }
 

@@ -1,13 +1,13 @@
 /**
  * What a task is doing, as Ember shows it (docs/DESIGN.md "Two bodies"): the types of a task's activity and the pure
- * words built from them, shared by main (app/main/agent/activity.ts builds the activity), the task cards and, later,
- * Home's "Task activity". Every word here is Ember's own, built from what Ember's tools and the Copilot SDK's events
- * say happened, never from the model's text. The one exception is a note (`model: true`): the worker's own short
+ * words built from them, shared by main (app/main/agent/activity.ts builds the activity), the task cards and Home's
+ * "Task activity". Every word here is Ember's own, built from what Ember's tools and the Copilot SDK's events say
+ * happened, never from the model's text. The one exception is a note (`model: true`): the worker's own short
  * report_progress words, which a page draws as plain text in a secondary label and never as Ember's voice. Raw
  * reasoning, tool arguments, screen text and error messages never reach these words.
  */
 
-import type { PlanStep, TaskHand } from "./view";
+import type { PlanStep, TaskHand, ViewBlock } from "./view";
 
 /** A task's state in words, one table for every surface, so a state reads the same wherever it is seen or heard. */
 export const STATUS_WORDS = {
@@ -57,6 +57,31 @@ export interface ActivityItem {
   app?: string;
   /** The words are the worker's own (a note): drawn as plain secondary text, never spoken as Ember's. */
   model?: true;
+  /**
+   * A question's decision as policy wrote it (its sentence up to the "?"): Home's Task activity shows it under the row.
+   * The cards never show it (the bubble asks it).
+   */
+  asked?: string;
+}
+
+/**
+ * A task as Home's "Task activity" shows it (TaskManager.activities): its activity, and what its card showed (its
+ * state, plan, where it works and how it ended). Kept in memory only, for the tasks with a card and the twenty newest
+ * finished ones besides, and gone when Ember quits. `summary`, the plan's and the view's words are the worker's own.
+ */
+export interface TaskEntry {
+  id: string;
+  title: string;
+  status: "queued" | "running" | "waiting" | "done" | "failed" | "stopped";
+  /** Where it acts when not on this computer ("on build-01"). */
+  where?: string;
+  /** How it works now, while it works. */
+  hand?: TaskHand;
+  plan?: PlanStep[];
+  /** How it ended, in the worker's words (finish_task's summary), and what it found or made. */
+  summary?: string;
+  view?: ViewBlock[];
+  activity: TaskActivity;
 }
 
 /** A task's whole activity, kept in main while Ember runs (the cards get a summary; Home will show it whole). */

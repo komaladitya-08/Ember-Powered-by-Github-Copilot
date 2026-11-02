@@ -25,8 +25,8 @@ export type ActivityEvent =
   | { type: "tool-end"; id: string; ok: boolean }
   /** The worker's own note (report_progress): its text, and its few words for what it does now. */
   | { type: "note"; text: string; intent?: string }
-  /** A question of this task went up. */
-  | { type: "question" }
+  /** A question of this task went up. `asked`: its sentence as policy built it (Home shows its decision). */
+  | { type: "question"; asked?: string }
   /** It was answered (or not). */
   | { type: "answer"; answer: Answer }
   /** A step wasn't allowed; `reason` is Ember's (policy's) words. */
@@ -49,6 +49,19 @@ export type ActivityEvent =
 /** Longest words kept from a note or a reason (the card shows a line of it). */
 const NOTE_MAX = 200;
 const REASON_MAX = 120;
+/** Longest words kept of a question's decision (Home shows it under the row). */
+const ASKED_MAX = 160;
+
+/**
+ * A question's decision: its sentence up to the first "?" ("Click “Send” in Mail?"), without what the step does after
+ * it, or a typed text's whole two ends; null when it has no words.
+ */
+export function askedWords(prompt: string | undefined): string | null {
+  if (!prompt) return null;
+  const q = prompt.indexOf("?");
+  const decision = clip(q >= 0 ? prompt.slice(0, q + 1) : prompt, ASKED_MAX);
+  return decision || null;
+}
 
 const clip = (s: string, max: number) => {
   const t = s.replace(/\s+/g, " ").trim();
@@ -132,7 +145,8 @@ export class ActivityLog {
       case "question": {
         a.questions++;
         a.asking = true;
-        this.question = this.push({ id: this.id("q"), kind: "question", at, state: "waiting", words: ANSWER_WORDS.waiting });
+        const asked = askedWords(e.asked);
+        this.question = this.push({ id: this.id("q"), kind: "question", at, state: "waiting", words: ANSWER_WORDS.waiting, ...(asked ? { asked } : {}) });
         a.live = STATUS_WORDS.waiting;
         return true;
       }

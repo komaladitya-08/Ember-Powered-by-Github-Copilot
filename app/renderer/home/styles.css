@@ -33,7 +33,46 @@ section { display: grid; gap: 8px; }
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 2px 5px rgba(0, 0, 0, 0.35), 0 10px 30px rgba(0, 0, 0, 0.45);
 }
 h1 { margin: 0; font: var(--type-large-title); letter-spacing: -0.021em; text-wrap: balance; }
+h1[tabindex="-1"]:focus { outline: none; }
+.hero-text { min-width: 0; }
 .hero-text p { margin: 4px 0 0; color: var(--muted); max-width: 46ch; font: var(--type-body); font-size: 15px; letter-spacing: -0.009em; text-wrap: pretty; }
+
+/* ───── Home's status panel: one opaque group, the only HUD part of the window (docs/DESIGN.md "Home"). The ring is
+   still (it never animates), its state said in the word beside it; what is on, today, then Ask and Stop everything. */
+.status-panel { display: grid; }
+body:not(.first-run) .status-panel { padding: 18px 20px 16px; border-radius: var(--r-xl); background: var(--panel); box-shadow: var(--group-edge); }
+body:not(.first-run) .status-panel .hero { gap: 18px; }
+.ring { position: relative; flex: none; display: grid; place-items: center; }
+body:not(.first-run) .ring { width: 96px; height: 96px; border-radius: 50%; }
+body:not(.first-run) .ring #buddy { width: 80px; height: 80px; border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 0 1px rgba(255, 255, 255, 0.07); }
+/* The presence ring, as on the handle: dim when not ready, the accent when ready or at work, a heavier ring when Ember
+   needs the user, red with a notch for a problem. Decorative: the state word says it. */
+body:not(.first-run) .ring::before {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; pointer-events: none;
+  border: 2px solid var(--hud-dim);
+}
+.ring:is([data-ring="ready"], [data-ring="acting"], [data-ring="needs"])::before { border-color: var(--accent); }
+.ring[data-ring="needs"]::before { border-width: 3px; }
+.ring[data-ring="error"]::before { border-color: var(--red); -webkit-mask: conic-gradient(from -20deg, transparent 0 40deg, #000 40deg); }
+.hero-text .state-word { margin: 2px 0 0; }
+#state-word { color: var(--fg); font: var(--type-title-2); font-weight: 600; letter-spacing: -0.013em; }
+#state-word[data-ring="error"] { color: var(--red-text); }
+.state-word .link { margin-left: 6px; font: var(--type-callout); font-weight: 500; }
+/* The status line is a quiet caption under the state (where Ember is, how to ask), and the setup check a link under it. */
+body:not(.first-run) .hero-text #tagline { margin-top: 4px; font: var(--type-callout); letter-spacing: -0.003em; }
+.hero-text .setup-link { display: block; margin-top: 4px; font: var(--type-callout); font-weight: 500; text-align: left; }
+.task-group .asking { margin: 12px 0 0; }
+.task-filter .btn[aria-pressed="true"] { background: rgba(255, 255, 255, 0.14); font-weight: 600; }
+.status-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
+.status-facts > div { min-width: 0; }
+.status-facts dt { color: var(--muted); font: var(--type-footnote); }
+.status-facts dd { margin: 2px 0 0; font: var(--type-callout); font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.status-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.stop-hint { margin: 0; color: var(--muted); font: var(--type-footnote); }
+@media (max-width: 560px) { .status-facts { grid-template-columns: minmax(0, 1fr); } }
+
+/* ───── Panes: one at a time once Ember has started (the sidebar picks it); the first run shows its own parts ───── */
+body:not(.first-run) .off-pane { display: none !important; }
 
 /* Section titles above their groups; sub-headers in the secondary label, as System Settings' group headers. */
 h2 { margin: 0 0 4px 4px; font: var(--type-title-2); letter-spacing: -0.013em; color: var(--fg); }
@@ -173,15 +212,15 @@ html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138p
 /* A choice in a list (Speak … out loud), laid out and styled as the model choices. */
 .choice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 14px; align-items: center; }
 /* A pop-up button, sized to its choice and set at the row's end; its height grows with the text size, as its words do. */
-.models select, .choice select, #text-size {
+.models select, .choice select, #text-size, #handle-position {
   justify-self: end; max-width: 100%; height: calc(28px * var(--text-scale)); padding: 0 30px 0 11px; border-radius: var(--r-sm); border: 0;
   -webkit-appearance: none; appearance: none; cursor: pointer;
   color: var(--fg); font: 500 13px var(--ember-font); letter-spacing: -0.003em;
   background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f5f2ef' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 9.5 4-4 4 4M8 14.5l4 4 4-4'/%3E%3C/svg%3E") right 10px center / 12px no-repeat, rgba(255, 255, 255, 0.07);
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
-.models select option, .choice select option, #text-size option { background: var(--surface-2); color: var(--fg); }
+.models select:focus-visible, .choice select:focus-visible, #text-size:focus-visible, #handle-position:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.models select option, .choice select option, #text-size option, #handle-position option { background: var(--surface-2); color: var(--fg); }
 /* Narrow: the choice goes under its label. */
 @media (max-width: 480px) { .choice { grid-template-columns: minmax(0, 1fr); } .choice select { justify-self: start; } }
 .models-hint { grid-column: 1 / -1; margin: 0; }
@@ -196,7 +235,7 @@ html:has(> body.first-run) { scroll-padding-bottom: calc(var(--start-row-h, 138p
 .locked { opacity: 0.5; }
 
 /* Callouts: the consent note, organisation notices, the welcome. Neutral: colour is kept for actions. */
-.consent { padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.consent { padding: 14px 16px; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
 .consent p { margin: 0 0 12px; }
 .match { display: grid; gap: 8px; }
 .match .hint { margin: 0; }
@@ -259,9 +298,16 @@ progress[hidden] { display: none; }
 .never-look-msg { margin: 0; }
 .never-look-msg:empty { display: none; }
 .presence-line { margin: 0; color: var(--fg); }
+#presence-text:empty { display: none; }
+/* A switch with its note under it, as one row of its group (Apps & privacy, UI audit #11). */
+.group > .noted-row { display: grid; gap: 4px; }
+.row-note { margin: 0; padding-right: 64px; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
 
-/* ───── Conversation: a chat. You on the right, Ember on the left, tasks and problems as notes ───── */
-.conversation { list-style: none; margin: 0; padding: 10px 0; max-height: 360px; overflow-y: auto; display: grid; gap: 2px; }
+/* ───── Conversation: a chat. You on the right, Ember on the left, tasks and problems as notes. Part of the page (no
+   scroll box of its own, UI audit #1): its latest messages, with the earlier ones a button away. ───── */
+.convo { display: grid; gap: 8px; }
+.convo .earlier { justify-self: center; }
+.conversation { list-style: none; margin: 0; padding: 10px 0; display: grid; gap: 2px; }
 .conversation:empty::before { content: attr(data-empty); display: block; padding: 4px 16px; color: var(--muted); }
 /* Who and when on one line, then the words on their own line (the zero-height ::before breaks the line). */
 .conversation li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; padding: 4px 14px; }
@@ -280,6 +326,98 @@ progress[hidden] { display: none; }
 }
 .conversation li.you p { border-radius: var(--r-xl) var(--r-xl) var(--r-xs) var(--r-xl); background: color-mix(in srgb, var(--accent) 26%, var(--surface-1)); color: #fff3e2; }
 .conversation li.task p, .conversation li.problem p { background: transparent; padding: 2px 6px; border-radius: 0; color: var(--muted); }
+
+/* ───── Task activity: one group per task, newest first. Its title with the state symbol, its plan as a checklist, a
+   row for each thing it did (the time after it started, the state symbol, the words), and how it ended. Opaque and
+   still: nothing here animates; the clock under a working task's title is text written once a second. ───── */
+.task-groups { display: grid; gap: 12px; }
+.task-groups > .empty { margin: 0; padding: 14px 16px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--group-edge); color: var(--muted); }
+.task-group { display: grid; padding: 0 16px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--group-edge); min-width: 0; }
+.task-head { display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 12px 0; }
+.task-body { display: grid; }
+.task-body > * { margin: 0; padding: 12px 0; border-top: 1px solid var(--line); }
+/* A task that ended folds to its head (the chevron at its trailing edge); opened, its plan, rows and result. */
+.task-fold > summary { list-style: none; cursor: pointer; border-radius: var(--r-sm); }
+.task-fold > summary::-webkit-details-marker { display: none; }
+.task-fold > summary::after {
+  content: "" / ""; flex: none; align-self: center; width: 14px; height: 14px; margin-left: auto; background: var(--muted);
+  -webkit-mask: var(--sym-chevron) center / 12px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
+.task-fold[open] > summary::after { transform: rotate(90deg); }
+.task-fold > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (hover: hover) { .task-fold > summary:hover::after { background: var(--fg); } }
+/* Where a waiting question is asked, and the keys that answer it: a callout above the tasks (Home never answers). */
+.asking { margin: 0; padding: 12px 16px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); }
+.asking:focus { outline: none; }
+.asking:focus-visible { box-shadow: inset 0 0 0 1px var(--line), var(--focus-ring); }
+.task-head .sym, .timeline .sym { flex: none; width: 18px; height: 18px; background: var(--sym-tint); -webkit-mask: var(--sym) center / 18px no-repeat; }
+.task-head .sym { margin-top: 1px; }
+.task-text { display: grid; gap: 2px; min-width: 0; }
+.task-title { margin: 0; font: var(--type-headline); font-weight: 600; letter-spacing: -0.006em; overflow-wrap: anywhere; text-wrap: pretty; }
+.task-meta { margin: 0; color: var(--muted); font: var(--type-footnote); font-weight: 500; font-variant-numeric: tabular-nums; }
+.task-steps { margin: 0; color: var(--muted); font: var(--type-footnote); overflow-wrap: anywhere; }
+/* The plan: done (a tick), now (the accent dot, words in weight 600), to come (a ring). */
+.plan-list { list-style: none; display: grid; gap: 4px; font: var(--type-callout); }
+.plan-list li { position: relative; padding-left: 26px; overflow-wrap: anywhere; }
+.plan-list li::before { content: ""; position: absolute; left: 3px; top: 3px; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-3); }
+.plan-list li[data-state="done"] { color: var(--muted); }
+.plan-list li[data-state="done"]::before { box-shadow: none; background: var(--green); -webkit-mask: var(--sym-done) center / 12px no-repeat; }
+.plan-list li[data-state="now"] { font-weight: 600; }
+.plan-list li[data-state="now"]::before { box-shadow: none; background: var(--accent); width: 8px; height: 8px; left: 5px; top: 5px; }
+/* The timeline: rows of at least 44px, the time first in tabular figures. */
+.timeline { list-style: none; display: grid; }
+.timeline > li { display: grid; grid-template-columns: 3.2em 18px minmax(0, 1fr); gap: 10px; align-items: start; min-height: 44px; padding: 11px 0; font: var(--type-callout); }
+.timeline > li + li { border-top: 1px solid var(--line); }
+.timeline .at { color: var(--label-3); font-variant-numeric: tabular-nums; text-align: right; line-height: 18px; }
+.timeline .what { min-width: 0; overflow-wrap: anywhere; line-height: 18px; }
+/* The worker's own words: secondary, tagged as its note, never styled as Ember's voice. */
+.timeline .what.model { color: var(--muted); }
+.note-tag { padding: 1px 6px; border-radius: var(--r-capsule); background: rgba(120, 120, 128, 0.26); color: var(--fg); font: 600 11px/17px var(--ember-font); }
+.timeline .asked { display: block; margin-top: 2px; color: var(--muted); font: var(--type-footnote); }
+.timeline > li.dropped { display: block; min-height: 0; padding: 8px 0; color: var(--muted); font: var(--type-footnote); }
+.timeline .steps > summary { list-style: none; cursor: pointer; display: flex; align-items: flex-start; gap: 6px; border-radius: var(--r-xs); }
+.timeline .steps > summary::-webkit-details-marker { display: none; }
+.timeline .steps > summary::after {
+  content: "" / ""; flex: none; width: 12px; height: 12px; margin-top: 3px; background: var(--muted);
+  -webkit-mask: var(--sym-chevron) center / 10px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
+.timeline .steps[open] > summary::after { transform: rotate(90deg); }
+.timeline .steps > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (hover: hover) { .timeline .steps > summary:hover::after { background: var(--fg); } }
+.step-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; color: var(--muted); font: var(--type-footnote); }
+.step-list li { display: flex; gap: 10px; }
+.step-list .at { text-align: left; min-width: 3.2em; line-height: inherit; }
+.task-result { display: grid; gap: 8px; }
+.task-result .summary { margin: 0; color: var(--muted); font: var(--type-callout); overflow-wrap: anywhere; text-wrap: pretty; }
+/* A result view (app/shared/view.ts's catalog, drawn by overlay/view.ts): flat in its group, as on the card. */
+.view { display: grid; gap: 6px; font: var(--type-callout); min-width: 0; }
+.view p { margin: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.view ul, .view ol { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
+.view li { overflow-wrap: anywhere; }
+.view dl { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 2px 14px; margin: 0; }
+.view dt { color: var(--muted); overflow-wrap: anywhere; }
+.view dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.view table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+.view th { text-align: left; font-weight: 600; color: var(--muted); }
+.view th, .view td { padding: 3px 6px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
+.view tbody tr { box-shadow: inset 0 1px 0 var(--separator); }
+.view .file code { font: 12px/18px var(--ember-mono); overflow-wrap: anywhere; }
+.view .file-label { color: var(--muted); }
+.view .checklist { list-style: none; padding-left: 0; }
+.view .checklist li { position: relative; padding-left: 18px; }
+.view .checklist li::before { content: ""; position: absolute; left: 0; top: 0.25em; width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--label-3); }
+.view .checklist li[data-done="true"]::before { box-shadow: none; background: var(--green); -webkit-mask: var(--sym-done) center / 12px no-repeat; }
+.view .progress p { display: flex; justify-content: space-between; gap: 10px; }
+.view .progress-n { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.view .bar { height: 4px; margin-top: 4px; border-radius: var(--r-capsule); background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.view .bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.view .excerpt { margin: 0; min-width: 0; }
+.view .excerpt figcaption { color: var(--muted); font: 12px/18px var(--ember-mono); overflow-wrap: anywhere; }
+.view .excerpt pre { margin: 4px 0 0; padding: 6px 8px; border-radius: var(--r-xs); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--separator); font: 12px/18px var(--ember-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.view .status-block { position: relative; padding-left: 20px; }
+.view .status-block::before { content: ""; position: absolute; left: 0; top: 0.15em; width: 14px; height: 14px; background: var(--green); -webkit-mask: var(--sym-done) center / 14px no-repeat; }
+.view .status-block[data-tone="warn"]::before { background: var(--yellow); -webkit-mask-image: var(--sym-warn); }
+.view .status-block[data-tone="fail"]::before { background: var(--red); -webkit-mask-image: var(--sym-failed); }
 
 /* ───── What Ember did: time, a fixed-width state tag, the step ───── */
 .activity { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
@@ -314,7 +452,9 @@ progress[hidden] { display: none; }
 .checks .check-actions { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .facts { margin: 0; padding: 14px 16px; display: grid; grid-template-columns: max-content 1fr; gap: 8px 18px; }
 .facts dt { color: var(--muted); }
-.facts dd { margin: 0; overflow-wrap: anywhere; font: 13px/20px var(--ember-mono); }
+.facts dd { margin: 0; overflow-wrap: anywhere; }
+.facts dd.path { font: 13px/20px var(--ember-mono); }
+.facts dd.plain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 
 /* ── First run: only the welcome, the character picker and Start ── */
 body.first-run .after-setup { display: none !important; }
@@ -324,7 +464,7 @@ body.loading .home { visibility: hidden; }
 
 /* ── Section links. Narrow: one row of capsules that scrolls sideways and away with the page. ── */
 .jump {
-  display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: -16px -4px 0; padding: 4px;
+  display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; margin: -12px -4px 0; padding: 4px;
 }
 .jump a {
   flex: none; position: relative; padding: 5px 11px; border-radius: var(--r-capsule); color: var(--muted); text-decoration: none;
@@ -360,17 +500,16 @@ h2, summary { scroll-margin-top: 16px; }
   .jump a[aria-current="true"] { background: rgba(255, 255, 255, 0.1); }
 }
 html { scroll-padding-top: 16px; }
-.jump a[href="#pick-h"] { --tile: #ff9230; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5c.7 3.3 3 4.6 4.5 6.8 1.4 2 2 4.1 1.5 6.3-.8 3.3-3.4 5.4-6 5.4s-5.3-2-6-5.2c-.5-2.2.3-4.3 1.6-5.9.3 1.5 1 2.5 2.2 3-.4-3.9 1.1-7.5 2.2-10.4z'/%3E%3C/svg%3E"); }
+.jump a[href="#home-h"] { --tile: #ff9230; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M11.1 2.9a1.4 1.4 0 0 1 1.8 0l8 6.7c.6.5.2 1.4-.6 1.4H19v8.5a1.5 1.5 0 0 1-1.5 1.5H15v-6h-6v6H6.5A1.5 1.5 0 0 1 5 19.5V11H3.7c-.8 0-1.2-.9-.6-1.4z'/%3E%3C/svg%3E"); }
+.jump a[href="#pick-h"] { --tile: #ff453a; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5c.7 3.3 3 4.6 4.5 6.8 1.4 2 2 4.1 1.5 6.3-.8 3.3-3.4 5.4-6 5.4s-5.3-2-6-5.2c-.5-2.2.3-4.3 1.6-5.9.3 1.5 1 2.5 2.2 3-.4-3.9 1.1-7.5 2.2-10.4z'/%3E%3C/svg%3E"); }
 .jump a[href="#copilot-h"] { --tile: #6d7cff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5c.5 4.6 2.4 6.9 7 7.5-4.6.6-6.5 2.9-7 7.5-.5-4.6-2.4-6.9-7-7.5 4.6-.6 6.5-2.9 7-7.5zM19 15.5c.2 1.9 1 2.8 2.9 3-1.9.2-2.7 1.1-2.9 3-.2-1.9-1-2.8-2.9-3 1.9-.2 2.7-1.1 2.9-3z'/%3E%3C/svg%3E"); }
-.jump a[href="#conversation-h"] { --tile: #30d158; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3.5c5 0 9 3.3 9 7.5s-4 7.5-9 7.5c-.9 0-1.8-.1-2.6-.3L5 20.5l.9-3.6C4.1 15.5 3 13.4 3 11c0-4.2 4-7.5 9-7.5z'/%3E%3C/svg%3E"); }
+.jump a[href="#memory-h"] { --tile: #30d158; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 2.5h10A1.5 1.5 0 0 1 18.5 4v17.2a.6.6 0 0 1-.95.5L12 17.6l-5.55 4.1a.6.6 0 0 1-.95-.5V4A1.5 1.5 0 0 1 7 2.5z'/%3E%3C/svg%3E"); }
 .jump a[href="#voice-h"] { --tile: #ff375f; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3' fill='black' stroke='none'/%3E%3Cpath d='M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21'/%3E%3C/svg%3E"); }
 .jump a[href="#privacy-h"] { --tile: #0091ff; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2.5l8 3.2v5.8c0 4.9-3.4 9-8 10-4.6-1-8-5.1-8-10V5.7z'/%3E%3C/svg%3E"); }
 .jump a[href="#computers-h"] { --tile: #5e5ce6; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M4.5 4h15A1.5 1.5 0 0 1 21 5.5v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 15.5v-10A1.5 1.5 0 0 1 4.5 4zm.5 2v9h14V6zM8 19h8a1 1 0 0 1 0 2H8a1 1 0 0 1 0-2z'/%3E%3C/svg%3E"); }
 .jump a[href="#commands-h"] { --tile: #3a3a3c; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 7 5 5-5 5M12.5 18h6.5'/%3E%3C/svg%3E"); }
 .jump a[href="#access-h"] { --tile: #00b8c4; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='4.6' r='2.1'/%3E%3Cpath d='M4.2 7.6a1.1 1.1 0 0 1 1.3-.9l4.5.9h4l4.5-.9a1.1 1.1 0 1 1 .4 2.2l-4 .8V13l2 7a1.1 1.1 0 1 1-2.1.6L12.9 15h-1.8l-1.9 5.6a1.1 1.1 0 1 1-2.1-.6l2-7V9.7l-4-.8a1.1 1.1 0 0 1-.9-1.3z'/%3E%3C/svg%3E"); }
-.jump a[href="#activity-h"] { --tile: #a55eea; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8.5'/%3E%3Cpath d='M12 7.5V12l3 2'/%3E%3C/svg%3E"); }
 .jump a[href="#checks-h"] { --tile: #8e8e93; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14.7 3.3a5 5 0 0 0-5.9 6.5l-5.4 5.4a2 2 0 0 0 2.8 2.8l5.4-5.4a5 5 0 0 0 6.5-5.9l-2.9 2.9-2.4-.5-.5-2.4z'/%3E%3C/svg%3E"); }
-.jump a[href="#about-h"] { --tile: #8e8e93; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2a10 10 0 1 1 0 20 10 10 0 0 1 0-20zm0 4.6a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8zm1.1 4.4h-2.2v6.6h2.2z'/%3E%3C/svg%3E"); }
 #agree { scroll-margin: 120px; }
 
 /* ── Folded sections (What Ember did, Setup check, About): a disclosure chevron in the gutter, titles in line ── */
@@ -405,8 +544,8 @@ html { scroll-padding-top: 16px; }
    cards and Start keep an edge; the chosen character a thick highlight edge (and its check); the section you are in
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
-  .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row, .consent, .managed, .welcome, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
-  .card, .start, .models select, .choice select, #text-size, .add-row input { border: 1px solid ButtonText; }
+  body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .start-row, .consent, .managed, .welcome, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .card, .start, .models select, .choice select, #text-size, #handle-position, .add-row input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
@@ -417,7 +556,7 @@ html { scroll-padding-top: 16px; }
   body.first-run .start-row { background: Canvas; }
   body.first-run .start-row::before { forced-color-adjust: none; box-shadow: 0 0 0 1px CanvasText, 0 100vmax 0 100vmax Canvas; }
   /* The pop-up's own chevron is drawn by the system, in its colours (the painted one is a light image). */
-  .models select, .choice select, #text-size { appearance: auto; -webkit-appearance: menulist; background-image: none; }
+  .models select, .choice select, #text-size, #handle-position { appearance: auto; -webkit-appearance: menulist; background-image: none; }
   .pick-row input[type="range"] { forced-color-adjust: none; }
   .pick-row input[type="range"]::-webkit-slider-runnable-track { background: linear-gradient(to right, Highlight var(--fill, 32%), CanvasText var(--fill, 32%)); box-shadow: none; }
   .pick-row input[type="range"]::-webkit-slider-thumb, .pick-row input[type="range"]:focus-visible::-webkit-slider-thumb { background: ButtonText; box-shadow: 0 0 0 2px Canvas; }
@@ -545,10 +684,89 @@ html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: 
 html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
 html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
 html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: calc(28px * var(--text-scale)); }
-html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position { font-size: calc(13px * var(--text-scale)); }
 html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
 html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
 html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
-html[data-text-size] .facts dd { font-size: calc(13px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
+html[data-text-size] .facts dd.path { font-size: calc(13px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
 html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
 @media (min-width: 640px) { html[data-text-size] .jump a { font-size: calc(14px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); } }
+html[data-text-size] .note-tag { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
+html[data-text-size] .view .file code, html[data-text-size] .view .excerpt figcaption, html[data-text-size] .view .excerpt pre { font-size: calc(12px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
+html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-height: calc(18px * var(--text-scale)); }
+
+/* Contrast themes for Home's status panel and Task activity: the ring in the text colour (heavier when Ember needs
+   you), every state symbol and plan mark in a system colour, the note tag with an edge. */
+@media (forced-colors: active) {
+  body:not(.first-run) .ring::before { border-color: GrayText; }
+  .ring:is([data-ring="ready"], [data-ring="acting"], [data-ring="needs"], [data-ring="error"])::before { border-color: CanvasText; }
+  .task-head .sym, .timeline .sym, .task-fold > summary::after, .plan-list li[data-state="done"]::before, .plan-list li[data-state="now"]::before, .view .checklist li[data-done="true"]::before, .view .status-block::before { forced-color-adjust: none; background: CanvasText; }
+  .plan-list li::before, .view .checklist li::before { forced-color-adjust: none; box-shadow: inset 0 0 0 1.5px CanvasText; }
+  .note-tag, .view .bar, .asking { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .view .bar i { forced-color-adjust: none; background: Highlight; }
+  .timeline .steps > summary::after { background: CanvasText; }
+  .task-filter .btn[aria-pressed="true"] { outline: 2px solid Highlight; }
+}
+
+/* ───── Search settings, at the top of the sidebar (System Settings' search): a filled field, Apple's focus ring;
+   links to panes that don't hold the words typed step out of the list; the setting Enter found is marked until the
+   next search (a fill, no motion). ───── */
+.search { flex: none; display: flex; padding: 0 0 6px; }
+.search input {
+  width: 100%; min-width: 150px; height: calc(28px * var(--text-scale)); padding: 0 10px; border: 0; border-radius: var(--r-sm);
+  background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-callout); box-shadow: inset 0 0 0 1px var(--control-edge);
+}
+.search input::placeholder { color: #9a9592; opacity: 1; }
+.search input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.jump a.unmatched { display: none; }
+.found { border-radius: var(--r-xs); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+@media (min-width: 640px) { .search { padding: 0 0 10px; } }
+@media (forced-colors: active) {
+  .search input { border: 1px solid ButtonText; }
+  .found { outline: 2px solid Highlight; }
+}
+
+/* ───── Motion (research_notes/motion_animation.md §4.2): the motion tokens this page needs, under the names and values
+   the shared sheet will carry (defined here until it does: the same names merge cleanly). Opacity and translate only,
+   on content that just appeared, never on what updates while scrolling; Calm (html.calm, ember.css) makes all of it
+   instant. ───── */
+:root {
+  --spring-smooth-0: linear(0, 0.01 2%, 0.045 4.5%, 0.12 8%, 0.45 20.5%, 0.575 26%, 0.678 31.5%, 0.766 37.5%, 0.837 44%, 0.895 51.5%, 0.939 60.5%, 0.971 72.5%, 0.991 91.5%, 1);
+  --spring-brisk: linear(0, 0.013 2.5%, 0.047 5%, 0.119 8.5%, 0.262 14%, 0.491 22.5%, 0.621 28%, 0.728 33.5%, 0.813 39%, 0.881 45%, 0.933 51.5%, 0.972 59.5%, 0.997 70%, 1.006 87.5%, 1);
+  --spring-reward: linear(0, 0.009 2%, 0.043 4.5%, 0.107 7.5%, 0.218 11.5%, 0.562 22.5%, 0.698 27.5%, 0.801 32%, 0.882 36.5%, 0.95 41.5%, 1 47%, 1.031 53%, 1.046 61%, 1.037 74%, 1.005 99.5%, 1);
+  --t-press: 220ms;
+  --t-fast: 300ms;
+  --t-move: 420ms;
+  --t-fade-in: 180ms;
+  --t-fade-out: 130ms;
+  --t-calm-fade: 150ms;
+  --stagger: 30ms;
+}
+/* A pane coming into view (the sidebar picked it) settles in from just below: one fade and a 6 px rise. */
+body:not(.first-run) [data-pane]:not(.off-pane) {
+  transition: opacity var(--t-fade-in) ease-out, translate var(--t-move) var(--spring-brisk);
+}
+/* Disclosure content (a fold, a finished task, a folded row) fades in from just above; the height doesn't animate. */
+.fold[open] > :not(summary), .task-fold[open] > .task-body, .timeline .steps[open] > .step-list {
+  transition: opacity var(--t-fade-in) ease-out, translate var(--t-move) var(--spring-brisk);
+}
+/* The sidebar's selection glides between rows on a click (its own small layer); the link keeps the fill until the
+   glide has a place to start from, and in contrast themes the link's own outline marks it. */
+@media (min-width: 640px) {
+  .jump-hl {
+    position: absolute; left: 10px; right: 10px; top: 0; z-index: -1; pointer-events: none; border-radius: var(--r-sm);
+    background: rgba(255, 255, 255, 0.1); translate: 0 var(--hl-y, 0); height: var(--hl-h, 32px);
+  }
+  .jump.glides .jump-hl { transition: translate var(--t-move) var(--spring-smooth-0); }
+  body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: transparent; }
+}
+@media (max-width: 639px) { .jump-hl { display: none; } }
+@media (forced-colors: active) { .jump-hl { display: none; } }
+@starting-style {
+  body:not(.first-run) [data-pane]:not(.off-pane) { opacity: 0; translate: 0 6px; }
+  .fold[open] > :not(summary), .task-fold[open] > .task-body, .timeline .steps[open] > .step-list { opacity: 0; translate: 0 -4px; }
+}
+@media (prefers-contrast: more) {
+  .jump-hl { display: none; }
+  body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: rgba(255, 255, 255, 0.1); }
+}

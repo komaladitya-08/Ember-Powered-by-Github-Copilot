@@ -189,7 +189,8 @@ describe("the setup check in the settings window", () => {
     expect(setupView(LINUX_A11Y_OFF, first)).toMatchObject({ failing: 0, needing: 1, open: true, beforeStart: true, note: "1 thing worth a look" });
     // A warning with nothing to do keeps the fold shut and the first-run screen as it was.
     const other = LINUX_A11Y_OFF.map(r => (r.id === "accessibility" ? { id: r.id, label: r.label, status: "ok" as const } : r.id === "os" ? { ...r, status: "warn" as const } : r));
-    expect(setupView(other, first)).toMatchObject({ needing: 0, open: false, beforeStart: false, note: "1 thing worth a look" });
+    // The note counts what the tagline and the sidebar's badge count: nothing needs the user, so all is good (UI audit #6).
+    expect(setupView(other, first)).toMatchObject({ needing: 0, open: false, beforeStart: false, note: "All good" });
     // Opened by itself once: a user who closes it isn't overruled by the next status.
     expect(setupView(LINUX_A11Y_OFF, { opened: true, beforeStart: true }).open).toBe(false);
   });
@@ -563,7 +564,7 @@ describe("setup check and doctor wording", () => {
   it("gives a place to report problems in the About section, the issue address platform's advice names too (review #105)", () => {
     // One address for both packages (app/shared/support.ts, review #223 names it in the display-scaling advice).
     expect(ISSUES_URL).toBe("https://github.com/komaladitya-08/Ember-Powered-by-Github-Copilot/issues");
-    expect(SCRIPT).toContain("[\"Report a problem\", ISSUES_URL]");
+    expect(SCRIPT).toContain("[\"Report a problem\", ISSUES_URL, \"copy\"]");
   });
 });
 

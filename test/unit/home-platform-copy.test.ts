@@ -135,6 +135,15 @@ const CHORD_SENTENCES: Record<ShortcutId, string> = {
   allow: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.",
   deny: "When Ember asks “May I?”, press Ctrl+Alt+Y to allow or Ctrl+Alt+N for not now; you don't need the mouse. With a screen reader running, Ember also speaks its questions and results, unless you turn that off under Voice.",
 };
+/**
+ * The same chords elsewhere on the page: Home's status panel names the stop chord, and Task activity's callout (hidden
+ * until a task waits for an answer, so it reads as nothing) the allow and not-now chords.
+ */
+const MORE_SENTENCES: Partial<Record<ShortcutId, string[]>> = {
+  stop: ["Or press Ctrl+Alt+X to stop everything at once."],
+  allow: [""],
+  deny: [""],
+};
 const IDS: ShortcutId[] = ["ask", "stop", "settings", "mute", "allow", "deny"];
 const t = "2026-10-22T09:00:00.000Z";
 
@@ -156,9 +165,10 @@ describe("the settings window before a status names an OS", () => {
   it("marks every chord chip with its shortcut, each holding today's Linux key caps", () => {
     const root = page();
     const chips = elements(root).filter(e => e.attrs.class === "chord");
-    // Allow's and Not now's twice: the question sentence has a twin for each key on its own (D-45b).
-    expect(chips).toHaveLength(8);
-    expect(chips.map(c => c.attrs["data-shortcut"]).sort()).toEqual([...IDS, "allow", "deny"].sort());
+    // Allow's and Not now's twice in each place: the question sentence has a twin for each key on its own (D-45b); Comfort
+    // & access and Task activity's callout each name them, and Stop is named in the consent list and Home's status panel.
+    expect(chips).toHaveLength(13);
+    expect(chips.map(c => c.attrs["data-shortcut"]).sort()).toEqual([...IDS, "stop", "allow", "deny", "allow", "deny", "allow", "deny"].sort());
     for (const chip of chips) {
       const id = chip.attrs["data-shortcut"] as ShortcutId;
       expect(chip.children.map(markup).join(""), id).toBe(SHORTCUTS.linux[id].keys.map(k => `<kbd>${k}</kbd>`).join("+"));
@@ -168,7 +178,7 @@ describe("the settings window before a status names an OS", () => {
       const all = elements(root).filter(e => (e.tag === "p" || e.tag === "li") && elements(e).includes(chip));
       return visible(all[all.length - 1]);
     };
-    for (const chip of chips) expect(sentenceOf(chip)).toBe(CHORD_SENTENCES[chip.attrs["data-shortcut"] as ShortcutId]);
+    for (const chip of chips) { const id = chip.attrs["data-shortcut"] as ShortcutId; expect([CHORD_SENTENCES[id], ...(MORE_SENTENCES[id] ?? [])], id).toContain(sentenceOf(chip)); }
   });
 
   it("writes today's strings when no OS is given", () => {
@@ -256,7 +266,7 @@ describe("the settings window with a Windows or macOS status", () => {
       const root = page();
       for (const patch of homePatches(p)) expect(select(root, patch.selector).length, patch.selector).toBeGreaterThan(0);
     }
-    for (const id of IDS) expect(select(page(), `[data-shortcut="${id}"]`), id).toHaveLength(id === "allow" || id === "deny" ? 2 : 1);
+    for (const id of IDS) expect(select(page(), `[data-shortcut="${id}"]`), id).toHaveLength(id === "allow" || id === "deny" ? 4 : id === "stop" ? 2 : 1);
   });
 
   it("writes the OS's shortcuts in the tagline, the stop line and the voice line", () => {
@@ -445,7 +455,7 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(st.shortcuts.ask).toEqual({ label: "Ctrl+Alt+Shift+Space", keys: ["Ctrl", "Alt", "Shift", "Space"] });
     const root = apply(page(), homePatches(st));
     expect(sentence(root, "ask")).toBe("Ask Ember anything with Ctrl+Alt+Shift+Space.");
-    expect(sentence(root, "stop")).toBe(CHORD_SENTENCES.stop.replace("Ctrl+Alt+X", "Ctrl+Alt+Shift+X"));
+    expect(sentence(root, "stop")).toBe("Or press Ctrl+Alt+Shift+X to stop everything at once.");
     expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Press Ctrl+Alt+Shift+Space to ask it anything.");
     expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Press Ctrl+Alt+Shift+Space and ask Ember something.");
     // A stop pressed with Ctrl+Alt+X (in this run or an earlier one) isn't renamed by the fallback Ember holds now.
@@ -463,11 +473,12 @@ describe("the settings window names the chord Ember holds: its fallback, or none
     expect(text).not.toMatch(/Win\+Alt/);
     expect(text).toContain("Stop everything, in Ember's handle menu and in settings, stops everything at once.");
     expect(text).toContain("Open Ember again from the Start menu any time to come back here, or click Ember's handle.");
-    expect(text).toContain("Another app has Ember's ask shortcut: ask with Ask Ember…, under Comfort & access, or from Ember's handle.");
+    expect(text).toContain("Another app has Ember's ask shortcut: ask with Ask Ember… on Home, or from Ember's handle.");
+    expect(text).toContain("Another app has the stop shortcut: use Stop everything, here or in Ember's handle menu.");
     expect(text).toContain("Mute microphone, in Ember's handle menu, turns the microphone off and on.");
     expect(text).toContain("When Ember asks “May I?”, answer in its bubble: another app has the keys for Allow and Not now.");
-    expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Ask it anything with Ask Ember…, under Comfort & access.");
-    expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Use Ask Ember…, under Comfort & access, to ask Ember something.");
+    expect(tagline(base, st.shortcuts.ask.label)).toBe("Ember is beside your cursor. Ask it anything with Ask Ember… below.");
+    expect(byId(root, "conversation").attrs["data-empty"]).toBe("Nothing yet. Use Ask Ember… at the top of Home to ask Ember something.");
     expect(micOffText(st.shortcuts.mute.label)).toBe("Microphone off");
     expect(describeEntry({ t, event: "stop", source: "hotkey" }, entryWords(st))?.what).toBe("Everything stopped (stop shortcut)");
     // Each OS's own way back, and the page as it was once Ember holds them again.

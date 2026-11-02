@@ -101,11 +101,11 @@ describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
     expect((await call("report_progress", { text: "x", intent: "y".repeat(61) })).resultType).toBe("failure");
   });
 
-  it("says a question went up and how it was answered, never what it asked", async () => {
+  it("says a question went up with the sentence policy built (for Home), and how it was answered", async () => {
     const allowed = makeWorker({ grants: {} });
     await allowed.call("perceive_window", {});
     await allowed.call("click", { id: 1 });
-    expect(allowed.activity.filter(e => e.type === "question" || e.type === "answer")).toEqual([{ type: "question" }, { type: "answer", answer: "allowed" }]);
+    expect(allowed.activity.filter(e => e.type === "question" || e.type === "answer")).toEqual([{ type: "question", asked: expect.stringMatching(/\?/) }, { type: "answer", answer: "allowed" }]);
     const declined = makeWorker({ grants: {}, answer: "deny" });
     await declined.call("perceive_window", {});
     await declined.call("click", { id: 1 });

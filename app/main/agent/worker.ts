@@ -1048,8 +1048,8 @@ export class Worker {
   private async ask(question: Question, signal: AbortSignal = this.overSignal): Promise<string | null> {
     const ask = () => this.d.confirmer.ask(question, signal);
     // Its card says it waits for the user while the question is up, and then how they answered (never what it asked:
-    // the question shows in the bubble, built by policy).
-    this.activity({ type: "question" });
+    // the question shows in the bubble, built by policy). Home's Task activity shows the decision policy wrote.
+    this.activity({ type: "question", asked: question.prompt });
     let answer: string | null = null;
     try {
       answer = await (this.clock ? this.clock.waiting(ask) : ask());
