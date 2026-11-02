@@ -1384,6 +1384,12 @@ function start(): void {
   let signInPage: string | null = null;
   const openSignInPage = () => { if (signInPage && mayOpenSignInPage(signInPage)) void shell.openExternal(signInPage); };
   ipcMain.handle(IPC.openSignInPage, guard(openSignInPage));
+  // The sign-in code and a setup command's Copy: every web permission stays denied (the clipboard's too), so main
+  // writes it. Plain text from the settings window only, and short.
+  ipcMain.handle(IPC.copyText, guard((text: unknown) => {
+    if (typeof text !== "string" || !text || text.length > 4096) throw new Error("Nothing to copy.");
+    clipboard.writeText(text);
+  }));
   /** A sign-in that failed, in plain words (a network or certificate problem, not "net::ERR_…"; no promised retry). */
   const signInError = (err: unknown): string => explainSignInError(err, { online: net.isOnline(), reinstall: sys.words.reinstall });
   /**
@@ -2251,7 +2257,7 @@ function start(): void {
       // The level for Ember's presence ring and voice meter: straight to the overlay, never through the state.
       onLevel: l => {
         overlay?.setLevel(l);
-        if (homeWantsLevel && l.mic !== undefined && home && !home.isDestroyed() && home.isVisible()) home.webContents.send(IPC.homeLevel, l.mic);
+        if (homeWantsLevel && l.mic !== undefined && home && !home.isDestroyed() && home.isVisible() && !home.isMinimized()) home.webContents.send(IPC.homeLevel, l.mic);
       },
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,

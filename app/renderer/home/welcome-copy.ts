@@ -87,7 +87,7 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
       ? { icon: "send", text: "While your organisation's policy locks me down, nothing is sent to a model service, so I can't answer or act." }
       : { icon: "send", text: `When you ask something, your request and what I read go to ${o.service}. Nothing is sent before you ask.` },
     { icon: "hand", text: "I ask before acting in an app, and always before anything hard to undo. I never type passwords." },
-    { icon: "lock", text: `Your settings, logs and a record of what I did stay on this computer (${o.kept}). I send no usage statistics.` },
+    { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). I send no usage statistics.` },
     { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on." },
   ];
 }
@@ -102,6 +102,25 @@ export const CONSENT_TEXT = {
   quit: "Quit Ember",
 } as const;
 
+/**
+ * Each consent line beside the full text's words it shortens (index.html "Before Ember starts"): the summary claims
+ * nothing the full text doesn't (home-welcome.test.ts checks every pair against the page).
+ */
+export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly string[]>> = {
+  eye: ["reads the window you're working in", "for tasks it may take a screenshot of it", "App windows on your never-look list and password prompts are never read"],
+  send: ["When you ask something</b>, your request and what Ember read from the screen go to", "Nothing is sent before you ask."],
+  hand: ["It asks before acting</b> in an app, and always before anything hard to undo.", "It never types passwords."],
+  lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "It sends no usage statistics."],
+  plug: ["The microphone stays off</b> unless you turn on", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
+};
+
+/** The sign-in step's title and lead: an organisation's own model service has nothing to sign in to. */
+export function signInText(managed: boolean): { title: string; lead: string } {
+  return managed
+    ? { title: "Connecting to your organisation's service", lead: "Your organisation runs its own model service for me, so there's nothing to sign in to." }
+    : STEP_TEXT["sign-in"];
+}
+
 /** The sign-in step as the Copilot status has it: what it says, and which buttons it offers. */
 export interface SignInView {
   /** The line under the buttons ("" when none). */
@@ -113,21 +132,34 @@ export interface SignInView {
   why: string;
   cancel: boolean;
   skip: boolean;
+  /** Offer "Check again" (a sign-in made elsewhere, such as the GitHub CLI's, is looked for again). */
+  retry: boolean;
 }
 
 /**
- * `phase` and `login` from the agent's status (null while it hasn't come), `signingIn` while a device flow runs,
- * `managedProvider` when the organisation's own model service answers instead of Copilot (nothing to sign in to).
+ * `phase`, `reason` and `login` from the agent's status (null while it hasn't come), `signingIn` while a device flow
+ * runs, `managedProvider` when the organisation's own model service answers instead of Copilot (nothing to sign in
+ * to), `locked` while the organisation's policy locks Ember down (nothing connects; signing in can't help).
  */
-export function signInView(o: { phase: string | null; login?: string; signingIn: boolean; managedProvider: boolean }): SignInView {
+export function signInView(o: { phase: string | null; reason?: string; login?: string; signingIn: boolean; managedProvider: boolean; locked?: boolean }): SignInView {
+  const none = { cancel: false, skip: false, retry: false };
   if (o.phase === "ready") {
     const who = o.managedProvider ? "Connected to your organisation's model service." : o.login ? `Signed in as ${o.login}.` : "Connected to Copilot.";
-    return { line: who, tone: "ok", primary: "continue", why: "", cancel: false, skip: false };
+    return { ...none, line: who, tone: "ok", primary: "continue", why: "" };
   }
-  if (o.signingIn) return { line: "", tone: "", primary: "continue", why: "Waiting for you to approve the sign-in in your browser.", cancel: true, skip: false };
-  if (o.phase === "starting" || o.phase === null) return { line: "Connecting to Copilot…", tone: "", primary: "continue", why: "Still connecting to Copilot.", cancel: false, skip: true };
-  return { line: "", tone: "", primary: "sign-in", why: "", cancel: false, skip: true };
+  // Signing in can't help: the policy holds Ember back, so the way on is Continue (the line says why).
+  if (o.locked) return { ...none, line: "Your organisation's policy locks me down, so I can't connect for now.", tone: "error", primary: "continue", why: "" };
+  if (o.phase === "error" && o.reason === "policy") return { ...none, line: "", tone: "error", primary: "continue", why: "" };
+  if (o.signingIn) return { ...none, line: "", tone: "", primary: "continue", why: "Waiting for you to approve the sign-in in your browser.", cancel: true };
+  const service = o.managedProvider ? "your organisation's model service" : "Copilot";
+  if (o.phase === "starting" || o.phase === null) return { ...none, line: `Connecting to ${service}…`, tone: "", primary: "continue", why: `Still connecting to ${service}.`, skip: true };
+  // The organisation's service didn't answer: nothing to sign in to, so Continue (settings shows it again later).
+  if (o.managedProvider) return { ...none, line: "", tone: "error", primary: "continue", why: "" };
+  return { ...none, line: "", tone: "", primary: "sign-in", why: "", skip: true, retry: true };
 }
+
+/** "Check again": looks for a sign-in made elsewhere (the GitHub CLI's) and connects with it. */
+export const CHECK_AGAIN = "Check again";
 
 /** What "Skip for now" leaves for later, and where. */
 export const SKIP_SIGN_IN = "You can sign in later in Settings › Copilot. Until then I can't answer or act.";
@@ -141,7 +173,7 @@ export interface PlainCheck { id: string; title: string; text: string; held: boo
 
 /** The command a row's detail tells the user to run ("…: sudo dnf install python3-pyatspi"), if any. */
 export function fixCommand(detail: string): string | undefined {
-  return /\b(sudo [^.;]+?)\s*(?:\.(?:\s|$)|$)/.exec(detail)?.[1].trim();
+  return /\b(sudo [^.;,]+?)\s*(?:\.(?:\s|$)|,|$)/.exec(detail)?.[1].trim();
 }
 
 /** Plain words for the rows that hold Ember back or have a fix, by row id; others keep their own label. */
@@ -205,7 +237,7 @@ export const CHECKS_DETAIL = "Show the details";
 /** The try step's three tries: what each says before and after it is done. */
 export const TRY_TEXT = {
   stop: { title: "Stop me", ask: "Press the stop shortcut now. It stops everything I'm doing, at once, anywhere.", done: "That's how you stop me." },
-  voice: { title: "Say “Hey Ember”", ask: "Say “Hey Ember” and watch the meter. Then ask something, or say nothing.", done: "I heard you." },
+  voice: { title: "Say “Hey Ember”", ask: "Say “Hey Ember”, then ask something and watch the meter.", done: "I heard you." },
   ask: { title: "Ask me something", ask: "Open the ask box and type a question, such as “What can you do?”", done: "You asked me something.", open: "Open the ask box" },
   /** The ask box can't be opened yet: why, beside its button. */
   askWhy: "Sign in first, then you can ask me something.",
@@ -215,11 +247,18 @@ export const TRY_TEXT = {
   voiceWaiting: "I'm not listening yet. Once I am, say “Hey Ember”.",
 } as const;
 
-/** "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, and the microphone open. */
-export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null }): "listening" | "waiting" | "off" {
-  if (!o.wakeWord || !o.voiceConsent) return "off";
+/**
+ * "Say “Hey Ember”" shows only while Ember listens for it: on, agreed to, allowed by the organisation
+ * (`features.voice`), not muted, and the microphone open. Muted, off, not working or not allowed counts as off.
+ */
+export function voiceTry(o: { wakeWord: boolean; voiceConsent: boolean; state: string | null; allowed?: boolean; muted?: boolean }): "listening" | "waiting" | "off" {
+  if (!o.wakeWord || !o.voiceConsent || o.allowed === false || o.muted) return "off";
+  if (o.state === "off" || o.state === "muted" || o.state === "error") return "off";
   return o.state === "waiting" || o.state === "active" ? "listening" : "waiting";
 }
+
+/** Ember's size until the user moves the slider (settings.ts's default). */
+export const DEFAULT_SIZE = 60;
 
 /** One row of the "Your Ember" card. */
 export interface SummaryRow { label: string; value: string }
@@ -227,16 +266,18 @@ export interface SummaryRow { label: string; value: string }
 /** The "Your Ember" card's rows: who, Copilot, voice, and the keys Ember holds (a key another app holds isn't named). */
 export function summaryRows(o: {
   character: string; size: number; signedIn: string | null; voice: "listening" | "waiting" | "off";
-  keys: { ask: string; stop: string; settings: string };
+  /** The keys as Ember holds them ("" while another app holds one); null until the status names this OS's. */
+  keys: { ask: string; stop: string; settings: string } | null;
 }): SummaryRow[] {
   const rows: SummaryRow[] = [
-    { label: "Character", value: `${o.character}, ${o.size} px` },
+    // The size in pixels only once the user changed it: "Default size" says as much without a number to decode.
+    { label: "Character", value: o.size === DEFAULT_SIZE ? `${o.character}, default size` : `${o.character}, ${o.size} px` },
     { label: "Copilot", value: o.signedIn ?? "Not signed in yet" },
     { label: "“Hey Ember”", value: o.voice === "off" ? "Off" : "On" },
   ];
-  if (o.keys.ask) rows.push({ label: "Ask", value: o.keys.ask });
-  if (o.keys.stop) rows.push({ label: "Stop everything", value: o.keys.stop });
-  if (o.keys.settings) rows.push({ label: "Settings", value: o.keys.settings });
+  if (o.keys?.ask) rows.push({ label: "Ask", value: o.keys.ask });
+  if (o.keys?.stop) rows.push({ label: "Stop everything", value: o.keys.stop });
+  if (o.keys?.settings) rows.push({ label: "Settings", value: o.keys.settings });
   return rows;
 }
 

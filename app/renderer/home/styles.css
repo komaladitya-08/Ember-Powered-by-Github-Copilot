@@ -654,6 +654,7 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: non
 .w-card > :nth-child(n+7) { transition-delay: calc(var(--stagger) * 3); }
 .w-card > :nth-child(n+9) { transition-delay: calc(var(--stagger) * 4); }
 .w-card > :nth-child(n+11) { transition-delay: calc(var(--stagger) * 5); }
+html.calm .w-card > * { transition-delay: 0s; }
 
 /* The step's buttons: Back leading, the step's own trailing, and why the main one waits beside it. They follow the
    step rather than sit at the window's foot (Apple: no controls at the bottom of a macOS window), so a short step

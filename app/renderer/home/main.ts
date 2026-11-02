@@ -405,13 +405,15 @@ function renderAdmin(a: Status["admin"]): void {
   }
   $("retention").textContent = keptWords(a);
   // Locked down, nothing goes to a model service: the data list says so instead of naming one.
-  const send = document.querySelector<HTMLElement>("li[data-icon='send']");
+  // The full consent text's line (first run's short form beside it is welcome.ts's own, drawn from the status).
+  const send = document.querySelector<HTMLElement>("#w-full li[data-icon='send']");
   const sendLine = lockdownSendLine(a);
   if (send) {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
-  if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  const service = document.querySelector<HTMLElement>("#w-full #model-service");
+  if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
@@ -643,7 +645,8 @@ function showCode(userCode: string, uri: string): void {
   const code = Object.assign(document.createElement("code"), { textContent: userCode });
   const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
   copy.setAttribute("aria-label", `Copy the code ${userCode}`);
-  copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
+  // Main copies it: the page has no clipboard permission (every web permission is denied but the mic window's audio).
+  copy.addEventListener("click", () => { window.ember.copyText(userCode).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
   // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).

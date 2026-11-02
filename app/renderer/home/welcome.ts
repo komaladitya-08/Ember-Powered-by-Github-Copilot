@@ -13,12 +13,11 @@ import type { Settings, SettingsPatch } from "../../main/settings";
 import { CONSENT_VERSION } from "../../shared/consent";
 import type { Status, VoiceStatus } from "../../shared/ipc";
 import { LEVEL_STEPS } from "../../shared/level";
-import { SHORTCUTS } from "../../shared/shortcuts";
 import { keptWords } from "./admin-copy";
-import { fixButtonName, fixFailedText, ipcErrorText, signInLabel } from "./copy";
+import { fixButtonName, fixFailedText, ipcErrorText, retryMessage, signInLabel } from "./copy";
 import {
-  CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
-  consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry, type WelcomeStep,
+  CHECK_AGAIN, CHECKS_DETAIL, CONSENT_TEXT, checkState, checksNext, NAV, signInText, SKIP_SIGN_IN, START_LABEL, STEP_TEXT, SUMMARY_NOTE, TRY_TEXT, WELCOME_STEPS, checksHeadline, checksLater,
+  DEFAULT_SIZE, consentPoints, firstStep, gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry, type WelcomeStep,
 } from "./welcome-copy";
 
 /** What the settings window lends the welcome. */
@@ -58,7 +57,15 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   let agent: AgentStatus | null = null;
   let voice: VoiceStatus | null = null;
   let signingIn = false;
+  /** The page main offers while it waits for a sign-in made elsewhere ("Open cli.github.com"), or null. */
+  let waitLink: string | null = null;
   let declined = false;
+  /** The sign-in step's main button signs in (rather than going on). */
+  let signInFirst = false;
+  /** Whether main was last asked for the microphone's level (asked again only when that changes). */
+  let levelWanted: boolean | null = null;
+  /** The setup rows (and their buttons' words) as last drawn: drawn again only when they change. */
+  let shownChecks = "";
   const tried = { stop: false, voice: false, ask: false };
   /** Conversation lines from before the try step: a first request counts only after it. */
   let heardBefore = -1;
@@ -86,7 +93,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   }
   function finish(): void {
     active = false;
-    void window.ember.watchLevel(false).catch(() => { /* the window is going: nothing to stop */ });
+    wantLevel(false);
     const [bp, bn] = home.buddy; bp?.insertBefore(deps.buddy, bn);
     const [cp, cn] = home.cards; cp?.insertBefore(deps.cards, cn);
     if (cardsLabel) deps.cards.setAttribute("aria-labelledby", cardsLabel);
@@ -111,8 +118,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const at = WELCOME_STEPS.indexOf(step);
     [...arc.children].forEach((seg, i) => seg.classList.toggle("on", i <= at));
     $("w-count").textContent = stepCount(step);
-    $("w-title").textContent = STEP_TEXT[step].title;
-    $("w-lead").textContent = STEP_TEXT[step].lead;
+    const text = step === "sign-in" ? signInText(managed()) : STEP_TEXT[step];
+    $("w-title").textContent = text.title;
+    $("w-lead").textContent = text.lead;
     for (const pane of root.querySelectorAll<HTMLElement>(".w-pane")) pane.hidden = pane.dataset.pane !== step;
     back.hidden = !stepBefore(step);
     back.textContent = NAV.back;
@@ -126,7 +134,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (step === "checks") label = renderChecks();
     if (step === "try") renderTry();
     if (step === "done") { renderSummary(); label = START_LABEL; next.className = "start"; }
-    void window.ember.watchLevel(step === "try" && voiceState() === "listening").catch(() => { /* no meter: the words still say it */ });
+    wantLevel(step === "try" && voiceState() === "listening");
     next.textContent = label;
     // Can't be pressed yet: said beside it (and to screen readers through its description), never only greyed.
     if (why) next.setAttribute("aria-disabled", "true"); else next.removeAttribute("aria-disabled");
@@ -146,8 +154,20 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     return { label: CONSENT_TEXT.agree, why: "" };
   }
 
+  /** Asks main for the microphone's level, or stops, only when that changes. */
+  function wantLevel(on: boolean): void {
+    if (levelWanted === on) return;
+    levelWanted = on;
+    void window.ember.watchLevel(on).catch(() => { levelWanted = null; });
+  }
+  /** The organisation's own model service answers, or its policy locks Ember down: nothing to sign in to. */
+  const managed = () => !!status?.admin.provider || (!!status && status.admin.error !== null);
+
   function renderSignIn(): { label: string; why: string } {
-    const v = signInView({ phase: agent?.phase ?? null, login: agent?.login, signingIn, managedProvider: !!status?.admin.provider });
+    const v = signInView({
+      phase: agent?.phase ?? null, reason: agent?.reason, login: agent?.login, signingIn,
+      managedProvider: !!status?.admin.provider, locked: !!status && status.admin.error !== null,
+    });
     const line = $("w-signin-line");
     // A device code on screen is the line while it waits; otherwise the status (or what went wrong) is.
     const detail = agent?.phase === "error" && !signingIn ? agent.detail : v.line;
@@ -158,12 +178,26 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       alt.hidden = false;
       alt.textContent = v.cancel ? "Cancel" : NAV.skip;
     }
-    if (!signingIn) $("w-code").hidden = true;
-    return { label: v.primary === "sign-in" ? signInLabel(agent?.signInWith) : NAV.next, why: v.why };
+    if (!signingIn) { $("w-code").hidden = true; waitLink = null; }
+    // A sign-in made elsewhere (the GitHub CLI's): the page main offers, and Check again, which looks for it.
+    const open = $("w-open-page");
+    open.hidden = !waitLink;
+    open.textContent = waitLink ?? "";
+    // Ember's own GitHub App signs in here; Check again is for a build that signs in through the GitHub CLI.
+    $("w-check-again").hidden = !((v.retry && agent?.signInWith === "github-cli") || waitLink);
+    $("w-check-again").textContent = CHECK_AGAIN;
+    $("w-signin-more").hidden = open.hidden && $("w-check-again").hidden;
+    $("w-signin-later").hidden = $("w-signin-later").hidden || managed();
+    signInFirst = v.primary === "sign-in";
+    return { label: signInFirst ? signInLabel(agent?.signInWith) : NAV.next, why: v.why };
   }
 
   function renderChecks(): string {
     const rows = status?.environment.checks ?? [];
+    // Unchanged: left as it is, so a "Copied" and the focus stay where they are.
+    const key = JSON.stringify([rows, status?.platform?.fixLabels ?? null]);
+    if (key === shownChecks) return checksNext(rows);
+    shownChecks = key;
     const head = checksHeadline(rows);
     const h = $("w-checks-head");
     if (h.textContent !== head.text) h.textContent = head.text;
@@ -177,10 +211,8 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       text.append(el("b", { textContent: c.title }), el("p", { textContent: c.text }));
       // A fix the user runs themselves: the command, ready to copy (its full advice stays in the details).
       if (c.command) {
-        const copy = el("button", { type: "button", className: "btn quiet small", textContent: "Copy" });
+        const copy = copyButton(c.command, `Copy the command: ${c.command}`);
         copy.dataset.fix = `copy:${c.id}`;
-        copy.setAttribute("aria-label", `Copy the command: ${c.command}`);
-        copy.addEventListener("click", () => { void navigator.clipboard.writeText(c.command ?? "").then(() => { copy.textContent = "Copied"; }); });
         const cmd = el("p", { className: "w-cmd" });
         cmd.append(el("code", { textContent: c.command }), copy);
         text.append(cmd);
@@ -197,6 +229,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
           btn.setAttribute("aria-disabled", "true");
           window.ember.applyFix(fix as Parameters<typeof window.ember.applyFix>[0]).then(env => {
             if (status) status = { ...status, environment: env };
+            shownChecks = "";
             deps.checksChanged(env);
             render();
           }, err => {
@@ -225,7 +258,10 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     return checksNext(rows);
   }
 
-  const voiceState = () => voiceTry({ wakeWord: !!settings?.wakeWord, voiceConsent: !!settings?.voice.consent, state: voice?.state ?? null });
+  const voiceState = () => voiceTry({
+    wakeWord: !!settings?.wakeWord, voiceConsent: !!settings?.voice.consent, state: voice?.state ?? null,
+    allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted,
+  });
   const signedIn = () => agent?.phase === "ready";
 
   function renderTry(): void {
@@ -236,14 +272,15 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       const p = li.querySelector("p")!;
       if (p.textContent !== text) p.textContent = text;
     };
-    // The keys as Ember holds them on this OS; a shortcut another app holds isn't offered (nothing to rehearse).
+    // The keys as Ember holds them on this OS, named only once the status says which they are; a shortcut another app
+    // holds isn't offered (nothing to rehearse).
     const keys = status?.platform?.shortcuts;
     const chord = (id: "stop" | "ask", at: string) => {
-      const k = keys?.[id] ?? SHORTCUTS.linux[id];
-      const held = !keys?.[id]?.taken && !!k.label;
+      const k = keys?.[id];
+      const held = !!k && !k.taken && !!k.label;
       const box = $(at);
       box.hidden = !held;
-      if (held && box.dataset.keys !== k.keys.join("+")) {
+      if (held && k && box.dataset.keys !== k.keys.join("+")) {
         box.dataset.keys = k.keys.join("+");
         box.replaceChildren(...k.keys.flatMap((key, i) => [...(i ? ["+"] : []), el("kbd", { textContent: key })]));
       }
@@ -269,9 +306,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     const name = deps.cards.querySelector('[aria-checked="true"] b')?.textContent ?? "Cinder";
     const keys = status?.platform?.shortcuts;
     const rows = summaryRows({
-      character: name, size: s?.size ?? 60, voice: voiceState(),
+      character: name, size: s?.size ?? DEFAULT_SIZE, voice: voiceState(),
       signedIn: signedIn() ? (status?.admin.provider ? "Your organisation's model service" : agent?.login ? `Signed in as ${agent.login}` : "Connected") : null,
-      keys: { ask: keys?.ask.label ?? "Ctrl+Alt+Space", stop: keys?.stop.label ?? "Ctrl+Alt+X", settings: keys?.settings.label ?? "Ctrl+Alt+E" },
+      keys: keys ? { ask: keys.ask.label, stop: keys.stop.label, settings: keys.settings.label } : null,
     });
     $("w-summary").replaceChildren(...rows.flatMap(r => [el("dt", { textContent: r.label }), el("dd", { textContent: r.value })]));
     $("w-summary-note").textContent = SUMMARY_NOTE;
@@ -282,10 +319,12 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     if (next.getAttribute("aria-disabled") === "true") return;
     if (step === "consent" && !consented()) {
       declined = false;
-      void deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }).then(ok => { if (ok) go("sign-in"); });
+      // Not saved: the notice at the top says why (review #84), so it is brought into view.
+      void deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }).then(ok => { if (ok) go("sign-in"); else window.scrollTo({ top: 0 }); });
       return;
     }
-    if (step === "sign-in" && !signedIn()) { signIn(); return; }
+    // Sign in is the step's button only while signing in can help (not with the organisation's own service, nor locked).
+    if (step === "sign-in" && signInFirst) { signIn(); return; }
     // Start that couldn't be saved says why in the notice at the top (review #84).
     if (step === "done") { void deps.save({ onboarded: true }).then(ok => { if (!ok) window.scrollTo({ top: 0 }); }); return; }
     const to = stepAfter(step);
@@ -303,6 +342,16 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
       if (signingIn) { void window.ember.cancelSignIn(); return; }
       go("checks");
     }
+  });
+  $("w-open-page").addEventListener("click", () => { void window.ember.openSignInPage(); });
+  $("w-check-again").addEventListener("click", () => {
+    const line = $("w-signin-line");
+    line.textContent = "Checking…";
+    line.className = "w-status";
+    window.ember.retrySignIn().then(r => {
+      line.textContent = retryMessage(r, r.found && agent?.phase === "ready");
+      line.className = `w-status ${r.found ? "" : "error"}`;
+    }, err => { line.textContent = ipcErrorText(err); line.className = "w-status error"; });
   });
   $("w-ask").addEventListener("click", () => {
     if ($("w-ask").getAttribute("aria-disabled") === "true") return;
@@ -324,8 +373,9 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   window.ember.onSignInProgress(p => {
     if (!active) return;
     if (p.state === "code") { showCode(p.userCode ?? "", p.verificationUri ?? ""); return; }
-    if (p.state === "waiting") { signingIn = true; $("w-signin-line").textContent = p.message ?? ""; render(); return; }
+    if (p.state === "waiting") { signingIn = true; waitLink = p.link ?? null; $("w-signin-line").textContent = p.message ?? ""; render(); return; }
     signingIn = false;
+    waitLink = null;
     $("w-code").hidden = true;
     $("w-signin-line").textContent = p.state === "error" ? p.message ?? "" : "";
     $("w-signin-line").className = `w-status ${p.state === "error" ? "error" : ""}`;
@@ -337,9 +387,7 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
   function showCode(userCode: string, uri: string): void {
     const box = $("w-code");
     box.hidden = false;
-    const copy = el("button", { type: "button", className: "btn quiet small", textContent: "Copy" });
-    copy.setAttribute("aria-label", `Copy the code ${userCode}`);
-    copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
+    const copy = copyButton(userCode, `Copy the code ${userCode}`);
     let where = uri;
     try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
     const open = el("button", { type: "button", className: "btn quiet small", textContent: "Open" });
@@ -399,6 +447,16 @@ export function startWelcome(deps: WelcomeDeps): Welcome {
     },
     toConsent(): void { if (active) go("consent"); },
   };
+}
+
+/** A Copy button: "Copied" once it worked, "Couldn't copy" (and the text stays on screen to select) when it didn't. */
+function copyButton(text: string, label: string): HTMLButtonElement {
+  const copy = el("button", { type: "button", className: "btn quiet small", textContent: "Copy" });
+  copy.setAttribute("aria-label", label);
+  copy.addEventListener("click", () => {
+    window.ember.copyText(text).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; });
+  });
+  return copy;
 }
 
 function hostOf(url: string): string {

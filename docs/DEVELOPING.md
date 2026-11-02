@@ -113,9 +113,9 @@ cache (test/temp-folder.ts).
 - **First run** is seven steps in the settings window, one decision each (`app/renderer/home/welcome.ts`, its words
   in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
   lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
-  and offers **Quit Ember**; you sign in to GitHub (the device flow, or **Skip for now**); the setup check shows only
-  the rows that need you, in plain words, with their fix button or the command to copy (**Show the details** has every
-  row); you try the stop shortcut, “Hey Ember” with a live level meter (only while it is on and listening) and a first
+  and offers **Quit Ember**; you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service, or under its lockdown, there is nothing to sign in to and the step only goes on; or **Skip for now**); the setup check shows only
+  the rows that need you, in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission) (**Show the details** has every
+  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
   request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
   **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
   step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in

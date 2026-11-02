@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import {
-  CONSENT_TEXT, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, checkState, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
+  CONSENT_SOURCES, CONSENT_TEXT, STEP_TEXT, TRY_TEXT, WELCOME_STEPS, checkState, signInText, checksHeadline, checksLater, checksNext, consentPoints, firstStep, fixCommand,
   gated, plainChecks, signInView, stepAfter, stepBefore, stepCount, summaryRows, voiceTry,
 } from "../../app/renderer/home/welcome-copy";
 
@@ -14,6 +14,7 @@ const read = (f: string) => readFileSync(new URL(`../../app/${f}`, import.meta.u
 const PAGE = read("renderer/home/index.html");
 const SCRIPT = read("renderer/home/welcome.ts");
 const MAIN = read("main/main.ts");
+const HOME = read("renderer/home/main.ts");
 
 describe("first run's steps", () => {
   it("go hello, character, consent, sign-in, checks, try, done, one decision each", () => {
@@ -36,7 +37,7 @@ describe("first run's steps", () => {
   });
 
   it("goes forward from the consent step only once the agreement is saved", () => {
-    expect(SCRIPT).toContain("void deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }).then(ok => { if (ok) go(\"sign-in\"); });");
+    expect(SCRIPT).toContain("void deps.save({ consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }).then(ok => { if (ok) go(\"sign-in\"); else window.scrollTo({ top: 0 }); });");
     expect(SCRIPT).toContain("step = gated(to, consented());");
   });
 
@@ -54,13 +55,38 @@ describe("first run's steps", () => {
 describe("the consent in short", () => {
   const points = consentPoints({ service: "GitHub Copilot", kept: "kept 30 days", locked: false });
 
-  it("says only what the full text says, in five lines with its symbols", () => {
+  it("says only what the full text says, each line paired with the words it shortens (review of #124)", () => {
     expect(points.map(p => p.icon)).toEqual(["eye", "send", "hand", "lock", "plug"]);
-    // Each line's claim is in the full text ("Before Ember starts"), which stays on the page unchanged.
-    for (const claim of ["reads the window you're working in", "may take a screenshot of it", "password prompts are never read", "Nothing is sent before you ask",
-      "asks before acting", "always before anything hard to undo", "never types passwords", "kept 30 days", "sends no usage statistics",
-      "The microphone stays off", "are off until you turn them on"]) expect(PAGE, claim).toContain(claim);
-    expect(points[1].text).toBe("When you ask something, your request and what I read go to GitHub Copilot. Nothing is sent before you ask.");
+    const full = PAGE.slice(PAGE.indexOf("<details class=\"w-more\" id=\"w-full\">"), PAGE.indexOf("</details>", PAGE.indexOf("id=\"w-full\"")));
+    // Every line has its sources, and every source is in the full text, which stays on the page unchanged.
+    for (const p of points) {
+      expect(CONSENT_SOURCES[p.icon].length, p.icon).toBeGreaterThan(0);
+      for (const source of CONSENT_SOURCES[p.icon]) expect(full, `${p.icon}: ${source}`).toContain(source);
+    }
+    // And each line says what its sources say, in Ember's words.
+    const pairs: [string, RegExp, string][] = [
+      ["eye", /I read the window you're working in, and for tasks I may take a screenshot of it\./, "reads the window you're working in"],
+      ["eye", /Never password prompts, or apps on your never-look list\./, "App windows on your never-look list and password prompts are never read"],
+      ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
+      ["hand", /I ask before acting in an app, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
+      ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. I send no usage statistics\./, "It sends no usage statistics."],
+      ["plug", /The microphone, other computers and commands stay off until you turn them on\./, "The microphone stays off</b> unless you turn on"],
+    ];
+    for (const [icon, said, source] of pairs) {
+      expect(points.find(p => p.icon === icon)!.text, icon).toMatch(said);
+      expect(CONSENT_SOURCES[icon as "eye"], icon).toContain(source);
+    }
+  });
+
+  it("leaves the full text's own lines to the settings window, never the short form (review of #124)", () => {
+    // The short form is drawn from the status: its list starts empty, and never carries the full text's ids.
+    expect(PAGE).toContain("<ul class=\"terms w-points\" id=\"w-points\" aria-label=\"What Ember does, in short\"></ul>");
+    expect(PAGE.split("id=\"model-service\"").length - 1).toBe(1);
+    expect(SCRIPT).not.toContain("model-service");
+    // The organisation's service and the lockdown line are written into the full text only.
+    expect(HOME).toContain("document.querySelector<HTMLElement>(\"#w-full li[data-icon='send']\")");
+    expect(HOME).toContain("document.querySelector<HTMLElement>(\"#w-full #model-service\")");
+    expect(HOME).not.toMatch(/querySelector<HTMLElement>\("li\[data-icon='send'\]"\)/);
   });
 
   it("names the organisation's service, and says nothing is sent while locked down", () => {
@@ -84,6 +110,25 @@ describe("the sign-in step", () => {
     expect(signInView({ phase: "signed-out", signingIn: true, managedProvider: false }))
       .toMatchObject({ primary: "continue", why: "Waiting for you to approve the sign-in in your browser.", cancel: true, skip: false });
     expect(signInView({ phase: "starting", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "Still connecting to Copilot.", skip: true });
+  });
+
+  it("offers Check again while signed out, and shows the page main offers for a GitHub CLI sign-in (review of #124)", () => {
+    expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false }).retry).toBe(true);
+    expect(signInView({ phase: "ready", signingIn: false, managedProvider: false }).retry).toBe(false);
+    expect(SCRIPT).toContain("waitLink = p.link ?? null;");
+    expect(SCRIPT).toContain("$(\"w-check-again\").hidden = !((v.retry && agent?.signInWith === \"github-cli\") || waitLink);");
+    expect(PAGE).toContain("<button type=\"button\" class=\"btn quiet small\" id=\"w-check-again\">Check again</button>");
+  });
+
+  it("never offers sign-in with the organisation's own service, under lockdown, or when the policy refused (review of #124)", () => {
+    expect(signInText(true).title).toBe("Connecting to your organisation's service");
+    expect(signInText(false)).toBe(STEP_TEXT["sign-in"]);
+    expect(signInView({ phase: "starting", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "Still connecting to your organisation's model service." });
+    expect(signInView({ phase: "error", signingIn: false, managedProvider: true })).toMatchObject({ primary: "continue", why: "", retry: false });
+    expect(signInView({ phase: "error", reason: "policy", signingIn: false, managedProvider: false })).toMatchObject({ primary: "continue", why: "", retry: false, skip: false });
+    expect(signInView({ phase: "signed-out", signingIn: false, managedProvider: false, locked: true }))
+      .toMatchObject({ primary: "continue", line: "Your organisation's policy locks me down, so I can't connect for now.", retry: false });
+    expect(SCRIPT).toContain("if (step === \"sign-in\" && signInFirst) { signIn(); return; }");
   });
 
   it("says who is signed in once connected", () => {
@@ -116,6 +161,7 @@ describe("the checks step", () => {
     expect(plainChecks(missing)[0].text).toContain("Run the command below");
     expect(fixCommand("No SSH client found. Install OpenSSH with: sudo dnf install openssh-clients")).toBe("sudo dnf install openssh-clients");
     expect(fixCommand("Accessibility is on")).toBeUndefined();
+    expect(fixCommand("Install it with sudo dnf install speech-dispatcher, then restart Ember.")).toBe("sudo dnf install speech-dispatcher");
   });
 
   it("marks a failing row red on the row and the headline alike, and all good in green", () => {
@@ -140,15 +186,28 @@ describe("the try step", () => {
     expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "needs-models" })).toBe("waiting");
     expect(voiceTry({ wakeWord: true, voiceConsent: true, state: "waiting" })).toBe("listening");
     expect(TRY_TEXT.voiceLater).toContain("Settings › Voice");
+    // The level reaches the meter only after the wake word, so the words say to ask something.
+    expect(TRY_TEXT.voice.ask).toBe("Say “Hey Ember”, then ask something and watch the meter.");
+  });
+
+  it("counts voice as off when the organisation turned it off, it is muted, or the microphone isn't working (review of #124)", () => {
+    const on = { wakeWord: true, voiceConsent: true, state: "waiting" };
+    expect(voiceTry({ ...on, allowed: false })).toBe("off");
+    expect(voiceTry({ ...on, muted: true })).toBe("off");
+    for (const state of ["off", "muted", "error"]) expect(voiceTry({ ...on, state }), state).toBe("off");
+    expect(SCRIPT).toContain("allowed: status?.admin.features.voice !== false, muted: !!settings?.voice.muted,");
   });
 
   it("hears the stop shortcut and the microphone's level from main, never audio", () => {
     expect(MAIN).toContain("sendToHome(IPC.homeStopped, source);");
     expect(MAIN).toContain("ipcMain.handle(IPC.watchLevel, guard((on: unknown) => { homeWantsLevel = on === true; }));");
     expect(SCRIPT).toContain("if (!active || step !== \"try\" || source !== \"hotkey\" || tried.stop) return;");
-    // The meter asks for levels only on the try step while Ember listens, and stops asking when it leaves.
-    expect(SCRIPT).toContain("void window.ember.watchLevel(step === \"try\" && voiceState() === \"listening\")");
-    expect(SCRIPT).toContain("void window.ember.watchLevel(false)");
+    // The meter asks for levels only on the try step while Ember listens, stops when it leaves, and asks main only
+    // when that changes; main sends nothing to a hidden or minimised window.
+    expect(SCRIPT).toContain("wantLevel(step === \"try\" && voiceState() === \"listening\");");
+    expect(SCRIPT).toContain("wantLevel(false);");
+    expect(SCRIPT).toContain("if (levelWanted === on) return;");
+    expect(MAIN).toContain("home.isVisible() && !home.isMinimized()) home.webContents.send(IPC.homeLevel, l.mic);");
   });
 });
 
@@ -166,5 +225,23 @@ describe("“Your Ember”", () => {
     const rows = summaryRows({ character: "Cinder", size: 60, signedIn: null, voice: "off", keys: { ...keys, ask: "" } });
     expect(rows.find(r => r.label === "Ask")).toBeUndefined();
     expect(rows.find(r => r.label === "Copilot")?.value).toBe("Not signed in yet");
+  });
+
+  it("says the default size in words, and names no keys before the status says this OS's (review of #124)", () => {
+    expect(summaryRows({ character: "Cinder", size: 60, signedIn: null, voice: "off", keys })[0].value).toBe("Cinder, default size");
+    expect(summaryRows({ character: "Cinder", size: 60, signedIn: null, voice: "off", keys: null }).map(r => r.label)).toEqual(["Character", "Copilot", "“Hey Ember”"]);
+    expect(SCRIPT).not.toContain("SHORTCUTS.linux");
+  });
+
+  it("shows when copying failed, and draws the setup rows again only when they change (review of #124)", () => {
+    expect(SCRIPT).toContain("() => { copy.textContent = \"Couldn't copy\"; }");
+    // Pages have no clipboard permission: main copies, for the settings window only, plain short text.
+    expect(SCRIPT).toContain("window.ember.copyText(text)");
+    expect(HOME).not.toContain("navigator.clipboard");
+    expect(MAIN).toContain("ipcMain.handle(IPC.copyText, guard((text: unknown) => {");
+    expect(MAIN).toContain("if (typeof text !== \"string\" || !text || text.length > 4096) throw new Error(\"Nothing to copy.\");");
+    expect(SCRIPT).toContain("if (key === shownChecks) return checksNext(rows);");
+    // Calm shows the summary at once: no stagger delay is left behind.
+    expect(read("renderer/home/styles.css")).toContain("html.calm .w-card > * { transition-delay: 0s; }");
   });
 });
