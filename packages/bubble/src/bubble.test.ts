@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { announcement, bubbleFit, bubblePosition, chipLabel, keyHintParts, onPress, questionParts, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, type BubbleView } from "./bubble";
+import { announcement, bubbleFit, bubblePosition, chipLabel, growOrigin, keyHintParts, onPress, questionParts, snapToDevice, streamDelay, thoughtScrolls, titleRepeatsChip, BUBBLE_CSS, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, type BubbleView } from "./bubble";
 
 describe("chipLabel", () => {
   it("says Answering while an answer streams, Ready once it is done", () => {
@@ -374,5 +374,44 @@ describe("the bubble's hierarchy (UI audit #9)", () => {
     expect(BUBBLE_CSS).toMatch(/\.eb-lock \{[^}]*pointer-events: none;/);
     expect(BUBBLE_CSS).toContain("html.calm .eb-lock { animation: none !important; }");
     expect(BUBBLE_CSS).toMatch(/@keyframes eb-lock \{ from \{ opacity: 0; scale: 1\.05; \} \}/);
+  });
+});
+
+describe("the bubble on the screen's pixels and in motion (Liquid Glass workstream)", () => {
+  it("sits on whole device pixels at 125 % and 150 %, not on whole CSS px half a device pixel apart", () => {
+    for (const dpr of [1, 1.25, 1.5, 2]) {
+      for (const v of [10.3, 101.7, 333.33, 47.5]) expect(Number.isInteger(Math.round(snapToDevice(v, dpr) * dpr * 1e6) / 1e6), `${v} at ${dpr}`).toBe(true);
+    }
+    expect(snapToDevice(10.6, 1.5)).toBeCloseTo(10.6667, 3);
+    expect(snapToDevice(10.3, 0)).toBe(10);
+  });
+
+  it("grows out of Ember: from the point of the bubble nearest Ember's base", () => {
+    // Below-right of Ember: from near its top left.
+    expect(growOrigin({ x: 400, y: 300 }, { x: 378, y: 318 }, { width: 300, height: 120 })).toEqual({ x: 22, y: 0 });
+    // Above Ember: from its bottom edge.
+    expect(growOrigin({ x: 400, y: 300 }, { x: 378, y: 120 }, { width: 300, height: 120 })).toEqual({ x: 22, y: 120 });
+    // Ember to its right: from its right edge.
+    expect(growOrigin({ x: 800, y: 300 }, { x: 420, y: 250 }, { width: 300, height: 120 })).toEqual({ x: 300, y: 50 });
+  });
+
+  it("draws streamed text at most 15 times a second, however fast it arrives (R8)", () => {
+    expect(1000 / STREAM_MS).toBeLessThanOrEqual(15.2);
+    expect(streamDelay(-Infinity, 5)).toBe(0);
+    expect(streamDelay(1000, 1010)).toBe(STREAM_MS - 10);
+    expect(streamDelay(1000, 1000 + STREAM_MS)).toBe(0);
+    // A token every 10 ms for a second: drawn at most 16 times (the first at once, then once a gap).
+    let drawn = -Infinity, draws = 0, due = -1;
+    for (let t = 0; t <= 1000; t += 10) {
+      if (due >= 0 && t >= due) { drawn = due; draws++; due = -1; }
+      const wait = streamDelay(drawn, t);
+      if (wait === 0 && due < 0) { drawn = t; draws++; } else if (due < 0) due = t + wait;
+    }
+    expect(draws).toBeLessThanOrEqual(16);
+  });
+
+  it("brings a question in by its opacity alone, and leaves faster than it comes", () => {
+    expect(BUBBLE_CSS).toContain('.ember-bubble[data-mood="attention"], .ember-bubble[data-mood="attention"][data-hidden="true"] { translate: none; scale: none; }');
+    expect(BUBBLE_CSS).toMatch(/\.ember-bubble\[data-hidden="true"\] \{[^}]*transition-duration: 140ms, 0s, 140ms, 140ms; transition-timing-function: ease-in;/);
   });
 });

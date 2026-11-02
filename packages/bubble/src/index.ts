@@ -1,5 +1,5 @@
 export {
-  ReasoningBubble, BUBBLE_CSS, onPress, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, chipLabel, announcement, bubbleFit, bubblePosition, keyHintParts, questionParts, thoughtScrolls, titleRepeatsChip, wholeReadNews,
+  ReasoningBubble, BUBBLE_CSS, onPress, BUBBLE_LABEL, MIN_BUBBLE_WIDTH, RISKY_TAG, STREAM_MS, chipLabel, growOrigin, snapToDevice, streamDelay, announcement, bubbleFit, bubblePosition, keyHintParts, questionParts, thoughtScrolls, titleRepeatsChip, wholeReadNews,
   type BubbleAction, type BubbleMood, type BubbleSpot, type BubbleView, type Point, type Rect, type Size,
 } from "./bubble";
 export { plainMarkdown, plainStream } from "./markdown";

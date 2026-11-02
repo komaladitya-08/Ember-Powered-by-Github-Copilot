@@ -293,7 +293,9 @@ and VoiceOver on a Mac. While one runs:
 
 **Seeing, motion and time.** Settings › **Comfort & access** has **Text size** (Large or Larger, for settings, the
 bubble, task cards, the handle, the ask box, the desk window's bar on Linux, the command window and its terminal,
-and the password and consent cards), **Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion) and **More
+and the password and consent cards), **Glass** (Clear, Regular or Solid: how much of your screen shows through Ember's
+bubble, cards, handle and ask box; solid in Calm mode and when your system asks for less transparency or more contrast),
+**Calm mode** (no hops, bounces or fidgets; also on when your system asks for less motion; Ember's bubble and cards still fade in and out) and **More
 time to read and answer** (messages stay ten times as long, also ones that waited behind another or were covered for a
 while, and Ember's own notices; a question waits 20 minutes instead of 2 before it counts as **Not now**, and one with a
 long text to read 10 minutes more instead of 1 for every 1000 characters of it). At Large and

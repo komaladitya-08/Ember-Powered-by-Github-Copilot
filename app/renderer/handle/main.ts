@@ -12,6 +12,7 @@ import type { Settings } from "../../main/settings";
 import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
 import { HandleLive } from "./live";
+import { watchPixels } from "../shared/pixels";
 import { handleLine } from "./line";
 
 declare global { interface Window { emberHandle: HandleApi } }
@@ -24,6 +25,8 @@ let emotion: Emotion = "neutral";
 const canvas = document.getElementById("face") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
 const $ = (id: string) => document.getElementById(id)!;
+// Hairlines of one device pixel at any scale (the face's canvas is sized at the scale on every frame it draws).
+watchPixels();
 
 /** Ember is who speaks, whichever look it wears (Cinder, Wisp, Glassling, Glint are its looks). */
 const name = "Ember";

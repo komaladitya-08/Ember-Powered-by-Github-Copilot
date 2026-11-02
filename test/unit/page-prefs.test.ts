@@ -55,6 +55,28 @@ describe("Ember's display settings in every window", () => {
     }
   });
 
+  it("puts the Glass setting on the pages drawn on glass: clear or solid, and nothing for regular (the default)", async () => {
+    for (const p of ["overlay", "handle", "ask"]) {
+      const f = fakePage(url(p));
+      await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default", glass: "clear" }));
+      expect(f.dataset.glass, p).toBe("clear");
+      await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default", glass: "solid" }));
+      expect(f.dataset.glass, p).toBe("solid");
+      await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default", glass: "regular" }));
+      expect(f.dataset.glass, p).toBeUndefined();
+    }
+    // The windows are opaque: the setting leaves them as they are.
+    for (const p of ["home", "command", "prompt", "desk", "mic"]) {
+      const f = fakePage(url(p));
+      await applyPagePrefs(f.page, pagePrefs({ reduceMotion: false, textSize: "default", glass: "clear" }));
+      expect(f.dataset.glass, p).toBeUndefined();
+    }
+    // Only the three words reach the page.
+    const odd = pagePrefs({ reduceMotion: false, textSize: "default", glass: "\"); alert(1); (\"" as never });
+    expect(odd.glass).toBe("regular");
+    expect(prefsScript(odd, "overlay")).not.toContain("alert");
+  });
+
   it("runs only in Ember's own bundled pages, and only code built from a switch and one of three sizes", async () => {
     const web = fakePage("https://example.com/renderer/home/index.html");
     expect(await applyPagePrefs(web.page, pagePrefs({ reduceMotion: true, textSize: "large" }))).toBe(false);
@@ -151,7 +173,8 @@ describe("the text size", () => {
   it("scales every type token, from a scale the text size sets on the page (review #57)", () => {
     const tokens = [...shared.matchAll(/--type-[\w-]+: ([^;]+);/g)].map(m => m[1]);
     expect(tokens.length).toBe(8);
-    for (const t of tokens) expect(t).toMatch(/^\d00 calc\(\d+px \* var\(--text-scale\)\)\/calc\(\d+px \* var\(--text-scale\)\) var\(--ember-font\)$/);
+    // Line heights in whole pixels at every size (18 px × 1.15 is 20.7 px: fractional baselines blur at 100 %).
+    for (const t of tokens) expect(t).toMatch(/^\d00 calc\(\d+px \* var\(--text-scale\)\)\/round\(calc\(\d+px \* var\(--text-scale\)\), 1px\) var\(--ember-font\)$/);
     expect(shared).toMatch(/:root \{[^}]*--text-scale: 1;/);
     expect(shared).toContain('html[data-text-size="large"] { --text-scale: 1.15; }');
     expect(shared).toContain('html[data-text-size="larger"] { --text-scale: 1.3; }');

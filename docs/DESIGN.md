@@ -24,7 +24,22 @@ They share one emotion rig, so switching never changes behaviour.
 - **12 emotions**, each a set of face parameters on springs (eyes, lids, pupils, brows,
   mouth, blush, squash, tilt, energy, heat), plus an emote and a gesture.
 - **Always alive:** breathing, blinks (sometimes double), saccades and gaze at the pointer,
-  hops with landing squash, a talking mouth flap, idle fidgets (glance, yawn, hop), optional sleep.
+  hops with landing squash, a talking mouth, idle fidgets (glance, yawn, hop), optional sleep.
+- **Life that follows how people look:**
+  - blinks close in 60 ms and open in 110 ms, every 2.5–5 s at rest and every 6–10 s while
+    thinking or working (people blink less while reading);
+  - the eyes jump to a new point (a saccade: a stiff spring for about 60–120 ms) and then follow it
+    on the soft spring;
+  - a long "got it" blink (250 ms) when the user's request ends (listening gives way);
+  - listening starts without the anticipation pop (a wake must feel instant), and "Needs you" has no
+    pop or hop (a pop reads as alarm): it holds, blinking only;
+  - fidgets every 5–10 s in the first minute of idling, then every 8–15 s: rarer, never more insistent;
+  - with Ember's own voice (Piper or Kokoro) the mouth opens with its loudness (the level the
+    presence meter uses, ten times a second, smoothed in the rig) and the glow brightens a little
+    with it; the system's voice gives no level, so the mouth keeps its syllable flap;
+  - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
+    something happens (it drew every 110 ms);
+  - in Calm every spring settles without overshoot; blinks, gaze and the talking mouth stay.
 - **Emotes** are outlined so they read on any background: `…` thinking, `?` confused,
   `!` surprised, `zzz` sleepy, sparkles proud, sweat drop worried.
 
@@ -85,6 +100,12 @@ They share one emotion rig, so switching never changes behaviour.
   and a task's result say "in Ember's settings", and an announced command names no stop
   chord, only its **Stop**. (The command window's line for a run the kill switch ended names
   no chord at all, "Stopped with everything else": the switch has other ways too.)
+- **How it moves.** The bubble grows out of Ember (from 0.96, the corner nearest Ember, on the brisk
+  spring) and leaves the way it came, faster; a question only fades in and out, so nothing near a
+  decision moves. Streamed text is drawn at most 15 times a second. A card's plan dot fills as its
+  step starts, and a finished card's tick settles in once on the reward spring; a failure just shows
+  its mark (no shake, no flash). The Ask box grows out of Ember beneath it. In Calm, each of them
+  fades over 150 ms instead.
 - **Follow:** spring to cursor + offset. **Flight:** quadratic-bezier arc, 0.6–1.4 s by
   distance, smoothstep easing (`packages/motion`, ported from clicky, MIT).
 - **Mini-Embers** mark tasks running in background windows or on Ember's desk.
@@ -232,9 +253,29 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
 - **Layers:** the settings window and the desk are the content layer: opaque grouped sections, a
   sidebar with coloured symbol tiles (as System Settings), rounded-rectangle buttons, switches, pop-up
   menus, headers above each group and footnotes below it. What floats over other apps (bubble, task
-  cards, handle, ask box, status line) is glass: an opaque frost (no backdrop blur: with software
-  compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
-  left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
+  cards, handle, ask box, status line) is Liquid Glass without a blur (with software compositing a
+  blur costs a core, and a transparent window can't see other apps): the screen shows through a dense
+  tint, with a static sheen, a 1 px rim lit from the top left, a lit top and darker bottom edge, a
+  dark hairline of one device pixel and tight shadows, and capsule buttons in two sizes (28 and 24 px
+  at the default text size). Two densities, never mixed on one surface: **regular** (0.88) under
+  sentences, where a white page's own text shows through at under 1.5:1, and **clear** (0.55) only
+  at the handle's face end, its words on a plate. Labels on glass are a step firmer (74 % and 66 %),
+  and every label, tag and control edge is tested against a white page behind the glass.
+- **Glass setting** (Settings › Comfort & access › Glass, `settings.glass`, as macOS 27's Liquid
+  Glass control): **Clear**, an even smoky tint (0.68) with no plates or halos behind the words,
+  just dense enough that near-white labels pass 4.5:1 over a white page; tags' words in the label's
+  colour, Ember's accent as words in a light tint of it (#FFE4CC) and the marks in light tints;
+  **Regular** (the default, 0.88); or **Solid**. Reduce Transparency and Calm make it solid,
+  Increase Contrast solid with a 1 px light border. Three Clear designs were rendered for the owner
+  (a 0.30 body with a dark text halo, the same with heavier weights and an accent-tinted halo, and
+  this even tint): the halos measured 2.7–3.1:1 against the brightest pixels round the letters over
+  a white page and let the app's own text collide with Ember's, so the even tint was chosen.
+  Without a compositor the floating windows are opaque panels, as before.
+- **Crisp at every scale:** what moves is placed on device pixels (not whole CSS px, half a device
+  pixel apart at 150 %), canvases are sized in whole device pixels and redrawn when the scale
+  changes, hairlines are one device pixel, line heights are whole pixels at every text size, and the
+  status line is centred by layout rather than `translateX(-50%)`. Nested corners are
+  `max(outer − padding, 6 px)`: the bubble's whole-text panel is 6.
 - **Catalog cards** (settings › Extensions › Browse): a marketplace's entries as cards on
   `--surface-2` inside their group, in columns of at least 240 px; the name with its kind as a
   neutral tag, the publisher's description (cut to whole words), who and where it comes from in the
@@ -245,11 +286,15 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
 - **State:** one symbol family (working, waiting its turn, waiting for you, done, failed, stopped)
   beside the words on every surface, with the state in words for screen readers; never colour alone.
 - **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.
-- **Motion:** springs as CSS `linear()` curves. Endless animations (pulses and the focus ring's glow)
+- **Motion:** Apple's springs (`Spring(duration, bounce)`) as CSS `linear()` curves: smooth (bounce 0)
+  for what glides, brisk (0.15) for entrances from their source, reward (0.3) for a completion
+  flourish once and never on a question or an error; durations from 220 ms (a press) to 600 ms (a
+  rare large move), fades of 180 ms in and 130 ms out. Endless animations (pulses and the focus ring's glow)
   change only opacity, each on a layer of its own, so they never repaint; the thinking glow breathes
   three times and stops, and so do the presence ring's glow, its done and the bubble's lock-on. The
-  one script-driven motion is the presence meters (20 changes a second at most, only while there is
-  sound). Calm mode and the desktop's reduced motion stop all of them, in every window:
+  handle's microphone halo is steady. The script-driven motion is the presence meters (20 changes a
+  second at most, only while there is sound) and the character. Calm mode and the desktop's reduced
+  motion stop all of them, in every window, but for one fade of 150 ms where a surface comes and goes:
   main puts `html.calm` on each of Ember's pages as it loads and when the setting changes
   (`app/main/page-prefs.ts`).
 - **Icon** (`assets/ember.svg`): Apple's icon grid (a 104 px continuous-corner tile on a 128 px

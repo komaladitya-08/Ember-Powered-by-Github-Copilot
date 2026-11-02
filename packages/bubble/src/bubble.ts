@@ -4,7 +4,8 @@
  * start), and the current step with its "why".
  *
  * It floats over any app, light or dark, so it always uses the same dark glass
- * (nearly opaque, lit at its edge) instead of following a page theme.
+ * (Liquid Glass's regular density: the screen shows faintly through, never enough
+ * to compete with its words; lit at its edge) instead of following a page theme.
  *
  * It is drawn every frame, so it only touches the DOM when something changed and
  * only measures itself (a layout read) after its content changed.
@@ -254,6 +255,32 @@ function narrowerWidths(width: number, bounds: Size, avoid: readonly Rect[]): nu
 
 const STYLE_ID = "ember-bubble-style";
 
+/**
+ * A position in CSS px snapped to the device's pixels (1/dpr): a whole CSS px is half a device pixel at 150 %, and a
+ * layer placed there is resampled, which blurs its text.
+ */
+export function snapToDevice(v: number, dpr: number): number {
+  const s = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+  return Math.round(v * s) / s;
+}
+
+/**
+ * Where the bubble grows from as it appears (its `transform-origin`, px from its top left): the point nearest Ember's
+ * base, inside the bubble, so it comes out of Ember (Apple: a surface emerges from its source).
+ */
+export function growOrigin(anchor: Point, at: Point, box: Size): Point {
+  const clamp = (v: number, hi: number) => Math.round(Math.min(Math.max(v, 0), Math.max(0, hi)));
+  return { x: clamp(anchor.x - at.x, box.width), y: clamp(anchor.y - at.y, box.height) };
+}
+
+/** The quickest streamed text is drawn again (ms): 15 times a second at most (R8), however fast it arrives. */
+export const STREAM_MS = 66;
+
+/** How long streamed text that arrived at `now` waits before it is drawn, when it was last drawn at `drawnAt` (ms). */
+export function streamDelay(drawnAt: number, now: number): number {
+  return Math.max(0, drawnAt + STREAM_MS - now);
+}
+
 export const BUBBLE_CSS = `
 /* What moves with Ember every frame: an empty, unstyled box (its layer is only as big as the bubble in it), so a move
    restyles nothing but this box's transform. Moving the styled bubble itself re-resolved its glass, shadows and
@@ -263,32 +290,41 @@ export const BUBBLE_CSS = `
   /* The state's colour: its dot, and the glow while Ember thinks. Actions use the app's one accent. The page's
      tokens (shared/ember.css) when present, so Increase Contrast reaches the bubble; Apple's values otherwise. */
   --eb-mood: var(--accent, #ff9230);
+  /* Labels on glass one step firmer (ember.css --glass-label-*): its secondary words pass 4.5:1 over a white page. */
+  --label-2: var(--glass-label-2, rgba(245, 240, 236, 0.74));
+  --label-3: var(--glass-label-3, rgba(245, 240, 236, 0.66));
   position: absolute; left: 0; top: 0;
   width: min(300px, calc(100vw - 24px));
   display: grid; gap: 6px;
   padding: 12px 14px 13px;
   border-radius: var(--r-xl, 18px);
   /* Glass without a backdrop blur: with software compositing the blur cost ~10% of a core while Ember animated
-     beside it, and it can't see other apps anyway. An opaque frost (a translucent body would leave the text of the
-     app behind readable through Ember's), a sheen, a rim lit from the top left over the body, an outer hairline
-     (crisp over white pages) and two soft shadows give it the material's depth. The shadows are kept tight (a
-     negative spread): everything they reach is redrawn on every frame the bubble moves. */
+     beside it, and it can't see other apps anyway. Apple's regular glass as a dense tint (0.88: the black text of a
+     white page behind shows at under 1.5:1, so it never competes with Ember's), a sheen, a rim lit from the top left in
+     its border, a lit top and darker bottom edge, a hairline of one device pixel (crisp over white pages) and two soft
+     shadows give it the material's depth. The shadows are kept tight (a negative spread): everything they reach is
+     redrawn on every frame the bubble moves. */
   border: 1px solid transparent;
   background: var(--glass,
-    linear-gradient(180deg, rgba(46, 42, 44, 0.97), rgba(26, 23, 25, 0.985)) padding-box,
-    linear-gradient(160deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.08) 35%, rgba(255, 255, 255, 0.05) 65%, rgba(255, 255, 255, 0.14)) border-box,
-    linear-gradient(180deg, rgba(46, 42, 44, 0.97), rgba(26, 23, 25, 0.985)) border-box);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.16), 0 12px 28px -8px rgba(0, 0, 0, 0.42);
+    radial-gradient(140% 90% at 50% -30%, rgba(255, 255, 255, 0.08), transparent 60%) padding-box,
+    linear-gradient(180deg, rgba(30, 27, 29, 0.88), rgba(20, 17, 19, 0.92)) padding-box,
+    linear-gradient(160deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.1) 35%, rgba(255, 255, 255, 0.06) 65%, rgba(255, 255, 255, 0.18)) border-box);
+  box-shadow: var(--glass-spec, inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.22)), var(--glass-hairline, 0 0 0 0.5px rgba(0, 0, 0, 0.6)), 0 2px 6px rgba(0, 0, 0, 0.18), 0 12px 28px -8px rgba(0, 0, 0, 0.42);
   color: var(--label, #f5f2ef);
   font: 400 14px/20px var(--ember-font, "Inter", "Atkinson Hyperlegible", system-ui, sans-serif);
   letter-spacing: -0.006em;
   pointer-events: none;
-  /* Shown: it settles in on a spring from just below. The shadow changes with the mood at once (a box-shadow
-     transition would repaint the whole bubble every frame). */
-  transition: opacity 180ms ease, visibility 0s, translate 420ms var(--spring-snappy, ease-out);
+  /* Shown: it grows out of Ember (scale from the corner nearest Ember: place() sets the origin as it shows) on the
+     brisk spring, from just below; it leaves the way it came, faster. Compositor only (opacity, translate, scale on
+     the bubble's own layer). The shadow changes with the mood at once (a box-shadow transition would repaint the
+     whole bubble every frame). */
+  transition: opacity var(--t-fade-in, 180ms) ease-out, visibility 0s, translate var(--t-move, 420ms) var(--spring-brisk, ease-out), scale var(--t-move, 420ms) var(--spring-brisk, ease-out);
 }
 /* Hidden is gone once it has faded: nothing in it takes a click or the keyboard. */
-.ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; translate: 0 4px; transition-delay: 0s, 180ms, 0s; transition-duration: 140ms, 0s, 140ms; }
+.ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; translate: 0 4px; scale: 0.96; transition-delay: 0s, 140ms, 0s, 0s; transition-duration: 140ms, 0s, 140ms, 140ms; transition-timing-function: ease-in; }
+/* A question comes and goes by its opacity alone: nothing near a pending decision moves, grows or slides under the
+   pointer (its buttons appear where they stay). */
+.ember-bubble[data-mood="attention"], .ember-bubble[data-mood="attention"][data-hidden="true"] { translate: none; scale: none; }
 .ember-bubble[data-mood="listening"] { --eb-mood: var(--yellow, #ffd600); }
 .ember-bubble[data-mood="thinking"]  { --eb-mood: var(--accent-2, #ffb340); }
 .ember-bubble[data-mood="acting"]    { --eb-mood: var(--accent, #ff9230); }
@@ -335,6 +371,9 @@ export const BUBBLE_CSS = `
 .ember-bubble[data-mood="attention"] .eb-chip { color: var(--purple-text, #eea2ff); }
 .ember-bubble[data-mood="error"] .eb-chip { color: var(--red-text, #ff7a71); }
 .ember-bubble[data-mood="done"] { --eb-chip-text: var(--green-text, #5be37d); }
+/* Clear glass (the Glass setting, html[data-glass="clear"]): a tag's word in the label's colour, as the state's colours
+   fall under 4.5:1 there with a white page behind; its dot and tint keep the colour (and the word says the state). */
+html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--label, #f5f2ef); }
 .eb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--eb-mood); }
 /* The dot pulses only while Ember is busy; a finished answer sits still, and so does a question (it waits for you:
    nothing about it hurries you). */
@@ -428,7 +467,8 @@ export const BUBBLE_CSS = `
    typed, in a panel on the glass (a flat fill and a hairline, no glass on glass) that scrolls. It takes the wheel. */
 .eb-whole {
   max-height: 7lh; overflow-y: auto; overscroll-behavior: contain; pointer-events: auto;
-  padding: 6px 10px; border-radius: var(--r-md, 10px);
+  /* Concentric with the bubble: its 18 px corner less the 14 px padding, at least 6 px. */
+  padding: 6px 10px; border-radius: var(--r-xs, 6px);
   background: rgba(255, 255, 255, 0.06); box-shadow: inset 0 0 0 1px var(--separator, rgba(255, 255, 255, 0.09));
   color: var(--label, #f5f2ef); white-space: pre-wrap; overflow-wrap: anywhere;
 }
@@ -489,11 +529,13 @@ export const BUBBLE_CSS = `
 /* Nothing animates while the bubble is hidden (an endless animation keeps the compositor busy). */
 .ember-bubble[data-hidden="true"] .eb-dot, .ember-bubble[data-hidden="true"] .eb-thought span::after, .ember-bubble[data-hidden="true"]::before { animation: none !important; }
 /* Calm: the desktop's reduced-motion preference, or Ember's own Calm mode (html.calm). The glow stays, still. */
-@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after, .ember-bubble::before, .eb-lock { animation: none !important; } .ember-bubble { transition: none; translate: none; } }
+@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after, .ember-bubble::before, .eb-lock { animation: none !important; } .ember-bubble { transition: opacity var(--t-calm-fade, 150ms) ease, visibility var(--t-calm-fade, 150ms) !important; translate: none !important; scale: none !important; } }
 html.calm .eb-dot, html.calm .eb-thought span::after { animation: none !important; }
 html.calm .eb-lock { animation: none !important; }
 html.calm .ember-bubble::before { animation: none !important; }
-html.calm .ember-bubble { transition: none; translate: none; }
+/* Calm keeps one fade (R1, ember.css .calm-fade, written here too as the bubble also runs without ember.css): opacity
+   over --t-calm-fade, no slide or growth. Outranks ember.css's html.calm * that stops every transition. */
+html.calm .ember-bubble { transition: opacity var(--t-calm-fade, 150ms) ease, visibility var(--t-calm-fade, 150ms) !important; translate: none !important; scale: none !important; }
 /* Increase contrast: the tokens firm up the body, rim and edges; the outline goes on the solid body. */
 @media (prefers-contrast: more) {
   .ember-bubble { border-color: rgba(255, 255, 255, 0.5); background: var(--glass-fill, linear-gradient(#141112, #141112)) border-box; }
@@ -518,15 +560,15 @@ html.calm .ember-bubble { transition: none; translate: none; }
 }
 /* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
    grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
-html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
-html[data-text-size] .eb-chip, html[data-text-size] .eb-risk { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
-html[data-text-size] .ember-bubble[data-mood="attention"] .eb-title { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
-html[data-text-size] .eb-task { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
-html[data-text-size] .eb-step kbd { font-size: calc(11px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
-html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
-html[data-text-size] .ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
-html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
-html[data-text-size] .eb-whole-hint { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: round(calc(20px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-chip, html[data-text-size] .eb-risk { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .ember-bubble[data-mood="attention"] .eb-title { font-size: calc(13px * var(--text-scale, 1)); line-height: round(calc(18px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-task { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-step kbd { font-size: calc(11px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: round(calc(18px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-whole-hint { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
 `;
 
 /**
@@ -616,6 +658,11 @@ export class ReasoningBubble {
   private hot: Rect[] = [];
   /** Hidden because there was no room for it beside what it must not cover (see `place`). */
   private crowded = false;
+  /** Streamed text arrived sooner than STREAM_MS after the last drawing: drawn when the gap is up. */
+  private streamTimer: ReturnType<typeof setTimeout> | null = null;
+  private streamAt = -Infinity;
+  /** The origin it grows from (see `growOrigin`), set only while it is hidden. */
+  private origin = "";
 
   constructor(host: HTMLElement) {
     if (!document.getElementById(STYLE_ID)) {
@@ -625,7 +672,8 @@ export class ReasoningBubble {
       document.head.appendChild(style);
     }
     this.root = document.createElement("div");
-    this.root.className = "ember-bubble";
+    // calm-fade: in Calm it still fades in and out (ember.css R1), rather than pop.
+    this.root.className = "ember-bubble calm-fade";
     this.root.innerHTML = `
       <div class="eb-lock" aria-hidden="true"></div>
       <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-risk" aria-hidden="true"></span><span class="eb-title"></span></div>
@@ -704,16 +752,35 @@ export class ReasoningBubble {
   setThought(text: string): void {
     if (this.thoughtRaw === text) return;
     this.thoughtRaw = text;
-    this.paintThought(true);
-    this.thoughtBox.style.display = text ? "" : "none";
-    this.changed();
+    this.drawThought();
   }
 
   /** Append streamed reasoning text (e.g. from assistant.reasoning_delta). */
   appendThought(delta: string): void {
-    this.thoughtBox.style.display = "";
     this.thoughtRaw += delta;
+    this.drawThought();
+  }
+
+  /**
+   * Draws the thought as it now is: at once, unless it streams and was drawn less than STREAM_MS ago (each drawing
+   * lays out and re-rasters the bubble's lines, and tokens can come a hundred a second): then once the gap is up.
+   */
+  private drawThought(): void {
+    if (this.streaming) {
+      const wait = streamDelay(this.streamAt, performance.now());
+      if (wait > 0) {
+        this.streamTimer ??= setTimeout(() => { this.streamTimer = null; this.drawThought(); }, wait);
+        return;
+      }
+    }
+    this.flushThought();
+  }
+
+  private flushThought(): void {
+    if (this.streamTimer) { clearTimeout(this.streamTimer); this.streamTimer = null; }
+    this.streamAt = performance.now();
     this.paintThought(true);
+    this.thoughtBox.style.display = this.thoughtRaw ? "" : "none";
     this.changed();
   }
 
@@ -743,6 +810,8 @@ export class ReasoningBubble {
 
   setStreaming(on: boolean): void {
     if (on === this.streaming) return;
+    // Text still waiting to be drawn is drawn now: the finished answer never waits on the stream's gap.
+    if (this.streamTimer) this.flushThought();
     this.streaming = on;
     this.root.dataset.streaming = String(on);
     if (on) this.root.setAttribute("aria-busy", "true");
@@ -921,7 +990,15 @@ export class ReasoningBubble {
     const m = this.sized(width);
     this.useWidth(width);
     if ((this.thoughtBox.dataset.overflow === "true") !== m.over) this.thoughtBox.dataset.overflow = String(m.over);
-    const x = Math.round(p.x), y = Math.round(p.y);
+    // On the device's pixels (not only whole CSS px, half a device pixel apart at 150 %), so its text stays crisp.
+    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    const x = snapToDevice(p.x, dpr), y = snapToDevice(p.y, dpr);
+    // About to appear: it grows from the corner nearest Ember. Set only while hidden, never on a bubble on screen.
+    if (this.root.dataset.hidden === "true") {
+      const o = growOrigin(anchor, { x, y }, m.box);
+      const origin = `${o.x}px ${o.y}px`;
+      if (origin !== this.origin) { this.origin = origin; this.root.style.transformOrigin = origin; }
+    }
     // A new measurement (the content changed, or another width) may move the buttons.
     const resized = m.box !== this.box || m.hot !== this.hot;
     const shown = this.setCrowded(false);

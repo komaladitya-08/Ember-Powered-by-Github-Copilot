@@ -11,6 +11,7 @@
  */
 
 import { DONE_RING_MS, RING_TICKS, meterBars, ticksLit, type Presence } from "../../shared/presence";
+import { snapToDevice } from "@ember/bubble";
 import type { SoundLevel } from "../../shared/level";
 
 export class PresenceView {
@@ -90,9 +91,12 @@ export class PresenceView {
     if (l.voice !== undefined) { this.voice = l.voice; this.showVoice(); }
   }
 
-  /** Where Ember's centre is (overlay px) and its size: only the wrapper's transform is written, and only on a change. */
-  place(x: number, y: number, size: number): void {
-    const rx = Math.round(x), ry = Math.round(y);
+  /**
+   * Where Ember's centre is (overlay px) and its size: only the wrapper's transform is written, and only on a change.
+   * On device pixels at `dpr`, so the ticks stay sharp at 125 % and 150 %.
+   */
+  place(x: number, y: number, size: number, dpr = 1): void {
+    const rx = snapToDevice(x, dpr), ry = snapToDevice(y, dpr);
     if (this.at?.x !== rx || this.at.y !== ry) {
       this.at = { x: rx, y: ry };
       this.mount.style.transform = `translate(${rx}px, ${ry}px)`;
