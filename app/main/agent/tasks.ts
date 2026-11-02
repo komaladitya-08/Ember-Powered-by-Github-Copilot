@@ -66,6 +66,11 @@ export interface TaskManagerDeps {
   /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
   provider?: boolean;
   /**
+   * Whether tasks may act now (false: the organisation turned acting off). A failed card offers Try again only while
+   * they may: the retry would refuse to start otherwise, a button that does nothing. Default: they may.
+   */
+  actionsAllowed?: () => boolean;
+  /**
    * How this OS's settings shortcut is written ("Ctrl+Alt+E" on Linux), for a task's error that points to settings: or
    * the one Ember holds when the task fails, null while another app holds it (none is named then, cross-review X5).
    */
@@ -198,7 +203,7 @@ export class TaskManager {
   retry(id: string): Task | null {
     const t = this.tasks.get(id);
     const spec = this.specs.get(id);
-    if (!t || !spec || !retryable(t) || this.cutOff || this.closed) return null;
+    if (!t || !spec || !retryable(t) || this.cutOff || this.closed || !this.actionsAllowed()) return null;
     this.dismiss(id);
     return this.start(spec.goal, spec.opts);
   }
@@ -324,6 +329,8 @@ export class TaskManager {
   private async run(task: Task, spec: TaskSpec): Promise<void> {
     const abort = new AbortController();
     let worker: WorkerLike;
+    // Known before its worker is made: a task whose worker couldn't be made is still one that would act (Try again).
+    task.mode = spec.mode ?? "do";
     try {
       // Its activity starts now: its card's clock counts from here, not from when it was queued.
       const log = new ActivityLog(Date.now());
@@ -338,11 +345,10 @@ export class TaskManager {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
       this.d.log.error("task.error", { id: task.id, err });
-      this.finish(task, "failed", { success: false, summary: "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." });
+      this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." : "Ember couldn't start this. Ask again; if it keeps happening, restart Ember." });
       this.pump();
       return;
     }
-    task.mode = spec.mode ?? "do";
     // A task that does the work starts in the background (a guide is Ember beside the cursor, pointing).
     if (task.mode === "do") task.hand ??= "background";
     this.running.set(task.id, { worker, abort });
@@ -429,6 +435,11 @@ export class TaskManager {
     for (const id of gone.slice(0, Math.max(0, gone.length - ACTIVITY_KEPT))) this.logs.delete(id);
   }
 
+  /** Tasks may act now (TaskManagerDeps.actionsAllowed). */
+  private actionsAllowed(): boolean {
+    try { return this.d.actionsAllowed?.() !== false; } catch { return false; /* can't tell: no button that might do nothing */ }
+  }
+
   private publish(): void {
     if (this.closed) return;
     this.keepLogs();
@@ -443,7 +454,7 @@ export class TaskManager {
         detail: stopping ? TASK_STOPPING : t.detail,
         actions: t.status === "running" || t.status === "queued"
           ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
-          : retryable(t) && this.specs.has(t.id) && !this.cutOff
+          : retryable(t) && this.specs.has(t.id) && !this.cutOff && this.actionsAllowed()
             ? [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }]
             : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
         ...(t.where ? { where: t.where } : {}),

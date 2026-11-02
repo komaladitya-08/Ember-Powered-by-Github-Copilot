@@ -23,6 +23,7 @@ import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import type { ActivityEvent } from "./activity";
+import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
@@ -1143,7 +1144,10 @@ export class Worker {
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
     }
-    return handler(parsed.data);
+    const result = await handler(parsed.data);
+    // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
+    if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
+    return result;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
@@ -1468,7 +1472,7 @@ export class Worker {
           if (name !== "report_progress" && name !== "finish_task" && step) { this.doing = `${step}…`; d.onProgress(this.doing); }
           // Its card's activity: the step in Ember's words and the app it works in now (never the call's arguments).
           this.activity({ type: "heard" });
-          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}) });
+          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: cardApp(friendlyApp(this.window.app), this.d.target?.kind === "ssh") } : {}) });
         }
         if (e.type === "tool.execution_complete") {
           const data = e.data as { toolCallId?: string; success?: boolean };
@@ -3521,9 +3525,10 @@ export class Worker {
     }
   }
 
-  /** Every audit entry goes through here: an action (tried or done) after a "Not now" means the task went on. */
+  /** Every audit entry goes through here: an action done (or a command started) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
-    if (e.event === "action" || (e.event === "command" && e.phase === "started")) this.declined = false;
+    // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
+    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) this.declined = false;
     try {
       this.d.audit.write(e);
     } catch (err) {

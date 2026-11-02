@@ -111,6 +111,20 @@ describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
     await declined.call("perceive_window", {});
     await declined.call("click", { id: 1 });
     expect(declined.activity.filter(e => e.type === "answer")).toEqual([{ type: "answer", answer: "declined" }]);
+    // The step it asked about was turned down: its card shows it stopped, not failed (UI audit).
+    expect(declined.activity.at(-1)).toEqual({ type: "denied" });
+  });
+
+  it("stays declined after a \"Not now\" until a step really happens, not when a later one only failed (UI audit)", async () => {
+    const { w, call } = makeWorker({ grants: {}, answer: "deny" });
+    await call("perceive_window", {});
+    await call("click", { id: 1 });
+    const inner = w as unknown as { declined: boolean; audit(e: Record<string, unknown>): void };
+    expect(inner.declined).toBe(true);
+    inner.audit({ event: "action", task: "t1", kind: "click", app: "gedit", ok: false, error: "the control a click goes to can't be found" });
+    expect(inner.declined).toBe(true);
+    inner.audit({ event: "action", task: "t1", kind: "click", app: "gedit", ok: true });
+    expect(inner.declined).toBe(false);
   });
 
   it("says a step wasn't allowed, with policy's reason", async () => {
