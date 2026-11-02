@@ -74,6 +74,8 @@ export function keyHintParts(step: string | null | undefined): { keys: string[];
 
 /** The words a risky question's tag says (beside "Needs you"): policy asks about this kind of step every time. */
 export const RISKY_TAG = "Risky step";
+/** The tag beside Ember's own announcement of a step it took without asking (BubbleState.autonomous): never model text. */
+export const AUTONOMOUS_TAG = "Without asking";
 
 export interface BubbleView {
   visible: boolean;
@@ -349,6 +351,14 @@ export const BUBBLE_CSS = `
   color: var(--yellow, #ffd600); background: color-mix(in srgb, var(--yellow, #ffd600) 16%, transparent);
 }
 .ember-bubble[data-mood="attention"][data-risky="true"] .eb-risk { display: inline-flex; }
+/* Ember's own announcement of a step it took without asking (Work without asking): its tag, in the status colour, which
+   only Ember sets (a task's own note never has it). */
+.eb-auto {
+  flex: none; display: none; padding: 1px 8px; border-radius: var(--r-capsule, 999px);
+  font: 600 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
+  color: var(--accent, #ff9f0a); background: color-mix(in srgb, var(--accent, #ff9f0a) 16%, transparent);
+}
+.ember-bubble[data-autonomous="true"] .eb-auto { display: inline-flex; }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A question's title ("May I?", "May I run a command?") leads into it; the decision is its sentence below (.eb-ask). */
 .ember-bubble[data-mood="attention"] .eb-title { font-size: 13px; line-height: 18px; color: var(--label-2, rgba(245, 240, 236, 0.66)); }
@@ -511,7 +521,7 @@ html.calm .ember-bubble { transition: none; translate: none; }
   .eb-actions button[aria-disabled="true"], .eb-actions button.eb-primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
   .eb-whole { border: 1px solid CanvasText; }
   /* The state's tag and the risky tag keep an edge (their tint is dropped); the brackets are drawn as they are. */
-  .eb-chip, .eb-risk { border: 1px solid CanvasText; }
+  .eb-chip, .eb-risk, .eb-auto { border: 1px solid CanvasText; }
   .eb-lock, .ember-bubble[data-risky="true"] .eb-lock { forced-color-adjust: none; --eb-lock: CanvasText; }
   .ember-bubble[data-risky="true"] .eb-actions button.eb-primary, .ember-bubble[data-risky="true"] .eb-actions button.eb-primary:hover { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }
   .eb-step kbd { outline: 1px solid CanvasText; outline-offset: -1px; }
@@ -519,7 +529,7 @@ html.calm .ember-bubble { transition: none; translate: none; }
 /* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
    grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
 html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
-html[data-text-size] .eb-chip, html[data-text-size] .eb-risk { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-chip, html[data-text-size] .eb-risk, html[data-text-size] .eb-auto { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 html[data-text-size] .ember-bubble[data-mood="attention"] .eb-title { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
 html[data-text-size] .eb-task { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 html[data-text-size] .eb-step kbd { font-size: calc(11px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
@@ -628,7 +638,7 @@ export class ReasoningBubble {
     this.root.className = "ember-bubble";
     this.root.innerHTML = `
       <div class="eb-lock" aria-hidden="true"></div>
-      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-risk" aria-hidden="true"></span><span class="eb-title"></span></div>
+      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-risk" aria-hidden="true"></span><span class="eb-auto" aria-hidden="true"></span><span class="eb-title"></span></div>
       <p class="eb-thought"><span></span></p>
       <div class="eb-whole" hidden></div>
       <p class="eb-whole-hint" hidden></p>
@@ -636,6 +646,7 @@ export class ReasoningBubble {
       <div class="eb-actions" hidden></div>`;
     this.head = this.root.querySelector(".eb-head")!;
     this.root.querySelector(".eb-risk")!.textContent = RISKY_TAG;
+    this.root.querySelector(".eb-auto")!.textContent = AUTONOMOUS_TAG;
     this.chipText = this.root.querySelector(".eb-chip-text")!;
     this.title = this.root.querySelector(".eb-title")!;
     this.thoughtBox = this.root.querySelector(".eb-thought")!;
@@ -683,6 +694,13 @@ export class ReasoningBubble {
     this.root.dataset.mood = mood;
     this.updateChip();
     this.paintThought();
+    this.changed();
+  }
+
+  /** Ember's own announcement of a step it took without asking (BubbleState.autonomous): its "Without asking" tag. */
+  setAutonomous(on: boolean): void {
+    if (on === (this.root.dataset.autonomous === "true")) return;
+    this.root.dataset.autonomous = String(on);
     this.changed();
   }
 

@@ -20,9 +20,10 @@ import { friendlyApp } from "../../shared/apps";
 import { roleWord } from "../../shared/role-words";
 import { visibleText } from "../../shared/visible-text";
 import { KEYS, SHORTCUTS, type KeyConventions, type OS } from "../../shared/shortcuts";
-import { OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
+import { ADMIN_APP, OFFICE_APP, OPENS_PROGRAMS, READ_ONLY_WINDOW, RISKY_EXTRA, RUN_ANSWER_EXTRA, RUN_FILE_DIALOG_EXTRA, RUNS_PROGRAM_EXTRA, SECURITY_APP, SECURITY_CLASS, SECURITY_TITLE, SETTINGS_APP, TABBED_APP, TYPING_REFUSED, WEB_APP, placeName, type OpensPrograms, type TypingRefusal } from "./vocabulary";
 import { isRemoteSurface, REMOTE_SURFACE_REASON } from "./remote-surface";
 import { targetRules } from "./target-rules";
+import { covers, movingWords, type AutonomyScope, type AutonomyScopes } from "./autonomy";
 
 export type Tier = "read" | "reversible" | "confirm" | "never";
 export type Verdict = "allow" | "confirm" | "deny";
@@ -166,6 +167,18 @@ export interface Decision {
    * that scrolls, taking Allow only once all of it has been in view. Shown as the question shows typed text (typedUnits).
    */
   detail?: string;
+  /**
+   * The scopes of "Work without asking" that would let this question go unasked (autonomy.ts): set only where the step
+   * asks for no reason but being the first in an app ("apps"), using the borrowed mouse or keyboard ("cursor"), or
+   * carrying text from another window ("crossWindow"). Never on a risky step.
+   */
+  waivable?: AutonomyScope[];
+  /** For a step that carries text from elsewhere: the apps it comes from, as people name them (none: another window of this app). */
+  carriedFrom?: string[];
+  /** It would have asked, and goes ahead because the user lets Ember work without asking: Ember says `announce` instead. */
+  autonomy?: true;
+  /** What Ember says as it goes ahead without asking (bubble and card), built from the request, never model text. */
+  announce?: string;
 }
 
 export type Grant = "observe" | "act";
@@ -195,6 +208,11 @@ export interface PolicyInputs {
   os?: OS;
   /** Is this window an authentication or security prompt (default: isSecurityWindow with `os`)? */
   isSecurityWindow?: (w: { app?: string; title?: string; name?: string }) => boolean;
+  /**
+   * "Work without asking" (autonomy.ts autonomyInForce): the scopes in force, or null while it is off. A step whose only
+   * reason to ask is in those scopes is allowed and announced (Decision.autonomy); risky steps are never touched.
+   */
+  autonomy?: () => AutonomyScopes | null;
 }
 
 /** Latin look-alikes from Cyrillic and Greek, enough to keep "Dеlete" (Cyrillic е) from passing as harmless. */
@@ -1691,8 +1709,16 @@ function describe(r: ActionRequest, withApp = true, kc: KeyConventions = KEYS.li
   }
 }
 
+/**
+ * A decision's waivable scopes when the only thing that makes it ask is text carried from another window (Risk.carried):
+ * crossWindow, with what else it needs (`also`), and where the text comes from. Anything else risky: none.
+ */
+function carriedOnly(risk: Risk, also: AutonomyScope[]): Pick<Decision, "waivable" | "carriedFrom"> {
+  return risk.carried ? { waivable: [...also, "crossWindow"], carriedFrom: risk.carried } : {};
+}
+
 /** Why an action needs the user's OK; `about`: the on-screen words that make it so; `note`: added to the question. */
-type Risk = { reason: string; about?: string; note?: string };
+type Risk = { reason: string; about?: string; note?: string; carried?: string[] };
 /** Fields whose own text is all that Ctrl+A selects in them (in a paragraph or a section it selects the whole document or page). */
 const HOLDS_ALL_TEXT = /^(entry|text|spin button|combo box|password text|terminal)$/;
 /** Select All as the user's keyboard names it ("Ctrl+A"; "Command+A" on macOS), for the reasons and notes below. */
@@ -2065,7 +2091,36 @@ export class PolicyEngine {
         ? { ...d, verdict: "confirm", tier: "confirm", reason: "your organisation asks you to confirm every action", remember: false, everyTime: true }
         : { ...d, remember: false, everyTime: true };
     }
+    // "Work without asking": a question whose only reason is in the scopes the user left on goes unasked, and is announced.
+    // (Off-task steps and the administrator's "confirm every action" returned above; risky steps are never waivable.)
+    // Never in the system's own Settings, a security app or a system-administration app (security review of #127):
+    // those steps keep asking. By the program's name and by the name people know it by.
+    const names = [appNameOf(r.app), friendlyApp(r.app).trim()];
+    const systemApp = names.some(n => !!SETTINGS_APP[this.os]?.test(n) || !!SECURITY_APP[this.os]?.test(n) || ADMIN_APP[this.os].test(n));
+    if (d.verdict === "confirm" && !systemApp && covers(this.o.autonomy?.() ?? null, d.waivable)) {
+      return { ...d, verdict: "allow", tier: "reversible", remember: false, autonomy: true, reason: `${d.reason}; the user lets Ember work without asking`, announce: this.announcement(r, d) };
+    }
     return { ...d, remember };
+  }
+
+  /**
+   * What Ember says as it goes ahead without asking: the kind of step, the app and, for text, how much (never the text
+   * typed, nor any words from the screen: the bubble may be seen by others, and screen text is untrusted; security
+   * review of #127). For text carried from elsewhere: where from, where to and how much.
+   */
+  private announcement(r: ActionRequest, d: Decision): string {
+    const here = r.app ? friendlyApp(r.app) : "this app";
+    const chars = r.kind === "text" || r.kind === "cursor_text" ? (r.value ?? "").length : undefined;
+    if (d.carriedFrom) return movingWords(d.carriedFrom, here, chars);
+    const n = `${chars ?? 0} ${chars === 1 ? "character" : "characters"}`;
+    const key = r.kind === "keys" ? keyLabel(r.value ?? "", this.keys) ?? "a key" : "";
+    const verb: Record<ActionKind, string> = {
+      read: "Reading", click: "Clicking", toggle: "Changing a setting", text: `Typing ${n}`, select: "Choosing an option", value: "Setting a value",
+      setting: "Changing a setting", open_app: "Opening an app", cursor_click: "Using your mouse to click", cursor_text: `Using your keyboard to type ${n}`,
+      keys: `Using your keyboard to press ${key}`, scroll: "Using your mouse to scroll",
+    };
+    const borrowed = !r.onDesk && (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll");
+    return `${verb[r.kind]} in ${here}, without asking as you let me.${borrowed ? " Move the mouse or press a key to take it back." : ""}`;
   }
 
   /**
@@ -2252,7 +2307,8 @@ export class PolicyEngine {
     const here = r.app ? friendlyApp(r.app) : "this app";
     const reason = apps.length ? `this may carry text from ${appList(apps.slice(0, 3))} into ${here}`
       : from.every(s => s.described) ? `this may carry text from the user's screen into ${here}` : `this may carry text from another window or tab of ${here}`;
-    return { reason: risk?.reason ?? reason, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note };
+    // Carried text alone (nothing else about the step asks): "Work without asking" may cover it (crossWindow).
+    return { reason: risk?.reason ?? reason, about: risk?.about, note: risk?.note ? `${risk.note} ${note}` : note, ...(risk ? {} : { carried: apps }) };
   }
 
   private decideBase(r: ActionRequest, count = true): Decision {
@@ -2326,20 +2382,22 @@ export class PolicyEngine {
     if (r.onDesk) {
       // Ember's desk: its own display and app instances, so mouse and keyboard need no borrowing.
       // Hard-to-undo actions are still confirmed (desk apps share the user's files).
-      if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, risky: true, everyTime: true };
+      if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, risky: true, everyTime: true, ...carriedOnly(risk, []) };
       return { tier: "reversible", verdict: "allow", reason: "on Ember's desk", prompt };
     }
 
     // Anything with the borrowed mouse or keyboard is confirmed every time (PLAN.md §5).
     if (r.kind === "cursor_click" || r.kind === "cursor_text" || r.kind === "keys" || r.kind === "scroll") {
-      return { tier: "confirm", verdict: "confirm", reason: risk?.reason ?? "Ember needs your mouse or keyboard for this", about: risk?.about, prompt, risky: true, everyTime: true };
+      // Nothing about the step but the borrowing (or text carried from elsewhere) asks: "Work without asking" may cover it.
+      return { tier: "confirm", verdict: "confirm", reason: risk?.reason ?? "Ember needs your mouse or keyboard for this", about: risk?.about, prompt, risky: true, everyTime: true,
+        ...(risk ? carriedOnly(risk, ["cursor"]) : { waivable: ["cursor"] as AutonomyScope[] }) };
     }
 
     // Launching apps and Ember's short list of comfort settings are easy to undo.
     if (r.kind === "open_app" || r.kind === "setting") return { tier: "reversible", verdict: "allow", reason: "easy to undo", prompt };
 
     const grant = this.o.grants()[r.app.toLowerCase()];
-    if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, needsGrant: grant !== "act", risky: true };
+    if (risk) return { tier: "confirm", verdict: "confirm", reason: risk.reason, about: risk.about, prompt, needsGrant: grant !== "act", risky: true, ...carriedOnly(risk, grant === "act" ? [] : ["apps"]) };
     // Grants are kept by the program's own name; questions and reasons use the name people know ("Settings", not "gnome-control-center").
     const app = r.app ? friendlyApp(r.app) : "this app";
     if (grant === "act") return { tier: "reversible", verdict: "allow", reason: `Ember may act in ${app}`, prompt };
@@ -2353,6 +2411,7 @@ export class PolicyEngine {
       prompt: `Let me work in ${app}? First step: ${lowerFirst(describe(r, false, kc)).replace(/\?$/, ".")}`,
       stepPrompt: prompt,
       needsGrant: true,
+      waivable: ["apps"],
     };
   }
 

@@ -312,6 +312,26 @@ describe("VoiceService", () => {
     expect(selfSpeaking.at(-1)).toBe(false);
   });
 
+  it("dates Ember's next speech after its page went mid-speech, so its own words never answer a question (#127's echo guard)", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const { v } = service();
+    await v.setWanted(true);
+    const [proc] = electron.procs;
+    proc.emit("message", { type: "ready", loadMs: 900 });
+    speaking(electron.windows.find(w => w.title === "Ember microphone")!, true);
+    v.setMuted(true); // the mic page goes while Ember speaks
+    v.setMuted(false);
+    await vi.advanceTimersByTimeAsync(10);
+    vi.setSystemTime(2_000_000);
+    const heardFrom = Date.now();
+    vi.setSystemTime(2_000_500);
+    const mic = electron.windows.filter(w => w.title === "Ember microphone").at(-1)!;
+    speaking(mic, true);
+    speaking(mic, false);
+    expect(v.selfSpokeSince(heardFrom)).toBe(true);
+  });
+
   it("goes back from 'Downloading…' with the reason when the download fails, leaving nothing behind", async () => {
     const { v, states } = service(false);
     await v.setWanted(true);
