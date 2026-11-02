@@ -110,11 +110,11 @@ export function tagline(t: {
   if (t.failing) return `Ember needs ${things(t.failing)} fixed before it can work on this computer.`;
   const where = !t.overlay ? `Ember is in the ${handleCornerText(t.corner)}.` : t.hidden ? "Ember is hidden for now." : "Ember is beside your cursor.";
   if (t.phase === "error" && t.waitingForTasks) return `${where} Copilot isn't answering: Ember reconnects once the tasks that are running finish.`;
-  if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot below to start asking.`;
+  if (t.phase === "signed-out" || t.phase === "error") return `${where} Connect Copilot to start asking.`;
   if (t.phase === "starting" || t.phase === null) return `${where} Connecting to Copilot…`;
   // Ready, with setup rows still worth a look: said, so a warning isn't left in a closed fold (review #95).
   // An empty label: another app holds the ask shortcut and its fallback (D-45b), so settings' Ask Ember… is the way.
-  const ask = askLabel ? `Press ${askLabel} to ask it anything.` : "Ask it anything with Ask Ember…, under Comfort & access.";
+  const ask = askLabel ? `Press ${askLabel} to ask it anything.` : "Ask it anything with Ask Ember… below.";
   return `${where} ${ask}${t.look ? ` The setup check has ${things(t.look)} worth a look.` : ""}`;
 }
 
@@ -134,11 +134,11 @@ export function setupBadge(needing: number, failing = 0): { text: string; label:
 }
 
 /**
- * The note by the Setup check heading: how many rows fail, else how many warn, counted in words (review #160), as
- * `ember doctor` says it ("worth a look").
+ * The note by the Setup check heading: how many rows fail, else how many need the user (setupView's `needing`, the
+ * count the tagline and the sidebar's badge give, UI audit #6), counted in words (review #160), as `ember doctor` says it.
  */
-export function checksNote(failing: number, warn: number): string {
-  return failing ? `${things(failing)} to fix` : warn ? `${things(warn)} worth a look` : "All good";
+export function checksNote(failing: number, needing: number): string {
+  return failing ? `${things(failing)} to fix` : needing ? `${things(needing)} worth a look` : "All good";
 }
 
 /** What the setup check shows, and what the window remembers between statuses. */
@@ -163,7 +163,7 @@ export function setupView(rows: readonly SetupRow[], before: { opened: boolean; 
   const failing = rows.filter(r => r.status === "fail").length;
   const warn = rows.filter(r => r.status === "warn").length;
   const needing = rows.filter(needsUser).length;
-  return { failing, warn, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(failing, warn) };
+  return { failing, warn, needing, open: needing > 0 && !before.opened, beforeStart: before.beforeStart || needing > 0, note: checksNote(failing, needing) };
 }
 
 /** What a screen reader hears when Start has done its work and gone (review #50). */
@@ -184,7 +184,7 @@ export function dayLabel(t: string, now = new Date()): string {
  * this OS writes it, "" while it holds neither its default nor its fallback (D-45b).
  */
 export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): string {
-  return askLabel ? `Nothing yet. Press ${askLabel} and ask Ember something.` : "Nothing yet. Use Ask Ember…, under Comfort & access, to ask Ember something.";
+  return askLabel ? `Nothing yet. Press ${askLabel} and ask Ember something.` : "Nothing yet. Use Ask Ember… at the top of Home to ask Ember something.";
 }
 
 /**
@@ -624,5 +624,5 @@ export const GLASS_CHOICES: readonly { value: "clear" | "regular" | "solid"; lab
   { value: "regular", label: "Regular" },
   { value: "solid", label: "Solid" },
 ];
-export const GLASS_LABEL = "Glass";
+export const GLASS_LABEL = "How much shows through";
 export const GLASS_HINT = "How much of your screen shows through Ember's bubble, task cards, handle and ask box. Clear is an even, lighter tint, with Ember's words kept easy to read; Solid shows nothing through. Calm mode, and your desktop's settings to reduce transparency or increase contrast, make it solid.";

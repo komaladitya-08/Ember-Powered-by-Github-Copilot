@@ -212,6 +212,42 @@ Ember is two places at once, each for one kind of work.
   (scaled with the text), flat on the glass with `--separator` rules. Without a compositor, the corner card shows the
   task's words only.
 
+## Home: the settings window
+
+Home is an opaque content window in the manner of macOS System Settings: a sidebar of panes with coloured symbol
+tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page that opened on the character picker).
+- **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
+  (headings, switch labels, footnotes, buttons), Enter goes to the first setting found and marks it. The links, most
+  used first: Home, Copilot, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
+  available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
+  rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
+  640 px the links are one row of capsules, the search field first.
+- **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
+  character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
+  state in a few words ("Ready", "Working on 2 tasks", "A task needs you" with **Show the question**, "Not connected",
+  "Needs setting up"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
+  you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
+  allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
+  takes that place while Copilot isn't connected) beside a quiet **Stop everything** and the stop chord.
+- **The conversation** is part of the page, not a box that scrolls inside it: its latest 30 messages, then **Show
+  earlier messages**.
+- **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.
+  Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then
+  the plan as a checklist (done ticks, the accent dot for now, rings to come), then the timeline: rows of at least
+  44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
+  folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
+  **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
+  by the cards' catalog code. A finished task folds to its head. While a task waits for an answer, a callout in its
+  group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Home never answers. From five tasks, **All**,
+  **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second.
+- **Settings panes** keep System Settings' grouped rows: switches at the trailing edge, a switch's note inside its
+  row (Apps & privacy's **When Ember asks first**), pop-up buttons styled as one (Handle position too), and states
+  shown as switches (**Follow my cursor**, **Hide Ember until it needs me**) rather than buttons. Voice shows its
+  status row only while it says something the switch doesn't. About sets paths in the mono face and the issue
+  address as words with **Copy**.
+- **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
+  from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
+
 ## Design system (`app/renderer/shared/ember.css`)
 
 Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
