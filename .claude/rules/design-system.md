@@ -192,7 +192,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - A risky question (policy's `risky`, `BubbleState.risky`) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered, not filled, so nothing invites a reflex yes; the no-compositor corner card shows the tag and the bordered Allow too (`body[data-risky]`, `cardRisky()`). It changes how it looks, never how it is answered.
   - Every decision the floating layer asks for also works from the keyboard (the `allow` and `deny` shortcuts in app/shared/shortcuts.ts, Ctrl+Alt+Y / Ctrl+Alt+N on Linux, while Ember holds them), with the hint from `questionKeyHint()`.
   - "Always in <app>" stays click-only, because a global key could take an app's own shortcut and grant for good.
-  - New task-card buttons ignore presses for `TASK_ARM_MS`, because the pointer may already rest where the card appears.
+  - New task-card buttons, and the bubble's Try again and Stop, ignore presses for `TASK_ARM_MS` (app/renderer/handle/arm.ts), because the pointer may already rest where they appear.
   - Question buttons are armed only by the Confirmer: never add a renderer arm delay to them.
 - **Screen readers.**
   - Put words for screen readers only in `.sr` (`.eb-live` in the bubble), and announce changes through `role="status"` or `aria-live="polite"`.

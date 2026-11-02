@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { armMsFor, TASK_ARM_MS } from "../../app/renderer/handle/arm";
+import { ArmClock, armMsFor, TASK_ARM_MS } from "../../app/renderer/handle/arm";
 import { cardRisky } from "../../app/renderer/handle/card";
 
 describe("corner card buttons", () => {
@@ -13,6 +13,23 @@ describe("corner card buttons", () => {
   it("still arms a new task card's Stop/Close so a resting pointer cannot press it", () => {
     expect(armMsFor([{ id: "task:abc:stop" }])).toBe(TASK_ARM_MS);
     expect(armMsFor([{ id: "task:abc:dismiss" }])).toBe(TASK_ARM_MS);
+  });
+
+  it("arms the bubble's Try again and Stop as a card's, but never a question's buttons (UI audit)", () => {
+    expect(armMsFor([{ id: "ui:retry" }])).toBe(TASK_ARM_MS);
+    expect(armMsFor([{ id: "ui:stop" }])).toBe(TASK_ARM_MS);
+    const clock = new ArmClock();
+    clock.shown(["ui:retry", "q1:once"], 1000);
+    expect(clock.ready("ui:retry", 1000 + TASK_ARM_MS - 1)).toBe(false);
+    expect(clock.ready("q1:once", 1000)).toBe(true);
+    // Shown again by a later update: still the same button, armed from when it first came up.
+    clock.shown(["ui:retry"], 1500);
+    expect(clock.ready("ui:retry", 1000 + TASK_ARM_MS)).toBe(true);
+    // Gone and back: armed again.
+    clock.shown([], 3000);
+    clock.shown(["ui:retry"], 3100);
+    expect(clock.ready("ui:retry", 3200)).toBe(false);
+    expect(readFileSync("app/renderer/overlay/main.ts", "utf8")).toContain("if (bubbleArm.ready(a.id, performance.now())) api.bubbleAction(a.id);");
   });
 });
 
