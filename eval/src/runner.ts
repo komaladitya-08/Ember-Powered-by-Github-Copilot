@@ -134,12 +134,14 @@ export function scriptedReply(task: Task, messages: Msg[]): { tool?: { name: str
   if (!call) return { text: "Done." };
   const args: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(call.args)) {
-    if (v && typeof v === "object" && "find" in v) {
+    // Only {find} itself, never an array (whose prototype has a find) or a view's tree.
+    const find = v && typeof v === "object" && !Array.isArray(v) && Object.hasOwn(v, "find") ? (v as { find: string }).find : null;
+    if (find !== null) {
       const screen = [...messages].reverse().find(m => m.role === "tool" && textOf(m).includes("<screen"));
-      if (!screen) throw new Error(`step ${step}: no screen read before {find: ${v.find}}`);
-      const re = new RegExp(v.find);
+      if (!screen) throw new Error(`step ${step}: no screen read before {find: ${find}}`);
+      const re = new RegExp(find);
       const hit = textOf(screen).split(/\\n|\n/).map(l => /\[(\d+)\] (.*)/.exec(l)).find(m => m && re.test(m[2]));
-      if (!hit) throw new Error(`step ${step}: nothing on screen matches ${v.find}`);
+      if (!hit) throw new Error(`step ${step}: nothing on screen matches ${find}`);
       args[k] = Number(hit[1]);
     } else {
       args[k] = v;
