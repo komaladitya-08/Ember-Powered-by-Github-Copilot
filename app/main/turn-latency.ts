@@ -3,7 +3,7 @@
  * transcript arrives to the request being sent to Copilot, the answer's first words streaming in, the first chunk handed
  * to the voice and the first sound played. Main logs one `voice.latency` line per spoken turn, with times only (never
  * words: CLAUDE.md privacy), so every change to the voice path is measured the same way. Plain Node and pure: main
- * passes the clock and the log.
+ * passes the clock and the log. With an acknowledgement, the first sound is the acknowledgement's.
  */
 
 /** One spoken turn's timings, in ms from when its transcript arrived (absent: that step didn't happen). */
@@ -11,12 +11,14 @@ export interface TurnTimes {
   /** Transcribing the request (the engine's own figure). */
   asrMs: number;
   sentMs?: number;
+  /** Ember said its acknowledgement ("On it."), Copilot not having answered yet (acknowledge.ts). */
+  ackMs?: number;
   firstTokenMs?: number;
   firstChunkMs?: number;
   firstAudioMs?: number;
 }
 
-type Step = "sent" | "firstToken" | "firstChunk" | "firstAudio";
+type Step = "sent" | "ack" | "firstToken" | "firstChunk" | "firstAudio";
 
 /** A turn's steps not seen within this long are given up on, and the turn is logged as it stands. */
 export const TURN_GIVE_UP_MS = 60_000;
@@ -52,6 +54,7 @@ export class TurnLatency {
     this.o.log({
       asrMs: t.asrMs,
       ...(m.sent !== undefined ? { sentMs: m.sent } : {}),
+      ...(m.ack !== undefined ? { ackMs: m.ack } : {}),
       ...(m.firstToken !== undefined ? { firstTokenMs: m.firstToken } : {}),
       ...(m.firstChunk !== undefined ? { firstChunkMs: m.firstChunk } : {}),
       ...(m.firstAudio !== undefined ? { firstAudioMs: m.firstAudio } : {}),

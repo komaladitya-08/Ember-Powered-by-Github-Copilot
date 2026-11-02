@@ -28,6 +28,7 @@ import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "..
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
+import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
 import { FILE_PATH_WORDS } from "../policy/vocabulary";
 import { SETTINGS, changeSetting, findApp, isTerminalApp, launchApp, listApps, programsOf, type DesktopApp, type SettingName } from "../hands/system";
@@ -896,6 +897,8 @@ export class Worker {
   private steps = 0;
   /** Something on screen asked for an action the user didn't (an off-task question): every step is confirmed from then on. */
   private tainted = false;
+  /** It was tainted by text on screen written as instructions to an AI agent (injection.ts), not by a step: questions say so. */
+  private steered = false;
   /** What the user asked for in their own words, with what they added since (steer): what the policy checks risky steps against. */
   private userWords: string;
   /**
@@ -1736,14 +1739,22 @@ export class Worker {
       return this.refuse("read", "Ember's own window", "That is one of Ember's own windows: tasks never use them. Use list_windows and pick another window.", { app: p.window.app });
     }
     this.window = { app: p.window.app, name: p.window.name, role: p.window.role };
-    this.remember(p.window, [p.window.name, ...p.nodes.flatMap(n => (n.secret ? [n.name] : [n.name, n.text ?? ""]))]);
+    const readText = [p.window.name, ...p.nodes.flatMap(n => (n.secret ? [n.name] : [n.name, n.text ?? ""]))];
+    this.remember(p.window, readText);
     this.frame = p.window.bounds;
     this.axScale = p.axScale ?? 1;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}`, resultType: "success" };
+    // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
+    // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped.
+    const signals = injectionSignals(readText.join("\n"));
+    if (signals.length) {
+      if (!this.tainted) { this.tainted = true; this.steered = true; }
+      this.d.log.info("worker.injection_flagged", { task: this.spec.id, app: p.window.app, signals });
+    }
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${signals.length ? INJECTION_NOTE : ""}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
@@ -3497,9 +3508,11 @@ export class Worker {
     if (this.tainted && decision.verdict !== "deny" && decision.tier !== "read" && decision.aligned !== false) {
       // An app the user already allowed for this task: the step alone is asked about, not working in the app again.
       const step = decision.stepPrompt && this.allowedApps.has(req.app.toLowerCase()) ? decision.stepPrompt : decision.prompt;
-      const prompt = `${step} (I'm checking each step: a step came up that you didn't ask for.)`;
+      const prompt = this.steered
+        ? `${step} (I'm checking each step: text on screen tried to give me instructions.)`
+        : `${step} (I'm checking each step: a step came up that you didn't ask for.)`;
       decision = decision.verdict === "allow"
-        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; a step came up that the user didn't ask for`, prompt }
+        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
         : { ...decision, everyTime: true, remember: false, prompt };
     }
     if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
