@@ -29,16 +29,20 @@ function panel(o: Omit<ConsentPanel, "sha256">): ConsentPanel {
 const stopLabel = (os: OS, key?: string | null) => (key === undefined ? SHORTCUTS[os].stop.label : key);
 
 /**
- * Where what Ember reads goes, as the cards name it: GitHub Copilot, or the organisation's own model endpoint when the
- * administrator set one (`byok`: the policy's provider; Ember then never uses a GitHub sign-in).
+ * Which model service the cards name: true, the organisation's own endpoint (the policy's provider; Ember then never
+ * uses a GitHub sign-in); a host, the user's own model provider there (Home › Copilot); false or absent, GitHub Copilot.
  */
-const serviceName = (byok: boolean | undefined) => (byok ? "your organisation's model service" : "GitHub Copilot");
+export type CardService = boolean | string;
+
+/** Where what Ember reads goes, as the cards name it (CardService). */
+const serviceName = (byok: CardService | undefined) =>
+  (typeof byok === "string" ? `your model service (${byok})` : byok ? "your organisation's model service" : "GitHub Copilot");
 
 /**
  * The WSL card (§8.4.1). `target` is the distro "WSL" names (or "local" when none is installed yet); `byok`: the
  * organisation's own model service is in use.
  */
-export function wslConsent(o: { target: TargetId; targetLabel: string; byok?: boolean }): ConsentPanel {
+export function wslConsent(o: { target: TargetId; targetLabel: string; byok?: CardService }): ConsentPanel {
   return panel({
     feature: "wsl", target: o.target, targetLabel: o.targetLabel,
     title: "Use Ember with WSL?",
@@ -61,7 +65,7 @@ export interface CommandsCardFacts {
   /** A Podman distro. */
   podman: boolean;
   /** The organisation's own model service is in use (the policy's provider), not GitHub Copilot. */
-  byok?: boolean;
+  byok?: CardService;
 }
 
 /** The commands card for one target (§8.4.3). */
@@ -101,7 +105,7 @@ export interface SshCardFacts {
   /** The machine Ember connected to before isn't the one it reached now (§7.4: asked again). */
   machineChanged?: boolean;
   /** The organisation's own model service is in use (the policy's provider): no GitHub sign-in, nothing to Copilot. */
-  byok?: boolean;
+  byok?: CardService;
   /** What `ssh -G` resolved the name to when the user said yes, when it now resolves it elsewhere (sshChangedFrom). */
   changedFrom?: HostRecord["resolved"];
 }
@@ -151,7 +155,7 @@ export function sshConsent(o: { os: OS; target: TargetId; facts: SshCardFacts; s
       ? `Your organisation lets Ember only run commands on ${f.label}.`
       // Built before Ember has looked at the computer (§8.4.2): what it does there is said for each kind it may be.
       : `If ${f.label} has a desktop, Ember reads and uses apps on its screen only when ${r.user} is the person logged in there, and shows a notice with a Stop button while it does. You'll be asked before every step it takes there. On a server with no desktop, or on a Mac, it only runs commands.`,
-    `Your voice and ${f.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(f.byok)} from this computer when you ask something.`,
+    `Your voice and ${typeof f.byok === "string" ? "your model service's key" : f.byok ? "the key to your organisation's model service" : "your GitHub sign-in"} stay on this computer. Ember sends ${f.label} only the steps it takes there and the commands it runs. What it reads there goes to ${serviceName(f.byok)} from this computer when you ask something.`,
     `It copies a helper there: about 33 MB (up to about 60 MB where that computer can't unpack the smaller download, as is usual on a Mac), unpacked to about 130 MB in its own folder (~/.local/share/ember-remote, or ~/Library/Application Support/Ember Remote on a Mac). It runs only while Ember is connected and stops when you disconnect, quit Ember or ${stop ? `press ${stop}` : "use Stop everything"}. If the connection drops, a command running there stops within ${f.graceSeconds} seconds.`,
     `${f.label} keeps its own record of what Ember does there.`,
   );

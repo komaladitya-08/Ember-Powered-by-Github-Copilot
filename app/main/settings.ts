@@ -16,6 +16,7 @@ import { NEVER_LOOK_DEFAULTS } from "../shared/never-look";
 import { DISTRO_NAME, HOST_ID, parseTargetId, type TargetId } from "../shared/targets";
 import { HANDLE_POSITIONS } from "../shared/handle-place";
 import { HOST_OS } from "./platform/os";
+import { AZURE_API_VERSION, endpointProblem, MAX_ENDPOINT, MODEL_ID, PROVIDER_TYPES, WIRE_APIS } from "../shared/provider";
 import { readTextFile } from "./text-file";
 
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
@@ -25,6 +26,17 @@ export const CHARACTERS = ["cinder", "wisp", "glassling", "glint"] as const;
 
 /** A first-use consent card's record (§7.4): the card's version the user said yes to (0: not yet) and when. */
 const ConsentRecord = z.object({ version: z.number().int().min(0).default(0), at: z.string().nullable().default(null) }).default({ version: 0, at: null });
+
+/**
+ * The user's own model provider's card record: as ConsentRecord, plus the endpoint host the card named. A yes holds only
+ * for that host: another address asks again (app/main/provider.ts userProviderInForce).
+ */
+const ProviderConsent = z.object({
+  version: z.number().int().min(0).default(0),
+  at: z.string().nullable().default(null),
+  host: z.string().max(MAX_ENDPOINT).default(""),
+}).default({ version: 0, at: null, host: "" });
+const providerModel = z.string().regex(MODEL_ID).nullable().default(null);
 
 /** No control characters (they could hide what a value says, or end a line in ssh's config). */
 const NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/; // eslint-disable-line no-control-regex -- control characters are exactly what's refused here
@@ -126,6 +138,26 @@ export const SettingsSchema = z.object({
     conductor: z.string().nullable().default(null),
     worker: z.string().nullable().default(null),
   }).default({ conductor: null, worker: null }),
+  /**
+   * The user's own model provider ("bring your own key", Home › Copilot): off by default. While on, agreed to for its
+   * endpoint's host (`consent`, FEATURE_CONSENT_VERSION.provider) and allowed by the administrator
+   * (`features.userProvider`; their own `provider` always wins), Ember uses this endpoint instead of GitHub Copilot.
+   * The API key is never here: it is kept apart, encrypted with the OS keyring (provider-key.bin, app/main/provider.ts).
+   */
+  provider: z.object({
+    on: z.boolean().default(false),
+    type: z.enum(PROVIDER_TYPES).default("openai"),
+    /** "" until the user enters one; otherwise https, or http only on this computer (endpointProblem). */
+    baseUrl: z.string().max(MAX_ENDPOINT).refine(v => v === "" || endpointProblem(v) === null, "not a usable endpoint").default(""),
+    /** null: the service's default ("completions"). */
+    wireApi: z.enum(WIRE_APIS).nullable().default(null),
+    /** Azure only; null: the runtime's default. */
+    azureApiVersion: z.string().regex(AZURE_API_VERSION).nullable().default(null),
+    /** The model (or Azure deployment) for the conversation, and for tasks (null: the conversation's). */
+    conductor: providerModel,
+    worker: providerModel,
+    consent: ProviderConsent,
+  }).default({ on: false, type: "openai", baseUrl: "", wireApi: null, azureApiVersion: null, conductor: null, worker: null, consent: { version: 0, at: null, host: "" } }),
   /** Calm mode: no hops, bounces or idle fidgets (also on when the desktop asks for reduced motion). */
   reduceMotion: z.boolean().default(false),
   /** More time to read and answer: bubbles stay ten times as long, and a question waits 20 minutes (WCAG 2.2.1: readTimeOf). */

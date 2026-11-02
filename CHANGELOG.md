@@ -309,6 +309,22 @@ allows them.
   `confirmEveryAction` and a lockdown. An older Ember reads a policy with this key as broken and locks down, so update
   Ember before adding it.
 
+### Your own model provider
+
+- **Use my own model provider** (Settings › **Copilot**, off by default): Ember can use a model service of yours
+  instead of GitHub Copilot: OpenAI-compatible, Azure OpenAI or Anthropic, at an `https://` address, or a model server
+  on this computer (Ollama, LM Studio) at `http://localhost`. It first shows a card naming the service's address and
+  what goes there, screenshots for tasks included, and uses it only once you agree (and again for another address).
+  **Test connection** checks the address and the key in one request. Turning it on or off, or changing it, applies from
+  your next message without a restart; tasks already running finish where they started, and a new conversation starts
+  on the other service (what Ember remembers stays).
+- **The API key** is kept encrypted by the system's keyring, apart from the settings, never shown again, logged or
+  recorded, and goes only to that service. Where the keyring would keep it as plain text, Ember refuses and says why.
+  **Remove** and **Sign out** delete it. `ember doctor` names the service by its address only.
+- For administrators: the organisation's own `provider` always wins, and `features.userProvider: false` (or a lockdown)
+  turns the user's off (managed); `models.allowed` still holds. An older Ember reads a policy with this key as broken
+  and locks down, so update Ember before adding it.
+
 ### In detail
 
 #### Signing in and Copilot

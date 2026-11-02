@@ -256,15 +256,33 @@ progress[hidden] { display: none; }
 .managed-tag { color: var(--muted); font: var(--type-footnote); }
 .add-row { display: flex; gap: 8px; margin-top: 4px; }
 /* A text field: filled, rounded, Apple's focus ring; as tall as the button beside it at every text size. */
-.add-row input {
+.add-row input, .field-row > input {
   flex: 1; min-width: 0; height: calc(28px * var(--text-scale)); padding: 0 11px; border-radius: var(--r-sm); border: 0;
   background: rgba(255, 255, 255, 0.06); color: var(--fg); font: var(--type-body); letter-spacing: -0.006em;
   box-shadow: inset 0 0 0 1px var(--control-edge);
 }
-.add-row input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.add-row input:focus-visible, .field-row > input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 /* 6.1:1 on the window and 4.8:1 on the field (the default grey is about 4:1). */
 .add-row input::placeholder { color: #9a9592; opacity: 1; }
+.field-row > input::placeholder { color: #9a9592; opacity: 1; }
 .never-look-msg { margin: 0; }
+/* ── Your own model provider (Copilot): a label, then its field; the field goes under the label when narrow ── */
+.field-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px 14px; align-items: center; }
+.field-row > label { min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
+.field-row > .add-row { margin-top: 0; }
+.field-row > .row-note { padding-right: 0; }
+.field-row[hidden], .key-saved[hidden], .byok-field[hidden] { display: none; }
+@media (max-width: 480px) { .field-row { grid-template-columns: minmax(0, 1fr); } }
+.key-saved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.key-saved .key-state { margin-right: auto; color: var(--fg); }
+.key-saved .btn.remove { background: transparent; box-shadow: none; color: var(--red-text); font-weight: 500; padding: 3px 8px; margin-right: -8px; }
+.key-saved .btn.remove:focus-visible { box-shadow: var(--focus-ring); }
+.byok-advanced { gap: 12px; }
+.fold.byok-advanced > summary { margin-left: 0; color: var(--fg); }
+.fold.byok-advanced[open] > summary { margin-bottom: 0; }
+.byok-msg { margin: 6px 0 0; }
+.byok-msg:empty { display: none; }
+.byok-msg.error { color: var(--red-text); }
 .never-look-msg:empty { display: none; }
 .presence-line { margin: 0; color: var(--fg); }
 #presence-text:empty { display: none; }
@@ -486,7 +504,7 @@ html { scroll-padding-top: 16px; }
    an outline; the slider, the chevrons and the sidebar's symbols are drawn in system colours. */
 @media (forced-colors: active) {
   body:not(.first-run) .status-panel, .task-group, .task-groups > .empty, .copilot, .group, .checks, .activity, .conversation, .plain-list, .facts, .consent, .managed, progress { outline: 1px solid CanvasText; outline-offset: -1px; }
-  .card, .start, .models select, .choice select, #text-size, #handle-position, #glass, .add-row input { border: 1px solid ButtonText; }
+  .card, .start, .models select, .choice select, #text-size, #handle-position, #glass, .add-row input, .field-row > input { border: 1px solid ButtonText; }
   .card[aria-checked="true"] { border: 3px solid Highlight; padding: 8px 8px 12px; }
   /* Start is filled with the highlight: drawn as it is, so its words get no backplate (as .btn in ember.css). */
   .start { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }

@@ -123,10 +123,10 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
   - Audio stays on the machine and is never written to disk.
 - **Privacy.**
   - There is no telemetry.
-  - Network calls go only to Copilot (or the admin's BYOK provider), GitHub sign-in, the user-approved, SHA-256-pinned model download, once the user turns SSH on, the computers they name and the pinned Node.js download for them, and, once the user turns extensions on, the marketplaces they add and the servers of the extensions they install (each named on its consent card). Ember listens on no network port.
+  - Network calls go only to Copilot (or the admin's BYOK provider, or the user's own model provider once they turn it on and agree to its card for that host, with its "Test connection"), GitHub sign-in, the user-approved, SHA-256-pinned model download, once the user turns SSH on, the computers they name and the pinned Node.js download for them, and, once the user turns extensions on, the marketplaces they add and the servers of the extensions they install (each named on its consent card). Ember listens on no network port.
   - Ember's data folder is created mode 0700 and the audit files are 0600. Typed text appears in the audit log only as a character count.
   - Never log window titles, typed text or the user's words anywhere more widely readable.
-  - The GitHub token is stored only with `safeStorage`, and never when its backend is `basic_text`.
+  - The GitHub token and the user's own provider's API key are stored only with `safeStorage`, never when its backend is `basic_text`, and never in settings.json. The key is never logged, audited, shown again or passed to any environment: only to the runtime's provider config.
 - **Admin policy.** The organisation's policy (`/etc/ember/policy.json` on Linux, `/Library/Application Support/Ember/policy.json` on macOS, `HKLM\SOFTWARE\Policies\Ember` on Windows) can only tighten Ember. If it is unreadable, invalid, or (as a file) not owned by root or writable by group or others, Ember applies `LOCKDOWN`.
 
 ## Writing UI copy

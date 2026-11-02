@@ -17,7 +17,7 @@ import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfi
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
-import { friendlyError, type Presenter } from "./presenter";
+import { friendlyError, type Presenter, type ServiceKind } from "./presenter";
 import type { Logger } from "../logger";
 import { CHARACTERS, type SettingsStore } from "../settings";
 import { SHORTCUTS, type ShortcutTable } from "../../shared/shortcuts";
@@ -37,6 +37,8 @@ export interface ConductorDeps {
   workDir: string;
   model: string | null;
   provider?: ProviderConfig;
+  /** Whose endpoint `provider` is, for the words of an error (ServiceKind; default: the organisation's when one is given). */
+  service?: ServiceKind;
   /**
    * Text description of the user's screen (M3 perception); `target`: the computer the model named (only offered with
    * caps.targets), whose screen is read instead.
@@ -865,7 +867,7 @@ export class Conductor {
       // connection was already let go (a hung runtime replaced): Ember said so then, and is reconnecting.
       const msg = err instanceof Error ? err.message : String(err);
       this.deps.log.warn("conductor.send_failed", { err, replaced: this.session !== session });
-      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider, settingsKey: this.settingsKey() }));
+      if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: this.deps.service ?? !!this.deps.provider, settingsKey: this.settingsKey() }));
       throw new ConnectionLost(msg);
     }
   }

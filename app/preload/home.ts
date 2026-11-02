@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { EXTENSIONS_IPC, IPC, type EmberExtensionsApi, type EmberHomeApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus } from "../shared/ipc";
+import { EXTENSIONS_IPC, IPC, PROVIDER_IPC, type EmberExtensionsApi, type EmberHomeApi, type EmberProviderApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
@@ -89,3 +89,14 @@ const extensions: EmberExtensionsApi = {
   agree: () => ipcRenderer.invoke(EXTENSIONS_IPC.agree),
 };
 contextBridge.exposeInMainWorld("emberExtensions", extensions);
+
+// The user's own model provider (Home › Copilot): PROVIDER_IPC's channels only; main takes them only from this window and
+// checks every argument (app/main/provider-ipc.ts). The key goes to main once and never comes back.
+const provider: EmberProviderApi = {
+  state: () => ipcRenderer.invoke(PROVIDER_IPC.state),
+  onChanged: fn => listen<null>(PROVIDER_IPC.changed, () => fn()),
+  saveKey: key => ipcRenderer.invoke(PROVIDER_IPC.saveKey, key),
+  removeKey: () => ipcRenderer.invoke(PROVIDER_IPC.removeKey),
+  test: () => ipcRenderer.invoke(PROVIDER_IPC.test),
+};
+contextBridge.exposeInMainWorld("emberProvider", provider);

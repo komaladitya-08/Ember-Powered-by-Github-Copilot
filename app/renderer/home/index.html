@@ -205,6 +205,32 @@
         </div>
         <p class="usage" id="usage"></p>
       </div>
+      <h3 class="sub" id="byok-h">Model provider</h3>
+      <div class="group byok" id="byok" role="group" aria-labelledby="byok-h">
+        <label class="switch-row"><input type="checkbox" id="byok-on" role="switch" aria-describedby="byok-hint"><span>Use my own model provider</span></label>
+        <div id="byok-consent" class="consent" role="group" aria-label="Before Ember uses your model provider" hidden>
+          <p id="byok-consent-text"></p>
+          <div class="agent-actions"><button type="button" id="byok-yes" class="btn" aria-describedby="byok-consent-text">I agree, use this provider</button><button type="button" id="byok-no" class="btn quiet">Not now</button></div>
+        </div>
+        <label class="choice byok-field"><span>Provider</span><select id="byok-type"><option value="openai">OpenAI-compatible</option><option value="azure">Azure OpenAI</option><option value="anthropic">Anthropic</option></select></label>
+        <div class="field-row byok-field"><label for="byok-url">Endpoint</label><input id="byok-url" type="url" maxlength="2048" spellcheck="false" autocomplete="off" placeholder="https://api.openai.com/v1" aria-describedby="byok-msg"></div>
+        <div class="field-row byok-field" id="byok-key-row">
+          <label for="byok-key" id="byok-key-label">API key</label>
+          <form class="add-row" id="byok-key-form" autocomplete="off"><input id="byok-key" type="password" maxlength="8192" spellcheck="false" autocomplete="off" placeholder="Paste your key" aria-describedby="byok-msg"><button type="submit" class="btn quiet">Save</button></form>
+          <p class="row-note" id="byok-no-keyring" hidden></p>
+          <div class="key-saved" id="byok-key-saved" hidden><span class="key-state">Key saved</span><button type="button" id="byok-key-replace" class="btn quiet small">Replace</button><button type="button" id="byok-key-remove" class="btn quiet small remove">Remove</button></div>
+        </div>
+        <div class="field-row byok-field"><label for="byok-conductor">Conversation model</label><input id="byok-conductor" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="e.g. gpt-4.1"></div>
+        <div class="field-row byok-field"><label for="byok-worker">Model for tasks (must understand images)</label><input id="byok-worker" type="text" maxlength="200" spellcheck="false" autocomplete="off" placeholder="Same as the conversation"></div>
+        <details class="fold byok-advanced byok-field" id="byok-fold">
+          <summary>Advanced</summary>
+          <label class="choice"><span>Wire API</span><select id="byok-wire"><option value="">Chat completions</option><option value="responses">Responses</option></select></label>
+          <div class="field-row" id="byok-azure-row"><label for="byok-azure">Azure API version</label><input id="byok-azure" type="text" maxlength="40" spellcheck="false" autocomplete="off" placeholder="2024-10-21"></div>
+        </details>
+        <div class="agent-actions byok-field"><button type="button" id="byok-test" class="btn quiet">Test connection</button></div>
+      </div>
+      <p class="hint byok-msg" id="byok-msg" role="status" aria-live="polite"></p>
+      <p class="hint" id="byok-hint"></p>
       <p class="hint" data-key-held="ask">Ask Ember anything with <span class="chord" data-shortcut="ask"><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Space</kbd></span>.</p>
       <p class="hint" data-key-taken="ask" hidden>Another app has Ember's ask shortcut: ask with Ask Ember… on Home, or from Ember's handle.</p>
     </section>

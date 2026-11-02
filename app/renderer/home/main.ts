@@ -24,6 +24,7 @@ import {
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
+import { providerSettings, startProvider } from "./provider";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 import { startWelcome } from "./welcome";
@@ -148,6 +149,7 @@ function applySettings(s: Settings): void {
   applyMemorySettings(s);
   applyRoutineSettings(s);
   applyAutonomySettings(s);
+  providerSettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -636,7 +638,8 @@ function renderAgent(a: AgentStatus | null): void {
   $("retry").textContent = waiting ? "Reconnect now (stops the tasks that are running)" : "Check again";
   $("cancel-sign-in").hidden = !signingIn;
   $("sign-out").hidden = a.phase !== "ready" || !a.login;
-  $("models").hidden = a.phase !== "ready" || a.models.length === 0;
+  // With the user's own provider, its models are chosen in its own rows (Model provider), not from Copilot's list.
+  $("models").hidden = a.phase !== "ready" || a.models.length === 0 || a.service?.kind === "user";
   // The lists are rebuilt only when they change (an open drop-down isn't pulled from under the pointer).
   const key = JSON.stringify([a.models, a.conductorModel, a.workerModel]);
   if (key !== modelsKey) {
@@ -761,6 +764,8 @@ window.ember.onSettingsChanged(targetsSettings);
 startTargets();
 // Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
 startExtensions();
+// The user's own model provider (Copilot › Model provider): its key goes to main once and never comes back.
+startProvider(save);
 // Task activity (in memory only): each task this session, and the status panel's count of those at work.
 startTasks(t => { tasksNow = t; renderStatus(); });
 

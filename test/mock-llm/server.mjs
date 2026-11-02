@@ -41,7 +41,7 @@ export async function startMockLlm(opts = {}) {
     try { json = JSON.parse(body); } catch { /* not JSON */ }
     const messages = json.messages ?? [];
     const tools = (json.tools ?? []).map(t => t.function?.name).filter(Boolean);
-    requests.push({ messages, tools, model: json.model });
+    requests.push({ messages, tools, model: json.model, authorization: req.headers.authorization ?? null });
     const reply = (opts.respond ?? defaultRespond)(messages, tools);
     const id = `cmpl-${requests.length}`;
     const created = Math.floor(Date.now() / 1000);

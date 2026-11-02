@@ -188,6 +188,46 @@ export function emptyConversationText(askLabel = SHORTCUTS.linux.ask.label): str
 }
 
 /**
+ * The own model provider's card (Copilot › Model provider, FEATURE_CONSENT_VERSION.provider), shown when the user turns
+ * it on, and again for another host: where everything Copilot would get goes instead, screenshots included, and where
+ * the key goes. Change its words only with a bump of that version.
+ */
+export function providerConsentText(host: string): string {
+  return `Ember will send what it would send to GitHub Copilot to ${host} instead: your requests, what it reads from your screen and apps, what it remembers that bears on them, what commands print, and for tasks, screenshots of the windows it works in, with password fields and never-look windows blacked out. That service's own terms and privacy rules apply, and it may keep what it gets. Your API key is kept encrypted on this computer and goes only to ${host}. Turn this off to go back to Copilot.`;
+}
+
+/** Under the Model provider group: what the switch does now, or why the organisation decides it. */
+export function providerHint(o: { managed: "organisation" | "off" | null; inForce: boolean; on: boolean; host: string | null }): string {
+  if (o.managed === "organisation") return "Managed by your organisation: Ember uses its model service.";
+  if (o.managed === "off") return "Managed by your organisation: Ember uses GitHub Copilot.";
+  if (o.inForce && o.host) return `Ember sends your requests to ${o.host} instead of Copilot. A change applies from your next message; tasks already running finish where they started.`;
+  if (o.on && !o.host) return "Enter the service's address to use it.";
+  if (o.on && o.host && !o.inForce) return `Ember uses GitHub Copilot until you agree to use ${o.host}.`;
+  return "Use a model service of your own instead of GitHub Copilot: OpenAI, Azure OpenAI, Anthropic, or a model server on this computer such as Ollama or LM Studio.";
+}
+
+/** Shown in place of the key field when the computer can't keep a key safely (no keyring, or basic_text). */
+export const PROVIDER_NO_KEYRING = "This computer has no keyring for passwords, so Ember can't keep a key safely here. A model server on this computer that needs no key still works.";
+
+/** The Model provider group's short messages (under the group, in its status line). */
+export const PROVIDER_WORDS = {
+  keySaved: "Key saved.",
+  keyRemoved: "Key removed.",
+  pasteKey: "Paste the API key first.",
+  testing: "Testing…",
+  testFailed: "Ember couldn't test the connection. Try again.",
+  badModel: "A model name has no spaces in it, such as gpt-4.1 or llama3.2:3b.",
+  badAzure: "Enter the API version as Azure writes it, such as 2024-10-21.",
+} as const;
+
+/** What "Test connection" found, in one sentence: connected (with how many models it lists), or main's reason why not. */
+export function providerTestText(r: { ok: true; host: string; models: number | null } | { ok: false; why: string }): string {
+  if (!r.ok) return r.why;
+  if (r.models === null) return `Connected to ${r.host}.`;
+  return `Connected to ${r.host}. It lists ${r.models} ${r.models === 1 ? "model" : "models"}.`;
+}
+
+/**
  * Memory's note, shown before it is first turned on (Settings › Conversation, docs/MEMORY.md §3): what Ember keeps,
  * where, what goes to Copilot, and how to forget it. Changing it means bumping FEATURE_CONSENT_VERSION.memory.
  */

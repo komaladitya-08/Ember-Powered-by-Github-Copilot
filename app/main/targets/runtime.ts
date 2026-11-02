@@ -401,6 +401,11 @@ export interface TargetsDepsExtra {
    * announcement names it only then, as the bubble and the spoken words (cross-review X0). Absent: the OS's own.
    */
   stopKey?(): string | null;
+  /**
+   * The host of the user's own model provider while it is in force (app/main/provider.ts), else null: the consent cards
+   * name it as where what Ember reads goes. The organisation's own provider is named from the policy instead.
+   */
+  ownService?(): string | null;
 }
 
 /** What the runtime offers main beyond TargetsRuntime (an extension of the contract). */
@@ -505,6 +510,8 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
   const log = deps.log;
   const settings = deps.settings;
   const admin = () => deps.admin();
+  /** The model service the cards name (CardService): the organisation's, else the user's own by its host, else Copilot. */
+  const cardService = () => admin().policy.provider !== undefined || (deps.ownService?.() ?? false);
   const system: WorkerSystem = wslAwareSystem(deps.sys);
   let disposed = false;
 
@@ -804,7 +811,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     ...(host.via && host.via !== "local" ? { viaLabel: distroLabel(host.via.slice(4)) } : {}),
     desktopOff: admin().policy.ssh?.desktop === false, graceSeconds: admin().policy.ssh?.commandGraceSeconds ?? 20,
     // The organisation's own model service: the card says what is read goes there, not to GitHub Copilot.
-    byok: admin().policy.provider !== undefined,
+    byok: cardService(),
     // Asked again because the SSH settings now send the name elsewhere: the card says from where to where.
     changedFrom: sshChangedFrom(host, resolved),
   });
@@ -1119,7 +1126,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     if (!consentCurrent("wsl", own.wsl.consent)) {
       await refreshWsl();
       const d = defaultDistro(wslFacts);
-      const card = wslConsent({ ...(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" }), byok: admin().policy.provider !== undefined });
+      const card = wslConsent({ ...(d ? { target: targetIdOf("wsl", d.name), targetLabel: distroLabel(d.name) } : { target: LOCAL_TARGET, targetLabel: "WSL" }), byok: cardService() });
       const said = await askCard(card);
       if (said !== "yes") return { ok: false, message: cardNo(said) };
       settings.update({ targets: { ...settings.own().targets, wsl: { on: true, consent: consentGiven("wsl", parts.now()) } } });
@@ -1159,7 +1166,7 @@ export function buildTargets(deps: TargetsDeps & TargetsDepsExtra, parts: Target
     const privileged = e.kind === "local" ? elevated()
       : e.kind === "wsl" ? e.distro?.defaultUid === 0 || (wslServices.get(e.distro?.name ?? "")?.facts()?.privileged ?? false)
         : safeCap(commandsOf(e.id))?.askEvery === "root";
-    return { kind: e.kind, privileged, windows: e.kind === "local" && deps.os === "win32", podman: e.kind === "wsl" && !!e.distro && isToolDistro(e.distro), byok: admin().policy.provider !== undefined };
+    return { kind: e.kind, privileged, windows: e.kind === "local" && deps.os === "win32", podman: e.kind === "wsl" && !!e.distro && isToolDistro(e.distro), byok: cardService() };
   };
 
   // ── Panel answers (the command card's and a consent card's own buttons) ──

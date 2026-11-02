@@ -1,0 +1,94 @@
+// The user's own model provider on the real Copilot runtime, against the offline mock model: the settings and the key
+// store main uses (app/main/provider.ts activeProvider, ProviderKeyStore), not EMBER_TEST_PROVIDER_URL. With it on and
+// agreed to, Ember answers through it with the saved key and no GitHub sign-in; turned off, it goes back to Copilot
+// (signed out here) without a restart. "Test connection" reaches the same server.
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+// @ts-expect-error -- plain JS test helper
+import { startMockLlm } from "../mock-llm/server.mjs";
+import { AgentHost } from "../../app/main/agent/host";
+import { locateRuntime } from "../../app/main/agent/runtime";
+import { SettingsStore } from "../../app/main/settings";
+import { AdminPolicySchema, type LoadedAdminPolicy } from "../../app/main/admin";
+import { ProviderKeyStore, activeProvider, testConnection, type FetchLike } from "../../app/main/provider";
+import { FEATURE_CONSENT_VERSION } from "../../app/shared/consent";
+import { endpointHost } from "../../app/shared/provider";
+import { createLogger } from "../../app/main/logger";
+import type { SecretBox } from "../../app/main/agent/auth";
+import type { EmberState } from "../../app/shared/overlay";
+
+const KEY = "sk-" + "m".repeat(40); // not a real key
+const NONE: LoadedAdminPolicy = { policy: AdminPolicySchema.parse({}), source: null };
+/** A keyring that seals by reversing (the test runs where no real one may exist). */
+const box: SecretBox = {
+  isEncryptionAvailable: () => true,
+  encryptString: s => Buffer.from([...s].reverse().join("")),
+  decryptString: b => [...b.toString()].reverse().join(""),
+  getSelectedStorageBackend: () => "gnome_libsecret",
+};
+
+let mock: { baseUrl: string; requests: { model: string; authorization: string | null; messages: unknown[] }[]; close(): Promise<void> };
+let dir: string;
+
+beforeAll(async () => {
+  mock = await startMockLlm({ delayMs: 5 });
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-own-provider-"));
+}, 60000);
+
+afterAll(async () => {
+  await mock?.close();
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const until = async (cond: () => boolean, ms = 30000) => { for (const t0 = Date.now(); !cond() && Date.now() - t0 < ms;) await new Promise(r => setTimeout(r, 50)); return cond(); };
+
+describe("the user's own model provider on the real Copilot runtime", () => {
+  it("answers through it with the saved key, and goes back to Copilot when it is turned off", async () => {
+    const userData = fs.mkdtempSync(path.join(dir, "host-"));
+    const settings = new SettingsStore(path.join(userData, "settings.json"));
+    settings.load();
+    settings.update({
+      provider: {
+        ...settings.get().provider, on: true, type: "openai", baseUrl: mock.baseUrl, conductor: "mock-model",
+        consent: { version: FEATURE_CONSENT_VERSION.provider, at: new Date().toISOString(), host: endpointHost(mock.baseUrl)! },
+      },
+    });
+    const keys = new ProviderKeyStore(path.join(userData, "provider-key.bin"), box);
+    expect(await keys.save(KEY)).toEqual({ ok: true });
+    const key = await keys.load();
+    const states: Partial<EmberState>[] = [];
+    const host = new AgentHost({
+      userData, runtimePath: locateRuntime({ appPath: process.cwd() }).path, settings,
+      log: createLogger({ dir: path.join(userData, "logs") }),
+      setState: p => states.push(p), onStatus: () => undefined,
+      provider: () => activeProvider({ fixed: null, settings: settings.get(), admin: NONE, key }),
+    });
+    try {
+      expect(await host.start(null)).toBe("ready");
+      expect(host.getStatus()).toMatchObject({ service: { kind: "user", host: endpointHost(mock.baseUrl) }, conductorModel: "mock-model" });
+      const before = mock.requests.length;
+      await host.ask("hello from my own provider");
+      expect(await until(() => states.some(s => s.bubble?.thought?.includes("You said:") === true && s.bubble.streaming === false))).toBe(true);
+      const sent = mock.requests.slice(before);
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent.every(r => r.authorization === `Bearer ${KEY}` && r.model === "mock-model")).toBe(true);
+      // Nothing in the settings file or the log holds the key.
+      expect(fs.readFileSync(path.join(userData, "settings.json"), "utf8")).not.toContain(KEY);
+      const logs = fs.readdirSync(path.join(userData, "logs")).map(f => fs.readFileSync(path.join(userData, "logs", f), "utf8")).join("\n");
+      expect(logs).not.toContain(KEY);
+      // Turned off: back to Copilot at once, which has no sign-in here.
+      settings.update({ provider: { ...settings.get().provider, on: false } });
+      expect(await host.providerChanged()).toBe("signed-out");
+    } finally {
+      await host.stop();
+    }
+  }, 120000);
+
+  it("tests the connection with one request to the model list", async () => {
+    const p = { ...new SettingsStore(path.join(dir, "none.json")).get().provider, on: true, baseUrl: mock.baseUrl };
+    const r = await testConnection(p, KEY, globalThis.fetch as unknown as FetchLike);
+    expect(r).toEqual({ ok: true, host: endpointHost(mock.baseUrl), models: 1 });
+  });
+});

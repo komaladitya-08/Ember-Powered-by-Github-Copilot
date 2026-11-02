@@ -175,7 +175,8 @@ Everything Ember hears and says is worked out on the computer itself: the wake w
 voice and Voice Match need no network. Ember's packages carry everything it runs: its speech models, and the Node.js
 runtime it installs on computers you bring it to over SSH (each checked against its pinned SHA-256), so Ember downloads
 nothing from third parties. Only Copilot itself, and the review of commands, need the network: your organisation's
-model service, or GitHub Copilot's.
+model service, your own model provider, or GitHub Copilot's. With your own provider on a model server on this
+computer (below), nothing needs the network at all.
 
 What to install so nothing is downloaded:
 
@@ -215,6 +216,21 @@ GitHub CLI. Install it, run `gh auth login` in a terminal, and press **Connect w
   `sudo dnf install gh`
 - Windows: `winget install --id GitHub.cli` in PowerShell, or the installer from [cli.github.com](https://cli.github.com)
 - macOS: `brew install gh`, or the installer from [cli.github.com](https://cli.github.com)
+
+## Use your own model provider
+
+Instead of GitHub Copilot, Ember can use a model service of your own: in its settings, open **Copilot** and turn on
+**Use my own model provider**. Choose the **Provider** (OpenAI-compatible, Azure OpenAI or Anthropic), enter its
+**Endpoint** (an `https://` address, or `http://localhost:…` for a model server on this computer such as Ollama or LM
+Studio), paste the **API key** and press **Save**, and enter the **Conversation model** (and, if it differs, a **Model
+for tasks** that understands images). Ember first shows what it will send to that service, screenshots of the windows
+it works in included, and uses it only once you agree. **Test connection** checks the address and the key. A change
+applies from your next message, without a restart.
+
+The key is kept encrypted by your system's keyring, apart from Ember's settings, and goes only to that service; Ember
+never shows it again (**Replace** and **Remove** are there), and signing out deletes it. Where there is no keyring
+(Linux without GNOME Keyring or KWallet), Ember won't keep a key, but a local server that needs none still works. If
+your organisation set its own model service, or turned this off, the switch shows as managed.
 
 ## Shortcuts
 

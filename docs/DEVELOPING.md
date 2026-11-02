@@ -601,6 +601,30 @@ Apps Ember must never read or capture are listed under `privacy.neverLook` in `s
 and window title, ignoring characters that show nothing, such as a soft hyphen, and accents written apart; password
 managers and polkit are listed by default).
 
+### Your own model provider ("bring your own key")
+
+Home › Copilot › **Model provider** lets a user point Ember at a model service of their own instead of GitHub Copilot
+(`settings.provider`, off by default; app/main/provider.ts): **Provider** (OpenAI-compatible, Azure OpenAI or
+Anthropic), **Endpoint** (https, or plain http only for a server on this computer: `localhost`, `127.0.0.1`, `::1`,
+such as Ollama at `http://localhost:11434/v1` or LM Studio at `http://localhost:1234/v1`), **API key**, the
+**Conversation model** and **Model for tasks** (the conversation's when empty; it must take images), and under
+**Advanced** the wire API (`completions` or `responses`) and Azure's API version. **Test connection** makes one GET of the
+service's model list with the saved key, refusing redirects, and says in one sentence what came of it.
+
+- **Consent.** Turning it on with an address shows a card naming the endpoint's host and everything that goes there
+  instead of to Copilot, screenshots for tasks included. Nothing goes there until the user agrees, and the yes holds
+  only for that host (`provider.consent.host`, `FEATURE_CONSENT_VERSION.provider`): another address asks again.
+- **The key** is sealed with the OS keyring (`safeStorage`) in `provider-key.bin` in Ember's data folder (0600), apart
+  from `settings.json`. Where the keyring is `basic_text` (no GNOME Keyring or KWallet), Ember refuses to keep a key and
+  says why; a local server that needs no key still works. The key is never logged, audited, shown again (Home says
+  "Key saved", with **Replace** and **Remove**) or put in any process's environment: it reaches only the Copilot
+  runtime's provider config. **Remove** and **Sign out** delete it.
+- **Switching** applies from the next message, without a restart; tasks already running finish on the service they
+  started with. A conversation isn't carried to another service: a new one starts (memory stays). While the user's
+  provider is in force, no GitHub sign-in is passed to the runtime, and the setup check's model row says
+  "Your own model provider (host)".
+- **The administrator's** `provider` always wins, and `features.userProvider: false` or a lockdown turns the user's off.
+
 ### For administrators: `/etc/ember/policy.json`
 
 On Windows the same JSON goes in the registry (§10.7), on a Mac in `/Library/Application Support/Ember/policy.json`
@@ -642,7 +666,8 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `features.autonomy` | `false`: "Work without asking" is off and managed; Ember asks before a first step in an app, a borrow and moving text between apps, as before. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN turn it off too. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `models` | Only these models; or pin the conversation and task models |
-| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
+| `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`). It always wins over a user's own provider, which Home then shows as managed |
+| `features.userProvider` | `false`: users can't point Ember at a model service of their own ("Use my own model provider" in Home › Copilot is off and managed; a key already saved stays unused until signing out or Remove deletes it). Allowed when absent; the organisation's own `provider` and LOCKDOWN turn it off too, and `models.allowed` and pinned models still hold for the user's model ids. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `auditRetentionDays` | How long the audit log is kept (default 30; nothing is deleted while Ember is locked down) |
 | `features.wsl` / `features.ssh` | No WSL / no connecting to other computers over SSH |
 | `commands` | Commands on this computer, in WSL and over SSH: `"on"`, `"ask"` (every command asks) or `"off"` |
@@ -1021,7 +1046,8 @@ is fixed: a value it can't read, of another type, over 256 KiB, not JSON, or not
 `provider.apiKeyFile` isn't supported on Windows and locks Ember down too: put the key in a `ProviderApiKey` string
 value beside `PolicyJson`, or in the `EMBER_PROVIDER_API_KEY` environment variable. Ember reads the value again every
 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5). Every key
-in §5's table works here too, `features.autonomy` ("Work without asking") among them.
+in §5's table works here too, `features.autonomy` ("Work without asking") and `features.userProvider` (a user's own
+model provider) among them.
 
 From an elevated Windows PowerShell:
 
@@ -1339,7 +1365,8 @@ The folder must be a real folder, not a link, that belongs to root and only root
 not a link, that belongs to root and that group and others can't write. No folder or no file means no policy; anything
 else Ember can't trust locks it down until it is fixed. `provider.apiKeyFile` works as on Linux. Ember reads the file
 again every 10 seconds: once it changes, a running Ember stops and stays locked down until the user restarts it (§5).
-Every key in §5's table works here too, `features.autonomy` ("Work without asking") among them. Ember reads this file
+Every key in §5's table works here too, `features.autonomy` ("Work without asking") and `features.userProvider` (a
+user's own model provider) among them. Ember reads this file
 only, not managed preferences, so deploy it as a file (a package or a script from your management tool):
 
 ```bash
