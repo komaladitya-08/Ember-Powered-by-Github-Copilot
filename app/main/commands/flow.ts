@@ -802,6 +802,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       title: "May I run a command?", context: ctx.task.title, prompt,
       options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }],
       task, ...(where ? { where } : {}), armMs: d.armMs, panel: { kind: "command", card: card("ask", [...says, why]) },
+      // A dangerous command (deleting, publishing, secrets, system changes…: the classifier's classes) looks risky.
+      ...(d.classes.length > 0 ? { risky: true } : {}),
     };
     const answer = await ctx.confirmer.ask(question, ctx.signal);
     audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q });

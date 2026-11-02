@@ -212,6 +212,8 @@ describe("CL's own judge (the default)", () => {
     const del = harness({ binding: LOCAL, answers: ["deny"] });
     expect((await call(del, { target: "this computer", command: "rm -r build" })).resultType).toBe("denied");
     expect((del.asked[0].panel as { card: CommandCard }).card.says).toContain("You didn't ask for this.");
+    // A dangerous command's question looks risky in the bubble and the corner card (UI audit 6).
+    expect((del.asked[0] as { risky?: boolean }).risky).toBe(true);
     expect(del.starts).toEqual([]);
     const own = harness({ binding: LOCAL });
     const r = await call(own, { target: "this computer", command: "rm -rf /home/ana/.config/ember" });

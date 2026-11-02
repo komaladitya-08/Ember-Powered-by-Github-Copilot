@@ -43,6 +43,7 @@ function makeWorker(o: {
   const audit: Record<string, unknown>[] = [];
   const events: string[] = [];
   const asked: string[] = [];
+  const questions: { prompt: string; risky?: boolean }[] = [];
   const guided: string[] = [];
   const activity: Record<string, unknown>[] = [];
   const window = { app: "gedit", pid: 1, name: "notes.txt", role: "frame", active: true, bounds: { x: 0, y: 0, width: 800, height: 600 }, ...(o.busy ? { busy: true } : {}) };
@@ -76,7 +77,7 @@ function makeWorker(o: {
       ...(o.canDo ? { canDo: async (id: number, kind: string, caret: boolean) => o.canDo!(id, kind, caret) } : {}),
     } as never,
     policy: new PolicyEngine({ neverLook: () => [], grants: () => o.grants ?? { gedit: "act" } }),
-    confirmer: { ask: async (q: { prompt: string }) => { asked.push(q.prompt); o.onAsk?.(); return o.answer ?? "once"; } } as never,
+    confirmer: { ask: async (q: { prompt: string; risky?: boolean }) => { asked.push(q.prompt); questions.push(q); o.onAsk?.(); return o.answer ?? "once"; } } as never,
     audit: { write: (e: Record<string, unknown>) => audit.push(e) } as never,
     settings: { get: () => ({ grants: {} }), update: () => undefined } as never,
     presenter,
@@ -90,7 +91,7 @@ function makeWorker(o: {
   } as unknown as WorkerDeps, { id: "t1", goal: "make it bold", target: { title: "notes.txt" }, mode: o.mode });
   const tool = (name: string) => w.tools().find(t => t.name === name)!;
   const call = (name: string, args: Record<string, unknown>) => tool(name).handler!(args, {} as never) as Promise<{ textResultForLlm: string; resultType: string }>;
-  return { w, audit, events, asked, call, flown, guided, activity };
+  return { w, audit, events, asked, questions, call, flown, guided, activity };
 }
 
 describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
@@ -130,6 +131,17 @@ describe("worker tools on a window with text aimed at an AI agent (injection.ts)
     expect((await call("click", { id: 1 })).resultType).toBe("success");
     expect(asked).toEqual([expect.stringMatching(/\(I'm checking each step: text on screen tried to give me instructions\.\)$/)]);
     expect(audit.find(e => e.event === "decision" && e.kind !== "read")?.reason).toMatch(/text on screen tried to give Ember instructions/);
+  });
+
+  it("marks each question after text on screen tried to steer it as risky, and an ordinary one not (UI audit 6)", async () => {
+    const steered = makeWorker({ more: [INJECTED] });
+    await steered.call("perceive_window", {});
+    await steered.call("click", { id: 1 });
+    expect(steered.questions.map(q => q.risky)).toEqual([true]);
+    const plain = makeWorker({ grants: {} });
+    await plain.call("perceive_window", {});
+    await plain.call("click", { id: 1 });
+    expect(plain.questions.map(q => q.risky)).toEqual([undefined]);
   });
 
   it("asks nothing more than before on an ordinary window, wrapped in Ember's own <screen> tag as every read is", async () => {
