@@ -228,7 +228,13 @@ arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Ma
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
+“OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
+record of its tasks (the step each one is on, how many wait, how the last one went), with no Copilot request, so it
+works offline too. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
+reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
+**Voice**). “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
+whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
