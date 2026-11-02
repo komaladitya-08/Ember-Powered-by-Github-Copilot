@@ -133,6 +133,11 @@ export function blinkAt(t: number, close = BLINK_CLOSE, open = BLINK_OPEN): numb
   if (t <= 0 || t >= close + open) return 1;
   return t < close ? 1 - t / close : (t - close) / open;
 }
+/**
+ * How long a voice level holds (s): Ember's voice sends one at least every half second while it plays
+ * (app/shared/level.ts VOICE_KEEP_ALIVE_MS), so one older than this means the voice stopped without saying so.
+ */
+export const VOICE_STALE_S = 1.5;
 /** Emotions entered without the anticipation pop: listening must start at once, and a pop reads as alarm on a question. */
 const NO_POP: ReadonlySet<Emotion> = new Set(["listening", "worried"]);
 
@@ -168,6 +173,8 @@ export class Rig {
   private saccade = 0;
   /** The level of Ember's own voice while it plays (0–1), or null: then the mouth keeps its synthetic flap. */
   private voiceLevel: number | null = null;
+  /** When the level last came (rig time, s). */
+  private voiceAt = -Infinity;
   private voice = 0;
   /** A question is up (setQuestion): nothing about Ember jumps, pops, hops or fidgets until it is answered. */
   private question = false;
@@ -236,6 +243,7 @@ export class Rig {
    */
   setTalkLevel(v: number | null): void {
     this.voiceLevel = v === null || !Number.isFinite(v) ? null : Math.max(0, Math.min(1, v));
+    this.voiceAt = this.t;
   }
 
   /** Something happened (the user moved, Ember was spoken to): restart the idle clock and wake from a doze. */
@@ -293,10 +301,12 @@ export class Rig {
     if (this.hopY > -1) this.hopV = -150 * strength;
   }
 
-  /** Talking or not. Stopping also drops the voice's level: a level left over would keep the mouth moving for good. */
+  /**
+   * Talking or not, as the words go (the syllable flap of the system's voice). Ember's own voice moves the mouth by its
+   * level (setTalkLevel) for as long as it plays, which outlasts the words: the last sentence is spoken after them.
+   */
   setTalking(on: boolean): void {
     this.talking = on;
-    if (!on) this.voiceLevel = null;
   }
 
   /**
@@ -344,7 +354,7 @@ export class Rig {
       t: this.t,
       dt: Math.min(dt, MAX_DRAW_DT),
       breath,
-      lift: this.hopY + (this.reducedMotion ? 0 : Math.sin(this.t * 2.1) * face.bounce * 3),
+      lift: this.hopY + (this.reducedMotion || this.question ? 0 : Math.sin(this.t * 2.1) * face.bounce * 3),
       lean: this.lean,
       accel: this.reducedMotion ? { x: 0, y: 0 } : { ...this.accel },
       talk: this.talk,
@@ -396,7 +406,8 @@ export class Rig {
     for (const k of KEYS) {
       const wobbly = k === "squash" || k === "tilt";
       const stiff = wobbly ? 160 : 110;
-      const damp = 2 * Math.sqrt(stiff) * (this.reducedMotion ? 1 : wobbly ? 0.32 : 0.8);
+      // (A question holds the body still too: its tilt and squash settle without wobbling.)
+      const damp = 2 * Math.sqrt(stiff) * (this.reducedMotion || (wobbly && this.question) ? 1 : wobbly ? 0.32 : 0.8);
       this.vel[k] += (stiff * (target[k] - this.face[k]) - damp * this.vel[k]) * dt;
       this.face[k] += this.vel[k] * dt;
     }
@@ -460,9 +471,11 @@ export class Rig {
     // Talking: with Ember's own voice the mouth follows its loudness (opening fast, closing a little slower, with a
     // touch of syllable rhythm between the level's ten updates a second); with the system's voice, a syllable flap.
     const syl = Math.max(0, Math.sin(this.t * 17) * 0.6 + Math.sin(this.t * 7.3) * 0.4);
+    // A level not refreshed for VOICE_STALE_S is dropped: the voice stopped without its null (its page closed).
+    if (this.voiceLevel !== null && this.t - this.voiceAt > VOICE_STALE_S) this.voiceLevel = null;
     const level = this.voiceLevel ?? 0;
     this.voice += (level - this.voice) * Math.min(1, dt * (level > this.voice ? 40 : 11));
-    const mouth = !this.talking ? 0 : this.voiceLevel !== null ? this.voice * (0.8 + 0.2 * syl) : syl;
+    const mouth = this.voiceLevel !== null ? this.voice * (0.8 + 0.2 * syl) : this.talking ? syl : 0;
     this.talk += (mouth - this.talk) * Math.min(1, dt * 25);
 
     this.lean += ((Math.max(-1, Math.min(1, this.posVel.x / 900)) * 0.35) - this.lean) * Math.min(1, dt * 8);

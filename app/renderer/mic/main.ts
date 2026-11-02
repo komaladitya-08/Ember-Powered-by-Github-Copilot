@@ -14,7 +14,7 @@ import { Capture } from "./capture";
 import { Player, playerAudio, type PlayerContext } from "./player";
 import { speechWatch, type WatchedUtterance } from "./speech-watch";
 import { bestVoice } from "./voices";
-import { LEVEL_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rms, voiceAt, type VoiceSpan } from "../../shared/level";
+import { LEVEL_MS, VOICE_KEEP_ALIVE_MS, VOICE_LEVEL_MS, LevelMeter, envelope, rms, voiceAt, type VoiceSpan } from "../../shared/level";
 
 declare global { interface Window { emberMic: MicApi } }
 
@@ -98,8 +98,9 @@ function update(): void {
 let spans: VoiceSpan[] = [];
 let voiceTimer: ReturnType<typeof setInterval> | undefined;
 // (Read on a 100 ms timer: a little slack, so a tick that comes a hair early is not held back to the next. Between two
-// chunks it reads silence: the meter rests, and goes only when the voice has stopped.)
-const voiceMeter = new LevelMeter(l => api.level({ voice: l }), VOICE_LEVEL_MS - 5);
+// chunks it reads silence: the meter rests, and goes only when the voice has stopped. A level that holds is sent again
+// every VOICE_KEEP_ALIVE_MS: Ember's mouth follows its voice only while levels keep coming.)
+const voiceMeter = new LevelMeter(l => api.level({ voice: l }), VOICE_LEVEL_MS - 5, VOICE_KEEP_ALIVE_MS);
 function voicePlaying(on: boolean): void {
   clearInterval(voiceTimer);
   voiceTimer = undefined;

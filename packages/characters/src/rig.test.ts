@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { BLINK_CLOSE, BLINK_OPEN, Rig, PRESETS, blinkAt, blinkGap, fidgetGap, type Emotion } from "./rig";
+import { BLINK_CLOSE, BLINK_OPEN, Rig, PRESETS, VOICE_STALE_S, blinkAt, blinkGap, fidgetGap, type Emotion } from "./rig";
 
 function settle(rig: Rig, seconds: number) {
   let pose = rig.update(0);
@@ -306,5 +306,52 @@ describe("Rig while a question is up, and after it stops talking (review of the 
     let hop = 0;
     for (let i = 0; i < 60; i++) hop = Math.max(hop, Math.abs(rig.update(1 / 60).lift));
     expect(hop).toBeGreaterThan(5);
+  });
+});
+
+describe("Rig mouth and Ember's own voice (re-review: the last sentence plays after the words)", () => {
+  it("keeps following the voice's levels after the words have ended (setTalking(false))", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    rig.setTalking(true);
+    rig.setTalking(false);
+    // The last sentence plays: levels keep coming, ten a second.
+    let open = 0, n = 0;
+    for (let i = 0; i < 60 * 3; i++) {
+      if (i % 6 === 0) rig.setTalkLevel([0.2, 0.9, 0.5, 0.8][(i / 6) % 4]);
+      const p = rig.update(1 / 60);
+      if (i > 30) { open += p.talk; n++; }
+    }
+    expect(open / n).toBeGreaterThan(0.3);
+  });
+
+  it("lets go of a level that stops coming (the voice's page closed or crashed), within about 1.5 s, and stays still", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    rig.setTalking(true);
+    for (let i = 0; i < 60; i++) { if (i % 6 === 0) rig.setTalkLevel(0.8); rig.update(1 / 60); }
+    rig.setTalking(false);
+    // No null, no more levels.
+    expect(rig.update(1 / 60).talk).toBeGreaterThan(0.3);
+    const p = settle(rig, VOICE_STALE_S + 0.5);
+    expect(p.talk).toBeLessThan(0.01);
+    expect(settle(rig, 5).talk).toBeLessThan(0.01);
+  });
+
+  it("holds the idle float and the body's wobble still while a question is up", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    settle(rig, 2);
+    rig.setQuestion(true);
+    rig.setEmotion("curious");
+    settle(rig, 1);
+    let lift = 0, overTilt = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      const p = rig.update(1 / 60);
+      lift = Math.max(lift, Math.abs(p.lift));
+      overTilt = Math.max(overTilt, p.face.tilt - PRESETS.curious.face.tilt!);
+    }
+    expect(lift).toBe(0);
+    expect(overTilt).toBeLessThan(0.005);
   });
 });

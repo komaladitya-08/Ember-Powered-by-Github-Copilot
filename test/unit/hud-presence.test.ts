@@ -171,3 +171,20 @@ describe("the handle's line (review #5)", () => {
     expect(handleLine({ tasks: [] })).toBe("Ready");
   });
 });
+
+describe("Ember's voice level as it plays (re-review: the mouth needs to know the voice still plays)", () => {
+  it("sends a level that holds again every keep-alive, so a listener can tell it from a stream that died", async () => {
+    const { VOICE_KEEP_ALIVE_MS } = await import("../../app/shared/level");
+    const sent: (number | null)[] = [];
+    const m = new LevelMeter(l => sent.push(l), 95, VOICE_KEEP_ALIVE_MS);
+    for (let t = 0; t <= 1500; t += 100) m.push(0.05, t);
+    // Unchanged for 1.5 s: sent at the start, then every half second.
+    expect(sent.length).toBe(1 + Math.floor(1500 / VOICE_KEEP_ALIVE_MS));
+    expect(new Set(sent).size).toBe(1);
+    // Without a keep-alive (the microphone's meter), only changes go.
+    const plain: (number | null)[] = [];
+    const n = new LevelMeter(l => plain.push(l));
+    for (let t = 0; t <= 1500; t += 100) n.push(0.05, t);
+    expect(plain.length).toBe(1);
+  });
+});

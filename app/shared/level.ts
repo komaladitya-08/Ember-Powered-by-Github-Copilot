@@ -15,6 +15,12 @@ export const LEVEL_MS = 50;
  * the overlay's five bars cost about 4 points of a core while Ember spoke, at 10 about 2 (measured under Xvfb).
  */
 export const VOICE_LEVEL_MS = 100;
+/**
+ * Ember's voice level is sent again at least this often while it plays, even unchanged; the character's mouth lets go of
+ * a level older than VOICE_STALE_S (packages/characters' rig), so a mic page that closed or crashed mid-sentence never
+ * leaves the mouth moving.
+ */
+export const VOICE_KEEP_ALIVE_MS = 500;
 
 /** A level from the page that hears or plays: `mic` while Ember hears a request, `voice` while its own voice plays; null: that stream ended. */
 export interface SoundLevel {
@@ -71,12 +77,20 @@ export class LevelMeter {
   /** A changed step not yet sent (it came too soon after the last): sent with the next reading after the gap. */
   private owed: number | null = null;
 
-  constructor(private readonly send: (level: number | null) => void, private readonly gapMs = LEVEL_MS) {}
+  /**
+   * `keepAliveMs`: an unchanged step is sent again this long after the last one, so a listener can tell a level that
+   * holds from a stream that died without its null (Ember's mouth follows its voice only while levels keep coming).
+   */
+  constructor(private readonly send: (level: number | null) => void, private readonly gapMs = LEVEL_MS, private readonly keepAliveMs = Infinity) {}
 
   /** A reading (RMS, 0–1) at `now` (ms). */
   push(value: number, now: number): void {
     const step = levelStep(value);
-    if (step === this.sent) { this.owed = null; return; }
+    if (step === this.sent) {
+      this.owed = null;
+      if (now - this.sentAt >= this.keepAliveMs) { this.sentAt = now; this.send(step); }
+      return;
+    }
     if (now - this.sentAt < this.gapMs) { this.owed = step; return; }
     this.owed = null;
     this.sent = step;
