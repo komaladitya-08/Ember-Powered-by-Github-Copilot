@@ -18,7 +18,9 @@ import { loginItemFollower } from "./autostart";
 import { watchCrashes } from "./crash-log";
 import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, type SettingsPatch } from "./settings";
-import { auditRetentionDays, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
+import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
+import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
+import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1057,7 +1059,7 @@ function start(): void {
     }, { visible: true, mood: "idle", ...n, step: null, streaming: false, actions: [] }, time);
   };
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
-  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean } = {}) => {
+  const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean; verified?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
     lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
@@ -1076,7 +1078,7 @@ function start(): void {
     const ack = ackTimer;
     const unanswered = () => { if (ack && ackTimer === ack) cancelAck(); };
     if (!agent) { unanswered(); return; }
-    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
+    return agent.ask(text, context, epoch, { voiceUnchecked: how.voiceUnchecked, ...(how.verified ? { verified: true } : {}) }).then(answered => { if (!answered) unanswered(); }, err => { unanswered(); log.error("ask.failed", { err }); });
   };
   /**
    * `look: false`: what the user is in was read already (the handle's menu reads it before taking focus), and
@@ -1257,6 +1259,22 @@ function start(): void {
     onChange: () => broadcast(IPC.routinesChanged, routineRows()),
   });
   const ownerPrint = () => (settings.get().voice.match ? voiceprints.read() : null);
+  /** When the request being heard began (its wake, or a follow-up window opening): Ember's own voice since then is an echo. */
+  let heardFrom = 0;
+  /**
+   * A spoken answer to the question up (voice-answer.ts judged the words): taken through the Confirmer, which holds a yes
+   * to what the approve key may do; or, when it can't be taken, the question stays and its bubble says why (and how to
+   * set Voice Match up). Spoken too, where Ember speaks. Nothing of what was said is logged, only the outcome.
+   */
+  const answerByVoice = (o: Exclude<VoiceAnswerOutcome, { kind: "none" }>) => {
+    if (!confirmer) return;
+    const result = o.kind === "answer" ? confirmer.answerVoice(o.answer, { verified: o.verified }) : o.why;
+    log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified });
+    if (result === "answered" || result === "no-question") return;
+    const words = VOICE_ANSWER_REFUSED[result];
+    confirmer.note(words);
+    if (maySpeak()) voice?.speak(spokenText(words));
+  };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
@@ -1264,6 +1282,7 @@ function start(): void {
   const onVoice = (e: VoiceEvent) => {
     switch (e.type) {
       case "wake":
+        heardFrom = Date.now();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
         voice?.hush();
@@ -1272,7 +1291,7 @@ function start(): void {
         setState({ emotion: "listening", talking: false, bubble: { visible: true, mood: "listening", title: "Listening…", thought: "", step: null, streaming: true, actions: [] } });
         break;
       case "listening":
-        if (e.on && e.reason === "follow-up") { setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
+        if (e.on && e.reason === "follow-up") { heardFrom = Date.now(); setState({ emotion: "listening" }); setStatus("listen", "Listening for a follow-up…"); }
         // (Not the note that a request was cut: it comes with the "listening off" of that request, and stays.)
         if (!e.on && !isCutNote(statusBy.listen)) setStatus("listen", null);
         // Nobody spoke: back to idle. The wake was another word ("Amber"): back to what was showing.
@@ -1306,10 +1325,18 @@ function start(): void {
           setStatus("listen", note);
           setTimeout(() => { if (statusBy.listen === note) setStatus("listen", null); }, 10_000).unref?.();
         }
-        // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
-        // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
-        turnLatency.heard(e.ms);
-        void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true });
+        // While a question is up, "allow" or "not now" answers it (a yes only from the owner's verified voice, never from
+        // Ember's own; voice-answer.ts). Anything else is a request, as ever.
+        {
+          const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
+          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
+          if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
+          // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
+          // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
+          // `verified`: Voice Match matched the owner's voice (what may turn "Work without asking" on).
+          turnLatency.heard(e.ms);
+          void askEmber(e.text, { voiceUnchecked: !voice?.rejectsSpeakers, spoken: true, ...(matchOn && e.verified === true ? { verified: true } : {}) });
+        }
         break;
       }
       case "stop":
@@ -1990,6 +2017,8 @@ function start(): void {
         confirmEveryAction: () => policy.confirmEveryAction,
         allowGrants: () => policy.allowGrants,
         trustAskedApps: () => settings.get().trust.askedApps,
+        // "Work without asking" (policy/autonomy.ts): only with its card agreed to and where the organisation allows it.
+        autonomy: () => autonomyInForce(settings.get().autonomy, policy),
         // On macOS also by the installed app with that name's bundle id (Terminal renamed is still Terminal); a WSLg
         // app's also as a Linux app (§4.5).
         isTerminalApp: name => privacy.isTerminalApp({ id: name, name }),
@@ -2153,6 +2182,12 @@ function start(): void {
       },
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
+      // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
+      autonomy: {
+        state: () => ({ on: settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
+        set: on => { const a = settings.get().autonomy; settings.update({ autonomy: { ...a, on, ...(on ? { scopes: { ...ALL_SCOPES } } : {}) } }); },
+        open: consent => { showHome(); sendToHome(IPC.focusSection, consent ? "privacy:autonomy-yes" : "privacy:autonomy-on"); },
+      },
       onTaskFinished: t => {
         // Read out unless the user asked for results on screen only ("Ember, just show me": speakResults).
         if (maySpeak() && settings.get().speakResults) voice?.speak(spokenText(t.text));

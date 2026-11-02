@@ -69,7 +69,8 @@ export type VoiceEvent =
   | { type: "listening"; on: boolean; reason: "wake" | "follow-up" | "timeout" | "done" | "stop" | "rejected"; window: "wake" | "follow-up" }
   | { type: "speech"; on: boolean }
   /** `window`: a wake's request or a follow-up (which gets no follow-up of its own); `cut`: the speaker was still talking when the request reached its length limit. */
-  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean }
+  /** `verified`: Voice Match compared it with the owner's voiceprint and it matched (match.ts); absent otherwise. */
+  | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
   | { type: "rejected"; keyword: string; reason: "self" | "speakers" | "check" | "voice"; heard?: string; score?: number };
 

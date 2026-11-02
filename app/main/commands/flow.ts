@@ -29,6 +29,7 @@ import { carriedText } from "./carried";
 import { notReviewable, reviewedDecision, type CommandReviewer } from "./review";
 import { classifyCommand } from "./classify";
 import { LINES, decideCommand } from "./decide";
+import { covers, type AutonomyScopes } from "../policy/autonomy";
 import { mentioned } from "./intent";
 import { capLines, cleanOutput, shapeOutput, type ShapeOptions } from "./output";
 import { resolveTargetPath } from "./paths";
@@ -63,7 +64,14 @@ export interface CommandFlowContext {
   };
   service: CommandService;
   /** Asks the user, through the worker: the wait for an answer doesn't count toward the task's time limit. */
-  confirmer: Pick<Confirmer, "ask">;
+  /** `howAnswered` (optional): how the card was answered, for the audit (a spoken answer, and whether Voice Match verified it). */
+  confirmer: Pick<Confirmer, "ask"> & { howAnswered?: Confirmer["howAnswered"] };
+  /**
+   * "Work without asking" (policy/autonomy.ts): its scopes in force for this task, or null (off, or the task was steered or
+   * told no). With commands and crossWindow on, an ordinary command that asks only because it carries text read
+   * elsewhere announces instead (autonomousCommand).
+   */
+  autonomy?: () => AutonomyScopes | null;
   presenter: Presenter;
   audit: (e: AuditEntry) => void;
   log: Logger;
@@ -575,6 +583,24 @@ export function heldDecision(d: CommandDecision, r: AskReasons, kind: TargetBind
   };
 }
 
+/**
+ * "Work without asking" for a command (owner decision of 2026-11-02, PLAN.md §2 "Commands"): an ordinary command whose
+ * only reason to ask is that it carries text read elsewhere in the task (rule "carried", no finding), in a task with the
+ * user's own words that nothing steered, announces with its Stop countdown instead, saying where the text came from.
+ * Anything the classifier flags (deleting, publishing, secrets, system changes, download-and-run, unclear), root, the
+ * administrator's or the user's "ask every", taint and another computer named still ask. Null: it asks as decided.
+ */
+export function autonomousCommand(d: CommandDecision, o: { scopes: AutonomyScopes | null; words: string; tainted: boolean; carried: { from: string[] } | null; elsewhere: boolean }): CommandDecision | null {
+  if (d.verdict !== "ask" || !covers(o.scopes, ["commands", "crossWindow"]) || o.tainted || o.elsewhere || !o.carried || !o.words.trim()) return null;
+  if (d.classes.length || d.rules.length !== 1 || d.rules[0] !== "carried") return null;
+  const from = o.carried.from.length ? listOf(o.carried.from.slice(0, 3)) : "another window";
+  return {
+    ...d, verdict: "announce", unasked: false, rules: ["carried", "autonomy"],
+    requested: { intent: "autonomy", announce: `Running a command with text from ${from}, without asking as you let me.` },
+    reason: "Working without asking: an ordinary command that carries text read elsewhere in the task.",
+  };
+}
+
 /** The result the model gets for how a run ended (§3.8.6). */
 function resultOf(exit: RunExit, shaped: string, o: { label: string; timeoutS: number; redact: (s: string) => string }): ToolResultObject {
   switch (exit.ended) {
@@ -758,6 +784,10 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
     const lines = [...(places.length ? [unknownPlaceLine(places, here)] : []), ...(others.length ? [wrongTargetLine(others, here)] : [])];
     d = { ...d, says: [...lines, ...d.says.filter(l => !lines.includes(l))] };
   }
+  // "Work without asking": an ordinary command that asks only for the text it carries announces instead (its Stop
+  // countdown and the card still show where the text came from).
+  const autonomous = autonomousCommand(d, { scopes: ctx.autonomy?.() ?? null, words, tainted: tainted || !!ctx.state.outputTainted, carried, elsewhere: others.length > 0 || places.length > 0 });
+  if (autonomous) d = autonomous;
   // AI review: a command that asks only by the danger rules is shown to the reviewer with the user's words; one it finds
   // routine runs with its announcement (Stop countdown) instead. The hard asks are never reviewed (review.ts).
   if (ctx.review && d.verdict === "ask") {
@@ -804,7 +834,8 @@ async function flow(a: RunCommandArgs, ctx: CommandFlowContext, endPending: () =
       task, ...(where ? { where } : {}), armMs: d.armMs, panel: { kind: "command", card: card("ask", [...says, why]) },
     };
     const answer = await ctx.confirmer.ask(question, ctx.signal);
-    audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q });
+    const how = ctx.confirmer.howAnswered?.(question);
+    audit({ phase: "answered", answer: ctx.isOver() ? "stopped" : answer ?? "expired", q, ...(how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {}) });
     if (ctx.isOver()) return "stopped";
     if (answer === "once") return "once";
     ctx.onDeclined?.();

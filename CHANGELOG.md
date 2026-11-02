@@ -94,7 +94,8 @@ work on other computers you reach over SSH. Each is off until you turn it on and
   push`, pull requests, `p4 submit`, package publishing, uploads), deletes from source control or a service, reads or
   changes passwords, keys or other secrets, changes the system or needs privileges, downloads code and runs it, keeps
   running after Ember stops, or that Ember can't read with certainty. The question shows the whole command, with
-  invisible characters made visible, and is answered with **Allow** or **Not now** (never "Always", never by voice).
+  invisible characters made visible, and is answered with **Allow** or **Not now** (never "Always"; by voice only
+  as “Ember, allow” from your Voice Match-verified voice once the card shows the whole command).
 - **The command window**: Tab and Shift+Tab always move between the window's buttons and tabs and never go into the
   command; Ctrl+V pastes into a command that takes typing (Command+V on a Mac), Ctrl+C copies selected output, and
   **Copy output** copies all of it. When a command waits for you to type (a password, a "[y/N]"), its tab says so, the
@@ -278,6 +279,21 @@ allows them.
   key reads a policy that has it as broken and locks down, so update Ember first.
 - **Not yet**: connectors (GitHub-hosted services), Copilot `extension.mjs` extensions, extensions in tasks (only the
   conversation uses them), programs from extensions on macOS, and servers that need you to sign in to them.
+
+### Work without asking and spoken answers
+
+- **Work without asking** (Settings › **Apps & privacy**, off by default, with its own card to agree to first): Ember
+  uses your apps, borrows your mouse and keyboard, moves text between apps and runs ordinary commands for what you ask
+  without asking first each time, and says what it is doing in its bubble and on the task's card. It still asks every
+  time before anything risky (sending, posting, submitting, sharing, deleting, overwriting, paying, installing, signing
+  out, security settings, dangerous commands), and a task that a page tried to steer goes back to asking. Say “Ember,
+  work without asking” (Voice Match must recognise you) or “Ember, ask me first again”.
+- **Answer questions by voice**: while Ember asks, “Ember, allow” (with Voice Match on and recognising you) or “Ember,
+  not now” (anyone) answers it. Never “Always”, never Ember's own voice, and a command card or a long text only once
+  all of it has been shown. The audit log says the answer was spoken.
+- For administrators: `features.autonomy: false` turns Work without asking off (managed); so do `allowGrants: false`,
+  `confirmEveryAction` and a lockdown. An older Ember reads a policy with this key as broken and locks down, so update
+  Ember before adding it.
 
 ### In detail
 

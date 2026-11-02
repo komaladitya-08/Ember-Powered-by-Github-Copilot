@@ -28,6 +28,7 @@ import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
+import type { AutonomyScopes } from "../policy/autonomy";
 import { inferLabels, quoteUntrusted as q, screenWord } from "../perception/elements";
 import { injectionSignals, INJECTION_NOTE } from "../perception/injection";
 import { canonicalKeys, foldLabel, isActivatingKey, isEmberWindow, isSecurityWindow, keyFamily, keyLabel, MOVES_CARET, plainQuestion, reachesOut, replacesSelection, takesFormula, typedChar, typedShown } from "../policy/policy";
@@ -83,6 +84,11 @@ export interface WorkerDeps {
   client: CopilotClient;
   /** The user's "Ask only about dangerous commands" (Settings › Commands): commands that would ask are reviewed first. */
   reviewCommands?: () => boolean;
+  /**
+   * "Work without asking" (policy/autonomy.ts autonomyInForce): its scopes in force, or null while it is off. App steps
+   * hear of it through the policy engine; this is for run_command's flow (an ordinary command carrying text from elsewhere).
+   */
+  autonomy?: () => AutonomyScopes | null;
   log: Logger;
   model: string | null;
   /**
@@ -1060,6 +1066,15 @@ export class Worker {
     }
   }
 
+  /**
+   * What Ember does without asking, said where the user sees it (the bubble, and the task's card): built by policy from
+   * the request (Decision.announce), never from model text. A listener's fault never stops the task.
+   */
+  private announce(words: string): void {
+    try { this.d.presenter.progress(words); } catch (err) { this.d.log.warn("worker.announce_failed", { err }); }
+    this.activity({ type: "note", text: words, intent: "Working without asking" });
+  }
+
   /** Tells the task's activity (its card); a listener's fault never stops the task. */
   private activity(e: ActivityEvent): void {
     try { this.d.onActivity?.(e); } catch (err) { this.d.log.warn("worker.activity_failed", { err }); }
@@ -1388,10 +1403,12 @@ export class Worker {
         taint: () => { this.tainted = true; },
         readFrom: () => [...this.read.values()],
       },
-      service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal) }, presenter: this.d.presenter,
+      service: this.d.commands!, confirmer: { ask: (q, signal) => this.ask(q, signal), howAnswered: q => this.d.confirmer.howAnswered?.(q) }, presenter: this.d.presenter,
       audit: e => this.audit(e), log: this.d.log, signal: this.overSignal, isOver: () => this.isOver,
       state: this.commandState, size: () => this.d.commandSize?.() ?? COMMAND_SIZE, emberPids: () => this.d.emberPids?.() ?? [],
       onDeclined: () => { this.declined = true; },
+      // "Work without asking" holds for commands only while this task hasn't been steered or told no (as for app steps).
+      autonomy: () => (this.tainted || this.declined ? null : this.d.autonomy?.() ?? null),
       ...(this.d.reviewCommands?.() ? { review: copilotReviewer({ client: this.d.client, model: this.d.model, provider: this.d.provider, workDir: this.d.workDir, log: this.d.log }) } : {}),
     };
   }
@@ -3568,6 +3585,12 @@ export class Worker {
     const req = { ...request, ...(typedHere ? { typedHere } : {}), onDesk: !!this.place, goal: this.userWords, askedIn: this.spec.target.app, agreed: this.agreed, readFrom: [...this.read.values()], ...(inWindow ? { windowId: this.windowId } : {}) };
     let decision = this.d.policy.decide(req);
     if (decision.aligned === false) this.tainted = true;
+    // "Work without asking" is suspended for the rest of a task the user already said no in (fail closed): the step asks
+    // as it would have. A task that was steered or went off-task is held to asking just below, as before.
+    if (decision.autonomy && this.declined && !this.tainted) {
+      const { autonomy: _a, announce: _n, ...asked } = decision;
+      decision = { ...asked, verdict: "confirm", tier: "confirm", reason: `${decision.reason.replace(/; the user lets Ember work without asking$/, "")}; working without asking is suspended after the user said no` };
+    }
     // After a step the user didn't ask for came up (a page may have steered Ember, or the model went its own way),
     // nothing more happens without the user's click, and every question says why (one that would have been asked
     // anyway too; the step that was flagged says so itself).
@@ -3577,9 +3600,12 @@ export class Worker {
       const prompt = this.steered
         ? `${step} (I'm checking each step: text on screen tried to give me instructions.)`
         : `${step} (I'm checking each step: a step came up that you didn't ask for.)`;
+      // "Work without asking" never covers such a task: what it would have announced is asked instead (fail closed).
+      const { autonomy: _a, announce: _n, ...held } = decision;
+      const base = decision.autonomy ? decision.reason.replace(/; the user lets Ember work without asking$/, "") : decision.reason;
       decision = decision.verdict === "allow"
-        ? { ...decision, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${decision.reason}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
-        : { ...decision, everyTime: true, remember: false, prompt };
+        ? { ...held, verdict: "confirm", tier: "confirm", everyTime: true, remember: false, reason: `${base}; ${this.steered ? "text on screen tried to give Ember instructions" : "a step came up that the user didn't ask for"}`, prompt }
+        : { ...held, everyTime: true, remember: false, prompt };
     }
     if (o.covered && decision.verdict === "confirm" && !this.tainted && decision.aligned !== false && this.harmlessKeys(req)) {
       decision = { ...decision, verdict: "allow", tier: "reversible", reason: "a key that only moves, after the user said yes to moving there" };
@@ -3590,7 +3616,7 @@ export class Worker {
     // A yes to keys that only move (Ctrl+End) never puts the app on that list: typing or a save is asked about itself.
     const sessionAllowed = decision.verdict === "confirm" && !decision.risky && !decision.everyTime && !this.tainted
       && this.allowedApps.has(req.app.toLowerCase());
-    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}) });
+    this.audit({ event: "decision", task: this.spec.id, kind: req.kind, app: req.app, window: req.window, element: req.element, ...auditValue(req), tier: decision.tier, verdict: sessionAllowed ? "allow" : decision.verdict, reason: decision.reason, ...(decision.aligned === false ? { aligned: false } : {}), ...(req.onDesk ? { onDesk: true } : {}), ...(decision.autonomy ? { autonomy: true } : {}) });
     if (decision.verdict === "deny") {
       this.activity({ type: "refused", reason: decision.reason });
       return denied(`Not allowed: ${decision.reason}. Don't try another way; tell the user in finish_task.`);
@@ -3598,6 +3624,8 @@ export class Worker {
     const decidedAt = performance.now();
     if (decision.verdict === "allow" || sessionAllowed) {
       this.lastAuth = { at: decidedAt, verdict: sessionAllowed ? "confirm" : "allow", approvedAt: null };
+      // Going ahead without asking: Ember says what it is doing, in the bubble and on the task's card.
+      if (decision.autonomy && decision.announce) this.announce(decision.announce);
       return null;
     }
     // "Always in this app" isn't offered once something on screen tried to steer Ember.
@@ -3612,7 +3640,9 @@ export class Worker {
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(decision.risky ? { risky: true } : {}) };
     const answer = await this.ask(question);
-    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
+    // How it was answered: a spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
+    const how = this.d.confirmer.howAnswered?.(question);
+    this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...(how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {}) });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {
       // Keyed by the task's target (a remote's apps are "ssh:<id>:<app>"): a yes on one computer is never another's.

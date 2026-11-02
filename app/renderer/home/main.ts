@@ -8,7 +8,7 @@
 import { Rig, FACTORIES, type Character } from "@ember/characters";
 import type { ActivityEntry, EmberHomeApi, Presence, RoutineRow, Status, StatusPlatform, VoiceStatus } from "../../shared/ipc";
 import { SPEAK_NO_VOICE, modelsDownloadLabel, setupBadge, setupView } from "./copy";
-import { MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
+import { AUTONOMY_CONSENT_TEXT, autonomyHint, MEMORY_CONSENT_TEXT, ROUTINES_CONSENT_TEXT, deleteRoutineLabel, forgetMemoryLabel, handleCornerText, memoryEmptyText, routinesEmptyText } from "./copy";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { MATCH_TEXT, matchAnnouncement, matchView, trustView } from "./match-copy";
 import { ISSUES_URL } from "../../shared/support";
@@ -118,6 +118,7 @@ let settings: Settings | null = null;
 type MemoryRow = Awaited<ReturnType<EmberHomeApi["memory"]>>[number];
 const MEMORY_VERSION = FEATURE_CONSENT_VERSION.memory;
 const ROUTINES_VERSION = FEATURE_CONSENT_VERSION.routines;
+const AUTONOMY_VERSION = FEATURE_CONSENT_VERSION.autonomy;
 let memoryRows: MemoryRow[] = [];
 let routineRows: RoutineRow[] = [];
 /** The routine whose Delete was pressed: focus goes to the one now in its place. */
@@ -138,6 +139,7 @@ function applySettings(s: Settings): void {
   if (!sliding && document.activeElement !== size) showSize(s.size);
   applyMemorySettings(s);
   applyRoutineSettings(s);
+  applyAutonomySettings(s);
   ($("login") as HTMLInputElement).checked = s.startAtLogin;
   ($("reduce-motion") as HTMLInputElement).checked = s.reduceMotion;
   ($("more-time") as HTMLInputElement).checked = s.moreTime;
@@ -437,7 +439,7 @@ function renderAdmin(a: Status["admin"]): void {
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
   if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
-  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
+  for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"], ["autonomy-on", "autonomy"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
     (input.closest(MANAGED_ROW) ?? input).classList.toggle("locked", managed.has(key));
@@ -448,6 +450,7 @@ function renderAdmin(a: Status["admin"]): void {
   if (voice) renderVoice(voice);
   if (settings) applyMemorySettings(settings);
   if (settings) applyRoutineSettings(settings);
+  if (settings) applyAutonomySettings(settings);
 }
 
 // ───── What Ember did ─────
@@ -826,6 +829,26 @@ $("routines-yes").addEventListener("click", () => {
 });
 $("routines-no").addEventListener("click", () => { $("routines-consent").hidden = true; $("routines-on").focus(); });
 $("routines-forget-all").addEventListener("click", () => { routineFocus = 0; void window.ember.forgetAllRoutines(); });
+
+// ───── Work without asking (app/main/policy/autonomy.ts): on only once the user agrees to its card ─────
+$("autonomy-consent-text").textContent = AUTONOMY_CONSENT_TEXT;
+function applyAutonomySettings(s: Settings): void {
+  ($("autonomy-on") as HTMLInputElement).checked = s.autonomy.on && s.autonomy.consent.version >= AUTONOMY_VERSION;
+  $("autonomy-hint").textContent = autonomyHint(managed.has("autonomy"));
+}
+$("autonomy-on").addEventListener("change", e => {
+  const on = (e.target as HTMLInputElement).checked;
+  const a = settings?.autonomy ?? { on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } };
+  if (on && a.consent.version < AUTONOMY_VERSION) { $("autonomy-consent").hidden = false; (e.target as HTMLInputElement).checked = false; $("autonomy-yes").focus(); return; }
+  // Turned on: all four of what it covers (using apps, commands, the mouse and keyboard, moving text between apps).
+  void save({ autonomy: { ...a, on, ...(on ? { scopes: { apps: true, commands: true, cursor: true, crossWindow: true } } : {}) } });
+});
+$("autonomy-yes").addEventListener("click", () => {
+  $("autonomy-consent").hidden = true;
+  void save({ autonomy: { on: true, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: AUTONOMY_VERSION, at: new Date().toISOString() } } });
+  $("autonomy-on").focus();
+});
+$("autonomy-no").addEventListener("click", () => { $("autonomy-consent").hidden = true; $("autonomy-on").focus(); });
 window.ember.onSettingsChanged(applyRoutineSettings);
 void window.ember.routines().then(renderRoutines);
 window.ember.onRoutines(renderRoutines);
@@ -844,6 +867,8 @@ function showSection(value: string): void {
   if (!h) return;
   if (isHidden(h)) { pendingSection.hold(value); return; }
   pendingSection.drop();
+  // Asked for by voice ("work without asking" before its card was agreed to): the card shows, focused on its agree button.
+  if (control === "autonomy-yes" && !managed.has("autonomy")) $("autonomy-consent").hidden = false;
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;

@@ -249,6 +249,8 @@ export class VoiceService {
       if (!(this.mic && e.sender === this.mic.webContents) && e.sender !== this.speaker?.wc) return;
       // (Repeated every 20 s while it lasts: the voice process is told each time, the log only when it changes.)
       if (!!on !== this.saidSpeaking) { this.saidSpeaking = !!on; this.o.log.info("voice.self_speaking", { on: !!on, listening: !!this.proc }); this.o.onSelfSpeaking?.(!!on); }
+      if (on && !this.saidSpeakingBefore) this.lastSelfSpeech = Date.now();
+      this.saidSpeakingBefore = !!on;
       this.proc?.postMessage({ type: "self-speaking", on: !!on });
       this.speakingUntil = on ? Date.now() + SPEAKING_MAX_MS : 0;
       if (this.speaker && e.sender === this.speaker.wc) {
@@ -272,6 +274,19 @@ export class VoiceService {
    * a call, a video or Ember's own voice can say a request, so words heard then never count as asking for a dangerous
    * command (review #252).
    */
+  /** When Ember last started making sound (as the speaking page told it; 0: never this run), and whether it was then. */
+  private lastSelfSpeech = 0;
+  private saidSpeakingBefore = false;
+
+  /**
+   * Is Ember speaking now, or did it start to since `t` (ms since the epoch: when the user's request began, at its wake)?
+   * A spoken answer to a question heard then may be Ember's own voice from the speakers ("…or say not now"), so it isn't
+   * taken (the echo guard of review #112, on top of the voice process not taking requests while Ember speaks).
+   */
+  selfSpokeSince(t: number): boolean {
+    return this.saidSpeaking || this.lastSelfSpeech >= t;
+  }
+
   get rejectsSpeakers(): boolean {
     return !!this.proc && this.monitorOn && (this.state === "waiting" || this.state === "active");
   }

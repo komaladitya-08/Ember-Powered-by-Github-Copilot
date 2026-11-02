@@ -71,7 +71,9 @@ export class VoiceGate {
         this.send(e);
         return;
       }
-      if (score >= this.threshold) { this.send(e); return; }
+      // Matched: said so, so a spoken yes to a question can be taken (main's voice-answer.ts). A request heard without a
+      // check (Voice Match off, or the model failed above) carries no `verified`, and can't approve anything.
+      if (score >= this.threshold) { this.send({ ...e, verified: true }); return; }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });
       this.send({ type: "listening", on: false, reason: "rejected", window: e.window });
     });

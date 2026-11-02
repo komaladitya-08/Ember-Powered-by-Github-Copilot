@@ -70,7 +70,7 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([utterance("Open the terminal.")]);
   });
 
-  it("sends the owner's request, and turns another voice's away as a wake taken back (in order)", async () => {
+  it("sends the owner's request marked verified, and turns another voice's away as a wake taken back (in order)", async () => {
     const sent: VoiceEvent[] = [];
     const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
     g.setOwner(owner);
@@ -81,7 +81,8 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([
       { type: "rejected", keyword: "", reason: "voice", score: 0 },
       { type: "listening", on: false, reason: "rejected", window: "wake" },
-      utterance("The owner."),
+      // Verified: only such a request may answer a question with a spoken yes (voice-answer.ts).
+      { ...utterance("The owner."), verified: true },
     ]);
     expect(similarity(Float32Array.from([1, 0.1]), owner)).toBeGreaterThanOrEqual(VOICE_MATCH_THRESHOLD);
   });
@@ -95,7 +96,7 @@ describe("VoiceGate", () => {
     expect(sent).toEqual([{ type: "stop" }, { type: "wake", keyword: "ember" }]);
   });
 
-  it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), and says so", async () => {
+  it("hears the request when the model fails (Voice Match failing never leaves Ember deaf), unverified, and says so", async () => {
     const sent: VoiceEvent[] = [], errors: unknown[] = [];
     const g = new VoiceGate(() => fakePrinter(true), e => sent.push(e), err => errors.push(err));
     g.setOwner(owner);

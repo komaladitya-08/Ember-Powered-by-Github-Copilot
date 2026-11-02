@@ -209,7 +209,11 @@ view ("Read the whole command to allow it."). The approve chord (Ctrl+Alt+Y, Win
 works only while that card shows the whole command (not while the window is blank after its page crashed, until the
 page loads again and shows it); **Not now** and the deny chord always work. While the card is up,
 Ember and its bubble keep clear of the command window (as they do of settings), and the same goes for Ember's sign-in
-and consent cards. There is never an "Always" for commands, a voice "yes" never approves one, and a notification (and
+and consent cards. There is never an "Always" for commands. A spoken “Ember, allow” approves one only when Voice Match
+recognises your voice, and only while the card shows the whole command, as the approve chord does; “Ember, not now”
+works for anyone. With **Work without asking** on (Settings › Apps & privacy), an ordinary command that would ask only
+because it carries text Ember read in another window runs after its Stop countdown instead; dangerous ones still ask.
+A notification (and
 Ember's speech) only says "Ember wants to run a command on build-01." with how to get to the command window from the
 keyboard ("press Alt+Tab to go there" on Linux and Windows); screen readers hear that too, and a question's key hint
 ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). A question nobody answers counts as "no" after 2 minutes (20 with **More

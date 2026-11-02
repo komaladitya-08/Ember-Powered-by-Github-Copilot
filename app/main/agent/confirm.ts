@@ -1,8 +1,11 @@
 /**
  * Questions Ember asks with buttons in its bubble ("Allow" / "Not now").
- * Only a click in Ember's own bubble answers them (never voice, never the
- * model). One question shows at a time; the rest wait their turn. Unanswered
- * questions expire as "no", counted from when they appear on screen.
+ * A click in Ember's own bubble answers them, or Ember's keys, or a short spoken
+ * answer while the question is up (answerVoice: a yes only from the owner's
+ * voice as Voice Match verified it, "Not now" from anyone; owner decision of
+ * 2026-11-02, PLAN.md §2 "Approvals"). Never the model, never typed text, and
+ * never "Always" by voice. One question shows at a time; the rest wait their
+ * turn. Unanswered questions expire as "no", counted from when they appear on screen.
  *
  * A question can't be answered by accident: clicks in its first moments are
  * ignored (a double-click or a click already on its way lands on nothing),
@@ -29,8 +32,18 @@ import type { BubbleState, EmberState } from "../../shared/overlay";
 import type { ConsentPanel } from "../../shared/consent";
 import type { CommandCard } from "../commands/types";
 
-/** How an answer arrived: a bubble button, Ember's approve/deny keys, or the panel window's own buttons. */
-export type AnswerVia = "bubble" | "key" | "panel";
+/** How an answer arrived: a bubble button, Ember's approve/deny keys, the panel window's own buttons, or spoken. */
+export type AnswerVia = "bubble" | "key" | "panel" | "voice";
+
+/** How a question was answered (the audit records it): `verified`, for a spoken answer, whether Voice Match verified it. */
+export interface AnswerChannel { via: AnswerVia; verified?: boolean }
+
+/**
+ * What became of a spoken answer: taken ("answered"), or why not. A yes needs a verified voice ("unverified"), never
+ * answers a question whose card only a click may allow ("click-only"), and waits as a key would for the question to be
+ * armed, its whole text read, or its panel shown whole ("not-yet").
+ */
+export type VoiceAnswerResult = "answered" | "no-question" | "unverified" | "click-only" | "not-yet";
 
 /** A question whose full content shows in a window of Ember's own (the command card, a consent card). */
 export type QuestionPanel =
@@ -75,7 +88,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/;
  * how many times the approve key asked for more, and when that key was last pressed (`keyAt`).
  */
 interface WholeRead { seen: boolean; page: number; seenAt: number; keyAt: number }
-interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead }
+interface Pending { n: number; q: Question; resolve: (answer: string | null) => void; timer: ReturnType<typeof setTimeout> | null; shownAt: number; off?: () => void; whole?: WholeRead; note?: string }
 
 export interface ConfirmerTiming {
   /** How long a question stays up before it expires as "no" (read as each one shows: the user's setting may change). */
@@ -123,6 +136,8 @@ export class Confirmer {
   private panelHint: ConfirmerTiming["panelHint"];
   /** Waiting for no question to be up or queued (settled()). */
   private settledWaiters: (() => void)[] = [];
+  /** How each answered question was answered (howAnswered), kept only as long as the question object is. */
+  private channels = new WeakMap<Question, AnswerChannel>();
 
   constructor(private show: (patch: Partial<EmberState>) => void, timing: number | ConfirmerTiming = {}) {
     const t = typeof timing === "number" ? { timeoutMs: timing } : timing;
@@ -186,7 +201,53 @@ export class Confirmer {
     if (!this.current.q.options.some(o => o.id === m[2])) return false;
     if (this.now() - this.current.shownAt < this.armOf(this.current.q) || this.blocked()) return false;
     if (!this.allowedFrom(this.current, m[2], via, proof)) return false;
+    this.channels.set(this.current.q, { via });
     this.finish(this.current, m[2]);
+    return true;
+  }
+
+  /** How question `q` was answered, once it has been by the user (undefined: not yet, expired, cancelled or stopped). */
+  howAnswered(q: Question): AnswerChannel | undefined {
+    return this.channels.get(q);
+  }
+
+  /**
+   * A short spoken answer to the question up now (main's onVoice, after voice-answer.ts judged the words): "allow" takes
+   * the primary option ("Allow", never "Always"), "deny" Not now. A "Not now" is taken from anyone at once (the safer
+   * way). A yes only when `verified` (Voice Match matched the owner's voice), and as the approve key would be: not while
+   * Ember borrows the mouse, not on a click-only question (a consent card), not before the question is armed, its whole
+   * text has been in view or its panel window shows all of it.
+   */
+  answerVoice(which: "allow" | "deny", o: { verified: boolean }): VoiceAnswerResult {
+    const c = this.current;
+    if (!c) return "no-question";
+    if (which === "deny") {
+      if (!c.q.options.some(x => x.id === "deny")) return "not-yet";
+      this.channels.set(c.q, { via: "voice", verified: o.verified === true });
+      this.finish(c, "deny");
+      return "answered";
+    }
+    if (o.verified !== true) return "unverified";
+    if (c.q.clickOnly) return "click-only";
+    const opt = c.q.options.find(x => x.primary) ?? c.q.options[0];
+    if (!opt || opt.id === "always" || opt.id === "deny") return "not-yet";
+    if (this.now() - c.shownAt < this.armOf(c.q) || this.blocked()) return "not-yet";
+    // As the approve key: its whole text read and armed again since, and a panel only while its window shows all of it.
+    if (!this.allowedFrom(c, opt.id, "key", undefined)) return "not-yet";
+    this.channels.set(c.q, { via: "voice", verified: true });
+    this.finish(c, opt.id);
+    return "answered";
+  }
+
+  /**
+   * A line under the question up now, in place of its key hint (why a spoken answer wasn't taken, and how it can be):
+   * the question stays as it is. False when no question is up.
+   */
+  note(text: string): boolean {
+    const c = this.current;
+    if (!c) return false;
+    c.note = text.replace(/\s+/g, " ").trim().slice(0, 240) || undefined;
+    this.show({ bubble: this.bubbleOf(c) });
     return true;
   }
 
@@ -312,7 +373,7 @@ export class Confirmer {
       // A panel question is answered in its window, which names the keys while they work there; its step says how to
       // get there from the keyboard (the bubble's own buttons are mouse-only). Until all of a whole text has been shown,
       // the approve key shows its next part: the keys say that, not "allow".
-      step: panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.()) || null, streaming: false,
+      step: p.note ?? ((panel ? this.panelHintFor(panel) : (p.whole && !p.whole.seen ? this.readKeyHint?.() : this.keyHint?.())) || null), streaming: false,
       // A panel question's bubble only brings its window up (or says no): what is allowed must be seen whole first.
       actions: panel
         ? [{ id: `ui:panel:${p.n}`, label: panel.kind === "command" ? "Show the command" : "Read it" }, { id: `q${p.n}:deny`, label: "Not now" }]
