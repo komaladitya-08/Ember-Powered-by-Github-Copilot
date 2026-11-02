@@ -10,8 +10,9 @@
 
 import fs from "node:fs";
 import crypto from "node:crypto";
-import { reminderTime, whenWords, type Reminders } from "./reminders";
-import { MAX_STEPS, routineSteps, type RoutineBook } from "./routines";
+import { reminderTime, whenWords, type Reminder, type Reminders } from "./reminders";
+import { MAX_STEPS, routineKey, routineSteps, type Routine, type RoutineBook } from "./routines";
+import { ownWords } from "../memory/service";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
@@ -156,7 +157,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; now?: () => number }, routines?: { store: RoutineBook; said: () => string }): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; now?: () => number }, routines?: RoutineTools): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -240,17 +241,35 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
         async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
     ] : []),
-    ...(reminders ? reminderTools(reminders) : []),
+    ...(reminders ? reminderTools(reminders, !!routines) : []),
     ...(routines ? routineTools(routines) : []),
   ];
 }
 
 /**
- * The routine tools (routines.ts), while routines are on: a routine is saved only from the user's own words, and running
- * one starts its steps as ordinary requests, so every risky step still asks.
+ * The routine tools as the conductor gives them: the book, what the user said this turn, and `ran`, told of a routine
+ * run_routine runs (its steps count as the user's words for the rest of the turn).
+ */
+export interface RoutineTools {
+  store: RoutineBook;
+  said: () => string;
+  ran?: (r: Routine) => void;
+  /**
+   * What the user said this turn, without any routine's steps: what saves, runs and deletes a routine (a routine's
+   * steps never run or delete another). Absent: `said`.
+   */
+  own?: () => string;
+  /** A routine already ran this turn: at most one runs a turn. */
+  ranOne?: () => boolean;
+}
+
+/**
+ * The routine tools (routines.ts), while routines are on: a routine is saved, run or deleted only when the user's own
+ * words this turn name it (never the screen's, a file's or a task result's), and running one starts its steps as
+ * ordinary requests, so every risky step still asks.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-function routineTools(r: { store: RoutineBook; said: () => string }): Tool<any>[] {
+function routineTools(r: RoutineTools): Tool<any>[] {
   return [
     checkedTool("save_routine", "Save a routine when the user asks you to (\"when I say start my day, open Mail and show today's calendar\"): a name and a few steps, each a request in their own words. Saying the name later runs the steps. One with the same name is replaced.",
       z.object({
@@ -258,7 +277,7 @@ function routineTools(r: { store: RoutineBook; said: () => string }): Tool<any>[
         steps: z.array(z.string().min(1).max(200)).min(1).max(MAX_STEPS).describe("Each step as a request, in the user's words (\"open Mail\")"),
       }),
       async ({ name, steps }) => {
-        const saved = r.store.save(name, steps, r.said());
+        const saved = r.store.save(name, steps, (r.own ?? r.said)());
         return typeof saved === "string" ? saved : `Saved “${saved.name}” with ${saved.steps.length} step${saved.steps.length === 1 ? "" : "s"}. Tell the user in a few words.`;
       }),
     checkedTool("list_routines", "List the user's saved routines and their steps.",
@@ -271,26 +290,107 @@ function routineTools(r: { store: RoutineBook; said: () => string }): Tool<any>[
       z.object({ name: z.string().min(1).max(60).describe("The routine's name") }),
       async ({ name }) => {
         const found = r.store.find(name);
-        return found ? routineSteps(found) : `No routine is called “${name.slice(0, 60)}”. Use list_routines, or ask the user.`;
+        if (!found) return `No routine is called “${name.slice(0, 60)}”. Use list_routines, or ask the user.`;
+        // Only the user's own request runs one, when it is the routine's name: never a name the screen, a file or a task
+        // result says, nor a request that only shares its words.
+        if (!namesRoutine((r.own ?? r.said)(), found.name)) return `Not run: the user didn't ask for “${found.name}” in this request. Run a routine only when their request is its name.`;
+        // At most one a turn: a routine's own steps never start another (or itself again).
+        if (r.ranOne?.()) return `Not run: a routine already ran in this request, and only one runs at a time. Do its steps, and tell the user they can ask for “${found.name}” next.`;
+        r.ran?.(found);
+        return routineSteps(found);
       }),
     checkedTool("delete_routine", "Delete a saved routine the user asks you to delete, by its name.",
       z.object({ name: z.string().min(1).max(60) }),
       async ({ name }) => {
         const found = r.store.find(name);
-        return found && r.store.forget(found.id) ? `Deleted “${found.name}”.` : `No routine is called “${name.slice(0, 60)}”.`;
+        if (!found) return `No routine is called “${name.slice(0, 60)}”.`;
+        // Only the user's own request to delete it: never a name the screen, a file or a task result says.
+        if (!asksToDelete((r.own ?? r.said)(), found.name)) return `Not deleted: the user didn't ask in this request to delete “${found.name}”. Delete a routine only when they ask.`;
+        return r.store.forget(found.id) ? `Deleted “${found.name}”.` : `No routine is called “${found.name}”.`;
       }),
   ];
 }
 
+/** Words that ask for a reminder to go ("cancel", "never mind", "don't remind me"). */
+const CANCEL_WORDS = /\b(?:cancel|delete|remove|clear|forget|drop|scrap|skip|stop|turn off|never mind|nevermind|don't remind me|do not remind me|no longer need)\b/gi;
+/**
+ * A request to set one ("remind me…", "could you remind me…", "I want you to set a reminder…"): never a cancel, whatever
+ * its words. "Don't remind me" is a cancel, not this.
+ */
+const SETS_REMINDER = /(?<!\b(?:don't|do not|never|not|stop|no need to)\s+)\bremind me\b|\b(?:set|add|make|create)\s+(?:me\s+)?(?:a|another|up a|one more)\s+reminder\b/i;
+/** A negation just before a cancel word: "don't cancel…", "do not remove…", "don't stop until…". */
+const NEGATED = /\b(?:don't|do not|dont|never|not|no need to|won't|shouldn't)\s+(?:\S+\s+)?$/i;
+/** "All my reminders", "every reminder", "both reminders". */
+const ALL_REMINDERS = /\b(?:all\s+(?:of\s+)?(?:my\s+|the\s+)?reminders|every\s+reminder|both\s+(?:of\s+)?(?:my\s+|the\s+)?reminders)\b/i;
+/** How many words after a cancel word it governs ("cancel the reminder to call Priya"). */
+const CANCEL_REACH = 6;
+
+/**
+ * Whether what the user said this turn asks to cancel `r`: a cancel word governing it, within a few words in the same
+ * clause, that names the reminder's own words, all the reminders, or "the reminder" when it is the only one waiting. A
+ * request to set one never cancels one ("set a reminder to stop at the bank"), nor does a cancel word about something
+ * else ("…and remove the old screenshots"). Text on the screen or in a task result never cancels one.
+ */
+export function asksToCancel(said: string, r: Pick<Reminder, "text">, waiting: number): boolean {
+  // Sentence by sentence ("remind me to buy milk; also cancel the reminder to call Priya" is a set, then a cancel).
+  for (const sentence of said.replace(/[\u2018\u2019]/g, "'").split(/[\n.?!;]/)) {
+    // A request to set one never cancels one, and a cancel is always about a reminder ("remind", "reminder").
+    if (SETS_REMINDER.test(sentence) || !/\bremind(?:er|ers)?\b/i.test(sentence)) continue;
+    for (const clause of sentence.split(",")) {
+      for (const m of clause.matchAll(CANCEL_WORDS)) {
+        // "Don't cancel…" keeps it.
+        if (NEGATED.test(clause.slice(0, m.index ?? 0))) continue;
+        const after = clause.slice((m.index ?? 0) + m[0].length).trim().split(/\s+/).filter(Boolean).slice(0, CANCEL_REACH).join(" ");
+        if (!after) continue;
+        if (ALL_REMINDERS.test(after) || ownWords(r.text, after)) return true;
+        if (waiting === 1 && /\breminders?\b/i.test(after)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** The wake word before a request ("Ember, …", "hey Ember, …"). */
+const WAKE = /^\s*(?:(?:hey|ok|okay)[,\s]+)?(?:ember[,\s]+)?/i;
+const escaped = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Whether a line of what the user said this turn is the routine's name as a whole request ("start my day", "Ember,
+ * start my day!", "run my start my day routine"): never a request that only shares its words ("what day did I start
+ * this job?", "clean up the spelling in this paragraph").
+ */
+export function namesRoutine(said: string, name: string): boolean {
+  const k = routineKey(name);
+  if (!k) return false;
+  const whole = new RegExp(`^(?:please\\s+)?(?:(?:run|start|do)\\s+(?:my\\s+|the\\s+)?)?${escaped(k)}(?:\\s+routine)?(?:[,\\s]+please)?$`, "i");
+  return said.split("\n").some(line => whole.test(routineKey(line.replace(WAKE, ""))));
+}
+
+/** Words that ask for a routine to go. */
+const DELETE_WORDS = String.raw`(?:delete|remove|forget|erase|drop|scrap|get rid of)`;
+
+/**
+ * Whether what the user said this turn asks to delete the routine `name`: a line that is the request itself ("delete
+ * my start my day routine", "please remove start my day", "can you delete the routine called wind down?"), never a
+ * negation ("don't delete my start my day routine", "never remove…") or another question ("should I delete…?").
+ */
+export function asksToDelete(said: string, name: string): boolean {
+  const k = routineKey(name);
+  if (!k) return false;
+  const re = new RegExp(String.raw`^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?${DELETE_WORDS}\s+(?:(?:my|the|that|this|routine|called|named)\s+){0,3}${escaped(k)}(?:\s+routine)?(?:[,\s]+(?:please|for me))?$`, "i");
+  return said.replace(/[\u2018\u2019]/g, "'").split("\n").some(line => re.test(routineKey(line.replace(WAKE, ""))));
+}
+
 /**
  * The reminder tools (reminders.ts): a reminder only tells the user something when it is due, in the user's own words;
- * it never starts a task. Reminders last while Ember runs.
+ * it never starts a task, and only the user's own words cancel one. Reminders last while Ember runs, or across restarts
+ * while routines are on (`lasting`).
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-function reminderTools(r: { store: Reminders; said: () => string; now?: () => number }): Tool<any>[] {
+function reminderTools(r: { store: Reminders; said: () => string; now?: () => number }, lasting = false): Tool<any>[] {
   const now = r.now ?? Date.now;
   return [
-    checkedTool("set_reminder", "Remind the user of something later, when they ask (\"remind me in 20 minutes to call Priya\", \"at 3 pm tell me to stand up\"). Ember shows and says it when it's due; it never acts on it. Use the user's own words for what to remind them of. Give minutes from now, or a clock time. Reminders last while Ember runs: if they ask for one days ahead, say so.",
+    checkedTool("set_reminder", `Remind the user of something later, when they ask ("remind me in 20 minutes to call Priya", "at 3 pm tell me to stand up"). Ember shows and says it when it's due; it never acts on it. Use the user's own words for what to remind them of. Give minutes from now, or a clock time. ${lasting ? "Reminders are kept when Ember restarts, at most a week ahead." : "Reminders last while Ember runs: if they ask for one days ahead, say so."}`,
       z.object({
         text: z.string().min(1).max(200).describe("What to remind them of, in their words (\"call Priya\")"),
         minutes: z.number().int().min(1).max(10_080).optional().describe("Minutes from now"),
@@ -311,7 +411,14 @@ function reminderTools(r: { store: Reminders; said: () => string; now?: () => nu
       }),
     checkedTool("cancel_reminder", "Cancel a reminder the user asks you to cancel, by its id from set_reminder or list_reminders.",
       z.object({ id: z.string().min(1).max(20).describe("The reminder's id, without brackets") }),
-      async ({ id }) => r.store.cancel(id.replace(/^\[|\]$/g, "")) ? `Cancelled ${id}.` : `No reminder has the id ${id}. Use list_reminders to find it.`),
+      async ({ id }) => {
+        const key = id.replace(/^\[|\]$/g, "");
+        const list = r.store.list();
+        const found = list.find(x => x.id === key);
+        if (!found) return `No reminder has the id ${id}. Use list_reminders to find it.`;
+        if (!asksToCancel(r.said(), found, list.length)) return "Not cancelled: the user didn't ask in this request to cancel that reminder. Cancel one only when they ask.";
+        return r.store.cancel(key) ? `Cancelled ${id}.` : `No reminder has the id ${id}. Use list_reminders to find it.`;
+      }),
   ];
 }
 
@@ -554,8 +661,25 @@ export class Conductor {
    * turn waits for it, and its words must not stand for the turn still running.
    */
   private said = "";
+  /**
+   * The steps of the routines run_routine ran this turn: the user's own words when they saved them, so a reminder or a
+   * fact one sets counts as theirs, and a task one starts checks its risky steps against them (AgentHost.userWordsOf).
+   */
+  private routineWords: string[] = [];
+  /** The routine run_routine ran this turn (at most one runs a turn). */
+  private routinesRan = new Set<string>();
   /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
   private unstarted: string[] = [];
+
+  /** What the user said this turn, with the steps of the routines it ran. */
+  private get turnSaid(): string {
+    return [this.said, ...this.routineWords].filter(Boolean).join("\n");
+  }
+
+  /** The steps of the routines run this turn ("" when none), in the user's words: AgentHost adds them to the turn's. */
+  get routineSaid(): string {
+    return this.routineWords.join("\n");
+  }
 
   /**
    * A turn began with `content` (the prompt ask() sent, which ends with the user's words): the oldest request it
@@ -566,6 +690,8 @@ export class Conductor {
     const said = content.trimEnd();
     const i = this.unstarted.findIndex(t => said.endsWith(t.trim()));
     this.said = i < 0 ? "" : this.unstarted[i];
+    this.routineWords = [];
+    this.routinesRan.clear();
     this.unstarted.splice(0, i + 1);
     // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
     // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
@@ -575,19 +701,22 @@ export class Conductor {
   /** Memory's tools, while memory is on (deps.memory). */
   private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
     const store = this.deps.memory;
-    return store ? { store, said: () => this.said } : undefined;
+    return store ? { store, said: () => this.turnSaid } : undefined;
   }
 
   /** The routine tools, while routines are on (deps.routines). */
-  private get routineTools(): { store: RoutineBook; said: () => string } | undefined {
+  private get routineTools(): RoutineTools | undefined {
     const store = this.deps.routines;
-    return store ? { store, said: () => this.said } : undefined;
+    return store ? {
+      store, said: () => this.turnSaid, own: () => this.said, ranOne: () => this.routinesRan.size > 0,
+      ran: r => { this.routinesRan.add(r.id); this.routineWords.push(...r.steps); },
+    } : undefined;
   }
 
   /** The reminder tools, when the deps give reminders. */
   private get reminderTools(): { store: Reminders; said: () => string } | undefined {
     const store = this.deps.reminders;
-    return store ? { store, said: () => this.said } : undefined;
+    return store ? { store, said: () => this.turnSaid } : undefined;
   }
 
   /** The tools that come with other computers, as the deps give them. */
@@ -622,7 +751,7 @@ export class Conductor {
       model: d.model ?? undefined,
       provider: d.provider,
       tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools),
-      systemMessage: emberSystemMessage(d.words, d.memory ? { ...(d.caps ?? NO_CAPS), memory: true } : d.caps),
+      systemMessage: emberSystemMessage(d.words, d.memory || d.routines ? { ...(d.caps ?? NO_CAPS), ...(d.memory ? { memory: true } : {}), ...(d.routines ? { routines: true } : {}) } : d.caps),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
       ...(d.extensions ? { extensions: d.extensions } : {}),
@@ -709,9 +838,11 @@ export class Conductor {
     // What Ember remembers that bears on the request (while memory is on): before it, as information.
     let remembered = "";
     try { remembered = this.deps.memory?.context(text) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    const routines = this.routinesLine(text);
     const parts = [
       ...(reports.length ? [`<task_results untrusted="true">\n${reports.map(r => r.replace(/</g, "‹")).join("\n")}\n</task_results>`] : []),
       ...(remembered ? [remembered] : []),
+      ...(routines ? [routines] : []),
       ...(line ? [line] : []),
       ...(context ? [context] : []),
       text,
@@ -737,6 +868,23 @@ export class Conductor {
       if (this.session === session) this.deps.presenter.fail(friendlyError(msg, undefined, { provider: !!this.deps.provider, settingsKey: this.settingsKey() }));
       throw new ConnectionLost(msg);
     }
+  }
+
+  /**
+   * The `<routines>` line before a request, while routines are on and some are saved: a request that is a routine's
+   * name says so (it is run), else their names, so the conversation knows saying one runs it. "" otherwise.
+   */
+  private routinesLine(text: string): string {
+    const book = this.deps.routines;
+    if (!book) return "";
+    let list: Routine[];
+    try { list = book.list(); } catch (err) { this.deps.log.warn("conductor.routines_unreadable", { err: err instanceof Error ? err.message : String(err) }); return ""; }
+    if (!list.length) return "";
+    const name = (r: Routine) => `“${r.name.replace(/[<>]/g, "")}”`;
+    // The whole request, without the wake word ("Ember, start my day"), is a routine's name.
+    const named = list.find(r => namesRoutine(text, r.name));
+    if (named) return `<routines>The user's request is the name of their routine ${name(named)}: run it with run_routine.</routines>`;
+    return `<routines>The user's routines: ${list.map(name).join(", ")}. Run one with run_routine only when the user's request names it.</routines>`;
   }
 
   /** The settings shortcut an error may name: the one Ember holds now (none if the check fails), else the OS's table's. */
@@ -768,6 +916,8 @@ export class Conductor {
     this.deps.log.warn(why === "silent" ? "conductor.turn_silent" : "conductor.turn_not_started", { ms });
     this.deps.onTurnEnd?.(true);
     if (why === "silent") {
+      // Ending it drops the requests waiting behind it (as the host's queue does): no turn will begin for them.
+      this.unstarted = [];
       this.deps.presenter.fail(NO_ANSWER);
       this.deps.onSilentTurn?.();
       this.endSilentTurn();

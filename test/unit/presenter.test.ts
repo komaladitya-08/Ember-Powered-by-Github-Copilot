@@ -57,6 +57,13 @@ describe("Presenter", () => {
     expect(last().bubble?.thought.endsWith("…")).toBe(true);
   });
 
+  it("shows a tool without words of its own (an extension's) as “Using a tool”, never its raw name (audit of the conversation features)", () => {
+    const { p, last } = setup();
+    p.userPrompt("list my issues");
+    p.event({ type: "tool.execution_start", data: { toolName: "github-list_issues" } });
+    expect(last().bubble?.step).toBe("Using a tool");
+  });
+
   it("shows the current tool as a step and looks focused", () => {
     const { p, last } = setup();
     p.userPrompt("be glint");

@@ -57,6 +57,19 @@ describe("a running task's card", () => {
     expect(last().activity!.approvals).toBe(1);
   });
 
+  it("tells “status?” what holds a running task up: the user's answer, or a Stop winding it down, and when it began to run (audit of the conversation features)", async () => {
+    const { tm, tell } = manager();
+    const t = tm.start("Send the report");
+    expect(tm.holdUp(t.id)).toBeNull();
+    await vi.waitFor(() => expect(tell.length).toBe(1));
+    expect(t.ranAt).toBeGreaterThanOrEqual(t.started);
+    expect(tm.holdUp(t.id)).toBeNull();
+    tell[0]({ type: "question" });
+    expect(tm.holdUp(t.id)).toBe("answer");
+    tm.cancel(t.id);
+    expect(tm.holdUp(t.id)).toBe("stopping");
+  });
+
   it("names a change of hand in the details, but not the background it starts in", async () => {
     const { tm, tell, last } = manager({
       makeWorker: (_s, _p, update, activity) => { setTimeout(() => { update!({ hand: "background" }); update!({ hand: "cursor" }); activity!({ type: "turn" }); }, 0); return { run: () => new Promise(() => undefined), dispose: async () => undefined, sessionId: "s" } as unknown as Worker; },
