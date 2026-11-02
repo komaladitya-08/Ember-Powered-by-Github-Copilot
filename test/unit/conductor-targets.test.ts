@@ -170,4 +170,20 @@ describe("the user's words a turn's tools check against", () => {
     emit({ type: "user.message", data: { content: "Something the runtime sent itself" } });
     expect(await setReminder("how is the weather today")).toMatch(/user's own words/);
   });
+
+  it("drops the requests waiting behind a turn that went silent, as the runtime does: none of them gives a later turn its words (audit of the conversation features)", async () => {
+    const reminders = new Reminders({ onDue: () => undefined, timers: { set: (() => 0) as unknown as typeof setTimeout, clear: () => undefined } });
+    const { c, config, emit } = await conductorWith({ reminders, turnEndGraceMs: 60_000 });
+    const setReminder = (text: string) => run(byName(config().tools, "set_reminder"), { text, minutes: 5 });
+    await c.ask("what's on my screen");
+    emit({ type: "user.message", data: { content: "what's on my screen" } });
+    await c.ask("remind me in 5 minutes to water the plants");
+    // The turn went silent and is ended: the request waiting behind it is dropped with it.
+    (c as unknown as { stuckTurn(why: string, ms: number): void }).stuckTurn("silent", 1);
+    emit({ type: "session.idle", data: {} });
+    // A turn the runtime begins with that dropped request's words is none of the user's requests now.
+    emit({ type: "user.message", data: { content: "remind me in 5 minutes to water the plants" } });
+    expect(await setReminder("water the plants")).toMatch(/user's own words/);
+    await c.stop();
+  });
 });

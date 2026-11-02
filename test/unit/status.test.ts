@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsReply, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -57,6 +57,15 @@ describe("statusReply", () => {
 
   it("says how long a task without a plan has been at it, rather than guessing how far it has got", () => {
     expect(statusReply("name", [task({})], NOW)).toBe("Working on “Tidy the desktop”, about 2 minutes in.");
+  });
+
+  it("counts the minutes from when the task began to run, not from when it waited in the queue (audit of the conversation features)", () => {
+    expect(statusReply("status", [task({ started: NOW - 10 * 60_000, ranAt: NOW - 30_000 })], NOW)).toBe("Working on “Tidy the desktop”, 30 seconds in.");
+  });
+
+  it("says a task is waiting for the user's answer, or stopping, rather than “Working on…” (audit of the conversation features)", () => {
+    const tasks = [task({ id: "a", title: "Send the report" }), task({ id: "b", title: "Tidy the desktop" })];
+    expect(statusReply("status", tasks, NOW, id => (id === "a" ? "answer" : "stopping"))).toBe("“Send the report” is waiting for your answer. “Tidy the desktop” is stopping.");
   });
 
   it("names a guide as showing the user, where a task runs elsewhere, and how many wait", () => {
@@ -126,6 +135,15 @@ describe("catch-up", () => {
     expect(catchUpReply(many, NOW)).toBe("5 tasks finished. “Task 1”: done. “Task 2”: done. “Task 3”: done. And 2 more.");
     expect(catchUpReply([], NOW)).toBe("Nothing new: no tasks finished in the last two hours.");
   });
+
+  it("says “you stopped it” only when the user did, and reads a summary without its markdown (audit of the conversation features)", () => {
+    const tasks = [
+      task({ id: "a", title: "Build the app", status: "cancelled", finished: NOW - 1000, stopReason: "build-01's connection dropped, so I stopped this." }),
+      task({ id: "b", title: "Tidy the desktop", status: "done", finished: NOW - 2000, result: { success: true, summary: "Moved **3** screenshots to `Pictures`." } }),
+      task({ id: "c", title: "Check the logs", status: "cancelled", finished: NOW - 3000 }),
+    ];
+    expect(catchUpReply(tasks, NOW)).toBe("3 tasks finished. “Build the app”: build-01's connection dropped, so I stopped this. “Tidy the desktop”: done. Moved 3 screenshots to Pictures. “Check the logs”: you stopped it.");
+  });
 });
 
 describe("systems check", () => {
@@ -184,6 +202,41 @@ describe("AgentHost's status answer", () => {
     expect(await host.ask("open the quarterly report", null, host.stopEpoch - 1)).toBe(false);
   });
 
+  it("tells main only once a request goes to Copilot, so “On it.” never comes while it waits or for one answered here (audit of the conversation features)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined });
+    let sent = 0;
+    const onSent = () => { sent++; };
+    await host.ask("Ember?", null, host.stopEpoch, { onSent });
+    await host.ask("open the quarterly report", null, host.stopEpoch, { onSent });
+    expect(sent).toBe(0);
+    // Connected: it is told just before the request goes.
+    const order: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a connected conversation, without Copilot
+    const inner = host as any;
+    inner.status = { ...inner.status, phase: "ready" };
+    inner.conductor = { sessionId: "s", ending: null, ask: async () => { order.push("ask"); } };
+    expect(await host.ask("open the quarterly report", null, host.stopEpoch, { onSent: () => order.push("sent") })).toBe(true);
+    expect(order).toEqual(["sent", "ask"]);
+  });
+
+  it("arms no acknowledgement for a request queued behind a turn under way, so it isn't said over that turn's answer (review of #129)", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet, setState: () => undefined, onStatus: () => undefined });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a connected conversation, without Copilot
+    const inner = host as any;
+    inner.status = { ...inner.status, phase: "ready" };
+    inner.conductor = { sessionId: "s", ending: null, ask: async () => undefined };
+    inner.queued = [{ target: null, words: "open Mail", screen: [] }];
+    let sent = 0;
+    expect(await host.ask("open the quarterly report", null, host.stopEpoch, { onSent: () => { sent++; } })).toBe(true);
+    expect(sent).toBe(0);
+  });
+
   it("turns reading results aloud off and on by request, saved in settings, and says so", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
     const settings = new SettingsStore(path.join(dir, "settings.json"));
@@ -192,12 +245,31 @@ describe("AgentHost's status answer", () => {
     const answers: string[] = [];
     const host = new AgentHost({
       userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet,
-      setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t),
+      setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t), health: () => ({ mic: "off", speaks: true }),
     });
     await host.ask("Ember, just show me");
     expect(settings.get().speakResults).toBe(false);
     await host.ask("read them out again");
     expect(settings.get().speakResults).toBe(true);
     expect(answers).toEqual([RESULTS_REPLY.quiet, RESULTS_REPLY.loud]);
+  });
+
+  it("never promises results read aloud when Ember isn't speaking, the organisation keeps them on screen, or the switch can't be saved (audit of the conversation features)", async () => {
+    expect(resultsReply("loud", { saved: true, on: true, speaks: true })).toBe(RESULTS_REPLY.loud);
+    expect(resultsReply("loud", { saved: true, on: true, speaks: false })).toBe(RESULTS_REPLY.loudSilent);
+    expect(resultsReply("loud", { saved: true, on: false, speaks: true })).toBe(RESULTS_REPLY.managed);
+    expect(resultsReply("quiet", { saved: false, on: true, speaks: true })).toBe(RESULTS_REPLY.failed);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-status-"));
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    const answers: string[] = [];
+    const host = new AgentHost({
+      userData: dir, runtimePath: "/nowhere/copilot-runtime", settings, log: quiet,
+      setState: () => undefined, onStatus: () => undefined, onAnswer: t => answers.push(t), health: () => ({ mic: "off", speaks: false }),
+    });
+    await host.ask("read them out again");
+    settings.update = () => { throw new Error("disk full"); };
+    await host.ask("just show me");
+    expect(answers).toEqual([RESULTS_REPLY.loudSilent, RESULTS_REPLY.failed]);
   });
 });

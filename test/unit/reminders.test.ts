@@ -15,7 +15,8 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { MAX_REMINDERS, Reminders, reminderTime, whenWords, type Reminder } from "../../app/main/agent/reminders";
+import crypto from "node:crypto";
+import { MAX_REMINDERS, Reminders, reminderNotification, reminderTime, whenWords, type Reminder } from "../../app/main/agent/reminders";
 import { conductorTools } from "../../app/main/agent/conductor";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -108,6 +109,29 @@ describe("Reminders", () => {
   });
 });
 
+describe("Reminders' ids and notifications (audit of the conversation features)", () => {
+  it("gives a new reminder an id of its own, so one already waiting keeps its timer and is still told", () => {
+    const due: string[] = [];
+    const timers: { fn: () => void; cleared: boolean }[] = [];
+    const store = new Reminders({
+      onDue: r => due.push(r.text), now: () => NOW,
+      timers: { set: ((fn: () => void) => { const t = { fn, cleared: false }; timers.push(t); return t; }) as unknown as typeof setTimeout, clear: (t => { (t as unknown as { cleared: boolean }).cleared = true; }) as typeof clearTimeout },
+    });
+    const spy = vi.spyOn(crypto, "randomBytes");
+    spy.mockImplementationOnce(() => Buffer.from("aaaaaa", "hex")).mockImplementationOnce(() => Buffer.from("aaaaaa", "hex")).mockImplementationOnce(() => Buffer.from("bbbbbb", "hex"));
+    const a = store.add("call Priya", NOW + 60_000, "remind me to call Priya") as Reminder;
+    const b = store.add("stand up", NOW + 60_000, "remind me to stand up") as Reminder;
+    spy.mockRestore();
+    expect(a.id).not.toBe(b.id);
+    expect(store.list().map(r => r.text)).toEqual(["call Priya", "stand up"]);
+  });
+
+  it("leaves the reminder's words out of a notification while the screen is locked", () => {
+    expect(reminderNotification({ text: "call the bank about the loan" }, true)).toBe("A reminder is due.");
+    expect(reminderNotification({ text: "call the bank about the loan" }, false)).toBe("call the bank about the loan");
+  });
+});
+
 describe("the conductor's reminder tools", () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK's tool objects
   const handler = (tools: any[], name: string) => (args: unknown) => tools.find(t => t.name === name).handler(args, {});
@@ -126,8 +150,21 @@ describe("the conductor's reminder tools", () => {
     said = "read me the newsletter";
     expect(await handler(tools, "set_reminder")({ text: "wire the deposit to the new account", minutes: 5 })).toMatch(/user's own words/);
     const id = /\[([0-9a-f]+)\]/.exec(set)![1];
+    // Only the user's own request cancels one: never the screen or a task result (audit of the conversation features).
+    expect(await handler(tools, "cancel_reminder")({ id: `[${id}]` })).toMatch(/^Not cancelled: the user didn't ask/);
+    said = "cancel the reminder to call Priya";
     expect(await handler(tools, "cancel_reminder")({ id: `[${id}]` })).toBe(`Cancelled [${id}].`);
     expect(await handler(tools, "list_reminders")({})).toBe("No reminders are waiting.");
+  });
+
+  it("says reminders last across a restart only while routines keep them (audit of the conversation features)", async () => {
+    const { RoutineBook, routinesFile } = await import("../../app/main/agent/routines");
+    const store = new Reminders({ onDue: () => undefined });
+    const plain = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, { store, said: () => "" });
+    expect(plain.find(t => t.name === "set_reminder")!.description).toMatch(/Reminders last while Ember runs/);
+    const book = new RoutineBook({ file: routinesFile(fs.mkdtempSync(path.join(os.tmpdir(), "ember-rem-"))) });
+    const kept = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, { store, said: () => "" }, { store: book, said: () => "" });
+    expect(kept.find(t => t.name === "set_reminder")!.description).toMatch(/kept when Ember restarts/);
   });
 
   it("gives no reminder tools unless reminders are given (today's tool list)", () => {
