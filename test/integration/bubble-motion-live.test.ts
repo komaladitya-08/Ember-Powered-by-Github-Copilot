@@ -131,7 +131,10 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "ember-bubble-motion-test", main: "main.cjs" }));
     const env: NodeJS.ProcessEnv = { ...process.env, DISPLAY: display, ELECTRON_ENABLE_LOGGING: "0" };
     delete env.ELECTRON_RUN_AS_NODE;
-    const child = spawn(electronBinary(), [...(process.getuid?.() === 0 ? ["--no-sandbox"] : []), dir], { stdio: ["ignore", "pipe", "pipe"], env });
+    // A test harness that loads only its own local page, so it runs without the Chromium sandbox: on a runner whose
+    // chrome-sandbox isn't set up setuid root (ubuntu's CI) Electron aborts at once with it ("The SUID sandbox helper
+    // binary was found, but is not configured correctly"), and as root (EL8's container) it can't run with it at all.
+    const child = spawn(electronBinary(), ["--no-sandbox", dir], { stdio: ["ignore", "pipe", "pipe"], env });
     let out = "", err = "";
     child.stdout.on("data", d => { out += d; });
     child.stderr.on("data", d => { err += d; });
