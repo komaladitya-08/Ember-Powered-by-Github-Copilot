@@ -244,8 +244,9 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
 - **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
   (headings, switch labels, footnotes, buttons, and a few other words people use for a pane, so "mic" finds Voice:
   `SEARCH_ALIASES`, ranked after the settings named by their own words), and says "Nothing found" in the sidebar
-  when none does. Enter goes to the first setting found and marks its row (a group's header or footnote stands for its
-  first row), with its control focused. The sidebar grows with the text size, so its labels stay on one line. The links, most
+  when none does. Enter goes to the first setting found and marks its row, with its control focused (a group's header
+  or footnote stands for the group: a one-row group's row, else the whole group). The sidebar grows with the text size,
+  so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). The links, most
   used first: Home, Copilot, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
@@ -331,7 +332,8 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   colour, Ember's accent as words in a light tint of it (#FFE4CC) and the marks in light tints (a view's toned words
   take the label too: the reddest red that passes 4.5:1 there is about #FFDCDC, which read as white with a blush, so
   the tone is carried by its mark, tint and rule); a risky question's tag is filled with Clear's yellow under dark
-  words, so it stays unmistakably the caution colour;
+  words, so it stays unmistakably the caution colour (not in a contrast theme, where it is the text colour on the
+  window's, edged);
   **Regular** (the default, 0.88); or **Solid**. Reduce Transparency and Calm make it solid,
   Increase Contrast solid with a 1 px light border. Three Clear designs were rendered for the owner
   (a 0.30 body with a dark text halo, the same with heavier weights and an accent-tinted halo, and

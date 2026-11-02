@@ -223,7 +223,10 @@ export class ViewRenderer {
       }
       case "badge": {
         const b = toned(el("span", "vw-badge"), n.tone);
-        if (n.symbol) b.append(sym(n.symbol));
+        // A warning or a problem always carries its symbol, so its tone never rests on colour alone (on Clear glass its
+        // words are in the label's colour); other tones show one only when the view asks.
+        const mark = n.symbol ?? (n.tone === "negative" || n.tone === "caution" ? TONE_SYMBOL[n.tone] : undefined);
+        if (mark) b.append(sym(mark));
         if (TONE_WORDS[n.tone]) b.append(sr(TONE_WORDS[n.tone]));
         b.append(document.createTextNode(n.text));
         return b;

@@ -635,10 +635,12 @@ html[data-text-size] .facts dd.path { font-size: calc(13px * var(--text-scale));
 html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: round(calc(18px * var(--text-scale)), 1px); }
 @media (min-width: 640px) {
   html[data-text-size] .jump a { font-size: calc(14px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
-  /* The sidebar grows with its words, so "Comfort & access" stays on one line at the larger sizes; the content moves
-     over with it. */
-  html[data-text-size] body:not(.first-run) .home > .jump { width: calc(200px * var(--text-scale)); }
-  html[data-text-size] body:not(.first-run) .home { padding-left: calc(228px * var(--text-scale)); }
+  /* The sidebar grows with its words, so "Comfort & access" stays on one line at the larger sizes, but only as far as
+     the window leaves the content its 460 px (a pane's own minimum, measured at Larger: the Computers pane needs about
+     385 px, plus its margins): from 640 to 720 px wide it stays 200 px, so nothing scrolls sideways. */
+  html[data-text-size] body:not(.first-run) { --sidebar: min(calc(200px * var(--text-scale)), max(200px, calc(100vw - 460px))); }
+  html[data-text-size] body:not(.first-run) .home > .jump { width: var(--sidebar); }
+  html[data-text-size] body:not(.first-run) .home { padding-left: calc(var(--sidebar) + 28px); }
 }
 html[data-text-size] .note-tag { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
 html[data-text-size] .view .file code, html[data-text-size] .view .excerpt figcaption, html[data-text-size] .view .excerpt pre { font-size: calc(12px * var(--text-scale)); line-height: round(calc(18px * var(--text-scale)), 1px); }
@@ -674,6 +676,8 @@ html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-
    its letters (a spread, which takes no room: nothing moves). */
 .found { border-radius: var(--r-xs); background: color-mix(in srgb, var(--accent) 16%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent); }
 .found:focus-visible { outline: none; }
+/* A whole group found by its header or footnote: tinted on its own fill, edged in the accent, its corners kept. */
+.group.found { border-radius: var(--r-lg); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); box-shadow: var(--group-edge), 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 @media (min-width: 640px) { .search { padding: 0 0 10px; } }
 @media (forced-colors: active) {
   .search input { border: 1px solid ButtonText; }

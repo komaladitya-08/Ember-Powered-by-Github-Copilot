@@ -1079,15 +1079,17 @@ search.addEventListener("keydown", e => {
   if (e.key !== "Enter" || !found.length) return;
   e.preventDefault();
   const { pane: p, el: hit } = found[0];
-  // A group's header or footnote stands for its first row: the row is marked and its control takes focus, so the mark
-  // sits on what changes the setting, not on a heading.
-  const group = hit.matches("h3.sub") ? hit.nextElementSibling : hit.matches(".hint") ? hit.previousElementSibling : null;
-  const el = group?.matches(".group") && group.firstElementChild instanceof HTMLElement && !hiddenHere(group.firstElementChild) ? group.firstElementChild : hit;
+  // A group's header or footnote stands for its group, which it describes as a whole: a group of one row is that row
+  // (marked, its control focused); a longer one is marked whole and takes focus itself, so no one row is picked for it.
+  const sibling = hit.matches("h3.sub") ? hit.nextElementSibling : hit.matches(".hint") ? hit.previousElementSibling : null;
+  const group = sibling instanceof HTMLElement && sibling.matches(".group") && !hiddenHere(sibling) ? sibling : null;
+  const rows = group ? [...group.children].filter((r): r is HTMLElement => r instanceof HTMLElement && !hiddenHere(r)) : [];
+  const el = !group ? hit : rows.length === 1 ? rows[0] : group;
   showPane(p, true);
   // A setting in a fold (What Ember did, About) shows once its folds are open.
   for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
   // The setting found takes focus (its control, when it is a label), marked until it loses focus.
-  const control = el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : el.querySelector<HTMLElement>("input, select, button");
+  const control = el === group ? null : el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : el.querySelector<HTMLElement>("input, select, button");
   const to = control ?? el;
   const madeFocusable = !control && !to.hasAttribute("tabindex");
   if (madeFocusable) to.tabIndex = -1;
