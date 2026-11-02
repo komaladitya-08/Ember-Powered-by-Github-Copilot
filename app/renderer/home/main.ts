@@ -801,7 +801,8 @@ function renderRoutines(rows: RoutineRow[]): void {
       return li;
     })
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: routinesEmptyText(routinesOn()) })]));
-  ($("routines-forget-all") as HTMLButtonElement).hidden = !rows.length;
+  // While routines are on, reminders may be kept too (Home lists none of them): Delete all clears those as well.
+  ($("routines-forget-all") as HTMLButtonElement).hidden = !rows.length && !routinesOn();
   if (routineFocus !== null) {
     const buttons = list.querySelectorAll("button");
     (buttons[Math.min(routineFocus, buttons.length - 1)] ?? $("routines-on")).focus();

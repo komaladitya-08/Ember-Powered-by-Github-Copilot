@@ -74,6 +74,8 @@ export interface PromptCaps {
   commandsOffered?: boolean;
   /** Long-term memory is on: the conductor has remember, recall and forget_memory (docs/MEMORY.md). Absent: false. */
   memory?: boolean;
+  /** Routines are on: the conductor has save_routine, list_routines, run_routine and delete_routine. Absent: false. */
+  routines?: boolean;
 }
 
 /** What AgentHost asks of the targets runtime (HostOptions.targets). */

@@ -711,6 +711,9 @@ export class AgentHost {
       { onEvent: e => this.conversationEvent(e), onProblem: text => this.rememberProblem(text), ...this.bubbleOptions });
     this.noticeBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
     this.offerBoard = new Presenter(o.setState, undefined, () => "Ember", this.owner, undefined, !!o.provider, this.bubbleOptions);
+    // Reminders kept from the last run come back now, not once Copilot connects: one due while Ember was offline or
+    // signed out is still told on time (a reminder never needs Copilot).
+    if (this.routinesWanted()) this.keepRoutines();
   }
 
   /**
@@ -939,6 +942,10 @@ export class AgentHost {
       if (!this.voiceUnchecked.has(before)) typed.unshift(said[0]);
       at = k;
     }
+    // The steps of a routine this turn ran (run_routine): the user's own words when they saved it, so its tasks' risky
+    // steps get the usual question rather than "you didn't ask for this".
+    const routine = r === this.turn ? this.conductor?.routineSaid ?? "" : "";
+    if (routine) { said.push(routine); typed.push(routine); }
     return { words: said.join("\n"), ...(agreed.length ? { agreed } : {}), ...(typed.length < said.length ? { commandWords: typed.join("\n") } : {}) };
   }
 
@@ -1090,19 +1097,7 @@ export class AgentHost {
       // Another account than the conversation's (signed in again from the error state, or the GitHub CLI's
       // account changed): it isn't resumed under this one. It's deleted, as at sign-out, and what it said and
       // how its tasks ended go with it.
-      if (this.conversation && login !== this.conversationLogin) {
-        this.o.log.info("agent.account_changed");
-        await this.forgetCurrent(RUNTIME_WAIT_MS);
-        this.carried = [];
-        this.transcript.length = 0;
-        this.terminalRefused.clear();
-        this.o.onTranscript?.([]);
-        // What Ember remembered was about the account before, its person: none of it carries over.
-        this.o.memory?.forgetAll();
-        this.reminders.clear();
-        this.o.routines?.forgetAll();
-        this.o.onAccountChanged?.();
-      }
+      if (this.conversation && login !== this.conversationLogin) await this.accountChanged();
 
       let models: ModelLike[] = [];
       const admin = this.o.admin?.();
@@ -1980,6 +1975,26 @@ export class AgentHost {
     this.terminalRefused.clear();
     this.o.onTranscript?.([]);
     this.o.log.info("agent.conversation_forgotten");
+  }
+
+  /**
+   * Another account than the conversation's signed in: the conversation is deleted, as at sign-out, and what it said,
+   * how its tasks ended and what Ember kept about its person go with it.
+   */
+  private async accountChanged(): Promise<void> {
+    this.o.log.info("agent.account_changed");
+    await this.forgetCurrent(RUNTIME_WAIT_MS);
+    this.carried = [];
+    this.transcript.length = 0;
+    this.terminalRefused.clear();
+    this.o.onTranscript?.([]);
+    // What Ember remembered was about the account before, its person: none of it carries over.
+    this.o.memory?.forgetAll();
+    this.reminders.clear();
+    this.o.routines?.forgetAll();
+    // How the tasks ended was the other account's too: "what did I miss?" doesn't tell this one.
+    this.finishedLately = [];
+    this.o.onAccountChanged?.();
   }
 
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */

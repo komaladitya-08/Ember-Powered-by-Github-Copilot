@@ -94,6 +94,7 @@ import { registerExtensionsIpc } from "./extensions-ipc";
 import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
+import { reminderNotification } from "./agent/reminders";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
@@ -1251,7 +1252,11 @@ function start(): void {
   // Routines and lasting reminders (app/main/agent/routines.ts): routines.json beside the settings, used only while the
   // user has them on and the organisation allows them.
   const routinesAllowed = () => policy.features.routines !== false;
-  const routineRows = () => (routinesAllowed() ? routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })) : []);
+  const routineRows = () => {
+    if (!routinesAllowed()) return [];
+    // An unreadable routines.json (no permission) lists nothing rather than failing Home's section.
+    try { return routineBook.list().map(r => ({ id: r.id, name: r.name, steps: r.steps })); } catch (err) { log.warn("routines.unreadable", { err: err instanceof Error ? err.message : String(err) }); return []; }
+  };
   const routineBook: RoutineBook = new RoutineBook({
     file: routinesFile(userData, err => log.warn("routines.file_broken", { err: err instanceof Error ? err.message : String(err) })),
     onChange: () => broadcast(IPC.routinesChanged, routineRows()),
@@ -2103,8 +2108,10 @@ function start(): void {
     // Commands still running and connections are let go of when Ember quits.
     app.on("will-quit", () => { void targets?.dispose(); });
     agent = new AgentHost({
-      ...(memoryAllowed() ? { memory } : {}),
-      ...(routinesAllowed() ? { routines: routineBook } : {}),
+      // Always given, so sign-out and an account change forget them even while the organisation has them off (the host
+      // uses them only while settings, with the policy applied, have them on).
+      memory,
+      routines: routineBook,
       extensions,
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
       cornerTasks: true,
@@ -2148,8 +2155,10 @@ function start(): void {
       onAccountChanged: () => { askHistory = []; },
       // A reminder the user set is due (reminders.ts): said too when replies are spoken, and a notification while away.
       onReminder: r => {
-        if (maySpeak()) voice?.speak(spokenText(`Reminder: ${r.text}`));
-        if (userAway()) notify("Ember: reminder", r.text);
+        // After what Ember is saying (an answer under way), not cutting it off.
+        if (maySpeak()) voice?.speak(spokenText(`Reminder: ${r.text}`), { append: true });
+        // A notification shows on the lock screen: while it is locked, it says only that one is due.
+        if (userAway()) notify("Ember: reminder", reminderNotification(r, screenLock?.locked ?? false));
       },
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
