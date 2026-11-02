@@ -381,6 +381,22 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     expect(sent(s.events)[0]).not.toHaveProperty("cut");
   });
 
+  it("doesn't end a request that never goes quiet at the speaker's softer words, in a fan's noise: it's cut at the cap (early end)", () => {
+    // "Hey Ember, …" and 30 s of talk with no pause, at half the clips' level, over a fan's noise (low-passed, -45 dBFS)
+    // that the room's first 3 s teach. It ended at 5.9 s, mid-sentence and not marked cut ("…make the text of the text.").
+    const talk = cat(read("wake").subarray(0, at(1.6)), ...Array.from({ length: 4 }, () => ["chat", "followup", "bigger"].map(trimmed)).flat());
+    const audio = cat(silence(3), talk.map(x => x * 0.5), silence(1));
+    let seed = 9, lp = 0;
+    const fan = audio.map(() => { const w = (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5; lp = 0.97 * lp + 0.03 * w; return lp * 6 + w * 0.3; });
+    const gain = 10 ** (-45 / 20) / Math.sqrt(fan.reduce((s, x) => s + x * x, 0) / fan.length);
+    const s = session();
+    s.hear(audio.map((x, i) => x + fan[i] * gain));
+    s.end();
+    const u = s.events.find(e => e.type === "utterance")!;
+    expect(u).toMatchObject({ window: "wake", cut: true });
+    expect(u.at / 1000 - 3).toBeGreaterThan(9.5); // at the cap (10 s of speech), not at a softer word
+  });
+
   it("teaches Voice Match a voice from four phrases, and lets a fifth in that voice through", async () => {
     // The voiceprint model as the worker runs it (voiceprint-worker.ts), in this thread.
     const ort = createRequire(import.meta.url)("onnxruntime-web");

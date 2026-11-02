@@ -360,6 +360,13 @@ const QUIET_RATIO = 10 ** -1.2;
 const CLOSE_RATIO = 10 ** -0.6;
 const SILENCE_RATIO = 2.5;
 const SILENT_FRAMES = 6;
+/**
+ * The speaker's own softer words ("…make the text a bit…") can stay 12–15 dB under their loudest for 0.6 s, as quiet as
+ * others' talk, but with gaps of the room's own noise between their syllables (2–5 frames: shorter than a pause): such a
+ * gap, before any pause, starts the count over (measured in a -45 dBFS room: a request ended 5.9 s in, mid-sentence; it
+ * now goes on to the cap). Others' talk with a dip of a frame still ends a request as before.
+ */
+const GAP_FRAMES = 2;
 const LOUDNESS_FRAMES = 16;
 const BACK_FRAMES = 4;
 const QUIET_END_FRAMES = 12;
@@ -953,14 +960,16 @@ export class VoiceEngine {
       if (speaking && n >= LOUD_FRAMES) this.peak = Math.max(this.peak, median(this.segment, n - LOUD_FRAMES, n));
       // The room's own noise: a pause, or the end, that the VAD's silence decides on (for 0.64 s at most since the voice).
       const silent = Math.sqrt(energy) < Math.max(this.o.silenceRms ?? 0.0008, this.floor * SILENCE_RATIO);
+      // A gap between syllables: a moment of the room's own noise (shorter than a pause), and sound again.
+      const gap = !silent && this.silentRun >= GAP_FRAMES && this.silentRun < SILENT_FRAMES;
       this.silentRun = silent ? this.silentRun + 1 : 0;
       if (this.silentRun >= BREATH_FRAMES) this.silentAt = n;
       this.hushRun = silent && this.hushed < PAUSE_HOLD_FRAMES ? this.hushRun + 1 : 0;
-      // The count starts over when the speaker's voice is back, or at their softer words before any pause; it holds in a
-      // pause, and at loud talk after one (see QUIET_RATIO).
+      // The count starts over when the speaker's voice is back, or at their softer words before any pause (and at a gap
+      // between syllables then, see GAP_FRAMES); it holds in a pause, and at loud talk after one (see QUIET_RATIO).
       const near = median(this.segment, n - LOUDNESS_FRAMES, n) >= this.peak * QUIET_RATIO, voice = median(this.segment, n - BACK_FRAMES, n) >= this.peak * CLOSE_RATIO;
       if (voice) { this.quietFor = 0; this.pausedSinceVoice = false; this.hushed = 0; }
-      else if (near && !this.pausedSinceVoice) this.quietFor = 0;
+      else if ((near || gap) && !this.pausedSinceVoice) this.quietFor = 0;
       else if (!near && this.hushRun < SILENT_FRAMES) this.quietFor++;
       if (this.hushRun >= SILENT_FRAMES) { this.pauseAt = n; this.pausedSinceVoice = true; this.hushed++; }
       // After cutting in, the speaker's voice once Ember's no longer reaches the microphone (it starts over if Ember's does again).
