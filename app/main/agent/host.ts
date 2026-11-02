@@ -1825,6 +1825,19 @@ export class AgentHost {
   }
 
   /**
+   * The conversation's own Stop (its bubble's, while Copilot keeps it waiting: presenter STOP_ANSWER): the turn under
+   * way ends, and so does a request still waiting to be sent. Tasks and their questions go on (the kill switch stops
+   * those).
+   */
+  async stopAnswer(): Promise<void> {
+    this.stops++;
+    this.queued = [];
+    this.presenter.stopped();
+    this.o.log.info("agent.answer_stopped");
+    await this.conductor?.abort();
+  }
+
+  /**
    * Stops the current answer and every running task (the kill switch). Main shows the kill switch's
    * message right after: nothing of the conversation's or a stopped task's replaces it.
    */

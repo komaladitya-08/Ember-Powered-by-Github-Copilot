@@ -576,8 +576,13 @@ function start(): void {
   const setState = guardWhileAsking(() => confirmer?.waiting ?? false, showState);
   /** The setup rows as last read (none until then), for the handle's word: a status change doesn't read them again. */
   let setupSeen: EnvReport["checks"] = [];
-  /** The handle's word: "Setup needed" while Copilot is ready and a setup row holds Ember back (review #95), else the agent's. */
-  const idleNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen) ?? idleWord(status);
+  /** The handle's word: the agent's ("Ready", or why Ember can't answer yet). */
+  const idleNow = (status: Parameters<typeof idleWord>[0]) => idleWord(status);
+  /**
+   * The setup row that holds Ember back while Copilot is ready, in a few words ("Fix “Screen reading”", review #95):
+   * the handle says it when nothing more urgent is going on (a task, a question), never in place of those.
+   */
+  const setupNow = (status: Parameters<typeof idleWord>[0]) => setupIdle(status.phase, setupSeen);
   /**
    * Setup rows just read (every readEnvironment: the settings window's status and focus re-read, a fix, Start, the
    * hello): kept, and the handle's word follows them, so "Setup needed" goes once the row holding Ember back is fixed.
@@ -585,8 +590,8 @@ function start(): void {
   const sawSetup = (rows: EnvReport["checks"]) => {
     setupSeen = rows;
     const status = agent?.getStatus();
-    const idle = status && idleNow(status);
-    if (idle && idle !== lastState.idle) showState({ idle });
+    const setup = status ? setupNow(status) : null;
+    if (status && setup !== (lastState.setup ?? null)) showState({ setup });
   };
   onSetupRead = sawSetup;
   /** This OS's setup rows now, for the Start decision and the hello (none if they can't be read: words, never a gate). */
@@ -1038,6 +1043,8 @@ function start(): void {
    * Main's own notice in the bubble for `ms` (times More time to read and answer, cross-review X4): held, so a task's
    * hide doesn't wipe it, and given back after, so a task still at work shows its progress again (review #81).
    */
+  /** The latest request asked, and how, for a problem's Try again (presenter TRY_AGAIN): the same words, the same caution. */
+  let lastAsk: { text: string; voiceUnchecked?: boolean } | null = null;
   const showNotice = (n: { title: string; thought: string }, ms: number) => {
     const time = ms * readTime();
     return holdNotice<EmberState["bubble"]>({
@@ -1048,6 +1055,7 @@ function start(): void {
   /** `how.voiceUnchecked`: heard where Ember can't tell the user from its speakers (V1: never the user's words for commands). */
   const askEmber = async (text: string, how: { voiceUnchecked?: boolean; spoken?: boolean } = {}) => {
     if (!consented()) { showHome(); return; }
+    lastAsk = { text, ...(how.voiceUnchecked ? { voiceUnchecked: true } : {}) };
     // Nobody at a locked screen is the user (a request said or typed then is dropped, review #81). Said, so that a user
     // who sees it (the lock read wrongly) knows why nothing happened.
     if (screenLock?.locked) { log.info("ask.refused", { reason: "screen_locked" }); showNotice(LOCKED_ASK, 6000); return; }
@@ -1512,7 +1520,11 @@ function start(): void {
     // Stopping a task is always honoured (also while Ember waits for the mouse), and so is an announced command's Stop
     // (critique integration-24). Anything else that arrives while Ember really drives the pointer was Ember's own
     // click, not the user's: ignored.
-    if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:")) { log.warn("bubble.action_while_borrowing", { id }); return; }
+    if (borrowRef?.driving && !(task && task[2] === "stop") && !id.startsWith("ui:cmdstop:") && id !== "ui:stop") { log.warn("bubble.action_while_borrowing", { id }); return; }
+    // The conversation's Stop while Copilot keeps it waiting (its turn ends; tasks go on), and a problem's Try again
+    // (the same request, as it was asked: offered only where its turn ran no tool).
+    if (id === "ui:stop") { void agent?.stopAnswer(); return; }
+    if (id === "ui:retry") { if (lastAsk) { captureContext(); void askEmber(lastAsk.text, { voiceUnchecked: lastAsk.voiceUnchecked }); } return; }
     if (id === "ui:settings") { openSettings(); return; }
     if (id === "ui:setup-check") { showHome(); sendToHome(IPC.focusSection, "checks"); agent?.releaseBubble(lastState.bubble); return; }
     if (id === "ui:more") { expandAnswer(); return; }
@@ -2085,7 +2097,7 @@ function start(): void {
         broadcast(IPC.agentStatusChanged, status);
         // The handle says why Ember can't answer yet, instead of "Ready" (in a few words: the pill is narrow).
         // Ready with a setup row holding Ember back: "Setup needed" (review #95).
-        showState({ idle: idleNow(status) });
+        showState({ idle: idleNow(status), setup: setupNow(status) });
       },
       onTranscript: entries => broadcast(IPC.conversationChanged, entries),
       // Another account signed in: its conversation went, and with it what the ask box remembers (as at sign-out).
@@ -2184,6 +2196,8 @@ function start(): void {
       micHint: sys.fixes.ids.includes("open-microphone-settings") ? `To allow it, open the microphone's privacy settings in ${sys.words.settingsApp}.` : undefined,
       onEvent: onVoice,
       onSelfSpeaking: on => { if (on) turnLatency.mark("firstAudio"); },
+      // The level for Ember's presence ring and voice meter: straight to the overlay, never through the state.
+      onLevel: l => overlay?.setLevel(l),
       // Replies in Ember's own neural voice once its model is in (it downloads with the speech models).
       neuralVoice: true,
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.

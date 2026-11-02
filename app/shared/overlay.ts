@@ -6,6 +6,7 @@ import type { BubbleMood } from "@ember/bubble";
 import type { Settings } from "../main/settings";
 import type { MicState } from "./voice";
 import type { TargetSummary } from "./targets";
+import type { SoundLevel } from "./level";
 
 export const OVERLAY = {
   init: "overlay:init",
@@ -21,6 +22,8 @@ export const OVERLAY = {
   cards: "overlay:cards",
   /** The desktop's reduce-motion preference changed (the overlay's page follows it live), for Ember's follow spring. */
   motion: "overlay:motion",
+  /** The sound's level (app/shared/level.ts SoundLevel) for Ember's presence ring and voice meter, apart from the state. */
+  level: "overlay:level",
 } as const;
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -63,6 +66,11 @@ export interface BubbleState {
   where?: string;
   /** A question's whole text, which its sentence shows only in part (a long typed text): shown in a block that scrolls. */
   whole?: WholeText;
+  /**
+   * A question about a risky step (policy's `risky`: send, delete, pay, install…, asked every time): the bubble sets it
+   * apart from a routine one (docs/DESIGN.md "Bubble and motion"). Presentation only: policy decided it already.
+   */
+  risky?: boolean;
 }
 
 /**
@@ -128,6 +136,11 @@ export interface EmberState {
   avoid?: Rect[];
   /** What the handle says when nothing else is going on: "Ready", or why Ember can't answer yet. */
   idle?: string;
+  /**
+   * The setup row that holds Ember back, in a few words ("Fix “Screen reading”"; setup-attention.ts setupIdle), while
+   * Copilot is ready: the handle says it when nothing more urgent is going on. Null or absent: nothing to set up.
+   */
+  setup?: string | null;
   /** The picker's target, for the handle's badge (absent or "local": no badge). */
   target?: TargetSummary;
 }
@@ -147,6 +160,8 @@ export interface OverlayApi {
   setCards(rect: Rect | null): void;
   /** The desktop's reduce-motion preference changed while Ember runs (true: less motion). */
   setReducedMotion?(on: boolean): void;
+  /** The sound's level for the presence ring (the microphone's while Ember hears) and the voice meter (its own voice). */
+  onLevel?(fn: (l: SoundLevel) => void): void;
 }
 
 export interface HandleApi {

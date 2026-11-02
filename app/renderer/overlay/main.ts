@@ -19,6 +19,8 @@ import { TASK_ARM_MS } from "../handle/arm";
 import { shortWhere, whereText } from "../handle/badge";
 import { bubbleHere, cardsCorner, handleSide, pillBottom, pillSpot, stackPlace } from "./layout";
 import { handleCorner, type HandleSide } from "../../shared/handle-place";
+import { presenceOf } from "../../shared/presence";
+import { PresenceView } from "./presence";
 
 declare global { interface Window { emberOverlay: OverlayApi } }
 
@@ -41,6 +43,8 @@ bubble.onWholeSeen = n => api.bubbleAction(wholeSeenAction(n));
 const statusEl = document.getElementById("status")!;
 const tasksEl = document.getElementById("tasks")!;
 const focusEl = document.getElementById("focus")!;
+/** Ember's presence ring, microphone mark and voice meter (presence.ts), drawn under Ember. */
+const presence = new PresenceView(document.body);
 
 const characters: Record<string, Character> = Object.fromEntries(FACTORIES.map(f => { const c = f(); return [c.id, c]; }));
 const rig = new Rig();
@@ -89,6 +93,8 @@ function applyReducedMotion(): void {
   rig.reducedMotion = reducedMotionQuery.matches || settings?.reduceMotion === true;
   // Calm mode also stills the CSS pulses (the bubble's dot, the status dot, the focus glow).
   document.documentElement.classList.toggle("calm", settings?.reduceMotion === true);
+  // The presence ring holds still too: no level on its ticks, a steady mark for the voice meter.
+  presence.setCalm(rig.reducedMotion);
 }
 reducedMotionQuery.addEventListener("change", () => {
   applyReducedMotion();
@@ -122,6 +128,8 @@ api.onInit((i: OverlayInit) => {
   applySettings(i.settings);
 });
 api.onSettings(applySettings);
+// The sound's level, apart from the state (up to 20 a second while the microphone hears or Ember's voice plays).
+api.onLevel?.(l => presence.setLevel(l));
 api.onFrame(f => {
   frame = f;
   // Away (hidden, or on another display): one more draw clears Ember, then nothing until it is back.
@@ -144,7 +152,10 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   rig.setTalking(s.talking);
   if (s.talking || s.bubble.visible) rig.wake();
   const b = s.bubble;
+  presence.setState(presenceOf(s));
+  presence.setHearing(s.mic === "active");
   bubble.setMood(b.mood);
+  bubble.setRisky(b.risky === true);
   showWhere(b.where, b.title);
   bubble.setTitle(b.title);
   // The finished answer arrives plain; the tail shown while it streams may still carry markdown.
@@ -672,6 +683,8 @@ function draw(now: number): void {
     ctx.scale(scale, scale);
     character.draw(ctx, pose);
     showStage(true);
+    presence.place(lx, ly, size);
+    presence.show(true);
     // With no room beside the settings window, a bubble that asks nothing hides rather than cover it (the window's
     // Conversation section has its words); a question stays, wherever it must go.
     // (An answer opened in full is pinned: it stays on screen too.)
@@ -692,6 +705,7 @@ function draw(now: number): void {
   } else {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);
+    presence.show(false);
     drawnAt = null;
     setBody(null);
   }

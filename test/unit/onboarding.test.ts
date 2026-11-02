@@ -309,9 +309,10 @@ describe("Ember's hello once it starts", () => {
 });
 
 describe("Ember's handle while a setup row holds it back", () => {
-  it("says Setup needed instead of Ready, until the row is fixed (review #95)", () => {
-    expect(setupIdle("ready", MAC_FIRST)).toBe("Setup needed");
-    expect(setupIdle("ready", LINUX_A11Y_OFF)).toBe("Setup needed");
+  it("names the row that holds Ember back instead of Ready, until it is fixed (review #95, UI audit #5)", () => {
+    expect(setupIdle("ready", MAC_FIRST)).toBe("3 setup checks to fix");
+    expect(setupIdle("ready", LINUX_A11Y_OFF)).toBe("Fix “Screen reading”");
+    expect(setupIdle("ready", allowed(MAC_FIRST, "accessibility", "screen-recording"))).toBe("Fix “Input Monitoring”");
     expect(setupIdle("ready", allowed(MAC_FIRST, "accessibility", "screen-recording", "input-monitoring"))).toBeNull();
     // A fix button for a nicety isn't "needed".
     expect(setupIdle("ready", [{ id: "location", label: "Applications folder", status: "warn", fix: "move-to-applications" }])).toBeNull();

@@ -42,6 +42,39 @@ export function titleRepeatsChip(title: string, chip: string): boolean {
   return !!norm(title) && norm(title) === norm(chip);
 }
 
+/**
+ * A question's words as the bubble sets them (review #9): the decision itself (its first sentence, up to its "?"), set
+ * strongest; what follows it (what the step does: "It sends … to Priya Shah"); and the task it is part of ("Your task:
+ * …", quieter, under it). Null when the text isn't a question's (no "?" in its first line): it is shown as it is.
+ */
+export function questionParts(thought: string): { ask: string; rest: string; task: string } | null {
+  const at = thought.indexOf("\nYour task: ");
+  const body = at >= 0 ? thought.slice(0, at) : thought;
+  const task = at >= 0 ? thought.slice(at + 1).trim() : "";
+  const q = /^([^\n]*?\?)(\s+[\s\S]*)?$/.exec(body.trim());
+  if (!q) return null;
+  return { ask: q[1], rest: (q[2] ?? "").trim(), task };
+}
+
+/**
+ * A step row that names keys ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"), as keycaps and the words beside them; null for
+ * any other step (a route in words: "Or press Ctrl+Alt+E and go to Conversation.", what Ember is doing).
+ */
+export function keyHintParts(step: string | null | undefined): { keys: string[]; word: string }[] | null {
+  const parts = step?.split(/\s+·\s+/) ?? [];
+  if (!parts.length) return null;
+  const out: { keys: string[]; word: string }[] = [];
+  for (const p of parts) {
+    const m = /^(\S+\+\S+)\s+(.+)$/.exec(p.trim());
+    if (!m) return null;
+    out.push({ keys: m[1].split("+").filter(Boolean), word: m[2] });
+  }
+  return out;
+}
+
+/** The words a risky question's tag says (beside "Needs you"): policy asks about this kind of step every time. */
+export const RISKY_TAG = "Risky step";
+
 export interface BubbleView {
   visible: boolean;
   mood: BubbleMood;
@@ -59,6 +92,8 @@ export interface BubbleView {
   whole?: string;
   /** Main says all of the whole text has been shown (its Allow works): until then, that Allow waits for it is said too. */
   wholeSeen?: boolean;
+  /** A question about a risky step: heard as such first ("Risky step."), as the eye sees its tag. */
+  risky?: boolean;
 }
 
 /** A step row as heard: its parts as a list ("Ctrl+Alt+Y allow; Ctrl+Alt+N not now"). */
@@ -89,7 +124,7 @@ export function announcement(v: BubbleView, speaker = "Ember"): string {
   const whole = v.whole?.trim();
   const asked = whole && both ? `${end(both)} ${WHOLE_LABEL}: ${v.wholeSeen === true ? whole : `${end(whole)} ${WHOLE_UNREAD_SAID}`}` : both;
   switch (v.mood) {
-    case "attention": return both ? `${speaker} needs you${at}: ${hint ? `${end(asked)} ${end(hint)}` : asked}` : "";
+    case "attention": return both ? `${speaker} needs you${at}: ${v.risky ? `${RISKY_TAG}. ` : ""}${hint ? `${end(asked)} ${end(hint)}` : asked}` : "";
     case "error": return both ? `${speaker} has a problem${at}: ${withHint}` : "";
     case "idle": case "done": return text || title ? `${speaker} says${at}: ${hint ? `${end(text || title)} ${end(hint)}` : text || title}` : "";
     case "guiding": return text || title ? `${speaker} says${at}: ${text || title}` : "";
@@ -281,28 +316,49 @@ export const BUBBLE_CSS = `
 /* A grid item is as wide as its longest word by default: one long unbroken word (an app's name on a
    button) would widen the bubble past its edge. */
 .ember-bubble > * { min-width: 0; }
-.eb-head { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-/* The state: a dot in its colour and a word in the secondary label (lighter tints where the user must act). A
-   finished answer needs no "Ready" beside Ember's name. */
+.eb-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Nothing to say above the words (a finished answer: the bubble is Ember's, its name needn't title it). */
+.eb-head[hidden] { display: none; }
+/* The state is a tag, not a second title (review #9): its dot and word in the state's colour on a tint of it (the
+   word in the colour's text tint), a capsule set apart from the title by its shape as well as its weight. A finished
+   answer has none. */
 .eb-chip {
-  flex: none; display: inline-flex; align-items: center; gap: 6px;
-  font: 500 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
-  color: var(--label-2, rgba(245, 240, 236, 0.66));
+  flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px 1px 6px; border-radius: var(--r-capsule, 999px);
+  font: 600 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
+  color: var(--eb-chip-text, var(--label-2, rgba(245, 240, 236, 0.66))); background: color-mix(in srgb, var(--eb-mood) 16%, transparent);
 }
 .ember-bubble[data-mood="idle"]:not([data-streaming="true"]) .eb-chip { display: none; }
+.ember-bubble[data-mood="idle"] { --eb-chip-text: var(--label-2, rgba(245, 240, 236, 0.66)); }
+.ember-bubble[data-mood="listening"] { --eb-chip-text: var(--yellow, #ffd600); }
+.ember-bubble:is([data-mood="thinking"], [data-mood="guiding"]) { --eb-chip-text: var(--accent-2, #ffb340); }
+.ember-bubble[data-mood="acting"] { --eb-chip-text: var(--accent, #ff9230); }
 .ember-bubble[data-mood="attention"] .eb-chip { color: var(--purple-text, #eea2ff); }
 .ember-bubble[data-mood="error"] .eb-chip { color: var(--red-text, #ff7a71); }
-.eb-dot { position: relative; top: -0.5px; width: 8px; height: 8px; border-radius: 50%; background: var(--eb-mood); box-shadow: 0 0 0 3px color-mix(in srgb, var(--eb-mood) 24%, transparent); }
-/* The dot pulses only while Ember is busy or waiting on you; a finished answer sits still. */
-.ember-bubble:is([data-streaming="true"], [data-mood="listening"], [data-mood="thinking"], [data-mood="acting"], [data-mood="guiding"], [data-mood="attention"]) .eb-dot {
+.ember-bubble[data-mood="done"] { --eb-chip-text: var(--green-text, #5be37d); }
+.eb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--eb-mood); }
+/* The dot pulses only while Ember is busy; a finished answer sits still, and so does a question (it waits for you:
+   nothing about it hurries you). */
+.ember-bubble:is([data-streaming="true"], [data-mood="listening"], [data-mood="thinking"], [data-mood="acting"], [data-mood="guiding"]):not([data-mood="attention"]) .eb-dot {
   animation: eb-pulse 1.4s ease-in-out infinite;
 }
+/* A risky question's own tag beside "Needs you" (policy asks about such a step every time): the caution colour, which
+   has no tint of its own, as a tag on its tint. */
+.eb-risk {
+  flex: none; display: none; padding: 1px 8px; border-radius: var(--r-capsule, 999px);
+  font: 600 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
+  color: var(--yellow, #ffd600); background: color-mix(in srgb, var(--yellow, #ffd600) 16%, transparent);
+}
+.ember-bubble[data-mood="attention"][data-risky="true"] .eb-risk { display: inline-flex; }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A question's title ("May I?", "May I run a command?") leads into it; the decision is its sentence below (.eb-ask). */
+.ember-bubble[data-mood="attention"] .eb-title { font-size: 13px; line-height: 18px; color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 /* A question's or a problem's title carries the decision ("Pushing feature-x to origin, as you asked"): it wraps onto a
    second line rather than lose its end under an ellipsis. */
 .ember-bubble:is([data-mood="attention"], [data-mood="error"]) .eb-title {
   white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
+/* So does "Still waiting for Copilot…" beside Thinking at the larger text sizes (its Stop is under it). */
+.ember-bubble[data-mood="thinking"] .eb-title { white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 /* A title that only repeats the chip's word ("Thinking…" beside Thinking) isn't shown twice. */
 .ember-bubble .eb-title[hidden] { display: none; }
 /* Finished text reads from its start, at full contrast: up to six lines. */
@@ -312,6 +368,10 @@ export const BUBBLE_CSS = `
   color: var(--label, #f5f2ef); white-space: pre-line; overflow-wrap: anywhere;
 }
 .eb-thought:empty { display: none; }
+/* A question's sentence (questionParts): the decision strongest, what it does after it, and the task it is part of
+   quieter under it. */
+.eb-ask { font-weight: 600; }
+.eb-task { display: block; margin-top: 4px; font: 400 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 /* Running commentary (thinking, working, listening) is quieter: the secondary label, three lines. */
 .ember-bubble:is([data-mood="thinking"], [data-mood="acting"], [data-mood="listening"]) .eb-thought {
   max-height: 3lh; color: var(--label-2, rgba(245, 240, 236, 0.66));
@@ -352,6 +412,13 @@ export const BUBBLE_CSS = `
 .eb-step { display: flex; gap: 7px; padding-top: 8px; border-top: 1px solid var(--separator, rgba(255, 255, 255, 0.09)); font: 400 13px/18px var(--ember-font, "Inter", system-ui, sans-serif); color: var(--label-2, rgba(245, 240, 236, 0.66)); }
 .eb-step[hidden] { display: none; }
 .eb-step-arrow { color: var(--eb-mood); font-weight: 600; }
+/* A step that names keys (a question's "Ctrl+Alt+Y allow · Ctrl+Alt+N not now") shows them as keycaps beside their words. */
+.eb-step kbd {
+  display: inline-block; min-width: 1.5em; margin-right: 2px; padding: 0 4px; border-radius: var(--r-xs, 6px); text-align: center;
+  font: 600 11px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0.01em; color: var(--label, #f5f2ef);
+  background: rgba(255, 255, 255, 0.1); box-shadow: inset 0 0 0 1px var(--separator, rgba(255, 255, 255, 0.09)), 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+.eb-step .eb-key-word { margin: 0 4px 0 2px; }
 /* A question's step row is its keyboard hint ("Ctrl+Alt+Y allow · Ctrl+Alt+N not now"): quiet, under the buttons. So
    is a problem's, the keyboard's way to what its buttons do ("Or press Ctrl+Alt+E and go to Computers."), and an
    answer's cut short, where it is whole ("… go to Conversation."). */
@@ -382,25 +449,49 @@ export const BUBBLE_CSS = `
   transition: background-color 140ms ease, filter 140ms ease, transform 220ms var(--spring-snappy, ease-out);
 }
 .eb-actions button.eb-primary { background: var(--accent, #ff9230); color: var(--on-accent, #1d1204); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.3); }
+/* A risky question's Allow isn't the one that stands out (nothing invites a reflex yes): bordered in the caution
+   colour, as quiet as Not now. */
+.ember-bubble[data-risky="true"] .eb-actions button.eb-primary { background: rgba(255, 255, 255, 0.08); color: var(--label, #f5f2ef); box-shadow: inset 0 0 0 1.5px var(--yellow, #ffd600); }
 @media (hover: hover) {
   .eb-actions button:hover { background: rgba(255, 255, 255, 0.14); }
   .eb-actions button.eb-primary:hover { background: var(--accent, #ff9230); filter: brightness(1.08); }
+  .ember-bubble[data-risky="true"] .eb-actions button.eb-primary:hover { background: rgba(255, 255, 255, 0.14); filter: none; }
 }
 .eb-actions button:active { transform: scale(0.97); }
 /* Allow before the whole text has all been in view: it takes no press yet. */
 .eb-actions button[aria-disabled="true"] { opacity: 0.4; cursor: default; filter: none; transform: none; }
 .eb-actions button:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge, rgba(255, 255, 255, 0.42)), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
 .eb-actions button.eb-primary:focus-visible { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--focus-ring, 0 0 0 2px #121011, 0 0 0 4px rgba(255, 146, 48, 0.75)); }
+/* Needs you: four corner brackets lock onto the bubble once (Ember's HUD: a question is told apart by its shape, not
+   only its colour), then hold still; in the caution colour on a risky question. Decorative, and outside the bubble's
+   clickable parts. */
+.eb-lock {
+  --eb-lock: var(--accent, #ff9230);
+  position: absolute; inset: -6px; display: none; pointer-events: none;
+  background:
+    linear-gradient(var(--eb-lock), var(--eb-lock)) left top / 14px 2px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) left top / 2px 14px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) right top / 14px 2px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) right top / 2px 14px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) left bottom / 14px 2px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) left bottom / 2px 14px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) right bottom / 14px 2px no-repeat,
+    linear-gradient(var(--eb-lock), var(--eb-lock)) right bottom / 2px 14px no-repeat;
+}
+.ember-bubble[data-risky="true"] .eb-lock { --eb-lock: var(--yellow, #ffd600); }
+.ember-bubble[data-mood="attention"]:not([data-hidden="true"]) .eb-lock { display: block; animation: eb-lock 180ms var(--spring-snappy, ease-out) 1; }
 /* Read out by screen readers, never seen. */
 .eb-live { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @keyframes eb-pulse { 50% { opacity: 0.45; } }
 @keyframes eb-blink { 50% { opacity: 0; } }
 @keyframes eb-glow { 50% { opacity: 0.55; } }
+@keyframes eb-lock { from { opacity: 0; scale: 1.05; } }
 /* Nothing animates while the bubble is hidden (an endless animation keeps the compositor busy). */
 .ember-bubble[data-hidden="true"] .eb-dot, .ember-bubble[data-hidden="true"] .eb-thought span::after, .ember-bubble[data-hidden="true"]::before { animation: none !important; }
 /* Calm: the desktop's reduced-motion preference, or Ember's own Calm mode (html.calm). The glow stays, still. */
-@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after, .ember-bubble::before { animation: none !important; } .ember-bubble { transition: none; translate: none; } }
+@media (prefers-reduced-motion: reduce) { .eb-dot, .eb-thought span::after, .ember-bubble::before, .eb-lock { animation: none !important; } .ember-bubble { transition: none; translate: none; } }
 html.calm .eb-dot, html.calm .eb-thought span::after { animation: none !important; }
+html.calm .eb-lock { animation: none !important; }
 html.calm .ember-bubble::before { animation: none !important; }
 html.calm .ember-bubble { transition: none; translate: none; }
 /* Increase contrast: the tokens firm up the body, rim and edges; the outline goes on the solid body. */
@@ -412,16 +503,26 @@ html.calm .ember-bubble { transition: none; translate: none; }
    state's word is beside the dot). Written out here too, as the bubble also runs without ember.css. */
 @media (forced-colors: active) {
   .ember-bubble, .ember-bubble[data-mood] { --eb-mood: CanvasText; }
+  /* Its glass is gradients, which the system drops: a body of the window's colour, so its words aren't on the app's. */
+  .ember-bubble { background: Canvas; }
   .eb-actions button { border: 1px solid ButtonText; }
   .eb-actions button.eb-primary, .eb-actions button.eb-primary:hover { forced-color-adjust: none; color: HighlightText; background: Highlight; border-color: Highlight; box-shadow: none; }
   .eb-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
   .eb-actions button[aria-disabled="true"], .eb-actions button.eb-primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
   .eb-whole { border: 1px solid CanvasText; }
+  /* The state's tag and the risky tag keep an edge (their tint is dropped); the brackets are drawn as they are. */
+  .eb-chip, .eb-risk { border: 1px solid CanvasText; }
+  .eb-lock, .ember-bubble[data-risky="true"] .eb-lock { forced-color-adjust: none; --eb-lock: CanvasText; }
+  .ember-bubble[data-risky="true"] .eb-actions button.eb-primary, .ember-bubble[data-risky="true"] .eb-actions button.eb-primary:hover { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }
+  .eb-step kbd { outline: 1px solid CanvasText; outline-offset: -1px; }
 }
 /* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
    grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
 html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: calc(20px * var(--text-scale, 1)); }
-html[data-text-size] .eb-chip { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-chip, html[data-text-size] .eb-risk { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .ember-bubble[data-mood="attention"] .eb-title { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
+html[data-text-size] .eb-task { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
+html[data-text-size] .eb-step kbd { font-size: calc(11px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 html[data-text-size] .eb-step { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(18px * var(--text-scale, 1)); }
 html[data-text-size] .ember-bubble:is([data-mood="attention"], [data-mood="error"], [data-mood="idle"]) .eb-step { font-size: calc(12px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
 html[data-text-size] .eb-actions button { font-size: calc(13px * var(--text-scale, 1)); line-height: calc(16px * var(--text-scale, 1)); }
@@ -464,6 +565,7 @@ export class ReasoningBubble {
   readonly root: HTMLDivElement;
   /** The empty box the bubble sits in: the one element moved (by transform) as Ember moves. */
   private readonly mount: HTMLDivElement;
+  private readonly head: HTMLDivElement;
   private readonly chipText: HTMLSpanElement;
   private readonly title: HTMLSpanElement;
   private readonly thoughtBox: HTMLParagraphElement;
@@ -491,6 +593,10 @@ export class ReasoningBubble {
    */
   onWholeSeen: ((n: number) => void) | null = null;
   private mood: BubbleMood = "idle";
+  /** The thought as given (a question's is drawn in parts: questionParts), and the step's words as given (keycaps drawn). */
+  private thoughtRaw = "";
+  private stepRaw: string | null = null;
+  private risky = false;
   private streaming = false;
   private expanded = false;
   private visible = true;
@@ -521,12 +627,15 @@ export class ReasoningBubble {
     this.root = document.createElement("div");
     this.root.className = "ember-bubble";
     this.root.innerHTML = `
-      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-title"></span></div>
+      <div class="eb-lock" aria-hidden="true"></div>
+      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-risk" aria-hidden="true"></span><span class="eb-title"></span></div>
       <p class="eb-thought"><span></span></p>
       <div class="eb-whole" hidden></div>
       <p class="eb-whole-hint" hidden></p>
       <div class="eb-step" hidden><span class="eb-step-arrow" aria-hidden="true">→</span><span class="eb-step-text"></span></div>
       <div class="eb-actions" hidden></div>`;
+    this.head = this.root.querySelector(".eb-head")!;
+    this.root.querySelector(".eb-risk")!.textContent = RISKY_TAG;
     this.chipText = this.root.querySelector(".eb-chip-text")!;
     this.title = this.root.querySelector(".eb-title")!;
     this.thoughtBox = this.root.querySelector(".eb-thought")!;
@@ -556,7 +665,9 @@ export class ReasoningBubble {
 
   /** Who is talking, for screen readers ("Cinder says: …"). */
   setSpeaker(name: string): void {
+    if (name === this.speaker) return;
     this.speaker = name;
+    this.updateTitle();
   }
 
   /** Where the bubble's task acts when not on this computer ("on build-01"), for screen readers (see `announcement`). */
@@ -571,6 +682,15 @@ export class ReasoningBubble {
     this.mood = mood;
     this.root.dataset.mood = mood;
     this.updateChip();
+    this.paintThought();
+    this.changed();
+  }
+
+  /** A question about a risky step (BubbleState.risky): its own tag, caution brackets, and an Allow that doesn't stand out. */
+  setRisky(on: boolean): void {
+    if (on === this.risky) return;
+    this.risky = on;
+    this.root.dataset.risky = String(on);
     this.changed();
   }
 
@@ -582,8 +702,9 @@ export class ReasoningBubble {
   }
 
   setThought(text: string): void {
-    if (this.thought.textContent === text) return;
-    this.thought.textContent = text;
+    if (this.thoughtRaw === text) return;
+    this.thoughtRaw = text;
+    this.paintThought(true);
     this.thoughtBox.style.display = text ? "" : "none";
     this.changed();
   }
@@ -591,8 +712,33 @@ export class ReasoningBubble {
   /** Append streamed reasoning text (e.g. from assistant.reasoning_delta). */
   appendThought(delta: string): void {
     this.thoughtBox.style.display = "";
-    this.thought.textContent += delta;
+    this.thoughtRaw += delta;
+    this.paintThought(true);
     this.changed();
+  }
+
+  /**
+   * Draws the thought: a finished question's in its parts (questionParts: the decision in weight 600, what it does, the
+   * task under it), anything else as it is. All of it as text (textContent): it may hold what an app's screen said.
+   */
+  private paintThought(force = false): void {
+    const parts = this.mood === "attention" && !this.streaming ? questionParts(this.thoughtRaw) : null;
+    const key = parts ? "q" : "t";
+    if (!force && this.thought.dataset.drawn === key) return;
+    this.thought.dataset.drawn = key;
+    if (!parts) { this.thought.textContent = this.thoughtRaw; return; }
+    const ask = document.createElement("b");
+    ask.className = "eb-ask";
+    ask.textContent = parts.ask;
+    const nodes: Node[] = [ask];
+    if (parts.rest) nodes.push(document.createTextNode(` ${parts.rest}`));
+    if (parts.task) {
+      const task = document.createElement("small");
+      task.className = "eb-task";
+      task.textContent = parts.task;
+      nodes.push(task);
+    }
+    this.thought.replaceChildren(...nodes);
   }
 
   setStreaming(on: boolean): void {
@@ -602,6 +748,7 @@ export class ReasoningBubble {
     if (on) this.root.setAttribute("aria-busy", "true");
     else this.root.removeAttribute("aria-busy");
     this.updateChip();
+    this.paintThought();
     this.changed();
   }
 
@@ -615,9 +762,19 @@ export class ReasoningBubble {
 
   /** The step being performed and why; null hides the row. */
   setStep(text: string | null): void {
-    if (this.step.hidden === !text && this.stepText.textContent === (text ?? "")) return;
+    if (this.step.hidden === !text && this.stepRaw === (text || null)) return;
+    this.stepRaw = text || null;
     this.step.hidden = !text;
-    this.stepText.textContent = text ?? "";
+    // Keys it names show as keycaps beside their words ("Ctrl" "Alt" "Y" allow); anything else as words.
+    const keys = keyHintParts(text);
+    if (!keys) this.stepText.textContent = text ?? "";
+    else {
+      this.stepText.replaceChildren(...keys.flatMap((k, i) => {
+        const caps = k.keys.map(key => Object.assign(document.createElement("kbd"), { textContent: key }));
+        const word = Object.assign(document.createElement("span"), { className: "eb-key-word", textContent: k.word });
+        return [...(i ? [document.createTextNode(" · ")] : []), ...caps, word];
+      }));
+    }
     this.changed();
   }
 
@@ -820,11 +977,18 @@ export class ReasoningBubble {
     this.updateTitle();
   }
 
-  /** Hides a title that only says the chip's word again (the chip shows unless it is a finished answer's "Ready"). */
+  /**
+   * Hides a title that only says the chip's word again (the chip shows unless it is a finished answer's "Ready"), or
+   * only names Ember (an answer's "Ember": the bubble is Ember's already, review #9); and the head row with nothing in it.
+   */
   private updateTitle(): void {
     const chipShown = !(this.mood === "idle" && !this.streaming);
-    const hide = chipShown && titleRepeatsChip(this.title.textContent ?? "", chipLabel(this.mood, this.streaming));
+    const title = this.title.textContent ?? "";
+    const hide = (chipShown && titleRepeatsChip(title, chipLabel(this.mood, this.streaming))) || title.trim() === this.speaker;
     if (this.title.hidden !== hide) this.title.hidden = hide;
+    // (A where badge the page put in the head keeps it.)
+    const empty = !chipShown && (hide || !title.trim()) && !this.head.querySelector(".where:not([hidden])");
+    if (this.head.hidden !== empty) this.head.hidden = empty;
   }
 
   /** One layout read: size, overflow, and where the clickable parts are. */
@@ -854,8 +1018,9 @@ export class ReasoningBubble {
     // Keep what was said while hidden: a hide/show flicker (Ember crossing a screen edge) doesn't repeat it.
     if (!this.visible) return;
     const view: BubbleView = {
-      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thought.textContent ?? "", streaming: this.streaming, where: this.where,
-      step: this.step.hidden ? null : this.stepText.textContent, ...(this.whole ? { whole: this.whole.text, wholeSeen: this.wholeSeenByMain } : {}),
+      visible: true, mood: this.mood, title: this.title.textContent ?? "", thought: this.thoughtRaw, streaming: this.streaming, where: this.where,
+      step: this.step.hidden ? null : this.stepRaw, ...(this.whole ? { whole: this.whole.text, wholeSeen: this.wholeSeenByMain } : {}),
+      ...(this.risky && this.mood === "attention" ? { risky: true } : {}),
     };
     const text = announcement(view, this.speaker);
     if (text === this.announced) return;
