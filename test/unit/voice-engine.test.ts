@@ -696,6 +696,27 @@ describe("VoiceEngine with other people talking", () => {
     expect(utterances(events)).toEqual([expect.stringMatching(/^U77 b19$/)]);
   });
 
+  it("doesn't end a request at the speaker's own softer words, with gaps between their syllables (early end)", () => {
+    const b = talking({ wake: 9, hangover: 19 });
+    // As measured in a -45 dBFS room: "…and make the text a bit…" 13 dB under the speaker's loudest for 0.6 s (the
+    // count reached 16 frames), its syllables 2 frames apart at the room's own noise, then "…bigger." as loud as before.
+    const soft = Array.from({ length: 4 }, () => [...n(3, () => level(0.022)), ...n(2, room)]).flat();
+    const { events } = listen(b, [...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...soft, ...n(30, () => level(0.1)), ...n(60, room)]);
+    expect(utterances(events)).toEqual(["U77 b12"]);
+    expect(events.find(e => e.type === "utterance")).not.toHaveProperty("cut");
+  });
+
+  it("still sends a request that never goes quiet at the cap, saying it was cut (early end)", () => {
+    const b = talking({ wake: 9, hangover: 19 });
+    // The speaker goes on for 30 s, the softer words between their louder ones as above, in a room quiet at each gap.
+    const talk = Array.from({ length: 60 }, () => [...n(8, () => level(0.1)), ...n(3, () => level(0.022)), ...n(2, room), ...n(3, () => level(0.022))]).flat();
+    const { events } = listen(b, [...n(100, room), level(0, 9), ...n(47, () => level(0.1)), ...talk]);
+    const u = events.find(e => e.type === "utterance")!;
+    expect(u).toMatchObject({ type: "utterance", cut: true });
+    expect(u.at / 32 - 101).toBeGreaterThan(300); // at the cap (10 s of speech, with the wake phrase), not at a softer word
+    expect(events.at(-1)).toMatchObject({ type: "listening", on: false, reason: "done" });
+  });
+
   it("doesn't end a request at a short pause while the others talk either (the count starts over once the voice is back)", () => {
     for (const pause of [12, 16]) {
       const b = talking({ wake: 9, hangover: 19 });
