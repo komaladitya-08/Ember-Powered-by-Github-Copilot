@@ -1255,6 +1255,21 @@ describe("review round 5: the bubble main covers, a reply behind a question, ano
     await stop(host);
   });
 
+  it("“what did I miss?” and “status?” still name a finished task after its card has gone, and not after sign-out", async () => {
+    const { host, screen } = await resultUp();
+    // The card goes 15 s after the task finished.
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(host.tasks!.list()).toEqual([]);
+    await host.ask("what did I miss?");
+    expect(screen().bubble?.thought).toBe("One task finished. “turn on night light”: done. Night light is on.");
+    await host.ask("status?");
+    expect(screen().bubble?.thought).toBe("Nothing's running right now. The last thing was “turn on night light”: done.");
+    await host.forgetConversation();
+    await host.ask("what did I miss?");
+    expect(screen().bubble?.thought).toBe("Nothing new: no tasks finished in the last two hours.");
+    await stop(host);
+  });
+
   it("signed in as another account from the error state: the first account's conversation is deleted, not resumed", async () => {
     const transcripts: unknown[][] = [];
     // (Main clears the ask box's history then, as at sign-out.)

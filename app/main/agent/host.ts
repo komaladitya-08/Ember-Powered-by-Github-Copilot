@@ -41,7 +41,7 @@ import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
-import { catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -506,6 +506,8 @@ const OUTCOME = {
 const report = (t: Task) => `Task "${t.title}" ${statusWord(t.status)}: ${t.result?.summary ?? ""}${t.result?.view?.length ? `\n${viewText(t.result.view)}` : ""}`;
 /** Requests sent while the conversation was busy, kept at most (the runtime runs them one turn at a time). */
 const MAX_QUEUED = 20;
+/** Finished tasks kept for "what did I miss?" after their cards go (it names three and counts the rest). */
+const FINISHED_KEPT = 20;
 
 /**
  * One request of the user's: where they were when they called Ember, what they said, and what the conversation
@@ -646,6 +648,11 @@ export class AgentHost {
   private readonly announced = new Set<string>();
   /** Finished tasks' presenters, while their cards are up (closing a card drops a result still waiting to show). */
   private readonly outcomes = new Map<string, Presenter>();
+  /**
+   * The tasks that finished in this conversation, newest last (at most FINISHED_KEPT, none older than CATCH_UP_MS):
+   * "what did I miss?" and "status?" answer from them after their cards have gone (TaskManager forgets a task then).
+   */
+  private finishedLately: Task[] = [];
   /** The target each task started by the conversation acts on, until it finishes (its result names a remote). */
   private readonly taskBindings = new Map<string, TargetBinding>();
   /** Whether each running remote task has used its computer's desktop (a lock there stops only those, §5.3.4 step 8). */
@@ -1134,6 +1141,7 @@ export class AgentHost {
         audit: hands?.audit ?? this.o.taskBase?.audit,
         settingsKey: this.o.settingsKey ?? this.sys.shortcuts?.settings.label,
         onFinished: task => {
+          this.finishedLately = [...this.finishedLately.filter(t => t !== task && Date.now() - (t.finished ?? 0) <= CATCH_UP_MS), task].slice(-FINISHED_KEPT);
           // Copilot is to be reconnected once the tasks are done: this may have been the last one.
           if (this.reconnectAfterTasks) void Promise.resolve().then(() => { if (!this.tasksAtWork()) this.reconnectAfterTasks?.(); });
           // Stopped because its computer went (or someone there pressed Stop): it says why, not just "Stopped.".
@@ -1701,6 +1709,12 @@ export class AgentHost {
     this.o.onTurnEnd?.(false);
   }
 
+  /** The tasks on cards now, and those that finished lately whose cards have gone (finishedLately). */
+  private tasksLately(): Task[] {
+    const now = this.tasks?.list() ?? [];
+    return [...now, ...this.finishedLately.filter(t => !now.includes(t))];
+  }
+
   /** Requests sent whose turn hasn't started yet, oldest first (a request sent during a turn waits for it to end). */
   private queued: UserRequest[] = [];
   /**
@@ -1739,12 +1753,12 @@ export class AgentHost {
     // "What did I miss?": the tasks that finished lately, from Ember's own record.
     if (catchUpQuestion(text) && this.betweenTurns()) {
       this.o.log.info("agent.catch_up_local");
-      this.answerLocally(text, catchUpReply(this.tasks?.list() ?? [], Date.now()), how.voiceUnchecked);
+      this.answerLocally(text, catchUpReply(this.tasksLately(), Date.now()), how.voiceUnchecked);
       return;
     }
     const status = statusQuestion(text);
     if (status && this.betweenTurns()) {
-      const tasks = this.tasks?.list() ?? [];
+      const tasks = this.tasksLately();
       this.o.log.info("agent.status_local", { kind: status, running: tasks.filter(t => t.status === "running").length });
       this.answerLocally(text, statusReply(status, tasks, Date.now()), how.voiceUnchecked);
       return;
@@ -1889,6 +1903,7 @@ export class AgentHost {
     this.setSignedOut(true);
     // How its tasks ended belongs to this conversation too: the next one (maybe another account's) doesn't hear it.
     this.tasks?.takeReports();
+    this.finishedLately = [];
     this.carried = [];
     this.transcript.length = 0;
     this.terminalRefused.clear();
