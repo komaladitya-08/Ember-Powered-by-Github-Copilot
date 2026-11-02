@@ -179,6 +179,12 @@ export const SettingsSchema = z.object({
    * note in Settings › Conversation (`consent`, FEATURE_CONSENT_VERSION.routines). Kept in routines.json.
    */
   routines: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  /**
+   * Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools in the conversation, off
+   * until the user turns them on and agrees to their note in Home (`consent`, FEATURE_CONSENT_VERSION.extensions).
+   * What is installed is kept in extensions.json, apart from the settings.
+   */
+  extensions: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

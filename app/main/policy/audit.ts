@@ -13,7 +13,7 @@ import { typesCharacter } from "./policy";
 
 export interface AuditEntry {
   task?: string;
-  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl";
+  event: "decision" | "action" | "confirm" | "task" | "stop" | "command" | "remote" | "wsl" | "extension";
   [key: string]: unknown;
 }
 

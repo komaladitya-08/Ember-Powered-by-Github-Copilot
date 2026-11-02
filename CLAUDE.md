@@ -100,7 +100,7 @@ scripts/, packaging/, test/ (unit, integration, smoke, fixtures, mock-llm, demo)
 
 Ember drives a real person's desktop, so these rules are hard limits. They implement PLAN.md §5 and the §6 gates. When a safety check can't run, fail closed: refuse, send no image, lock down or stop. `.claude/rules/agent-and-policy.md` has the implementation detail.
 
-- **Agent tools.** Build every Copilot session with `hardenedSessionConfig()` and `verifySessionTools()`. SDK built-ins stay off, and no agent gets the SDK's shell, edit or fetch tools. Every change Ember makes goes through its own zod-typed tools: tier 0 (app settings and `launchApp()`), the accessibility helper, Ember's desk, the borrowed cursor, or `run_command`.
+- **Agent tools.** Build every Copilot session with `hardenedSessionConfig()` and `verifySessionTools()`. SDK built-ins stay off, and no agent gets the SDK's shell, edit or fetch tools, or any tool that installs or manages extensions. Extension tools are only agreed MCP tools, each call decided by Ember's gate (app/main/extensions/gate.ts). Every change Ember makes goes through its own zod-typed tools: tier 0 (app settings and `launchApp()`), the accessibility helper, Ember's desk, the borrowed cursor, or `run_command`.
 - **Policy decides, not the model.**
   - `PolicyEngine.decide()` in main decides every action, and question text is built from the request, never from model output.
   - Approval comes only from a click in Ember's bubble, corner card or prompt window, or from the allow and deny shortcuts while a question is up (`app/shared/shortcuts.ts`: Ctrl+Alt+Y/N on Linux, Win+Alt+Y/N on Windows, Control+Shift+Command+Y/N on macOS). Never from voice or the model.
@@ -122,7 +122,7 @@ Ember drives a real person's desktop, so these rules are hard limits. They imple
   - Audio stays on the machine and is never written to disk.
 - **Privacy.**
   - There is no telemetry.
-  - Network calls go only to Copilot (or the admin's BYOK provider), GitHub sign-in, the user-approved, SHA-256-pinned model download, and, once the user turns SSH on, the computers they name and the pinned Node.js download for them. Ember listens on no network port.
+  - Network calls go only to Copilot (or the admin's BYOK provider), GitHub sign-in, the user-approved, SHA-256-pinned model download, once the user turns SSH on, the computers they name and the pinned Node.js download for them, and, once the user turns extensions on, the marketplaces they add and the servers of the extensions they install (each named on its consent card). Ember listens on no network port.
   - Ember's data folder is created mode 0700 and the audit files are 0600. Typed text appears in the audit log only as a character count.
   - Never log window titles, typed text or the user's words anywhere more widely readable.
   - The GitHub token is stored only with `safeStorage`, and never when its backend is `basic_text`.

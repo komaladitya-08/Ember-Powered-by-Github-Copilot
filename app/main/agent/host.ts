@@ -37,7 +37,7 @@ import type { TargetId } from "../../shared/targets";
 import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
-import { SessionToolsTimeoutError } from "./session-config";
+import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
@@ -136,6 +136,12 @@ export interface HostOptions {
   onReminder?: (r: Reminder) => void;
   /** Routines and lasting reminders (routines.ts): used only while the user has them on, agreed and allowed. */
   routines?: RoutineBook;
+  /**
+   * Extensions (app/main/extensions/service.ts): the conductor's session gets the tools the user agreed to, each call
+   * decided by Ember's gate. When `generation` moves (an install, a change, a stop), Copilot is reconnected between
+   * turns, the conversation resumed as it was.
+   */
+  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
@@ -554,6 +560,10 @@ const agrees = (reply: string, asked: string): boolean => {
 
 export class AgentHost {
   private client: CopilotClient | null = null;
+  /** The connected runtime, for the extensions' marketplaces (null until Copilot is ready). */
+  get copilotClient(): CopilotClient | null {
+    return this.status.phase === "ready" ? this.client : null;
+  }
   conductor: Conductor | null = null;
   tasks: TaskManager | null = null;
   private status: AgentStatus;
@@ -1212,10 +1222,14 @@ export class AgentHost {
       const memory = this.memoryWanted() ? this.o.memory : undefined;
       this.memoryOn = !!memory;
       const routines = this.keepRoutines();
+      // The extension tools as they are now (none while extensions are off): a later change reconnects between turns.
+      this.extensionsGen = this.o.extensions?.generation ?? 0;
+      const extensions = this.o.extensions?.forSession();
       this.conductor = new Conductor({
         client, settings: this.o.settings, presenter: this.presenter, log: this.o.log.child("conductor"),
         reminders: this.reminders,
         ...(routines ? { routines } : {}),
+        ...(extensions ? { extensions } : {}),
         stateFile: this.stateFile,
         resume: this.conversation,
         workDir: path.join(this.o.userData, "copilot", "empty-workdir"),
@@ -1639,6 +1653,8 @@ export class AgentHost {
    */
   /** Whether this conversation's conductor was given memory (memoryWanted() when it started). */
   private memoryOn = false;
+  /** The extensions' generation this conversation's conductor was given (ExtensionsService.generation when it started). */
+  private extensionsGen = 0;
 
   /** Whether this conversation's conductor was given routines (routinesWanted() when it started). */
   private routinesOn = false;
@@ -1770,6 +1786,10 @@ export class AgentHost {
     // conversation resumed as it was), so the tools match the switch. Only between turns, with no task under way.
     if (this.status.phase === "ready" && (this.memoryWanted() !== this.memoryOn || this.routinesWanted() !== this.routinesOn) && this.idle) {
       this.o.log.info("agent.memory_changed", { on: this.memoryWanted(), routines: this.routinesWanted() });
+      void this.launch(this.token, this.source);
+    } else if (this.status.phase === "ready" && this.o.extensions && this.o.extensions.generation !== this.extensionsGen && this.idle) {
+      // An extension was installed, changed, turned on or off, or stopped: the same reconnect, so the tools match.
+      this.o.log.info("agent.extensions_changed");
       void this.launch(this.token, this.source);
     }
     // Still connecting (just started, reconnecting, or the session still opening): wait a little rather than say "not connected".

@@ -12,6 +12,7 @@ paths:
   - "app/main/wsl/**"
   - "app/main/remote/**"
   - "app/main/memory/**"
+  - "app/main/extensions/**"
   - "app/remote/**"
   - "app/askpass/**"
   - "app/main/screen-lock.ts"
@@ -144,6 +145,24 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 
   Typed text appears only as a character count. On Linux the journald copy (`journalctl -t ember-audit`, built by `journalLine()`) replaces goals, summaries, window titles, element names, chosen values, errors, folders and command text with their sizes; reasons, app names and shortcuts stay. Windows and macOS keep only the file.
 - **Tokens.** Store the GitHub token only with `safeStorage`, and never when its backend is `basic_text`. Accept `gho_`, `ghu_` and `github_pat_` tokens; refuse classic `ghp_` tokens.
+
+## Extensions
+
+docs/DEVELOPING.md "Extensions: the runtime and the gate" is the design; app/main/extensions/ the code.
+- **Only MCP servers load**, passed by Ember as explicit `mcpServers`. Never pass a third-party plugin as
+  `pluginDirectories` (its command hooks run outside every gate), never set `requestExtensions`, and never give a model
+  a tool that installs, enables, reloads or manages extensions: only the user does that, in Home.
+- **Admit tools one by one** through `hardenedSessionConfig({ extensions })`: `mcp:<server>-<tool>` names only, never
+  one equal to an Ember tool (an MCP tool replaces it silently), never `builtin:`.
+- **Every call goes through `gate.ts`'s `classify()`**: hints only make a call stricter; a changing tool asks every
+  time with a question built by `gateQuestion()` (no Always); a deny is final for the turn; every decision and result
+  is audited with sizes only; a call that can't be recorded is denied.
+- **Results** are rewritten by `wrapResult()` (untrusted, `<` escaped, capped, no images) and scanned by injection.ts.
+- **Pins** (pin.ts) are checked at install, start and re-enable, and against what the session shows; a changed tool
+  stays off until `reagree`.
+- **Servers start through the launcher** (launch.ts) with `appEnv()`'s allowlist, never the runtime's environment.
+- **Nothing runs** until `settings.extensions` is on with consent `>= FEATURE_CONSENT_VERSION.extensions` and the
+  admin's `features.extensions` isn't false (LOCKDOWN sets it false). The kill switch's `extensions` part stops them.
 
 ## Long-term memory
 

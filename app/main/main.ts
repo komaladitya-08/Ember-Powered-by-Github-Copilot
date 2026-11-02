@@ -89,6 +89,7 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { ExtensionsService } from "./extensions/service";
 import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
@@ -1109,6 +1110,7 @@ function start(): void {
   let audit: AuditLog | null = null;
   let borrowRef: CursorBorrow | null = null;
   let deskViewRef: DeskView | null = null;
+  let extensionsRef: ExtensionsService | null = null;
   const killSwitch = new KillSwitch(() => [
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
@@ -1117,6 +1119,8 @@ function start(): void {
     { name: "agent", stop: () => agent?.abortAll() },
     // Every command stops, on every target, and every remote is told to stop (at once, whatever the network does).
     { name: "targets", stop: () => targets?.stopAll() },
+    // Every extension call is refused from now on, its questions dropped, and every extension server ended.
+    { name: "extensions", stop: () => extensionsRef?.stopPart().stop() },
     // The user's take-over of the desk ends too (its keys are released).
     { name: "desk", stop: () => deskViewRef?.handBack() },
     { name: "motion", stop: () => { overlay?.setBorrowing(false); deskViewRef?.setDriving(false); showState({ focus: null, gesture: null }); } },
@@ -1207,6 +1211,27 @@ function start(): void {
   const memoryAllowed = () => policy.features.memory !== false;
   const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
+  // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
+  // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
+  const extensions = new ExtensionsService({
+    dir: path.join(userData, "extensions"), copilotHome: path.join(userData, "copilot"),
+    settings, admin: () => policy, client: () => agent?.copilotClient ?? null, confirmer: () => confirmer, audit: () => audit,
+    log: log.child("extensions"), os: platform.os,
+    // macOS never runs Ember as plain Node (PLAN.md §2 "Node mode"): no launcher, so no stdio servers there.
+    launcher: platform.os === "darwin" ? null : { execPath: process.execPath, script: path.join(__dirname, "mcp-launch.cjs") },
+    fetch: (u, i) => net.fetch(String(u), i as RequestInit),
+    allowLocal: devEnv("EMBER_EXTENSIONS_LOCAL") === "1",
+  });
+  // Every enabled extension's tools are checked against what the user agreed to before a conversation uses them.
+  extensionsRef = extensions;
+  void extensions.refresh().catch(err => log.warn("extensions.refresh_failed", { err }));
+  // Turned on (or agreed to) later: the same check first.
+  let extensionsActive = extensions.active();
+  settings.onChange(() => {
+    const on = extensions.active();
+    if (on && !extensionsActive) void extensions.refresh().catch(err => log.warn("extensions.refresh_failed", { err }));
+    extensionsActive = on;
+  });
   // Routines and lasting reminders (app/main/agent/routines.ts): routines.json beside the settings, used only while the
   // user has them on and the organisation allows them.
   const routinesAllowed = () => policy.features.routines !== false;
@@ -2050,6 +2075,7 @@ function start(): void {
     agent = new AgentHost({
       ...(memoryAllowed() ? { memory } : {}),
       ...(routinesAllowed() ? { routines: routineBook } : {}),
+      extensions,
       // Ember's two bodies: tasks work in the corner, on their cards; the cursor's bubble is the conversation's.
       cornerTasks: true,
       readTime,
