@@ -84,6 +84,11 @@ export const SettingsSchema = z.object({
   speak: z.boolean().default(true),
   /** Speak them while a screen reader runs, even with `speak` off; off with it, Ember never speaks (app/shared/speech.ts). */
   speakWithScreenReader: z.boolean().default(true),
+  /**
+   * Read a finished task's result out loud too (when replies are spoken); off, it shows on screen only ("Ember, just
+   * show me", JARVIS's "leave it on the screen"). Questions, answers and announcements are spoken either way.
+   */
+  speakResults: z.boolean().default(true),
   /** Listen for "Hey Ember". */
   wakeWord: z.boolean().default(true),
   voice: z.object({
@@ -169,6 +174,11 @@ export const SettingsSchema = z.object({
    * the settings (app/main/memory/store.ts).
    */
   memory: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  /**
+   * Routines and lasting reminders (app/main/agent/routines.ts): off until the user turns them on and agrees to their
+   * note in Settings › Conversation (`consent`, FEATURE_CONSENT_VERSION.routines). Kept in routines.json.
+   */
+  routines: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

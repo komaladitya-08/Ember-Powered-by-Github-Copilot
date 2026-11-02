@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IPC, type EmberHomeApi, type Presence, type SignInProgress, type VoiceStatus } from "../shared/ipc";
+import { IPC, type EmberHomeApi, type Presence, type RoutineRow, type SignInProgress, type VoiceStatus } from "../shared/ipc";
 import type { Settings } from "../main/settings";
 import type { AgentStatus, TranscriptEntry } from "../main/agent/host";
 import type { MemoryItem } from "../main/memory/service";
@@ -32,6 +32,10 @@ const api: EmberHomeApi = {
   onMemory: fn => listen<MemoryItem[]>(IPC.memoryChanged, fn),
   forgetMemory: id => ipcRenderer.invoke(IPC.memoryForget, id),
   forgetAllMemory: () => ipcRenderer.invoke(IPC.memoryForgetAll),
+  routines: () => ipcRenderer.invoke(IPC.routinesList),
+  onRoutines: fn => listen<RoutineRow[]>(IPC.routinesChanged, fn),
+  forgetRoutine: id => ipcRenderer.invoke(IPC.routinesForget, id),
+  forgetAllRoutines: () => ipcRenderer.invoke(IPC.routinesForgetAll),
   onVoiceProgress: fn => listen<{ done: number; total: number; phase?: "unpacking" }>(IPC.voiceProgress, fn),
   activity: () => ipcRenderer.invoke(IPC.activity),
   retrySignIn: () => ipcRenderer.invoke(IPC.agentRetry),

@@ -187,12 +187,12 @@ describe("AgentHost's TaskManager without a window system (§2.6, critique integ
     await host.stop();
   });
 
-  it("has today's tools and words when nothing can take a task (no screen, commands off, no other computer)", async () => {
+  it("has today's tools and words, plus reminders, when nothing can take a task (no screen, commands off, no other computer)", async () => {
     const t = targets(() => ({ ok: false, why: "Ember can't use this computer's screen here, and commands are off." }), () => ({ commands: false, targets: false }));
     const { host } = makeHost({ targets: t.agent, taskBase: taskBase().base });
     await host.start(TOKEN, "stored");
     expect(host.tasks).toBeNull();
-    expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "show_me"]);
+    expect(conductor().config.tools.map((x: any) => x.name)).toEqual(["set_appearance", "describe_screen", "start_task", "show_me", "set_reminder", "list_reminders", "cancel_reminder"]);
     expect(await tool(conductor(), "start_task").handler({ goal: "tidy my desktop" }, {})).toMatch(/cannot operate applications in this session \(no desktop access\)/);
     expect(await tool(conductor(), "show_me").handler({ goal: "how do I change the wallpaper" }, {})).toBe("Ember can't point at things in this session (no desktop access). Explain the steps in words instead.");
     expect(taskSessions()).toEqual([]);
