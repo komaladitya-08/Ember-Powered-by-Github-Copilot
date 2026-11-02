@@ -89,6 +89,9 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { registerExtensionsIpc } from "./extensions-ipc";
+import { demoExtensionsApi, demoVariant } from "./extensions-demo";
+import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
@@ -1467,6 +1470,15 @@ function start(): void {
   }));
   // Everything kept goes, and so do the reminders waiting this run (they would be kept again at their next change).
   ipcMain.handle(IPC.routinesForgetAll, guard(() => { agent?.reminders.clear(); routineBook.forgetAll(); }));
+  // Extensions, plugins and connectors (Home's Extensions section): the settings window's own page only, as guard. With
+  // no runtime the section says extensions aren't available yet; EMBER_TEST_EXTENSIONS shows a pretend one, which opens
+  // nothing in the browser.
+  const extensionsDemo = demoVariant(devEnv("EMBER_TEST_EXTENSIONS"));
+  const extensionsApi: ExtensionsApi | null = extensionsDemo ? demoExtensionsApi(extensionsDemo) : null;
+  registerExtensionsIpc(ipcMain, event => {
+    const url = event.senderFrame?.url ?? "";
+    return isTrustedSender(url) && !!home && !home.isDestroyed() && event.sender === home.webContents;
+  }, extensionsApi, url => (extensionsDemo ? log.info("extensions.demo_open", { url }) : shell.openExternal(url)), { send: sendToHome, log: log.child("extensions") });
   ipcMain.handle(IPC.voiceDownload, guard(async () => {
     // Listening turned off by the organisation: nothing to download for.
     if (policy.features.voice === false) return;

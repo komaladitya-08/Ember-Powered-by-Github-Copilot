@@ -157,6 +157,13 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   cards, handle, ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
   left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
+- **Catalog cards** (settings › Extensions › Browse): a marketplace's entries as cards on
+  `--surface-2` inside their group, in columns of at least 240 px; the name with its kind as a
+  neutral tag, the publisher's description (cut to whole words), who and where it comes from in the
+  tertiary label, and a quiet **Add** or **Connect** (**Added** with a check once added). The consent
+  card opens in the card pressed, across the whole row, with the one prominent button. Each tool of
+  an added item carries a tint tag in words: **Read-only** (green), **Can change things** (yellow)
+  or **Changed** (red).
 - **State:** one symbol family (working, waiting its turn, waiting for you, done, failed, stopped)
   beside the words on every surface, with the state in words for screen readers; never colour alone.
 - **Shape:** radii 6 / 8 / 10 / 14 / 18 and capsules; nested corners are concentric.

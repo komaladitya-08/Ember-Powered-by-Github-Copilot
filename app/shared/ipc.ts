@@ -11,6 +11,7 @@ import type { MicState } from "./voice";
 import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
 import type { TargetSummary } from "./targets";
+import type { Installed, MarketplaceEntry } from "./extensions";
 
 export const IPC = {
   getStatus: "ember:get-status",
@@ -292,4 +293,64 @@ export interface EmberAskApi {
   onHidden(fn: () => void): void;
   /** The page needs `rows` rows (the field's 1 to 4 lines, and one for the note when a paste was cut): the box grows to fit. */
   fit?(rows: number): void;
+}
+
+/**
+ * Home's Extensions section (app/main/extensions-ipc.ts, app/renderer/home/extensions.ts): main takes these only from
+ * the settings window, checks every argument's type and size, and answers in plain words (never the runtime's raw text).
+ */
+export const EXTENSIONS_IPC = {
+  /** What is installed, the marketplaces added, and whether extensions may be used at all (ExtensionsState). */
+  state: "extensions:state",
+  /** Main says something changed (installed, enabled, connected, a tool changed): the page asks for the state again. */
+  changed: "extensions:changed",
+  browse: "extensions:browse",
+  connectors: "extensions:connectors",
+  addMarketplace: "extensions:add-marketplace",
+  removeMarketplace: "extensions:remove-marketplace",
+  install: "extensions:install",
+  uninstall: "extensions:uninstall",
+  setEnabled: "extensions:set-enabled",
+  /** Connect a connector: GitHub's consent page opens in the browser when it needs one (only https://github.com/…). */
+  connect: "extensions:connect",
+  disconnect: "extensions:disconnect",
+  /** The user agrees again to an item whose tools changed since they agreed (rug-pull protection). */
+  reagree: "extensions:reagree",
+} as const;
+
+/** How an extensions action went: `why` is one plain sentence for the page. */
+export type ExtensionsDone = { ok: true } | { ok: false; why: string };
+
+/** Extensions as Home shows them. */
+export interface ExtensionsState {
+  /** This build has the extensions runtime (false: the section says it isn't ready yet). */
+  available: boolean;
+  /** The organisation allows extensions, and Ember isn't locked down. */
+  allowed: boolean;
+  installed: Installed[];
+  marketplaces: { name: string; source: string }[];
+  /** Set when the list couldn't be read: one plain sentence. */
+  error?: string;
+}
+
+/** A marketplace's entries, or the connectors' catalog. */
+export type ExtensionsEntries = { ok: true; entries: MarketplaceEntry[] } | { ok: false; why: string };
+
+/** Connect's outcome: connected, waiting for the user in GitHub's page (opened in the browser), or still pending. */
+export type ExtensionsConnect = { ok: true; state: "connected" | "consent" | "pending" } | { ok: false; why: string };
+
+/** The settings window's extensions API (`window.emberExtensions`, app/preload/home.ts). */
+export interface EmberExtensionsApi {
+  state(): Promise<ExtensionsState>;
+  onChanged(fn: () => void): () => void;
+  browse(marketplace: string): Promise<ExtensionsEntries>;
+  connectors(): Promise<ExtensionsEntries>;
+  addMarketplace(source: string): Promise<ExtensionsDone>;
+  removeMarketplace(name: string): Promise<ExtensionsDone>;
+  install(marketplace: string, name: string): Promise<ExtensionsDone>;
+  uninstall(id: string): Promise<ExtensionsDone>;
+  setEnabled(id: string, on: boolean): Promise<ExtensionsDone>;
+  connect(name: string): Promise<ExtensionsConnect>;
+  disconnect(id: string): Promise<ExtensionsDone>;
+  reagree(id: string): Promise<ExtensionsDone>;
 }

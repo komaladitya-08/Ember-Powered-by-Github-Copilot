@@ -454,6 +454,91 @@ html { scroll-padding-top: 16px; }
 .sub-switch { padding-left: 16px; }
 .row-note { color: var(--muted); font: var(--type-footnote); }
 
+/* ───── Extensions: what is added (status, switch, tools), marketplaces and their catalog, connectors ───── */
+.jump a[href="#extensions-h"] { --tile: #ac8e68; --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 3.5a2 2 0 0 1 4 0V5h4a1 1 0 0 1 1 1v4h-1.5a2 2 0 0 0 0 4H19v4a1 1 0 0 1-1 1h-4v-1.5a2 2 0 0 0-4 0V19H6a1 1 0 0 1-1-1v-4h1.5a2 2 0 0 0 0-4H5V6a1 1 0 0 1 1-1h4z'/%3E%3C/svg%3E"); }
+.ext-list li.ext-item { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: stretch; padding: 10px 0; }
+#ext-connectors-group { margin-top: 10px; }
+.ext-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.ext-head > input, .ext-head > button { flex: none; }
+.ext-text { display: grid; gap: 1px; min-width: 0; overflow-wrap: anywhere; flex: 1 1 auto; }
+.ext-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.ext-meta { color: var(--muted); font: var(--type-callout); min-width: 0; overflow-wrap: anywhere; }
+.ext-status { display: flex; align-items: center; gap: 8px; margin-top: 2px; color: var(--muted); font: var(--type-callout); }
+.ext-note { margin: 0; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
+/* A tool list folds under its item, with the fold's chevron (open at once when a tool changed). */
+.ext-tools > summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 2px 6px 2px 0; border-radius: var(--r-xs);
+  color: var(--muted); font: var(--type-footnote);
+}
+.ext-tools > summary::-webkit-details-marker { display: none; }
+.ext-tools > summary::before {
+  content: "" / ""; flex: none; width: 12px; height: 12px; background: var(--muted);
+  -webkit-mask: var(--sym-chevron) center / 10px no-repeat; transition: transform 260ms var(--spring-snappy);
+}
+.ext-tools[open] > summary::before { transform: rotate(90deg); }
+.ext-tools > summary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+@media (hover: hover) { .ext-tools > summary:hover { color: var(--fg); } .ext-tools > summary:hover::before { background: var(--fg); } }
+.ext-tool-list { list-style: none; margin: 6px 0 2px; padding: 0; display: grid; gap: 8px; }
+/* Nested lists are not rows of the group they sit in. */
+.plain-list .ext-tool-list li, .plain-list .ext-consent-lines li { display: grid; min-height: 0; padding: 0; border-top: 0; }
+.plain-list .ext-tool-list li { grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 2px 8px; }
+.ext-tool-name { font: 12px/16px var(--ember-mono); color: var(--fg); min-width: 0; overflow-wrap: anywhere; }
+.ext-tool-desc { grid-column: 2; color: var(--muted); font: var(--type-footnote); text-wrap: pretty; }
+/* Tags: a tint behind the word in its -text colour (yellow's word is yellow itself). */
+.ext-list .tag, .ext-card .tag {
+  justify-self: start; padding: 1px 8px; border-radius: var(--r-capsule); white-space: nowrap;
+  font: 600 11px/17px var(--ember-font); letter-spacing: 0.01em; background: rgba(120, 120, 128, 0.26); color: var(--fg);
+}
+.ext-list .tag.ok { background: color-mix(in srgb, var(--green) 16%, transparent); color: var(--green-text); }
+.ext-list .tag.ask { background: color-mix(in srgb, var(--yellow) 14%, transparent); color: var(--warn); }
+.ext-list .tag.no { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-text); }
+.ext-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ext-row-actions { display: flex; flex: none; gap: 2px; }
+/* Buttons in these lists are text buttons: their words line up with the name above; Remove and Disconnect in red. */
+.ext-list .btn.quiet { color: var(--fg); margin-right: 0; }
+.ext-list .ext-actions .btn.quiet:first-child { margin-left: -8px; }
+.ext-list .ext-row-actions .btn.quiet:last-child, .ext-list .ext-head > .btn.quiet { margin-right: -8px; }
+.ext-list .btn.quiet.danger { color: var(--red-text); }
+.ext-list .btn.quiet[aria-disabled="true"], .ext-card .btn[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
+.ext-list .btn.quiet[aria-current="true"] { font-weight: 600; background: rgba(255, 255, 255, 0.08); }
+.ext-list li.ext-market { min-height: 48px; }
+/* Browsing a marketplace: its entries as cards in a group of their own. */
+.ext-browse { display: grid; gap: 10px; padding: 12px 16px 16px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--group-edge); }
+.ext-browse-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.ext-browse-head h3.sub { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.ext-browse-head h3.sub:focus { outline: none; }
+#ext-browse-status, #extensions-msg { margin: 0 4px; }
+#ext-browse-status:empty, #extensions-msg:empty { display: none; }
+.ext-cards { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); align-items: start; gap: 10px; }
+/* The card asking for consent takes the whole row, so its promises read at a comfortable measure. */
+.ext-card:has(> .ext-consent) { grid-column: 1 / -1; }
+.ext-cards:empty { display: none; }
+.ext-card {
+  display: grid; align-content: start; gap: 6px; min-width: 0; overflow-wrap: anywhere; padding: 12px 14px;
+  border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.ext-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.ext-desc { margin: 0; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
+.ext-card .ext-meta { margin: 0; color: var(--label-3); font: var(--type-footnote); }
+.ext-card-foot { margin-top: 2px; }
+.ext-added { display: inline-flex; align-items: center; gap: 5px; color: var(--green-text); font: var(--type-footnote); font-weight: 600; }
+.ext-added::before { content: "" / ""; width: 14px; height: 14px; background: var(--green); -webkit-mask: var(--sym-done) center / contain no-repeat; }
+/* The consent card, in place of the item's buttons. */
+.ext-consent { display: grid; gap: 0; }
+.consent .ext-consent-title { margin: 0 0 8px; font-weight: 600; color: var(--fg); }
+.ext-consent-lines { margin: 0 0 12px; padding-left: 18px; display: grid; gap: 6px; color: var(--muted); font: var(--type-callout); text-wrap: pretty; }
+.plain-list .ext-consent-lines li { display: list-item; }
+/* In a list, the card's Not now is the bordered button again (the list's buttons are text buttons). */
+.ext-list .ext-consent .btn.quiet { margin: 0; padding: 4px 13px; color: var(--label); background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--control-edge); }
+@media (hover: hover) { .ext-list .ext-consent .btn.quiet:hover { background: rgba(255, 255, 255, 0.12); } }
+.ext-list .ext-consent .btn.quiet:focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.ext-card .ext-consent { margin-top: 4px; padding: 10px 0 0; border-radius: 0; background: transparent; box-shadow: inset 0 1px 0 var(--line); }
+@media (forced-colors: active) {
+  .ext-browse, .ext-card, .ext-list .tag, .ext-card .tag { outline: 1px solid CanvasText; outline-offset: -1px; }
+  .ext-tools > summary::before, .ext-tools > summary:hover::before, .ext-added::before { background: CanvasText; }
+  .ext-list .btn.quiet[aria-current="true"] { outline: 1px solid Highlight; }
+}
+
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type. */
 html[data-text-size] .hero-text p { font-size: calc(15px * var(--text-scale)); }
 html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
@@ -461,6 +546,8 @@ html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-he
 html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
 html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: calc(28px * var(--text-scale)); }
 html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size { font-size: calc(13px * var(--text-scale)); }
+html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
 html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
 html[data-text-size] .facts dd { font-size: calc(13px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
 html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
