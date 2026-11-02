@@ -307,6 +307,15 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
   - `firstAudioMs`: Ember's first sound.
 - A step that didn't happen is left out: a stop, or speaking off.
 
+**Does Ember hear itself?** Before Ember can be interrupted without "Hey Ember" (docs/ASSISTANT.md 2.3), its own
+voice must not reach its microphone. Ember plays its voice through Web Audio, which Chromium's echo cancellation is
+documented not to cover; `EMBER_TTS_OUTPUT=element` (development builds) plays it through an `<audio>` element
+instead, which it is documented to cover. `node scripts/voice/echo-check.mjs` (after `npm run build` and
+`node scripts/voice/prepare.mjs`) measures both on the computer it runs on: quiet room, then six of Ember's sentences
+per path. It prints how many dB above the room Ember's voice came back, and any wakes, speech onsets or utterances it
+caused (lower is better; `--json out.json` keeps the numbers). Run it with speakers, not headphones, and nobody
+talking; `--fake` only checks the script itself. The recording is deleted when it ends.
+
 A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
 report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).
 
@@ -345,7 +354,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG` and `EMBER_AX_PROVIDER` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER` and `EMBER_TTS_OUTPUT` switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &

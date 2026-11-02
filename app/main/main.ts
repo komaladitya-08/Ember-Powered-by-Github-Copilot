@@ -2122,6 +2122,8 @@ function start(): void {
     if (speechModels.bundled) log.info("voice.models_bundled", { root: speechModels.root });
     voice = new VoiceService({
       log: log.child("voice"),
+      // How Ember's voice is played (VoiceOptions.playback): a development switch until echo-check.mjs has measured it.
+      ...(devEnv("EMBER_TTS_OUTPUT") === "element" ? { playback: "element" as const } : {}),
       modelsRoot: speechModels.root,
       // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
       ...(speechModels.bundled ? { bundled: { userRoot: speechModels.userRoot } } : {}),

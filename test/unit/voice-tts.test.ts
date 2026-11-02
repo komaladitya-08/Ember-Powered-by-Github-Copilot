@@ -6,7 +6,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { SpeechStream, speechChunks } from "../../app/voice/tts";
-import { Player, type PlayerAudio, type PlayerSource } from "../../app/renderer/mic/player";
+import { Player, type PlayerAudio, type PlayerSource, playerAudio } from "../../app/renderer/mic/player";
 import { bestVoice } from "../../app/renderer/mic/voices";
 
 describe("speechChunks", () => {
@@ -154,5 +154,37 @@ describe("bestVoice", () => {
   it("keeps to the language, and lets the system choose when it has none for it", () => {
     expect(bestVoice([v("Thomas (Enhanced)", "fr-FR"), v("Alex", "en-GB")], "en-US")?.name).toBe("Alex");
     expect(bestVoice([v("Thomas", "fr-FR")], "en-US")).toBeNull();
+  });
+});
+
+describe("playerAudio (how Ember's voice reaches the speakers)", () => {
+  const ctx = () => {
+    const dest = { stream: { id: "s" } };
+    const c = {
+      currentTime: 1.5, state: "running", resumed: 0,
+      resume: async () => { c.resumed++; },
+      createBuffer: () => ({ copyToChannel() {}, duration: 1 }),
+      createBufferSource: () => ({ buffer: null, onended: null, connect() {}, start() {}, stop() {} }),
+      destination: { speakers: true },
+      createMediaStreamDestination: () => dest,
+    };
+    return { c, dest };
+  };
+
+  it("plays through the context's own output by default", () => {
+    const { c } = ctx();
+    expect(playerAudio(c, false)).toBe(c);
+  });
+
+  it("plays through an <audio> element fed by a media stream when asked (echo cancellation covers media elements)", async () => {
+    const { c, dest } = ctx();
+    const el = { srcObject: null as unknown, plays: 0, play: async () => { el.plays++; } };
+    const a = playerAudio(c, true, () => el);
+    expect(a.destination).toBe(dest);
+    expect(el.srcObject).toBe(dest.stream);
+    expect(a.currentTime).toBe(1.5);
+    await a.resume();
+    expect(c.resumed).toBe(1);
+    expect(el.plays).toBe(2);
   });
 });
