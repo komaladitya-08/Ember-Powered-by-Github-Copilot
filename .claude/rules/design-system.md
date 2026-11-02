@@ -189,7 +189,7 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Hidden elements.** A class that sets `display` overrides the `hidden` attribute, so give it a `[hidden] { display: none; }` rule.
 - **Questions.**
   - A question is unmistakable and still: the bubble's brackets lock on once (a 180 ms `scale`), the ring is full and steady, the state tag says "Needs you", and nothing about it pulses or counts down. Its sentence sets the decision (up to its "?") in weight 600, what the step does after it, and the task under it in the secondary label; its keys show as keycaps.
-  - A risky question (policy's `risky`, `BubbleState.risky`) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered, not filled, so nothing invites a reflex yes. It changes how it looks, never how it is answered.
+  - A risky question (policy's `risky`, `BubbleState.risky`) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered, not filled, so nothing invites a reflex yes; the no-compositor corner card shows the tag and the bordered Allow too (`body[data-risky]`, `cardRisky()`). It changes how it looks, never how it is answered.
   - Every decision the floating layer asks for also works from the keyboard (the `allow` and `deny` shortcuts in app/shared/shortcuts.ts, Ctrl+Alt+Y / Ctrl+Alt+N on Linux, while Ember holds them), with the hint from `questionKeyHint()`.
   - "Always in <app>" stays click-only, because a global key could take an app's own shortcut and grant for good.
   - New task-card buttons ignore presses for `TASK_ARM_MS`, because the pointer may already rest where the card appears.

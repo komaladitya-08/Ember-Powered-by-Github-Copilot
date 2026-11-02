@@ -55,7 +55,9 @@ They share one emotion rig, so switching never changes behaviour.
   buttons, four corner brackets lock onto the bubble once (180 ms) and then hold still, and nothing
   about it pulses. A **risky** question (one policy asks about every time: send, delete, pay,
   install…) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered rather
-  than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. When
+  than filled, so nothing invites a reflex yes; screen readers hear "Risky step." first. The
+  no-compositor corner card marks it the same way: the tag beside Ember's name and the bordered
+  Allow. When
   "Thinking…" has heard nothing from Copilot for 10 seconds it says "Still waiting for Copilot…"
   with **Stop** (that turn only; tasks go on), and so does a turn that goes quiet for 30. A problem
   offers **Open settings** where settings can fix it, otherwise **Try again** where asking again is
