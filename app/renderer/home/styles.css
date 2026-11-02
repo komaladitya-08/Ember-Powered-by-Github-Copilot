@@ -575,6 +575,14 @@ html { scroll-padding-top: 16px; }
 .ext-list .btn.quiet.danger { color: var(--red-text); }
 .ext-list .btn.quiet[aria-disabled="true"], .ext-card .btn[aria-disabled="true"] { opacity: 0.4; pointer-events: none; }
 .ext-list .btn.quiet[aria-current="true"] { font-weight: 600; background: rgba(255, 255, 255, 0.08); }
+/* Except that only Remove and Disconnect (and Computers' Remove) stay red text buttons: Browse, Connect, Agree again and
+   the rest are bordered quiet buttons, so they look like something to click (white words alone read as a label). */
+.ext-list .btn.quiet:not(.danger), .targets .target-actions .btn.quiet:not(.danger) {
+  margin-left: 0; margin-right: 0; padding: 3px 10px; color: var(--label); background: rgba(255, 255, 255, 0.07); box-shadow: inset 0 0 0 1px var(--control-edge);
+}
+@media (hover: hover) { .ext-list .btn.quiet:not(.danger):hover, .targets .target-actions .btn.quiet:not(.danger):hover { background: rgba(255, 255, 255, 0.12); } }
+.ext-list .btn.quiet:not(.danger):focus-visible, .targets .target-actions .btn.quiet:not(.danger):focus-visible { box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
+.ext-list .btn.quiet[aria-current="true"]:not(.danger) { background: rgba(255, 255, 255, 0.14); }
 .ext-list li.ext-market { min-height: 48px; }
 /* Browsing a marketplace: its entries as cards in a group of their own. */
 .ext-browse { display: grid; gap: 10px; padding: 12px 16px 16px; border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--group-edge); }
@@ -615,20 +623,28 @@ html { scroll-padding-top: 16px; }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): what this page sizes in px grows with the type. */
 html[data-text-size] .hero-text p { font-size: calc(15px * var(--text-scale)); }
-html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
-html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
+html[data-text-size] h3.sub, html[data-text-size] .activity li.day { font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
+html[data-text-size] .start { font-size: calc(15px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
 html[data-text-size] .terms code, html[data-text-size] .hint code { font-size: calc(12px * var(--text-scale)); }
-html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: calc(28px * var(--text-scale)); }
+html[data-text-size] .sign-in-msg code { font-size: calc(20px * var(--text-scale)); line-height: round(calc(28px * var(--text-scale)), 1px); }
 html[data-text-size] .models select, html[data-text-size] .choice select, html[data-text-size] #text-size, html[data-text-size] #handle-position, html[data-text-size] #glass { font-size: calc(13px * var(--text-scale)); }
-html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
-html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
-html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
-html[data-text-size] .facts dd.path { font-size: calc(13px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); }
-html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
-@media (min-width: 640px) { html[data-text-size] .jump a { font-size: calc(14px * var(--text-scale)); line-height: calc(20px * var(--text-scale)); } }
-html[data-text-size] .note-tag { font-size: calc(11px * var(--text-scale)); line-height: calc(17px * var(--text-scale)); }
-html[data-text-size] .view .file code, html[data-text-size] .view .excerpt figcaption, html[data-text-size] .view .excerpt pre { font-size: calc(12px * var(--text-scale)); line-height: calc(18px * var(--text-scale)); }
-html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-height: calc(18px * var(--text-scale)); }
+html[data-text-size] .ext-tool-name { font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
+html[data-text-size] .ext-list .tag, html[data-text-size] .ext-card .tag { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
+html[data-text-size] .activity .tag, html[data-text-size] .pill { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
+html[data-text-size] .facts dd.path { font-size: calc(13px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
+html[data-text-size] .jump a { font-size: calc(13px * var(--text-scale)); line-height: round(calc(18px * var(--text-scale)), 1px); }
+@media (min-width: 640px) {
+  html[data-text-size] .jump a { font-size: calc(14px * var(--text-scale)); line-height: round(calc(20px * var(--text-scale)), 1px); }
+  /* The sidebar grows with its words, so "Comfort & access" stays on one line at the larger sizes, but only as far as
+     the window leaves the content its 460 px (a pane's own minimum, measured at Larger: the Computers pane needs about
+     385 px, plus its margins): from 640 to 720 px wide it stays 200 px, so nothing scrolls sideways. */
+  html[data-text-size] body:not(.first-run) { --sidebar: min(calc(200px * var(--text-scale)), max(200px, calc(100vw - 460px))); }
+  html[data-text-size] body:not(.first-run) .home > .jump { width: var(--sidebar); }
+  html[data-text-size] body:not(.first-run) .home { padding-left: calc(var(--sidebar) + 28px); }
+}
+html[data-text-size] .note-tag { font-size: calc(11px * var(--text-scale)); line-height: round(calc(17px * var(--text-scale)), 1px); }
+html[data-text-size] .view .file code, html[data-text-size] .view .excerpt figcaption, html[data-text-size] .view .excerpt pre { font-size: calc(12px * var(--text-scale)); line-height: round(calc(18px * var(--text-scale)), 1px); }
+html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-height: round(calc(18px * var(--text-scale)), 1px); }
 
 /* Contrast themes for Home's status panel and Task activity: the ring in the text colour (heavier when Ember needs
    you), every state symbol and plan mark in a system colour, the note tag with an edge. */
@@ -654,7 +670,14 @@ html[data-text-size] .timeline .at, html[data-text-size] .timeline .what { line-
 .search input::placeholder { color: #9a9592; opacity: 1; }
 .search input:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--control-edge), var(--focus-ring); }
 .jump a.unmatched { display: none; }
-.found { border-radius: var(--r-xs); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+/* Nothing found: said in the sidebar, where the links were (and to screen readers by #search-msg). */
+.search-none { margin: 4px 10px; color: var(--muted); font: var(--type-callout); }
+/* The setting Enter found: its row (or its words) on a tint that reaches a little past it, so the mark never touches
+   its letters (a spread, which takes no room: nothing moves). */
+.found { border-radius: var(--r-xs); background: color-mix(in srgb, var(--accent) 16%, transparent); box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent); }
+.found:focus-visible { outline: none; }
+/* A whole group found by its header or footnote: tinted on its own fill, edged in the accent, its corners kept. */
+.group.found { border-radius: var(--r-lg); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); box-shadow: var(--group-edge), 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent); }
 @media (min-width: 640px) { .search { padding: 0 0 10px; } }
 @media (forced-colors: active) {
   .search input { border: 1px solid ButtonText; }
@@ -696,6 +719,8 @@ body:not(.first-run) .home > [data-pane]:not(.off-pane) {
   body:not(.first-run) .home > .jump.has-hl a[aria-current="true"] { background: transparent; }
 }
 @media (max-width: 639px) { .jump-hl { display: none; } }
+/* With no link to sit on (the pane's own link stepped out of a search), the selection isn't drawn at all. */
+.jump:not(.has-hl) .jump-hl { display: none; }
 @media (forced-colors: active) { .jump-hl { display: none; } }
 @starting-style {
   body:not(.first-run) .home > [data-pane]:not(.off-pane) { opacity: 0; translate: 0 6px; }
@@ -707,9 +732,14 @@ body:not(.first-run) .home > [data-pane]:not(.off-pane) {
 }
 
 /* ───── First run (welcome.ts): one decision a step, Ember's line as its title, a still step indicator ─────
-   The window shows only the steps (and the organisation's notices) until Start; the step's buttons stay at the
-   window's foot when the step is short, and follow the step when it is long, so nothing ever covers it. */
-body.first-run .home { max-width: 640px; display: flex; flex-direction: column; gap: 20px; padding: 28px 24px 32px; }
+   The window shows only the steps (and the organisation's notices) until Start; the step's buttons follow its words,
+   so nothing ever covers them. As Apple's setup assistants do, the steps sit in the middle of the window, not in a
+   strip at its top with half the window empty below: the column is centred in the window's height, and every step
+   takes at least the same box, so the indicator and title stay put from step to step (a longer step grows down, and
+   the page scrolls once it outgrows the window). A wide window gives the column a little more width too. */
+body.first-run .home { max-width: 640px; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; gap: 20px; padding: 28px 24px 32px; }
+body.first-run #welcome { min-height: min(560px, calc(100vh - 60px)); }
+@media (min-width: 1000px) { body.first-run .home { max-width: 720px; } }
 body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: none; }
 .welcome {
   display: flex; flex-direction: column; gap: 22px;
@@ -747,7 +777,7 @@ body.first-run .home > :not(#welcome, #managed, #settings-notice) { display: non
 @starting-style { .welcome[data-dir="back"] .w-pane { translate: -16px 0; } }
 /* Reduced motion: the step fades in without moving (Calm stops every transition, ember.css). */
 @media (prefers-reduced-motion: reduce) { @starting-style { .w-pane, .welcome[data-dir="back"] .w-pane { translate: none; } .w-stage { scale: none; } } }
-.w-pane > .hint { margin: 0 4px; }
+.w-pane > .hint { margin: 0; }
 
 /* What Ember does: the full text's symbols, one short line each. */
 .w-points { margin: 0; gap: 12px; color: var(--fg); }

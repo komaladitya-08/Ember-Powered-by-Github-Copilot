@@ -102,5 +102,7 @@ html[data-text-size] .cut, html[data-text-size] .tip { line-height: calc(16px * 
 /* Windows contrast themes (forced colours; tokens in ember.css): the computer a request goes to is set apart by its
    weight (the highlight is no text colour). */
 @media (forced-colors: active) {
+  /* The glass is gradients, which the system drops: the field and its capsules take the window's colour. */
+  textarea, .meta, .cut, .tip { background: Canvas; }
   .where { color: CanvasText; }
 }

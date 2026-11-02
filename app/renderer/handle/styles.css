@@ -42,6 +42,10 @@ body[data-presence="error"] .menu::before { border-color: var(--red); -webkit-ma
    its tint, which has no tint token of its own. Never on the pill (the bubble shows it there). */
 .risk { display: none; flex: none; padding: 0 8px; border-radius: var(--r-capsule); font: var(--type-caption); font-weight: 600; color: var(--yellow); background: color-mix(in srgb, var(--yellow) 16%, transparent); }
 body.fallback[data-risky="true"] .risk { display: inline-flex; }
+/* Ember's own announcement of a step it took without asking: its "Without asking" tag beside Ember's name on the card,
+   as the bubble's beside its state (Ember's warmer light on the accent's tint). */
+.auto { display: none; flex: none; padding: 0 8px; border-radius: var(--r-capsule); font: var(--type-caption); font-weight: 600; color: var(--accent-2); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+body.fallback[data-autonomous="true"] .auto { display: inline-flex; }
 .target-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 .target:not([data-state="ready"]) .target-dot { width: 10px; height: 10px; border-radius: 0; }
 .target[data-state="connecting"] .target-dot { background: var(--yellow); -webkit-mask: var(--sym-working) center / 10px no-repeat; }
@@ -107,6 +111,9 @@ body.fallback .step { display: block; flex: none; margin-top: 4px; font: var(--t
 body.fallback .step[hidden] { display: none; }
 /* The question's buttons and the task row share the card's 12 px inset (main.ts reads their bottom margins). */
 .actions { display: flex; flex: none; gap: 8px; flex-wrap: wrap; margin: 0 12px 12px; }
+/* On the card they line up under the words they answer, not under Ember's face (8 px in, the 96 px face, a 10 px gap),
+   as an alert's buttons follow its text. */
+body.fallback .actions { margin-left: 114px; }
 /* Capsules: the prominent one is the app's accent, the others carry an edge of 3:1 or more (WCAG 1.4.11). */
 .actions button, .task-actions button {
   all: unset; box-sizing: border-box; cursor: pointer; min-height: calc(28px * var(--text-scale)); padding: 5px 14px; border-radius: var(--r-capsule);
@@ -169,6 +176,9 @@ body.fallback .mic { left: 82px; top: 90px; }
 /* Windows contrast themes (forced colours; tokens and focus in ember.css): the card's buttons and the computer's badge
    keep their edges (the handle keeps its own: a border the system colours). */
 @media (forced-colors: active) {
+  /* The glass is gradients, which the system drops: the capsule takes the window's colour (as the bubble does), so its
+     words don't each sit on a strip of backplate over the app. */
+  .handle { background: Canvas; }
   .actions button, .task-actions button { border: 1px solid ButtonText; }
   .actions button.primary { forced-color-adjust: none; border-color: Highlight; box-shadow: none; }
   .target { outline: 1px solid CanvasText; outline-offset: -1px; }
@@ -176,7 +186,7 @@ body.fallback .mic { left: 82px; top: 90px; }
   body.fallback .whole { border: 1px solid CanvasText; }
   /* A risky question: its Allow a plain button with a firmer edge (not the highlight's fill), its tag an edged word. */
   body[data-risky="true"] .actions button.primary { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }
-  .risk { forced-color-adjust: auto; color: CanvasText; background: Canvas; border: 1px solid CanvasText; }
+  .risk, .auto { forced-color-adjust: auto; color: CanvasText; background: Canvas; border: 1px solid CanvasText; }
 }
 
 /* Increase Contrast: the risky Allow's caution edge and the tag's tint are firmer (no token reaches them). */
