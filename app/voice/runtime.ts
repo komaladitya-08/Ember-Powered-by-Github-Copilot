@@ -361,9 +361,10 @@ export function modelKey(file: string, list: string[], threadCount: number): str
  * with more, each is made and `probe`d twice (the first run compiles, for CoreML), and the one whose second probe took
  * least is kept. A provider that fails to make the model, or to run it, is skipped; if every one fails, the last
  * error is thrown. `cache`: a verdict remembered for `key` is used without timing (timed again if it can't be made);
- * a new one is remembered.
+ * a new one is remembered. `free`: frees a model that isn't kept (a slower provider's, or one whose probe failed), so
+ * a model loaded twice doesn't stay loaded twice.
  */
-export function fastestProvider<T>(list: string[], make: (provider: string) => T, probe: (made: T) => void, o: { now?: () => number; cache?: { store: ProviderCache; key: string | null } } = {}): { made: T; provider: string; tried: ProviderTry[] } {
+export function fastestProvider<T>(list: string[], make: (provider: string) => T, probe: (made: T) => void, o: { now?: () => number; cache?: { store: ProviderCache; key: string | null }; free?: (made: T) => void } = {}): { made: T; provider: string; tried: ProviderTry[] } {
   const now = o.now ?? (() => performance.now());
   const cache = list.length > 1 && o.cache?.key ? { store: o.cache.store, key: o.cache.key } : null;
   const remembered = cache?.store.get(cache.key);
@@ -377,17 +378,25 @@ export function fastestProvider<T>(list: string[], make: (provider: string) => T
   const tried: ProviderTry[] = [];
   let best: { made: T; provider: string; ms: number } | null = null;
   let last: unknown = null;
+  const drop = (made: T) => {
+    try { o.free?.(made); } catch { /* freeing what isn't kept: nothing else to do */ }
+  };
   for (const provider of list) {
+    let made: T | undefined;
     try {
-      const made = make(provider);
+      made = make(provider);
       if (list.length === 1) return { made, provider, tried: [{ provider }] };
       probe(made);
       const t0 = now();
       probe(made);
       const ms = Math.round((now() - t0) * 10) / 10;
       tried.push({ provider, ms });
-      if (!best || ms < best.ms) best = { made, provider, ms };
+      if (!best || ms < best.ms) {
+        if (best) drop(best.made);
+        best = { made, provider, ms };
+      } else drop(made);
     } catch (err) {
+      if (made !== undefined) drop(made);
       last = err;
       tried.push({ provider, error: err instanceof Error ? err.message : String(err) });
     }

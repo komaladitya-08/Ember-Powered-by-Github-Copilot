@@ -523,7 +523,8 @@ export class VoiceEngine {
     if (this.mode.kind !== "listening") return;
     // What the VAD heard so far is Ember's voice, or was cut by it: start afresh once Ember is done.
     this.resetListening();
-    if (this.wasSpeaking) { this.wasSpeaking = false; this.emit({ type: "speech", on: false }); }
+    // (A bare name's window not shown yet never said speech began: it says nothing of its end either.)
+    if (this.wasSpeaking) { this.wasSpeaking = false; if (this.mode.announced !== false) this.emit({ type: "speech", on: false }); }
   }
 
   /**
@@ -534,6 +535,16 @@ export class VoiceEngine {
    */
   followUp(ms = 8000, o: { afterQuestion?: boolean } = {}): void {
     if (this.afterFollowUp) return;
+    if (this.mode.kind === "listening" && this.mode.announced === false) {
+      // A bare name's window not shown yet ("…remember…" may yet be taken back): it becomes the follow-up window, which
+      // needs no name, rather than be extended and then dropped with the follow-up in it. What it heard so far stays.
+      const m = this.mode;
+      this.peak = this.voice;
+      this.mode = { kind: "listening", until: Math.max(m.until, this.now() + ms), ms, heardSpeech: m.heardSpeech, first: false, reason: "follow-up", checkAt: null, keyword: "", afterQuestion: !!o.afterQuestion };
+      this.emit({ type: "listening", on: true, reason: "follow-up", window: "follow-up" });
+      if (this.wasSpeaking) this.emit({ type: "speech", on: true });
+      return;
+    }
     if (this.mode.kind === "listening") { this.mode.until = Math.max(this.mode.until, this.now() + ms); return; }
     this.resetListening();
     this.peak = this.voice;

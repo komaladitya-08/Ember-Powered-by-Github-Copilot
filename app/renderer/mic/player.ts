@@ -44,15 +44,20 @@ export function playerAudio(ctx: PlayerContext, element: boolean, makeElement: (
   const dest = ctx.createMediaStreamDestination();
   const out = makeElement();
   out.srcObject = dest.stream;
-  // A hidden page plays without a gesture (voice.ts sets the autoplay policy); a refusal is tried again on resume.
-  const play = () => out.play().catch(() => undefined);
+  // A hidden page plays without a gesture (voice.ts sets the autoplay policy); a refusal is tried again on resume, and
+  // with the next chunk while the context runs (it never needs resuming then, and the element would stay silent).
+  let refused = false;
+  const play = () => out.play().then(() => { refused = false; }, () => { refused = true; });
   void play();
   return {
     get currentTime() { return ctx.currentTime; },
     get state() { return ctx.state; },
     resume: async () => { await ctx.resume(); await play(); },
     createBuffer: (channels, length, rate) => ctx.createBuffer(channels, length, rate),
-    createBufferSource: () => ctx.createBufferSource(),
+    createBufferSource: () => {
+      if (refused && ctx.state === "running") void play();
+      return ctx.createBufferSource();
+    },
     destination: dest,
   };
 }
