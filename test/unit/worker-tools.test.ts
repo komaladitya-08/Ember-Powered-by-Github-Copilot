@@ -103,11 +103,15 @@ describe("what a worker tells its card (app/main/agent/activity.ts)", () => {
     expect((await call("report_progress", { text: "x", intent: "y".repeat(61) })).resultType).toBe("failure");
   });
 
-  it("says a question went up and how it was answered, never what it asked", async () => {
+  it("says a question went up, what it asks in Ember's words and where, and how it was answered", async () => {
     const allowed = makeWorker({ grants: {} });
     await allowed.call("perceive_window", {});
     await allowed.call("click", { id: 1 });
-    expect(allowed.activity.filter(e => e.type === "question" || e.type === "answer")).toEqual([{ type: "question" }, { type: "answer", answer: "allowed" }]);
+    const [question, answered] = allowed.activity.filter(e => e.type === "question" || e.type === "answer");
+    expect(question).toMatchObject({ type: "question", askedIn: "bubble", asked: expect.stringMatching(/^Click( in .+)?\?$/) });
+    expect(answered).toEqual({ type: "answer", answer: "allowed" });
+    // The button's name (screen text) stays in the bubble's question; Home gets the kind of step and the app only.
+    expect(JSON.stringify(question)).not.toContain("Bold");
     const declined = makeWorker({ grants: {}, answer: "deny" });
     await declined.call("perceive_window", {});
     await declined.call("click", { id: 1 });
@@ -502,6 +506,11 @@ describe("one question per step (review round 6)", () => {
     await behind.call("perceive_window", {});
     await behind.call("type_text", { id: 1, text: "Hello", mode: "insert" });
     expect(behind.asked).toEqual([expect.stringMatching(/^Borrow your mouse and keyboard to type “Hello” into the “Body” paragraph/)]);
+    // Home's Task activity never gets the typed text or the field's name: only Ember's words for the step (review of
+    // PR #125: typed text appears nowhere but the question that asks about it).
+    const said = behind.activity.filter(e => e.type === "question");
+    expect(said).toEqual([expect.objectContaining({ asked: expect.stringMatching(/^Type with your keyboard( in .+)?\?$/), askedIn: "bubble" })]);
+    expect(JSON.stringify(said)).not.toMatch(/Hello|Body/);
     expect(behind.events).toEqual([]);
   });
 });

@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText } from "../../shared/view";
-import type { TaskActivity } from "../../shared/activity";
+import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
@@ -39,9 +39,12 @@ import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
+import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
+import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
+import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsReply, resultsRequest, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
@@ -142,9 +145,22 @@ export interface HostOptions {
    * decided by Ember's gate. When `generation` moves (an install, a change, a stop), Copilot is reconnected between
    * turns, the conversation resumed as it was.
    */
-  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number };
+  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
+  /**
+   * "Work without asking" by voice (autonomy-intent.ts): its state, turning it on or off, and opening its switch (with
+   * its card) in Settings. Absent: the words go to the conversation like any others.
+   */
+  autonomy?: {
+    state(): { on: boolean; consented: boolean; managed: boolean };
+    /**
+     * `how`: spoken (and whether Voice Match verified it) or typed, for the audit entry. False when it couldn't be made
+     * so (its audit entry couldn't be written, so a turn on was undone).
+     */
+    set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
+    open(consent: boolean): void;
+  };
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -1224,6 +1240,7 @@ export class AgentHost {
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
             reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
+            autonomy: () => autonomyInForce(this.o.settings.get().autonomy, this.o.admin?.() ?? null),
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),
@@ -1442,7 +1459,9 @@ export class AgentHost {
   private async runtimeEnv(): Promise<NodeJS.ProcessEnv> {
     const e = process.env;
     const noProxy = (v: string | undefined, more: string[] = []) => [v, "127.0.0.1", "localhost", ...more].filter(Boolean).join(",");
-    const env: NodeJS.ProcessEnv = { ...e, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
+    // Its own temporary folder (0700, emptied at each connect): large tool output it saves there stays private.
+    const tmp = runtimeTempEnv(clearRuntimeTemp(runtimeTempDir(this.o.userData)));
+    const env: NodeJS.ProcessEnv = { ...e, ...tmp, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
     this.proxy = undefined;
     if (e.HTTPS_PROXY || e.https_proxy || !this.o.resolveProxy) return env;
     const resolve = this.o.resolveProxy;
@@ -1776,11 +1795,26 @@ export class AgentHost {
    * behind a turn under way), just before it is sent: main's acknowledgement waits for it, so "On it." never comes
    * while the request still waits, nor over another turn's answer.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; onSent?: () => void } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean; onSent?: () => void } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
     // Its turn begins at once only when no turn was under way or waiting as it was asked (before its own "Thinking…"):
     // otherwise main's acknowledgement would be said over the earlier turn's answer, so one queued behind gets none.
     const first = this.betweenTurns();
+    // "Work without asking" / "ask me first again": the switch, set here and never by the conductor (it has no tool for
+    // it). On only from the owner's verified voice with its card agreed to; off from anyone (autonomy-intent.ts).
+    const mode = this.o.autonomy ? autonomyIntent(text) : null;
+    if (mode && this.o.autonomy) {
+      const plan = planAutonomyIntent(mode, { ...this.o.autonomy.state(), verified: how.verified === true, short: how.short === true });
+      let saved = true;
+      try {
+        if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: how.spoken ? "voice" : "typed", verified: how.verified === true });
+        if (plan.open) this.o.autonomy.open(plan.open.consent);
+      } catch (err) { saved = false; this.o.log.warn("agent.autonomy_not_saved", { err }); }
+      this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
+      // Said only once it is so: a change that couldn't be saved or recorded says that instead (review of #127).
+      this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how.voiceUnchecked);
+      return true;
+    }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).
@@ -1940,7 +1974,7 @@ export class AgentHost {
    * What each kept task did and is doing, newest first (TaskManager.activities): Home's "Task activity" reads it. In
    * memory only; empty while no TaskManager runs.
    */
-  taskActivities(): { id: string; title: string; activity: TaskActivity }[] {
+  taskActivities(): TaskEntry[] {
     return this.tasks?.activities() ?? [];
   }
 
@@ -1994,6 +2028,8 @@ export class AgentHost {
     await this.tasks?.drain(2500);
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
+    // The runtime's saved tool output goes with the conversation.
+    try { clearRuntimeTemp(runtimeTempDir(this.o.userData)); } catch (err) { this.o.log.warn("agent.runtime_temp_not_cleared", { err }); }
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.forgetKept();
     this.setSignedOut(true);
@@ -2038,6 +2074,8 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversation = null;
+    // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
+    this.o.extensions?.conversationEnded?.();
     this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);

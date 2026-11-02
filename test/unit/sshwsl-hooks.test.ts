@@ -475,7 +475,10 @@ describe("the policy's seams for other targets (critique integration-17)", () =>
     for (const os of ["linux", "win32", "darwin"] as const) {
       for (const r of CORPUS) out.push({ os, kind: r.kind, app: r.app, d: engine(os).decide(r) });
     }
-    const today = out.filter(x => (x as { app: string }).app !== "Ember commands");
+    // "Work without asking"'s marks (Decision.waivable, carriedFrom: which questions it could let go unasked) are left out:
+    // with it off, every decision is otherwise today's, byte for byte.
+    const today = out.filter(x => (x as { app: string }).app !== "Ember commands")
+      .map(x => { const { waivable: _w, carriedFrom: _c, ...d } = (x as { d: Record<string, unknown> }).d; return { ...(x as object), d }; });
     expect(today).toHaveLength(78);
     // SHA-256 of these decisions as policy.ts made them before the seam (89657f8), Ember's command window left out; since
     // the release review a choice in GNOME Settings is asked about every time (review #111), the remote-window reason

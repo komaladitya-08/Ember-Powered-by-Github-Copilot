@@ -28,6 +28,8 @@ type FromMain =
   | { type: "enrol" }
   | { type: "enrol-cancel" }
   | { type: "self-speaking"; on: boolean }
+  /** One of Ember's questions is up (or no longer): a "no" in a follow-up window then answers it. */
+  | { type: "question"; up: boolean }
   /** `afterQuestion`: Ember's answer asked something ("Okay." is then a reply, not a closer). */
   | { type: "follow-up"; ms: number; afterQuestion?: boolean }
   | { type: "cancel" };
@@ -159,7 +161,7 @@ parent.on("message", e => {
       backend = recognizers;
       speakerModel = m.models.speaker;
       gate.setOwner(decodePrint(m.voiceprint));
-      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : e.type === "wake" ? made.wakeAudio : null));
+      const made = new VoiceEngine(backend, e => gate.event(e, e.type === "utterance" ? made.requestAudio : e.type === "wake" ? made.wakeAudio : null, e.type === "utterance" && made.requestWithWake));
       engine = made;
       if (m.monitor) speakers.start();
       send({ type: "ready", loadMs: Date.now() - t0, backend: recognizers.info });
@@ -196,6 +198,8 @@ parent.on("message", e => {
     port.start();
   } else if (m.type === "self-speaking") {
     engine?.selfSpeaking(m.on);
+  } else if (m.type === "question") {
+    engine?.questionUp(m.up);
   } else if (m.type === "follow-up") {
     engine?.followUp(m.ms, { afterQuestion: m.afterQuestion });
   } else if (m.type === "cancel") {

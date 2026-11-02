@@ -12,6 +12,10 @@ import type { AdminPolicy } from "../main/admin";
 import type { OS, ShortcutId, ShownShortcut } from "./shortcuts";
 import type { TargetSummary } from "./targets";
 import type { Installed, MarketplaceEntry } from "./extensions";
+import type { TaskEntry } from "./activity";
+
+/** Main pushes Home's Task activity at most this often (a task's steps can come many a second). */
+export const TASKS_PUSH_MS = 500;
 
 export const IPC = {
   getStatus: "ember:get-status",
@@ -75,6 +79,19 @@ export const IPC = {
   /** The handle menu's Ask Ember… and Stop everything, from the settings window (a keyboard's way to them). */
   openAsk: "ember:open-ask",
   stopEverything: "ember:stop-everything",
+  /**
+   * Home's Task activity: every kept task's activity (AgentHost.taskActivities, in memory only), and main's push of
+   * the same list when it changes (at most every TASKS_PUSH_MS, only to the settings window).
+   */
+  tasks: "tasks:activity",
+  tasksChanged: "tasks:activity-changed",
+  /** Everything was stopped (first run's stop rehearsal hears the shortcut): the source, "hotkey" for the keys. */
+  homeStopped: "ember:home-stopped",
+  /** First run's "Hey Ember" meter: the window asks for the microphone's level while it shows, and gets it (0–8, null at the end). */
+  watchLevel: "ember:watch-level",
+  homeLevel: "ember:home-level",
+  /** Copies a sign-in code or a setup command for the settings window (pages get no clipboard permission). */
+  copyText: "ember:copy-text",
 } as const;
 
 export interface SignInProgress {
@@ -247,9 +264,20 @@ export interface EmberHomeApi {
   openAsk(): Promise<void>;
   /** Stops everything, as the handle menu's Stop everything does. */
   stopEverything(): Promise<void>;
+  /** Everything was just stopped, and how ("hotkey", "voice", "menu" or "settings"). */
+  onStopped(fn: (source: string) => void): () => void;
+  /** Send the microphone's level here while first run's "Hey Ember" try shows (true), or stop (false). */
+  watchLevel(on: boolean): Promise<void>;
+  /** The microphone's level (0–LEVEL_STEPS) while Ember hears a request, and null when it stops hearing. */
+  onLevel(fn: (level: number | null) => void): () => void;
+  /** Puts `text` (a sign-in code or a setup command, at most 4096 characters) on the clipboard. */
+  copyText(text: string): Promise<void>;
   cancelSignIn(): Promise<void>;
   /** Opens GitHub's page where the sign-in code is entered (again). */
   openSignInPage(): Promise<void>;
+  /** What each task this session did and is doing, newest first (kept in memory only), and changes to it. */
+  tasks(): Promise<TaskEntry[]>;
+  onTasks(fn: (tasks: TaskEntry[]) => void): () => void;
   /** This session's conversation (kept in memory only). */
   conversation(): Promise<TranscriptEntry[]>;
   onConversation(fn: (entries: TranscriptEntry[]) => void): () => void;

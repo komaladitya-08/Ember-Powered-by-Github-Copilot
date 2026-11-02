@@ -13,6 +13,8 @@ export type PreToolUseHookInput = Parameters<NonNullable<SessionHooks["onPreTool
 export type PreToolUseHookOutput = Exclude<Awaited<ReturnType<NonNullable<SessionHooks["onPreToolUse"]>>>, void>;
 export type PostToolUseHookInput = Parameters<NonNullable<SessionHooks["onPostToolUse"]>>[0];
 export type PostToolUseHookOutput = Exclude<Awaited<ReturnType<NonNullable<SessionHooks["onPostToolUse"]>>>, void>;
+export type PostToolUseFailureHookInput = Parameters<NonNullable<SessionHooks["onPostToolUseFailure"]>>[0];
+export type PostToolUseFailureHookOutput = Exclude<Awaited<ReturnType<NonNullable<SessionHooks["onPostToolUseFailure"]>>>, void>;
 
 export const BUILTIN_AGENTS = ["explore", "task", "general-purpose", "code-review", "research", "security-review"];
 
@@ -49,6 +51,21 @@ export interface SessionExtensions {
   postToolUse(input: PostToolUseHookInput): Promise<PostToolUseHookOutput | void>;
   /** What the session shows of its extension tools, checked against their pins (verifySessionTools). */
   verify(shown: ShownTool[]): void;
+  /**
+   * A failed call's text (only `additionalContext` can be added: the SDK doesn't let a failure be rewritten, so the raw
+   * failure reaches the model and this says it is untrusted data).
+   */
+  postToolUseFailure?(input: PostToolUseFailureHookInput): Promise<PostToolUseFailureHookOutput | void>;
+  /**
+   * Gives the gate the session's live tool list (verifySessionTools): a server may change a tool mid-session
+   * (notifications/tools/list_changed), so every call is checked against what the model is shown at that moment.
+   */
+  bind?(shown: () => Promise<ShownTool[]>): void;
+  /**
+   * A server said its tool list changed (`mcp.tools.list_changed`). The runtime's metadata has no hints, so a change
+   * of hints alone can't be checked against the pin: that server's tools ask from then on in this session.
+   */
+  listChanged?(serverName: string): void;
   /** A new request from the user: the tools they refused in the last turn may be asked about again. */
   newTurn?(): void;
 }
@@ -78,6 +95,10 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     if (ext && admitted.has(input.toolName)) return ext.postToolUse(input);
     return o.hooks?.onPostToolUse?.(input, invocation);
   };
+  const onPostToolUseFailure: NonNullable<SessionHooks["onPostToolUseFailure"]> = async (input, invocation) => {
+    if (ext && admitted.has(input.toolName)) return ext.postToolUseFailure?.(input);
+    return o.hooks?.onPostToolUseFailure?.(input, invocation);
+  };
   // Only the admitted tools load from each server, and only servers with one.
   const servers: Record<string, MCPServerConfig> = {};
   if (ext) {
@@ -100,7 +121,7 @@ export function hardenedSessionConfig(o: HardenedOptions): SessionConfig {
     systemMessage: o.systemMessage,
     workingDirectory: o.workingDirectory,
     onPermissionRequest: o.onPermissionRequest,
-    hooks: { ...(o.hooks ?? {}), onPreToolUse, ...(withExt ? { onPostToolUse } : {}) },
+    hooks: { ...(o.hooks ?? {}), onPreToolUse, ...(withExt ? { onPostToolUse, onPostToolUseFailure } : {}) },
     infiniteSessions: { enabled: true },
   } as SessionConfig;
 }
@@ -144,7 +165,17 @@ export async function verifySessionTools(session: CopilotSession, granted: strin
     const isAdmitted = (t: ShownTool) => admitted.has(t.name) && !!t.mcpServerName && t.name === `${t.mcpServerName}-${t.mcpToolName}`;
     const extra = meta.tools.filter(t => !granted.includes(t.name) && !isAdmitted(t)).map(t => t.name);
     if (extra.length) throw new UngrantedToolsError(extra);
-    if (ext && admitted.size) ext.verify(meta.tools.filter(isAdmitted));
+    if (ext && admitted.size) {
+      ext.verify(meta.tools.filter(isAdmitted));
+      ext.bind?.(async () => {
+        const now = await session.rpc.tools.getCurrentMetadata();
+        if (!Array.isArray(now.tools)) throw new Error("the runtime did not report its tools");
+        return now.tools.filter(isAdmitted);
+      });
+      if (ext.listChanged && typeof session.on === "function") {
+        session.on(e => { if (e.type === "mcp.tools.list_changed") ext.listChanged?.(String((e.data as { serverName?: unknown }).serverName ?? "")); });
+      }
+    }
     return names;
   })(), timeoutMs);
 }
