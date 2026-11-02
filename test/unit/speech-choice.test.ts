@@ -33,4 +33,13 @@ describe("speaking out loud", () => {
     const admin = parseAdminPolicy(JSON.stringify({ features: { speak: false } }), "/etc/ember/policy.json");
     expect(speakChoice(applyAdminPolicy({ ...DEFAULT_SETTINGS, ...speakSettings("always") }, admin.policy))).toBe("never");
   });
+
+  it("shows “Read finished tasks out loud” off, not on and locked, when the organisation turned speaking off", () => {
+    const admin = parseAdminPolicy(JSON.stringify({ features: { speak: false } }), "/etc/ember/policy.json");
+    const user = { ...DEFAULT_SETTINGS, speakResults: true };
+    expect(applyAdminPolicy(user, admin.policy).speakResults).toBe(false);
+    // The user's own choice is kept for when the organisation allows speaking again.
+    expect(user.speakResults).toBe(true);
+    expect(applyAdminPolicy(user, parseAdminPolicy("{}", "/etc/ember/policy.json").policy).speakResults).toBe(true);
+  });
 });
