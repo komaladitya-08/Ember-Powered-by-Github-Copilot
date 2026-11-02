@@ -6,6 +6,8 @@
  */
 
 import type { Status } from "../../shared/ipc";
+import type { OS } from "../../shared/shortcuts";
+import { TARGET_FEATURE_TEXT, targetFeatureApplies } from "./computers-copy";
 
 type Lockdown = Pick<Status["admin"], "error" | "held" | "retentionDays">;
 
@@ -30,4 +32,19 @@ export function lockdownSendLine(a: Lockdown): string | null {
 /** How long the record of every action is kept, as the data list says it ("kept 30 days"). */
 export function keptWords(a: Lockdown): string {
   return a.retentionDays === null ? `none deleted ${until(a)}` : `kept ${a.retentionDays} days`;
+}
+
+/**
+ * What each switch the administrator can turn off (admin.ts AdminPolicySchema `features`) is called in the notice at the
+ * top of the window: every key has words, so the notice never shows a raw key such as "routines" or "aiReview".
+ */
+export const FEATURE_TEXT: Readonly<Record<string, string>> = {
+  voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
+  cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", memory: "remembering between runs",
+  routines: "keeping routines and reminders", aiReview: "Copilot's review of commands", extensions: "adding extensions", ...TARGET_FEATURE_TEXT,
+};
+
+/** The switches the administrator turned off that mean something on `os`, in the notice's words. */
+export function turnedOffWords(features: Status["admin"]["features"], os?: OS): string[] {
+  return Object.entries(features).filter(([k, v]) => v === false && targetFeatureApplies(k, os)).map(([k]) => FEATURE_TEXT[k] ?? k);
 }
