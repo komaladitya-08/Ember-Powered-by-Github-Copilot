@@ -31,6 +31,12 @@ declare global { interface Window { emberOverlay: OverlayApi } }
 
 /** Frame gaps (plus the wait for the next display frame) while nothing moves quickly. */
 const LIVELY_MS = 22;
+/**
+ * Talking (its hands may be busy too, but nothing else moves): the mouth follows a voice level that changes ten times a
+ * second, so 30 frames a second shows it fully. Measured: at the lively rate, speaking over the see-through glass cost
+ * 10-16 % more of a core than over the old opaque glass (blending what is under the glass at 45 frames a second).
+ */
+const TALKING_MS = 33;
 const RESTING_MS = 55;
 /** Dozing: the face still settling into sleep. Once it has, nothing is drawn until something happens. */
 const DOZING_MS = 110;
@@ -822,10 +828,13 @@ function draw(now: number): void {
     setBody((f || (!!state?.bubble.visible && asks)) && !onTarget ? body : null);
 
     const urgent = moving || looking || rig.motion === "brisk";
-    const lively = rig.motion === "gentle" || BRISK.has(pose.gesture) || !!state?.talking || pose.talk > 0.01;
+    const talking = !!state?.talking || pose.talk > 0.01;
+    // While it talks, its busy hands (a wave) go at the talking rate too: 30 frames a second still reads as a wave.
+    const busy = rig.motion === "gentle" || (BRISK.has(pose.gesture) && !talking);
+    const lively = busy || talking;
     // Asleep and settled: the last frame stays, and nothing is drawn until Ember or the cursor moves or the state
     // changes (onFrame, onState). Drawing on at 110 ms cost idle wakeups for a picture that didn't change.
-    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : lively ? LIVELY_MS : rig.asleep ? DOZING_MS : RESTING_MS);
+    if (!(rig.asleep && rig.settled && !urgent && !lively)) requestDraw(urgent ? 0 : busy ? LIVELY_MS : talking ? TALKING_MS : rig.asleep ? DOZING_MS : RESTING_MS);
   } else {
     // Hidden or on another display: sleep until a frame brings Ember here.
     showStage(false);
