@@ -943,7 +943,9 @@ export class VoiceEngine {
     const speaking = this.backend.speaking();
     if (speaking !== this.wasSpeaking) {
       this.wasSpeaking = speaking;
-      this.emit({ type: "speech", on: speaking });
+      // A bare name not shown yet says nothing: main shows "Listening…" on speech, and a window it never saw open sends
+      // it no "listening off" ("I remember…" left "Listening…" up for good). It's told once the wake shows (handleSegment).
+      if (this.mode.kind !== "listening" || this.mode.announced !== false) this.emit({ type: "speech", on: speaking });
       if (speaking && this.mode.kind === "listening") this.mode.heardSpeech = true;
     }
     if (speaking || segments.length) {
@@ -1110,6 +1112,7 @@ export class VoiceEngine {
       this.mode.announced = true;
       this.emit({ type: "wake", keyword: BARE_NAME });
       this.emit({ type: "listening", on: true, reason: "wake", window: "wake" });
+      if (this.wasSpeaking) this.emit({ type: "speech", on: true });
     }
     const bargeIn = !!this.mode.bargeIn, stopped = (t: string) => isStop(t) || (bargeIn && heardStopWord(t));
     if (bargeIn && this.pendingStop?.bargeIn) this.pendingStop = null; // decided here, on what the window heard
