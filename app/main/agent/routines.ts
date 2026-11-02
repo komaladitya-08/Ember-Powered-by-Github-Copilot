@@ -5,10 +5,13 @@
  * survive a restart.
  *
  * What keeps it safe:
- * - Only the user's own words make a routine: its name and steps must be mostly in what they said that turn
- *   (`ownWords`, as memory and reminders), so the screen, a file or a task result can't plant one.
+ * - Only the user's own words make a routine: its name and each of its steps must be mostly in what they said that turn
+ *   (`ownWords`, as memory and reminders), so the screen, a file or a task result can't plant one, nor add a step to
+ *   one the user is saving.
+ * - Only the user's own words run or delete one: its name must be in what they said (conductor.ts).
  * - Running one never skips a question: its steps start as ordinary tasks, checked by the policy against what the user
- *   says when they run it (the routine's name), so every risky step asks, every time.
+ *   says when they run it and the routine's steps (their own words when they saved it), so every risky step asks, every
+ *   time, with the usual question.
  * - Nothing is kept until the user turns routines on and agrees to their note (FEATURE_CONSENT_VERSION.routines), and the
  *   organisation can turn them off. routines.json is the user's alone (0600, in the 0700 data folder), written whole, and
  *   a broken file is moved aside, never overwritten.
@@ -57,14 +60,17 @@ export function routinesFile(dir: string, onBroken?: (err: unknown) => void): Ro
       let raw: string;
       try {
         raw = fs.readFileSync(file, "utf8");
-      } catch {
-        // None kept yet.
-        return EMPTY();
+      } catch (err) {
+        // None kept yet. Any other failure (no permission, a folder in its place) is thrown: read as empty, the next
+        // save would replace what the user kept.
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return EMPTY();
+        throw err;
       }
       try {
         return FileSchema.parse(JSON.parse(raw));
       } catch (err) {
-        try { fs.renameSync(file, `${file}.broken`); } catch { /* left where it is: save() will replace it */ }
+        // Moved aside under a name of its own, so a second broken file never replaces the first.
+        try { fs.renameSync(file, brokenName(file)); } catch { /* left where it is: save() will replace it */ }
         onBroken?.(err);
         return EMPTY();
       }
@@ -76,9 +82,19 @@ export function routinesFile(dir: string, onBroken?: (err: unknown) => void): Ro
       fs.renameSync(tmp, file);
     },
     erase() {
-      for (const f of [file, `${file}.tmp`, `${file}.broken`]) fs.rmSync(f, { force: true });
+      const broken = (() => { try { return fs.readdirSync(dir).filter(f => f.startsWith("routines.json.broken")); } catch { return []; } })();
+      for (const f of [file, `${file}.tmp`, ...broken.map(b => path.join(dir, b))]) fs.rmSync(f, { force: true });
     },
   };
+}
+
+/** Where a broken routines.json goes: `routines.json.broken`, or `.broken-2`, `.broken-3`… when that is taken. */
+function brokenName(file: string): string {
+  for (let n = 1; n < 100; n++) {
+    const name = n === 1 ? `${file}.broken` : `${file}.broken-${n}`;
+    if (!fs.existsSync(name)) return name;
+  }
+  return `${file}.broken-${Date.now()}`;
 }
 
 /** A routine's name as matched: lower case, curly apostrophes straight, quotes and end punctuation gone. */
@@ -98,8 +114,10 @@ export class RoutineBook {
     return this.data;
   }
 
-  private write(): void {
-    this.o.file.save(this.d);
+  /** Saves `next` and only then keeps it: a write that fails changes nothing (and throws). */
+  private write(next: Data): void {
+    this.o.file.save(next);
+    this.data = next;
     this.o.onChange?.();
   }
 
@@ -124,21 +142,20 @@ export class RoutineBook {
     if (!s.length || s.length > MAX_STEPS) return `A routine has 1 to ${MAX_STEPS} steps.`;
     if (s.some(x => x.length > MAX_TEXT)) return `Keep each step under ${MAX_TEXT} characters.`;
     // Only the user's own request makes a routine: never steps from the screen, a file or a task result.
-    if (!ownWords(`${n} ${s.join(" ")}`, said)) return "Not saved: a routine's name and steps must be the user's own words from this request. Ask them to say the steps.";
+    // Each step on its own: checked together, a step the screen planted would ride along with the user's.
+    if (!ownWords(n, said) || !s.every(x => ownWords(x, said))) return "Not saved: a routine's name and each of its steps must be the user's own words from this request. Ask them to say the steps.";
     const old = this.find(n);
     if (!old && this.d.routines.length >= MAX_ROUTINES) return `Not saved: ${MAX_ROUTINES} routines are already kept. The user can delete one first.`;
     const r: Routine = { id: old?.id ?? crypto.randomBytes(3).toString("hex"), name: n, steps: s, created: this.now() };
-    this.d.routines = [...this.d.routines.filter(x => x !== old), r];
-    this.write();
+    this.write({ ...this.d, routines: [...this.d.routines.filter(x => x !== old), r] });
     return r;
   }
 
   /** Forgets one routine by its id; false when there is none. */
   forget(id: string): boolean {
-    const before = this.d.routines.length;
-    this.d.routines = this.d.routines.filter(r => r.id !== id);
-    if (this.d.routines.length === before) return false;
-    this.write();
+    const routines = this.d.routines.filter(r => r.id !== id);
+    if (routines.length === this.d.routines.length) return false;
+    this.write({ ...this.d, routines });
     return true;
   }
 
@@ -156,8 +173,7 @@ export class RoutineBook {
 
   /** Keeps `list` as the reminders waiting (each change to Reminders). */
   setReminders(list: readonly Reminder[]): void {
-    this.d.reminders = list.slice(0, MAX_REMINDERS).map(r => ({ id: r.id, text: r.text, at: r.at, created: r.created }));
-    this.write();
+    this.write({ ...this.d, reminders: list.slice(0, MAX_REMINDERS).map(r => ({ id: r.id, text: r.text, at: r.at, created: r.created })) });
   }
 }
 

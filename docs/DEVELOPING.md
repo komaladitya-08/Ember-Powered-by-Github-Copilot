@@ -385,19 +385,27 @@ phrases it shows; a request in another voice is then ignored (“Ember, stop” 
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
 “OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
-record of its tasks (the step each one is on, how many wait, how the last one went), with no Copilot request, so it
-works offline too. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
+record of its tasks (the step each one is on, one waiting for your answer or stopping, how many wait, how the last one
+went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
+once the request has gone to Copilot, after anything Ember is already saying. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
 reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
-**Voice**). “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+**Voice**); while Ember isn't speaking replies at all, it says results stay on screen instead of promising to read them. “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
 how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
 whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
-reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken, and sends a notification if
-you are away. Only your own words set one. Reminders last while Ember runs, unless you turn on **Keep my routines
+reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken (after what it is saying), and
+sends a notification if you are away (only “A reminder is due.” while the screen is locked). Only your own words set
+or cancel one. Reminders last while Ember runs, unless you turn on **Keep my routines
 and reminders** under **Conversation** (and agree to its note): then they are kept in `routines.json` (mode 0600) and a
-reminder that fell due while Ember was closed is told at the next start. With it on you can also name a routine (“when
-I say start my day, open Mail and show today's calendar”); saying its name runs the steps as if you had just asked each
-one, and Ember still asks before anything risky. Only your own words make a routine. Home lists them with **Delete**,
-and signing out deletes them all.
+reminder that fell due while Ember was closed is told at the next start, also before Copilot connects. With it on you
+can also name a routine (“when I say start my day, open Mail and show today's calendar”); saying its name runs the steps
+as if you had just asked each one, and Ember still asks before anything risky, with the usual question; a command a
+step names (“delete the build folder”) always asks too, since the step isn't what you said just now. Only your own
+words make, run or delete a routine: making one needs its name and each of its steps in what you said, running one
+needs your request to be its name (alone, or “run my start my day routine”), and deleting one “delete my start my day
+routine”; a reminder is cancelled only by words such as “cancel the reminder to call Priya”. Text written as instructions to an AI
+(“ignore your previous instructions”) in a window, in any open window's title, or in what Ember read on the screen
+before a task makes that task ask before every step. Home lists them with
+**Delete**, and signing out deletes them all, also while your organisation has routines turned off.
 “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
@@ -626,8 +634,8 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `neverLook` | Apps and windows Ember never reads, captures or acts in (added to each user's list) |
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
-| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left untouched and unused |
-| `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left untouched and unused. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left unused (signing out still deletes it) |
+| `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left unused (signing out still deletes it). An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `features.autonomy` | `false`: "Work without asking" is off and managed; Ember asks before a first step in an app, a borrow and moving text between apps, as before. `allowGrants: false`, `confirmEveryAction: true`, `features.actions: false` and LOCKDOWN turn it off too. `true` turns nothing on. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
