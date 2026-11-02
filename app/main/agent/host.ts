@@ -39,7 +39,7 @@ import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError } from "./session-config";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
-import { resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
+import { catchUpQuestion, catchUpReply, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
 const refusedKey = (l: string) => l.trim().replace(/\.$/, "");
@@ -1667,6 +1667,12 @@ export class AgentHost {
       try { this.o.settings.update({ speakResults: results === "loud" }); } catch (err) { this.o.log.warn("agent.results_not_saved", { err }); }
       this.o.log.info("agent.results_switch", { on: results === "loud" });
       this.answerLocally(text, RESULTS_REPLY[results], how.voiceUnchecked);
+      return;
+    }
+    // "What did I miss?": the tasks that finished lately, from Ember's own record.
+    if (catchUpQuestion(text) && this.betweenTurns()) {
+      this.o.log.info("agent.catch_up_local");
+      this.answerLocally(text, catchUpReply(this.tasks?.list() ?? [], Date.now()), how.voiceUnchecked);
       return;
     }
     const status = statusQuestion(text);

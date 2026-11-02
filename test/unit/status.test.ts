@@ -16,7 +16,7 @@ vi.mock("@github/copilot-sdk", async importOriginal => {
   return { ...real, CopilotClient: FakeClient, RuntimeConnection: { forStdio: () => ({}) } };
 });
 
-import { durationWords, RECENT_MS, RESULTS_REPLY, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
+import { CATCH_UP_MS, catchUpQuestion, catchUpReply, durationWords, RECENT_MS, RESULTS_REPLY, resultsRequest, statusQuestion, statusReply } from "../../app/main/agent/status";
 import type { Task } from "../../app/main/agent/tasks";
 import { AgentHost } from "../../app/main/agent/host";
 import { SettingsStore } from "../../app/main/settings";
@@ -102,6 +102,29 @@ describe("resultsRequest", () => {
 
   it("leaves requests that only sound alike to Copilot", () => {
     for (const t of ["show me how to change the wallpaper", "just show me the downloads folder", "read this email out", "tell me a joke", "stop"]) expect(resultsRequest(t), t).toBeNull();
+  });
+});
+
+describe("catch-up", () => {
+  it("hears the ways of asking what happened while the user was away", () => {
+    for (const t of ["What did I miss?", "Ember, catch me up", "anything new?", "what happened while I was away", "fill me in", "what did you get done"]) expect(catchUpQuestion(t), t).toBe(true);
+    for (const t of ["what did I miss in the meeting notes", "catch the bus", "status?", ""]) expect(catchUpQuestion(t), t).toBe(false);
+  });
+
+  it("names the tasks that finished lately, newest first, each in one sentence, and what is still under way", () => {
+    const tasks = [
+      task({ id: "a", title: "Tidy the desktop", status: "done", finished: NOW - 3_600_000, result: { success: true, summary: "Moved 3 screenshots to Pictures. Left the rest alone." } }),
+      task({ id: "b", title: "Check the logs", status: "failed", finished: NOW - 600_000, result: { success: false, summary: "No log folder." } }),
+      task({ id: "c", title: "Old one", status: "done", finished: NOW - CATCH_UP_MS - 1 }),
+      task({ id: "d", title: "Write the report" }),
+    ];
+    expect(catchUpReply(tasks, NOW)).toBe("2 tasks finished. “Check the logs”: it didn't finish. “Tidy the desktop”: done. Moved 3 screenshots to Pictures. One task is still under way.");
+  });
+
+  it("counts the rest beyond three, and says plainly when nothing finished", () => {
+    const many = [1, 2, 3, 4, 5].map(i => task({ id: `t${i}`, title: `Task ${i}`, status: "done", finished: NOW - i * 1000 }));
+    expect(catchUpReply(many, NOW)).toBe("5 tasks finished. “Task 1”: done. “Task 2”: done. “Task 3”: done. And 2 more.");
+    expect(catchUpReply([], NOW)).toBe("Nothing new: no tasks finished in the last two hours.");
   });
 });
 

@@ -117,3 +117,43 @@ export const RESULTS_REPLY = {
   quiet: "Okay, I'll keep results on screen and won't read them out.",
   loud: "Okay, I'll read results out again.",
 } as const;
+
+/** How far back "what did I miss?" looks. */
+export const CATCH_UP_MS = 2 * 60 * 60_000;
+/** At most this many tasks are named in a catch-up; the rest are counted. */
+const CATCH_UP_TASKS = 3;
+
+/** "What did I miss?", "catch me up", "anything new?". */
+const CATCH_UP_RE = new RegExp(String.raw`^${LEAD}(?:what did i miss|what have i missed|catch me up|fill me in|anything (?:new|happen(?:ed)?)|what happened(?: while i was (?:away|gone|out))?|what(?:'s| is) new|what did you (?:do|get done))${TAIL}$`, "i");
+
+/** Whether `text` asks what happened while the user was away. */
+export function catchUpQuestion(text: string): boolean {
+  const t = norm(text);
+  return !!t && t.length <= 60 && CATCH_UP_RE.test(t);
+}
+
+/** A finished task's summary, cut to one short sentence for speech and the bubble. */
+const brief = (s: string) => {
+  const one = s.trim().split(/(?<=[.!?])\s/)[0] ?? "";
+  return one.length > 120 ? `${one.slice(0, 119).trimEnd()}…` : one;
+};
+
+/**
+ * Ember's catch-up (the Jarvis research's J4 "what did I miss" brief), from its own record only: the tasks that finished
+ * in the last CATCH_UP_MS, newest first, with how each went, and what is still under way. Nothing is read from the
+ * screen or sent anywhere.
+ */
+export function catchUpReply(tasks: readonly Task[], now: number): string {
+  const finished = tasks.filter(t => t.finished !== null && now - t.finished <= CATCH_UP_MS).sort((a, b) => (b.finished ?? 0) - (a.finished ?? 0));
+  const running = tasks.filter(t => t.status === "running" || t.status === "queued").length;
+  const still = running ? ` ${running === 1 ? "One task is" : `${running} tasks are`} still under way.` : "";
+  if (!finished.length) return `Nothing new: no tasks finished in the last two hours.${still}`;
+  const lines = finished.slice(0, CATCH_UP_TASKS).map(t => {
+    const how = OUTCOME[t.status as keyof typeof OUTCOME] ?? "done";
+    const said = t.status === "done" && t.result?.summary ? ` ${brief(t.result.summary)}` : "";
+    return `${named(t)}: ${how}.${said}`;
+  });
+  const more = finished.length - lines.length;
+  const head = finished.length === 1 ? "One task finished." : `${finished.length} tasks finished.`;
+  return `${head} ${lines.join(" ")}${more ? ` And ${more} more.` : ""}${still}`;
+}
