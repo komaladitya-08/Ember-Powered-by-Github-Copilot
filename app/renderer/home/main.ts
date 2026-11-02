@@ -22,6 +22,7 @@ import {
   type HomePatch, type Segment,
 } from "./copy";
 import { startTargets, targetsSettings, targetsStatus } from "./computers";
+import { extensionsStatus, startExtensions } from "./extensions";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 import { followStartRow } from "./start-row";
@@ -343,6 +344,7 @@ function render(status: Status): void {
   renderSettingsNotice(status.settingsNotice);
   applySettings(status.settings);
   targetsStatus(status);
+  extensionsStatus(status);
 }
 
 // ───── What differs by OS: shortcuts, folders, the consent's OS sentences (from main; Linux's markup until then) ─────
@@ -706,6 +708,8 @@ window.ember.onSettingsChanged(applySettings);
 // Computers and Commands (§8.3): shown once the targets runtime answers, kept in step with the settings.
 window.ember.onSettingsChanged(targetsSettings);
 startTargets();
+// Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
+startExtensions();
 
 // ───── Conversation (this session only) ─────
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];

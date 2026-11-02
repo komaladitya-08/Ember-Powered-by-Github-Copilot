@@ -41,7 +41,7 @@ export function keptWords(a: Lockdown): string {
 export const FEATURE_TEXT: Readonly<Record<string, string>> = {
   voice: "listening for “Hey Ember”", speak: "speaking out loud", actions: "acting in apps (Ember can still answer and show you how)",
   cursor: "borrowing your mouse", desk: "Ember's own desk", screenImages: "sending screenshots", memory: "remembering between runs",
-  routines: "keeping routines and reminders", aiReview: "Copilot's review of commands", ...TARGET_FEATURE_TEXT,
+  routines: "keeping routines and reminders", aiReview: "Copilot's review of commands", extensions: "adding extensions", ...TARGET_FEATURE_TEXT,
 };
 
 /** The switches the administrator turned off that mean something on `os`, in the notice's words. */

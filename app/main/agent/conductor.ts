@@ -14,7 +14,7 @@ import { reminderTime, whenWords, type Reminders } from "./reminders";
 import { MAX_STEPS, routineSteps, type RoutineBook } from "./routines";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
-import { hardenedSessionConfig, verifySessionTools } from "./session-config";
+import { hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "./session-config";
 import { NO_CAPS, emberSystemMessage } from "./persona";
 import { friendlyError, type Presenter } from "./presenter";
 import type { Logger } from "../logger";
@@ -102,6 +102,11 @@ export interface ConductorDeps {
   listComputers?: () => string;
   /** offer_connect: shows the user a Connect button for a host their words named; returns what to tell the model. */
   offerConnect?: (name: string) => string;
+  /**
+   * The extension tools the user agreed to (ExtensionsService.forSession), each call decided by Ember's gate. Absent:
+   * today's tools exactly.
+   */
+  extensions?: SessionExtensions;
 }
 
 /** The tools that come with other computers (§2.6): only with PromptCaps.targets. */
@@ -562,6 +567,9 @@ export class Conductor {
     const i = this.unstarted.findIndex(t => said.endsWith(t.trim()));
     this.said = i < 0 ? "" : this.unstarted[i];
     this.unstarted.splice(0, i + 1);
+    // A new turn: a tool the user refused last turn may be asked about again (never retried within the turn). At the
+    // turn's start, not at ask(), so a request sent during a turn can't clear that turn's refusals.
+    this.deps.extensions?.newTurn?.();
   }
 
   /** Memory's tools, while memory is on (deps.memory). */
@@ -617,6 +625,7 @@ export class Conductor {
       systemMessage: emberSystemMessage(d.words, d.memory ? { ...(d.caps ?? NO_CAPS), memory: true } : d.caps),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),
+      ...(d.extensions ? { extensions: d.extensions } : {}),
     });
     if (d.resume) {
       try {
@@ -640,7 +649,7 @@ export class Conductor {
       writeAgentState(d.stateFile, { forget: undefined });
       d.log.info("conductor.leftovers_deleted", { count: leftovers.length });
     }
-    const tools = await verifySessionTools(this.session, this.toolNames);
+    const tools = await verifySessionTools(this.session, this.toolNames, undefined, d.extensions);
     d.log.info("conductor.tools", { tools });
     const ms = d.turnStartMs ?? TURN_START_MS;
     const silentMs = d.turnSilentMs ?? TURN_SILENT_MS;

@@ -20,7 +20,7 @@
     </header>
 
     <nav class="jump after-setup" id="jump" aria-label="Settings sections">
-      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
+      <a href="#pick-h">Your Ember</a><a href="#copilot-h">Copilot</a><a href="#conversation-h">Conversation</a><a href="#voice-h">Voice</a><a href="#privacy-h">Apps &amp; privacy</a><a href="#computers-h" id="jump-computers" hidden>Computers</a><a href="#commands-h" id="jump-commands" hidden>Commands</a><a href="#extensions-h">Extensions</a><a href="#access-h">Comfort &amp; access</a><a href="#activity-h">What Ember did</a><a href="#checks-h">Setup check</a><a href="#about-h">About</a>
     </nav>
 
     <p id="managed" class="managed" hidden></p>
@@ -192,6 +192,37 @@
         <p class="hint" id="commands-managed" hidden></p>
         <p class="hint"><button type="button" id="open-commands" class="link">Open the command window</button></p>
         <p class="hint" id="commands-msg" role="status"></p>
+      </div>
+    </section>
+
+    <section class="after-setup" id="extensions" aria-labelledby="extensions-h">
+      <h2 id="extensions-h" tabindex="-1">Extensions</h2>
+      <div class="stack">
+        <p class="intro" id="extensions-intro">Extensions give Ember more tools: plugins from marketplaces you add, and connectors to services such as Slack or Notion, through GitHub. Only you can add them, here.</p>
+        <p class="managed" id="extensions-blocked" role="status" hidden></p>
+        <div class="stack" id="extensions-body" hidden>
+          <h3 class="sub" id="ext-installed-h">Added</h3>
+          <ul class="plain-list ext-list" id="ext-installed" aria-labelledby="ext-installed-h"></ul>
+          <h3 class="sub" id="ext-markets-h">Marketplaces</h3>
+          <ul class="plain-list ext-list" id="ext-markets" aria-labelledby="ext-markets-h"></ul>
+          <form class="add-row" id="ext-market-form" autocomplete="off" hidden>
+            <label for="ext-market-add" class="sr">Marketplace's GitHub repository or address</label>
+            <input id="ext-market-add" type="text" maxlength="2048" spellcheck="false" placeholder="owner/repo or https://…" aria-describedby="extensions-msg ext-markets-hint">
+            <button type="submit" class="btn quiet" data-key="market-add">Add</button>
+          </form>
+          <p class="hint" id="ext-markets-hint">Ember fetches each marketplace's list from the address you add, and nothing from it runs until you add an item and agree.</p>
+          <div class="ext-browse" id="ext-browse" role="region" aria-labelledby="ext-browse-h" hidden>
+            <div class="ext-browse-head"><h3 class="sub" id="ext-browse-h" tabindex="-1"></h3><button type="button" id="ext-browse-done" class="btn quiet small">Done</button></div>
+            <p class="hint" id="ext-browse-status" role="status"></p>
+            <ul class="ext-cards" id="ext-cards" aria-labelledby="ext-browse-h"></ul>
+          </div>
+          <div class="stack" id="ext-connectors-group">
+            <h3 class="sub" id="ext-connectors-h">Connectors</h3>
+            <ul class="plain-list ext-list" id="ext-connectors" aria-labelledby="ext-connectors-h"></ul>
+            <p class="hint">Connectors go through GitHub's Copilot service: you sign in to each service on GitHub's page, in your browser.</p>
+          </div>
+        </div>
+        <p class="hint" id="extensions-msg" role="status"></p>
       </div>
     </section>
 

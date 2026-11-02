@@ -130,6 +130,29 @@ cache (test/temp-folder.ts).
   - **Forget** removes one fact and **Forget everything** removes them all; saying "forget that" works too, and
     signing out forgets it all.
   - Turning it on or off reconnects Copilot before the next request, between turns, with the conversation resumed.
+- **Extensions** (Settings › **Extensions**): plugins and extensions from marketplaces the user adds, and connectors
+  (GitHub-hosted services such as Slack or Notion). Only the user adds, turns off, removes, connects or disconnects,
+  and only here.
+  - **Added** lists each item with its status in words beside a dot, a switch to turn it off, its tools (each badged
+    **Read-only**, **Can change things** or **Changed**), and **Remove** (a connector: **Disconnect**). A tool whose
+    name, description, schema or annotations changed since the user agreed shows **Changed since you agreed** with
+    **Agree again**; Ember stops using the changed tools until then.
+  - **Marketplaces** takes a GitHub repository (`owner/repo`, or its `https://github.com/…` address) or any `https://`
+    address (no `http`, user names or passwords); **Browse** shows its entries as cards (name, kind, description,
+    publisher, source, version, and **Added** once added).
+  - **Connectors** lists GitHub's catalog. **Connect** opens GitHub's consent page in the system browser (main opens
+    only `https://github.com` and its subdomains), shows **Waiting for you to finish in your browser** with **Check
+    again**, then **Connected**; one whose sign-in lapsed says **Needs you to sign in again**.
+  - Every add and connect first shows a consent card in place: only you add, read-only tools run once you agree,
+    Ember asks before any tool that changes or sends anything, results are information and never instructions, and
+    where the item reaches (the marketplace's source, or GitHub's Copilot service for a connector).
+    The first yes also records extensions' own consent (`settings.extensions`, `FEATURE_CONSENT_VERSION.extensions`;
+    `consentCard`'s words are pinned to that version in extensions-runtime.test.ts) and turns extensions on; nothing
+    loads before it. Connectors' catalog is empty for now (see "Extensions: the runtime and the gate").
+  - With `features.extensions` false, or while Ember is locked down, the section says so and lists what was added,
+    with nothing to change. A build without the extensions runtime says extensions aren't available yet.
+  - Main's side is `app/main/extensions-ipc.ts` (`EXTENSIONS_IPC`: the settings window only, every argument checked,
+    errors in one plain sentence); the words are `app/renderer/home/extensions-copy.ts`.
 - If another app already holds one of Ember's shortcuts, Ember registers its fallback (the same chord with Shift;
   on a Mac Control+Shift+Command with another key, never VoiceOver's Option: `FALLBACK_SHORTCUTS` in
   `app/shared/shortcuts.ts`), and the **Setup check**, the greeting, the
@@ -189,6 +212,54 @@ yours; it asks before dangerous ones ([COMMANDS-WSL-SSH.md](COMMANDS-WSL-SSH.md)
 
 The first time it starts, Ember explains what it reads, what it sends and what it keeps, and does nothing until you
 agree.
+
+### Extensions: the runtime and the gate
+
+The runtime is `app/main/extensions/` (ExtensionsService, the `ExtensionsApi` Home calls); the contract is
+`app/shared/extensions.ts`. A spike on the bundled runtime (Copilot SDK 1.0.21, empty mode, the mock model) decided what
+it builds on:
+
+- **Only MCP servers load.** Ember reads a plugin's manifest (`plugin.json`, `.github/plugin/plugin.json`,
+  `.claude-plugin/plugin.json`) and its MCP servers (`mcpServers`, `mcp.json`, `.mcp.json`), copies the plugin into
+  `extensions/plugins/<id>/`, and passes each server to the conductor's session as an explicit `mcpServers` entry. Its
+  hooks, agents, skills, rules and `extension.mjs` files are never loaded: passed as `pluginDirectories`, a plugin's
+  command hooks ran inside Ember's hardened session, outside every tool gate.
+- **Admitted one by one.** `hardenedSessionConfig({ extensions })` lists exactly `mcp:<server>-<tool>` for each agreed
+  tool in `availableTools` (never `builtin:`), filters each server's `tools`, and drops any name Ember grants itself:
+  an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
+  that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
+  exactly.
+- **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
+  LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
+  differently, or refused this turn: deny. A tool whose `readOnlyHint` is true (and not `destructiveHint`) in an
+  agreed item, with no injected text seen: allow. Anything else: the Confirmer asks every time ("Use “post_message”
+  from Slack? With "{…}"."), with Allow and Not now, never Always. Every decision, answer and result is an
+  `extension` audit entry, with sizes only.
+- **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
+  escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
+  later call ask.
+- **Pins.** At install and at each start (and when an item is turned on) Ember lists each server's tools itself
+  (`probe.ts`) and compares SHA-256 pins of name, description, schema and hints (`pin.ts`); a changed tool is off
+  until the user agrees again in Home.
+- **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
+  `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
+  starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
+  in `extensions/run/`. A server that needs a `${VAR}` from the user's environment is refused. `node` is Ember's own
+  Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
+- **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
+  `generation`; the host reconnects between turns (the conversation resumed), as memory does.
+- **The kill switch** part `extensions` refuses every call from sessions loaded before it, drops their questions and
+  ends every server the launcher recorded.
+- **Off for now:** connectors (`connectors()` is empty, `connect()` says they aren't available: they need GitHub's
+  service, which the spike couldn't reach without a real sign-in), `extension.mjs` extensions (bare tool names that
+  aren't filtered by `availableTools` and could shadow Ember's), the SDK's catalog, legacy SSE servers, servers that
+  need a sign-in (shown as needing one), and workers (only the conversation gets extension tools).
+- Marketplaces are registered with the runtime (`server.plugins.marketplaces`), which fetches them; a plugin kept in a
+  GitHub repository of its own is fetched by the runtime's install, copied, and uninstalled from the runtime again.
+  Only a GitHub repository (`owner/repo`) or an `https://` address can be added (`EMBER_EXTENSIONS_LOCAL=1`: a local
+  folder in development).
+- Tests: `test/unit/extensions-runtime.test.ts`; `test/integration/extensions.test.ts` (the real runtime, the mock model
+  and the launcher).
 
 ### Ember's desk
 
@@ -407,6 +478,8 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | Computers added over SSH, WSL's switch, and each computer's command switches | `settings.json` (`targets`, `commands`) |
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
+| Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest
 are kept); one it can repair is tidied once it has stayed the same for 2 s. A `settings.json` that can't be read at
@@ -422,8 +495,10 @@ Environment variables for development:
 | `EMBER_LOG_STDOUT=1` | Also print log lines to the terminal (on by default in development) |
 | `EMBER_PYTHON=/usr/bin/python3.12` | Python for the accessibility sidecar (Linux; default: `/usr/libexec/platform-python`, then `python3`) |
 | `EMBER_AX_PROVIDER=fake` | Windows and macOS, development only: the accessibility host reads a pretend desktop instead of the real one (a small bench, or the windows in the JSON file `EMBER_AX_FAKE_DESKTOP` names) |
+| `EMBER_TEST_EXTENSIONS=demo` | Development only: settings' **Extensions** section runs on a pretend runtime held in memory (`app/main/extensions-demo.ts`), which reaches no network, runs nothing and opens no browser: `demo` has marketplaces, plugins (one with a changed tool) and connectors (one needing a sign-in again), `empty` has nothing added, and `managed` is turned off by the organisation. For the render checks |
 | `EMBER_TEST_ALLOW_LOOPBACK_SSH=1` | Development only: lets Ember connect over SSH to this same computer (`127.0.0.1`), for the SSH tests (§14.5) |
 | `EMBER_MEMORY_LOG=30` | Development only: every that many seconds, logs `memory.report`: each Electron process's private bytes (Windows) and working set in MB, each renderer named after its page and window (`renderer mic Ember microphone`), and the totals. Working set counts the pages processes share once per process, so its sum over-counts; compare private bytes. The accessibility host and the Copilot runtime are processes of their own and aren't in it |
+| `EMBER_EXTENSIONS_LOCAL=1` | Development only: ExtensionsService accepts an absolute local folder holding a `marketplace.json` as a marketplace (Home's field still takes only GitHub repositories and https addresses, so this is for scripts and tests that call the service) |
 | `EMBER_REMOTE_DEV=1` | For the remote agent only: lets `ember-remote.cjs` run from a checkout's `dist/remote` instead of a verified install (§14.5); an installed agent ignores it |
 
 Apps Ember must never read or capture are listed under `privacy.neverLook` in `settings.json` (matched against app name
@@ -467,6 +542,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
 | `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left untouched and unused |
 | `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left untouched and unused. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
+| `features.extensions` | `false`: no extension loads or runs, and none can be added (the Extensions section says so and lists what was added, read only); what was installed is left untouched and unused. LOCKDOWN turns it off too. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |
