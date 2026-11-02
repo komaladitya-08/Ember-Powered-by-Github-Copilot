@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CopilotClient, RuntimeConnection, type ProviderConfig } from "@github/copilot-sdk";
 import { viewText } from "../../shared/view";
-import type { TaskActivity } from "../../shared/activity";
+import type { TaskEntry } from "../../shared/activity";
 import { Conductor, ConnectionLost, NO_ANSWER, forgetSavedConversation, readAgentState, within, writeAgentState, type ConductorMemory } from "./conductor";
 import { FEATURE_CONSENT_VERSION } from "../../shared/consent";
 import { BubbleOwner, Presenter, SIGN_IN_REFUSED, type NoticeBoard, type PresenterEvent, type PresenterOptions } from "./presenter";
@@ -39,6 +39,7 @@ import { whereWords } from "../commands/flow";
 import { NO_CAPS } from "./persona";
 import type { SignInWith } from "./github-app";
 import { SessionToolsTimeoutError, type SessionExtensions } from "./session-config";
+import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp";
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
@@ -142,7 +143,7 @@ export interface HostOptions {
    * decided by Ember's gate. When `generation` moves (an install, a change, a stop), Copilot is reconnected between
    * turns, the conversation resumed as it was.
    */
-  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number };
+  extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
   /**
@@ -1432,7 +1433,9 @@ export class AgentHost {
   private async runtimeEnv(): Promise<NodeJS.ProcessEnv> {
     const e = process.env;
     const noProxy = (v: string | undefined, more: string[] = []) => [v, "127.0.0.1", "localhost", ...more].filter(Boolean).join(",");
-    const env: NodeJS.ProcessEnv = { ...e, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
+    // Its own temporary folder (0700, emptied at each connect): large tool output it saves there stays private.
+    const tmp = runtimeTempEnv(clearRuntimeTemp(runtimeTempDir(this.o.userData)));
+    const env: NodeJS.ProcessEnv = { ...e, ...tmp, NO_PROXY: noProxy(e.NO_PROXY), no_proxy: noProxy(e.no_proxy ?? e.NO_PROXY) };
     this.proxy = undefined;
     if (e.HTTPS_PROXY || e.https_proxy || !this.o.resolveProxy) return env;
     const resolve = this.o.resolveProxy;
@@ -1916,7 +1919,7 @@ export class AgentHost {
    * What each kept task did and is doing, newest first (TaskManager.activities): Home's "Task activity" reads it. In
    * memory only; empty while no TaskManager runs.
    */
-  taskActivities(): { id: string; title: string; activity: TaskActivity }[] {
+  taskActivities(): TaskEntry[] {
     return this.tasks?.activities() ?? [];
   }
 
@@ -1981,6 +1984,8 @@ export class AgentHost {
     await this.tasks?.drain(2500);
     await within(this.tasks?.flushDeletes() ?? Promise.resolve(), RUNTIME_WAIT_MS);
     await this.forgetCurrent(RUNTIME_WAIT_MS);
+    // The runtime's saved tool output goes with the conversation.
+    try { clearRuntimeTemp(runtimeTempDir(this.o.userData)); } catch (err) { this.o.log.warn("agent.runtime_temp_not_cleared", { err }); }
     // Memory is about the person who signed out: it goes with their conversation (docs/MEMORY.md §3).
     this.o.memory?.forgetAll();
     this.reminders.clear();
@@ -1999,6 +2004,8 @@ export class AgentHost {
   /** Deletes this run's conversation (now, or at the next start if Copilot doesn't answer within `ms`). */
   private async forgetCurrent(ms: number): Promise<void> {
     this.conversation = null;
+    // An extension's result that read as instructions tainted that conversation (across its reconnects); it ends here.
+    this.o.extensions?.conversationEnded?.();
     this.convoCaps = null;
     try {
       if (this.conductor) await this.conductor.forget(ms);

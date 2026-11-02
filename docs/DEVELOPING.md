@@ -110,17 +110,48 @@ cache (test/temp-folder.ts).
 
 ### Using Ember
 
+- **First run** is seven steps in the settings window, one decision each (`app/renderer/home/welcome.ts`, its words
+  in `welcome-copy.ts`): Ember says hello; you choose a character; you read what Ember does and doesn't do (five short
+  lines, the full text under **Read the full text**) and **Agree and continue**, or **Not now**, which keeps Ember off
+  and offers **Quit Ember**; you sign in to GitHub (the device flow; a build without Ember's GitHub App offers the GitHub CLI's page and **Check again**; with the organisation's own model service, or under its lockdown, there is nothing to sign in to and the step only goes on; or **Skip for now**); the setup check shows only
+  the rows that need you, in plain words, with their fix button or the command to copy (main writes it to the clipboard: pages have no clipboard permission) (**Show the details** has every
+  row); you try the stop shortcut, “Hey Ember” with a level meter that follows your request after the wake word (only while it is on, agreed to, allowed by the organisation, not muted and listening) and a first
+  request in the ask box; and **Your Ember** sums it up before **Start Ember**. Nothing is read, heard or sent before
+  **Agree and continue** (it saves the consent; the steps after it can't be reached without it). Back works on every
+  step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in
+  settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
-  **Handle position** in settings' **Comfort & access**. Click the handle for **Ask Ember…**, **Stop everything**,
+  **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop everything**,
   **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
   **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember**, **Move to the other side** (the handle and its
   task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running).
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.
 - **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions.
-- Long answers have **Read all** (counted at the text size you picked): the settings window's **Conversation** section
+- **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Copilot**,
+  **Voice**, **Your Ember** (character, size, start at login, and **Ember on screen**: **Handle position**, **Follow my
+  cursor**, **Hide Ember until it needs me**, **Quit Ember**), **Memory** (with routines and reminders), **Apps &
+  privacy**, **Comfort & access**, **Computers** and **Commands** (once available), **Extensions**, and **Setup &
+  about**. **Search settings** at the top of the sidebar narrows it to the panes that hold the words typed; Enter goes
+  to the first setting found. The window reopens on the pane you last viewed (kept in the page's own storage).
+  - **Home** is a status panel (Ember's still presence ring, its state in a few words, which of listening, memory and
+    commands are on, today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
+    **Conversation**, **Task activity** and the folded **What Ember did**.
+  - **Task activity** shows each task of this session, newest first and the one that needs you on top: its state and
+    clock, its steps in one line, its plan as a checklist, a row for each thing it did with the time after it started
+    (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
+    (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
+    asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
+    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, and gone at
+    quit; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most twice a second,
+    only to the settings window.
+  - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
+    from the Dock or Finder) only greets you, unless a setup row needs you (`startView`'s `setupNeeded`): then settings
+    opens. Starting it again while it runs, the
+    settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
+- Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
-- **Memory** (Settings › Conversation › **Remember what I tell you**, off until you turn it on and agree to its note):
+- **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
   - It keeps this in `memory.json` in its data folder (mode 0600).
   - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.
@@ -231,22 +262,46 @@ it builds on:
   an MCP tool silently replaces an Ember tool of the same name. `verifySessionTools` accepts an extension tool only as
   that MCP tool and checks its description and schema against the pin. With no extension tool the session is today's
   exactly.
+- **Checked at every call, not only at load.** A server can change a tool mid-session (`notifications/tools/list_changed`),
+  so `verifySessionTools` binds the gate to the session's live tool list, and every call compares what the model is
+  shown now with the pin; a tool that differs is denied and marked changed for good (off until the user agrees again).
+  A session never bound, or whose list can't be read, denies every extension call.
 - **Ember's gate decides every call** (`gate.ts`, from `onPreToolUse`): off (the admin's `features.extensions`,
   LOCKDOWN, the user's switch or consent `FEATURE_CONSENT_VERSION.extensions`), stopped, disabled, changed, shown
-  differently, or refused this turn: deny. A tool whose `readOnlyHint` is true (and not `destructiveHint`) in an
-  agreed item, with no injected text seen: allow. Anything else: the Confirmer asks every time ("Use “post_message”
-  from Slack? With "{…}"."), with Allow and Not now, never Always. Every decision, answer and result is an
-  `extension` audit entry, with sizes only.
+  differently, or refused this turn: deny. A read-only tool in an agreed item, with no injected text seen: allow.
+  Read-only means `readOnlyHint` true with neither `destructiveHint` nor `openWorldHint` true, on a stdio server whose
+  tool list hasn't changed this session: every call to a remote (HTTP) server's tools asks, since it sends its
+  arguments there. Anything else: the Confirmer asks every time ("Use “post_message” from Slack? With "{…}"."), with
+  Allow and Not now, never Always. A yes counts only if the gate still allows the call when it comes. Every decision,
+  answer and result is an `extension` audit entry, with sizes only.
+- **Hints changed mid-session.** The runtime's tool list has no hints, so a change of hints alone (`readOnlyHint` to
+  `destructiveHint`) can't be compared with the pin during a session. When a server sends `tools/list_changed`
+  (`mcp.tools.list_changed`), every tool of that server asks for the rest of the session; the next start's check
+  (`refresh()`) re-pins nothing and turns the changed tool off.
+- **Failures are untrusted too.** The SDK can't rewrite a failed call's text, so `onPostToolUseFailure` adds Ember's
+  note that it is untrusted data, audits its size, and taints the conversation (any extension failure).
+- **Taint lasts the conversation**, across reconnects; it ends when the conversation is forgotten.
 - **Results are untrusted.** `onPostToolUse` replaces each result with `<extension_result untrusted="true">` text (`<`
   escaped, capped at 60 000 characters, images dropped); `injection.ts` scans it, and a flagged result makes every
-  later call ask.
+  later call ask. Output over about 2.5 MB the runtime saves to a file in its temporary folder and passes as a pointer
+  ("Saved to: …copilot-tool-output-….txt") and a preview: Ember can't scan the rest, so it treats such a result as
+  flagged and audits it as `truncated`. The runtime's temporary folder is `copilot-tmp/` in Ember's data folder
+  (`TMPDIR`, `TMP` and `TEMP`, 0700, emptied at each connect and at sign-out), never the shared /tmp, where those files
+  would be readable by every user.
 - **Pins.** At install and at each start (and when an item is turned on) Ember lists each server's tools itself
-  (`probe.ts`) and compares SHA-256 pins of name, description, schema and hints (`pin.ts`); a changed tool is off
-  until the user agrees again in Home.
+  (`probe.ts`, in its own process group, ended whole) and compares SHA-256 pins of name, description, schema and hints
+  (`pin.ts`); a changed tool is off until the user agrees again in Home. Known gap: **Agree again** (and install)
+  pins the tools the server serves at that moment without showing them to the user first; the card naming the served
+  tools, with a hash carried back on the yes, is a follow-up.
 - **Servers' environment.** The runtime would start a stdio server with its whole environment (the spike saw
   `GH_TOKEN` and cloud keys reach it), so it starts Ember's launcher (`dist/app/mcp-launch.cjs`, plain Node), which
   starts the server with `appEnv()`'s allowlist and the plugin's own values only, no shell, and records its process id
-  in `extensions/run/`. A server that needs a `${VAR}` from the user's environment is refused. `node` is Ember's own
+  in `extensions/run/` (Linux and macOS: as the leader of its own process group, so the kill switch ends everything
+  it started; Windows: `taskkill /T`). A server that needs a `${VAR}` from the user's environment is refused, and
+  proxy addresses reach it without their user name and password. This keeps Ember's sign-in out of the server's own
+  environment; it is not a sandbox. A stdio server runs as the user and can read what the user can, including the
+  environment of the Copilot runtime that started it (`/proc/<pid>/environ` on Linux), which holds the GitHub token
+  (the SDK passes it as `COPILOT_SDK_AUTH_TOKEN`). Install only extensions you would run yourself. `node` is Ember's own
   Node. macOS has no plain-Node mode, so stdio servers don't run there yet; remote servers must use HTTPS.
 - **Hot reload.** Installing, removing, turning an item on or off, agreeing again and the kill switch move
   `generation`; the host reconnects between turns (the conversation resumed), as memory does.
@@ -483,6 +538,7 @@ On Linux (Windows: §10.6, macOS: §11.6):
 | SSH's password helper: a two-line wrapper, and a socket for each connection while it asks | `~/.config/ember/ssh/askpass`; `$XDG_RUNTIME_DIR/ea-*/` |
 | Node.js downloaded for other computers (SHA-256 checked) | `~/.config/ember/remote/runtime/` |
 | Extensions: what is installed and the tools the user agreed to (0600), Ember's copy of each plugin, and the process ids of the servers running (folders 0700) | `~/.config/ember/extensions/` (`extensions.json`, `plugins/<id>/`, `run/`) |
+| The Copilot runtime's temporary files (large tool output it saves; 0700, emptied at each connect and at sign-out) | `~/.config/ember/copilot-tmp/` |
 | Marketplaces the user added, and the runtime's copy of their catalogues | `~/.config/ember/copilot/settings.json`, `~/.config/ember/copilot/.cache/copilot/marketplaces/` |
 
 A hand edit of `settings.json` that Ember can't use is copied aside as `settings.json.bad-<time>` (the three newest

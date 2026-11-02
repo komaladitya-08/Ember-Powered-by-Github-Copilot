@@ -46,11 +46,13 @@ export function dockMenuItems(ask: () => void): { label: string; click: () => vo
 
 /**
  * What Ember shows once it has started: settings until it is set up, or when this desktop session can't work (its setup
- * check says why); the ask box for a launcher's --ask; settings for a start by the user (or --show-settings); at login,
- * only its greeting.
+ * check says why); the ask box for a launcher's --ask; settings for --show-settings, or for a start by the user while a
+ * setup row needs them (`setupNeeded`: setup-attention.ts needsUser); otherwise only its greeting, which names the
+ * settings shortcut (UI audit #15: Home opened on every start, set up or not). Starting Ember again while it runs
+ * still opens settings (main's second-instance).
  */
-export function startView(o: { onboarded: boolean; showSettings: boolean; atLogin: boolean; sessionProblem: boolean; ask: boolean }): "settings" | "ask" | "greet" {
+export function startView(o: { onboarded: boolean; showSettings: boolean; atLogin: boolean; sessionProblem: boolean; ask: boolean; setupNeeded?: boolean }): "settings" | "ask" | "greet" {
   if (!o.onboarded || o.sessionProblem) return "settings";
   if (o.ask) return "ask";
-  return o.showSettings || !o.atLogin ? "settings" : "greet";
+  return o.showSettings || (!o.atLogin && o.setupNeeded === true) ? "settings" : "greet";
 }

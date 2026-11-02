@@ -70,13 +70,15 @@ describe("composing Linux's SystemPlatform", () => {
 });
 
 describe("paths", () => {
-  it("are today's: ~/.config/ember, the linux-x64 runtime, the fixed folder text and no rename retries", () => {
-    const p = linuxSystem(deps()).paths;
+  it("are today's: ~/.config/ember, the linux-x64 runtime, the real folder's name and no rename retries", () => {
+    const p = linuxSystem(deps({ env: { PATH: "/usr/bin:/bin", HOME: "/home/u" } })).paths;
     // Built with path.join, as main.ts always did: the exact string on Linux, backslashes when this suite runs on Windows.
     expect(p.userData("/home/u/.config", "/home/u")).toBe(path.join("/home/u/.config", "ember"));
     expect([p.runtimeId, p.runtimeExe]).toEqual(["linux-x64", "copilot-runtime"]);
-    expect(p.dataDirLabel("/tmp/anything")).toBe("~/.config/ember");
-    expect(p.dataDirLabel("/tmp/anything", "settings.json")).toBe("~/.config/ember/settings.json");
+    expect(p.dataDirLabel("/home/u/.config/ember")).toBe("~/.config/ember");
+    expect(p.dataDirLabel("/home/u/.config/ember", "settings.json")).toBe("~/.config/ember/settings.json");
+    // Moved elsewhere (EMBER_USER_DATA): the folder it really uses, so About names the file it reads (UI audit #15).
+    expect(p.dataDirLabel("/tmp/anything", "settings.json")).toBe("/tmp/anything/settings.json");
     expect(p.renameRetries).toBe(0);
   });
 });

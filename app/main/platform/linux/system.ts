@@ -56,8 +56,13 @@ export function linuxSystem(deps: PlatformDeps, io: LinuxSystemIO = {}): SystemP
       userData: (appData, _home) => path.join(appData, "ember"),
       runtimeId: "linux-x64",
       runtimeExe: "copilot-runtime",
-      // The settings window has always shown this fixed text (EMBER_USER_DATA is a development switch).
-      dataDirLabel: (_userData, file) => `~/.config/ember${file ? `/${file}` : ""}`,
+      // The folder Ember really uses (~/.config/ember unless EMBER_USER_DATA moved it), home-relative as macOS's is: About
+      // showed ~/.config/ember/settings.json beside a log file elsewhere (UI audit #15).
+      dataDirLabel: (userData, file) => {
+        const home = deps.env.HOME ?? "";
+        const shown = home && userData === home ? "~" : home && userData.startsWith(`${home}/`) ? `~${userData.slice(home.length)}` : userData;
+        return file ? `${shown}/${file}` : shown;
+      },
       renameRetries: 0,
     },
     apps: {
