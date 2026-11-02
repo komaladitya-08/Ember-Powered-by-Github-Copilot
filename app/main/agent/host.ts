@@ -1658,7 +1658,16 @@ export class AgentHost {
   private keepRoutines(): RoutineBook | undefined {
     const book = this.routinesWanted() ? this.o.routines : undefined;
     this.routinesOn = !!book;
-    if (!book) { this.reminders.setOnChange(null); return undefined; }
+    if (!book) {
+      this.reminders.setOnChange(null);
+      // Turned off after this run's reminders were kept: the file lets go of them (they last in memory only now).
+      // Left there, one told this run would be put back at the next start with routines on and told again, as missed.
+      if (this.remindersRestored && this.o.routines) {
+        this.remindersRestored = false;
+        try { this.o.routines.setReminders([]); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); }
+      }
+      return undefined;
+    }
     try {
       if (!this.remindersRestored) { this.remindersRestored = true; this.reminders.restore(book.reminders()); }
       this.reminders.setOnChange(list => { try { book.setReminders(list); } catch (err) { this.o.log.warn("agent.reminders_not_kept", { err }); } });
