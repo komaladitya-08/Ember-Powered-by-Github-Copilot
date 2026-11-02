@@ -156,12 +156,9 @@ Name these patterns when you design something new. Vague direction such as "make
   - `.hint` footnotes below the group;
   - words first in a row, with the switch at the trailing edge;
   - Remove as a `--red-text` text button.
-<<<<<<< HEAD
 - **Panes and section links.** Once Ember has started, Home shows one pane at a time (every top-level section carries `data-pane`; main.ts `showPane` takes the others off the page with `.off-pane`), and reopens on the last one. From 640px up, Home has a fixed 200px sidebar with **Search settings** at its top and coloured symbol tiles, and marks the current pane's link with `aria-current="true"`. Below 640px the search field and the links form one capsule row that scrolls sideways and is never sticky, so it never hides the focused element. A new section goes on a pane; a new pane gets a link, a tile and a place in the order (most used first).
 - **Home's status panel** is the one HUD part of a content window: still (its ring never animates), opaque on `--surface-1`, with one prominent button. Its words come from the same data the page shows below it (Task activity's tasks, the setup check's count), so the two never disagree.
-=======
 - **First run** (`#welcome`, welcome.ts): one decision a step, the step's buttons after its words (never stuck to the window's foot), a reason beside any button that waits (`aria-describedby="w-why"`), and a still step indicator. Its words are pure functions in welcome-copy.ts (home-welcome.test.ts). While it runs it borrows the hero's canvas and the character cards and gives them back at Start. Its forced-colours rules are in their own block at the end of home/styles.css; design-system.test.ts reads every block.
->>>>>>> origin/main
 - **Folds.** Fold a section with `<details class="fold" id="X-fold" aria-labelledby="X-h">`, with the chevron as a `::before` using `content: "" / ""` so it stays out of the spoken name.
 - **Window sizes.** Change CSS sizes and main-process window sizes together. The defaults:
   - Ask is 560×92, plus 24px a row as the text grows;
@@ -194,10 +191,10 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Hidden elements.** A class that sets `display` overrides the `hidden` attribute, so give it a `[hidden] { display: none; }` rule.
 - **Questions.**
   - A question is unmistakable and still: the bubble's brackets lock on once (a 180 ms `scale`), the ring is full and steady, the state tag says "Needs you", and nothing about it pulses or counts down. Its sentence sets the decision (up to its "?") in weight 600, what the step does after it, and the task under it in the secondary label; its keys show as keycaps.
-  - A risky question (policy's `risky`, `BubbleState.risky`) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered, not filled, so nothing invites a reflex yes. It changes how it looks, never how it is answered.
+  - A risky question (policy's `risky`, `BubbleState.risky`) adds a "Risky step" tag, caution-yellow brackets and an Allow that is bordered, not filled, so nothing invites a reflex yes; the no-compositor corner card shows the tag and the bordered Allow too (`body[data-risky]`, `cardRisky()`). It changes how it looks, never how it is answered.
   - Every decision the floating layer asks for also works from the keyboard (the `allow` and `deny` shortcuts in app/shared/shortcuts.ts, Ctrl+Alt+Y / Ctrl+Alt+N on Linux, while Ember holds them), with the hint from `questionKeyHint()`.
   - "Always in <app>" stays click-only, because a global key could take an app's own shortcut and grant for good.
-  - New task-card buttons ignore presses for `TASK_ARM_MS`, because the pointer may already rest where the card appears.
+  - New task-card buttons, and the bubble's Try again and Stop, ignore presses for `TASK_ARM_MS` (app/renderer/handle/arm.ts), because the pointer may already rest where they appear.
   - Question buttons are armed only by the Confirmer: never add a renderer arm delay to them.
 - **Screen readers.**
   - Put words for screen readers only in `.sr` (`.eb-live` in the bubble), and announce changes through `role="status"` or `aria-live="polite"`.
@@ -215,10 +212,13 @@ Name these patterns when you design something new. Vague direction such as "make
 - **Task state.** It is `data-status="running|queued|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Waiting its turn: ", "Waiting for you: " …). Every surface takes its state words from the one table, `STATUS_WORDS` in app/shared/activity.ts. Show selection with a ring plus a check.
 - **Task activity on cards.** A card's live line, telemetry row, summary and Details rows are built from the task's activity (app/shared/activity.ts, app/main/agent/activity.ts) in Ember's own words, never from the model's arguments, reasoning or screen text. The worker's own note is the one model text, in `--label-2`, never styled as Ember's voice. The clock is written as text by one shared one-second tick that runs only while a card under way shows: no re-render and no animation.
 - **Task activity in Home.** The same words, a group per task (app/renderer/home/tasks.ts, tasks-copy.ts), opaque and still, from main's in-memory list (`tasks:activity`, pushed at most every `TASKS_PUSH_MS`). It may also show what a question asked, in Ember's words built from the step's kind and app only (`askedWords`: never the typed text or names from the screen), and where it is answered (the bubble, the command window or a consent card), which the cards never show. Home never answers a question: it says where it is asked and which keys answer it. Its result view goes through the one `resultView` function.
-- **Generative views on cards.** A task's result `view` comes only from app/shared/view.ts's catalog, checked by
-  `ViewSchema`, and is drawn by app/renderer/overlay/view.ts with `textContent` alone. It has no links, buttons,
-  images or markup. A new block kind needs all of these: the type, the schema, the drawing, `viewText`, the
-  forced-colours rule and a test.
+- **Views** (docs/DESIGN.md "Views"). A task's view comes only from app/shared/view.ts's catalog (`ember.view/2`),
+  checked whole by app/main/agent/view-schema.ts, and is drawn by app/renderer/shared/view-dom.ts (one module for the
+  card and, next, Home) with `textContent` and static SVG alone, styled only by app/renderer/shared/view.css. It has no
+  links, buttons, images, markup or inline styles, never takes the accent, glass, a capsule or a status symbol, and
+  doesn't move except the one fade of a replaced node. Ember writes its frame ("Found by …") and a quote's caption. A
+  new block kind needs all of these: the type, the schema (`VIEW_KINDS`, which also writes the model's instructions),
+  the drawing, `nodeLines` (its text form), the forced-colours rule and tests (view-schema, view-dom).
 - **Failed tasks.** A failed task's card stays longer so it can be read: 60 s (TaskManager's `failureCardMs`), against 15 s (`cardMs`) for done and stopped cards. Then it leaves on its own. Close, Close all or Stop everything removes it sooner. A failed task that did work (not a guide) offers Try again, a click only: the same request starts again as a new task and asks every question again.
 
 ## Motion and performance

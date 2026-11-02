@@ -161,7 +161,7 @@ describe("the text size", () => {
   it("grows every literal font size too, in each window that scales and in the bubble (review #57)", async () => {
     const { BUBBLE_CSS } = await import("@ember/bubble");
     const sheets: [string, string][] = [
-      ["shared", shared], ["bubble", BUBBLE_CSS],
+      ["shared", shared], ["bubble", BUBBLE_CSS], ["view", read("app/renderer/shared/view.css")],
       ...["home", "command", "prompt", "overlay", "handle", "ask", "desk"].map(p => [p, read(`app/renderer/${p}/styles.css`)] as [string, string]),
     ];
     for (const [name, css] of sheets) expect(unscaled(css), name).toEqual([]);

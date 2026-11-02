@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
+import { BubbleOwner, LONG_ANSWER, NO_REPLY, Presenter, STILL_WAITING, STOP_ANSWER, STOPPED_ANSWER, TASK_IN_CORNER, TASK_NOTE, THINK_SLOW_MS, TRY_AGAIN, answerLines, cutShort, expandedBubble, forBubble, friendlyError, handStep, plainText, problemTitle, questionAloud, stepOf, readTimeOf } from "../../app/main/agent/presenter";
 import type { EmberState } from "../../app/shared/overlay";
 import { SHORTCUTS } from "../../app/shared/shortcuts";
 
@@ -54,6 +55,13 @@ describe("Presenter", () => {
     p.event({ type: "assistant.message", data: {} });
     expect(last().bubble?.thought.startsWith("Start.")).toBe(true);
     expect(last().bubble?.thought.endsWith("…")).toBe(true);
+  });
+
+  it("shows a tool without words of its own (an extension's) as “Using a tool”, never its raw name (audit of the conversation features)", () => {
+    const { p, last } = setup();
+    p.userPrompt("list my issues");
+    p.event({ type: "tool.execution_start", data: { toolName: "github-list_issues" } });
+    expect(last().bubble?.step).toBe("Using a tool");
   });
 
   it("shows the current tool as a step and looks focused", () => {
@@ -911,6 +919,76 @@ describe("a problem's buttons follow what failed (review #18)", () => {
     q.event({ type: "session.idle", data: {} });
     q.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
     expect(lastQ().bubble!.actions).toEqual([]);
+  });
+
+  it("never offers Try again for a turn that started a task when a newer request was asked meanwhile (UI audit 3)", () => {
+    const { p, last } = setup();
+    p.userPrompt("rename my screenshots");
+    p.event({ type: "user.message", data: { content: "rename my screenshots" } });
+    p.event({ type: "tool.execution_start", data: { toolName: "start_task" } });
+    p.userPrompt("what's the weather");
+    p.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(last().bubble!.actions).toEqual([]);
+    expect(p.retryRequest).toBeNull();
+  });
+
+  it("offers the failed turn's own request again, not a newer one asked while it ran (UI audit 3)", () => {
+    const { p, last } = setup();
+    p.userPrompt("what time is it in Tokyo");
+    p.event({ type: "user.message", data: { content: "<context untrusted=\"true\"></context>\nwhat time is it in Tokyo" } });
+    p.userPrompt("and in Paris");
+    p.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(last().bubble!.actions).toEqual([{ id: "ui:retry", label: "Try again" }]);
+    expect(p.retryRequest).toBe("what time is it in Tokyo");
+    // A request whose turn never began (the send failed) is the one offered.
+    const { p: q } = setup();
+    q.userPrompt("hi");
+    q.fail("fetch failed ECONNRESET");
+    expect(q.retryRequest).toBe("hi");
+  });
+
+  it("forgets a turn that ended with \"No answer\": a later failed send offers its own request, not that one (PR #130 review)", () => {
+    const { p } = setup();
+    p.userPrompt("A");
+    p.event({ type: "user.message", data: { content: "A" } });
+    p.event({ type: "session.idle", data: {} });
+    expect(p.retryRequest).toBe("A");
+    p.userPrompt("B");
+    p.fail("fetch failed ECONNRESET");
+    expect(p.retryRequest).toBe("B");
+  });
+
+  it("offers nothing to ask again after the kill switch quieted a hung turn (PR #130 review)", () => {
+    const { p, last } = setup();
+    p.userPrompt("rename my photos");
+    p.event({ type: "user.message", data: { content: "rename my photos" } });
+    p.quiet();
+    p.fail("Copilot stopped unexpectedly. I'm reconnecting; ask me again in a moment.");
+    expect(last().bubble!.actions).toEqual([]);
+    expect(p.retryRequest).toBeNull();
+  });
+
+  it("gives Try again's request once, and takes the button away at once, so a second press asks nothing (PR #130 review)", () => {
+    const { p, last } = setup();
+    p.userPrompt("hi");
+    p.event({ type: "session.error", data: { message: "fetch failed ECONNRESET" } });
+    expect(p.takeRetry()).toBe("hi");
+    expect(p.takeRetry()).toBeNull();
+    expect(last().bubble!.actions).toEqual([]);
+    const main = readFileSync(new URL("../../app/main/main.ts", import.meta.url), "utf8");
+    expect(main).toContain("const again = agent?.takeRetry() ?? null;");
+  });
+
+  it("shows a task worker's note labelled as the task's, never as Ember's own thought or in the quotes of a request (UI audit)", () => {
+    const states: Partial<EmberState>[] = [];
+    const task = new Presenter(s => states.push(s), undefined, () => "Tidy", new BubbleOwner(), undefined, false, { task: "t1" });
+    task.taskStarted();
+    task.note("Opening **Display** settings");
+    expect(states.at(-1)!.bubble).toMatchObject({ mood: "acting", thought: `${TASK_NOTE}Opening Display settings` });
+    expect(TASK_NOTE).toBe("Task note: ");
+    const worker = readFileSync(new URL("../../app/main/agent/worker.ts", import.meta.url), "utf8");
+    expect(worker).toContain("this.d.presenter.note(a.text);");
+    expect(worker).not.toContain("this.d.presenter.progress(a.text);");
   });
 
   it("offers nothing for a runtime that stopped and reconnects by itself", () => {

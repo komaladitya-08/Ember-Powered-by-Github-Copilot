@@ -92,6 +92,38 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 
   "Always in <app>" is a click only, never bound to a key, because a global key could take an app's own shortcut and grant for good.
 
+## Views (show_view, update_view, finish_task's view)
+
+- **Checked whole, fail closed.** Every view, and every update_view batch applied to a copy, goes through
+  `checkDoc()` (app/main/agent/view-schema.ts): the closed catalog and its limits, then every string, every string
+  read with its label, column or neighbours (`nodeTogether`), and the whole view read together:
+  - `mimicRefusal()`: an invisible, default-ignorable or bidi character refuses the view, except where writing needs
+    it (`hidesCharacters`: the emoji selector after a pictograph, a joiner between pictographs, (non-)joiners inside
+    Persian, Indic and other joining scripts). Ember's control words are matched by skeleton (`viewNorm()`: NFKD with
+    marks dropped, Cyrillic, Greek, Armenian, Cherokee and small-capital look-alikes folded to Latin; then I, 1, | as l
+    and 0 as o). Chords are matched by tokens (`namesChord`: only Ember's own allow, deny and stop chords from
+    shortcuts.ts, their modifiers by any OS's name or symbol, any separators, quotes and filler words); in each
+    string, label with value, table row, list, row and the whole view in reading order (key first, run together, with
+    filler words). Ember's voice (`speaksAsEmber`:
+    a capitalised "Ember:" where a speaker's name stands, "Ember:" before words of consent, "I'm Ember", "Ember says";
+    "from Ember:", "Ember asked/wrote/told"; digits and spelt-out letters folded) in every string, across fields and
+    through the whole view; and a heading, title, label or column that is only "Ember" with anything after it.
+  - `secretRefusal()`: `memoryRefusal()` (a token, key, card number, a key's BEGIN line, a secret's name with a
+    value that isn't a word like "required"), and a private path anywhere in any string, after NFKC and with
+    look-alike slashes read as "/" (but not /private/tmp, a Keynote .key, .env.example or id_rsa.pub). A token split
+    over up to five strings in reading order, or written with spaces, is caught run together (`tokenRefusal`, the
+    redactor's whole-token patterns only).
+
+  A refusal for what a view says (`why`) is audited as a `decision` with `kind: "view"`, shown on the card as a
+  refusal, and the model is told not to try another way. A quote's caption names an app only if the task read it (as
+  the task read it), and a file or a web page only if the task read something or ran a command. A new check adds its
+  bypasses to view-redteam.test.ts.
+- **Views reach the conductor only as data.** A finished task's view goes to the next turn as words inside
+  `<task_results untrusted="true">` (with "<" escaped), and to the conversation as the task's text, never as Ember's.
+- **Never in the audit:** a view's words. It records "showed a view" with its blocks, charts and rev.
+- **To the page apart from the state.** TaskManager's `onView` → main's `ViewHub` (app/main/agent/view-doc.ts): diffs
+  only, at most 4 a second a task, nothing while Ember is hidden, every view whole to a page that reloads.
+
 ## Untrusted text, secrets and never-look windows
 
 - **Untrusted text.** Wrap text from the screen, apps, files, the web or other tasks in an element marked `untrusted="true"`: `<screen>`, `<context>`, `<windows>`, `<options>`, `<task_results>`, `<tasks>` or `<command_output>` (built only by `shapeOutput()`). Quote it with `quoteUntrusted()`, and escape role and action names with `screenWord()`.

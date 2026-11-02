@@ -8,6 +8,7 @@
  */
 
 import type { Task } from "./tasks";
+import { plainText } from "./presenter";
 
 /** Recent enough to be "the last thing I did" (a finished task's card has usually gone by then). */
 export const RECENT_MS = 10 * 60_000;
@@ -58,15 +59,23 @@ export function durationWords(ms: number): string {
 /** A task's title as said in a sentence: in curly quotes, as the bubble names things. */
 const named = (t: Pick<Task, "title">) => `“${t.title}”`;
 
+/** What holds a running task up (TaskManager.holdUp): its question waits for the user, or it is stopping. */
+export type HoldUp = (id: string) => "answer" | "stopping" | null | undefined;
+
 /** One running task's line: "Working on “Tidy the desktop”: step 2 of 4, Move the screenshots." */
-function runningLine(t: Task, now: number): string {
+function runningLine(t: Task, now: number, holdUp?: HoldUp): string {
   const verb = t.mode === "guide" ? "Showing you" : "Working on";
   const plan = t.plan ?? [];
   const at = plan.findIndex(s => s.state === "now");
   const where = t.where ? ` ${t.where}` : "";
+  // Its question is up, or a Stop is winding it down: not "Working on…".
+  const held = holdUp?.(t.id);
+  if (held === "answer") return `${named(t)}${where} is waiting for your answer.`;
+  if (held === "stopping") return `${named(t)}${where} is stopping.`;
   if (plan.length && at >= 0) return `${verb} ${named(t)}${where}: step ${at + 1} of ${plan.length}, ${plan[at].text.replace(/[.\s]+$/, "")}.`;
   // No plan yet: how long it has been at it, rather than a guess at how far it has got.
-  return `${verb} ${named(t)}${where}, ${durationWords(now - t.started)} in.`;
+  // (From when it began to run, not when it was asked for: it may have waited in the queue.)
+  return `${verb} ${named(t)}${where}, ${durationWords(now - (t.ranAt ?? t.started))} in.`;
 }
 
 /** The most recently finished task, if it finished within RECENT_MS. */
@@ -82,22 +91,27 @@ function lastFinished(tasks: readonly Task[], now: number): Task | null {
 /** How a finished task went, in a few words. */
 const OUTCOME: Record<"done" | "failed" | "cancelled", string> = { done: "done", failed: "it didn't finish", cancelled: "you stopped it" };
 
+/** How `t` went: "you stopped it" only when the user did (else why it stopped: its computer went). */
+function outcomeOf(t: Task): string {
+  if (t.status === "cancelled" && t.stopReason) return brief(t.stopReason).replace(/[.!?…]+$/u, "");
+  return OUTCOME[t.status as keyof typeof OUTCOME] ?? "done";
+}
+
 /**
  * Ember's answer to a status question (or its name alone), from the tasks TaskManager holds. `kind` is what
  * statusQuestion() said. At most three sentences, and never more than the two running tasks plus the queue's size.
  */
-export function statusReply(kind: "name" | "status", tasks: readonly Task[], now: number): string {
+export function statusReply(kind: "name" | "status", tasks: readonly Task[], now: number, holdUp?: HoldUp): string {
   const running = tasks.filter(t => t.status === "running");
   const queued = tasks.filter(t => t.status === "queued").length;
-  const lines = running.map(t => runningLine(t, now));
+  const lines = running.map(t => runningLine(t, now, holdUp));
   if (queued) lines.push(queued === 1 ? "One more is waiting to start." : `${queued} more are waiting to start.`);
   if (lines.length) return lines.join(" ");
   // Nothing under way.
   const last = lastFinished(tasks, now);
   const idle = kind === "name" ? "Yes? What can I do for you?" : "Nothing's running right now.";
   if (!last) return idle;
-  const how = OUTCOME[last.status as keyof typeof OUTCOME] ?? "done";
-  return `${idle} The last thing was ${named(last)}: ${how}.`;
+  return `${idle} The last thing was ${named(last)}: ${outcomeOf(last)}.`;
 }
 
 /** Asking to keep results on screen only: "just show me", "stop telling me", "leave it on the screen". */
@@ -116,7 +130,24 @@ export function resultsRequest(text: string): "quiet" | "loud" | null {
 export const RESULTS_REPLY = {
   quiet: "Okay, I'll keep results on screen and won't read them out.",
   loud: "Okay, I'll read results out again.",
+  /** Turned on, but Ember isn't speaking replies now (speaking off, a screen reader's absence, the organisation). */
+  loudSilent: "Okay, but I'm not speaking replies right now, so results stay on screen. Speaking is under Voice in settings.",
+  /** The organisation keeps results on screen (speakResults off by its policy). */
+  managed: "Your organisation keeps results on screen, so I can't read them out.",
+  failed: "I couldn't change that just now. It's under Voice in settings.",
 } as const;
+
+/**
+ * Ember's answer to "just show me" or "read them out again", from what happens now: whether the switch was saved,
+ * whether results are read out (`on`: the settings as applied, the organisation's policy too) and whether Ember speaks
+ * replies at all now (`speaks`). It never promises results read aloud that won't be.
+ */
+export function resultsReply(asked: "quiet" | "loud", o: { saved: boolean; on: boolean; speaks: boolean }): string {
+  if (!o.saved) return RESULTS_REPLY.failed;
+  if (asked === "quiet") return RESULTS_REPLY.quiet;
+  if (!o.on) return RESULTS_REPLY.managed;
+  return o.speaks ? RESULTS_REPLY.loud : RESULTS_REPLY.loudSilent;
+}
 
 /** How far back "what did I miss?" looks. */
 export const CATCH_UP_MS = 2 * 60 * 60_000;
@@ -132,11 +163,11 @@ export function catchUpQuestion(text: string): boolean {
   return !!t && t.length <= 60 && CATCH_UP_RE.test(t);
 }
 
-/** A finished task's summary, cut to one short sentence for speech and the bubble. */
-const brief = (s: string) => {
-  const one = s.trim().split(/(?<=[.!?])\s/)[0] ?? "";
+/** A finished task's summary, cut to one short sentence for speech and the bubble (markdown gone: plainText). */
+function brief(s: string): string {
+  const one = plainText(s).trim().split(/(?<=[.!?])\s/)[0] ?? "";
   return one.length > 120 ? `${one.slice(0, 119).trimEnd()}…` : one;
-};
+}
 
 /**
  * Ember's catch-up (the Jarvis research's J4 "what did I miss" brief), from its own record only: the tasks that finished
@@ -149,9 +180,8 @@ export function catchUpReply(tasks: readonly Task[], now: number): string {
   const still = running ? ` ${running === 1 ? "One task is" : `${running} tasks are`} still under way.` : "";
   if (!finished.length) return `Nothing new: no tasks finished in the last two hours.${still}`;
   const lines = finished.slice(0, CATCH_UP_TASKS).map(t => {
-    const how = OUTCOME[t.status as keyof typeof OUTCOME] ?? "done";
     const said = t.status === "done" && t.result?.summary ? ` ${brief(t.result.summary)}` : "";
-    return `${named(t)}: ${how}.${said}`;
+    return `${named(t)}: ${outcomeOf(t)}.${said}`;
   });
   const more = finished.length - lines.length;
   const head = finished.length === 1 ? "One task finished." : `${finished.length} tasks finished.`;

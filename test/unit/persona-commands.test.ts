@@ -17,7 +17,7 @@ import type { SettingsStore } from "../../app/main/settings";
 import type { TargetBinding } from "../../app/main/targets/types";
 
 /** SHA-256 of JSON.stringify of each system message before the port (as persona-platform.test.ts pins them). */
-const FROZEN_HASHES = { ember: "190699e127521e9626d34d5b9bf8a8e853f005a3002eabfb149294f9789768c6", worker: "edff4e4f5b70f9942ddf858ecdb2dab9774d4fefa03706ac7f90ece353a50b67" };
+const FROZEN_HASHES = { ember: "6a34f42ea1c8857d1ad4ea453924b19ccc583a68494b519902ae2b1f18a650c5", worker: "edff4e4f5b70f9942ddf858ecdb2dab9774d4fefa03706ac7f90ece353a50b67" };
 const sha = (x: unknown) => crypto.createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const OSES: OS[] = ["linux", "win32", "darwin"];
 const sections = (m: ReturnType<typeof workerSystemMessage>) => m.sections as Record<string, { content?: string }>;

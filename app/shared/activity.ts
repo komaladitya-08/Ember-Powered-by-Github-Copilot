@@ -7,7 +7,7 @@
  * reasoning, tool arguments, screen text and error messages never reach these words.
  */
 
-import type { PlanStep, TaskHand, ViewBlock } from "./view";
+import type { PlanStep, TaskHand, ViewDoc } from "./view";
 
 /** A task's state in words, one table for every surface, so a state reads the same wherever it is seen or heard. */
 export const STATUS_WORDS = {
@@ -86,7 +86,8 @@ export interface TaskEntry {
   plan?: PlanStep[];
   /** How it ended, in the worker's words (finish_task's summary), and what it found or made. */
   summary?: string;
-  view?: ViewBlock[];
+  /** What it shows: its live view while it works (show_view), what it found or made once it ended. */
+  view?: ViewDoc;
   activity: TaskActivity;
 }
 
@@ -151,7 +152,7 @@ export interface CardActivity {
 export const ACTIVITY_LIMIT = 40;
 export const DETAIL_ROWS = 6;
 
-/** Each tool's kind of step (tools not listed are "other"; report_progress and finish_task make no step). */
+/** Each tool's kind of step (tools not listed are "other"; report_progress, the view tools and finish_task make no step). */
 export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   perceive_window: "read", describe_screen: "read",
   list_windows: "windows", switch_window: "switch",
@@ -165,8 +166,8 @@ export const STEP_GROUP: Readonly<Record<string, StepGroup>> = {
   point_at: "point", wait_for_click: "wait",
 };
 
-/** Tools that are the task talking, not working: no step row for them. */
-export const NOT_STEPS: ReadonlySet<string> = new Set(["report_progress", "finish_task"]);
+/** Tools that are the task talking, not working: no step row for them (its views are on its card already). */
+export const NOT_STEPS: ReadonlySet<string> = new Set(["report_progress", "show_view", "update_view", "finish_task"]);
 
 /** A step kind's words once done: one step, and several. */
 const DONE_WORDS: Readonly<Record<StepGroup, { one: string; many: (n: number) => string }>> = {
@@ -224,6 +225,19 @@ export function summarizeActivity(counts: Partial<Record<StepGroup, number>>, fa
   const others = rest === 1 ? "1 other step" : `${rest} other steps`;
   const said = rest ? `${parts.join(", ")} and ${others}` : parts.join(" and ");
   return failed > 0 ? `${said} (${failed === 1 ? "1 didn't work" : `${failed} didn't work`})` : said;
+}
+
+/** The longest app name a card's words keep (a window's app name can be anything another computer says). */
+export const CARD_APP_MAX = 40;
+
+/**
+ * An app's name as a card's words carry it ("in Text Editor"): cut to CARD_APP_MAX characters, and on a computer reached
+ * over SSH quoted (“…”), since that name is whatever the other computer says, never Ember's own words.
+ */
+export function cardApp(name: string, remote = false): string {
+  const t = name.replace(/\s+/g, " ").trim();
+  const cut = t.length > CARD_APP_MAX ? `${t.slice(0, CARD_APP_MAX - 1).trimEnd()}…` : t;
+  return remote ? `“${cut}”` : cut;
 }
 
 /** A step under way, as the card's live line says it: "Clicking in Text Editor…" (the hand line says whose mouse). */
@@ -302,7 +316,8 @@ export function activityRows(items: readonly ActivityItem[], max = DETAIL_ROWS):
       last.n = (last.n ?? 1) + 1;
       if (it.app) last.apps!.add(it.app);
       const one = last.apps!.size === 1 ? [...last.apps!][0] : undefined;
-      last.words = it.state === "failed" ? triedWords(it.group, last.n, one) : stepsWords(it.group, last.n, one);
+      // (A step that was stopped, a "Not now", is one it tried too, as is one that failed.)
+      last.words = it.state === "done" ? stepsWords(it.group, last.n, one) : triedWords(it.group, last.n, one);
       continue;
     }
     rows.push({

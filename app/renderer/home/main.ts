@@ -868,7 +868,8 @@ function renderRoutines(rows: RoutineRow[]): void {
       return li;
     })
     : [Object.assign(document.createElement("li"), { className: "empty", textContent: routinesEmptyText(routinesOn()) })]));
-  ($("routines-forget-all") as HTMLButtonElement).hidden = !rows.length;
+  // While routines are on, reminders may be kept too (Home lists none of them): Delete all clears those as well.
+  ($("routines-forget-all") as HTMLButtonElement).hidden = !rows.length && !routinesOn();
   if (routineFocus !== null) {
     const buttons = list.querySelectorAll("button");
     (buttons[Math.min(routineFocus, buttons.length - 1)] ?? $("routines-on")).focus();
@@ -1093,8 +1094,10 @@ let privacyKey = "";
 let focusAfter: { list: "grants" | "never-look"; index: number } | null = null;
 const listMsg = (text: string) => { $("never-look-msg").textContent = text; };
 // ───── When Ember asks first ─────
-$("trust-apps").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), askedApps: (e.target as HTMLInputElement).checked } }); });
-$("trust-commands").addEventListener("change", e => { void save({ trust: { ...(settings?.trust ?? { askedApps: true, reviewCommands: false }), reviewCommands: (e.target as HTMLInputElement).checked } }); });
+// Only the switch flipped: main fills in the other from the user's own settings (withOwnTrust), never the shown value,
+// which may be the administrator's.
+$("trust-apps").addEventListener("change", e => { void save({ trust: { askedApps: (e.target as HTMLInputElement).checked } } as SettingsPatch); });
+$("trust-commands").addEventListener("change", e => { void save({ trust: { reviewCommands: (e.target as HTMLInputElement).checked } } as SettingsPatch); });
 function renderTrust(s: Settings): void {
   for (const row of trustView(s.trust, managed)) {
     const input = $(row.id) as HTMLInputElement;

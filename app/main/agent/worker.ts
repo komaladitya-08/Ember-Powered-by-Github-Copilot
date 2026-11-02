@@ -15,14 +15,16 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
-import { PlanSchema, ViewSchema } from "./view-schema";
-import { VIEW_LIMITS, planSteps, type PlanStep, type TaskHand, type ViewBlock } from "../../shared/view";
+import { PlanSchema, ViewInputSchema, checkView, viewCatalogPrompt, type ViewCheck, type ViewContext } from "./view-schema";
+import { ViewOpsSchema, applyViewOps } from "./view-doc";
+import { VIEW_LIMITS, planSteps, viewCounts, type PlanStep, type TaskHand, type ViewDoc } from "../../shared/view";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
 import { askedWords, type ActivityEvent } from "./activity";
+import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
@@ -111,8 +113,8 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
-  /** Its plan, or how it works now, changed: its card shows them (docs/DESIGN.md "Two bodies"). */
-  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void;
+  /** Its plan, how it works now, or its live view changed: its card shows them (docs/DESIGN.md "Two bodies", "Views"). */
+  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }) => void;
   /**
    * What the task did and is doing, for its card (app/main/agent/activity.ts): its steps as its tools and the app name
    * them, its questions and their answers, refusals, retries and its own notes. Never arguments, reasoning or screen text.
@@ -197,6 +199,11 @@ export interface TaskSpec {
    */
   commandWords?: string;
   /**
+   * commandWords leaves out only the steps of a routine the user ran (they are in userWords for the policy, never words
+   * for commands), nothing heard by voice: the command card doesn't say they asked by voice.
+   */
+  typedOnly?: boolean;
+  /**
    * Ember's questions the user answered in those turns with a yes or a choice: a risky step one of them names isn't
    * flagged as unasked (nor does it make every later step asked), but is asked about all the same (ActionRequest.agreed).
    */
@@ -217,7 +224,7 @@ export interface WorkerResult {
   /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
   declined?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
-  view?: ViewBlock[];
+  view?: ViewDoc;
 }
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
@@ -252,7 +259,7 @@ const AUDIT_UNAVAILABLE = "I stopped because I can't write my record of what I d
 /** A new run's terminal size when the command window doesn't say (columns, rows). */
 const COMMAND_SIZE = { cols: 120, rows: 32 };
 /** The tools a task has where there is no desktop to work in (§2.6): commands and talking to the user. */
-const NO_DESKTOP_TOOLS = new Set(["run_command", "report_progress", "finish_task"]);
+const NO_DESKTOP_TOOLS = new Set(["run_command", "report_progress", "show_view", "update_view", "finish_task"]);
 /** The answers a remote's gate 2 gives a step as errors (§5.3.7; the PC's remote sidecar and apps throw them with `code`). */
 const REMOTE_CODES = new Set(["needs_confirm", "changed", "stale", "stopped", "deny", "denied"]);
 /**
@@ -976,6 +983,10 @@ export class Worker {
   private clipboard: PasteClipboard | null;
   /** Windows this task has read or listed (by process, path and title), with what it read there: text it types elsewhere is checked against them. */
   private read = new Map<string, ReadSource>();
+  /** Its live view (show_view, update_view), as checked and shown; finish_task's view takes its place. */
+  private liveView: ViewDoc | null = null;
+  /** It ran a command: a quote may say it came from one. */
+  private ranCommand = false;
   /** The window keys went into last (windowKey: by process, and path or else title), and what the keys selected there. */
   private keyed: { window: string; selected: Selected } = { window: "", selected: null };
   /**
@@ -1013,12 +1024,31 @@ export class Worker {
     // The user's own words only ("The user then added" would make "user" and "added" asked-for words).
     this.userWords = (spec.userWords ?? spec.goal).replace(STEERED, "\n$1");
     this.commandWords = (spec.commandWords ?? spec.userWords)?.replace(STEERED, "\n$1") ?? "";
-    this.spokenOnly = spec.commandWords !== undefined;
+    this.spokenOnly = spec.commandWords !== undefined && !spec.typedOnly;
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
-    if (spec.screen) this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
+    if (spec.screen) {
+      this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
+      // Its goal may carry that text: written as instructions to an AI agent, every step asks from the start.
+      this.flagInjection(spec.screen, "described");
+    }
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
     this.clipboard = d.clipboard ? asPasteClipboard(d.clipboard) : null;
+  }
+
+  /**
+   * Scans text the model is about to see (a window's read, the windows' titles, what the conversation read before the
+   * task) for instructions aimed at an AI agent (injection.ts): found, every step asks from now on and its questions say
+   * text on screen tried to give Ember instructions (also when an earlier unasked-for step had already tainted it).
+   * Whether it found any.
+   */
+  private flagInjection(text: string | readonly string[], where: "window" | "windows" | "described", app?: string): boolean {
+    const signals = injectionSignals(text);
+    if (!signals.length) return false;
+    this.tainted = true;
+    this.steered = true;
+    this.d.log.info("worker.injection_flagged", { task: this.spec.id, where, ...(app !== undefined ? { app } : {}), signals });
+    return true;
   }
 
   private get perception() { return this.place?.perception ?? this.d.perception; }
@@ -1186,7 +1216,10 @@ export class Worker {
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
     }
-    return handler(parsed.data);
+    const result = await handler(parsed.data);
+    // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
+    if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
+    return result;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
@@ -1209,9 +1242,11 @@ export class Worker {
         const wins = (await this.perception.windows()).filter(w => !isEmberWindow(w));
         // Their titles reach the model (an email's subject, a file's name): text typed elsewhere may carry them.
         for (const w of wins) this.remember(w, [w.name], true);
+        // A title written as instructions to an AI agent (a page's or a mail's) steers as the window's text would.
+        const flagged = this.flagInjection(wins.map(w => w.name), "windows");
         // A busy app's window is listed as last seen: it is still there, so the model waits instead of giving up on it.
         const lines = wins.map(w => `- ${q(w.app, 60)}: ${q(w.name, 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
-        return done(lines.length ? `<windows untrusted="true">\n${lines.join("\n")}\n</windows>` : "No windows found.");
+        return done(lines.length ? `<windows untrusted="true">\n${lines.join("\n")}\n</windows>${flagged ? INJECTION_NOTE : ""}` : "No windows found.");
       }),
       this.tool("switch_window", "Work in another open window from now on (does not raise it or take focus from the user).",
         z.object({ title: z.string().min(1).max(200).describe("Part of the window title, from list_windows") }),
@@ -1378,18 +1413,37 @@ export class Worker {
           // The worker's own words: shown on its card as its note, never as Ember's (markdown stripped).
           this.activity({ type: "note", text: plainText(a.text), ...(a.intent ? { intent: plainText(a.intent) } : {}) });
           this.d.onProgress(a.text);
-          this.d.presenter.progress(a.text);
+          this.d.presenter.note(a.text);
           return done("Shown.");
         }),
-      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a file you saved), also give it as `view`, drawn on the task's card; the summary still says it in words.",
+      this.tool("show_view", `Show a view on the task's card while you work: what you have found so far, at a glance (figures, a table, a chart, a list of steps), drawn by Ember from its catalog. It replaces the view shown before; change parts of it with update_view. The user sees it on the card, under Ember's line saying the task found it.\n${viewCatalogPrompt()}`,
+        z.object({ view: ViewInputSchema.describe("The view: a tree of nodes, its root a layout node") }),
+        async a => {
+          const r = checkView(a.view, this.viewContext(), (this.liveView?.rev ?? 0) + 1);
+          return this.showView(r, "show_view");
+        }),
+      this.tool("update_view", "Change the view show_view drew, by node id: replace a node (with its children), append a node to a stack, row, grid, card or section, remove one, or set some of a node's props (the cheap way to move a progress value, a metric's value, a step's state or a chart's series). Up to 16 changes, checked together with the whole view: if one can't be made, none is.",
+        z.object({ ops: ViewOpsSchema }),
+        async a => {
+          if (!this.liveView) return fail("There is no view to change yet: send one with show_view first.");
+          return this.showView(applyViewOps(this.liveView, a.ops, this.viewContext()), "update_view");
+        }),
+      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a chart, a file you saved), also give it as `view` (a tree of nodes, as show_view takes), drawn on the task's card in place of any view you showed; the summary still says it in words.",
         z.object({
           success: z.boolean(),
           summary: z.string().max(400),
-          view: ViewSchema.optional().describe("Up to 6 blocks: text, list (items), facts (label and value rows), table (up to 3 columns and 6 rows), file (a path). Only what the task found or made; words only, no links"),
+          view: ViewInputSchema.optional().describe("What the task found or made, as show_view takes it (or the older list of up to 6 blocks). Only what the task found or made; words only, no links"),
         }),
         async a => {
           // A cancelled guide step never gets here: it already ended the task (left() in waitForClick).
-          this.result = { success: a.success, summary: a.summary, ...(a.view ? { view: a.view } : {}) };
+          let view: ViewDoc | undefined;
+          if (a.view) {
+            const r = checkView(a.view, this.viewContext(), (this.liveView?.rev ?? 0) + 1);
+            if (!r.ok) return this.viewRefused(r, "finish_task");
+            view = r.doc;
+            this.viewShown(view);
+          }
+          this.result = { success: a.success, summary: a.summary, ...(view ? { view } : {}) };
           this.ended.abort();
           this.fly(null);
           // The task is over: end the turn, so a model that keeps going can't act any more.
@@ -1397,6 +1451,43 @@ export class Worker {
           return done(a.success ? "Task closed. Stop now." : "Task closed (they didn't finish). Stop now.");
         }),
     ];
+  }
+
+  /** What a view's quotes are checked against: the apps this task read (not only listed), and whether it ran a command. */
+  private viewContext(): ViewContext {
+    const appsRead = new Set([...this.read.values()].filter(r => !r.listed && r.app).map(r => friendlyApp(r.app)));
+    return { appsRead, ranCommand: this.ranCommand, appName: friendlyApp };
+  }
+
+  /**
+   * A checked view goes to the task's card (its live view). The audit says only that a view was shown and its size
+   * ("6 blocks, 1 chart"), never its words.
+   */
+  private showView(r: ViewCheck, tool: "show_view" | "update_view"): ToolResultObject {
+    if (!r.ok) return this.viewRefused(r, tool);
+    this.liveView = r.doc;
+    this.viewShown(r.doc);
+    this.d.onUpdate?.({ view: r.doc });
+    const named = Object.keys(r.doc.nodes).filter(id => !id.startsWith("_"));
+    return done(`Shown on the task's card.${named.length ? ` Ids you can change: ${named.slice(0, 40).join(", ")}.` : ""}`);
+  }
+
+  private viewShown(doc: ViewDoc): void {
+    const c = viewCounts(doc);
+    this.audit({ event: "decision", task: this.spec.id, kind: "view", app: "", verdict: "allow", reason: "showed a view", blocks: c.blocks, charts: c.charts, rev: doc.rev });
+  }
+
+  /**
+   * A view Ember won't show. One that imitates Ember's own controls or voice, or holds a secret, is refused (audited,
+   * on the card as a refusal, and the model told not to try another way); one that doesn't fit the catalog is an
+   * error the model can fix.
+   */
+  private viewRefused(r: Extract<ViewCheck, { ok: false }>, tool: string): ToolResultObject {
+    if (!r.why) return fail(`Ember can't draw that view: ${r.error}.`);
+    const reason = r.why === "mimic" ? "a view imitated Ember's own controls or voice" : "a view held a password, token or key";
+    this.audit({ event: "decision", task: this.spec.id, kind: "view", app: "", tier: "never", verdict: "deny", reason, tool });
+    this.activity({ type: "refused", reason: r.why === "mimic" ? "a view that looked like Ember's own buttons" : "a view holding a password or key" });
+    return denied(`Not shown: ${r.error}. Don't try another way to show it; the user's answers come only from Ember's own questions.`);
   }
 
   /** run_command (§3.2), when the task's target offers commands; none otherwise (the tool list is today's). */
@@ -1419,7 +1510,7 @@ export class Worker {
         timeoutSeconds: z.number().int().min(1).max(900).optional().describe("Default 120"),
         why: z.string().min(3).max(200).describe("One short sentence: why this command, in plain words"),
       }),
-      async a => runCommandTool(a, this.commandContext()))];
+      async a => { this.ranCommand = true; return runCommandTool(a, this.commandContext()); })];
   }
 
   /** What the command flow needs of this task (commands/flow.ts). */
@@ -1516,7 +1607,7 @@ export class Worker {
           if (name !== "report_progress" && name !== "finish_task" && step) { this.doing = `${step}…`; d.onProgress(this.doing); }
           // Its card's activity: the step in Ember's words and the app it works in now (never the call's arguments).
           this.activity({ type: "heard" });
-          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}) });
+          this.activity({ type: "tool-start", id: String(data.toolCallId ?? ""), tool: name, ...(step ? { step } : {}), ...(this.window.app ? { app: cardApp(friendlyApp(this.window.app), this.d.target?.kind === "ssh") } : {}) });
         }
         if (e.type === "tool.execution_complete") {
           const data = e.data as { toolCallId?: string; success?: boolean };
@@ -1598,6 +1689,7 @@ export class Worker {
     if (screen) {
       const had = this.read.get("described")?.text;
       this.read.set("described", { app: "", window: "", text: (had ? `${screen}\n${had}` : screen).slice(0, READ_TEXT_MAX), described: true });
+      this.flagInjection(screen, "described");
     }
     const said = text.replace(/</g, "‹");
     // What the user added is part of what they asked for: "and then send it" makes Send asked-for. Their own words
@@ -1861,13 +1953,10 @@ export class Worker {
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
-    // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped.
-    const signals = injectionSignals(readText.join("\n"));
-    if (signals.length) {
-      if (!this.tainted) { this.tainted = true; this.steered = true; }
-      this.d.log.info("worker.injection_flagged", { task: this.spec.id, app: p.window.app, signals });
-    }
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${signals.length ? INJECTION_NOTE : ""}`, resultType: "success" };
+    // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped. Each
+    // control on its own: a phrase never runs from one control's name into the next ("Ignore", "All", "Rules").
+    const flagged = this.flagInjection(readText, "window", p.window.app);
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
@@ -3570,9 +3659,10 @@ export class Worker {
     }
   }
 
-  /** Every audit entry goes through here: an action (tried or done) after a "Not now" means the task went on. */
+  /** Every audit entry goes through here: an action done (or a command started) after a "Not now" means the task went on. */
   private audit(e: AuditEntry): void {
-    if (e.event === "action" || (e.event === "command" && e.phase === "started")) this.declined = false;
+    // (Only a step that happened: one that failed after the "Not now" leaves the task declined.)
+    if ((e.event === "action" && e.ok === true) || (e.event === "command" && e.phase === "started")) this.declined = false;
     try {
       this.d.audit.write(e);
     } catch (err) {
@@ -3670,7 +3760,9 @@ export class Worker {
     // On another computer the question says where (§2.4): a badge in the bubble, and in the spoken question.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
-    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(decision.risky ? { risky: true } : {}) };
+    // Once text on screen tried to steer Ember, every step it asks about looks risky too (it is asked every time).
+    const risky = !!decision.risky || this.steered;
+    const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(risky ? { risky: true } : {}) };
     const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired", ...this.channelOf(question) });
     if (this.isOver) return STOPPED();

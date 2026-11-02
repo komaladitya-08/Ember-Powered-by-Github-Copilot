@@ -36,6 +36,8 @@ export type ActivityEvent =
   | { type: "answer"; answer: Answer }
   /** A step wasn't allowed; `reason` is Ember's (policy's) words. */
   | { type: "refused"; reason: string }
+  /** The step under way was turned down (a "Not now", a refusal, a stop): stopped, not a step that didn't work. */
+  | { type: "denied" }
   /** The task now works with another hand. */
   | { type: "hand"; hand: TaskHand }
   /** A call to the model failed and is tried again. */
@@ -185,6 +187,14 @@ export class ActivityLog {
         const step = a.items.findLast(i => i.kind === "step" && i.state === "running");
         if (step) Object.assign(step, { kind: "refused", state: "stopped", words, endedAt: at });
         else this.push({ id: this.id("r"), kind: "refused", at, state: "stopped", words });
+        this.setDoing("Thinking…");
+        return true;
+      }
+      case "denied": {
+        // Not counted as a step, nor as one that didn't work: the user (or policy) said no, nothing failed.
+        const step = a.items.findLast(i => i.kind === "step" && i.state === "running");
+        if (!step) return false;
+        Object.assign(step, { state: "stopped", words: triedWords(step.group ?? "other", 1, step.app), endedAt: at });
         this.setDoing("Thinking…");
         return true;
       }

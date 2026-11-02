@@ -204,4 +204,19 @@ describe("playerAudio (how Ember's voice reaches the speakers)", () => {
     expect(c.resumed).toBe(1);
     expect(el.plays).toBe(2);
   });
+
+  it("tries a refused <audio> element again with the next chunk while the context runs (it never resumes then; voice audit)", async () => {
+    const { c } = ctx();
+    let refuse = true;
+    const el = { srcObject: null as unknown, plays: 0, play: async () => { el.plays++; if (refuse) throw new Error("NotAllowedError"); } };
+    const a = playerAudio(c, true, () => el);
+    await Promise.resolve(); await Promise.resolve();
+    expect(el.plays).toBe(1);
+    refuse = false;
+    a.createBufferSource();
+    await Promise.resolve(); await Promise.resolve();
+    expect(el.plays).toBe(2);
+    a.createBufferSource(); // playing now: not asked again
+    expect(el.plays).toBe(2);
+  });
 });

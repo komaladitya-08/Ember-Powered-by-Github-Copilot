@@ -7,7 +7,9 @@
  * - Only the user's own words set one: a reminder whose words aren't mostly in what the user said this turn is refused
  *   (`ownWords`, as memory does), so text on the screen, in a file or in a task result can't plant one.
  * - Reminders live in memory only, never on disk, so Ember keeps nothing new (CLAUDE.md "Consent"); they end when Ember
- *   quits, and the conductor says so when it sets one.
+ *   quits, and the conductor says so when it sets one. The exception is the user's own choice: with routines on and
+ *   agreed to (routines.ts), the waiting ones are kept in routines.json (0600) and come back at the next start.
+ * - Only the user's own words cancel one (conductor.ts `asksToCancel`).
  */
 
 import crypto from "node:crypto";
@@ -53,6 +55,12 @@ export function reminderTime(a: { minutes?: number; at?: string }, now: number):
   return d.getTime();
 }
 
+/**
+ * A due reminder's notification text: its words, except while the screen is locked, where a notification shows to
+ * anyone at the computer: then only that one is due.
+ */
+export const reminderNotification = (r: Pick<Reminder, "text">, locked: boolean) => (locked ? "A reminder is due." : r.text);
+
 /** A time as people say it, in the user's locale ("3:30 PM"). */
 export const clockTime = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
@@ -97,7 +105,10 @@ export class Reminders {
     if (this.items.size >= MAX_REMINDERS) return `Not set: ${MAX_REMINDERS} reminders are already waiting. The user can cancel one first.`;
     const now = this.now();
     if (at - now > MAX_AHEAD_MS) return "Reminders can be at most a week ahead.";
-    const r: Reminder = { id: crypto.randomBytes(3).toString("hex"), text: t, at: Math.max(at, now), created: now };
+    // An id of its own: one already waiting (or kept from the last run) would lose its timer to this one, and never be told.
+    let id = crypto.randomBytes(3).toString("hex");
+    while (this.items.has(id)) id = crypto.randomBytes(3).toString("hex");
+    const r: Reminder = { id, text: t, at: Math.max(at, now), created: now };
     this.items.set(r.id, { r, timer: this.arm(r, now) });
     this.changed();
     return r;

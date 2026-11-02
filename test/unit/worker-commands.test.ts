@@ -10,7 +10,7 @@ import { z } from "zod";
 import { Worker, LINUX_WORKER_SYSTEM, type TaskSpec, type WorkerDeps, type WorkerSystem } from "../../app/main/agent/worker";
 import { Presenter } from "../../app/main/agent/presenter";
 import { PolicyEngine } from "../../app/main/policy/policy";
-import { setCommandJudge, type CommandJudge } from "../../app/main/commands/flow";
+import { CL_JUDGE, setCommandJudge, type CommandJudge } from "../../app/main/commands/flow";
 import type { CommandCapability, CommandService, DecideInput, RunExit, RunningCommand, RunSpec } from "../../app/main/commands/types";
 import type { TargetBinding } from "../../app/main/targets/types";
 import type { ActStamp } from "../../app/main/perception/ports";
@@ -188,6 +188,22 @@ describe("the command flow hears the user's own words only (critique security-1)
     expect(decided[2].userWords).toBe("push feature-x to origin");
   });
 
+  it("a routine's dangerous command asks, typed or spoken: its saved steps are never the user's words for commands (review of #129)", async () => {
+    const verdicts: string[] = [];
+    setCommandJudge({ ...CL_JUDGE, decideCommand: i => { const d = CL_JUDGE.decideCommand(i); verdicts.push(d.verdict); return d; } });
+    // As AgentHost gives a task a routine ("clean up": "delete the build folder") started: the steps in userWords for
+    // the policy, the user's typed words alone for commands, and (typed) no "you asked by voice".
+    const steps = "clean up\ndelete the build folder";
+    const typed = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "delete the build folder", userWords: steps, commandWords: "clean up", typedOnly: true } });
+    await typed.call("run_command", { target: "build-01", command: "rm -rf build", why: "to delete the build folder" });
+    const spoken = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "delete the build folder", userWords: steps, commandWords: "" } });
+    await spoken.call("run_command", { target: "build-01", command: "rm -rf build", why: "to delete the build folder" });
+    // Said by the user themselves, typed, it is only announced (the 4 s Stop).
+    const own = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "delete the build folder", userWords: "delete the build folder" } });
+    await own.call("run_command", { target: "build-01", command: "rm -rf build", why: "to delete the build folder" });
+    expect(verdicts).toEqual(["ask", "ask", "announce"]);
+  });
+
   it("a task the user steered with words but started without them gets only the steer's words", async () => {
     const decided = recordingJudge();
     const made = makeWorker({ target: REMOTE, commands: commandService(REMOTE), spec: { goal: "push the branch" } });
@@ -199,9 +215,9 @@ describe("the command flow hears the user's own words only (critique security-1)
 });
 
 describe("tools by desktop access (§2.6)", () => {
-  it("no desktop: run_command, report_progress and finish_task only", () => {
-    expect(makeWorker({ target: HEADLESS, commands: commandService(HEADLESS) }).names()).toEqual(["run_command", "report_progress", "finish_task"]);
-    expect(makeWorker({ target: HEADLESS, commands: null }).names()).toEqual(["report_progress", "finish_task"]);
+  it("no desktop: run_command, report_progress, the view tools and finish_task only", () => {
+    expect(makeWorker({ target: HEADLESS, commands: commandService(HEADLESS) }).names()).toEqual(["run_command", "report_progress", "show_view", "update_view", "finish_task"]);
+    expect(makeWorker({ target: HEADLESS, commands: null }).names()).toEqual(["report_progress", "show_view", "update_view", "finish_task"]);
   });
 
   it("text: perceive_window without its image parameter", () => {

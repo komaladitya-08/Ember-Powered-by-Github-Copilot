@@ -9,7 +9,7 @@
 import type { TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
 import { STATUS_WORDS, ROW_WORD } from "../../shared/activity";
-import { viewNodes } from "../overlay/view";
+import { renderView } from "../shared/view-dom";
 import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offsetText, offsetWords, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -21,10 +21,10 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
 };
 
 /**
- * A task's result view, drawn by the cards' own catalog code (textContent only): the one place Home draws a view, so a
- * shared view module can take its place.
+ * A task's view (its live view while it works, its result after), drawn by the shared view module in the window
+ * profile (app/renderer/shared/view-dom.ts, textContent and static SVG only): the one place Home draws a view.
  */
-const resultView = (view: NonNullable<TaskEntry["view"]>): HTMLElement[] => viewNodes(view);
+const resultView = (view: NonNullable<TaskEntry["view"]>): HTMLElement[] => [renderView(view, { profile: "window" })];
 
 /** Rows the user opened, by task and row id. */
 const opened = new Set<string>();
@@ -116,11 +116,11 @@ function group(t: TaskEntry, now: number): { node: HTMLElement; meta: HTMLElemen
   }
   // How it ended: the worker's summary (unless a problem row already says the same), and what it found or made.
   const said = t.activity.items.some(i => i.kind === "problem" && i.words === t.summary);
-  if ((t.summary && !said) || t.view?.length) {
+  if ((t.summary && !said) || t.view) {
     const result = el("div", "task-result");
     if (t.summary && !said) result.append(el("p", "summary", t.summary));
-    if (t.view?.length) {
-      const view = el("div", "view");
+    if (t.view) {
+      const view = el("div", "task-view");
       view.append(...resultView(t.view));
       result.append(view);
     }

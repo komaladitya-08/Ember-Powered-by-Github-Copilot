@@ -17,7 +17,7 @@ import type { AuditEntry, AuditLog } from "../policy/audit";
 import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
-import type { PlanStep, TaskHand } from "../../shared/view";
+import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
 import type { TaskActivity, TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
@@ -30,8 +30,15 @@ export interface Task {
   status: TaskStatus;
   detail: string;
   result: WorkerResult | null;
+  /** When it was asked for (it may wait in the queue), and when it began to run (absent until then). */
   started: number;
+  ranAt?: number;
   finished: number | null;
+  /**
+   * Why it stopped when the user didn't stop it (its computer went, or someone there pressed Stop): set by AgentHost,
+   * so a catch-up doesn't say "you stopped it".
+   */
+  stopReason?: string;
   mode?: "do" | "guide";
   /** The target it acts on, fixed for its life (absent: this computer). */
   targetId?: TargetId;
@@ -40,7 +47,12 @@ export interface Task {
   /** How it works now, and its plan (its worker's onUpdate): shown on its card while it works. */
   hand?: TaskHand;
   plan?: PlanStep[];
+  /** What it shows on its card: its live view (show_view, update_view) while it works, then finish_task's (or the live one). */
+  view?: ViewDoc;
 }
+
+/** What a worker tells its card besides its steps: its plan, how it works now, its live view. */
+export interface TaskUpdate { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }
 
 /**
  * What the TaskManager uses of a worker (§2.6): a stand-in that refuses a task (its target can't be used) needs
@@ -54,17 +66,27 @@ export interface TaskManagerDeps {
    * Builds the worker for a task (with its own presenter and tools). `activity` takes what the worker tells of its
    * steps, questions and problems (app/main/agent/activity.ts): its card shows them.
    */
-  makeWorker: (spec: TaskSpec, progress: (text: string) => void, update?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void, activity?: (e: ActivityEvent) => void) => WorkerLike;
+  makeWorker: (spec: TaskSpec, progress: (text: string) => void, update?: (u: TaskUpdate) => void, activity?: (e: ActivityEvent) => void) => WorkerLike;
   /** Deletes a worker's Copilot session (conversation and files). */
   deleteSession: (sessionId: string) => Promise<void>;
   /** The window the user is in right now. */
   currentWindow: () => (WindowTarget & { app?: string }) | null;
   setCards: (cards: TaskCard[]) => void;
+  /**
+   * A task's view changed (null: its card went): main carries it to the overlay apart from the cards (ViewHub), checked
+   * already (view-schema.ts). Its card says which rev it shows (TaskCard.viewRev).
+   */
+  onView?: (taskId: string, view: ViewDoc | null) => void;
   onFinished?: (task: Task) => void;
   /** A finished card went: the user closed it (`byUser`), or its time was up. */
   onRemoved?: (task: Task, byUser: boolean) => void;
   /** The organisation's own endpoint is configured (a task's error doesn't mention a GitHub sign-in). */
   provider?: boolean;
+  /**
+   * Whether tasks may act now (false: the organisation turned acting off). A failed card offers Try again only while
+   * they may: the retry would refuse to start otherwise, a button that does nothing. Default: they may.
+   */
+  actionsAllowed?: () => boolean;
   /**
    * How this OS's settings shortcut is written ("Ctrl+Alt+E" on Linux), for a task's error that points to settings: or
    * the one Ember holds when the task fails, null while another app holds it (none is named then, cross-review X5).
@@ -110,6 +132,8 @@ export interface StartOptions {
   targetId?: TargetId;
   where?: string;
   commandWords?: string;
+  /** TaskSpec.typedOnly. */
+  typedOnly?: boolean;
 }
 
 /** A task the user may try again from its card: one that did work (not a guide) and failed. */
@@ -167,7 +191,7 @@ export class TaskManager {
     const target = opts.target ?? this.d.currentWindow() ?? {};
     this.queue.push({ task, spec: { id, goal, target, mode: opts.mode ?? "do", ...(opts.userWords !== undefined ? { userWords: opts.userWords } : {}),
       ...(opts.agreed?.length ? { agreed: opts.agreed } : {}), ...(opts.screen ? { screen: opts.screen } : {}), ...(opts.targetId ? { targetId: opts.targetId } : {}),
-      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}) } });
+      ...(opts.commandWords !== undefined ? { commandWords: opts.commandWords } : {}), ...(opts.typedOnly ? { typedOnly: true } : {}) } });
     // The goal and window title are the user's words and screen text: the log keeps only their size.
     this.d.log.info("task.queued", { id, chars: goal.length, mode: opts.mode ?? "do" });
     this.record({ event: "task", task: id, phase: "asked", mode: opts.mode ?? "do", goal: goal.slice(0, 300), window: target.title,
@@ -205,7 +229,7 @@ export class TaskManager {
         ...(t.hand && !ended ? { hand: t.hand } : {}),
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan.map(p => ({ ...p })) } : {}),
         ...(ended && t.result?.summary ? { summary: t.result.summary } : {}),
-        ...(ended && t.result?.view?.length ? { view: t.result.view } : {}),
+        ...(t.view ? { view: t.view } : {}),
         activity,
       };
     });
@@ -218,13 +242,24 @@ export class TaskManager {
   retry(id: string): Task | null {
     const t = this.tasks.get(id);
     const spec = this.specs.get(id);
-    if (!t || !spec || !retryable(t) || this.cutOff || this.closed) return null;
+    if (!t || !spec || !retryable(t) || this.cutOff || this.closed || !this.actionsAllowed()) return null;
     this.dismiss(id);
     return this.start(spec.goal, spec.opts);
   }
 
   list(): Task[] {
     return [...this.tasks.values()];
+  }
+
+  /**
+   * What a running task is held up by: its question waiting for the user's answer ("answer"), or a Stop it is winding
+   * down from ("stopping"); null otherwise (as its card says: "waiting" and TASK_STOPPING).
+   */
+  holdUp(id: string): "answer" | "stopping" | null {
+    const t = this.tasks.get(id);
+    if (t?.status !== "running") return null;
+    if (this.stopping.has(id)) return "stopping";
+    return this.logs.get(id)?.log.asking ? "answer" : null;
   }
 
   cancel(id: string): void {
@@ -268,12 +303,27 @@ export class TaskManager {
   /** A finished card the user closed. */
   dismiss(id: string): void {
     const t = this.tasks.get(id);
-    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.specs.delete(id); this.publish(); this.d.onRemoved?.(t, true); }
+    if (t && t.status !== "running" && t.status !== "queued") { this.tasks.delete(id); this.specs.delete(id); this.dropView(t); this.publish(); this.d.onRemoved?.(t, true); }
+  }
+
+  /** A task's view, to its card (a listener's fault never stops the task). */
+  private showView(task: Task, view: ViewDoc): void {
+    // A closed manager's cards are gone for good: a worker still winding down shows nothing more.
+    if (this.closed) return;
+    task.view = view;
+    try { this.d.onView?.(task.id, view); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
+  }
+
+  /** Its card went: so does its view. */
+  private dropView(task: Task): void {
+    if (!task.view) return;
+    try { this.d.onView?.(task.id, null); } catch (err) { this.d.log.warn("task.view_failed", { id: task.id, err }); }
   }
 
   /** Takes this manager's cards off the screen for good (Ember stopped or restarted; a new manager takes over). */
   close(): void {
     this.closed = true;
+    for (const t of this.tasks.values()) this.dropView(t);
     this.d.setCards([]);
   }
 
@@ -344,6 +394,8 @@ export class TaskManager {
   private async run(task: Task, spec: TaskSpec): Promise<void> {
     const abort = new AbortController();
     let worker: WorkerLike;
+    // Known before its worker is made: a task whose worker couldn't be made is still one that would act (Try again).
+    task.mode = spec.mode ?? "do";
     try {
       // Its activity starts now: its card's clock counts from here, not from when it was queued.
       const log = new ActivityLog(Date.now());
@@ -352,21 +404,22 @@ export class TaskManager {
         if (u.plan) task.plan = u.plan;
         if (u.hand && u.hand !== (task.hand ?? "background")) log.add({ type: "hand", hand: u.hand }, Date.now());
         if (u.hand) task.hand = u.hand;
+        if (u.view) this.showView(task, u.view);
         this.publish();
       }, e => { if (log.add(e, Date.now())) this.publish(); });
     } catch (err) {
       // Its worker couldn't be made: the task fails now (closable, said plainly) rather than waiting for ever with a
       // Stop that does nothing, and what queued behind it gets its turn.
       this.d.log.error("task.error", { id: task.id, err });
-      this.finish(task, "failed", { success: false, summary: "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." });
+      this.finish(task, "failed", { success: false, summary: task.mode === "do" ? "Ember couldn't start this task. Try again; if it keeps happening, restart Ember." : "Ember couldn't start this. Ask again; if it keeps happening, restart Ember." });
       this.pump();
       return;
     }
-    task.mode = spec.mode ?? "do";
     // A task that does the work starts in the background (a guide is Ember beside the cursor, pointing).
     if (task.mode === "do") task.hand ??= "background";
     this.running.set(task.id, { worker, abort });
     task.status = "running";
+    task.ranAt = Date.now();
     task.detail = "Working…";
     this.publish();
     this.d.log.info("task.started", { id: task.id });
@@ -412,6 +465,9 @@ export class TaskManager {
     if (status !== "failed") this.specs.delete(task.id);
     task.status = status;
     task.result = result;
+    // finish_task's view takes the live view's place (one rev on, so the card draws only what changed); without one,
+    // the live view stays as the result.
+    if (result.view) this.showView(task, task.view ? { ...result.view, rev: task.view.rev + 1 } : result.view);
     // The card shows a card's worth; the whole summary goes to the conversation (task.result).
     task.detail = detailOf(result.summary);
     task.finished = Date.now();
@@ -422,8 +478,8 @@ export class TaskManager {
     // Finished cards stay on screen briefly, then go; a failure, or a result shown as a view, stays longer so it can be
     // read (and closed sooner).
     const timer = setTimeout(() => {
-      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.specs.delete(task.id); this.publish(); this.d.onRemoved?.(task, false); }
-    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : result.view?.length ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
+      if (this.tasks.get(task.id) === task && task.status !== "running") { this.tasks.delete(task.id); this.specs.delete(task.id); this.dropView(task); this.publish(); this.d.onRemoved?.(task, false); }
+    }, status === "failed" ? this.d.failureCardMs ?? 60_000 : task.view ? this.d.failureCardMs ?? 60_000 : this.d.cardMs ?? 15_000);
     timer.unref?.();
     this.record({ event: "task", task: task.id, phase: status, goal: task.title, summary: result.summary.slice(0, 300) });
     this.d.onFinished?.(task);
@@ -449,6 +505,11 @@ export class TaskManager {
     for (const id of gone.slice(0, Math.max(0, gone.length - ACTIVITY_KEPT))) this.logs.delete(id);
   }
 
+  /** Tasks may act now (TaskManagerDeps.actionsAllowed). */
+  private actionsAllowed(): boolean {
+    try { return this.d.actionsAllowed?.() !== false; } catch { return false; /* can't tell: no button that might do nothing */ }
+  }
+
   private publish(): void {
     if (this.closed) return;
     this.keepLogs();
@@ -463,14 +524,14 @@ export class TaskManager {
         detail: stopping ? TASK_STOPPING : t.detail,
         actions: t.status === "running" || t.status === "queued"
           ? [{ id: `task:${t.id}:stop`, label: "Stop" }]
-          : retryable(t) && this.specs.has(t.id) && !this.cutOff
+          : retryable(t) && this.specs.has(t.id) && !this.cutOff && this.actionsAllowed()
             ? [{ id: `task:${t.id}:retry`, label: "Try again" }, { id: `task:${t.id}:dismiss`, label: "Close" }]
             : [{ id: `task:${t.id}:dismiss`, label: "Close" }],
         ...(t.where ? { where: t.where } : {}),
-        // While it works: how, and its plan. Once it ended: what it found or made, and its plan (each step as it got).
+        // While it works: how, its plan and its live view. Once it ended: what it found or made, and its plan (each step as it got).
         ...(t.hand && (t.status === "running" || t.status === "queued") ? { hand: t.hand } : {}),
         ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan } : {}),
-        ...(t.result?.view?.length && (t.status === "done" || t.status === "failed") ? { view: t.result.view } : {}),
+        ...(t.view ? { viewRev: t.view.rev } : {}),
         ...(log ? { activity: log.card() } : {}),
       };
     });

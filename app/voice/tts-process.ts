@@ -85,7 +85,7 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
       } else {
         const speaker = kokoroSpeaker(m.natural);
         const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: speaker, speed: 1.0 }),
-          { cache: { store, key } });
+          { cache: { store, key }, free: v => v.free() });
         const rtf = realTimeFactor(chosen.made, speaker);
         const info = { backend: sherpa.backend, detail: sherpa.detail, provider: chosen.provider, threads: n, tried: chosen.tried, rtf };
         if (rtf <= NATURAL_MAX_RTF) return { voice: chosen.made, speaker, info: { voice: "kokoro", ...info } };
@@ -104,7 +104,7 @@ function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: nu
   const n = threads(sherpa.backend, 1);
   const spec = piperSpec(m.model);
   const chosen = fastestProvider(list, provider => sherpa.createTts(spec, { provider, numThreads: n }, 1), v => v.generate({ text: WARM_UP, sid: 0, speed: 1.0 }),
-    { cache: { store: providerCache(), key: modelKey(spec.model, list, n) } });
+    { cache: { store: providerCache(), key: modelKey(spec.model, list, n) }, free: v => v.free() });
   // Timed natively only (it tells main whether this computer is fast enough for the natural voice): in WebAssembly
   // the probe would hold up the first reply by two seconds.
   const rtf = sherpa.backend === "native" ? realTimeFactor(chosen.made, 0) : undefined;
