@@ -15,7 +15,7 @@ import { fastestProvider, modelKey, providerCache, providers, sherpaRuntime, thr
 
 type FromMain =
   /** `model`: the Piper voice's folder; `natural`: Kokoro's (when downloaded); `wasm`: run on WebAssembly (a process before this one died loading natively). */
-  | { type: "init"; model: string; natural?: string | null; wasm?: boolean }
+  | { type: "init"; model: string; natural?: string | null; wasm?: boolean; capiDir?: string }
   | { type: "say"; id: number; text: string }
   | { type: "hush"; id: number };
 
@@ -67,7 +67,7 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 
 /** The voice that speaks: Kokoro when it's there and fast enough here (natively), otherwise the Piper voice. */
 function load(m: Extract<FromMain, { type: "init" }>): { voice: Tts; speaker: number; info: VoiceInfo } {
-  const sherpa = sherpaRuntime(m.wasm ? { prefer: "wasm" } : {});
+  const sherpa = sherpaRuntime(m.wasm ? { prefer: "wasm" } : m.capiDir ? { capiDir: m.capiDir } : {});
   const list = providers(sherpa.backend);
   let natural: string | undefined;
   if (m.natural && sherpa.backend === "native") {

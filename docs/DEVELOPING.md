@@ -307,6 +307,14 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
   - `firstAudioMs`: Ember's first sound.
 - A step that didn't happen is left out: a stop, or speaking off.
 
+**Native speech on Linux (development).** `node scripts/voice/fetch-capi.mjs` fetches sherpa-onnx's prebuilt C API
+for Linux x64 (pinned by SHA-256; its libraries need only GLIBC_2.17) and prints its folder; run Ember with
+`EMBER_SHERPA_CAPI=<that folder>` and listening and Ember's voice run natively through koffi (app/voice/capi.ts),
+falling back to WebAssembly if a speech process dies loading, as the addon does on Windows and macOS. The settings
+and logs say `C API through koffi`. `EMBER_SHERPA_CAPI=<folder> node scripts/voice/bench.mjs` times it against
+WebAssembly. When sherpa-onnx's version changes, run `node scripts/voice/capi-structs.mjs <its c-api.h> <version>`
+to regenerate app/voice/capi-structs.ts. An installed Ember doesn't ship the libraries yet.
+
 A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
 report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).
 
@@ -345,7 +353,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG` and `EMBER_AX_PROVIDER` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER` and `EMBER_SHERPA_CAPI` switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &

@@ -83,7 +83,7 @@ await Promise.all([
     external: ["electron", "koffi", "sharp"],
   }),
   // The voice utility process (sherpa-onnx WASM stays external: it loads its .wasm beside itself; the native addon is
-  // required at run time from its platform package, app/voice/runtime.ts).
+  // required at run time from its platform package, app/voice/runtime.ts; koffi stays external for the C API, capi.ts).
   build({
     ...common,
     entryPoints: ["app/voice/process.ts"],
@@ -91,7 +91,7 @@ await Promise.all([
     platform: "node",
     format: "cjs",
     target: "node24",
-    external: ["electron", "sherpa-onnx"],
+    external: ["electron", "sherpa-onnx", "koffi"],
   }),
   // Voice Match's voiceprint model, a worker thread of the voice process (onnxruntime-web stays external: it loads its
   // WebAssembly from its own folder).
@@ -112,7 +112,7 @@ await Promise.all([
     platform: "node",
     format: "cjs",
     target: "node24",
-    external: ["electron", "sherpa-onnx"],
+    external: ["electron", "sherpa-onnx", "koffi"],
   }),
   // SSH's askpass helper (Linux and macOS PCs), the link worker thread, and the Windows job host for commands: plain
   // Node, never electron.

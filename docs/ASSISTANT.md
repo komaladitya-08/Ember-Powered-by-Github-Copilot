@@ -114,6 +114,13 @@ reported in every PR that touches it.
    from 1.34 s to about 0.33 s, listening costs 3.5 times less CPU, and Kokoro becomes possible on Linux. It needs a
    departure entry in PLAN.md §10 (`ember.nativeModules` stays `[]`, since it is a library, not an addon) and the
    packaging rules updated.
+   **Built for development (2026-11-02):** no build is needed. sherpa-onnx 1.13.8's own prebuilt
+   `linux-x64-shared` release needs only GLIBC_2.17, GLIBCXX_3.4.19 and CXXABI_1.3.7. app/voice/capi.ts binds it
+   through koffi with struct layouts generated from its header (scripts/voice/capi-structs.mjs), and
+   `EMBER_SHERPA_CAPI` (development builds, filled by scripts/voice/fetch-capi.mjs) turns it on. On a 2.8 GHz Xeon
+   with 4 threads (bench.mjs), Piper's first audio was 137 ms against WebAssembly's 551, listening ran at a real-time
+   factor of 0.075 against 0.136, and Kokoro ran at 0.565 on 4 threads (just over the 0.5 Ember needs). Shipping it in
+   the RPM and AppImage is the next step.
 2. **Speak the first clause, not the first sentence.** `SpeechStream` lets the first chunk end at a comma or dash
    once it has at least about 4 words, and keeps whole sentences after that. This saves the time Copilot spends
    writing the rest of a long first sentence.

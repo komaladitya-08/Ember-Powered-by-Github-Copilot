@@ -2122,6 +2122,8 @@ function start(): void {
     if (speechModels.bundled) log.info("voice.models_bundled", { root: speechModels.root });
     voice = new VoiceService({
       log: log.child("voice"),
+      // Native speech through sherpa-onnx's C API (app/voice/capi.ts): a development switch until it ships with Ember.
+      ...(devEnv("EMBER_SHERPA_CAPI") ? { capiDir: devEnv("EMBER_SHERPA_CAPI") } : {}),
       modelsRoot: speechModels.root,
       // Models that came with Ember are never changed: damaged, the user's own folder replaces them (review #254).
       ...(speechModels.bundled ? { bundled: { userRoot: speechModels.userRoot } } : {}),
