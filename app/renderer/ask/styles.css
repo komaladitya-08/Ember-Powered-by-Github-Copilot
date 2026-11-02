@@ -62,6 +62,9 @@ textarea:focus { box-shadow: var(--glass-spec), inset 0 0 0 1px rgba(255, 255, 2
   border: 1px solid transparent; background: var(--glass); border-radius: var(--r-capsule);
 }
 .cut[hidden] { display: none; }
+/* On Clear glass the caution colour is under 4.5:1 with a white page behind: the note's words take the label's colour
+   (its own line still sets it apart). */
+html[data-glass="clear"] .cut { color: var(--label); }
 /* The tip to wait for the box before typing: the same quiet line, in the label's colour (advice, not a warning). */
 .tip {
   box-sizing: border-box; margin: 0 0 0 14px; padding: 1px 10px; align-self: flex-start; flex: none; max-width: calc(100% - 28px);

@@ -31,12 +31,14 @@ They share one emotion rig, so switching never changes behaviour.
   - the eyes jump to a new point (a saccade: a stiff spring for about 60–120 ms) and then follow it
     on the soft spring;
   - a long "got it" blink (250 ms) when the user's request ends (listening gives way);
-  - listening starts without the anticipation pop (a wake must feel instant), and "Needs you" has no
-    pop or hop (a pop reads as alarm): it holds, blinking only;
+  - listening starts without the anticipation pop (a wake must feel instant); while a question is up
+    (`setQuestion`, whatever emotion it shows) Ember has no pop, hop, fidget or saccade: it holds,
+    blinking only;
   - fidgets every 5–10 s in the first minute of idling, then every 8–15 s: rarer, never more insistent;
   - with Ember's own voice (Piper or Kokoro) the mouth opens with its loudness (the level the
     presence meter uses, ten times a second, smoothed in the rig) and the glow brightens a little
-    with it; the system's voice gives no level, so the mouth keeps its syllable flap;
+    with it, and stopping talking drops the level; the system's voice gives no level, so the mouth keeps
+    its syllable flap;
   - asleep, the eyes stop wandering, and once the face has settled the overlay draws nothing until
     something happens (it drew every 110 ms);
   - in Calm every spring settles without overshoot; blinks, gaze and the talking mouth stay.

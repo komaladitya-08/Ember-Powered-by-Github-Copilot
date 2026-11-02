@@ -169,6 +169,8 @@ export class Rig {
   /** The level of Ember's own voice while it plays (0–1), or null: then the mouth keeps its synthetic flap. */
   private voiceLevel: number | null = null;
   private voice = 0;
+  /** A question is up (setQuestion): nothing about Ember jumps, pops, hops or fidgets until it is answered. */
+  private question = false;
   private hopY = 0;
   private hopV = 0;
   private talking = false;
@@ -206,11 +208,12 @@ export class Rig {
       this.emoteAge = 0;
       this.setGesture(opts.gesture ?? p.gesture);
       this.gazeOverride = p.gaze ?? null;
-      if (!this.reducedMotion && !NO_POP.has(e)) {
+      if (!this.reducedMotion && !NO_POP.has(e) && !this.question) {
         this.vel.squash += 2.2;   // anticipation pop on a change
         this.vel.tilt += rand(-0.6, 0.6);
       }
       if (p.hop) this.hop(p.hop);
+      if (this.question) this.fidget = null;
       // The next blink comes at the new emotion's rate (thinking's is slower), not the last one's.
       const [lo, hi] = blinkGap(e);
       this.blinkIn = Math.min(Math.max(this.blinkIn, 0.3), rand(lo, hi));
@@ -275,7 +278,7 @@ export class Rig {
   /** Look toward a direction; components roughly -1 … 1. A far new point is reached by a quick jump, then followed. */
   lookAt(x: number, y: number): void {
     const next = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
-    if (Math.hypot(next.x - this.lookTarget.x, next.y - this.lookTarget.y) > 0.5) this.saccade = 0.12;
+    if (!this.question && Math.hypot(next.x - this.lookTarget.x, next.y - this.lookTarget.y) > 0.5) this.saccade = 0.12;
     this.lookTarget = next;
     this.lookTargetAge = 0;
   }
@@ -286,12 +289,25 @@ export class Rig {
   }
 
   hop(strength = 1): void {
-    if (this.reducedMotion) return;
+    if (this.reducedMotion || this.question) return;
     if (this.hopY > -1) this.hopV = -150 * strength;
   }
 
+  /** Talking or not. Stopping also drops the voice's level: a level left over would keep the mouth moving for good. */
   setTalking(on: boolean): void {
     this.talking = on;
+    if (!on) this.voiceLevel = null;
+  }
+
+  /**
+   * A question is up, whatever the emotion it shows (Confirmer's is "curious"): until it is answered nothing about Ember
+   * jumps, pops, hops, fidgets or glances away (design-system.md "Nothing near a pending question moves"); blinks stay,
+   * and the eyes still follow the pointer smoothly.
+   */
+  setQuestion(on: boolean): void {
+    if (on === this.question) return;
+    this.question = on;
+    if (on) { this.fidget = null; this.saccade = 0; }
   }
 
   /** Tell the rig where the character is on screen, so it can lean and jiggle. */
@@ -349,7 +365,7 @@ export class Rig {
       if (this.sleepAfter && this.idleFor > this.sleepAfter) {
         this.setEmotion("sleepy");
         this.dozing = true;
-      } else if (this.fidgetIn <= 0 && !this.fidget && !this.reducedMotion) {
+      } else if (this.fidgetIn <= 0 && !this.fidget && !this.reducedMotion && !this.question) {
         const r = Math.random();
         this.fidget = r < 0.5
           ? { kind: "glance", age: 0, dur: 1.2, dir: { x: rand(-1, 1), y: rand(-0.6, 0.6) } }
@@ -395,7 +411,7 @@ export class Rig {
       goal = { x: this.gazeOverride.x + Math.sin(this.t * 1.3) * 0.08, y: this.gazeOverride.y };
     } else if (this.fidget?.kind === "glance" && this.fidget.dir) {
       goal = this.fidget.dir;
-    } else if (this.lookTargetAge > 2.5) {
+    } else if (this.lookTargetAge > 2.5 && !this.question) {
       if (this.saccadeIn <= 0) {
         this.lookTarget = { x: rand(-0.5, 0.5), y: rand(-0.3, 0.3) };
         this.saccadeIn = rand(0.7, 2.2);
@@ -446,7 +462,7 @@ export class Rig {
     const syl = Math.max(0, Math.sin(this.t * 17) * 0.6 + Math.sin(this.t * 7.3) * 0.4);
     const level = this.voiceLevel ?? 0;
     this.voice += (level - this.voice) * Math.min(1, dt * (level > this.voice ? 40 : 11));
-    const mouth = this.voiceLevel !== null ? this.voice * (0.8 + 0.2 * syl) : this.talking ? syl : 0;
+    const mouth = !this.talking ? 0 : this.voiceLevel !== null ? this.voice * (0.8 + 0.2 * syl) : syl;
     this.talk += (mouth - this.talk) * Math.min(1, dt * 25);
 
     this.lean += ((Math.max(-1, Math.min(1, this.posVel.x / 900)) * 0.35) - this.lean) * Math.min(1, dt * 8);

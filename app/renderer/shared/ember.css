@@ -389,6 +389,7 @@ html.calm .calm-fade { transition: opacity var(--t-calm-fade) ease, visibility v
     --gray: GrayText;
     --hud-line: CanvasText;
     --hud-dim: GrayText;
+    --accent-text-on-glass: CanvasText;
     --control-edge: ButtonText;
     --scroll-thumb: CanvasText;
     /* A shadow ring would be dropped, and on the controls drawn as they are it would sit under the outline below. */

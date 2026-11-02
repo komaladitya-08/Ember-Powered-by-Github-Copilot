@@ -325,8 +325,12 @@ export const BUBBLE_CSS = `
 /* Hidden is gone once it has faded: nothing in it takes a click or the keyboard. */
 .ember-bubble[data-hidden="true"] { opacity: 0; visibility: hidden; translate: 0 4px; scale: 0.96; transition-delay: 0s, 140ms, 0s, 0s; transition-duration: 140ms, 0s, 140ms, 140ms; transition-timing-function: ease-in; }
 /* A question comes and goes by its opacity alone: nothing near a pending decision moves, grows or slides under the
-   pointer (its buttons appear where they stay). */
+   pointer (its buttons appear where they stay). The overlay never gives a hidden bubble a mood, so a question arrives
+   on a bubble still posed as before (0.96, 4 px down): its translate and scale aren't transitioned at all, so they jump
+   to rest the frame it shows, under its opacity 0 (bubble-motion-live.test.ts). */
 .ember-bubble[data-mood="attention"], .ember-bubble[data-mood="attention"][data-hidden="true"] { translate: none; scale: none; }
+.ember-bubble[data-mood="attention"] { transition: opacity var(--t-fade-in, 180ms) ease-out, visibility 0s; }
+.ember-bubble[data-mood="attention"][data-hidden="true"] { transition: opacity 140ms ease-in, visibility 0s linear 140ms; }
 .ember-bubble[data-mood="listening"] { --eb-mood: var(--yellow, #ffd600); }
 .ember-bubble[data-mood="thinking"]  { --eb-mood: var(--accent-2, #ffb340); }
 .ember-bubble[data-mood="acting"]    { --eb-mood: var(--accent, #ff9230); }
@@ -348,7 +352,7 @@ export const BUBBLE_CSS = `
 .ember-bubble:is([data-mood="thinking"], [data-mood="listening"]):not([data-hidden="true"])::before { opacity: 1; animation: eb-glow 1.6s ease-in-out 3; }
 /* And a warm bloom round it (set once, not animated). */
 .ember-bubble:is([data-mood="thinking"], [data-mood="listening"]) {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.16), 0 12px 28px -8px rgba(0, 0, 0, 0.42),
+  box-shadow: var(--glass-spec, inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 -1px 0 rgba(0, 0, 0, 0.22)), var(--glass-hairline, 0 0 0 0.5px rgba(0, 0, 0, 0.6)), 0 2px 6px rgba(0, 0, 0, 0.18), 0 12px 28px -8px rgba(0, 0, 0, 0.42),
     0 0 18px color-mix(in srgb, var(--glow, #ff8226) 30%, transparent);
 }
 /* A grid item is as wide as its longest word by default: one long unbroken word (an app's name on a

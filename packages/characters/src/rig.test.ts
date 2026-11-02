@@ -263,3 +263,48 @@ describe("Rig liveliness (motion notes §4.4)", () => {
     expect(low).toBeGreaterThanOrEqual(PRESETS.sad.face.mouth! - 0.01);
   });
 });
+
+describe("Rig while a question is up, and after it stops talking (review of the Liquid Glass branch)", () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it("stops moving its mouth when it stops talking, even with the voice's last level left behind", () => {
+    const rig = new Rig();
+    rig.alive = false;
+    rig.setTalking(true);
+    rig.setTalkLevel(0.6);
+    settle(rig, 0.5);
+    rig.setTalking(false);
+    const pose = settle(rig, 10);
+    // A mouth still moving kept the overlay drawing every 33 ms for good.
+    expect(pose.talk).toBeLessThan(0.01);
+  });
+
+  it("holds still while a question is up, whatever emotion it shows (Confirmer's is curious): no pop, hop, fidget or glance away", () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.6); // every fidget would be a yawn, every saccade far off
+    const rig = new Rig();
+    settle(rig, 2);
+    rig.setQuestion(true);
+    rig.lookAt(0.2, 0.1);
+    const before = rig.update(0).face.squash;
+    rig.setEmotion("curious");
+    expect(rig.update(1 / 60).face.squash - before).toBeLessThan(0.01);
+    let lift = 0, yawn = 0;
+    const looks: number[] = [];
+    for (let t = 0; t < 20; t += 1 / 60) {
+      const p = rig.update(1 / 60);
+      lift = Math.max(lift, Math.abs(p.lift));
+      yawn = Math.max(yawn, p.face.mouthOpen);
+      if (t > 2) looks.push(p.look.x);
+    }
+    // (Curious's idle float stays, a few units; a hop is tens.)
+    expect(lift).toBeLessThan(5);
+    expect(yawn).toBeLessThan(0.5);
+    expect(Math.max(...looks) - Math.min(...looks)).toBeLessThan(0.1);
+    // Answered: its life comes back.
+    rig.setQuestion(false);
+    rig.setEmotion("surprised");
+    let hop = 0;
+    for (let i = 0; i < 60; i++) hop = Math.max(hop, Math.abs(rig.update(1 / 60).lift));
+    expect(hop).toBeGreaterThan(5);
+  });
+});

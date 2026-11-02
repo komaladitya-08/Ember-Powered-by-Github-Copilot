@@ -162,6 +162,8 @@ api.onState((s: EmberState & { avoid?: Rect[] }) => {
   const g = s.gesture ?? null;
   const fresh = g !== gestureSeen;
   gestureSeen = g;
+  // A question is up (in the bubble, whatever emotion it shows): Ember holds still but for its blinks.
+  rig.setQuestion(s.bubble.visible && s.bubble.mood === "attention");
   if (s.emotion !== emotion) {
     emotion = s.emotion;
     rig.setEmotion(s.emotion, fresh && g ? { gesture: g } : {});

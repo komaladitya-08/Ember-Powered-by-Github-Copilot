@@ -190,6 +190,8 @@ describe("every window", () => {
     for (const p of ["overlay", "handle"]) {
       const css = read(`app/renderer/${p}/styles.css`);
       const endless = [...css.matchAll(/([^{}]+)\{[^}]*animation: [\w-]+ [\d.]+s [\w-]+ infinite/g)].map(m => m[1].trim());
+      // The overlay has endless pulses (the handle's steady microphone halo has none left).
+      if (p === "overlay") expect(endless.length, p).toBeGreaterThan(0);
       for (const sel of endless) {
         const el = sel.split(",").pop()!.trim().replace(/\[data-state="active"\]/, "");
         expect(css, `${p}: ${sel}`).toMatch(new RegExp(`html\\.calm [^{]*${el.replace(/[.[\]()*:"=]/g, "\\$&").replace(/^\\\./, "\\.")}`));
@@ -404,6 +406,11 @@ describe("Liquid Glass on the floating layer (see-through, measured over a white
     expect(read("app/renderer/overlay/styles.css")).toContain(".task[data-cursor] .hand { color: var(--accent-text-on-glass);");
     expect(shared).toContain("[data-status] { --sym-tint: var(--accent-text-on-glass, var(--accent));");
     expect(token("accent-text-on-glass")).toBe("var(--accent)");
+    // And a system colour in contrast themes, as every word colour is.
+    expect(forced(shared, ":root")).toContain("--accent-text-on-glass: CanvasText;");
+    // The Ask box's note of a cut paste: the caution colour is under 4.5:1 on Clear, so its words take the label's.
+    expect(contrast(solid(clearToken("yellow")), g)).toBeLessThan(4.5);
+    expect(read("app/renderer/ask/styles.css")).toContain('html[data-glass="clear"] .cut { color: var(--label); }');
   });
 
   it("lets Increase Contrast, Reduce Transparency and Calm win over Clear (they always make it solid)", () => {
@@ -446,6 +453,11 @@ describe("Liquid Glass on the floating layer (see-through, measured over a white
   });
 
   it("draws hairlines of one device pixel, not 0.5 px smeared over two at 125 % and 150 %", () => {
+    // The bubble's every shadow, its thinking and listening bloom too, takes the glass's edges and hairline.
+    for (const [, shadow] of BUBBLE_CSS.matchAll(/\.ember-bubble[^{]*\{[^}]*?box-shadow: ([^;]+);/g)) {
+      if (/0 0 0 0\.5px/.test(shadow)) expect(shadow.startsWith("var(--glass-spec, ") && shadow.includes("var(--glass-hairline, "), shadow).toBe(true);
+    }
+    expect(BUBBLE_CSS).not.toMatch(/box-shadow: inset 0 1px 0 rgba\(255, 255, 255, 0\.08\), 0 0 0 0\.5px/);
     expect(token("glass-hairline")).toBe("0 0 0 var(--dpx, 0.5px) rgba(0, 0, 0, 0.6)");
     expect(token("glass-depth")).toMatch(/^var\(--glass-hairline\),/);
     for (const p of ["overlay", "handle", "ask"]) expect(read(`app/renderer/${p}/styles.css`), p).not.toMatch(/0 0 0 0\.5px/);
