@@ -236,8 +236,8 @@ Ctrl+Alt+Shift+Space"), and the greeting, the handle's menu, settings and every 
 
 If another app holds the fallback too, the setup check says which, and Ember keeps trying to get them. Meanwhile click
 Ember's handle in its corner, or from the keyboard start Ember again (from your apps, the Start menu or
-Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, under
-**Comfort & access**. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by
+Applications) or press the settings shortcut: settings then opens at **Ask Ember…** and **Stop everything**, at the
+top of **Home**. On Windows, PowerToys' Command Palette uses Win+Alt+Space and Xbox Game Bar uses Win+Alt+M by
 default.
 
 **Ask Ember** is also in the system's own launcher, whatever another app holds: right-click Ember in the dash or the
@@ -280,11 +280,11 @@ and VoiceOver on a Mac. While one runs:
 
 | To | From the keyboard |
 |---|---|
-| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, under **Comfort & access › Ember on screen**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |
+| Ask Ember | The ask shortcut opens the ask box with the keyboard in it: Enter sends (Shift+Enter adds a line), ↑ and ↓ bring back earlier requests, Esc closes. If another app holds it and its fallback: **Ask Ember…** in settings, at the top of **Home**, or **Ask Ember** in the system's launcher (app menu, Dock menu, or the jump list once Ember is pinned to the taskbar) |
 | Answer "May I?" | Ctrl+Alt+Y allow, Ctrl+Alt+N not now, while the question is up. **Always in this app** is a click only, so that a key meant for an app never grants for good. A question about typing a long text shows all of it in a box under it and allows only once all of it has been in view: until then Ctrl+Alt+Y shows the next part, and once it has, a moment later, Ctrl+Alt+Y pressed again allows |
-| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds it and its fallback: **Stop everything** under **Comfort & access › Ember on screen** |
+| Stop | The stop shortcut, or "Ember, stop": every task, question and command at once. If another app holds it and its fallback: **Stop everything** at the top of settings' **Home** |
 | Open settings | The settings shortcut, or start Ember again from your apps, the Start menu or Applications |
-| What the handle's menu does | Settings › **Comfort & access › Ember on screen**: **Ask Ember…**, **Stop everything**, **Hide Ember**, **Stay put**, **Quit Ember**, and **Handle position** for **Move to the other side**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
+| What the handle's menu does | Settings' **Home**: **Ask Ember…** and **Stop everything**. Settings › **Your Ember › Ember on screen**: **Hide Ember until it needs me** for **Hide Ember**, **Follow my cursor** for **Stay put**, **Handle position** for **Move to the other side**, and **Quit Ember**. The microphone: its shortcut, or **Voice** in settings. **Read the last answer** and a long answer's **Read all**: settings' **Conversation**. **Bring Ember to a computer…**, **Disconnect** and **Cancel connecting**: settings' **Computers**. **Work on**: name the computer in your request ("on build-01, …") |
 | A command card (**Allow**, **Not now**) | Alt+Tab to **Ember commands** and Tab to the button; or Ember's allow and not-now keys, once the card has shown the whole command; or say “Ember, allow” (Voice Match on) or “Ember, not now” then |
 | Any question of Ember's | Say “Ember, allow” (only with **Answer only my voice (Voice Match)** on and recognising you) or “Ember, not now” (anyone). Never “Always” by voice. **Apps & privacy › Work without asking** has Ember tell you instead of asking before routine steps; risky ones still ask |
 | The command window | Tab and Shift+Tab move between the tabs, the buttons and the command's terminal, never into the command (Ctrl+I types a Tab for a program that wants one); Ctrl+Shift+C copies (Command+C on a Mac), and **Copy output** copies all a command printed |
@@ -304,7 +304,7 @@ colour.
 
 **Where the handle sits.** Ember's handle sits in the bottom-right corner of your main screen, with its task cards
 just above it, clear of the taskbar, Dock or panel. If it covers something you need there, such as a status bar or a
-scroll corner, choose **Bottom left** in Settings › **Comfort & access** › **Handle position**, or click **Move to the
+scroll corner, choose **Bottom left** in Settings › **Your Ember** › **Handle position**, or click **Move to the
 other side** in the handle's menu. The task cards go with it, and on Linux Ember's desk view takes the other corner.
 
 **Known gaps.**

@@ -391,7 +391,7 @@ describe("README.md", () => {
     // never opens links (home/main.ts).
     const about = /<h2 id="about-h">([^<]+)<\/h2>/.exec(homePage)?.[1] ?? "";
     expect(about).toBe("About this build");
-    const row = /\["(Report a problem)", ISSUES_URL\]/.exec(read("app/renderer/home/main.ts"))?.[1] ?? "";
+    const row = /\["(Report a problem)", ISSUES_URL, "copy"\]/.exec(read("app/renderer/home/main.ts"))?.[1] ?? "";
     expect(row).toBe("Report a problem");
     const report = flat(section(readme, "Report a problem"));
     expect(report).toContain(`(${ISSUES_URL})`);
@@ -439,16 +439,22 @@ describe("README.md's Accessibility section, against the release it describes", 
     expect(gaps).not.toMatch(/question waits|leaves the bubble/);
   });
 
-  it.runIf(released)("names every button of Comfort & access › Ember on screen where the handle's menu, ask and stop are", () => {
-    expect(sectionOf("presence-actions")).toBe("Comfort & access");
-    expect(homePage).toMatch(/<h3 class="sub">Ember on screen<\/h3>\s*<div class="group">\s*<p[^>]*id="presence-text"/);
-    const buttons = [...(/id="presence-actions">([^]*?)<\/div>/.exec(homePage)?.[1] ?? "").matchAll(/<button [^>]*>([^<]+)<\/button>/g)].map(m => m[1]);
+  it.runIf(released)("names where the handle menu's actions are in settings: Ask and Stop on Home, the rest under Your Ember › Ember on screen", () => {
+    // Home's status panel holds Ask Ember… and Stop everything (UI audit #13).
+    const panel = /<section class="status-panel"[^]*?<\/section>/.exec(homePage)?.[0] ?? "";
+    const buttons = ["p-ask", "p-stop"].map(id => new RegExp(`id="${id}"[^>]*>([^<]+)<`).exec(panel)?.[1] ?? "");
     expect(buttons).toEqual(expect.arrayContaining(["Ask Ember…", "Stop everything"]));
+    // Your Ember › Ember on screen: the switches for Hide and Stay put, Handle position, then Quit Ember.
+    expect(sectionOf("p-follow")).toBe("Your Ember");
+    expect(homePage).toMatch(/<h3 class="sub after-setup" id="screen-h">Ember on screen<\/h3>/);
+    const switches = ["p-hide", "p-follow"].map(id => new RegExp(`id="${id}" role="switch"><span>([^<]+)</span>`).exec(homePage)?.[1] ?? "");
+    const quit = /id="p-quit"[^>]*>([^<]+)</.exec(homePage)?.[1] ?? "";
     const menuRow = row("What the handle's menu does");
-    expect(menuRow).toContain("Settings › **Comfort & access › Ember on screen**");
-    for (const b of buttons) expect(menuRow, b).toContain(`**${b}**`);
-    expect(row("Ask Ember")).toContain("**Ask Ember…** in settings, under **Comfort & access › Ember on screen**");
-    expect(row("Stop")).toContain("**Stop everything** under **Comfort & access › Ember on screen**");
+    expect(menuRow).toContain("Settings' **Home**");
+    expect(menuRow).toContain("Settings › **Your Ember › Ember on screen**");
+    for (const b of [...buttons, ...switches, quit, "Handle position"]) expect(menuRow, b).toContain(`**${b}**`);
+    expect(row("Ask Ember")).toContain("**Ask Ember…** in settings, at the top of **Home**");
+    expect(row("Stop")).toContain("**Stop everything** at the top of settings' **Home**");
     // The menu's computer items, and Settings › Computers for them.
     const ssh = { id: "ssh:build-01", kind: "ssh", label: "build-01", state: "connecting", can: "", usable: false, listedOnly: false, names: ["build-01"], host: { id: "h1" } };
     const local = { id: "local", kind: "local", label: "This computer", state: "ready", can: "", usable: true, listedOnly: false, names: [] };

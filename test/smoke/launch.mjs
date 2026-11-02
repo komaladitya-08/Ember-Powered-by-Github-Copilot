@@ -149,7 +149,8 @@ const tail = (inst, stream) => inst.said[stream].trim()
 let first, second, third;
 let ok = false;
 try {
-  first = launch("first");
+  // Set up, a start by the user only greets unless a setup row needs them (launcher.ts startView): ask for settings.
+  first = launch("first", ["--show-settings"]);
   await waitFor(first, () => first.events.includes("window.home.shown"), windowMs, "home window");
   console.log("ok   first instance showed its window");
   if (copied) {

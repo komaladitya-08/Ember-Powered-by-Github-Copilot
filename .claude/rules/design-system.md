@@ -46,7 +46,7 @@ When a case isn't covered here, follow the HIG page for that control.
 7. **Ember's own look.**
    - Mark AI with Ember's flame and characters, never a generic sparkle, and never imitate Siri or Apple Intelligence (no rainbow, no screen-edge glow).
    - The characters are original designs with no film assets. All four share one rig (packages/characters/src/rig.ts), so a new emotion or gesture must work for every character.
-   - **The Ember HUD** is Ember's own vocabulary on the floating layer, on top of the glass: the presence ring and its meters, and lock-on brackets. It exists for presence and telemetry (what Ember is doing, at a glance), in Ember's warm light, never cyan or blue, never a film's layout. Home and the content windows stay System Settings. Every HUD part repeats what words say; none is the only carrier of a state.
+   - **The Ember HUD** is Ember's own vocabulary on the floating layer, on top of the glass: the presence ring and its meters, and lock-on brackets. It exists for presence and telemetry (what Ember is doing, at a glance), in Ember's warm light, never cyan or blue, never a film's layout. Home and the content windows stay System Settings, except Home's still status panel. Every HUD part repeats what words say; none is the only carrier of a state.
 
 ## What Ember's look never includes
 
@@ -156,8 +156,12 @@ Name these patterns when you design something new. Vague direction such as "make
   - `.hint` footnotes below the group;
   - words first in a row, with the switch at the trailing edge;
   - Remove as a `--red-text` text button.
-- **Section links.** From 640px up, Home has a fixed 200px sidebar with coloured symbol tiles, and marks the current section with `aria-current="true"`. Below 640px the links form one capsule row that scrolls sideways and is never sticky, so it never hides the focused element.
+<<<<<<< HEAD
+- **Panes and section links.** Once Ember has started, Home shows one pane at a time (every top-level section carries `data-pane`; main.ts `showPane` takes the others off the page with `.off-pane`), and reopens on the last one. From 640px up, Home has a fixed 200px sidebar with **Search settings** at its top and coloured symbol tiles, and marks the current pane's link with `aria-current="true"`. Below 640px the search field and the links form one capsule row that scrolls sideways and is never sticky, so it never hides the focused element. A new section goes on a pane; a new pane gets a link, a tile and a place in the order (most used first).
+- **Home's status panel** is the one HUD part of a content window: still (its ring never animates), opaque on `--surface-1`, with one prominent button. Its words come from the same data the page shows below it (Task activity's tasks, the setup check's count), so the two never disagree.
+=======
 - **First run** (`#welcome`, welcome.ts): one decision a step, the step's buttons after its words (never stuck to the window's foot), a reason beside any button that waits (`aria-describedby="w-why"`), and a still step indicator. Its words are pure functions in welcome-copy.ts (home-welcome.test.ts). While it runs it borrows the hero's canvas and the character cards and gives them back at Start. Its forced-colours rules are in their own block at the end of home/styles.css; design-system.test.ts reads every block.
+>>>>>>> origin/main
 - **Folds.** Fold a section with `<details class="fold" id="X-fold" aria-labelledby="X-h">`, with the chevron as a `::before` using `content: "" / ""` so it stays out of the spoken name.
 - **Window sizes.** Change CSS sizes and main-process window sizes together. The defaults:
   - Ask is 560×92, plus 24px a row as the text grows;
@@ -210,6 +214,7 @@ Name these patterns when you design something new. Vague direction such as "make
   - HUD parts are decorative: `aria-hidden`, outside `interactiveRects()` and the task rects, and the words say every state for screen readers.
 - **Task state.** It is `data-status="running|queued|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Waiting its turn: ", "Waiting for you: " …). Every surface takes its state words from the one table, `STATUS_WORDS` in app/shared/activity.ts. Show selection with a ring plus a check.
 - **Task activity on cards.** A card's live line, telemetry row, summary and Details rows are built from the task's activity (app/shared/activity.ts, app/main/agent/activity.ts) in Ember's own words, never from the model's arguments, reasoning or screen text. The worker's own note is the one model text, in `--label-2`, never styled as Ember's voice. The clock is written as text by one shared one-second tick that runs only while a card under way shows: no re-render and no animation.
+- **Task activity in Home.** The same words, a group per task (app/renderer/home/tasks.ts, tasks-copy.ts), opaque and still, from main's in-memory list (`tasks:activity`, pushed at most every `TASKS_PUSH_MS`). It may also show what a question asked, in Ember's words built from the step's kind and app only (`askedWords`: never the typed text or names from the screen), and where it is answered (the bubble, the command window or a consent card), which the cards never show. Home never answers a question: it says where it is asked and which keys answer it. Its result view goes through the one `resultView` function.
 - **Generative views on cards.** A task's result `view` comes only from app/shared/view.ts's catalog, checked by
   `ViewSchema`, and is drawn by app/renderer/overlay/view.ts with `textContent` alone. It has no links, buttons,
   images or markup. A new block kind needs all of these: the type, the schema, the drawing, `viewText`, the

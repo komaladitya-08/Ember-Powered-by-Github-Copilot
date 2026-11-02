@@ -11,7 +11,7 @@
 
 import {
   ACTIVITY_LIMIT, ANSWER_WORDS, HAND_ROW, NOT_STEPS, STATUS_WORDS, STEP_GROUP, activityRows, doingWords, retryWords,
-  stepsWords, summarizeActivity, triedWords, type ActivityItem, type Answer, type CardActivity, type TaskActivity,
+  stepsWords, summarizeActivity, triedWords, type ActivityItem, type Answer, type AskedIn, type CardActivity, type TaskActivity,
 } from "../../shared/activity";
 import type { TaskHand } from "../../shared/view";
 
@@ -27,8 +27,11 @@ export type ActivityEvent =
   | { type: "note"; text: string; intent?: string }
   /** A step taken without asking (Work without asking): policy's words (Decision.announce), never the model's. */
   | { type: "announce"; text: string }
-  /** A question of this task went up. */
-  | { type: "question" }
+  /**
+   * A question of this task went up. `asked`: what it asks in Ember's words (askedWords: never typed text or screen
+   * text); `askedIn`: where the user answers it (the bubble, the command window, or a card in its own window).
+   */
+  | { type: "question"; asked?: string; askedIn?: AskedIn }
   /** It was answered (or not). */
   | { type: "answer"; answer: Answer }
   /** A step wasn't allowed; `reason` is Ember's (policy's) words. */
@@ -51,6 +54,24 @@ export type ActivityEvent =
 /** Longest words kept from a note or a reason (the card shows a line of it). */
 const NOTE_MAX = 200;
 const REASON_MAX = 120;
+/** A kind of step a question is about, in Ember's words (the user's own mouse and keyboard named as such). */
+const ASK_KIND: Readonly<Record<string, string>> = {
+  read: "Read the window", click: "Click", toggle: "Flip a switch", text: "Type text", select: "Choose an option",
+  value: "Set a value", setting: "Change a setting", open_app: "Open an app", cursor_click: "Click with your mouse",
+  cursor_text: "Type with your keyboard", keys: "Press keys", scroll: "Scroll",
+};
+
+/**
+ * What a question asked, as Home's Task activity shows it under the row: built by Ember from the step's kind and the
+ * app's name only, never from the question's sentence, so the text a step would type and the names on the screen
+ * (a button's, a cell's, a window's) never reach it ("Type text in Mail?", "Fill 3 cells in Calc?", "Run a command?").
+ * On Ember's desk its own mouse and keyboard aren't the user's.
+ */
+export function askedWords(o: { kind: string; app?: string; onDesk?: boolean; cells?: number }): string {
+  const what = o.cells !== undefined ? `Fill ${o.cells === 1 ? "a cell" : `${o.cells} cells`}` : o.kind === "command" ? "Run a command"
+    : o.kind === "consent" ? "Agree to turn this on" : (ASK_KIND[o.kind] ?? "Take a step").replace(/ with your (mouse|keyboard)$/, o.onDesk ? "" : " with your $1");
+  return `${what}${o.app ? ` in ${o.app}` : ""}${o.onDesk ? " on my desk" : ""}?`;
+}
 
 const clip = (s: string, max: number) => {
   const t = s.replace(/\s+/g, " ").trim();
@@ -140,7 +161,8 @@ export class ActivityLog {
       case "question": {
         a.questions++;
         a.asking = true;
-        this.question = this.push({ id: this.id("q"), kind: "question", at, state: "waiting", words: ANSWER_WORDS.waiting });
+        const asked = e.asked ? clip(e.asked, NOTE_MAX) : "";
+        this.question = this.push({ id: this.id("q"), kind: "question", at, state: "waiting", words: ANSWER_WORDS.waiting, ...(asked ? { asked } : {}), ...(e.askedIn ? { askedIn: e.askedIn } : {}) });
         a.live = STATUS_WORDS.waiting;
         return true;
       }

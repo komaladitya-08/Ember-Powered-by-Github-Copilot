@@ -121,16 +121,37 @@ cache (test/temp-folder.ts).
   step but the first. A run that agreed but didn't finish opens at sign-in next time. Everything chosen here stays in
   settings for later.
 - Ember appears beside your cursor; its handle sits in the bottom-right corner, or the bottom-left one with
-  **Handle position** in settings' **Comfort & access**. Click the handle for **Ask Ember…**, **Stop everything**,
+  **Handle position** in settings' **Your Ember**. Click the handle for **Ask Ember…**, **Stop everything**,
   **Mute / Unmute microphone** (with “Hey Ember” on), **Read the last answer** (once Ember has answered),
   **Settings…**, **Stay put / Follow my cursor**, **Hide / Show Ember**, **Move to the other side** (the handle and its
   task cards go to the other bottom corner) and **Quit Ember** (Quit asks first while a task is running).
 - The shortcuts here are Linux's: Windows uses Win+Alt+… and macOS Control+Shift+Command+… with the same letters.
 - **Ctrl+Alt+E** opens settings from anywhere. **Ctrl+Alt+Space** opens the ask box: it shows which window Ember
   will look at, and ↑/↓ bring back earlier questions.
-- Long answers have **Read all** (counted at the text size you picked): the settings window's **Conversation** section
+- **The settings window** shows one pane at a time, picked in its sidebar as System Settings does: **Home**, **Copilot**,
+  **Voice**, **Your Ember** (character, size, start at login, and **Ember on screen**: **Handle position**, **Follow my
+  cursor**, **Hide Ember until it needs me**, **Quit Ember**), **Memory** (with routines and reminders), **Apps &
+  privacy**, **Comfort & access**, **Computers** and **Commands** (once available), **Extensions**, and **Setup &
+  about**. **Search settings** at the top of the sidebar narrows it to the panes that hold the words typed; Enter goes
+  to the first setting found. The window reopens on the pane you last viewed (kept in the page's own storage).
+  - **Home** is a status panel (Ember's still presence ring, its state in a few words, which of listening, memory and
+    commands are on, today's tasks and approvals, **Ask Ember…** and **Stop everything** with the stop chord), then the
+    **Conversation**, **Task activity** and the folded **What Ember did**.
+  - **Task activity** shows each task of this session, newest first and the one that needs you on top: its state and
+    clock, its steps in one line, its plan as a checklist, a row for each thing it did with the time after it started
+    (steps of one kind folded, each listed when opened), its questions with how they were answered, and how it ended
+    (the worker's summary and view). A finished task folds to its head. A task waiting for your answer says where it is
+    asked and with which keys; Home never answers it. From five tasks, **All**, **Needs you**, **Working** and **Ended**
+    filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, and gone at
+    quit; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most twice a second,
+    only to the settings window.
+  - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
+    from the Dock or Finder) only greets you, unless a setup row needs you (`startView`'s `setupNeeded`): then settings
+    opens. Starting it again while it runs, the
+    settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
+- Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).
-- **Memory** (Settings › Conversation › **Remember what I tell you**, off until you turn it on and agree to its note):
+- **Memory** (Settings › Memory › **Remember what I tell you**, off until you turn it on and agree to its note):
   Ember remembers what you tell it about yourself and your work after it closes (docs/MEMORY.md).
   - It keeps this in `memory.json` in its data folder (mode 0600).
   - With each request, the few facts that bear on it go to Copilot as an untrusted `<memory>` block.

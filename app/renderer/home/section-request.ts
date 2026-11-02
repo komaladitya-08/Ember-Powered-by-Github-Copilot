@@ -20,10 +20,16 @@ export interface SectionRequest {
   control: string | null;
 }
 
+/**
+ * Requests whose control lives in another section than the name main uses: Ask Ember… and Stop everything moved to
+ * Home's status panel (main's keyboardRoute still says "access:ask" and "access:stop").
+ */
+const SECTIONS: Readonly<Record<string, string>> = { "access:ask": "home", "access:stop": "home" };
+
 /** Reads a request ("computers", "computers:host"); an unknown control falls back to the section's heading. */
 export function sectionRequest(value: string): SectionRequest {
   const [section] = value.split(":");
-  return { section, control: CONTROLS[value] ?? null };
+  return { section: SECTIONS[value] ?? section, control: CONTROLS[value] ?? null };
 }
 
 /** The request that waits for its section to show; at most one, the latest. */

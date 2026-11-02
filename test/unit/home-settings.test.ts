@@ -35,11 +35,16 @@ describe("the sidebar says what the sections are called (review #162)", () => {
   it("names each link with its section's heading", () => {
     const decode = (s: string) => s.replace(/&amp;/g, "&");
     const links = [...page.matchAll(/<a href="#([\w-]+-h)"[^>]*>([^<]+)<\/a>/g)].map(m => [m[1], decode(m[2])] as const);
-    expect(links.length).toBe(12);
-    for (const [id, text] of links) {
+    expect(links.length).toBe(11);
+    // Home opens the window's own page (its title is Ember's name); "Setup & about" the pane of the setup check and
+    // About this build. Every other link says its pane's heading.
+    expect(links[0]).toEqual(["home-h", "Home"]);
+    expect(page).toContain('<h1 id="home-h" tabindex="-1">Ember</h1>');
+    expect(links.at(-1)).toEqual(["checks-h", "Setup & about"]);
+    for (const id of ["checks-h", "about-h"]) expect(page).toMatch(new RegExp(`data-pane="checks"[^>]*>\\s*<details[^>]*>\\s*<summary><h2 id="${id}"`));
+    for (const [id, text] of links.slice(1, -1)) {
       const heading = decode(new RegExp(`<h2 id="${id}"[^>]*>([^<]+)</h2>`).exec(page)?.[1] ?? "");
-      // "About" opens "About this build": the heading may say more after the link's words, never something else.
-      expect(heading === text || heading.startsWith(`${text} `), `${text} → ${heading}`).toBe(true);
+      expect(heading, `${text} → ${heading}`).toBe(text);
     }
   });
 });
