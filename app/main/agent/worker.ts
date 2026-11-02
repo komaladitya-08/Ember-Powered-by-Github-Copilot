@@ -994,9 +994,28 @@ export class Worker {
     this.spokenOnly = spec.commandWords !== undefined;
     this.agreed = spec.agreed ?? [];
     // What Ember's conversation read on the user's screen before starting this task (its goal may carry it).
-    if (spec.screen) this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
+    if (spec.screen) {
+      this.read.set("described", { app: "", window: "", text: spec.screen.slice(0, READ_TEXT_MAX), described: true });
+      // Its goal may carry that text: written as instructions to an AI agent, every step asks from the start.
+      this.flagInjection(spec.screen, "described");
+    }
     this.window = { app: spec.target.app ?? "", name: spec.target.title ?? "" };
     this.clipboard = d.clipboard ? asPasteClipboard(d.clipboard) : null;
+  }
+
+  /**
+   * Scans text the model is about to see (a window's read, the windows' titles, what the conversation read before the
+   * task) for instructions aimed at an AI agent (injection.ts): found, every step asks from now on and its questions say
+   * text on screen tried to give Ember instructions (also when an earlier unasked-for step had already tainted it).
+   * Whether it found any.
+   */
+  private flagInjection(text: string, where: "window" | "windows" | "described", app?: string): boolean {
+    const signals = injectionSignals(text);
+    if (!signals.length) return false;
+    this.tainted = true;
+    this.steered = true;
+    this.d.log.info("worker.injection_flagged", { task: this.spec.id, where, ...(app !== undefined ? { app } : {}), signals });
+    return true;
   }
 
   private get perception() { return this.place?.perception ?? this.d.perception; }
@@ -1166,9 +1185,11 @@ export class Worker {
         const wins = (await this.perception.windows()).filter(w => !isEmberWindow(w));
         // Their titles reach the model (an email's subject, a file's name): text typed elsewhere may carry them.
         for (const w of wins) this.remember(w, [w.name], true);
+        // A title written as instructions to an AI agent (a page's or a mail's) steers as the window's text would.
+        const flagged = this.flagInjection(wins.map(w => w.name).join("\n"), "windows");
         // A busy app's window is listed as last seen: it is still there, so the model waits instead of giving up on it.
         const lines = wins.map(w => `- ${q(w.app, 60)}: ${q(w.name, 100)}${w.active ? " (focused by the user)" : ""}${w.busy ? " (busy, not answering)" : ""}`);
-        return done(lines.length ? `<windows untrusted="true">\n${lines.join("\n")}\n</windows>` : "No windows found.");
+        return done(lines.length ? `<windows untrusted="true">\n${lines.join("\n")}\n</windows>${flagged ? INJECTION_NOTE : ""}` : "No windows found.");
       }),
       this.tool("switch_window", "Work in another open window from now on (does not raise it or take focus from the user).",
         z.object({ title: z.string().min(1).max(200).describe("Part of the window title, from list_windows") }),
@@ -1550,6 +1571,7 @@ export class Worker {
     if (screen) {
       const had = this.read.get("described")?.text;
       this.read.set("described", { app: "", window: "", text: (had ? `${screen}\n${had}` : screen).slice(0, READ_TEXT_MAX), described: true });
+      this.flagInjection(screen, "described");
     }
     const said = text.replace(/</g, "‹");
     // What the user added is part of what they asked for: "and then send it" makes Send asked-for. Their own words
@@ -1814,12 +1836,8 @@ export class Worker {
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
     // The raw names and text, not the formatted read: that is wrapped in Ember's own <screen> tag, with "<" escaped.
-    const signals = injectionSignals(readText.join("\n"));
-    if (signals.length) {
-      if (!this.tainted) { this.tainted = true; this.steered = true; }
-      this.d.log.info("worker.injection_flagged", { task: this.spec.id, app: p.window.app, signals });
-    }
-    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${signals.length ? INJECTION_NOTE : ""}`, resultType: "success" };
+    const flagged = this.flagInjection(readText.join("\n"), "window", p.window.app);
+    const result: ToolResultObject = { textResultForLlm: `${p.text}${dialogNote(p.window, p.nodes, this.userWords, this.sys.os)}${flagged ? INJECTION_NOTE : ""}`, resultType: "success" };
     if (p.capture) result.binaryResultsForLlm = [{ type: "image", mimeType: p.capture.mimeType, data: p.capture.data.toString("base64"), description: "The window with numbered marks matching element ids" }];
     return result;
   }
