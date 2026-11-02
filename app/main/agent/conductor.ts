@@ -254,8 +254,13 @@ export interface RoutineTools {
   store: RoutineBook;
   said: () => string;
   ran?: (r: Routine) => void;
-  /** It already ran this turn (a routine is run once a turn: never twice, never from inside itself). */
-  hasRun?: (r: Routine) => boolean;
+  /**
+   * What the user said this turn, without any routine's steps: what saves, runs and deletes a routine (a routine's
+   * steps never run or delete another). Absent: `said`.
+   */
+  own?: () => string;
+  /** A routine already ran this turn: at most one runs a turn. */
+  ranOne?: () => boolean;
 }
 
 /**
@@ -272,7 +277,7 @@ function routineTools(r: RoutineTools): Tool<any>[] {
         steps: z.array(z.string().min(1).max(200)).min(1).max(MAX_STEPS).describe("Each step as a request, in the user's words (\"open Mail\")"),
       }),
       async ({ name, steps }) => {
-        const saved = r.store.save(name, steps, r.said());
+        const saved = r.store.save(name, steps, (r.own ?? r.said)());
         return typeof saved === "string" ? saved : `Saved “${saved.name}” with ${saved.steps.length} step${saved.steps.length === 1 ? "" : "s"}. Tell the user in a few words.`;
       }),
     checkedTool("list_routines", "List the user's saved routines and their steps.",
@@ -288,8 +293,9 @@ function routineTools(r: RoutineTools): Tool<any>[] {
         if (!found) return `No routine is called “${name.slice(0, 60)}”. Use list_routines, or ask the user.`;
         // Only the user's own request runs one, when it is the routine's name: never a name the screen, a file or a task
         // result says, nor a request that only shares its words.
-        if (!namesRoutine(r.said(), found.name)) return `Not run: the user didn't ask for “${found.name}” in this request. Run a routine only when their request is its name.`;
-        if (r.hasRun?.(found)) return `“${found.name}” already ran in this request. Don't run it again.`;
+        if (!namesRoutine((r.own ?? r.said)(), found.name)) return `Not run: the user didn't ask for “${found.name}” in this request. Run a routine only when their request is its name.`;
+        // At most one a turn: a routine's own steps never start another (or itself again).
+        if (r.ranOne?.()) return `Not run: a routine already ran in this request, and only one runs at a time. Do its steps, and tell the user they can ask for “${found.name}” next.`;
         r.ran?.(found);
         return routineSteps(found);
       }),
@@ -299,7 +305,7 @@ function routineTools(r: RoutineTools): Tool<any>[] {
         const found = r.store.find(name);
         if (!found) return `No routine is called “${name.slice(0, 60)}”.`;
         // Only the user's own request to delete it: never a name the screen, a file or a task result says.
-        if (!asksToDelete(r.said(), found.name)) return `Not deleted: the user didn't ask in this request to delete “${found.name}”. Delete a routine only when they ask.`;
+        if (!asksToDelete((r.own ?? r.said)(), found.name)) return `Not deleted: the user didn't ask in this request to delete “${found.name}”. Delete a routine only when they ask.`;
         return r.store.forget(found.id) ? `Deleted “${found.name}”.` : `No routine is called “${found.name}”.`;
       }),
   ];
@@ -307,8 +313,13 @@ function routineTools(r: RoutineTools): Tool<any>[] {
 
 /** Words that ask for a reminder to go ("cancel", "never mind", "don't remind me"). */
 const CANCEL_WORDS = /\b(?:cancel|delete|remove|clear|forget|drop|scrap|skip|stop|turn off|never mind|nevermind|don't remind me|do not remind me|no longer need)\b/gi;
-/** A request to set one ("remind me…", "set a reminder…"): never a cancel, whatever its words. */
-const SETS_REMINDER = /^\s*(?:(?:hey|ok|okay)[,\s]+)?(?:ember[,\s]+)?(?:please\s+)?(?:can you\s+)?(?:remind me\b|(?:set|add|make)\s+(?:me\s+)?(?:a|another|up a)\s+reminder\b)/i;
+/**
+ * A request to set one ("remind me…", "could you remind me…", "I want you to set a reminder…"): never a cancel, whatever
+ * its words. "Don't remind me" is a cancel, not this.
+ */
+const SETS_REMINDER = /(?<!\b(?:don't|do not|never|not|stop|no need to)\s+)\bremind me\b|\b(?:set|add|make|create)\s+(?:me\s+)?(?:a|another|up a|one more)\s+reminder\b/i;
+/** A negation just before a cancel word: "don't cancel…", "do not remove…", "don't stop until…". */
+const NEGATED = /\b(?:don't|do not|dont|never|not|no need to|won't|shouldn't)\s+(?:\S+\s+)?$/i;
 /** "All my reminders", "every reminder", "both reminders". */
 const ALL_REMINDERS = /\b(?:all\s+(?:of\s+)?(?:my\s+|the\s+)?reminders|every\s+reminder|both\s+(?:of\s+)?(?:my\s+|the\s+)?reminders)\b/i;
 /** How many words after a cancel word it governs ("cancel the reminder to call Priya"). */
@@ -321,10 +332,14 @@ const CANCEL_REACH = 6;
  * else ("…and remove the old screenshots"). Text on the screen or in a task result never cancels one.
  */
 export function asksToCancel(said: string, r: Pick<Reminder, "text">, waiting: number): boolean {
-  for (const line of said.replace(/[\u2018\u2019]/g, "'").split("\n")) {
-    if (SETS_REMINDER.test(line)) continue;
-    for (const clause of line.split(/[.?!;,]/)) {
+  // Sentence by sentence ("remind me to buy milk; also cancel the reminder to call Priya" is a set, then a cancel).
+  for (const sentence of said.replace(/[\u2018\u2019]/g, "'").split(/[\n.?!;]/)) {
+    // A request to set one never cancels one, and a cancel is always about a reminder ("remind", "reminder").
+    if (SETS_REMINDER.test(sentence) || !/\bremind(?:er|ers)?\b/i.test(sentence)) continue;
+    for (const clause of sentence.split(",")) {
       for (const m of clause.matchAll(CANCEL_WORDS)) {
+        // "Don't cancel…" keeps it.
+        if (NEGATED.test(clause.slice(0, m.index ?? 0))) continue;
         const after = clause.slice((m.index ?? 0) + m[0].length).trim().split(/\s+/).filter(Boolean).slice(0, CANCEL_REACH).join(" ");
         if (!after) continue;
         if (ALL_REMINDERS.test(after) || ownWords(r.text, after)) return true;
@@ -354,12 +369,16 @@ export function namesRoutine(said: string, name: string): boolean {
 /** Words that ask for a routine to go. */
 const DELETE_WORDS = String.raw`(?:delete|remove|forget|erase|drop|scrap|get rid of)`;
 
-/** Whether what the user said this turn asks to delete the routine `name` ("delete my start my day routine"). */
+/**
+ * Whether what the user said this turn asks to delete the routine `name`: a line that is the request itself ("delete
+ * my start my day routine", "please remove start my day", "can you delete the routine called wind down?"), never a
+ * negation ("don't delete my start my day routine", "never remove…") or another question ("should I delete…?").
+ */
 export function asksToDelete(said: string, name: string): boolean {
   const k = routineKey(name);
   if (!k) return false;
-  const re = new RegExp(String.raw`\b${DELETE_WORDS}\s+(?:(?:my|the|that|this|routine|called|named)\s+){0,3}${escaped(k)}(?:\s+routine)?(?:[,\s]+please)?$`, "i");
-  return said.split("\n").some(line => re.test(routineKey(line.replace(WAKE, ""))));
+  const re = new RegExp(String.raw`^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?${DELETE_WORDS}\s+(?:(?:my|the|that|this|routine|called|named)\s+){0,3}${escaped(k)}(?:\s+routine)?(?:[,\s]+(?:please|for me))?$`, "i");
+  return said.replace(/[\u2018\u2019]/g, "'").split("\n").some(line => re.test(routineKey(line.replace(WAKE, ""))));
 }
 
 /**
@@ -647,7 +666,7 @@ export class Conductor {
    * fact one sets counts as theirs, and a task one starts checks its risky steps against them (AgentHost.userWordsOf).
    */
   private routineWords: string[] = [];
-  /** The routines run_routine ran this turn (each runs once a turn). */
+  /** The routine run_routine ran this turn (at most one runs a turn). */
   private routinesRan = new Set<string>();
   /** The requests sent whose turn hasn't begun, oldest first: a turn's user.message ends with one of them. */
   private unstarted: string[] = [];
@@ -689,7 +708,7 @@ export class Conductor {
   private get routineTools(): RoutineTools | undefined {
     const store = this.deps.routines;
     return store ? {
-      store, said: () => this.turnSaid, hasRun: r => this.routinesRan.has(r.id),
+      store, said: () => this.turnSaid, own: () => this.said, ranOne: () => this.routinesRan.size > 0,
       ran: r => { this.routinesRan.add(r.id); this.routineWords.push(...r.steps); },
     } : undefined;
   }

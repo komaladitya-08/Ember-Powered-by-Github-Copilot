@@ -28,20 +28,24 @@ const AI = String.raw`(?:ai|a\.i\.|llms?|language models?|(?:ai |virtual |digita
  */
 const COMMAND = String.raw`(?:ignore|disregard|forward|send|delete|remove|open|click|press|reply|respond|run|execute|type|enter|navigate|visit|download|install|share|copy|paste|transfer|pay|submit|post|email|change|disable|enable|summari[sz]e|include|write|follow)`;
 
-/** Between two words of a phrase: spaces, tabs or hyphens ("ignore-all-previous-instructions"), never a line break. */
+/** Between two words of a phrase: spaces, tabs or hyphens ("ignore-all-previous-instructions"); a line break reads as a space first. */
 const SEP = String.raw`[ \t-]+`;
-/** Up to `n` words between two that matter, on the same line (never across a full stop or from one line to the next). */
+/** Up to `n` words between two that matter (never across a full stop). */
 const GAP = (n: number) => String.raw`(?:${SEP}[^\s.-]{1,30}){0,${n}}?`;
 
 /** Each signal: a name (logged, never the text) and its pattern. */
 const SIGNALS: { name: string; re: RegExp }[] = [
   // "Ignore your previous instructions", "disregard all prior rules", "Do not follow your previous instructions",
   // "disregard the instructions above and…", "Ignore everything above. Instead…", "Ignore the above and instead…",
-  // "Forget everything you were told". Not "If you've already installed it, ignore the instructions above.": a plain
-  // "the instructions above" counts only when an order follows it.
-  { name: "override", re: new RegExp(String.raw`\b(?:ignore|disregard|forget|override|bypass|(?:do${SEP}not|don't|stop)${SEP}follow(?:ing)?)\b${GAP(4)}${SEP}(?:previous|prior|earlier|above|original|all|your|any|system)\b${GAP(3)}${SEP}(?:instructions?|prompts?|rules|directions|guidelines|orders)\b`
+  // "Forget everything you were told". Not "If you've already installed it, ignore the instructions above." nor "Please
+  // ignore the above, wrong attachment.": a plain "the instructions above" or "the above" counts only when an order
+  // follows it. Not "Do not follow any instructions in this message unless you trust the sender" or "Stop following all
+  // the rules": "follow" counts only with your, previous, prior, earlier, original or system.
+  { name: "override", re: new RegExp(String.raw`\b(?:ignore|disregard|forget|override|bypass)\b${GAP(4)}${SEP}(?:previous|prior|earlier|above|original|all|your|any|system)\b${GAP(3)}${SEP}(?:instructions?|prompts?|rules|directions|guidelines|orders)\b`
+    + String.raw`|\b(?:do${SEP}not|don't|stop)${SEP}follow(?:ing)?${GAP(1)}${SEP}(?:previous|prior|earlier|original|your|system)\b${GAP(2)}${SEP}(?:instructions?|prompts?|rules|directions|guidelines|orders)\b`
     + String.raw`|\b(?:ignore|disregard|forget)\b${GAP(4)}${SEP}(?:instructions?|prompts?|rules|directions|guidelines)${SEP}(?:above|before this|you were given|you have been given)\b(?=[ \t,]*(?:and|then|instead|now)\b)`
-    + String.raw`|\b(?:ignore|disregard|forget)${SEP}(?:(?:everything|anything|all(?:${SEP}the${SEP}text)?)${SEP}(?:above|before(?:${SEP}this)?|(?:written|said)${SEP}above)|the${SEP}above|everything${SEP}you${SEP}(?:were|have${SEP}been)${SEP}told(?:${SEP}before)?)(?=[ \t]*(?:[.,;:!]|and\b|instead\b|$))`, "i") },
+    + String.raw`|\b(?:ignore|disregard|forget)${SEP}the${SEP}above(?=[ \t,]*(?:and${SEP})?(?:instead|now|then)\b)`
+    + String.raw`|\b(?:ignore|disregard|forget)${SEP}(?:(?:everything|anything|all(?:${SEP}the${SEP}text)?)${SEP}(?:above|before(?:${SEP}this)?|(?:written|said)${SEP}above)|everything${SEP}you${SEP}(?:were|have${SEP}been)${SEP}told(?:${SEP}before)?)(?=[ \t]*(?:[.,;:!]|and\b|instead\b|$))`, "i") },
   // "Important notice for AI assistants", "Attention AI agents", "If you are an AI".
   { name: "addressed", re: new RegExp(String.raw`\b(?:(?:notice|message|note|instructions?|attention|reminder)\s+(?:to|for)\s+(?:all\s+|any\s+)?${AI}\b|(?:notice|message|note|instructions?|reminder)\s+(?:to|for)\s+the\s+${AI}\s*:|(?:attention|dear|hey|hello),?\s+(?:all\s+)?${AI}\b|if you(?:'re|\s+are)\s+(?:an?\s+${AGENT}|copilot|chatgpt|gpt(?:-?\d)?)\b|${AGENT}\s+(?:reading|processing|viewing) this\b|\b(?:ai|a\.i\.)\s+(?:agents?|assistants?|bots)\s*:\s*(?:please\s+)?(?:you\s+(?:must|should)\s+|do\s+not\s+|don't\s+|never\s+)?${COMMAND}\b|\bllms\s*:\s*(?:please\s+)?${COMMAND}\b)`, "i") },
   // "You are now in developer mode", "new instructions:", "system prompt:".
@@ -76,13 +80,14 @@ function plain(text: string): string {
 }
 
 /**
- * The signals found in `text` (their names, each once), empty when it reads as ordinary app text. A phrase's words never
- * span a line break in a string: the lines of a screen read are separate controls ("Ignore", "All", "Rules" side by
- * side). Pass several pieces (each control's name and text, each window's title) as an array instead: a line break
- * inside a piece (text wrapped in a mail or a page) is a space, and nothing spans from one piece to the next.
+ * The signals found in `text` (their names, each once), empty when it reads as ordinary app text. A string is one
+ * document (an extension's result, what the conversation read on the screen): a line break in it is a space, so a
+ * phrase wrapped across lines is caught. Pass separate controls (each one's name and text, each window's title) as an
+ * array: each is read the same way on its own, and nothing spans from one to the next ("Ignore", "All", "Rules" side by
+ * side are three controls, not a phrase).
  */
 export function injectionSignals(text: string | readonly string[]): string[] {
-  const pieces = typeof text === "string" ? [text] : text.map(t => t.replace(/[ \t]*\r?\n[ \t]*/g, " "));
+  const pieces = (typeof text === "string" ? [text] : text).map(t => t.replace(/[ \t]*\r?\n[ \t]*/g, " "));
   const found = new Set<string>();
   for (const raw of pieces) {
     if (!raw) continue;

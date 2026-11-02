@@ -1333,7 +1333,9 @@ export class AgentHost {
           const commands = bound?.commands ?? null;
           if (r && said.words && !(commands && commands.capability().state !== "off")) {
             const key = refusedKey;
-            const earlier = said.words.slice(0, said.words.length - r.words.length).split("\n").filter(l => l.trim());
+            // (The words before this turn's request: without a routine's steps, which come after it.)
+            const base = this.userWordsOf(r, { routine: false }).words ?? r.words;
+            const earlier = base.slice(0, base.length - r.words.length).split("\n").filter(l => l.trim());
             const held = [...earlier.filter(l => { const by = this.terminalRefused.get(key(l)); return !by || by === r; }), r.words].join("\n");
             const terminal = terminalRequest(this.sys.os, this.wslOn());
             if (terminal.asks.test(held.replace(terminal.refuses, " ")) && !terminal.names.test(goal)) {

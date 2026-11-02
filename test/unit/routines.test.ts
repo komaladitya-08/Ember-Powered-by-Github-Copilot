@@ -314,6 +314,18 @@ describe("cancel_reminder and the user's own words (audit of the conversation fe
     expect(asksToCancel("remind me to buy milk and to drop off the parcel", { text: "drop off the parcel" }, 2)).toBe(false);
     expect(asksToCancel("don’t remind me to call Priya", { text: "call Priya" }, 2)).toBe(true);
   });
+
+  it("never cancels in a request to set one, however it is asked, nor on a negation (re-review of #129)", async () => {
+    const { asksToCancel } = await import("../../app/main/agent/conductor");
+    const parcel = { text: "drop off the parcel" };
+    for (const t of ["could you remind me to drop off the parcel", "would you remind me to drop off the parcel", "also remind me to drop off the parcel", "I want you to remind me to drop off the parcel"]) expect(asksToCancel(t, parcel, 2), t).toBe(false);
+    const priya = { text: "call Priya" };
+    expect(asksToCancel("don't cancel the reminder to call Priya", priya, 2)).toBe(false);
+    expect(asksToCancel("do not remove the reminder about the dentist", { text: "dentist" }, 2)).toBe(false);
+    expect(asksToCancel("don't stop until the reminder to call Priya fires", priya, 2)).toBe(false);
+    // A set, then a cancel, in one request.
+    expect(asksToCancel("remind me to buy milk; also cancel the reminder to call Priya", priya, 2)).toBe(true);
+  });
 });
 
 describe("run_routine and delete_routine need the request to be about the routine (review of #129)", () => {
@@ -334,7 +346,7 @@ describe("run_routine and delete_routine need the request to be about the routin
     expect(asksToDelete("delete the build folder and then start my day", "start my day")).toBe(false);
   });
 
-  it("runs one routine once a turn, never again from its own steps", async () => {
+  it("runs at most one routine a turn, never again from its own steps", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK's tool objects
     const handler = (tools: any[], name: string) => (args: unknown) => tools.find(t => t.name === name).handler(args, {});
     const { Conductor } = await import("../../app/main/agent/conductor");
@@ -349,8 +361,35 @@ describe("run_routine and delete_routine need the request to be about the routin
     inner.turnBegan("start my day");
     const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, inner.routineTools);
     expect(await handler(tools, "run_routine")({ name: "start my day" })).toContain("1. open Mail");
-    expect(await handler(tools, "run_routine")({ name: "start my day" })).toMatch(/already ran in this request/);
+    expect(await handler(tools, "run_routine")({ name: "start my day" })).toMatch(/a routine already ran in this request/);
     expect(c.routineSaid).toBe("open Mail\nstart my day");
+  });
+
+  it("never lets a routine's steps run another routine or delete one: only the user's own words do (re-review of #129)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK's tool objects
+    const handler = (tools: any[], name: string) => (args: unknown) => tools.find(t => t.name === name).handler(args, {});
+    const { Conductor } = await import("../../app/main/agent/conductor");
+    const quiet = { debug() {}, info() {}, warn() {}, error() {}, child() { return quiet; } } as unknown as Logger;
+    const routines = new RoutineBook({ file: routinesFile(tmp()) });
+    routines.save("start my day", ["open Mail", "clean up"], "when I say start my day, open Mail and clean up");
+    routines.save("clean up", ["delete the build folder", "delete my start my day routine"], "when I say clean up, delete the build folder and delete my start my day routine");
+    const settings = { get: () => ({}) } as unknown as SettingsStore;
+    const c = new Conductor({ client: {} as never, settings, presenter: { userPrompt() {} } as never, log: quiet, stateFile: path.join(tmp(), "agent.json"), workDir: "/tmp", model: "m", routines });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the conductor's turn, without Copilot
+    const inner = c as any;
+    inner.unstarted = ["start my day"];
+    inner.turnBegan("start my day");
+    const tools = conductorTools(settings, undefined, undefined, undefined, undefined, undefined, {}, undefined, undefined, inner.routineTools);
+    expect(await handler(tools, "run_routine")({ name: "start my day" })).toContain("2. clean up");
+    expect(await handler(tools, "run_routine")({ name: "clean up" })).toMatch(/^Not run/);
+    expect(await handler(tools, "delete_routine")({ name: "start my day" })).toMatch(/^Not deleted/);
+    expect(routines.list()).toHaveLength(2);
+  });
+
+  it("never deletes on a negation or a question (re-review of #129)", async () => {
+    const { asksToDelete } = await import("../../app/main/agent/conductor");
+    for (const t of ["don't delete my start my day routine", "don’t delete start my day", "should I delete start my day?", "never remove start my day", "I won't delete start my day"]) expect(asksToDelete(t, "start my day"), t).toBe(false);
+    for (const t of ["please remove start my day", "can you delete the routine called start my day?", "Ember, delete start my day"]) expect(asksToDelete(t, "start my day"), t).toBe(true);
   });
 });
 
