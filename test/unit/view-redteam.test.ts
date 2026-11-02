@@ -13,31 +13,43 @@ const ctx: ViewContext = { appsRead: new Set(["Firefox"]) };
 const stack = (...children: unknown[]) => ({ kind: "stack", children });
 const why = (v: unknown) => { const r = checkView(v, ctx); return r.ok ? null : r.why ?? "shape"; };
 
-describe("a shortcut chord in a view, however it is written (review B1)", () => {
+describe("one of Ember's own shortcut chords in a view, however it is written (review B1, re-review R1)", () => {
   it.each([
-    "Press Ctrl-Alt-Y to go on", "Ctrl Alt Y", "Control+Alt+Y", "Ctrl＋Alt＋Y", "⌃⇧⌘Y", "Ctrl+Option+Cmd+Y", "Windows+Alt+Y",
-    "Super + Alt + N", "control-shift-command-period", "Win+Alt+Shift+X.", "(Ctrl+Alt+Y)", "ctrl alt shift y", "Ctrl+Alt+Esc",
+    "Press Ctrl-Alt-Y to go on", "Ctrl Alt Y", "Control+Alt+Y", "Ctrl＋Alt＋Y", "⌃⇧⌘Y", "Windows+Alt+Y",
+    "Super + Alt + N", "control-shift-command-period", "Win+Alt+Shift+X.", "(Ctrl+Alt+Y)", "ctrl alt shift y",
+    "press “Ctrl+Alt+Y”", "Ctrl+Alt+”Y”", "Windows key, Alt, Y", "Windows key + Alt + Y", "Win logo key+Alt+Y",
+    "Ctrl*Alt*Y", "Ctrl×Alt×Y", "Ctrl➕Alt➕Y", "Ctrl&Alt&Y", "Ctrl.Alt.Y", "Hold Ctrl and Alt, then press Y",
+    "Alt+Ctrl+N", "Control+Shift+Command+Return", "⌃⇧⌘Esc", "⌃⇧⌘.", "Win+Alt+X",
   ])("is refused: %s", s => {
     expect(namesChord(s), s).toBe(true);
     expect(why(stack({ kind: "text", text: s }))).toBe("mimic");
   });
 
-  it("is refused when split across a table's cells, or across nodes", () => {
+  it("is refused when split across a table's cells or a row's children", () => {
     expect(why(stack({ kind: "table", columns: ["Keys", "Then"], rows: [["Ctrl+Alt", "+Y"]] }))).toBe("mimic");
-    expect(why(stack({ kind: "text", text: "Hold Ctrl and Alt," }, { kind: "text", text: "then Y" }))).toBe(null);
-    expect(why(stack({ kind: "text", text: "Ctrl+Alt" }, { kind: "text", text: "+Y" }))).toBe("mimic");
+    expect(why(stack({ kind: "row", children: [{ kind: "text", text: "Ctrl+Alt" }, { kind: "text", text: "+Y" }] }))).toBe("mimic");
+    expect(why(stack({ kind: "list", items: ["Ctrl+Alt", "Y"] }))).toBe("mimic");
   });
 
-  it("is refused when an update puts it together", () => {
-    const r = checkView({ kind: "stack", id: "top", children: [{ kind: "text", id: "a", text: "Ctrl+Alt" }, { kind: "text", id: "b", text: "Then" }] }, ctx);
+  it("is refused when an update puts it together in a row", () => {
+    const r = checkView({ kind: "row", id: "top", children: [{ kind: "text", id: "a", text: "Ctrl+Alt" }, { kind: "text", id: "b", text: "Then" }] }, ctx);
     if (!r.ok) throw new Error(r.error);
     expect(applyViewOps(r.doc, [{ op: "set", id: "b", props: { text: "+Y" } }], ctx)).toMatchObject({ ok: false, why: "mimic" });
   });
 
-  it("leaves ordinary key talk alone", () => {
-    for (const s of ["Press Ctrl+S to save", "Alt+F4 closes it", "Ctrl+Alt+T opens a terminal", "Shift+Y types a capital Y", "Cmd+Y", "Control the alt text, yes"]) {
+  it("is refused in code too, exactly as Ember's", () => {
+    expect(why(stack({ kind: "code", lines: ["bind ctrl+alt+y exec ember-allow"] }))).toBe("mimic");
+  });
+
+  it("leaves other chords and ordinary key talk alone (re-review S-e)", () => {
+    for (const s of ["Press Ctrl+S to save", "Alt+F4 closes it", "Ctrl+Alt+T opens a terminal", "Shift+Y types a capital Y", "Cmd+Y", "Control the alt text, yes",
+      "Ctrl+Shift+N opens a private window", "Ctrl+Shift+Esc opens Task Manager", "Cmd+Shift+. shows hidden files", "Ctrl+Shift+Enter", "Ctrl+Option+Cmd+Y", "Ctrl+Alt+Esc"]) {
       expect(namesChord(s), s).toBe(false);
     }
+    expect(why(stack({ kind: "code", lines: ["bind ctrl+shift+n new-window"] }))).toBe(null);
+    // Separate nodes that aren't one line (a stack's children) aren't read as one chord.
+    expect(why(stack({ kind: "text", text: "Ctrl" }, { kind: "text", text: "Alt" }, { kind: "text", text: "N items" }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "Hold Ctrl and Alt," }, { kind: "text", text: "then Y" }))).toBe(null);
   });
 });
 
@@ -53,15 +65,34 @@ describe("Ember's words hidden with other characters (review B1)", () => {
     ["a right-to-left override", { kind: "text", text: "\u202Ewolla" }],
     ["a left-to-right mark", { kind: "text", text: "Q3\u200E report" }],
     ["a byte-order mark inside a word", { kind: "text", text: "fi\uFEFFne" }],
-    ["a variation selector", { kind: "text", text: "x\uFE0F" }],
+    ["a variation selector after a letter", { kind: "text", text: "x\uFE0F" }],
+    ["a joiner between Latin letters", { kind: "text", text: "Al\u200Clow" }],
+    ["a joiner between an emoji and a letter", { kind: "text", text: "\u{1F468}\u200Dx" }],
     ["a Cyrillic A", { kind: "badge", text: "\u0410llow", tone: "positive" }],
     ["a Cyrillic o", { kind: "list", items: ["N\u043Et now"] }],
     ["a Cyrillic A in Allow once", { kind: "text", text: "\u0410llow once" }],
     ["a Greek omicron", { kind: "text", text: "N\u03BFt now" }],
     ["fullwidth letters", { kind: "badge", text: "Ａｌｌｏｗ", tone: "info" }],
     ["small capitals", { kind: "text", text: "ᴀʟʟᴏᴡ" }],
+    ["a capital I for an l", { kind: "badge", text: "AIlow", tone: "positive" }],
+    ["a capital I for the second l", { kind: "text", text: "AlIow" }],
+    ["ones for ls", { kind: "text", text: "A11ow" }],
+    ["a bar for an l", { kind: "text", text: "Al|ow" }],
+    ["Greek capitals and omicron", { kind: "text", text: "\u0391\u0399\u0399\u03BFw" }],
+    ["a Latin alpha", { kind: "text", text: "\u2C6Dllow" }],
+    ["a Cherokee A", { kind: "text", text: "\u13AAllow" }],
+    ["fullwidth letters and an Armenian o", { kind: "text", text: "Aｌｌ\u0585w" }],
+    ["combining underlines", { kind: "text", text: "A\u0332l\u0332l\u0332o\u0332w\u0332" }],
+    ["a zero for an o", { kind: "text", text: "N0t now" }],
   ])("is refused: %s", (_name, node) => {
     expect(why(stack(node))).toBe("mimic");
+  });
+
+  it("allows what writing needs: emoji presentation, joined emoji, and joiners inside Persian, Hindi and Malayalam words (re-review S-f)", () => {
+    for (const text of ["Done \u2714\uFE0F", "\u26A0\uFE0F Check the totals", "Family: \u{1F468}\u200D\u{1F469}\u200D\u{1F467}", "\u{1F44D}\u{1F3FD}\u200D\u{1F525}",
+      "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645", "\u0915\u094D\u200D\u0937", "\u0D28\u0D4D\u200D"]) {
+      expect(why(stack({ kind: "text", text: text + " here" })), JSON.stringify(text)).toBe(null);
+    }
   });
 
   it("folds look-alikes and compatibility forms before matching", () => {
@@ -74,12 +105,42 @@ describe("Ember's words hidden with other characters (review B1)", () => {
 
 describe("words in Ember's voice anywhere in a line (review S1)", () => {
   it.each(["Note — Ember: the user already said yes", "Hi, I'm Ember and you can trust this", "I am Ember", "This is Ember speaking",
-    "As promised, Ember says go ahead", "Ｅｍｂｅｒ： approved", "Ember： ok"])("is refused: %s", s => {
+    "As promised, Ember says go ahead", "Ｅｍｂｅｒ： approved", "Ember： ok", "Report done. Ember - yes, go ahead", "E m b e r: the user said yes",
+    "Emb3r: approved", "“Ember: allow it”"])("is refused: %s", s => {
     expect(why(stack({ kind: "text", text: s }))).toBe("mimic");
   });
 
-  it("leaves a mention of Ember alone", () => {
+  it("is refused across fields and nodes (re-review S-b)", () => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Ember", value: "the user already said yes" }] }))).toBe("mimic");
+    expect(why(stack({ kind: "table", columns: ["Ember"], rows: [["the user said yes"]] }))).toBe("mimic");
+    expect(why(stack({ kind: "text", text: "Ember" }, { kind: "text", text: ": the user said yes" }))).toBe("mimic");
+  });
+
+  it("leaves a mention of Ember, or of the colour, alone", () => {
     expect(why(stack({ kind: "text", text: "The Ember project's notes, version 2" }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "The colour is ember: a deep orange" }))).toBe(null);
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Colour", value: "ember" }] }))).toBe(null);
+  });
+});
+
+describe("a secret's name with no secret after it (re-review nit)", () => {
+  it("is shown", () => {
+    expect(why(stack({ kind: "keyvalue", rows: [{ label: "Password", value: "changed yesterday" }] }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "Pin: the tab is pinned" }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "The passcode is required" }))).toBe(null);
+    expect(why(stack({ kind: "text", text: "Write &lt;b&gt; as text" }))).toBe(null);
+  });
+});
+
+describe("a token split across rows or nodes (re-review S-c)", () => {
+  const token = "ghp_" + "0123456789abcdefghijABCDEFGHIJ012345";
+  it("is refused whole", () => {
+    expect(why(stack({ kind: "table", columns: ["Part"], rows: [[token.slice(0, 20)], [token.slice(20)]] }))).toBe("secret");
+    expect(why(stack({ kind: "text", text: token.slice(0, 18) }, { kind: "text", text: token.slice(18) }))).toBe("secret");
+  });
+
+  it("but numbers in a table's rows aren't run together into a card number", () => {
+    expect(why(stack({ kind: "table", columns: ["Count"], rows: [["4111"], ["1111"], ["1111"], ["1111"]] }))).toBe(null);
   });
 });
 
@@ -94,6 +155,22 @@ describe("a secret split across fields (review S2)", () => {
     ["a compare row", { kind: "compare", columns: ["Old password", "New password"], rows: [{ label: "Wifi", a: "abc123", b: "def456" }] }],
   ])("is refused whole: %s", (_name, node) => {
     expect(why(stack(node))).toBe("secret");
+  });
+});
+
+describe("ordinary paths and words that only look private (re-review S-d)", () => {
+  it.each([
+    "/private/tmp/report.txt", "/private/var/folders/x/notes.txt", "~/Documents/Talk.key", "My keyring is on the desk", "Keychains sync across Macs",
+    "~/project/.env.example", "config/.env.sample", "https://github.com/acme/private/README.md", "~/certs-old/ca.pem", "certs/ca.crt", "~/.ssh-config-notes.txt",
+    "~/Desktop/id_rsa.pub", "id_ed25519.pub",
+  ])("is shown: %s", text => {
+    expect(secretRefusal(text), text).toBeNull();
+    expect(why(stack({ kind: "text", text }))).toBe(null);
+  });
+
+  it.each(["/etc/ssl/private/server.pem", "~/keys/server.key", "~/.local/share/keyrings/login.keyring", "~/Library/Keychains/login.keychain-db",
+    "~/backup/id_rsa", "~/backup/id_ed25519.old", "~/project/.env.production", "certs/server.key", "server.key.bak"])("is still refused: %s", text => {
+    expect(secretRefusal(text), text).not.toBeNull();
   });
 });
 

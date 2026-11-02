@@ -25,6 +25,7 @@ import {
 } from "../../shared/view";
 import { SHORTCUTS, FALLBACK_SHORTCUTS } from "../../shared/shortcuts";
 import { memoryRefusal } from "../memory/guard";
+import { redactSecrets } from "../commands/redact";
 
 const line = (max: number) => z.string().trim().min(1).max(max);
 
@@ -38,15 +39,20 @@ const PRIVATE_PATH = new RegExp([
   String.raw`%LOCALAPPDATA%[\\/]ember([\\/]|$)`,
   String.raw`Application Support[\\/]ember([\\/]|$)`,
   String.raw`(^|[\\/])\.(ssh|gnupg|password-store|aws|kube|docker)([\\/]|$)`,
-  String.raw`(^|[\\/])keyrings?([\\/]|$)`,
-  String.raw`(^|[\\/])Keychains([\\/]|$)`,
+  // A keyring or keychain folder, written as a path (the bare word in a sentence is fine).
+  String.raw`[\\/]keyrings?([\\/]|$)|^keyrings?[\\/]`,
+  String.raw`[\\/]Keychains([\\/]|$)|^Keychains[\\/]`,
   String.raw`^/etc/(shadow|gshadow|sudoers)`,
   String.raw`(^|[\\/])\.(netrc|pgpass|git-credentials|npmrc|pypirc)$`,
-  String.raw`(^|[\\/])\.env(\.[\w-]+)?$`,
-  String.raw`\.(pem|key|p12|pfx|kdbx)$`,
+  // An env file, but not its checked-in examples.
+  String.raw`(^|[\\/])\.env(\.(?!(example|sample|template|dist)$)[\w-]+)?$`,
+  String.raw`\.(p12|pfx|kdbx)$`,
+  // A private key file: an SSH key (not its .pub), anything in an ssl/private folder, a .key or .pem under one of the
+  // folders keys live in, a key's backup. A Keynote "talk.key" or a "ca.pem" elsewhere is fine.
+  String.raw`(^|[\\/])id_(rsa|dsa|ecdsa|ed25519)(?!\.pub$)(\.[\w.-]*)?$`,
+  String.raw`(^|[\\/])ssl[\\/]private([\\/]|$)`,
+  String.raw`(^|[\\/])(ssl|tls|certs?|private|keys)[\\/]([^\\/]+[\\/])*[^\\/]*\.(key|pem)$`,
   String.raw`\.key\.(bak|old|orig|save)$`,
-  String.raw`(^|[\\/])id_(rsa|dsa|ecdsa|ed25519)(\.|$)`,
-  String.raw`[\\/]private[\\/]`,
 ].join("|"), "i");
 
 /** Why an excerpt may not be shown, or null when it may (a secret in a line, or a private place). */
@@ -305,79 +311,164 @@ export const MIMIC_LABELS: readonly string[] = [
 /**
  * Characters that change how text reads without being seen: format characters (zero-width spaces and joiners, the soft
  * hyphen, word joiners), every default-ignorable code point, and the bidi controls that reorder text. A view string
- * holding one is refused outright (fail closed): "Al" + a zero-width space + "low" must never pass as something other than "Allow".
+ * holding one is refused outright (fail closed), except where writing needs it (`invisibleAllowed`): "Al" + a zero-width
+ * space + "low" must never pass as something other than "Allow".
  */
 const INVISIBLE = /[\p{Cf}\p{Default_Ignorable_Code_Point}\u00AD\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
+const PICTO = /\p{Extended_Pictographic}/u;
+/** Emoji modifiers and the emoji variation selector, which may sit between a pictograph and a joiner. */
+const EMOJI_TAIL = /^(?:[\u{1F3FB}-\u{1F3FF}]|\uFE0F)$/u;
+/** Scripts whose words need a zero-width (non-)joiner (Persian, Urdu, Hindi, Malayalam…): never Latin, Greek or Cyrillic. */
+const JOINING_SCRIPTS = ["Arabic", "Hebrew", "Syriac", "Thaana", "Devanagari", "Bengali", "Gurmukhi", "Gujarati", "Oriya", "Tamil",
+  "Telugu", "Kannada", "Malayalam", "Sinhala", "Thai", "Lao", "Tibetan", "Myanmar", "Khmer", "Mongolian"].map(s => new RegExp(`\\p{Script=${s}}`, "u"));
 
 /**
- * Letters from other scripts that look like Latin ones (Cyrillic, Greek, small capitals), folded to the Latin letter
- * before Ember's words are matched, so "Аllow" with a Cyrillic А reads as "allow". NFKC already folds fullwidth and
- * compatibility forms.
+ * Whether the invisible character at `i` of `cs` is one writing needs: the emoji presentation selector after a
+ * pictograph ("⚠\uFE0F"), a joiner between pictographs (a family emoji), or a (non-)joiner between letters of one of the
+ * scripts that use them. Anywhere else it is refused.
+ */
+function invisibleAllowed(cs: readonly string[], i: number): boolean {
+  const c = cs[i];
+  if (c === "\uFE0F") return i > 0 && PICTO.test(cs[i - 1]);
+  if (c === "\u200D") {
+    let p = i - 1;
+    while (p >= 0 && EMOJI_TAIL.test(cs[p])) p--;
+    if (p >= 0 && PICTO.test(cs[p]) && i + 1 < cs.length && PICTO.test(cs[i + 1])) return true;
+  }
+  if (c === "\u200C" || c === "\u200D") {
+    // After a letter or sign of such a script, before another of the same script or the end of the word (a chillu).
+    const a = cs[i - 1], b = cs[i + 1];
+    return !!a && JOINING_SCRIPTS.some(re => re.test(a) && (b === undefined || re.test(b) || !/[\p{L}\p{N}\p{M}\p{Cf}]/u.test(b)));
+  }
+  return false;
+}
+
+/** Whether `s` holds an invisible or direction-changing character that writing doesn't need there. */
+export function hidesCharacters(s: string): boolean {
+  if (!INVISIBLE.test(s)) return false;
+  const cs = [...s];
+  return cs.some((c, i) => INVISIBLE.test(c) && !invisibleAllowed(cs, i));
+}
+
+/**
+ * Letters from other scripts that look like Latin ones (Cyrillic, Greek, Armenian, Cherokee, small capitals and other
+ * Latin forms NFKC keeps), mapped to the Latin letter with its case, before Ember's words are matched: "Аllow" with a
+ * Cyrillic А reads as "Allow". NFKC already folds fullwidth and compatibility forms.
  */
 const CONFUSABLE: Readonly<Record<string, string>> = Object.fromEntries([
   // Cyrillic
   ["а", "a"], ["в", "b"], ["е", "e"], ["ё", "e"], ["к", "k"], ["м", "m"], ["н", "h"], ["о", "o"], ["р", "p"], ["с", "c"], ["т", "t"],
   ["у", "y"], ["х", "x"], ["ѕ", "s"], ["і", "i"], ["ї", "i"], ["ј", "j"], ["һ", "h"], ["ԁ", "d"], ["ԛ", "q"], ["ԝ", "w"], ["ӏ", "l"],
-  ["ɡ", "g"], ["ո", "n"], ["ս", "u"], ["ⅼ", "l"],
-  ["А", "a"], ["В", "b"], ["Е", "e"], ["К", "k"], ["М", "m"], ["Н", "h"], ["О", "o"], ["Р", "p"], ["С", "c"], ["Т", "t"], ["Х", "x"],
-  ["У", "y"], ["І", "i"], ["Ј", "j"], ["Ѕ", "s"], ["Ԁ", "d"], ["Ԛ", "q"], ["Ԝ", "w"], ["Ӏ", "l"],
+  ["А", "A"], ["В", "B"], ["Е", "E"], ["К", "K"], ["М", "M"], ["Н", "H"], ["О", "O"], ["Р", "P"], ["С", "C"], ["Т", "T"], ["Х", "X"],
+  ["У", "Y"], ["І", "I"], ["Ј", "J"], ["Ѕ", "S"], ["Ԁ", "D"], ["Ԛ", "Q"], ["Ԝ", "W"], ["Ӏ", "I"],
   // Greek
   ["α", "a"], ["β", "b"], ["ε", "e"], ["ι", "i"], ["κ", "k"], ["ν", "v"], ["ο", "o"], ["ρ", "p"], ["τ", "t"], ["υ", "u"], ["χ", "x"],
-  ["ω", "w"], ["Α", "a"], ["Β", "b"], ["Ε", "e"], ["Ζ", "z"], ["Η", "h"], ["Ι", "i"], ["Κ", "k"], ["Μ", "m"], ["Ν", "n"], ["Ο", "o"],
-  ["Ρ", "p"], ["Τ", "t"], ["Υ", "y"], ["Χ", "x"],
+  ["ω", "w"], ["Α", "A"], ["Β", "B"], ["Ε", "E"], ["Ζ", "Z"], ["Η", "H"], ["Ι", "I"], ["Κ", "K"], ["Μ", "M"], ["Ν", "N"], ["Ο", "O"],
+  ["Ρ", "P"], ["Τ", "T"], ["Υ", "Y"], ["Χ", "X"],
+  // Armenian and Cherokee
+  ["օ", "o"], ["ո", "n"], ["ս", "u"], ["ց", "g"], ["հ", "h"], ["Ꭺ", "A"], ["Ꭼ", "E"], ["Ꮪ", "S"], ["Ꮃ", "W"], ["Ꮮ", "L"], ["Ꮯ", "C"],
+  ["Ꭰ", "D"], ["Ꮋ", "H"], ["Ꮶ", "K"], ["Ꮇ", "M"], ["Ꮲ", "P"], ["Ꭲ", "T"], ["Ꮩ", "V"], ["Ꮓ", "Z"],
   // Latin look-alikes NFKC keeps
-  ["ı", "i"], ["ȷ", "j"], ["ᴀ", "a"], ["ʙ", "b"], ["ᴄ", "c"], ["ᴅ", "d"], ["ᴇ", "e"], ["ɢ", "g"], ["ʜ", "h"], ["ɪ", "i"], ["ᴊ", "j"],
-  ["ᴋ", "k"], ["ʟ", "l"], ["ᴍ", "m"], ["ɴ", "n"], ["ᴏ", "o"], ["ᴘ", "p"], ["ʀ", "r"], ["ꜱ", "s"], ["ᴛ", "t"], ["ᴜ", "u"], ["ᴠ", "v"],
-  ["ᴡ", "w"], ["ʏ", "y"], ["ᴢ", "z"],
+  ["ı", "i"], ["ȷ", "j"], ["ɑ", "a"], ["Ɑ", "A"], ["ɩ", "i"], ["ɡ", "g"], ["ℓ", "l"], ["ǀ", "l"],
+  ["ᴀ", "a"], ["ʙ", "b"], ["ᴄ", "c"], ["ᴅ", "d"], ["ᴇ", "e"], ["ɢ", "g"], ["ʜ", "h"], ["ɪ", "i"], ["ᴊ", "j"], ["ᴋ", "k"], ["ʟ", "l"],
+  ["ᴍ", "m"], ["ɴ", "n"], ["ᴏ", "o"], ["ᴘ", "p"], ["ʀ", "r"], ["ꜱ", "s"], ["ᴛ", "t"], ["ᴜ", "u"], ["ᴠ", "v"], ["ᴡ", "w"], ["ʏ", "y"], ["ᴢ", "z"],
 ]);
 const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLE).join("")}]`, "gu");
 
-/** A view string as Ember matches it: NFKC, look-alike letters folded to Latin, curly quotes straight, lower case. */
+/** NFKD with combining marks dropped and look-alike letters mapped to Latin, case kept: the base of every match. */
+const lookAlikeBase = (s: string) => s.normalize("NFKD").replace(/\p{M}/gu, "").replace(CONFUSABLE_RE, c => CONFUSABLE[c] ?? c).normalize("NFKC");
+
+/** A view string as Ember matches it: compatibility forms, marks and look-alikes folded, curly quotes straight, lower case. */
 export function viewNorm(s: string): string {
-  return s.normalize("NFKC").replace(CONFUSABLE_RE, c => CONFUSABLE[c] ?? c).replace(/[’‘]/g, "'").toLowerCase();
+  return lookAlikeBase(s).replace(/[’‘]/g, "'").toLowerCase();
 }
+
+/**
+ * A word's skeleton for matching Ember's words only (in the spirit of UTS #39): its folded letters, with I, i, 1, |
+ * and ǀ all read as l and 0 as o, so "AIlow", "A11ow" and "Al|ow" read as "allow". Ember's own words are compared by
+ * their skeletons too.
+ */
+function skeleton(s: string): string {
+  return viewNorm(s).replace(/[i1|ǀ]/g, "l").replace(/0/g, "o").replace(/'/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+/** A name as matched for equality (an app's name against those the task read). */
 const fold = (s: string) => viewNorm(s).replace(/'/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-const MIMIC = new Set(MIMIC_WORDS);
-const LABELS = new Set(MIMIC_LABELS);
+const MIMIC = new Set(MIMIC_WORDS.map(skeleton));
+const LABELS = new Set(MIMIC_LABELS.map(skeleton));
 /** A short line that starts as one of Ember's questions' answers do ("Allow Ember to…", "Approve this"). */
-const MIMIC_START = /^(allow|deny|approve|grant|confirm|always allow|not now)\b/;
+const MIMIC_START = new RegExp(`^(${["allow", "deny", "approve", "grant", "confirm", "always allow", "not now"].map(skeleton).join("|")})\\b`);
 
 /** Every name of a modifier key, on every OS, by the modifier it is. */
 const MODIFIER: Readonly<Record<string, string>> = {
-  ctrl: "ctrl", control: "ctrl", ctl: "ctrl", strg: "ctrl", "⌃": "ctrl", "^": "ctrl",
+  ctrl: "ctrl", control: "ctrl", ctl: "ctrl", strg: "ctrl", "⌃": "ctrl",
   alt: "alt", option: "alt", opt: "alt", altgr: "alt", "⌥": "alt",
   win: "super", windows: "super", super: "super", meta: "super", cmd: "cmd", command: "cmd", "⌘": "cmd",
   shift: "shift", "⇧": "shift",
 };
-/** The keys of Ember's allow, deny and stop shortcuts (and their fallbacks) on every OS. */
-const CHORD_KEYS = new Set(["y", "n", "x", "return", "enter", "⏎", "↩", "esc", "escape", "period", ".", "comma", ","]);
-const _chordsCovered = (["linux", "win32", "darwin"] as const).every(os => (["allow", "deny", "stop"] as const)
-  .every(id => [SHORTCUTS[os][id], FALLBACK_SHORTCUTS[os][id]].every(sc => CHORD_KEYS.has(sc.keys[sc.keys.length - 1].toLowerCase()))));
-if (!_chordsCovered) throw new Error("view-schema: CHORD_KEYS misses one of Ember's shortcut keys");
+/** A key's names, as one name. */
+const KEY_NAME: Readonly<Record<string, string>> = { enter: "return", return: "return", "⏎": "return", "↩": "return", escape: "esc", esc: "esc", period: ".", ".": "." };
+/** Words people put between a chord's keys ("Windows key, Alt, Y", "hold Ctrl and Alt, then press Y"). */
+const FILLER = new Set(["key", "keys", "logo", "and", "then", "press", "hold", "the", "plus", "button", "down", "together", "with", "also"]);
 
 /**
- * Whether `s` names a key chord like Ember's allow, deny or stop shortcuts, however it is written: two or more
- * modifiers (any OS's name or symbol for them) then one of those keys, with any separators ("Ctrl-Alt-Y", "⌃⇧⌘Y",
- * "Control + Option + Cmd + Y", "Ctrl＋Alt＋Y").
+ * Ember's allow, deny and stop chords on every OS, default and fallback, from app/shared/shortcuts.ts: each as its
+ * modifiers (sorted, by what they are) and its key.
+ */
+const EMBER_CHORDS: ReadonlySet<string> = new Set((["linux", "win32", "darwin"] as const).flatMap(os => (["allow", "deny", "stop"] as const)
+  .flatMap(id => [SHORTCUTS[os][id], FALLBACK_SHORTCUTS[os][id]]).map(sc => {
+    const keys = sc.keys.map(k => k.toLowerCase());
+    const key = keys[keys.length - 1];
+    return `${keys.slice(0, -1).map(k => MODIFIER[k] ?? k).sort().join("+")}+${KEY_NAME[key] ?? key}`;
+  })));
+
+/**
+ * Whether `s` names one of Ember's own allow, deny or stop chords, however it is written: its modifiers by any OS's
+ * names or symbols, in any order, with any separators, quotes or filler words between ("press “Ctrl+Alt+Y”",
+ * "Windows key, Alt, Y", "⌃⇧⌘Y", "Ctrl×Alt×Y"). Other chords ("Ctrl+Shift+N", "Cmd+Shift+.") are ordinary text.
  */
 export function namesChord(s: string): boolean {
-  const spaced = viewNorm(s).replace(/[⌃⌥⌘⇧^⏎↩]/g, m => ` ${m} `);
-  const tokens = spaced.split(/[\s+\-_=~–—/|·•]+/)
-    .map(t => t.replace(/^["'([{<]+|["')\]}>:;!?]+$/g, ""))
-    .map(t => (t.length > 1 ? t.replace(/[.,]+$/, "") : t))
-    .filter(Boolean);
+  const spaced = viewNorm(s).replace(/[⌃⌥⌘⇧⏎↩]/g, m => ` ${m} `);
+  const tokens = spaced.match(/[\p{L}\p{N}]+|[⌃⌥⌘⇧⏎↩.]/gu) ?? [];
   let mods = new Set<string>();
-  for (const t of tokens) {
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
     const m = MODIFIER[t];
     if (m) { mods.add(m); continue; }
-    if (mods.size >= 2 && CHORD_KEYS.has(t)) return true;
+    const next = tokens[i + 1];
+    // A "." between keys ("Ctrl.Alt.Y") separates them; at the end of a chord it may be the key itself.
+    if (t === "." && next !== undefined && (MODIFIER[next] || next.length === 1)) continue;
+    if (mods.size && FILLER.has(t)) continue;
+    if (mods.size >= 2 && EMBER_CHORDS.has(`${[...mods].sort().join("+")}+${KEY_NAME[t] ?? t}`)) return true;
     mods = new Set();
   }
   return false;
 }
 
-/** Words that speak as Ember ("Ember: …", "I'm Ember", "Ember says …"): a view is the task's, never Ember's voice. */
-const AS_EMBER = [/^\s*ember\s*[:\-–—]/, /\bember\s*:/, /\b(i'?m|i am|this is|it's|it is) ember\b/, /\bember (says|asks|needs|wants|would like|is asking)\b/];
+/**
+ * A string as Ember looks for its own voice in it: look-alikes folded with their case, digits read as the letters they
+ * stand in for (Emb3r), and letters spelt out one at a time joined up ("E m b e r").
+ */
+function voiceText(s: string): string {
+  return lookAlikeBase(s).replace(/[’‘]/g, "'")
+    .replace(/(?<![\p{L}\p{N}])\p{L}(?:[ ._·-]\p{L}(?![\p{L}\p{N}])){2,}/gu, m => m.replace(/[ ._·-]/g, ""))
+    .replace(/(?<=\p{L})3(?=\p{L})/gu, "e").replace(/(?<=\p{L})0(?=\p{L})/gu, "o");
+}
+/**
+ * Words in Ember's voice: "Ember:" (or a dash) where a speaker's name stands (a line's or a sentence's start, or after
+ * a quote mark), "Ember:" anywhere before words of consent or the user, "I'm Ember", "Ember says". "The colour is
+ * ember: a deep orange" is not.
+ */
+const AS_EMBER = [
+  /(^|[.!?]\s+|["“”«»([]\s*)Ember\s*[:\-–—]/m,
+  /\bember\s*[:\-–—]\s*["“]?\s*(the user|you|i\b|i'm|we\b|yes|ok|okay|approved|allow|go ahead|confirmed|said|says|agreed|accepted)/i,
+  /\b(i'?m|i am|this is|it'?s|it is) ember\b/i,
+  /\bember (says|asks|needs|wants|would like|is asking)\b/i,
+];
+/** Whether `s` speaks as Ember. */
+export function speaksAsEmber(s: string): boolean {
+  const v = voiceText(s);
+  return AS_EMBER.some(re => re.test(v));
+}
 
 /**
  * Why `s` would make a view look like Ember's own question, consent or allow/deny UI, or null. `short` is a
@@ -385,20 +476,19 @@ const AS_EMBER = [/^\s*ember\s*[:\-–—]/, /\bember\s*:/, /\b(i'?m|i am|this i
  * A string holding invisible or direction-changing characters is refused whatever it says.
  */
 export function mimicRefusal(s: string, short = false): string | null {
-  if (INVISIBLE.test(s)) return "it holds invisible or direction-changing characters";
-  const f = fold(s);
+  if (hidesCharacters(s)) return "it holds invisible or direction-changing characters";
+  const f = skeleton(s);
   if (MIMIC.has(f) || (short && LABELS.has(f))) return `"${s.trim().slice(0, 30)}" is one of Ember's own buttons`;
   if (short && f.length <= 40 && MIMIC_START.test(f)) return `"${s.trim().slice(0, 30)}" reads like Ember's own question`;
   if (namesChord(s)) return "it names one of Ember's own shortcuts";
-  const n = viewNorm(s);
-  if (AS_EMBER.some(re => re.test(n))) return "it speaks as Ember";
+  if (speaksAsEmber(s)) return "it speaks as Ember";
   return null;
 }
 
-
 /**
- * Why `s` would show a secret or a place where secrets live, or null: a token, key, card number or "password: …"
- * (memoryRefusal), a private key's header, or a path (anywhere in it, slashes however written) into a private place.
+ * Why `s` would show a secret or a place where secrets live, or null: a token, key, card number, a private key's
+ * header or "password: hunter2" (memoryRefusal), or a path (anywhere in it, slashes however written) into a private
+ * place.
  */
 export function secretRefusal(s: string): string | null {
   const why = memoryRefusal(s);
@@ -406,6 +496,14 @@ export function secretRefusal(s: string): string | null {
   const n = s.normalize("NFKC").replace(/[∕⁄⧸／]/g, "/");
   if (PRIVATE_PATH.test(n.trim()) || n.split(/[\s"'`()<>[\]{},;]+/).some(t => t && PRIVATE_PATH.test(t))) return "it names a place where passwords and keys are kept";
   return null;
+}
+
+/**
+ * Why `s`, strings run together with nothing between, holds a token or key the redactor knows ("ghp_…" split over two
+ * rows), or null. Only tokens and keys: run together, numbers would read as card numbers.
+ */
+export function tokenRefusal(s: string): string | null {
+  return redactSecrets(s) !== s ? "it holds a password, token or key" : null;
 }
 
 /** Every string a node holds, with whether it sits where a button's label would. */
@@ -587,7 +685,7 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
   if (order.length > W.nodes) return { ok: false, error: `the view has ${order.length} nodes; at most ${W.nodes}` };
   let chars = 0, charts = 0;
   const out: Record<string, ViewNode> = {};
-  /** Every string in reading order: a shortcut spread over several nodes is caught in the whole view. */
+  /** Every string in reading order: Ember's voice or a token spread over several nodes is caught in the whole view. */
   const all: string[] = [];
   for (const id of order) {
     let n = nodes[id];
@@ -609,8 +707,14 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
     }
     for (const t of nodeTogether(n)) {
       if (namesChord(t)) return { ok: false, why: "mimic", error: `${id}: it names one of Ember's own shortcuts, so Ember doesn't show it. A view never asks, allows or speaks for Ember` };
+      if (speaksAsEmber(t)) return { ok: false, why: "mimic", error: `${id}: it speaks as Ember, so Ember doesn't show it. A view never asks, allows or speaks for Ember` };
       const secret = secretRefusal(t);
       if (secret) return { ok: false, why: "secret", error: `${id}: ${secret}, so Ember doesn't show the view. Leave it out` };
+    }
+    // A row's children read as one line: a chord split over them is still a chord.
+    if (n.kind === "row") {
+      const line = n.children.flatMap(c => (nodes[c] ? nodeStrings(nodes[c]).map(x => x.s) : [])).join(" ");
+      if (namesChord(line)) return { ok: false, why: "mimic", error: `${id}: it names one of Ember's own shortcuts, so Ember doesn't show it. A view never asks, allows or speaks for Ember` };
     }
     all.push(...strings.map(x => x.s));
     if (n.kind === "file") {
@@ -627,7 +731,15 @@ export function checkDoc(doc: ViewDoc, ctx: ViewContext): ViewCheck {
     }
     out[id] = n;
   }
-  if (namesChord(all.join(" "))) return { ok: false, why: "mimic", error: "the view names one of Ember's own shortcuts, so Ember doesn't show it. A view never asks, allows or speaks for Ember" };
+  // The whole view read through, a string a line: Ember's voice spread over nodes, a token split over them.
+  if (speaksAsEmber(all.join("\n"))) return { ok: false, why: "mimic", error: "the view speaks as Ember, so Ember doesn't show it. A view never asks, allows or speaks for Ember" };
+  // A token split over two or three strings in a row (cells, items, nodes): each run read with nothing between. Only
+  // strings with letters, as every token has: digits run together would read as a card number.
+  const worded = all.filter(x => /\p{L}/u.test(x));
+  for (let i = 0; i < worded.length - 1; i++) {
+    const split = tokenRefusal(worded[i] + worded[i + 1]) ?? (i + 2 < worded.length ? tokenRefusal(worded[i] + worded[i + 1] + worded[i + 2]) : null);
+    if (split) return { ok: false, why: "secret", error: `the view: ${split}, so Ember doesn't show it. Leave it out` };
+  }
   if (chars > W.chars) return { ok: false, error: `the view holds ${chars} characters; at most ${W.chars}` };
   if (charts > W.charts) return { ok: false, error: `the view has ${charts} charts and gauges; at most ${W.charts}` };
   return { ok: true, doc: { catalog: VIEW_CATALOG, rev: doc.rev, root, nodes: out } };

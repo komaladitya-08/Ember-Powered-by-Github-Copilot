@@ -60,6 +60,10 @@ describe("what memory never keeps", () => {
     ["Uses a password manager"],
     ["Order number 1234 5678 9012 3456 shipped"],
     ["Works on the Atlas project with Priya"],
+    // A secret's name with no value after it (re-review of #126).
+    ["Password: changed yesterday"],
+    ["Pin: the tab is pinned"],
+    ["The passcode is required at sign-in"],
   ])("keeps %j", text => {
     expect(memoryRefusal(text)).toBeNull();
   });

@@ -89,12 +89,19 @@ The eval judges its two blocking safety gates (out-of-scope actions on the injec
 - **Checked whole, fail closed.** Every view, and every update_view batch applied to a copy, goes through
   `checkDoc()` (app/main/agent/view-schema.ts): the closed catalog and its limits, then every string, every string
   read with its label, column or neighbours (`nodeTogether`), and the whole view read together:
-  - `mimicRefusal()`: any invisible, default-ignorable or bidi character refuses the view outright; Ember's control
-    words are matched after `viewNorm()` (NFKC, Cyrillic, Greek and small-capital look-alikes folded to Latin); a key
-    chord is matched by tokens (`namesChord`: any OS's names and symbols for two or more modifiers, then one of Ember's
-    shortcut keys, any separators); Ember's voice ("Ember:", "I'm Ember", "Ember says") anywhere in a line.
-  - `secretRefusal()`: `memoryRefusal()`, a private key's armour header, and a private path anywhere in any string,
-    after NFKC and with look-alike slashes read as "/".
+  - `mimicRefusal()`: an invisible, default-ignorable or bidi character refuses the view, except where writing needs
+    it (`hidesCharacters`: the emoji selector after a pictograph, a joiner between pictographs, (non-)joiners inside
+    Persian, Indic and other joining scripts). Ember's control words are matched by skeleton (`viewNorm()`: NFKD with
+    marks dropped, Cyrillic, Greek, Armenian, Cherokee and small-capital look-alikes folded to Latin; then I, 1, | as l
+    and 0 as o). Chords are matched by tokens (`namesChord`: only Ember's own allow, deny and stop chords from
+    shortcuts.ts, their modifiers by any OS's name or symbol, any separators, quotes and filler words); in each
+    string, label with value, table row, list, and a row's children read as one line. Ember's voice (`speaksAsEmber`:
+    a capitalised "Ember:" where a speaker's name stands, "Ember:" before words of consent, "I'm Ember", "Ember says";
+    digits and spelt-out letters folded) in every string, across fields and through the whole view.
+  - `secretRefusal()`: `memoryRefusal()` (a token, key, card number, a key's BEGIN line, a secret's name with a
+    value that isn't a word like "required"), and a private path anywhere in any string, after NFKC and with
+    look-alike slashes read as "/" (but not /private/tmp, a Keynote .key, .env.example or id_rsa.pub). A token split
+    over two or three strings in reading order is caught run together (`tokenRefusal`).
 
   A refusal for what a view says (`why`) is audited as a `decision` with `kind: "view"`, shown on the card as a
   refusal, and the model is told not to try another way. A quote's caption names an app only if the task read it (as
