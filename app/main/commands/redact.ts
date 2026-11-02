@@ -18,7 +18,7 @@ const PRIVATE_KEY = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*P
  * Whole-match token patterns (§3.11 step 4), in the order they are applied. Each one runs in time linear in its input:
  * output can be megabytes of one unbroken token, and redaction runs on Ember's main thread.
  */
-const TOKEN_PATTERNS: readonly RegExp[] = [
+export const TOKEN_PATTERNS: readonly RegExp[] = [
   // GitHub tokens.
   /\b(?:gh[pousr]_[A-Za-z0-9]{36,255}|github_pat_[A-Za-z0-9_]{22,255})\b/g,
   // AWS access key ids.

@@ -15,8 +15,9 @@ import fs from "node:fs";
 import crypto from "node:crypto";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool, type ToolResultObject } from "@github/copilot-sdk";
 import { z } from "zod";
-import { PlanSchema, ViewSchema } from "./view-schema";
-import { VIEW_LIMITS, planSteps, type PlanStep, type TaskHand, type ViewBlock } from "../../shared/view";
+import { PlanSchema, ViewInputSchema, checkView, viewCatalogPrompt, type ViewCheck, type ViewContext } from "./view-schema";
+import { ViewOpsSchema, applyViewOps } from "./view-doc";
+import { VIEW_LIMITS, planSteps, viewCounts, type PlanStep, type TaskHand, type ViewDoc } from "../../shared/view";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
 import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
@@ -111,8 +112,8 @@ export interface WorkerDeps {
   /** Ember flies to an element (screen px) while it acts; null brings it back. */
   flyTo: (bounds: Bounds | null) => void;
   onProgress: (text: string) => void;
-  /** Its plan, or how it works now, changed: its card shows them (docs/DESIGN.md "Two bodies"). */
-  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand }) => void;
+  /** Its plan, how it works now, or its live view changed: its card shows them (docs/DESIGN.md "Two bodies", "Views"). */
+  onUpdate?: (u: { plan?: PlanStep[]; hand?: TaskHand; view?: ViewDoc }) => void;
   /**
    * What the task did and is doing, for its card (app/main/agent/activity.ts): its steps as its tools and the app name
    * them, its questions and their answers, refusals, retries and its own notes. Never arguments, reasoning or screen text.
@@ -217,7 +218,7 @@ export interface WorkerResult {
   /** Stopped because the user said no to a question (or let it go unanswered), and nothing was done after that. */
   declined?: boolean;
   /** What it found or made, for its card (finish_task's view: app/shared/view.ts's catalog, checked). */
-  view?: ViewBlock[];
+  view?: ViewDoc;
 }
 
 const done = (text: string): ToolResultObject => ({ textResultForLlm: text, resultType: "success" });
@@ -252,7 +253,7 @@ const AUDIT_UNAVAILABLE = "I stopped because I can't write my record of what I d
 /** A new run's terminal size when the command window doesn't say (columns, rows). */
 const COMMAND_SIZE = { cols: 120, rows: 32 };
 /** The tools a task has where there is no desktop to work in (§2.6): commands and talking to the user. */
-const NO_DESKTOP_TOOLS = new Set(["run_command", "report_progress", "finish_task"]);
+const NO_DESKTOP_TOOLS = new Set(["run_command", "report_progress", "show_view", "update_view", "finish_task"]);
 /** The answers a remote's gate 2 gives a step as errors (§5.3.7; the PC's remote sidecar and apps throw them with `code`). */
 const REMOTE_CODES = new Set(["needs_confirm", "changed", "stale", "stopped", "deny", "denied"]);
 /**
@@ -976,6 +977,10 @@ export class Worker {
   private clipboard: PasteClipboard | null;
   /** Windows this task has read or listed (by process, path and title), with what it read there: text it types elsewhere is checked against them. */
   private read = new Map<string, ReadSource>();
+  /** Its live view (show_view, update_view), as checked and shown; finish_task's view takes its place. */
+  private liveView: ViewDoc | null = null;
+  /** It ran a command: a quote may say it came from one. */
+  private ranCommand = false;
   /** The window keys went into last (windowKey: by process, and path or else title), and what the keys selected there. */
   private keyed: { window: string; selected: Selected } = { window: "", selected: null };
   /**
@@ -1381,15 +1386,34 @@ export class Worker {
           this.d.presenter.progress(a.text);
           return done("Shown.");
         }),
-      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a file you saved), also give it as `view`, drawn on the task's card; the summary still says it in words.",
+      this.tool("show_view", `Show a view on the task's card while you work: what you have found so far, at a glance (figures, a table, a chart, a list of steps), drawn by Ember from its catalog. It replaces the view shown before; change parts of it with update_view. The user sees it on the card, under Ember's line saying the task found it.\n${viewCatalogPrompt()}`,
+        z.object({ view: ViewInputSchema.describe("The view: a tree of nodes, its root a layout node") }),
+        async a => {
+          const r = checkView(a.view, this.viewContext(), (this.liveView?.rev ?? 0) + 1);
+          return this.showView(r, "show_view");
+        }),
+      this.tool("update_view", "Change the view show_view drew, by node id: replace a node (with its children), append a node to a stack, row, grid, card or section, remove one, or set some of a node's props (the cheap way to move a progress value, a metric's value, a step's state or a chart's series). Up to 16 changes, checked together with the whole view: if one can't be made, none is.",
+        z.object({ ops: ViewOpsSchema }),
+        async a => {
+          if (!this.liveView) return fail("There is no view to change yet: send one with show_view first.");
+          return this.showView(applyViewOps(this.liveView, a.ops, this.viewContext()), "update_view");
+        }),
+      this.tool("finish_task", "End the task with a one or two sentence summary for the user. If they cancelled or closed a dialog without doing the step, success is false. When what you found or made is easier to take in at a glance (several items, a few facts, a small table, a chart, a file you saved), also give it as `view` (a tree of nodes, as show_view takes), drawn on the task's card in place of any view you showed; the summary still says it in words.",
         z.object({
           success: z.boolean(),
           summary: z.string().max(400),
-          view: ViewSchema.optional().describe("Up to 6 blocks: text, list (items), facts (label and value rows), table (up to 3 columns and 6 rows), file (a path). Only what the task found or made; words only, no links"),
+          view: ViewInputSchema.optional().describe("What the task found or made, as show_view takes it (or the older list of up to 6 blocks). Only what the task found or made; words only, no links"),
         }),
         async a => {
           // A cancelled guide step never gets here: it already ended the task (left() in waitForClick).
-          this.result = { success: a.success, summary: a.summary, ...(a.view ? { view: a.view } : {}) };
+          let view: ViewDoc | undefined;
+          if (a.view) {
+            const r = checkView(a.view, this.viewContext(), (this.liveView?.rev ?? 0) + 1);
+            if (!r.ok) return this.viewRefused(r, "finish_task");
+            view = r.doc;
+            this.viewShown(view);
+          }
+          this.result = { success: a.success, summary: a.summary, ...(view ? { view } : {}) };
           this.ended.abort();
           this.fly(null);
           // The task is over: end the turn, so a model that keeps going can't act any more.
@@ -1397,6 +1421,43 @@ export class Worker {
           return done(a.success ? "Task closed. Stop now." : "Task closed (they didn't finish). Stop now.");
         }),
     ];
+  }
+
+  /** What a view's quotes are checked against: the apps this task read (not only listed), and whether it ran a command. */
+  private viewContext(): ViewContext {
+    const appsRead = new Set([...this.read.values()].filter(r => !r.listed && r.app).map(r => friendlyApp(r.app)));
+    return { appsRead, ranCommand: this.ranCommand, appName: friendlyApp };
+  }
+
+  /**
+   * A checked view goes to the task's card (its live view). The audit says only that a view was shown and its size
+   * ("6 blocks, 1 chart"), never its words.
+   */
+  private showView(r: ViewCheck, tool: "show_view" | "update_view"): ToolResultObject {
+    if (!r.ok) return this.viewRefused(r, tool);
+    this.liveView = r.doc;
+    this.viewShown(r.doc);
+    this.d.onUpdate?.({ view: r.doc });
+    const named = Object.keys(r.doc.nodes).filter(id => !id.startsWith("_"));
+    return done(`Shown on the task's card.${named.length ? ` Ids you can change: ${named.slice(0, 40).join(", ")}.` : ""}`);
+  }
+
+  private viewShown(doc: ViewDoc): void {
+    const c = viewCounts(doc);
+    this.audit({ event: "decision", task: this.spec.id, kind: "view", app: "", verdict: "allow", reason: "showed a view", blocks: c.blocks, charts: c.charts, rev: doc.rev });
+  }
+
+  /**
+   * A view Ember won't show. One that imitates Ember's own controls or voice, or holds a secret, is refused (audited,
+   * on the card as a refusal, and the model told not to try another way); one that doesn't fit the catalog is an
+   * error the model can fix.
+   */
+  private viewRefused(r: Extract<ViewCheck, { ok: false }>, tool: string): ToolResultObject {
+    if (!r.why) return fail(`Ember can't draw that view: ${r.error}.`);
+    const reason = r.why === "mimic" ? "a view imitated Ember's own controls or voice" : "a view held a password, token or key";
+    this.audit({ event: "decision", task: this.spec.id, kind: "view", app: "", tier: "never", verdict: "deny", reason, tool });
+    this.activity({ type: "refused", reason: r.why === "mimic" ? "a view that looked like Ember's own buttons" : "a view holding a password or key" });
+    return denied(`Not shown: ${r.error}. Don't try another way to show it; the user's answers come only from Ember's own questions.`);
   }
 
   /** run_command (§3.2), when the task's target offers commands; none otherwise (the tool list is today's). */
@@ -1419,7 +1480,7 @@ export class Worker {
         timeoutSeconds: z.number().int().min(1).max(900).optional().describe("Default 120"),
         why: z.string().min(3).max(200).describe("One short sentence: why this command, in plain words"),
       }),
-      async a => runCommandTool(a, this.commandContext()))];
+      async a => { this.ranCommand = true; return runCommandTool(a, this.commandContext()); })];
   }
 
   /** What the command flow needs of this task (commands/flow.ts). */
