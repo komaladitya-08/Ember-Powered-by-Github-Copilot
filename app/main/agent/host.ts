@@ -43,6 +43,8 @@ import { clearRuntimeTemp, runtimeTempDir, runtimeTempEnv } from "./runtime-temp
 import { LOCKED_DESCRIBE, lockedOutSystem } from "../screen-lock";
 import { Reminders, whenWords, type Reminder } from "./reminders";
 import type { RoutineBook } from "./routines";
+import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "./autonomy-intent";
+import { autonomyInForce } from "../policy/autonomy";
 import { CATCH_UP_MS, catchUpQuestion, catchUpReply, healthQuestion, healthReply, type Health, resultsRequest, RESULTS_REPLY, statusQuestion, statusReply } from "./status";
 
 /** The words a task was refused for are known by these (userWordsOf adds a full stop to an earlier request). */
@@ -146,6 +148,19 @@ export interface HostOptions {
   extensions?: { forSession(): SessionExtensions | undefined; readonly generation: number; conversationEnded?(): void };
   /** The voice's side of a systems check ("Ember, systems check"): the microphone and whether replies are spoken. */
   health?: () => Pick<Health, "mic" | "speaks">;
+  /**
+   * "Work without asking" by voice (autonomy-intent.ts): its state, turning it on or off, and opening its switch (with
+   * its card) in Settings. Absent: the words go to the conversation like any others.
+   */
+  autonomy?: {
+    state(): { on: boolean; consented: boolean; managed: boolean };
+    /**
+     * `how`: spoken (and whether Voice Match verified it) or typed, for the audit entry. False when it couldn't be made
+     * so (its audit entry couldn't be written, so a turn on was undone).
+     */
+    set(on: boolean, how: { via: "voice" | "typed"; verified: boolean }): boolean;
+    open(consent: boolean): void;
+  };
   /**
    * Tasks that do the work show it on their cards in the corner, and the bubble beside the cursor only while they use
    * the user's mouse and keyboard (docs/DESIGN.md "Two bodies"). Main turns it on; without it (older tests) every task's
@@ -1215,6 +1230,7 @@ export class AgentHost {
             perception: h.perception, sidecar: h.sidecar, policy: h.policy, confirmer: h.confirmer, audit: h.audit,
             settings: this.o.settings, presenter,
             reviewCommands: () => this.o.settings.get().trust.reviewCommands && this.o.admin?.().features.aiReview !== false,
+            autonomy: () => autonomyInForce(this.o.settings.get().autonomy, this.o.admin?.() ?? null),
             lease: (key, owner, signal) => this.tasks!.lease(h.leaseKey(key), owner, signal),
             flyTo: h.flyTo, cursor: h.cursor, clipboard: h.clipboard, pointer: h.pointer, activationKey: h.activationKey,
             desk: h.desk, onDesk: h.onDesk, onProgress: progress, onUpdate: update, onActivity: activity, onUsage: (i, o) => this.recordUsage(i, o),
@@ -1761,8 +1777,23 @@ export class AgentHost {
    * Resolves true when the request is answered (here, or by a conductor turn), false when it was dropped or went
    * unanswered (stopped, not connected, never sent): main's acknowledgement is then not said.
    */
-  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean } = {}): Promise<boolean> {
+  async ask(text: string, context?: { target: WindowTarget & { app?: string }; text: string; targetId?: TargetId } | null, epoch = this.stopEpoch, how: { voiceUnchecked?: boolean; verified?: boolean; spoken?: boolean; short?: boolean } = {}): Promise<boolean> {
     if (epoch !== this.stopEpoch) return false;
+    // "Work without asking" / "ask me first again": the switch, set here and never by the conductor (it has no tool for
+    // it). On only from the owner's verified voice with its card agreed to; off from anyone (autonomy-intent.ts).
+    const mode = this.o.autonomy ? autonomyIntent(text) : null;
+    if (mode && this.o.autonomy) {
+      const plan = planAutonomyIntent(mode, { ...this.o.autonomy.state(), verified: how.verified === true, short: how.short === true });
+      let saved = true;
+      try {
+        if (plan.set !== undefined) saved = this.o.autonomy.set(plan.set, { via: how.spoken ? "voice" : "typed", verified: how.verified === true });
+        if (plan.open) this.o.autonomy.open(plan.open.consent);
+      } catch (err) { saved = false; this.o.log.warn("agent.autonomy_not_saved", { err }); }
+      this.o.log.info("agent.autonomy_switch", { intent: mode, set: plan.set ?? null, saved, opened: !!plan.open, verified: how.verified === true });
+      // Said only once it is so: a change that couldn't be saved or recorded says that instead (review of #127).
+      this.answerLocally(text, saved ? plan.reply : AUTONOMY_NOT_SAVED, how.voiceUnchecked);
+      return true;
+    }
     // "Ember?", "status?", "what are you doing?": answered at once from the tasks' own state, with no Copilot turn (it
     // works offline and costs no request). Only between turns: a request waiting for its turn is the conductor's.
     // "Just show me" / "read them out again": the switch for reading results aloud, set here (Settings › Voice has it).

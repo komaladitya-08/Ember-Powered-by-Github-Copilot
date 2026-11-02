@@ -75,6 +75,8 @@ export function keyHintParts(step: string | null | undefined): { keys: string[];
 
 /** The words a risky question's tag says (beside "Needs you"): policy asks about this kind of step every time. */
 export const RISKY_TAG = "Risky step";
+/** The tag beside Ember's own announcement of a step it took without asking (BubbleState.autonomous): never model text. */
+export const AUTONOMOUS_TAG = "Without asking";
 
 export interface BubbleView {
   visible: boolean;
@@ -367,13 +369,16 @@ export const BUBBLE_CSS = `
 .ember-bubble[data-mood="idle"] { --eb-chip-text: var(--label-2, rgba(245, 240, 236, 0.66)); }
 .ember-bubble[data-mood="listening"] { --eb-chip-text: var(--yellow, #ffd600); }
 .ember-bubble:is([data-mood="thinking"], [data-mood="guiding"]) { --eb-chip-text: var(--accent-2, #ffb340); }
-.ember-bubble[data-mood="acting"] { --eb-chip-text: var(--accent, #ff9230); }
+/* (Working: its word in Ember's warmer light, as the accent itself is under 4.5:1 on its own tint over a white page.) */
+.ember-bubble[data-mood="acting"] { --eb-chip-text: var(--accent-2, #ffb340); }
 .ember-bubble[data-mood="attention"] .eb-chip { color: var(--purple-text, #eea2ff); }
 .ember-bubble[data-mood="error"] .eb-chip { color: var(--red-text, #ff7a71); }
 .ember-bubble[data-mood="done"] { --eb-chip-text: var(--green-text, #5be37d); }
 /* Clear glass (the Glass setting, html[data-glass="clear"]): a tag's word in the label's colour, as the state's colours
    fall under 4.5:1 there with a white page behind; its dot and tint keep the colour (and the word says the state). */
-html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--label, #f5f2ef); }
+html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk, html[data-glass="clear"] .ember-bubble .eb-auto { color: var(--label, #f5f2ef); }
+/* (Their tints darkened a little there, under the label's words: the lighter glass let them pale.) */
+html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }
 .eb-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--eb-mood); }
 /* The dot pulses only while Ember is busy; a finished answer sits still, and so does a question (it waits for you:
    nothing about it hurries you). */
@@ -388,6 +393,15 @@ html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember
   color: var(--yellow, #ffd600); background: color-mix(in srgb, var(--yellow, #ffd600) 16%, transparent);
 }
 .ember-bubble[data-mood="attention"][data-risky="true"] .eb-risk { display: inline-flex; }
+/* Ember's own announcement of a step it took without asking (Work without asking): its tag, on the status colour's tint,
+   which only Ember sets (a task's own note never has it). Its word is in Ember's warmer light: the accent itself is under
+   4.5:1 on its own tint with a white page behind the glass. */
+.eb-auto {
+  flex: none; display: none; padding: 1px 8px; border-radius: var(--r-capsule, 999px);
+  font: 600 12px/16px var(--ember-font, "Inter", system-ui, sans-serif); letter-spacing: 0;
+  color: var(--accent-2, #ffb340); background: color-mix(in srgb, var(--accent, #ff9230) 16%, transparent);
+}
+.ember-bubble[data-autonomous="true"] .eb-auto { display: inline-flex; }
 .eb-title { font-weight: 600; letter-spacing: -0.006em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A question's title ("May I?", "May I run a command?") leads into it; the decision is its sentence below (.eb-ask). */
 .ember-bubble[data-mood="attention"] .eb-title { font-size: 13px; line-height: 18px; color: var(--label-2, rgba(245, 240, 236, 0.66)); }
@@ -553,7 +567,7 @@ html.calm .ember-bubble { transition: opacity var(--t-calm-fade, 150ms) ease, vi
   .eb-actions button[aria-disabled="true"], .eb-actions button.eb-primary[aria-disabled="true"] { opacity: 1; color: GrayText; background: Canvas; border-color: GrayText; }
   .eb-whole { border: 1px solid CanvasText; }
   /* The state's tag and the risky tag keep an edge (their tint is dropped); the brackets are drawn as they are. */
-  .eb-chip, .eb-risk { border: 1px solid CanvasText; }
+  .eb-chip, .eb-risk, .eb-auto { border: 1px solid CanvasText; }
   .eb-lock, .ember-bubble[data-risky="true"] .eb-lock { forced-color-adjust: none; --eb-lock: CanvasText; }
   .ember-bubble[data-risky="true"] .eb-actions button.eb-primary, .ember-bubble[data-risky="true"] .eb-actions button.eb-primary:hover { forced-color-adjust: auto; color: ButtonText; background: ButtonFace; border: 2px solid CanvasText; }
   .eb-step kbd { outline: 1px solid CanvasText; outline-offset: -1px; }
@@ -561,7 +575,7 @@ html.calm .ember-bubble { transition: opacity var(--t-calm-fade, 150ms) ease, vi
 /* Text size (Settings > Comfort & access: main sets html[data-text-size], ember.css the --text-scale): the words
    grow. The bubble keeps its width; its heights are counted in lines (lh), so it shows as many lines at every size. */
 html[data-text-size] .ember-bubble { font-size: calc(14px * var(--text-scale, 1)); line-height: round(calc(20px * var(--text-scale, 1)), 1px); }
-html[data-text-size] .eb-chip, html[data-text-size] .eb-risk { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
+html[data-text-size] .eb-chip, html[data-text-size] .eb-risk, html[data-text-size] .eb-auto { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
 html[data-text-size] .ember-bubble[data-mood="attention"] .eb-title { font-size: calc(13px * var(--text-scale, 1)); line-height: round(calc(18px * var(--text-scale, 1)), 1px); }
 html[data-text-size] .eb-task { font-size: calc(12px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
 html[data-text-size] .eb-step kbd { font-size: calc(11px * var(--text-scale, 1)); line-height: round(calc(16px * var(--text-scale, 1)), 1px); }
@@ -676,7 +690,7 @@ export class ReasoningBubble {
     this.root.className = "ember-bubble calm-fade";
     this.root.innerHTML = `
       <div class="eb-lock" aria-hidden="true"></div>
-      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-risk" aria-hidden="true"></span><span class="eb-title"></span></div>
+      <div class="eb-head"><span class="eb-chip" aria-hidden="true"><i class="eb-dot"></i><span class="eb-chip-text"></span></span><span class="eb-risk" aria-hidden="true"></span><span class="eb-auto" aria-hidden="true"></span><span class="eb-title"></span></div>
       <p class="eb-thought"><span></span></p>
       <div class="eb-whole" hidden></div>
       <p class="eb-whole-hint" hidden></p>
@@ -684,6 +698,7 @@ export class ReasoningBubble {
       <div class="eb-actions" hidden></div>`;
     this.head = this.root.querySelector(".eb-head")!;
     this.root.querySelector(".eb-risk")!.textContent = RISKY_TAG;
+    this.root.querySelector(".eb-auto")!.textContent = AUTONOMOUS_TAG;
     this.chipText = this.root.querySelector(".eb-chip-text")!;
     this.title = this.root.querySelector(".eb-title")!;
     this.thoughtBox = this.root.querySelector(".eb-thought")!;
@@ -731,6 +746,13 @@ export class ReasoningBubble {
     this.root.dataset.mood = mood;
     this.updateChip();
     this.paintThought();
+    this.changed();
+  }
+
+  /** Ember's own announcement of a step it took without asking (BubbleState.autonomous): its "Without asking" tag. */
+  setAutonomous(on: boolean): void {
+    if (on === (this.root.dataset.autonomous === "true")) return;
+    this.root.dataset.autonomous = String(on);
     this.changed();
   }
 

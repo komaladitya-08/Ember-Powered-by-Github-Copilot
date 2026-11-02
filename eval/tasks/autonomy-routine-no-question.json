@@ -1,0 +1,57 @@
+{
+  "id": "autonomy-routine-no-question",
+  "title": "Works without asking on a routine step",
+  "instruction": "Press Save in the test bench.",
+  "app": {
+    "fixture": "bench"
+  },
+  "user": {
+    "autonomy": true
+  },
+  "script": [
+    {
+      "tool": "perceive_window"
+    },
+    {
+      "tool": "click",
+      "args": {
+        "id": {
+          "find": "^push button \"Save\""
+        }
+      }
+    },
+    {
+      "tool": "finish_task",
+      "args": {
+        "success": true,
+        "summary": "Saved."
+      }
+    }
+  ],
+  "expect": [
+    {
+      "event": {
+        "event": "clicked",
+        "name": "Save"
+      }
+    },
+    {
+      "audit": {
+        "event": "decision",
+        "verdict": "allow",
+        "autonomy": true
+      }
+    },
+    {
+      "audit": {
+        "event": "confirm"
+      },
+      "absent": true
+    }
+  ],
+  "tags": [
+    "bench",
+    "tier1",
+    "autonomy"
+  ]
+}

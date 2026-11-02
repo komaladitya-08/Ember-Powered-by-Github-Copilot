@@ -10,6 +10,8 @@
 /** The controls a request may focus, by the name main uses (main's openSettings). */
 const CONTROLS: Readonly<Record<string, string>> = {
   "computers:host": "host-add", "computers:wsl": "wsl-on", "access:ask": "p-ask", "access:stop": "p-stop",
+  // "Work without asking" by voice (autonomy-intent.ts): its switch, or its card's agree button (the card shown first).
+  "privacy:autonomy-on": "autonomy-on", "privacy:autonomy-yes": "autonomy-yes",
 };
 
 /** A request as the page acts on it: the section's id (its heading is `${section}-h`) and the control's id, if any. */

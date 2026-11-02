@@ -345,6 +345,10 @@ describe("Liquid Glass on the floating layer (see-through, measured over a white
       for (const label of ["label", "glass-label-2", "glass-label-3"]) expect(contrast(over(token(label), hex(g)), g), `${label} on ${surface}`).toBeGreaterThanOrEqual(4.5);
       for (const c of ["accent", "green", "yellow", "green-text", "red-text", "purple-text", "accent-2"]) expect(contrast(solid(token(c)), g), `${c} on ${surface}`).toBeGreaterThanOrEqual(4.5);
       for (const c of ["red", "blue", "purple", "gray"]) expect(contrast(solid(token(c)), g), `${c} on ${surface}`).toBeGreaterThanOrEqual(3);
+      // "Without asking" (#127) and "Working": words in Ember's warmer light on the accent's tint.
+      const auto = over(`rgba(${solid(token("accent")).join(", ")}, 0.16)`, hex(g));
+      expect(contrast(solid(token("accent-2")), auto), `the "Without asking" tag on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      expect(BUBBLE_CSS).toContain('.ember-bubble[data-mood="acting"] { --eb-chip-text: var(--accent-2, #ffb340); }');
       // A tag: its tint at 16 % behind its word.
       for (const [text, tint] of [["green-text", "green"], ["red-text", "red"], ["purple-text", "purple"]]) {
         const tag = over(`rgba(${solid(token(tint)).join(", ")}, 0.16)`, hex(g));
@@ -387,7 +391,15 @@ describe("Liquid Glass on the floating layer (see-through, measured over a white
     const stop = over(fill, hex(g));
     expect(contrast(solid(token("label")), stop)).toBeGreaterThanOrEqual(4.5);
     // The tags' words take the label's colour there (the state's colours fall under 4.5:1); their dots keep the colour.
-    expect(BUBBLE_CSS).toContain('html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--label, #f5f2ef); }');
+    expect(BUBBLE_CSS).toContain('html[data-glass="clear"] .ember-bubble .eb-chip, html[data-glass="clear"] .ember-bubble .eb-risk, html[data-glass="clear"] .ember-bubble .eb-auto { color: var(--label, #f5f2ef); }');
+    // ("Without asking" in the label's colour on its accent tint, there.)
+    // The tags' tints darken a little on Clear; each word in the label's colour passes on every tint.
+    for (const tint of ["accent", "accent-2", "yellow", "purple", "red", "green"]) {
+      const tag = over("rgba(0, 0, 0, 0.2)", hex(over(`rgba(${solid(clearToken(tint)).join(", ")}, 0.16)`, hex(g))));
+      expect(contrast(solid(token("label")), tag), tint).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(BUBBLE_CSS).toContain('html[data-glass="clear"] .ember-bubble :is(.eb-chip, .eb-risk, .eb-auto) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }');
+    expect(BUBBLE_CSS).toMatch(/\.eb-auto \{[^}]*color: var\(--accent-2, #ffb340\);/);
     // Ember's accent as words and marks on glass goes through the token.
     expect(read("app/renderer/overlay/styles.css")).toContain(".task[data-cursor] .hand { color: var(--accent-text-on-glass);");
     expect(shared).toContain("[data-status] { --sym-tint: var(--accent-text-on-glass, var(--accent));");

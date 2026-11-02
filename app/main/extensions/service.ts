@@ -629,11 +629,15 @@ export class ExtensionsService implements ExtensionsApi {
     if (verdict === "allow") return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
-    const answer = await confirmer.ask(gateQuestion(e!.item.name, e!.tool.name, input.toolArgs), this.stopAsks.signal).catch(() => null);
+    const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
+    const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     // The question may have been up a while: the item, its pin and the live tool are checked again before a yes counts.
     const after = answer === "once" ? await this.gateInput(gate, input.toolName) : null;
     const yes = answer === "once" && after !== null && after.verdict !== "deny";
-    try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : answer === "once" ? "stale" : "deny" }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
+    // A spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
+    const how = confirmer.howAnswered?.(question);
+    const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true } : {};
+    try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : answer === "once" ? "stale" : "deny", ...channel }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
     if (yes) return { permissionDecision: "allow" };
     if (answer === "once" && after) return deny(after.reason);
     gate.refused.add(input.toolName);

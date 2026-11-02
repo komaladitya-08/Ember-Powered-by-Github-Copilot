@@ -191,6 +191,22 @@ export const SettingsSchema = z.object({
    * What is installed is kept in extensions.json, apart from the settings.
    */
   extensions: z.object({ on: z.boolean().default(false), consent: ConsentRecord }).default({ on: false, consent: { version: 0, at: null } }),
+  /**
+   * "Work without asking" (app/main/policy/autonomy.ts, PLAN.md §2 Approvals): off until the user turns it on and agrees
+   * to its card in Home (`consent`, FEATURE_CONSENT_VERSION.autonomy). While on, ordinary steps in the enabled `scopes`
+   * (using apps, ordinary commands with carried text, borrowing the mouse and keyboard, moving text between apps) are
+   * announced instead of asked; risky steps still ask every time.
+   */
+  autonomy: z.object({
+    on: z.boolean().default(false),
+    scopes: z.object({
+      apps: z.boolean().default(true),
+      commands: z.boolean().default(true),
+      cursor: z.boolean().default(true),
+      crossWindow: z.boolean().default(true),
+    }).default({ apps: true, commands: true, cursor: true, crossWindow: true }),
+    consent: ConsentRecord,
+  }).default({ on: false, scopes: { apps: true, commands: true, cursor: true, crossWindow: true }, consent: { version: 0, at: null } }),
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;

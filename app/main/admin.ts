@@ -56,6 +56,11 @@ export const AdminPolicySchema = z.object({
     routines: z.boolean().optional(),
     /** Extensions (plugins' MCP tools, app/main/extensions/): false, none load or run, and none can be installed. */
     extensions: z.boolean().optional(),
+    /**
+     * "Work without asking" (app/main/policy/autonomy.ts): false, Ember asks before ordinary steps as it did before, and
+     * the switch shows off and managed. Also off wherever `allowGrants` is false or `confirmEveryAction` is true.
+     */
+    autonomy: z.boolean().optional(),
   }).strict().default({}),
   /** Apps and windows Ember never reads, captures or acts in (added to the user's never-look list). */
   neverLook: z.array(name).max(200).default([]),
@@ -116,7 +121,7 @@ export interface LoadedAdminPolicy {
 
 /** Everything off that could act or listen: used when the policy file is broken. */
 const LOCKDOWN: AdminPolicy = AdminPolicySchema.parse({
-  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, extensions: false },
+  features: { voice: false, actions: false, cursor: false, desk: false, screenImages: false, wsl: false, ssh: false, memory: false, routines: false, extensions: false, autonomy: false },
   allowGrants: false,
   confirmEveryAction: true,
   commands: { local: "off", wsl: "off", ssh: "off" },
@@ -211,6 +216,14 @@ export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
   return { ...lockedDown(next.source ?? "the administrator's policy", "it changed while Ember was running; restart Ember to use it"), held: true };
 }
 
+/**
+ * May users turn on "Work without asking"? Not where the administrator turned it off (`features.autonomy`), keeps users
+ * from letting Ember act without asking (`allowGrants` false), wants a click before every action, or turned acting off.
+ */
+export function autonomyAllowed(admin: Pick<AdminPolicy, "features" | "allowGrants" | "confirmEveryAction">): boolean {
+  return admin.features.autonomy !== false && admin.allowGrants !== false && !admin.confirmEveryAction && admin.features.actions !== false;
+}
+
 /** The settings Ember actually uses: the user's, with the administrator's values on top. */
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);
@@ -229,6 +242,8 @@ export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   if (admin.features.memory === false) s.memory = { ...s.memory, on: false };
   if (admin.features.routines === false) s.routines = { ...s.routines, on: false };
   if (admin.features.extensions === false) s.extensions = { ...s.extensions, on: false };
+  // Acting without asking is off wherever the organisation keeps users from it, in any of its three ways.
+  if (!autonomyAllowed(admin)) s.autonomy = { ...s.autonomy, on: false };
   const allowed = admin.models.allowed;
   const pick = (pinned: string | undefined, chosen: string | null) => pinned ?? (chosen && allowed && !allowed.includes(chosen) ? null : chosen);
   s.models = { conductor: pick(admin.models.conductor, s.models.conductor), worker: pick(admin.models.worker, s.models.worker) };
@@ -246,6 +261,7 @@ export function managedKeys(admin: AdminPolicy): string[] {
   if (admin.features.memory === false) keys.push("memory");
   if (admin.features.routines === false) keys.push("routines");
   if (admin.features.extensions === false) keys.push("extensions");
+  if (!autonomyAllowed(admin)) keys.push("autonomy");
   if (admin.provider) keys.push("provider");
   return keys;
 }
