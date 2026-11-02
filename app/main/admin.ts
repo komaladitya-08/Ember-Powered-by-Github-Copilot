@@ -213,7 +213,8 @@ export function heldUntilRestart(next: LoadedAdminPolicy): LoadedAdminPolicy {
 export function applyAdminPolicy(user: Settings, admin: AdminPolicy): Settings {
   const s: Settings = structuredClone(user);
   if (admin.features.voice === false) s.wakeWord = false;
-  if (admin.features.speak === false) { s.speak = false; s.speakWithScreenReader = false; }
+  // Results aren't read out either: Home's "Read finished tasks out loud" shows off (and managed), not on.
+  if (admin.features.speak === false) { s.speak = false; s.speakWithScreenReader = false; s.speakResults = false; }
   if (admin.neverLook.length) {
     const have = new Set(s.privacy.neverLook.map(x => x.toLowerCase()));
     s.privacy = { ...s.privacy, neverLook: [...s.privacy.neverLook, ...admin.neverLook.filter(x => !have.has(x.toLowerCase()))] };

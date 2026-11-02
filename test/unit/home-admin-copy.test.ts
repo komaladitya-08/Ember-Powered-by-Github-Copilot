@@ -6,7 +6,8 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { keptWords, lockdownNotice, lockdownSendLine } from "../../app/renderer/home/admin-copy";
+import { FEATURE_TEXT, keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "../../app/renderer/home/admin-copy";
+import { AdminPolicySchema } from "../../app/main/admin";
 
 const inForce = { error: null, retentionDays: 30 };
 const broken = { error: "/etc/ember/policy.json: Unrecognized key: \"futureKey\"", retentionDays: null };
@@ -31,6 +32,19 @@ describe("the settings window under a lockdown", () => {
     expect(keptWords({ error: null, retentionDays: 365 })).toBe("kept 365 days");
     expect(keptWords(broken)).toBe("none deleted until your organisation fixes its policy");
     expect(keptWords(held)).toBe("none deleted until you restart Ember");
+  });
+
+  it("names every switch the organisation turned off in words, never as a raw key such as “routines”", () => {
+    const keys = Object.keys(AdminPolicySchema.shape.features.unwrap().shape);
+    expect(keys).toEqual(expect.arrayContaining(["memory", "routines", "aiReview", "speak"]));
+    for (const k of keys) expect(FEATURE_TEXT[k], k).toBeTruthy();
+    const off = turnedOffWords(Object.fromEntries(keys.map(k => [k, false])), "win32");
+    expect(off).toHaveLength(keys.length);
+    for (const k of keys) expect(off).not.toContain(k);
+    expect(turnedOffWords({ memory: false, routines: false, speak: false }, "linux"))
+      .toEqual(["remembering between runs", "keeping routines and reminders", "speaking out loud"]);
+    // WSL's switch means nothing off Windows (#221).
+    expect(turnedOffWords({ wsl: false }, "linux")).toEqual([]);
   });
 
   it("matches the page's own words while the policy is in force", () => {

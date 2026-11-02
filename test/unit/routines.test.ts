@@ -141,4 +141,26 @@ describe("AgentHost with routines", () => {
     await host.forgetConversation();
     expect(routines.list()).toEqual([]);
   });
+
+  it("stops keeping reminders once routines are turned off, so one told this run isn't told again next run as missed", async () => {
+    const { AgentHost } = await import("../../app/main/agent/host");
+    const { SettingsStore } = await import("../../app/main/settings");
+    const dir = tmp();
+    const settings = new SettingsStore(path.join(dir, "settings.json"));
+    settings.load();
+    settings.update({ routines: { on: true, consent: { version: FEATURE_CONSENT_VERSION.routines, at: "2026-11-02T00:00:00.000Z" } } });
+    const routines = new RoutineBook({ file: routinesFile(dir) });
+    const host = new AgentHost({ userData: dir, runtimePath: "/nowhere", settings, log: quiet, setState: () => undefined, onStatus: () => undefined, routines });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the conversation's start, without Copilot
+    const keep = () => (host as any).keepRoutines();
+    expect(keep()).toBe(routines);
+    host.reminders.add("call Priya", Date.now() + 60_000, "remind me in a minute to call Priya");
+    expect(routines.reminders().map(r => r.text)).toEqual(["call Priya"]);
+    // Turned off: the reminder lasts this run in memory only, and the file no longer holds it.
+    settings.update({ routines: { on: false, consent: settings.get().routines.consent } });
+    expect(keep()).toBeUndefined();
+    expect(host.reminders.list().map(r => r.text)).toEqual(["call Priya"]);
+    expect(new RoutineBook({ file: routinesFile(dir) }).reminders()).toEqual([]);
+    host.reminders.clear();
+  });
 });
