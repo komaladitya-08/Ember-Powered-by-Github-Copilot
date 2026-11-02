@@ -1554,7 +1554,7 @@ function start(): void {
   ipcMain.on(OVERLAY.bubbleAction, (event, id: unknown) => {
     const fromHandle = isHandle(event.sender);
     if (!(overlay?.owns(event.sender) || fromHandle) || typeof id !== "string" || id.length > 120) return;
-    const task = /^task:(.+):(stop|dismiss)$/.exec(id);
+    const task = /^task:(.+):(stop|dismiss|retry)$/.exec(id);
     // A question's whole text has all been in view on that page (review #116): its Allow works from now on. It says what
     // the user saw, not a click, so it counts while Ember drives the mouse too (the page takes no pointer then).
     const seen = wholeSeenOf(id);
@@ -1577,7 +1577,8 @@ function start(): void {
     // The targets runtime's own: a target picked, an offer, a connection, a panel to show, an announced command's Stop.
     if (targets?.bubbleAction(id)) return;
     if (task) {
-      if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else agent?.tasks?.dismiss(task[1]);
+      // Try again (a failed task's card): the user's click starts the same request again, asking every question again.
+      if (task[2] === "stop") agent?.tasks?.cancel(task[1]); else if (task[2] === "retry") agent?.retryTask(task[1]); else agent?.tasks?.dismiss(task[1]);
       log.info("task.card_action", { action: task[2] });
       return;
     }

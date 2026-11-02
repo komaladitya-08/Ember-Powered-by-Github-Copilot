@@ -2,11 +2,12 @@
 
 import { Rig, FACTORIES, type Character, type Emotion } from "@ember/characters";
 import { WHOLE_READ_HINT, announcement, onPress, plainStream, wholeInView, wholeJudged, wholeNext, wholePage, wholeReadNews, wholeUnreported, type BubbleView, type WholeView } from "@ember/bubble";
-import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type TaskCard, type WholeText } from "../../shared/overlay";
+import { waitsForWhole, wholeSeenAction, type BubbleState, type EmberState, type HandleApi, type WholeText } from "../../shared/overlay";
 import { cardTask, cardText } from "./card";
 import { cardClear, cardNeed, linesKept, type CardMeasure, type CardRow } from "./fit";
 import { armMsFor } from "./arm";
 import { cardBadge, targetBadge, whereText, type TargetBadge } from "./badge";
+import { STATE_WORD, cardLines } from "../overlay/stack";
 import type { Settings } from "../../main/settings";
 import { micBadge } from "../../shared/mic";
 import { presenceOf } from "../../shared/presence";
@@ -67,8 +68,6 @@ function buttons(host: HTMLElement, list: { id: string; label: string; primary?:
   }));
 }
 
-/** The task row's state in words, for screen readers (its symbol says it to the eye). */
-const TASK_WORD: Record<TaskCard["status"], string> = { running: "Working: ", queued: "Waiting its turn: ", waiting: "Needs you: ", done: "Done: ", failed: "Failed: ", stopped: "Stopped: " };
 
 const thoughtEl = $("thought");
 let wasStreaming = false;
@@ -245,11 +244,15 @@ api.onState(s => {
   $("task").hidden = !task;
   if (task) {
     $("task").dataset.status = task.status;
-    $("task-state").textContent = TASK_WORD[task.status];
+    // The task row's state in words for screen readers (its symbol says it to the eye), from the cards' one table.
+    $("task-state").textContent = STATE_WORD[task.status];
     const at = whereText(task.where);
     $("task-title").textContent = at ? `${task.title} (${at})` : task.title;
-    $("task-detail").textContent = task.detail;
-    $("task").title = `${task.title}${task.detail ? `: ${task.detail}` : ""}`;
+    // Under it, what it is doing now in Ember's words ("Clicking in Text Editor…"), else what it last said.
+    const lines = cardLines(task);
+    const doing = lines.live ?? lines.detail;
+    $("task-detail").textContent = doing;
+    $("task").title = `${task.title}${doing ? `: ${doing}` : ""}`;
   }
   buttons($("task-actions"), task?.actions ?? [], a => `${a.label}: ${task?.title ?? ""}`);
   requestAnimationFrame(fitCard);

@@ -132,13 +132,34 @@ Ember is two places at once, each for one kind of work.
   - on Ember's desk.
 
   A card shows:
+  - its title: the request, up to 72 characters cut at a word, on at most two lines;
   - how the task works now, under its title: "In the background", "On my desk", or "Using your mouse and keyboard"
     in the accent;
-  - its current step;
-  - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come;
-  - when it ends, what it found or made, as a **view**.
+  - a **live line** in Ember's own words: what it is doing now and where ("Clicking in Text Editor…", "Thinking…",
+    "Waiting for you" while its question is up, "Retrying…", "Still waiting for Copilot…");
+  - the worker's own note under it (`report_progress`'s `intent`, else its `text`), in the secondary label: the
+    model's words, never set as Ember's;
+  - a **telemetry row** of at most three items in footnote type, weight 500 and tabular figures: the plan's step
+    ("Step 3 of 7"), its clock ("Just started", then "42s", "1:42"; written once a second as text by one shared
+    tick, so nothing moves or re-lays out), then "Close to my limit" past 80% of its 150 steps or 20 minutes, else
+    how many steps the user allowed. Once it ends, the state's word and how long it took ("Didn't finish · Took 1:12");
+  - the steps so far in one sentence ("Clicked 3 times and read the window 2 times (1 didn't work)"), what changed
+    things named before what only looked;
+  - its plan, a dot per step (`report_progress`'s `plan` and `now`): done, under way (the accent, weight 600), to come
+    (the step a failed or stopped task was on keeps its weight in red or grey, not the accent);
+  - **Details**: up to six rows of what it did (steps of one kind in a row folded together, "Read the window 3 times in
+    Settings"; a refusal with policy's reason; a question and how it was answered; the worker's notes, marked as
+    its words), each with a static state symbol and when it happened. Closed until the user opens it, kept open by
+    task id across updates;
+  - when it ends, what it found or made, as a **view**, and on a failure **Try again** (the same request starts again
+    as a new task, asking every question again) beside **Close**.
 
-  A card with a view stays a minute, like a failure, and the stack widens from 270 to 320px to hold it.
+  The words come from `app/shared/activity.ts` (one table of state words: Working, Waiting for you, Waiting its turn,
+  Retrying, Done, Didn't finish, Stopped) and `app/main/agent/activity.ts`, which builds a task's activity from its
+  worker's tool calls and Ember's own signals: never the model's arguments, its reasoning or screen text. A running
+  task's symbol is a ring round a lit dot, which never reads as a spinner. A card with a view or a failure stays a
+  minute, and the stack widens from 270 to 320px to hold it; both widths grow with the text size. Without a
+  compositor, the corner card's task row has two lines: the title, and the live line under it.
 - **The cursor** (the character beside the pointer, and its bubble) is the assistant with you. It holds:
   - the conversation: what you asked, and the answer;
   - guides ("show me");
@@ -155,7 +176,14 @@ Ember is two places at once, each for one kind of work.
   - `list`, of up to 8 items;
   - `facts`, label and value rows;
   - `table`, up to 3 columns and 6 rows;
-  - `file`, a path, set in the mono face.
+  - `file`, a path, set in the mono face;
+  - `checklist`, up to 8 items each done or not (a tick or a ring, and the words for screen readers);
+  - `progress`, a label and whole numbers "3 of 5" (at most 10,000) with a static bar set once;
+  - `compare`, two named columns of values beside up to 6 row labels;
+  - `excerpt`, up to 8 lines of a file under its path, in the mono face, with nothing to open. It is refused whole,
+    never shown redacted, when a line holds a password, token, key or card number, or the file lives where secrets do
+    (Ember's data folder, SSH and GPG keys, keyrings, `.env` files);
+  - `status`, one outcome in words beside a tick, a warning or a mark.
 
   `finish_task`'s `view` is checked against `ViewSchema` (app/main/agent/view-schema.ts), and anything outside the
   catalog fails the call. app/renderer/overlay/view.ts draws it with `textContent` only: no markup, links, buttons or

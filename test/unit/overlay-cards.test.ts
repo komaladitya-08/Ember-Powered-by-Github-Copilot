@@ -43,9 +43,9 @@ describe("a task waiting its turn", () => {
     expect(card).toMatchObject({ status: "queued", detail: "Waiting to start", actions: [{ id: `task:${second.id}:stop`, label: "Stop" }] });
   });
 
-  it("is read out as waiting its turn; only a task that asks is read as needing the user", () => {
+  it("is read out as waiting its turn; only a task that asks is read as waiting for the user", () => {
     expect(STATE_WORD.queued).toBe("Waiting its turn: ");
-    expect(STATE_WORD.waiting).toBe("Needs you: ");
+    expect(STATE_WORD.waiting).toBe("Waiting for you: ");
   });
 
   it("counts as under way: its card sits with the running ones, nearest the handle, and the corner card shows it", () => {

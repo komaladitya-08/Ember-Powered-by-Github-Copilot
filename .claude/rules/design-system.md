@@ -207,12 +207,13 @@ Name these patterns when you design something new. Vague direction such as "make
   - By the cursor: none at rest; listening lights its 24 ticks by the microphone's level, with a separate steady microphone mark that says the microphone hears you whatever the level; thinking is `--accent-2`, breathing three times; acting is dim with one pulsing segment; needs you is the full ring, still; a problem is red with a notch; done completes once and goes (`DONE_RING_MS`). While Ember's own voice plays, a five-bar meter shows its level (the system's voice gives none, so none shows).
   - On the handle: a still ring round the face, `--hud-dim` at rest and the state's colour otherwise. The handle never animates it.
   - HUD parts are decorative: `aria-hidden`, outside `interactiveRects()` and the task rects, and the words say every state for screen readers.
-- **Task state.** It is `data-status="running|queued|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Waiting its turn: ", "Needs you: " …). Show selection with a ring plus a check.
+- **Task state.** It is `data-status="running|queued|waiting|done|failed|stopped"`, which sets `--sym` and `--sym-tint`. Put the symbol beside the words, and the state word in a `.sr` span ("Working: ", "Waiting its turn: ", "Waiting for you: " …). Every surface takes its state words from the one table, `STATUS_WORDS` in app/shared/activity.ts. Show selection with a ring plus a check.
+- **Task activity on cards.** A card's live line, telemetry row, summary and Details rows are built from the task's activity (app/shared/activity.ts, app/main/agent/activity.ts) in Ember's own words, never from the model's arguments, reasoning or screen text. The worker's own note is the one model text, in `--label-2`, never styled as Ember's voice. The clock is written as text by one shared one-second tick that runs only while a card under way shows: no re-render and no animation.
 - **Generative views on cards.** A task's result `view` comes only from app/shared/view.ts's catalog, checked by
   `ViewSchema`, and is drawn by app/renderer/overlay/view.ts with `textContent` alone. It has no links, buttons,
   images or markup. A new block kind needs all of these: the type, the schema, the drawing, `viewText`, the
   forced-colours rule and a test.
-- **Failed tasks.** A failed task's card stays longer so it can be read: 60 s (TaskManager's `failureCardMs`), against 15 s (`cardMs`) for done and stopped cards. Then it leaves on its own. Close, Close all or Stop everything removes it sooner.
+- **Failed tasks.** A failed task's card stays longer so it can be read: 60 s (TaskManager's `failureCardMs`), against 15 s (`cardMs`) for done and stopped cards. Then it leaves on its own. Close, Close all or Stop everything removes it sooner. A failed task that did work (not a guide) offers Try again, a click only: the same request starts again as a new task and asks every question again.
 
 ## Motion and performance
 

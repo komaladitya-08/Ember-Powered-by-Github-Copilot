@@ -43,7 +43,7 @@ describe("the view catalog", () => {
     // The SDK sends a zod schema to the runtime through its toJSONSchema() (@github/copilot-sdk schema.js).
     const finish = z.object({ success: z.boolean(), summary: z.string().max(400), view: ViewSchema.optional() }).toJSONSchema() as unknown as { properties: { view: { type: string; maxItems: number; items: { oneOf?: unknown[]; anyOf?: unknown[] } } } };
     expect(finish.properties.view).toMatchObject({ type: "array", maxItems: 6 });
-    expect((finish.properties.view.items.oneOf ?? finish.properties.view.items.anyOf)?.length).toBe(5);
+    expect((finish.properties.view.items.oneOf ?? finish.properties.view.items.anyOf)?.length).toBe(10);
     expect(z.object({ text: z.string(), plan: PlanSchema.optional() }).toJSONSchema()).toMatchObject({ properties: { plan: { type: "array", maxItems: 8 } } });
   });
 
