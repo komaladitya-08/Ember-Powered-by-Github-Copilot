@@ -193,6 +193,20 @@ describe("a task's live view", () => {
     expect(tm.get(t.id)?.view && viewText(tm.get(t.id)!.view!)).toBe("12 rows");
   });
 
+  it("reaches Home's Task activity too, live while the task works", async () => {
+    let update!: (u: { view?: ViewDoc }) => void;
+    const tm = new TaskManager({
+      log: quiet, currentWindow: () => null, setCards: () => undefined, deleteSession: async () => undefined, keepMs: 0,
+      makeWorker: (_spec, _progress, u) => { update = u!; return { run: () => new Promise<WorkerResult>(() => undefined), dispose: async () => undefined, sessionId: "s" } as unknown as Worker; },
+    });
+    const t = tm.start("Tally it");
+    await vi.waitFor(() => expect(update).toBeDefined());
+    update({ view: upgradeView([{ kind: "text", text: "12 rows so far" }]) });
+    const entry = tm.activities().find(e => e.id === t.id)!;
+    expect(entry.status).toBe("running");
+    expect(entry.view && viewText(entry.view)).toBe("12 rows so far");
+  });
+
   it("isn't sent once its manager has closed, from a worker still winding down (review S6)", async () => {
     let update!: (u: { view?: ViewDoc }) => void;
     const views: [string, ViewDoc | null][] = [];

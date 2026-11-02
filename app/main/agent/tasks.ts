@@ -18,7 +18,7 @@ import type { Agreement } from "../policy/policy";
 import type { TargetId } from "../../shared/targets";
 import { friendlyError } from "./presenter";
 import type { PlanStep, TaskHand, ViewDoc } from "../../shared/view";
-import type { TaskActivity } from "../../shared/activity";
+import type { TaskActivity, TaskEntry } from "../../shared/activity";
 import { ActivityLog, type ActivityEvent } from "./activity";
 
 export type TaskStatus = "queued" | "running" | "done" | "failed" | "cancelled";
@@ -156,7 +156,7 @@ export class TaskManager {
   /** Running tasks told to stop that are still winding down: their cards say so at once (a press that shows nothing gets pressed again). */
   private stopping = new Set<string>();
   /** Each task's activity, from when it starts to run (kept for ACTIVITY_KEPT finished tasks after their cards go). */
-  private logs = new Map<string, { log: ActivityLog; title: string }>();
+  private logs = new Map<string, { log: ActivityLog; task: Task }>();
   /** What each task was asked with, so a failed one can be tried again from its card. */
   private specs = new Map<string, { goal: string; opts: StartOptions }>();
 
@@ -196,9 +196,29 @@ export class TaskManager {
     return this.logs.get(id)?.log.get() ?? null;
   }
 
-  /** Every kept task's activity, newest first (for Home's "Task activity"; in memory only, gone when Ember quits). */
-  activities(): { id: string; title: string; activity: TaskActivity }[] {
-    return [...this.logs].reverse().map(([id, l]) => ({ id, title: l.title, activity: l.log.get() }));
+  /**
+   * Every kept task's activity, newest first, with what its card showed (Home's "Task activity"; in memory only, gone
+   * when Ember quits). A task's state reads as on its card.
+   */
+  activities(): TaskEntry[] {
+    // A task still in line (or one whose worker couldn't be made) has no log yet: listed with an empty one, so Home
+    // counts every task of the session (the status panel's "earlier" count is the audit's tasks less these).
+    const unlogged = [...this.tasks.values()].filter(t => !this.logs.has(t.id)).map(t => [t.id, { log: new ActivityLog(t.started), task: t }] as const);
+    return [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]) => {
+      const activity = log.get();
+      if (t.finished !== null && activity.endedAt === undefined) activity.endedAt = t.finished;
+      const status: TaskEntry["status"] = t.status === "cancelled" ? "stopped" : t.status === "running" && activity.asking ? "waiting" : t.status;
+      const ended = t.status !== "running" && t.status !== "queued";
+      return {
+        id, title: t.title, status,
+        ...(t.where ? { where: t.where } : {}),
+        ...(t.hand && !ended ? { hand: t.hand } : {}),
+        ...(t.plan?.length ? { plan: t.status === "done" ? t.plan.map(p => ({ ...p, state: "done" as const })) : t.plan.map(p => ({ ...p })) } : {}),
+        ...(ended && t.result?.summary ? { summary: t.result.summary } : {}),
+        ...(t.view ? { view: t.view } : {}),
+        activity,
+      };
+    });
   }
 
   /**
@@ -352,7 +372,7 @@ export class TaskManager {
     try {
       // Its activity starts now: its card's clock counts from here, not from when it was queued.
       const log = new ActivityLog(Date.now());
-      this.logs.set(task.id, { log, title: task.title });
+      this.logs.set(task.id, { log, task });
       worker = this.d.makeWorker(spec, text => { task.detail = text; this.publish(); }, u => {
         if (u.plan) task.plan = u.plan;
         if (u.hand && u.hand !== (task.hand ?? "background")) log.add({ type: "hand", hand: u.hand }, Date.now());

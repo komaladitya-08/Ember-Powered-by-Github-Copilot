@@ -1,8 +1,9 @@
 /**
- * Settings window: first-run consent, pick your Ember, Copilot sign-in, the
- * conversation, voice, apps & privacy, comfort & access (where Ember is), what
- * Ember did, setup checks and build facts. Until Start, only the welcome, the
- * character picker and Start show.
+ * Settings window (Home): until Start, only first run's steps show (welcome.ts); then one pane at a time, chosen in
+ * the sidebar as System Settings does (docs/DESIGN.md "Home"). Home itself is the status panel (Ember's still ring,
+ * its state, what is on, today, Ask and Stop everything), the conversation, Task activity and what Ember did; the
+ * other panes are Your Ember (character, size, Ember on screen), Copilot, Voice, Memory, Apps & privacy, Computers,
+ * Commands, Extensions, Comfort & access, and Setup & about.
  */
 
 import { Rig, FACTORIES, type Character } from "@ember/characters";
@@ -25,7 +26,12 @@ import { startTargets, targetsSettings, targetsStatus } from "./computers";
 import { extensionsStatus, startExtensions } from "./extensions";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
-import { followStartRow } from "./start-row";
+import { startWelcome } from "./welcome";
+import { revealAsking, startTasks } from "./tasks";
+import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
+import { searchMatches, searchMessage } from "./search-copy";
+import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
+import type { TaskEntry } from "../../shared/activity";
 
 declare global {
   interface Window { ember: EmberHomeApi }
@@ -39,8 +45,10 @@ const PITCH: Record<string, string> = {
   glint: "Two glowing eyes; the quietest",
 };
 
-/** Whether an element is (now) hidden, itself or by a parent. */
-const isHidden = (el: Element) => el instanceof HTMLElement && (el.hidden || !!el.closest("[hidden]") || el.closest("body.first-run .after-setup") !== null);
+/** Whether an element is hidden by its own page's rules (itself or a parent), whichever pane shows. */
+const hiddenHere = (el: Element) => el instanceof HTMLElement && (el.hidden || !!el.closest("[hidden]") || el.closest("body.first-run .after-setup") !== null);
+/** Whether an element is (now) hidden, itself or by a parent, or on a pane not shown. */
+const isHidden = (el: Element) => hiddenHere(el) || el.closest("body:not(.first-run) .off-pane") !== null;
 /** Focus the first of `ids` that is shown. */
 function focusFirst(ids: string[]): void {
   for (const id of ids) {
@@ -147,38 +155,28 @@ function applySettings(s: Settings): void {
   const corner = handleCornerText(s.handlePosition);
   if ($("handle-corner").textContent !== corner) $("handle-corner").textContent = corner;
   if (presence) renderPresence(presence);
-  // First run (or changed terms): the consent panel comes first and Start (right beside "I agree") waits for it;
-  // everything else waits until Ember has started.
-  const consented = s.consent.version >= CONSENT_VERSION;
-  // Start (or "I agree") had focus and goes now: focus moves to the top of the settings, and Ember says it started
+  // First run (or changed terms): its steps come first, the consent among them (welcome.ts); everything else waits
+  // until Ember has started. Start pressed here: focus moves to the top of the settings, and Ember says it started
   // (review #50), rather than dropping to the page.
-  const started = s.onboarded && !$("start-row").hidden && $("start-row").contains(document.activeElement);
+  const started = welcome.settings(s);
   document.body.classList.toggle("first-run", !s.onboarded);
   document.body.classList.remove("loading");
-  $("welcome").hidden = consented;
-  $("start-row").hidden = s.onboarded;
-  $("agree-row").hidden = consented;
-  ($("start") as HTMLButtonElement).disabled = !consented && !($("agree") as HTMLInputElement).checked;
-  $("start-hint").hidden = consented;
   $("pick-h").textContent = s.onboarded ? "Your Ember" : "Choose your Ember";
   renderPrivacy(s);
   renderTagline();
   if (started) {
     $("home-live").textContent = STARTED_TEXT;
+    showPane("home");
     window.scrollTo({ top: 0 });
-    $("pick-h").focus({ preventScroll: true });
+    $("home-h").focus({ preventScroll: true });
   }
+  renderStatus();
 }
-// First run's Start row stays at the window's foot: focus scrolls clear of it at its height now (start-row.ts).
-followStartRow($("start-row"), document.documentElement);
+// First run, one step at a time: it borrows the character and the cards until Start, and its fixes reach the setup check.
+const welcome = startWelcome({ save, buddy: heroCanvas, cards: $("cards"), checksChanged: env => renderChecks(env), arrived: () => { if (!calm) { heroRig.setEmotion("happy"); drawSoon(); } } });
 // Never a blank window, even if the first status is slow.
 setTimeout(() => document.body.classList.remove("loading"), 1500);
 $("login").addEventListener("change", e => { void save({ startAtLogin: (e.target as HTMLInputElement).checked }); });
-$("agree").addEventListener("change", e => {
-  const on = (e.target as HTMLInputElement).checked;
-  ($("start") as HTMLButtonElement).disabled = !on;
-  $("start-hint").hidden = on;
-});
 $("reduce-motion").addEventListener("change", e => { void save({ reduceMotion: (e.target as HTMLInputElement).checked }); });
 $("more-time").addEventListener("change", e => { void save({ moreTime: (e.target as HTMLInputElement).checked }); });
 // The text size reaches every window from main (page-prefs.ts), this one included.
@@ -190,14 +188,6 @@ size.addEventListener("input", () => {
   const v = Number(size.value);
   sizeLabel(v);
   void save({ size: v });
-});
-$("start").addEventListener("click", () => {
-  const already = (settings?.consent.version ?? 0) >= CONSENT_VERSION;
-  if (!already && !($("agree") as HTMLInputElement).checked) return;
-  void save({ ...(already ? {} : { consent: { version: CONSENT_VERSION, at: new Date().toISOString() } }), onboarded: true }).then(ok => {
-    // Start did nothing visible: the notice at the top says why (review #84).
-    if (!ok) $("settings-notice").scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  });
 });
 /**
  * Saves a change made in this window. One that can't be saved says why (main's plain sentence, in the notice at the
@@ -211,24 +201,61 @@ function save(patch: SettingsPatch): Promise<boolean> {
     return false;
   });
 }
-/** Something needs the user's agreement first: take them to the checkbox. */
-function focusAgree(): void {
-  const agree = $("agree");
-  agree.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
-  agree.focus({ preventScroll: true });
-}
 
 // ───── The line under the title: recomputed whenever anything it depends on changes ─────
 let failing = 0;
-/** Setup rows that don't fail but need the user: the tagline mentions them once Ember has started. */
+/** Setup rows that don't fail but need the user: the status panel's link under the tagline names them (it opens the pane). */
 let toLook = 0;
 function renderTagline(): void {
+  // The tagline leaves the rows worth a look to the link under it, which goes to them (owner review).
   const text = tagline({
-    failing, look: toLook, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
+    failing, look: 0, onboarded: settings?.onboarded ?? false, phase: agent?.phase ?? null, waitingForTasks: agent?.waitingForTasks === true,
     hidden: presence?.hidden ?? false, overlay: presence?.overlay ?? true, corner: settings?.handlePosition,
   }, platform?.shortcuts.ask.label);
   if ($("tagline").textContent !== text) $("tagline").textContent = text;
+  renderStatus();
 }
+
+// ───── Home's status panel: the still ring, Ember's state, what is on, today, and its actions ─────
+/** The tasks as Task activity last heard them; today's counts from the audit's recent entries. */
+let tasksNow: TaskEntry[] = [];
+let today = { tasks: 0, approvals: 0 };
+const setText = (id: string, text: string) => { if ($(id).textContent !== text) $(id).textContent = text; };
+function renderStatus(): void {
+  const { running, asking } = taskCounts(tasksNow);
+  const s = statusWord({ phase: agent?.phase ?? null, failing, waitingForTasks: agent?.waitingForTasks === true, running, asking });
+  setText("state-word", s.word);
+  $("ring").dataset.ring = s.ring;
+  $("state-word").dataset.ring = s.ring;
+  const v = voice?.state;
+  const listening = !!settings?.wakeWord && !!settings?.voice.consent;
+  setText("whats-on", whatsOnText({
+    voice: !listening ? "off" : v === "muted" ? "muted" : "listening",
+    memory: !!settings?.memory.on && (settings?.memory.consent.version ?? 0) >= MEMORY_VERSION,
+    commands: Object.values(settings?.commands ?? {}).filter(c => c?.on).length,
+    computers: settings?.targets.hosts.length ?? 0,
+    wsl: !!settings?.targets.wsl.on,
+  }));
+  setText("today", todaySummary(tasksNow, today));
+  // Copilot not connected: connecting it is the one prominent action here, and Ask steps back.
+  const notConnected = (agent?.phase === "signed-out" || agent?.phase === "error") && agent?.waitingForTasks !== true;
+  $("p-connect").hidden = !notConnected;
+  $("p-ask").classList.toggle("quiet", notConnected);
+  $("p-waiting").hidden = !asking;
+  const setup = setupLinkText(failing, toLook);
+  $("p-setup").hidden = !setup;
+  setText("p-setup", setup ?? "");
+}
+$("p-setup").addEventListener("click", () => showSection("checks"));
+$("p-connect").addEventListener("click", () => showSection("copilot"));
+// The question is asked in the bubble: this goes to where Home says so, with the keys that answer it.
+$("p-waiting").addEventListener("click", () => {
+  // The filter shows the waiting task first if it hid it (Ended, Working).
+  const at = revealAsking();
+  if (!at) return;
+  at.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+  at.focus({ preventScroll: true });
+});
 
 // ───── Setup check and build facts ─────
 let checksOpened = false;
@@ -291,14 +318,14 @@ function renderChecks(environment: Status["environment"]): void {
     (again ?? ($("checks-fold").querySelector("summary") as HTMLElement)).focus();
   }
   failing = environment.checks.filter(c => c.status === "fail").length;
-  const warn = environment.checks.filter(c => c.status === "warn").length;
   const view = setupView(environment.checks, { opened: checksOpened, beforeStart: checksBeforeStart });
   toLook = view.needing - failing;
   renderSetupBadge(view.needing, failing);
   const note = $("checks-note");
-  // As `ember doctor` says it ("worth a look"), counted in words (copy.ts checksNote).
+  // As `ember doctor` says it ("worth a look"), counted in words (copy.ts checksNote): the same count as the tagline's
+  // and the sidebar's badge (UI audit #6).
   note.textContent = view.note;
-  note.className = `fold-note${failing ? " fail" : warn ? " warn" : ""}`;
+  note.className = `fold-note${failing ? " fail" : view.needing ? " warn" : ""}`;
   // A row needs the user (it fails, holds back reading or using apps, or has a button): the check opens by itself
   // (once), and it shows before Start too, until Start.
   if (view.open) { ($("checks-fold") as HTMLDetailsElement).open = true; checksOpened = true; }
@@ -326,18 +353,28 @@ function render(status: Status): void {
   renderPlatform(status.platform);
   renderChecks(status.environment);
   renderAdmin(status.admin);
+  welcome.status(status);
   const v = status.environment.versions;
-  const facts: [string, string][] = [
-    ["Ember", status.appVersion],
-    ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`],
-    ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json"],
-    ["Log file", status.logFile],
+  // Paths are set in the mono face (they are values to copy); versions and the address read as words (UI audit #15).
+  const facts: [string, string, "path" | "text" | "copy"][] = [
+    ["Ember", status.appVersion, "text"],
+    ["Electron", `${v.electron ?? "?"} (Chromium ${v.chrome ?? "?"}, Node ${v.node})`, "text"],
+    ["Settings", platform?.settingsFile ?? "~/.config/ember/settings.json", "path"],
+    ["Log file", status.logFile, "path"],
     // Somewhere to say what went wrong (review #105): the window never opens links, so the address is there to copy.
-    ["Report a problem", ISSUES_URL],
+    ["Report a problem", ISSUES_URL, "copy"],
   ];
-  $("facts").replaceChildren(...facts.flatMap(([k, val]) => {
+  $("facts").replaceChildren(...facts.flatMap(([k, val, kind]) => {
     const dt = document.createElement("dt"); dt.textContent = k;
-    const dd = document.createElement("dd"); dd.textContent = val;
+    const dd = document.createElement("dd"); dd.className = kind === "path" ? "path" : "plain";
+    dd.append(Object.assign(document.createElement("span"), { textContent: val }));
+    if (kind === "copy") {
+      const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
+      copy.setAttribute("aria-label", `Copy the address ${val}`);
+      // Through main (pages get no clipboard permission), as the sign-in code is copied.
+      copy.addEventListener("click", () => { window.ember.copyText(val).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
+      dd.append(copy);
+    }
     return [dt, dd];
   }));
   $("about-note").textContent = `Ember ${status.appVersion}`;
@@ -430,13 +467,15 @@ function renderAdmin(a: Status["admin"]): void {
   }
   $("retention").textContent = keptWords(a);
   // Locked down, nothing goes to a model service: the data list says so instead of naming one.
-  const send = document.querySelector<HTMLElement>("li[data-icon='send']");
+  // The full consent text's line (first run's short form beside it is welcome.ts's own, drawn from the status).
+  const send = document.querySelector<HTMLElement>("#w-full li[data-icon='send']");
   const sendLine = lockdownSendLine(a);
   if (send) {
     sendAsWritten ??= [...send.childNodes].map(n => n.cloneNode(true));
     send.replaceChildren(...(sendLine ? [Object.assign(document.createElement("b"), { textContent: "When you ask something" }), sendLine] : sendAsWritten.map(n => n.cloneNode(true))));
   }
-  if (a.provider && !sendLine) $("model-service").textContent = `your organisation's model service (${new URL(a.provider).host})`;
+  const service = document.querySelector<HTMLElement>("#w-full #model-service");
+  if (a.provider && !sendLine && service) service.textContent = `your organisation's model service (${new URL(a.provider).host})`;
   for (const [id, key] of [["wake", "wakeWord"], ["speak", "speak"], ["speak-results", "speak"], ["m-conductor", "models"], ["m-worker", "models"], ["memory-on", "memory"], ["routines-on", "routines"]] as const) {
     const input = $(id) as HTMLInputElement | HTMLSelectElement;
     input.disabled = managed.has(key);
@@ -459,8 +498,10 @@ async function refreshActivity(): Promise<void> {
   const key = JSON.stringify(entries.slice(0, 1).map(e => e.t)) + entries.length + dayLabel(new Date().toISOString());
   if (key === shownActivity) return;
   shownActivity = key;
+  today = todayCounts(entries);
+  renderStatus();
   let day = "";
-  let today = 0;
+  let todayRows = 0;
   const items: HTMLLIElement[] = [];
   const words = entryWords(platform);
   for (const e of withCommandShells(entries)) {
@@ -469,7 +510,7 @@ async function refreshActivity(): Promise<void> {
     if (items.length >= 80) break;
     // A heading for each day ("Today", "Yesterday", then dates): the list covers up to a month.
     const label = dayLabel(e.t);
-    if (label === "Today") today++;
+    if (label === "Today") todayRows++;
     if (label !== day) {
       day = label;
       items.push(Object.assign(document.createElement("li"), { className: "day", textContent: day }));
@@ -483,7 +524,7 @@ async function refreshActivity(): Promise<void> {
     items.push(li);
   }
   $("activity").replaceChildren(...items);
-  $("activity-note").textContent = today ? `${today} today` : "";
+  $("activity-note").textContent = todayRows ? `${todayRows} today` : "";
 }
 void refreshActivity();
 /** Main says whether the window can be seen: minimised, X11 still reports the page visible. */
@@ -643,8 +684,8 @@ $("sign-in").addEventListener("click", () => {
   $("cancel-sign-in").focus();
   window.ember.signIn().catch(err => {
     setSigningIn(false);
-    // Not agreed yet: the way forward is the checkbox at the top, so go there.
-    if (settings && settings.consent.version < CONSENT_VERSION) { focusAgree(); return; }
+    // Not agreed yet: the way forward is first run's consent step, so go there.
+    if (settings && settings.consent.version < CONSENT_VERSION) { welcome.toConsent(); return; }
     signInMsg(ipcErrorText(err), true);
   });
 });
@@ -668,7 +709,8 @@ function showCode(userCode: string, uri: string): void {
   const code = Object.assign(document.createElement("code"), { textContent: userCode });
   const copy = Object.assign(document.createElement("button"), { type: "button", className: "btn quiet small", textContent: "Copy" });
   copy.setAttribute("aria-label", `Copy the code ${userCode}`);
-  copy.addEventListener("click", () => { void navigator.clipboard.writeText(userCode).then(() => { copy.textContent = "Copied"; }); });
+  // Main copies it: the page has no clipboard permission (every web permission is denied but the mic window's audio).
+  copy.addEventListener("click", () => { window.ember.copyText(userCode).then(() => { copy.textContent = "Copied"; }, () => { copy.textContent = "Couldn't copy"; }); });
   let where = uri;
   try { const u = new URL(uri); where = `${u.host}${u.pathname}`.replace(/\/$/, ""); } catch { /* shown as given */ }
   // "Enter it at …" stays in one piece: wrapped, the row's next line starts with it (not with a dash).
@@ -710,6 +752,8 @@ window.ember.onSettingsChanged(targetsSettings);
 startTargets();
 // Extensions, plugins and connectors: what main says is added, and the catalogs (only the user adds, here).
 startExtensions();
+// Task activity (in memory only): each task this session, and the status panel's count of those at work.
+startTasks(t => { tasksNow = t; renderStatus(); });
 
 // ───── Conversation (this session only) ─────
 type Entry = Awaited<ReturnType<EmberHomeApi["conversation"]>>[number];
@@ -724,17 +768,37 @@ function conversationRow(e: Entry): HTMLLIElement {
   li.append(who, t, text);
   return li;
 }
+/**
+ * The conversation is part of the page, not a box that scrolls inside it (UI audit #1): its latest messages, and "Show
+ * earlier messages" for the rest (conversation-view.ts). Rows are matched by what they are, so a new message is added in
+ * place and the oldest shown goes from the top; nothing scrolls the page on its own.
+ */
+/** Every message, once "Show earlier messages" was pressed (until the conversation is forgotten). */
+let conversationAllShown = false;
+let conversationAll: Entry[] = [];
 function renderConversation(entries: Entry[]): void {
+  // Forgotten (signed out, another account): back to the latest messages.
+  if (!entries.length) conversationAllShown = false;
+  conversationAll = entries;
   const list = $("conversation");
-  // Only the list scrolls, and only if the reader was at its end (never the page, never away from what they read).
-  const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
-  const same = (a: Entry, b: Entry) => a.t === b.t && a.who === b.who && a.text === b.text;
-  const grows = shownConversation.length <= entries.length && shownConversation.every((e, i) => same(e, entries[i]));
-  if (grows) list.append(...entries.slice(shownConversation.length).map(conversationRow));
-  else list.replaceChildren(...entries.map(conversationRow));
-  shownConversation = entries;
-  if (atEnd) list.scrollTop = list.scrollHeight;
+  const shown = conversationShown(entries, conversationAllShown);
+  const { drop, add } = conversationChange(shownConversation, shown);
+  for (let i = 0; i < drop; i++) list.firstElementChild?.remove();
+  list.append(...add.map(conversationRow));
+  shownConversation = shown;
+  const earlier = $("conversation-earlier") as HTMLButtonElement;
+  const label = earlierLabel(entries.length - shown.length);
+  earlier.hidden = !label;
+  if (label) earlier.textContent = label;
 }
+$("conversation-earlier").addEventListener("click", () => {
+  // Every message from the first, from now on; focus goes to the heading above them (the button goes).
+  conversationAllShown = true;
+  shownConversation = [];
+  $("conversation").replaceChildren();
+  renderConversation(conversationAll);
+  $("conversation-h").focus();
+});
 void window.ember.conversation().then(renderConversation);
 window.ember.onConversation(renderConversation);
 
@@ -842,22 +906,60 @@ function showSection(value: string): void {
   const { section, control } = sectionRequest(value);
   const h = document.getElementById(`${section}-h`);
   if (!h) return;
-  if (isHidden(h)) { pendingSection.hold(value); return; }
+  // Hidden by the page itself (Computers before its list came, the first run): it waits until it shows.
+  if (hiddenHere(h)) { pendingSection.hold(value); return; }
   pendingSection.drop();
+  const inPane = paneOf(h);
+  const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
+  if (opened && inPane) { restoring = null; showPane(inPane, true); }
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
   const field = control ? document.getElementById(control) : null;
   const to = field && !isHidden(field) ? field : target;
   const block = to === field ? "center" : "start";
-  to.scrollIntoView({ block, behavior: calm ? "auto" : "smooth" });
+  // A pane just opened starts at its top (its heading, or the control, in view); within the pane, it scrolls there.
+  if (opened && block === "start") window.scrollTo({ top: 0 });
+  else to.scrollIntoView({ block, behavior: calm || opened ? "auto" : "smooth" });
   to.focus({ preventScroll: true });
   keptInView = { el: to, block, until: performance.now() + 3000 };
-  markCurrent(section);
-  // The scroll this starts (and a page too short to bring the section to the top) doesn't move the mark.
-  pinnedUntil = performance.now() + 900;
 }
-let pinnedUntil = 0;
+
+// ───── Panes: one at a time, as System Settings shows one pane per sidebar item (UI audit #1) ─────
+/** The pane shown: Home until the user picks another. */
+let pane = "home";
+/** A section's pane (its `data-pane`: the page's own sections, not first run's steps, which use the same attribute). */
+const paneOf = (el: Element) => el.closest<HTMLElement>(".home > [data-pane]")?.dataset.pane ?? null;
+/** Shows pane `p` (every other pane's sections are taken off the page) and marks its link. */
+function showPane(p: string, glide = false, remember = true): void {
+  pane = p;
+  if (remember) try { localStorage.setItem("ember.home.pane", p); } catch { /* storage blocked: the window opens on Home */ }
+  for (const s of document.querySelectorAll<HTMLElement>(".home > [data-pane]")) s.classList.toggle("off-pane", s.dataset.pane !== p);
+  for (const a of jumpLinks) {
+    const h = document.getElementById(`${sectionOf(a)}-h`);
+    if (h && paneOf(h) === p) a.setAttribute("aria-current", "true");
+    else a.removeAttribute("aria-current");
+  }
+  placeHighlight(glide);
+  // Home's characters draw only while they show (the observer sees them go).
+  drawSoon();
+}
+/**
+ * The sidebar's selection: one highlight that glides to the link of the pane shown when the user picks it, and is put
+ * there without motion otherwise (the window opening, a resize). Decorative: aria-current says which it is.
+ */
+const highlight = Object.assign(document.createElement("span"), { className: "jump-hl" });
+highlight.setAttribute("aria-hidden", "true");
+$("jump").prepend(highlight);
+function placeHighlight(glide: boolean): void {
+  const a = jumpLinks.find(l => l.getAttribute("aria-current") === "true");
+  if (!a || !a.offsetHeight) { $("jump").classList.remove("has-hl"); return; }
+  $("jump").classList.toggle("glides", glide && $("jump").classList.contains("has-hl"));
+  highlight.style.setProperty("--hl-y", `${a.offsetTop}px`);
+  highlight.style.setProperty("--hl-h", `${a.offsetHeight}px`);
+  $("jump").classList.add("has-hl");
+}
+window.addEventListener("resize", () => placeHighlight(false));
 /**
  * What showSection just focused, brought back into view while sections above it are still appearing (Computers,
  * Commands come after the page has loaded and push it down) for a few seconds, until the user moves on.
@@ -873,7 +975,7 @@ window.ember.onFocusSection(showSection);
 // A section that was hidden when main asked for it shows itself once it appears; a click, key or scroll first drops it.
 new MutationObserver(() => {
   if (!pendingSection.waiting) return;
-  const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !isHidden(h); });
+  const value = pendingSection.take(s => { const h = document.getElementById(`${s}-h`); return !!h && !hiddenHere(h); });
   if (value) showSection(value);
 }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
 for (const type of ["pointerdown", "keydown", "wheel"]) window.addEventListener(type, () => { pendingSection.drop(); keptInView = null; }, { capture: true, passive: true });
@@ -889,33 +991,71 @@ $("jump").addEventListener("click", e => {
 $("jump").addEventListener("focusin", e => {
   (e.target as Element).closest("a")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 });
-function markCurrent(section: string): void {
-  for (const a of jumpLinks) {
-    if (sectionOf(a) === section) a.setAttribute("aria-current", "true");
-    else a.removeAttribute("aria-current");
+// The window opens on the pane last viewed (Apple's settings windows restore it), Home the first time. Kept in this
+// window's own storage: a pane's name only, and a blocked storage just means Home. Computers and Commands show only
+// once their list has come: the window waits on Home for them (without forgetting them), until the user picks a pane.
+let lastPane: string | null = null;
+try { lastPane = localStorage.getItem("ember.home.pane"); } catch { /* storage blocked: Home */ }
+const paneShows = (p: string) => !!document.querySelector(`.home > [data-pane="${CSS.escape(p)}"]:not([hidden])`);
+const known = !!lastPane && !!document.querySelector(`.home > [data-pane="${CSS.escape(lastPane)}"]`);
+/** The pane to reopen once it shows; null once it did, or the user picked another. */
+let restoring: string | null = known && lastPane && !paneShows(lastPane) ? lastPane : null;
+if (known && lastPane && paneShows(lastPane)) showPane(lastPane);
+else showPane("home", false, false);
+// A pane that shows late is reopened; the pane shown going away (its section hidden) leaves Home in its place.
+const panesSeen = new MutationObserver(() => {
+  if (restoring && paneShows(restoring)) { const p = restoring; restoring = null; showPane(p); return; }
+  if (!paneShows(pane)) showPane("home", false, false);
+});
+for (const s of document.querySelectorAll(".home > [data-pane]")) panesSeen.observe(s, { attributes: true, attributeFilter: ["hidden"] });
+// Links that show or step out later (Computers, Commands, a search) move the others, and a text size or window change
+// resizes them: the highlight follows at once.
+const linksMoved = new MutationObserver(() => placeHighlight(false));
+for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
+new ResizeObserver(() => placeHighlight(false)).observe($("jump"));
+
+// ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
+// Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
+const SEARCHED = "h2, h3.sub, label, summary, .hint, .row-note, .intro, .agent-actions > button, .pick-row label";
+function searchItems(): { pane: string; text: string; el: HTMLElement }[] {
+  const items: { pane: string; text: string; el: HTMLElement }[] = [];
+  for (const el of document.querySelectorAll<HTMLElement>(`.home > [data-pane] :is(${SEARCHED})`)) {
+    const p = paneOf(el);
+    if (!p || hiddenHere(el) || !el.textContent?.trim()) continue;
+    items.push({ pane: p, text: el.textContent, el });
   }
+  return items;
 }
-// The window opens at the top: the first section is the one you are in.
-markCurrent(sectionOf(jumpLinks[0]));
-// While scrolling: the link of the section at the top is marked.
-let scrollQueued = false;
-window.addEventListener("scroll", () => {
-  if (scrollQueued || performance.now() < pinnedUntil) return;
-  scrollQueued = true;
-  requestAnimationFrame(() => {
-    scrollQueued = false;
-    // At the end of the page the last sections can't scroll up to the line: the last one in view is marked.
-    const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
-    let current = sectionOf(jumpLinks[0]);
-    for (const a of jumpLinks) {
-      const h = document.getElementById(`${sectionOf(a)}-h`);
-      if (!h || isHidden(h)) continue;
-      const top = h.getBoundingClientRect().top;
-      if (top < 140 || (atEnd && top < innerHeight - 40)) current = sectionOf(a);
-    }
-    markCurrent(current);
-  });
-}, { passive: true });
+let found: ReturnType<typeof searchItems> = [];
+const search = $("search") as HTMLInputElement;
+search.addEventListener("input", () => {
+  const q = search.value;
+  found = searchMatches(q, searchItems());
+  const panes = new Set(found.map(f => f.pane));
+  for (const a of jumpLinks) {
+    const h = document.getElementById(`${sectionOf(a)}-h`);
+    a.classList.toggle("unmatched", !!q.trim() && !(h && panes.has(paneOf(h) ?? "")));
+  }
+  setText("search-msg", searchMessage(q, found.length, panes.size));
+});
+search.addEventListener("keydown", e => {
+  if (e.key === "Escape" && search.value) { e.preventDefault(); search.value = ""; search.dispatchEvent(new Event("input")); return; }
+  if (e.key !== "Enter" || !found.length) return;
+  e.preventDefault();
+  const { pane: p, el } = found[0];
+  showPane(p, true);
+  // A setting in a fold (What Ember did, About) shows once its folds are open.
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
+  // The setting found takes focus (its control, when it is a label), marked until it loses focus.
+  const control = el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : null;
+  const to = control ?? el;
+  const madeFocusable = !control && !to.hasAttribute("tabindex");
+  if (madeFocusable) to.tabIndex = -1;
+  el.classList.add("found");
+  to.addEventListener("blur", () => { el.classList.remove("found"); if (madeFocusable) to.removeAttribute("tabindex"); }, { once: true });
+  to.scrollIntoView({ block: "center", behavior: "auto" });
+  to.focus({ preventScroll: true });
+});
 
 // ───── Apps & privacy ─────
 /** The user's own never-look list holds at most this many (the administrator's come on top). */
@@ -1026,24 +1166,23 @@ $("never-look-defaults").addEventListener("click", () => {
   $("never-look-add").focus();
 });
 
-// ───── Ember on screen (the handle menu's Ask / Stop everything / Hide / Stay put / Quit, reachable by keyboard) ─────
+// ───── Ember on screen (the handle menu's Hide and Stay put as switches, Ask and Stop everything on Home, Quit) ─────
 let presence: Presence | null = null;
 function renderPresence(p: Presence): void {
   presence = p;
-  $("p-hide").hidden = !p.overlay;
-  $("p-follow").hidden = !p.overlay;
-  $("p-hide").textContent = p.hidden ? "Show Ember" : "Hide Ember";
-  $("p-follow").textContent = p.paused ? "Follow my cursor" : "Stay put";
+  // Following the cursor and hiding are states, so they are switches (UI audit #13), shown where Ember is by the cursor.
+  $("follow-row").hidden = !p.overlay;
+  $("hide-row").hidden = !p.overlay;
+  ($("p-hide") as HTMLInputElement).checked = p.hidden;
+  ($("p-follow") as HTMLInputElement).checked = !p.paused;
   const line = !p.overlay
     ? `This desktop session can't show Ember beside your cursor, so it lives in the card in the ${handleCornerText(settings?.handlePosition)}.`
-    : p.hidden
-      ? "Ember is hidden. It shows itself again when it needs to ask you something."
-      : p.paused ? "Ember stays where it is instead of following your cursor." : "Ember follows your cursor.";
+    : p.hidden ? "Ember is hidden. It shows itself again when it needs to ask you something." : "";
   if ($("presence-text").textContent !== line) $("presence-text").textContent = line;
   renderTagline();
 }
-$("p-hide").addEventListener("click", () => { void window.ember.setPresence({ hidden: !(presence?.hidden ?? false) }).then(renderPresence); });
-$("p-follow").addEventListener("click", () => { void window.ember.setPresence({ paused: !(presence?.paused ?? false) }).then(renderPresence); });
+$("p-hide").addEventListener("change", e => { void window.ember.setPresence({ hidden: (e.target as HTMLInputElement).checked }).then(renderPresence); });
+$("p-follow").addEventListener("change", e => { void window.ember.setPresence({ paused: !(e.target as HTMLInputElement).checked }).then(renderPresence); });
 $("p-quit").addEventListener("click", () => { void window.ember.quit(); });
 $("p-ask").addEventListener("click", () => { void window.ember.openAsk(); });
 $("p-stop").addEventListener("click", () => { void window.ember.stopEverything(); });
@@ -1085,6 +1224,9 @@ function renderVoice(v: VoiceStatus): void {
   renderVoiceFix();
   const text = v.detail && v.state === "error" ? `${VOICE_TEXT.error}: ${v.detail}` : v.detail ?? VOICE_TEXT[v.state] ?? v.state;
   $("voice-text").textContent = text;
+  // Off, the switch above says so: no lone "Off" row under it (UI audit #15). Screen readers still hear the change.
+  $("voice-text").parentElement!.hidden = v.state === "off";
+  renderStatus();
   // Teaching Ember a voice: its prompts are what screen readers hear; the voice line only when it changes.
   const said = renderMatch();
   if (said) voiceLive(said);

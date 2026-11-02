@@ -23,7 +23,7 @@ import { workerSystemMessage, guideSystemMessage } from "./worker-persona";
 import { TURN_START_MS, TurnWatch, within } from "./conductor";
 import { asPasteClipboard, ClipboardTimeout, holdsPassword, type ClipboardSnapshot, type PasteClipboard, type TextClipboard } from "./clipboard";
 import { handStep, plainText, stepOf, type HandStep, type Presenter } from "./presenter";
-import type { ActivityEvent } from "./activity";
+import { askedWords, type ActivityEvent } from "./activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
 import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
@@ -1050,11 +1050,15 @@ export class Worker {
   }
 
   /** Asks the user a question of this task (its steps' and its commands'): the wait for the answer isn't the task's time. */
-  private async ask(question: Question, signal: AbortSignal = this.overSignal): Promise<string | null> {
+  private async ask(question: Question, signal: AbortSignal = this.overSignal, asked?: string): Promise<string | null> {
     const ask = () => this.d.confirmer.ask(question, signal);
     // Its card says it waits for the user while the question is up, and then how they answered (never what it asked:
-    // the question shows in the bubble, built by policy).
-    this.activity({ type: "question" });
+    // the question shows in the bubble, built by policy). Home's Task activity gets what it asks in Ember's own words
+    // (`asked`, askedWords: never the question's sentence, which holds typed text and screen names) and where it is
+    // answered: a command's card is in the command window, a consent card in a window of its own.
+    const askedIn = question.panel?.kind === "command" ? "command" : question.panel ? "card" : "bubble";
+    const said = asked ?? (question.panel?.kind === "command" ? askedWords({ kind: "command" }) : question.panel ? askedWords({ kind: "consent" }) : undefined);
+    this.activity({ type: "question", askedIn, ...(said ? { asked: said } : {}) });
     let answer: string | null = null;
     try {
       answer = await (this.clock ? this.clock.waiting(ask) : ask());
@@ -2785,7 +2789,7 @@ export class Worker {
     // On another computer the question says where (§2.4), as every other question of a task does.
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     const question: WhereQuestion = { title: "May I?", context, prompt, options: [{ id: "once", label: "Allow", primary: true }, { id: "deny", label: "Not now" }], task: this.spec.id, ...(where ? { where } : {}), ...(detail ? { detail } : {}) };
-    const answer = await this.ask(question);
+    const answer = await this.ask(question, this.overSignal, askedWords({ kind: "cursor_text", cells: jobs.length, ...(this.window.app ? { app: friendlyApp(this.window.app) } : {}), onDesk: !!this.place }));
     this.audit({ event: "confirm", task: this.spec.id, kind: "cursor_text", app: this.window.app, element: { role: "table cell", name: jobs.map(j => j.cell).join(", ") }, chars: jobs.reduce((n, j) => n + j.text.length, 0), mode: "replace", ...(this.place ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "once") return null;
@@ -3672,7 +3676,7 @@ export class Worker {
     const where = this.d.target ? whereWords(this.d.target) : undefined;
     // Typed text its sentence cuts to two ends goes with it whole: the card shows all of it before Allow works (review #116).
     const question: WhereQuestion = { title: "May I?", context, prompt: decision.prompt, options, task: this.spec.id, ...(where ? { where } : {}), ...(decision.detail ? { detail: decision.detail } : {}), ...(decision.risky ? { risky: true } : {}) };
-    const answer = await this.ask(question);
+    const answer = await this.ask(question, this.overSignal, askedWords({ kind: req.kind, ...(req.app ? { app: friendlyApp(req.app) } : {}), onDesk: !!req.onDesk }));
     this.audit({ event: "confirm", task: this.spec.id, kind: req.kind, app: req.app, element: req.element, ...auditValue(req), ...(req.onDesk ? { onDesk: true } : {}), answer: this.isOver ? "stopped" : answer ?? "expired" });
     if (this.isOver) return STOPPED();
     if (answer === "always" && remember) {

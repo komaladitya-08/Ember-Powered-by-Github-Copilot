@@ -207,6 +207,42 @@ Ember is two places at once, each for one kind of work.
     applies them in one frame on the cards that show. Without a compositor, the corner card shows the task's words
     only, and the conversation always gets the view as words (`viewText`).
 
+## Home: the settings window
+
+Home is an opaque content window in the manner of macOS System Settings: a sidebar of panes with coloured symbol
+tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page that opened on the character picker).
+- **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
+  (headings, switch labels, footnotes, buttons), Enter goes to the first setting found and marks it. The links, most
+  used first: Home, Copilot, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
+  available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
+  rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
+  640 px the links are one row of capsules, the search field first.
+- **Home's status panel** is the window's one HUD part, on `--surface-1` and still: the presence ring round the
+  character (dim, the accent, heavier when a task needs you, red with a notch for a problem; never animated), Ember's
+  state in a few words ("Ready", "Working on 2 tasks", "A task needs you" with **Show the question**, "Not connected",
+  "Needs setting up"), where Ember is and how to ask as a quiet caption, a link to the setup check when a row needs
+  you, then two facts (which of listening, memory and commands are on; today's tasks by outcome and the steps you
+  allowed, from the same tasks Task activity lists) and **Ask Ember…** (the one prominent button; **Connect Copilot…**
+  takes that place while Copilot isn't connected) beside a quiet **Stop everything** and the stop chord.
+- **The conversation** is part of the page, not a box that scrolls inside it: its latest 30 messages, then **Show
+  earlier messages**.
+- **Task activity**: one group per task, the one that needs you first, then those at work, then the rest, newest first.
+  Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then
+  the plan as a checklist (done ticks, the accent dot for now, rings to come), then the timeline: rows of at least
+  44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
+  folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
+  **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
+  by the cards' catalog code. A finished task folds to its head. While a task waits for an answer, a callout in its
+  group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Home never answers. From five tasks, **All**,
+  **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second.
+- **Settings panes** keep System Settings' grouped rows: switches at the trailing edge, a switch's note inside its
+  row (Apps & privacy's **When Ember asks first**), pop-up buttons styled as one (Handle position too), and states
+  shown as switches (**Follow my cursor**, **Hide Ember until it needs me**) rather than buttons. Voice shows its
+  status row only while it says something the switch doesn't. About sets paths in the mono face and the issue
+  address as words with **Copy**.
+- **Motion** (the `--spring-smooth-0`, `--spring-brisk` and `--t-*` tokens): a pane coming into view fades and rises 6 px; a fold's content fades in
+  from 4 px above, its height never animating; the sidebar's fill glides. Calm makes all of it instant.
+
 ## Design system (`app/renderer/shared/ember.css`)
 
 Every window loads one stylesheet of tokens and controls, following Apple's Human Interface
@@ -214,7 +250,7 @@ Guidelines and its current design language (Liquid Glass, macOS 26/27), adapted 
 Pages use the tokens rather than literals, so Increase Contrast and Reduce Transparency reach every surface.
 
 - **Type:** Inter (bundled, SIL OFL 1.1) stands in for SF Pro, with optical sizes and Inter's own
-  tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid; hierarchy
+  tracking. Apple's text styles at a Linux desktop's size (body 14 px) on a 4 px line grid, line heights rounded to whole pixels at every text size; hierarchy
   comes from size, weight and label colour, never italics. Sentence case; no tracked capitals or
   monospace labels. The text size (Settings > Comfort & access: Default, Large 115 %, Larger 130 %)
   scales the type tokens, each page's own px sizes and the heights of its buttons, pop-up buttons and
@@ -251,6 +287,17 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   cards, handle, ask box, status line) is glass: an opaque frost (no backdrop blur: with software
   compositing it would cost a core, and it can't see other apps) with a sheen, a rim lit from the top
   left and layered shadows, and capsule buttons in two sizes (28 and 24 px at the default text size).
+- **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column. A still step indicator
+  (seven 4 px capsules, lit up to the current step, `--accent` and `--hud-dim`), "Step n of 7" in the footnote style,
+  Ember's character on its tile beside its line as the step's large title (148 px on the first step, 76 px after),
+  and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
+  quiet choice (Not now, Skip for now, Cancel), then its one prominent button, with the reason beside it whenever it
+  waits (`aria-describedby`). Rows that need the user, the tries and **Your Ember** are grouped rows on `--surface-1`;
+  the full consent text and the setup rows' details are disclosures (an accent chevron and words) over a
+  `--surface-2` callout. Every state is a symbol and words. Motion: Ember arrives once (0.6 to 1 over 600 ms on the
+  brisk spring, then a happy hop), each step's part comes in from the side it lies on (16 px over 420 ms, Back from the
+  other side) and then holds still, a try's check lands on the reward spring, and the summary's lines arrive 30 ms
+  apart; Calm shows it all at rest.
 - **Catalog cards** (settings › Extensions › Browse): a marketplace's entries as cards on
   `--surface-2` inside their group, in columns of at least 240 px; the name with its kind as a
   neutral tag, the publisher's description (cut to whole words), who and where it comes from in the

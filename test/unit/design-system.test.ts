@@ -51,16 +51,19 @@ const selectors = (list: string): string[] => {
 };
 /** The rules of a stylesheet's `@media (forced-colors: active)` block, as [selectors, declarations]. */
 const forcedRules = (css: string): [string[], string][] => {
-  const at = css.indexOf("@media (forced-colors: active) {");
-  if (at < 0) return [];
-  const open = css.indexOf("{", at);
-  let depth = 0, end = open;
-  for (let i = open; i < css.length; i++) {
-    if (css[i] === "{") depth++;
-    else if (css[i] === "}" && --depth === 0) { end = i; break; }
+  // Every forced-colours block in the sheet (a page may keep one beside each part, as Home does for first run).
+  const rules: [string[], string][] = [];
+  for (let at = css.indexOf("@media (forced-colors: active) {"); at >= 0; at = css.indexOf("@media (forced-colors: active) {", at + 1)) {
+    const open = css.indexOf("{", at);
+    let depth = 0, end = open;
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}" && --depth === 0) { end = i; break; }
+    }
+    const body = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, "");
+    rules.push(...[...body.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [selectors(m[1]), m[2]] as [string[], string]));
   }
-  const body = css.slice(open + 1, end).replace(/\/\*[\s\S]*?\*\//g, "");
-  return [...body.matchAll(/([^{}]+)\{([^}]*)\}/g)].map(m => [selectors(m[1]), m[2]] as [string[], string]);
+  return rules;
 };
 /** Every declaration the forced-colours block gives `selector`. */
 const forced = (css: string, selector: string) => forcedRules(css).filter(([s]) => s.includes(selector)).map(([, d]) => d).join(" ");
@@ -278,7 +281,7 @@ describe("Windows contrast themes (forced colours)", () => {
     }
   });
 
-  it("keeps first run's Start row opaque at the window's foot, so the terms scrolling under it don't show round it", () => {
+  it("draws any cover spread across the window as it is, in the window's colour, so nothing shows round it", () => {
     // What covers the window round a sticky part is a shadow spread across it (a shadow, so the window never scrolls
     // sideways), and the system drops every shadow: each such cover is drawn as it is there, in the window's colour.
     const covers: [string, string][] = [];
@@ -291,16 +294,22 @@ describe("Windows contrast themes (forced colours)", () => {
         covers.push(...selectors(sel).map(s => [page, s] as [string, string]));
       }
     }
-    expect(covers).toContainEqual(["home", "body.first-run .start-row::before"]);
     for (const [page, sel] of covers) {
       const d = forced(css(page), sel);
       expect(d, `${page}: ${sel}`).toContain("forced-color-adjust: none");
       expect(d, `${page}: ${sel}`).toMatch(/box-shadow: [^;]*\d+vmax Canvas[;,]/);
     }
-    // The row itself in the window's colour, with an edge in the text colour.
-    expect(forced(css("home"), "body.first-run .start-row")).toContain("background: Canvas;");
-    expect(forced(css("home"), ".start-row")).toMatch(/outline: 1px solid CanvasText/);
-    expect(forced(css("home"), "body.first-run .start-row::before")).toMatch(/box-shadow: 0 0 0 1px CanvasText,/);
+  });
+
+  it("keeps first run's step indicator, groups and marks apart in system colours (UI audit #7)", () => {
+    const home = css("home");
+    // The step you are on and those before it in the highlight, those to come in grey text: shape and colour, not tint.
+    expect(forced(home, ".w-arc i")).toContain("forced-color-adjust: none");
+    expect(forced(home, ".w-arc i")).toContain("background: GrayText;");
+    expect(forced(home, ".w-arc i.on")).toContain("background: Highlight;");
+    for (const sel of [".w-checks", ".w-tries", ".w-card", ".w-code"]) expect(forced(home, sel), sel).toMatch(/outline: 1px solid CanvasText/);
+    for (const sel of [".w-status::before", ".w-sym", ".w-tick::after", ".w-state::before"]) expect(forced(home, sel), sel).toContain("background: CanvasText;");
+    expect(forced(home, ".w-tick")).toContain("border: 1.5px solid CanvasText;");
   });
 });
 

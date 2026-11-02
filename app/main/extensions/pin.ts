@@ -60,7 +60,10 @@ export function checkPins(pinned: PinnedTool[], served: ServedTool[]): PinnedToo
   return pinned.map(p => (p.changed || now.get(p.name) !== p.hash ? { ...p, changed: true } : p));
 }
 
-/** Read-only by its own say: readOnlyHint true and destructiveHint not true. Anything else is a changing tool. */
+/**
+ * Read-only by its own say: readOnlyHint true, and neither destructiveHint nor openWorldHint true (a tool that reaches
+ * the open world sends what it is given there). Anything else is a changing tool.
+ */
 export function isReadOnly(t: { annotations: ToolHints }): boolean {
-  return t.annotations.readOnlyHint === true && t.annotations.destructiveHint !== true;
+  return t.annotations.readOnlyHint === true && t.annotations.destructiveHint !== true && t.annotations.openWorldHint !== true;
 }

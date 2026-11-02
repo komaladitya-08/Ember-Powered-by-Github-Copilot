@@ -22,14 +22,14 @@
      comes from size, weight and label colour, never italics. Tracking is Inter's own (tighter as text grows). All of
      it grows with the text size (Settings > Comfort & access): main sets html[data-text-size] (page-prefs.ts). */
   --text-scale: 1;
-  --type-large-title: 700 calc(28px * var(--text-scale))/calc(34px * var(--text-scale)) var(--ember-font);
-  --type-title-2: 600 calc(17px * var(--text-scale))/calc(22px * var(--text-scale)) var(--ember-font);
-  --type-title-3: 700 calc(22px * var(--text-scale))/calc(28px * var(--text-scale)) var(--ember-font);
-  --type-headline: 600 calc(14px * var(--text-scale))/calc(20px * var(--text-scale)) var(--ember-font);
-  --type-body: 400 calc(14px * var(--text-scale))/calc(20px * var(--text-scale)) var(--ember-font);
-  --type-callout: 400 calc(13px * var(--text-scale))/calc(18px * var(--text-scale)) var(--ember-font);
-  --type-footnote: 400 calc(12px * var(--text-scale))/calc(16px * var(--text-scale)) var(--ember-font);
-  --type-caption: 500 calc(11px * var(--text-scale))/calc(14px * var(--text-scale)) var(--ember-font);
+  --type-large-title: 700 calc(28px * var(--text-scale))/round(calc(34px * var(--text-scale)), 1px) var(--ember-font);
+  --type-title-2: 600 calc(17px * var(--text-scale))/round(calc(22px * var(--text-scale)), 1px) var(--ember-font);
+  --type-title-3: 700 calc(22px * var(--text-scale))/round(calc(28px * var(--text-scale)), 1px) var(--ember-font);
+  --type-headline: 600 calc(14px * var(--text-scale))/round(calc(20px * var(--text-scale)), 1px) var(--ember-font);
+  --type-body: 400 calc(14px * var(--text-scale))/round(calc(20px * var(--text-scale)), 1px) var(--ember-font);
+  --type-callout: 400 calc(13px * var(--text-scale))/round(calc(18px * var(--text-scale)), 1px) var(--ember-font);
+  --type-footnote: 400 calc(12px * var(--text-scale))/round(calc(16px * var(--text-scale)), 1px) var(--ember-font);
+  --type-caption: 500 calc(11px * var(--text-scale))/round(calc(14px * var(--text-scale)), 1px) var(--ember-font);
 
   /* Labels: Apple's label / secondary / tertiary on a warm off-white. */
   --label: #f5f2ef;
