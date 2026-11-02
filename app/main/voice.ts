@@ -97,6 +97,13 @@ export interface VoiceOptions {
    */
   capiDir?: string;
   /**
+   * How the mic page plays Ember's voice: "context", Web Audio straight to the speakers (the default), or "element",
+   * Web Audio into a media stream played by an <audio> element. Chromium's echo cancellation is documented to cover
+   * media elements and not Web Audio, which matters before barge-in without the wake word (docs/ASSISTANT.md 2.3);
+   * scripts/voice/echo-check.mjs measures both on a real computer. Development builds only, for now (EMBER_TTS_OUTPUT).
+   */
+  playback?: "context" | "element";
+  /**
    * Speech can run on sherpa-onnx's native addon here (default: Windows and macOS, runtime.ts). A voice or speech
    * process that dies before it is ready is then started again on WebAssembly: a damaged model aborts the addon's
    * onnxruntime, which nothing in the process can catch.
@@ -581,11 +588,16 @@ export class VoiceService {
     }
   }
 
+  /** The mic page's address, saying how it plays Ember's voice (VoiceOptions.playback). */
+  private micPage(): string {
+    return pageUrl(path.join(appDir, "renderer", "mic", "index.html"), this.o.playback === "element" ? { playback: "element" } : {});
+  }
+
   private speakerWindow(): Speaker {
     if (this.speaker && !this.speaker.win.isDestroyed()) return this.speaker;
     // The mic page without its audio port: it speaks, and never asks for the microphone.
     const win = hiddenWindow("Ember speech");
-    this.speaker = { win, wc: win.webContents, loaded: win.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))), saying: false };
+    this.speaker = { win, wc: win.webContents, loaded: win.loadURL(this.micPage()), saying: false };
     this.idleSpeaker();
     return this.speaker;
   }
@@ -696,7 +708,7 @@ export class VoiceService {
     mic.webContents.on("render-process-gone", (_e, d) => {
       if (this.mic === mic) { this.o.log.warn("voice.mic_gone", { reason: d.reason }); this.restartLater("The microphone page stopped."); }
     });
-    await mic.loadURL(pageUrl(path.join(appDir, "renderer", "mic", "index.html"))).catch(() => undefined);
+    await mic.loadURL(this.micPage()).catch(() => undefined);
     if (mic.isDestroyed() || this.mic !== mic) return;
     mic.webContents.postMessage(VOICE.port, null, [port2]);
   }

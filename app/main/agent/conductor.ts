@@ -10,6 +10,8 @@
 
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { reminderTime, whenWords, type Reminders } from "./reminders";
+import { MAX_STEPS, routineSteps, type RoutineBook } from "./routines";
 import { defineTool, type CopilotClient, type CopilotSession, type ProviderConfig, type Tool } from "@github/copilot-sdk";
 import { z } from "zod";
 import { hardenedSessionConfig, verifySessionTools } from "./session-config";
@@ -92,6 +94,10 @@ export interface ConductorDeps {
   caps?: PromptCaps;
   /** Long-term memory while it is on: its tools, and a `<memory>` block before each request. Absent: today's tools. */
   memory?: ConductorMemory;
+  /** The user's reminders (reminders.ts): set_reminder, list_reminders and cancel_reminder. Absent: no reminder tools. */
+  reminders?: Reminders;
+  /** The user's routines (routines.ts), while they are on: save_routine, list_routines, run_routine, delete_routine. */
+  routines?: RoutineBook;
   /** list_computers's answer (TargetsForAgent.describeTargets); offered only with caps.targets. */
   listComputers?: () => string;
   /** offer_connect: shows the user a Connect button for a host their words named; returns what to tell the model. */
@@ -145,7 +151,7 @@ const TARGET_ARG = z.string().min(1).max(80);
  * offer_connect are offered (§2.6); without it the tools are today's exactly.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
-export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }): Tool<any>[] {
+export function conductorTools(settings: SettingsStore, describeScreen?: (target?: string) => Promise<string>, startTask?: (goal: string, target?: string) => string, showMe?: (goal: string) => string | Promise<string>, tasks?: ConductorTasks, words: Pick<PlatformWords, "noScreen"> = PLATFORM_WORDS.linux, targets: TargetTools = {}, memory?: { store: ConductorMemory; said: () => string }, reminders?: { store: Reminders; said: () => string; now?: () => number }, routines?: { store: RoutineBook; said: () => string }): Tool<any>[] {
   const taskId = z.string().min(1).max(60).describe("The task's id, from list_tasks");
   const other = targets.caps?.targets === true;
   const noScreen = `Ember can't read the screen in this session (${words.noScreen}). Tell the user.`;
@@ -229,6 +235,78 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
         async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
     ] : []),
+    ...(reminders ? reminderTools(reminders) : []),
+    ...(routines ? routineTools(routines) : []),
+  ];
+}
+
+/**
+ * The routine tools (routines.ts), while routines are on: a routine is saved only from the user's own words, and running
+ * one starts its steps as ordinary requests, so every risky step still asks.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+function routineTools(r: { store: RoutineBook; said: () => string }): Tool<any>[] {
+  return [
+    checkedTool("save_routine", "Save a routine when the user asks you to (\"when I say start my day, open Mail and show today's calendar\"): a name and a few steps, each a request in their own words. Saying the name later runs the steps. One with the same name is replaced.",
+      z.object({
+        name: z.string().min(1).max(60).describe("The routine's name, as the user said it (\"start my day\")"),
+        steps: z.array(z.string().min(1).max(200)).min(1).max(MAX_STEPS).describe("Each step as a request, in the user's words (\"open Mail\")"),
+      }),
+      async ({ name, steps }) => {
+        const saved = r.store.save(name, steps, r.said());
+        return typeof saved === "string" ? saved : `Saved “${saved.name}” with ${saved.steps.length} step${saved.steps.length === 1 ? "" : "s"}. Tell the user in a few words.`;
+      }),
+    checkedTool("list_routines", "List the user's saved routines and their steps.",
+      z.object({}),
+      async () => {
+        const list = r.store.list();
+        return list.length ? list.map(x => `“${x.name}”: ${x.steps.join("; ")}`).join("\n") : "No routines are saved.";
+      }),
+    checkedTool("run_routine", "Run one of the user's saved routines when they say its name or ask for it. Returns its steps to do in order.",
+      z.object({ name: z.string().min(1).max(60).describe("The routine's name") }),
+      async ({ name }) => {
+        const found = r.store.find(name);
+        return found ? routineSteps(found) : `No routine is called “${name.slice(0, 60)}”. Use list_routines, or ask the user.`;
+      }),
+    checkedTool("delete_routine", "Delete a saved routine the user asks you to delete, by its name.",
+      z.object({ name: z.string().min(1).max(60) }),
+      async ({ name }) => {
+        const found = r.store.find(name);
+        return found && r.store.forget(found.id) ? `Deleted “${found.name}”.` : `No routine is called “${name.slice(0, 60)}”.`;
+      }),
+  ];
+}
+
+/**
+ * The reminder tools (reminders.ts): a reminder only tells the user something when it is due, in the user's own words;
+ * it never starts a task. Reminders last while Ember runs.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SDK types tool lists as Tool<any>[]
+function reminderTools(r: { store: Reminders; said: () => string; now?: () => number }): Tool<any>[] {
+  const now = r.now ?? Date.now;
+  return [
+    checkedTool("set_reminder", "Remind the user of something later, when they ask (\"remind me in 20 minutes to call Priya\", \"at 3 pm tell me to stand up\"). Ember shows and says it when it's due; it never acts on it. Use the user's own words for what to remind them of. Give minutes from now, or a clock time. Reminders last while Ember runs: if they ask for one days ahead, say so.",
+      z.object({
+        text: z.string().min(1).max(200).describe("What to remind them of, in their words (\"call Priya\")"),
+        minutes: z.number().int().min(1).max(10_080).optional().describe("Minutes from now"),
+        at: z.string().min(1).max(20).optional().describe("A clock time today or tomorrow, 24-hour \"15:30\" or \"3:30 pm\""),
+      }),
+      async ({ text, minutes, at }) => {
+        const when = reminderTime({ ...(minutes !== undefined ? { minutes } : {}), ...(at !== undefined ? { at } : {}) }, now());
+        if (typeof when === "string") return when;
+        const set = r.store.add(text, when, r.said());
+        if (typeof set === "string") return set;
+        return `Set [${set.id}] for ${whenWords(set.at, now())}. Tell the user in a few words, with the time.`;
+      }),
+    checkedTool("list_reminders", "List the reminders waiting.",
+      z.object({}),
+      async () => {
+        const list = r.store.list();
+        return list.length ? list.map(x => `[${x.id}] ${whenWords(x.at, now())}: ${x.text}`).join("\n") : "No reminders are waiting.";
+      }),
+    checkedTool("cancel_reminder", "Cancel a reminder the user asks you to cancel, by its id from set_reminder or list_reminders.",
+      z.object({ id: z.string().min(1).max(20).describe("The reminder's id, without brackets") }),
+      async ({ id }) => r.store.cancel(id.replace(/^\[|\]$/g, "")) ? `Cancelled ${id}.` : `No reminder has the id ${id}. Use list_reminders to find it.`),
   ];
 }
 
@@ -462,7 +540,7 @@ export class Conductor {
   private settleEnding: ((ended: boolean) => void) | null = null;
 
   constructor(private deps: ConductorDeps) {
-    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools).map(t => t.name);
+    this.toolNames = conductorTools(deps.settings, deps.describeScreen, deps.startTask, deps.showMe, deps.tasks, deps.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools).map(t => t.name);
   }
 
   /** What the user said in the turn under way: a fact saved now counts as theirs only if it is in their words. */
@@ -471,6 +549,18 @@ export class Conductor {
   /** Memory's tools, while memory is on (deps.memory). */
   private get memoryTools(): { store: ConductorMemory; said: () => string } | undefined {
     const store = this.deps.memory;
+    return store ? { store, said: () => this.said } : undefined;
+  }
+
+  /** The routine tools, while routines are on (deps.routines). */
+  private get routineTools(): { store: RoutineBook; said: () => string } | undefined {
+    const store = this.deps.routines;
+    return store ? { store, said: () => this.said } : undefined;
+  }
+
+  /** The reminder tools, when the deps give reminders. */
+  private get reminderTools(): { store: Reminders; said: () => string } | undefined {
+    const store = this.deps.reminders;
     return store ? { store, said: () => this.said } : undefined;
   }
 
@@ -505,7 +595,7 @@ export class Conductor {
     const config = hardenedSessionConfig({
       model: d.model ?? undefined,
       provider: d.provider,
-      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools),
+      tools: conductorTools(d.settings, d.describeScreen, this.guarded(d.startTask), this.guarded(d.showMe), d.tasks, d.words, this.targetTools, this.memoryTools, this.reminderTools, this.routineTools),
       systemMessage: emberSystemMessage(d.words, d.memory ? { ...(d.caps ?? NO_CAPS), memory: true } : d.caps),
       workingDirectory: d.workDir,
       onPermissionRequest: () => ({ kind: "reject", feedback: "Ember's conductor asks for nothing beyond its own tools." }),

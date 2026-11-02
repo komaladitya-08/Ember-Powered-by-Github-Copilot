@@ -23,6 +23,40 @@ export interface PlayerSource {
   stop(): void;
 }
 
+/** The parts of an AudioContext playerAudio() needs (a stand-in in tests). */
+export interface PlayerContext extends PlayerAudio {
+  createMediaStreamDestination(): { stream: unknown };
+}
+
+/** The parts of an <audio> element playerAudio() needs. */
+export interface PlayerElement {
+  srcObject: unknown;
+  play(): Promise<void>;
+}
+
+/**
+ * The audio the player writes to. `element` false: the context's own output, as always. True: a media stream played by
+ * an <audio> element instead, which Chromium's echo cancellation is documented to cover where Web Audio isn't (the
+ * microphone then hears less of Ember's own voice; scripts/voice/echo-check.mjs measures it).
+ */
+export function playerAudio(ctx: PlayerContext, element: boolean, makeElement: () => PlayerElement = () => new Audio()): PlayerAudio {
+  if (!element) return ctx;
+  const dest = ctx.createMediaStreamDestination();
+  const out = makeElement();
+  out.srcObject = dest.stream;
+  // A hidden page plays without a gesture (voice.ts sets the autoplay policy); a refusal is tried again on resume.
+  const play = () => out.play().catch(() => undefined);
+  void play();
+  return {
+    get currentTime() { return ctx.currentTime; },
+    get state() { return ctx.state; },
+    resume: async () => { await ctx.resume(); await play(); },
+    createBuffer: (channels, length, rate) => ctx.createBuffer(channels, length, rate),
+    createBufferSource: () => ctx.createBufferSource(),
+    destination: dest,
+  };
+}
+
 /** A moment between a chunk arriving and its sound, so it never starts in the past (s). */
 const LEAD_S = 0.03;
 

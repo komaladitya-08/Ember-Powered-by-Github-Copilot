@@ -810,6 +810,24 @@ export class Presenter {
   }
 
   /**
+   * Ember's own answer, said without a Copilot turn (the status answer, status.ts): it shows as an answer does, is kept
+   * as one (onFinalAnswer: the conversation and "Read the last answer"), and goes as one does.
+   */
+  say(text: string): void {
+    this.cancelHide();
+    this.guiding = false;
+    this.answering = false;
+    this.asked = null;
+    this.silent = false;
+    this.apply({
+      emotion: "happy", talking: false,
+      bubble: { visible: true, mood: "idle", title: this.name(), thought: clip(text), step: null, streaming: false, actions: [] },
+    }, "take");
+    this.onFinalAnswer?.(text);
+    this.hideLater(Math.min(30000, 6000 + text.length * 50));
+  }
+
+  /**
    * A bubble of Ember's own (NoticeBoard.post): it replaces this presenter's last one and claims the shared bubble as
    * `o.claim` says. With `o.ms` it goes that long after it reaches the screen; without, it stays until it is cleared
    * (its buttons answered, what it said no longer holds), and comes back after anything that covers it meanwhile.

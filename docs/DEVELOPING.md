@@ -228,7 +228,21 @@ arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Ma
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
 one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). “Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
+“OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
+record of its tasks (the step each one is on, how many wait, how the last one went), with no Copilot request, so it
+works offline too. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without
+reading them out, and “read them out again” undoes it (the same switch as **Read finished tasks out loud** under
+**Voice**). “What did I miss?” or “catch me up” names the tasks that finished in the last two hours and
+how each went, from the same record. “Ember, systems check” (or “are you working?”) says whether Copilot is connected,
+whether Ember is listening and speaking, and what is under way, also when Copilot can't be reached. “Remind me in 20 minutes to call Priya” or “at 3 pm, remind me to stand up” sets a
+reminder: when it is due, Ember shows it in its bubble, says it when replies are spoken, and sends a notification if
+you are away. Only your own words set one. Reminders last while Ember runs, unless you turn on **Keep my routines
+and reminders** under **Conversation** (and agree to its note): then they are kept in `routines.json` (mode 0600) and a
+reminder that fell due while Ember was closed is told at the next start. With it on you can also name a routine (“when
+I say start my day, open Mail and show today's calendar”); saying its name runs the steps as if you had just asked each
+one, and Ember still asks before anything risky. Only your own words make a routine. Home lists them with **Delete**,
+and signing out deletes them all.
+“Ember, stop” (or “Hey Ember, stop”, also while Ember is speaking) stops everything; while
 Ember is speaking, “Hey Ember” alone makes it stop talking and listen (needs `parec`); a short request said all
 over its voice isn't sent, so say it again once Ember is quiet. **Ctrl+Alt+M** turns the
 microphone off and on. Listening happens on this computer: no
@@ -302,9 +316,10 @@ macOS' builds, in Electron's utility processes as Ember runs them (`test/smoke/v
 - `asrMs` is what transcribing the request took.
 - The other fields count from when its transcript arrived:
   - `sentMs`: the request handed to Copilot, after the screen read of up to 3 s;
+  - `ackMs`: Ember's acknowledgement handed to the voice (below), when it gave one;
   - `firstTokenMs`: the answer's first words;
   - `firstChunkMs`: its first piece handed to the voice;
-  - `firstAudioMs`: Ember's first sound.
+  - `firstAudioMs`: Ember's first sound (the acknowledgement's, when there was one).
 - A step that didn't happen is left out: a stop, or speaking off.
 
 **Native speech on Linux (development).** `node scripts/voice/fetch-capi.mjs` fetches sherpa-onnx's prebuilt C API
@@ -314,6 +329,21 @@ falling back to WebAssembly if a speech process dies loading, as the addon does 
 and logs say `C API through koffi`. `EMBER_SHERPA_CAPI=<folder> node scripts/voice/bench.mjs` times it against
 WebAssembly. When sherpa-onnx's version changes, run `node scripts/voice/capi-structs.mjs <its c-api.h> <version>`
 to regenerate app/voice/capi-structs.ts. An installed Ember doesn't ship the libraries yet.
+
+**Does Ember hear itself?** Before Ember can be interrupted without "Hey Ember" (docs/ASSISTANT.md 2.3), its own
+voice must not reach its microphone. Ember plays its voice through Web Audio, which Chromium's echo cancellation is
+documented not to cover; `EMBER_TTS_OUTPUT=element` (development builds) plays it through an `<audio>` element
+instead, which it is documented to cover. `node scripts/voice/echo-check.mjs` (after `npm run build` and
+`node scripts/voice/prepare.mjs`) measures both on the computer it runs on: quiet room, then six of Ember's sentences
+per path. It prints how many dB above the room Ember's voice came back, and any wakes, speech onsets or utterances it
+caused (lower is better; `--json out.json` keeps the numbers). Run it with speakers, not headphones, and nobody
+talking; `--fake` only checks the script itself. The recording is deleted when it ends.
+
+When Copilot hasn't started answering a spoken request within 0.7 s, Ember acknowledges it in a few words that fit
+the request ("On it." for something to do, "Let me look." for a question about the screen, "Let me check." for other
+questions, "Let me show you." for "show me how", "Got it." for something to remember), and the answer follows it. A
+request that fits none of these (or isn't in English) gets no acknowledgement: a generic filler helps no one
+(app/main/acknowledge.ts).
 
 A streamed answer is spoken from its first clause once that has at least 25 characters and 4 words ("I opened the
 report,"). Ember doesn't wait for Copilot to finish the whole first sentence (`SpeechStream`, app/voice/tts.ts).
@@ -353,7 +383,7 @@ Then press **Ctrl+Alt+Space** and type a question.
 
 To try Ember offline without Copilot, run the mock model and point Ember at it (development checkouts only: an
 installed Ember ignores every `EMBER_TEST_*`, `EMBER_ADMIN_POLICY`, `EMBER_VOICE_MODELS`, `EMBER_BENCH_LOG`,
-`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER` and `EMBER_SHERPA_CAPI` switch):
+`EMBER_COPILOT_RUNTIME`, `EMBER_VOICE_DUMP`, `EMBER_MEMORY_LOG`, `EMBER_AX_PROVIDER`, `EMBER_TTS_OUTPUT` and `EMBER_SHERPA_CAPI` switch):
 
 ```bash
 node -e 'import("./test/mock-llm/server.mjs").then(m => m.startMockLlm({ port: 18090 })).then(s => console.log(s.baseUrl))' &
@@ -436,6 +466,7 @@ settings window says so), and the restart reads the new policy whole. Every key 
 | `confirmEveryAction` | A click before every action and every command, every time |
 | `allowGrants` | `false` removes "Always in this app", and Ember asks before working in an app even when the user asked for help in it |
 | `features.memory` | `false`: Ember remembers nothing between runs ("Remember what I tell you" off, managed); a memory file already there is left untouched and unused |
+| `features.routines` | `false`: no routines, and reminders end when Ember quits ("Keep my routines and reminders" off, managed); a routines file already there is left untouched and unused. An Ember from before this key reads a policy that has it as broken and locks down, so update Ember first |
 | `features.aiReview` | `false`: no command is sent to the model for review; every command Ember's rules flag asks the user ("Ask only about dangerous commands" off, managed) |
 | `models` | Only these models; or pin the conversation and task models |
 | `provider` | Use the organisation's own endpoint (`openai`, `azure` or `anthropic`) instead of GitHub sign-in; the key is read from `apiKeyFile` (or, without one, from the environment variable `EMBER_PROVIDER_API_KEY`) |

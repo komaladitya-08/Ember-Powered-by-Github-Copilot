@@ -85,7 +85,7 @@ added by #91; Kokoro on Windows and macOS, #94), ~~speaker verification~~ (Voice
 | Action tiers | 0 app APIs (gsettings/D-Bus) → 1 background AT-SPI (`doAction`, `EditableText`, `Value`, `Selection`; never `grabFocus`) → 2 **Ember's desk** → 3 **borrow cursor** (ask, idle ≥ 3 s, abort on input < 100 ms). **Windows and macOS:** tier 0 is dark mode (the registry; System Events) and opening apps (`explorer.exe`; `open -a`); tier 2 is Linux-only (§10 M11) | Cua-style "no foreground" contract |
 | Desk | `Xvnc` (tigervnc-server-minimal) `:N` on a Unix socket + `metacity` (AppStream) + `dbus-run-session` + `at-spi-bus-launcher`; a desk-agent child process with `DISPLAY=:N`; mini-view with `@novnc/novnc` over an IPC↔`net.Socket` bridge. **Windows and macOS:** no desk; `open_on_desk` is never offered (§10 M11) | All in AppStream, no EPEL needed |
 | Voice | Mic in a hidden renderer (echo cancellation on) → 16 kHz `AudioWorklet` → `utilityProcess` running **sherpa-onnx WASM**: keyword spotting ("hey ember", "ember stop"), Silero VAD, streaming Zipformer ASR; second-stage transcript check; 8 s follow-up window. **Windows and macOS:** the same WASM pipeline; models are unpacked in-process, with no system `tar` or `bzip2` (§10 M11) | Native addon needs glibc 2.32; WASM verified |
-| TTS | `speechSynthesis` with `--enable-speech-dispatcher` (espeak-ng), voice chosen by `lang`, played from the mic renderer so echo cancellation removes it; while Ember speaks, a "Hey Ember" its speakers didn't say makes it stop and listen. **Windows and macOS:** the system's own voices; speaker-output rejection (`parec`) is Linux-only, and the settings say so (§10 M11) | 0 voices without the flag; 100 with it |
+| TTS | `speechSynthesis` with `--enable-speech-dispatcher` (espeak-ng), voice chosen by `lang`, played from the mic renderer (Ember's own voice through Web Audio, which Chromium's echo cancellation is documented not to cover: §10 "Voice playback", measured with scripts/voice/echo-check.mjs before barge-in relies on it); while Ember speaks, a "Hey Ember" its speakers didn't say makes it stop and listen. **Windows and macOS:** the system's own voices; speaker-output rejection (`parec`) is Linux-only, and the settings say so (§10 M11) | 0 voices without the flag; 100 with it |
 | Safety boundary | Deterministic **policy engine** in the main process behind one shared `onPreToolUse` + `onPermissionRequest` for all sessions. **SSH, WSL and commands:** each SSH computer gets its own engine with both machines' policies combined, and the agent there checks every step again (gate 2), which can only refuse or ask (§10 M12) | See §5 |
 | Tests | Mock OpenAI-compatible server via BYOK `provider` for deterministic agent tests; per-PR rockylinux:8 container (Xvfb + D-Bus + AT-SPI + GTK fixture); nightly real RHEL 8.4 GNOME Xorg VM. **Windows and macOS:** per-PR `windows-2022` and `macos-15` jobs drive real desktops (a WinForms and an AppKit bench, Notepad, TextEdit); the eval stays Linux-only (§10 M11) | Mock server approach verified with real SDK loops |
 | Packaging | electron-builder **RPM** (+ AppImage); `rpmbuild` wrapper that unsets `LD_LIBRARY_PATH`; autostart entry with `--enable-speech-dispatcher`. **Windows and macOS:** a zip of `Ember\Ember.exe` (Ember's own version resource and icon, unsigned) and `Ember.app` (signed ad hoc) as a zip and a dmg; signing and notarisation are out of scope (§10 M11) | fpm breaks EL8 rpmbuild otherwise |
@@ -532,6 +532,12 @@ Native speech on Linux (docs/ASSISTANT.md 1.1), development builds: sherpa-onnx'
 Piper's first audio 137 ms against WebAssembly's 551 on a 4-thread Xeon. Not yet packaged: shipping it needs the
 libraries in the RPM and AppImage (with their Apache-2.0 and MIT notices) and check-symvers over them.
 
+Voice playback (§2 "TTS" corrected, 2026-11-02): the row said echo cancellation removes Ember's voice. That was
+written for `speechSynthesis`; Ember's own voice now plays through Web Audio, which Chromium's echo cancellation is
+documented not to cover. `EMBER_TTS_OUTPUT=element` (development builds) plays it through an `<audio>` element instead,
+and scripts/voice/echo-check.mjs measures both. Which path ships, and whether barge-in without the wake word is safe,
+waits for that measurement on real laptops.
+
 Voice latency, recognition, a natural voice and a smaller footprint: docs/ASSISTANT.md has the measurements,
 decisions and phases. Nothing in it is built yet.
 
@@ -542,6 +548,16 @@ built.
 Ember's two bodies (docs/DESIGN.md "Two bodies"): background tasks live on their cards in the corner, with how they work, their
 plan and a checked generative view of their result; the cursor's bubble is the conversation, guides and borrowing. Next:
 a background task's questions on its card.
+
+Reminders (the first bounded interjection, after docs/ASSISTANT.md phase 6): the conductor's `set_reminder`,
+`list_reminders` and `cancel_reminder` (app/main/agent/reminders.ts). A reminder is set only from the user's own words
+in that turn (`ownWords`, as memory), is due by a plain timer, is shown and said, and never starts anything. Reminders
+are kept in memory only (nothing new on disk, so no consent change) and end when Ember quits or the user signs out;
+keeping them across restarts needs consent: Routines (app/main/agent/routines.ts) add it as their own card
+(`FEATURE_CONSENT_VERSION.routines`, off by default, admin key `features.routines`, off in LOCKDOWN). With them on,
+reminders are kept in routines.json (0600) and missed ones are told at the next start, and the conductor gains
+`save_routine`, `list_routines`, `run_routine` and `delete_routine`: a routine is saved only from the user's own words,
+and running one starts its steps as ordinary requests, so the policy still asks before every risky step.
 
 ---
 
