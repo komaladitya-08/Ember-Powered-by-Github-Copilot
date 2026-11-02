@@ -70,6 +70,8 @@ export function probeStdio(o: { command: string; args: string[]; env: Record<str
       if (done) return;
       done = true;
       clearTimeout(timer);
+      // The kill switch's signal lives until the next stop: a probe that ended lets go of it (and of this child).
+      o.signal?.removeEventListener("abort", stopped);
       for (const w of waiting.values()) w.no(new Error("ended"));
       try {
         if (o.group && child.pid) process.kill(-child.pid, "SIGTERM");
@@ -152,7 +154,8 @@ export async function probeHttp(o: { url: string; headers: Record<string, string
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), o.timeoutMs ?? 20_000);
   if (o.signal?.aborted) ac.abort();
-  o.signal?.addEventListener("abort", () => ac.abort(), { once: true });
+  const stopped = () => ac.abort();
+  o.signal?.addEventListener("abort", stopped, { once: true });
   let session: string | null = null, id = 0;
   class NeedsAuth extends Error {}
   const post = async (msg: object, wantId?: number): Promise<unknown> => {
@@ -177,5 +180,6 @@ export async function probeHttp(o: { url: string; headers: Record<string, string
     return { ok: false, why: ac.signal.aborted ? "It didn't answer in time." : "It didn't say what it offers." };
   } finally {
     clearTimeout(timer);
+    o.signal?.removeEventListener("abort", stopped);
   }
 }

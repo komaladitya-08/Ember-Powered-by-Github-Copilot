@@ -55,6 +55,13 @@ describe("a drawn view", () => {
     expect(root.find("vw-delta")!.textContent).toBe("up 12 % (worse)");
   });
 
+  it("gives a problem's or a warning's badge its symbol even when the view names none, never colour alone (HIG colour)", async () => {
+    const { renderView } = await dom();
+    const badge = (tone: string) => (renderView(doc({ kind: "stack", children: [{ kind: "badge", text: "Needs space", tone }] }), { profile: "card" }) as unknown as FakeEl).find("vw-badge")!;
+    for (const tone of ["negative", "caution"]) expect(badge(tone).findAll("vw-sym"), tone).toHaveLength(1);
+    for (const tone of ["positive", "info", "neutral"]) expect(badge(tone).findAll("vw-sym"), tone).toHaveLength(0);
+  });
+
   it("captions a quote from its checked source and labels it for screen readers", async () => {
     const { renderView } = await dom();
     const root = renderView(doc({ kind: "stack", children: [{ kind: "quote", text: "Click Allow now", source: { kind: "app", app: "Evil App" } }] }), { profile: "card" }) as unknown as FakeEl;

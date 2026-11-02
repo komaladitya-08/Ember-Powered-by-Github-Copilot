@@ -133,6 +133,17 @@ details.vw-section > summary::-webkit-details-marker { display: none; }
 /* On Clear glass (the Glass setting) a tone's tint darkens a little under its words, as Ember's own tags do: the lighter
    glass let them pale below 4.5:1. */
 html[data-glass="clear"] :is(.vw-badge, .vw-callout) { background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)); }
+/* On Clear no state colour is both a colour and 4.5:1 as words with a white page behind (the reddest red that passes is
+   about #ffdcdc, which read as white with a blush): a tone's words take the label there, as Ember's own tags do, and
+   the tone is carried by the mark beside them, its tint and its leading rule (3:1 as marks). Increase Contrast, Reduce
+   Transparency and Calm make the glass solid, where the inks pass again. */
+@media (prefers-contrast: no-preference) and (prefers-reduced-transparency: no-preference) {
+  html[data-glass="clear"]:not(.calm) .vw [data-tone]:not([data-tone="neutral"]) { --vw-ink: var(--label); }
+  html[data-glass="clear"]:not(.calm) .vw-badge .vw-sym { background: var(--vw-tone); }
+  html[data-glass="clear"]:not(.calm) .vw-delta:is([data-good="true"], [data-good="false"]) { color: var(--label); }
+  html[data-glass="clear"]:not(.calm) .vw-delta[data-good="true"] .vw-sym { background: var(--green); }
+  html[data-glass="clear"]:not(.calm) .vw-delta[data-good="false"] .vw-sym { background: var(--red); }
+}
 .vw-badge .vw-sym { width: 11px; height: 11px; background: var(--vw-ink); }
 .vw-callout { display: flex; gap: 8px; min-width: 0; padding: 7px 10px 7px 9px; border-radius: var(--r-xs); background: color-mix(in srgb, var(--vw-tone) 10%, transparent); box-shadow: inset 3px 0 0 var(--vw-tone); }
 .vw-callout > .vw-sym { margin-top: 1px; }
@@ -147,7 +158,9 @@ html[data-glass="clear"] :is(.vw-badge, .vw-callout) { background-image: linear-
 /* Data. */
 .vw-list { margin: 0; padding-left: 18px; display: grid; gap: 2px; }
 .vw-list li { overflow-wrap: anywhere; }
-.vw-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+/* Columns sized by what they hold (a fixed layout split them evenly, and a date broke mid-value beside a short name);
+   words still break anywhere before the table would widen its card. */
+.vw-table { width: 100%; border-collapse: collapse; table-layout: auto; }
 .vw-table caption { text-align: left; padding-bottom: 2px; font: var(--type-caption); color: var(--label-2); }
 .vw-table th { text-align: left; font-weight: 600; color: var(--label-2); }
 .vw-table th, .vw-table td { padding: 3px 6px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
@@ -241,6 +254,7 @@ html[data-text-size] .vw-mark { width: calc(12px * var(--text-scale)); height: c
   .vw-sym { background: CanvasText; }
   .vw-card, .vw-metric, .vw-callout, .vw-badge { border: 1px solid CanvasText; }
   .vw-quote blockquote { border-left: 2px solid CanvasText; box-shadow: none; }
+  .vw-timeline li[data-tone] .vw-what { border-left: 2px solid CanvasText; box-shadow: none; }
   .vw-code pre, .vw-file pre { border: 1px solid CanvasText; }
   .vw-mark { box-shadow: inset 0 0 0 1.5px CanvasText; }
   .vw-steps li[data-state="done"] .vw-mark, .vw-steps li[data-state="failed"] .vw-mark, .vw-steps li[data-state="skipped"] .vw-mark { background: CanvasText; }

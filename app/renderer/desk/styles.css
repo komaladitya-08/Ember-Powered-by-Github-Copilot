@@ -38,7 +38,7 @@ body.control #screen { cursor: crosshair; }
 
 /* Text size (Settings > Comfort & access; --text-scale in ember.css): the bar's words and buttons grow with the type,
    and main's view.ts grows the window by the bar (deskViewBounds). */
-html[data-text-size] button { font-size: calc(12px * var(--text-scale)); line-height: calc(16px * var(--text-scale)); }
+html[data-text-size] button { font-size: calc(12px * var(--text-scale)); line-height: round(calc(16px * var(--text-scale)), 1px); }
 html[data-text-size] #hide { width: calc(24px * var(--text-scale)); font-size: calc(11px * var(--text-scale)); }
 html[data-text-size] header .dot { width: calc(8px * var(--text-scale)); height: calc(8px * var(--text-scale)); }
 

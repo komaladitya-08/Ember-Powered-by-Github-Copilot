@@ -163,6 +163,23 @@ describe("the hub that carries views to the overlay", () => {
     expect(sent[1].nodes.rows).toMatchObject({ value: 99 });
   });
 
+  it("keeps the card's view moving after a change that changed nothing (a set to the same value)", () => {
+    const { h, sent, advance } = hub();
+    let doc = base();
+    h.set("t1", doc);
+    // The model sets the progress to the value it already has: the view's rev moves on, its nodes don't.
+    doc = okApply(doc, [{ op: "set", id: "rows", props: { value: 10 } }]);
+    h.set("t1", doc);
+    advance(1_000);
+    doc = okApply(doc, [{ op: "set", id: "rows", props: { value: 70 } }]);
+    h.set("t1", doc);
+    advance(1_000);
+    // The page applies what it was sent, in order: it must end on the latest view, not stall at the first.
+    let page: ViewDoc | null = null;
+    for (const p of sent) page = applyViewPatch(page, p) ?? page;
+    expect(page && viewText(page)).toContain("Rows checked: 70 of 120");
+  });
+
   it("gives a page that reloads every view whole, and forgets a view whose card went", () => {
     const { h, sent } = hub();
     h.set("t1", base());

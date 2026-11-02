@@ -565,3 +565,144 @@ describe("views (app/renderer/shared/view.css)", () => {
     expect(viewCss).toContain('[data-series="2"].vw-line { stroke-dasharray: 1.5 3; }');
   });
 });
+
+describe("HIG pass (Apple's Human Interface Guidelines, checked surface by surface)", () => {
+  const page = (p: string) => read(`app/renderer/${p}/styles.css`);
+
+  it("gives every floating glass surface the window's colour in contrast themes, as the bubble has (its gradients are dropped)", () => {
+    expect(forced(page("overlay"), ".task")).toContain("background: Canvas;");
+    expect(forced(page("overlay"), ".status")).toContain("background: Canvas;");
+    expect(forced(page("handle"), ".handle")).toContain("background: Canvas;");
+    for (const sel of ["textarea", ".meta", ".cut", ".tip"]) expect(forced(page("ask"), sel), sel).toContain("background: Canvas;");
+    expect(forced(BUBBLE_CSS, ".ember-bubble")).toContain("background: Canvas;");
+    // A view's coloured timeline rule is a shadow, which the system drops: a real border instead.
+    expect(forced(viewCss, ".vw-timeline li[data-tone] .vw-what")).toContain("border-left: 2px solid CanvasText;");
+  });
+
+  it("keeps line heights on whole pixels at every text size, in every window but the Ask box (which main sizes exactly)", () => {
+    for (const p of ["home", "overlay", "handle", "desk", "command", "prompt"]) expect(page(p), p).not.toMatch(/line-height: calc\(/);
+  });
+
+  it("puts a tone's words in the label on Clear glass, where no state colour is both a colour and 4.5:1, and its mark in the colour", () => {
+    expect(viewCss).toContain('html[data-glass="clear"]:not(.calm) .vw [data-tone]:not([data-tone="neutral"]) { --vw-ink: var(--label); }');
+    expect(viewCss).toContain('html[data-glass="clear"]:not(.calm) .vw-delta[data-good="false"] .vw-sym { background: var(--red); }');
+    // Only while the glass is see-through: Increase Contrast and Reduce Transparency make it solid, where the inks pass.
+    expect(viewCss).toContain("@media (prefers-contrast: no-preference) and (prefers-reduced-transparency: no-preference) {");
+  });
+
+  /**
+   * A small cascade over a stylesheet, enough to say which declaration wins for one element: top-level rules and those in
+   * `@media (forced-colors: active)` or `@media not (forced-colors: active)` blocks, by whether forced colours are on
+   * (other blocks are left out); selectors of type, class, attribute and `:is()` parts with descendant combinators;
+   * specificity, then source order.
+   */
+  type El = { tag: string; classes: string[]; attrs: Record<string, string> };
+  const cascade = (css: string, forcedOn: boolean, chain: El[], prop: string): string | undefined => {
+    const rules: { selector: string; decls: string; order: number }[] = [];
+    const walk = (text: string, active: boolean) => {
+      let i = 0;
+      while (i < text.length) {
+        const open = text.indexOf("{", i);
+        if (open < 0) break;
+        const prelude = text.slice(i, open).replace(/\/\*[\s\S]*?\*\//g, "").trim();
+        let depth = 1, j = open + 1;
+        while (depth && j < text.length) { if (text[j] === "{") depth++; else if (text[j] === "}") depth--; j++; }
+        const body = text.slice(open + 1, j - 1);
+        if (prelude.startsWith("@media")) {
+          const q = prelude.slice(6).trim();
+          const on = q === "(forced-colors: active)" ? forcedOn : q === "not (forced-colors: active)" ? !forcedOn : false;
+          walk(body, active && on);
+        } else if (!prelude.startsWith("@") && active) {
+          for (const sel of selectors(prelude)) rules.push({ selector: sel, decls: body, order: rules.length });
+        }
+        i = j;
+      }
+    };
+    walk(css, true);
+    const simple = /^([a-z]+)|\.([\w-]+)|\[([\w-]+)(?:="([^"]*)")?\]|:is\(([^)]*)\)|:([\w-]+)(\([^)]*\))?/g;
+    /** Whether a compound matches an element, and its specificity (classes, attributes and pseudo-classes; types). */
+    const compound = (c: string, el: El): [boolean, number, number] => {
+      let ok = true, b = 0, t = 0;
+      for (const m of c.matchAll(simple)) {
+        if (m[1]) { t++; ok &&= el.tag === m[1]; }
+        else if (m[2]) { b++; ok &&= el.classes.includes(m[2]); }
+        else if (m[3]) { b++; ok &&= m[4] === undefined ? m[3] in el.attrs : el.attrs[m[3]] === m[4]; }
+        else if (m[5] !== undefined) { const any = m[5].split(",").map(x => compound(x.trim(), el)).find(r => r[0]); b += any ? any[1] : 1; ok &&= !!any; }
+        else { b++; ok = false; } // :hover, :focus-visible and the like: not the state checked
+      }
+      return [ok, b, t];
+    };
+    const matches = (sel: string): number | null => {
+      const parts = sel.replace(/\s*>\s*/g, " ").split(/\s+/).filter(Boolean);
+      let at = chain.length - 1, spec = 0;
+      for (let k = parts.length - 1; k >= 0; k--) {
+        let found = false;
+        for (; at >= 0; at--) {
+          const [ok, b, t] = compound(parts[k], chain[at]);
+          if (ok) { spec += b * 1000 + t; found = true; at--; break; }
+          if (k === parts.length - 1) return null;
+        }
+        if (!found) return null;
+      }
+      return spec;
+    };
+    let best: { spec: number; order: number; value: string } | undefined;
+    for (const r of rules) {
+      const value = new RegExp(`(?:^|;)\\s*${prop}: ([^;]+);`).exec(r.decls)?.[1].trim();
+      if (value === undefined) continue;
+      const spec = matches(r.selector);
+      if (spec === null) continue;
+      if (!best || spec > best.spec || (spec === best.spec && r.order > best.order)) best = { spec, order: r.order, value };
+    }
+    return best?.value;
+  };
+  const riskyTag = (glass: string): El[] => [
+    { tag: "html", classes: [], attrs: { "data-glass": glass } },
+    { tag: "div", classes: ["ember-bubble"], attrs: { "data-mood": "attention", "data-risky": "true" } },
+    { tag: "div", classes: ["eb-head"], attrs: {} },
+    { tag: "span", classes: ["eb-risk"], attrs: {} },
+  ];
+
+  it("fills a risky question's tag with the caution colour on Clear, so it stays unmistakably yellow, but never in a contrast theme", () => {
+    expect(BUBBLE_CSS).toContain('@media not (forced-colors: active) {\n  html[data-glass="clear"] .ember-bubble .eb-risk { color: var(--on-accent, #1d1204); background: var(--yellow, #fff0a0); }\n}');
+    // Clear, no contrast theme: the fill wins over the tags' darkening and the label's colour.
+    expect(cascade(BUBBLE_CSS, false, riskyTag("clear"), "background")).toBe("var(--yellow, #fff0a0)");
+    expect(cascade(BUBBLE_CSS, false, riskyTag("clear"), "color")).toBe("var(--on-accent, #1d1204)");
+    // A contrast theme (review of #135): the tag's words in the text colour on the window's, in every Glass setting,
+    // not the highlight's text on a pill of the text colour (both tokens are system colours there: invisible words).
+    for (const glass of ["clear", "regular", "solid"]) {
+      expect(cascade(BUBBLE_CSS, true, riskyTag(glass), "color"), glass).toBe("CanvasText");
+      expect(cascade(BUBBLE_CSS, true, riskyTag(glass), "background"), glass).toBe("Canvas");
+    }
+    // Regular, no contrast theme: the caution colour as words on its tint, as before.
+    expect(cascade(BUBBLE_CSS, false, riskyTag("regular"), "color")).toBe("var(--yellow, #ffd600)");
+  });
+
+  it("keeps Home's sidebar selection off when its link is out of a search, and grows the sidebar with the text only as far as the window allows (HIG sidebars)", () => {
+    const home = page("home");
+    expect(home).toContain(".jump:not(.has-hl) .jump-hl { display: none; }");
+    // Larger text widens the sidebar, never below 200 px nor past what leaves a pane its 460 px (it scrolled sideways
+    // at 648-700 px with Larger, review of #135); the content starts 28 px past it.
+    expect(home).toContain("html[data-text-size] body:not(.first-run) { --sidebar: min(calc(200px * var(--text-scale)), max(200px, calc(100vw - 460px))); }");
+    expect(home).toContain("html[data-text-size] body:not(.first-run) .home > .jump { width: var(--sidebar); }");
+    expect(home).toContain("html[data-text-size] body:not(.first-run) .home { padding-left: calc(var(--sidebar) + 28px); }");
+    const sidebar = (vw: number, scale: number) => Math.min(200 * scale, Math.max(200, vw - 460));
+    // Up to 660 px it stays the default 200 px; then it grows a pixel for a pixel, leaving a pane its 460 px, until the
+    // text size's own width (measured in real renders at Larger: no pane scrolls sideways at 648, 660, 700 or 720 px).
+    for (const vw of [640, 648, 660]) expect(sidebar(vw, 1.3), `${vw} px`).toBe(200);
+    for (const vw of [700, 720]) expect(vw - sidebar(vw, 1.3), `${vw} px`).toBe(460);
+    expect(sidebar(1100, 1.3)).toBe(260);
+    expect(sidebar(1100, 1)).toBe(200);
+    expect(read("app/renderer/home/index.html")).toContain('<p class="search-none" id="search-none" aria-hidden="true" hidden></p>');
+  });
+
+  it("centres first run's steps in the window's height in a box of one size, so the title stays put from step to step (HIG onboarding)", () => {
+    const home = page("home");
+    expect(home).toMatch(/body\.first-run \.home \{[^}]*min-height: 100vh;[^}]*justify-content: center;/);
+    expect(home).toContain("body.first-run #welcome { min-height: min(560px, calc(100vh - 60px)); }");
+  });
+
+  it("rounds an inner corner concentrically: the command card's command at 6 px inside its 14 px card (HIG concentricity)", () => {
+    expect(page("command")).toMatch(/\.command \{\n {2}margin: 0; padding: 8px 10px; border-radius: var\(--r-xs\);/);
+  });
+});

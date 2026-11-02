@@ -108,6 +108,9 @@ export class VoiceGate {
     if (e.type === "wake" && owner && audio?.length && e.keyword !== BARE_NAME) { this.lookAtWake(e, audio, owner); return; }
     if (e.type !== "utterance" || !owner || !audio?.length) { this.send(e); return; }
     const check = this.printer().print(audio);
+    // It is awaited only when the requests before it are done: a failure meanwhile would be an unhandled rejection,
+    // which ends the voice process. The await below still sees it.
+    check.catch(() => undefined);
     this.queue = this.queue.then(async () => {
       let score: number;
       try {

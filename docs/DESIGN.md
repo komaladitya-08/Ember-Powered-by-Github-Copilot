@@ -242,7 +242,11 @@ Ember is two places at once, each for one kind of work.
 Home is an opaque content window in the manner of macOS System Settings: a sidebar of panes with coloured symbol
 tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page that opened on the character picker).
 - **The sidebar.** **Search settings** sits at its top: typing narrows the links to the panes that hold the words
-  (headings, switch labels, footnotes, buttons), Enter goes to the first setting found and marks it. The links, most
+  (headings, switch labels, footnotes, buttons, and a few other words people use for a pane, so "mic" finds Voice:
+  `SEARCH_ALIASES`, ranked after the settings named by their own words), and says "Nothing found" in the sidebar
+  when none does. Enter goes to the first setting found and marks its row, with its control focused (a group's header
+  or footnote stands for the group: a one-row group's row, else the whole group). The sidebar grows with the text size,
+  so its labels stay on one line, but never past what leaves a pane 460 px (no sideways scroll at 640–720 px). The links, most
   used first: Home, Copilot, Voice, Your Ember, Memory, Apps & privacy, Comfort & access, Computers and Commands (once
   available), Extensions, Setup & about. The current pane's link carries `aria-current`, a fill that glides between
   rows on a click (`--spring-smooth-0`), and in a contrast theme an outline. The window reopens on the last pane. Below
@@ -329,7 +333,11 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
 - **Glass setting** (Settings › Comfort & access › Glass, `settings.glass`, as macOS 27's Liquid
   Glass control): **Clear**, an even smoky tint (0.68) with no plates or halos behind the words,
   just dense enough that near-white labels pass 4.5:1 over a white page; tags' words in the label's
-  colour, Ember's accent as words in a light tint of it (#FFE4CC) and the marks in light tints;
+  colour, Ember's accent as words in a light tint of it (#FFE4CC) and the marks in light tints (a view's toned words
+  take the label too: the reddest red that passes 4.5:1 there is about #FFDCDC, which read as white with a blush, so
+  the tone is carried by its mark, tint and rule); a risky question's tag is filled with Clear's yellow under dark
+  words, so it stays unmistakably the caution colour (not in a contrast theme, where it is the text colour on the
+  window's, edged);
   **Regular** (the default, 0.88); or **Solid**. Reduce Transparency and Calm make it solid,
   Increase Contrast solid with a 1 px light border. Three Clear designs were rendered for the owner
   (a 0.30 body with a dark text halo, the same with heavier weights and an accent-tinted halo, and
@@ -341,7 +349,9 @@ Pages use the tokens rather than literals, so Increase Contrast and Reduce Trans
   changes, hairlines are one device pixel, line heights are whole pixels at every text size, and the
   status line is centred by layout rather than `translateX(-50%)`. Nested corners are
   `max(outer − padding, 6 px)`: the bubble's whole-text panel is 6.
-- **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column. A still step indicator
+- **First run** (settings' `#welcome`, until Start): only its steps show, in a 640 px column (720 px in a window
+  1,000 px wide or more), centred in the window's height in a box of one size (560 px), so the indicator and title stay
+  put from step to step and a short step no longer leaves the window's lower half empty. A still step indicator
   (seven 4 px capsules, lit up to the current step, `--accent` and `--hud-dim`), "Step n of 7" in the footnote style,
   Ember's character on its tile beside its line as the step's large title (148 px on the first step, 76 px after),
   and the step's own part. The buttons follow the step, never stuck to the window's foot: Back leading, the step's
