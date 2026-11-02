@@ -6,7 +6,7 @@
  * worker's and are drawn as plain text.
  */
 
-import { STATUS_WORDS, clockText, stepsWords, summarizeActivity, triedWords, type ActivityItem, type ActivityState, type StepGroup, type TaskEntry } from "../../shared/activity";
+import { STATUS_WORDS, clockText, stepsWords, summarizeActivity, triedWords, type ActivityItem, type ActivityState, type AskedIn, type StepGroup, type TaskEntry } from "../../shared/activity";
 import { HAND_WORDS } from "../../shared/view";
 
 /** The list while no task has run this session. */
@@ -98,6 +98,11 @@ export function droppedText(n: number): string | null {
 /** What the screen reader hears when a task's state changes (once per change, from the polite live region). */
 export function taskAnnouncement(title: string, status: TaskEntry["status"]): string {
   return `${title}: ${STATUS_WORDS[status]}`;
+}
+
+/** Where the question a task waits on is answered (its latest question still waiting); the bubble when not said. */
+export function askedWhere(items: readonly Pick<ActivityItem, "kind" | "state" | "askedIn">[]): AskedIn {
+  return items.findLast(i => i.kind === "question" && i.state === "waiting")?.askedIn ?? "bubble";
 }
 
 /** Which tasks the list shows, once there are many (TASK_FILTER_FROM): all, those that need the user, at work, ended. */

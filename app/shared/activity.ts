@@ -58,11 +58,16 @@ export interface ActivityItem {
   /** The words are the worker's own (a note): drawn as plain secondary text, never spoken as Ember's. */
   model?: true;
   /**
-   * A question's decision as policy wrote it (its sentence up to the "?"): Home's Task activity shows it under the row.
-   * The cards never show it (the bubble asks it).
+   * What a question asked, in Ember's words from the step's kind and app only (agent/activity.ts askedWords: never the
+   * text it would type or names from the screen): Home's Task activity shows it under the row. The cards never do.
    */
   asked?: string;
+  /** Where a question is answered: Ember's bubble, its command window, or a card in its own window. */
+  askedIn?: AskedIn;
 }
+
+/** Where the user answers a question: the bubble (and the keys), the command window's card, or a consent card's window. */
+export type AskedIn = "bubble" | "command" | "card";
 
 /**
  * A task as Home's "Task activity" shows it (TaskManager.activities): its activity, and what its card showed (its

@@ -191,8 +191,12 @@ export class TaskManager {
    * when Ember quits). A task's state reads as on its card.
    */
   activities(): TaskEntry[] {
-    return [...this.logs].reverse().map(([id, { log, task: t }]) => {
+    // A task still in line (or one whose worker couldn't be made) has no log yet: listed with an empty one, so Home
+    // counts every task of the session (the status panel's "earlier" count is the audit's tasks less these).
+    const unlogged = [...this.tasks.values()].filter(t => !this.logs.has(t.id)).map(t => [t.id, { log: new ActivityLog(t.started), task: t }] as const);
+    return [...unlogged.reverse(), ...[...this.logs].reverse()].map(([id, { log, task: t }]) => {
       const activity = log.get();
+      if (t.finished !== null && activity.endedAt === undefined) activity.endedAt = t.finished;
       const status: TaskEntry["status"] = t.status === "cancelled" ? "stopped" : t.status === "running" && activity.asking ? "waiting" : t.status;
       const ended = t.status !== "running" && t.status !== "queued";
       return {

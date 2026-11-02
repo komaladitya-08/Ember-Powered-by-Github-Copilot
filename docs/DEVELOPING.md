@@ -135,8 +135,9 @@ cache (test/temp-folder.ts).
     filter the list. It is kept in memory only, for the tasks with a card and the 20 newest finished ones, and gone at
     quit; main sends it on `tasks:activity` and pushes changes on `tasks:activity-changed`, at most twice a second,
     only to the settings window.
-  - Once Ember is set up, starting it (the app menu entry, `ember`, the Start menu, the Dock) only greets you, unless a
-    setup row needs you (`startView`'s `setupNeeded`): then settings opens. Starting it again while it runs, the
+  - Once Ember is set up, starting it on Linux, Windows or macOS (the app menu entry, `ember`, the Start menu, Ember.app
+    from the Dock or Finder) only greets you, unless a setup row needs you (`startView`'s `setupNeeded`): then settings
+    opens. Starting it again while it runs, the
     settings shortcut, the handle's **Settings…** and `ember --show-settings` open settings.
 - Long answers have **Read all** (counted at the text size you picked): the **Conversation** on the settings window's **Home**
   keeps this session's questions, answers and task results (in memory only; quitting or signing out forgets them).

@@ -1,6 +1,6 @@
 /**
  * Search settings, at the top of Home's sidebar (Apple's System Settings: search filters the sidebar and finds a
- * setting several levels deep). Pure, so it is unit-tested (home-search.test.ts): which of the page's labels match
+ * setting several levels deep). Pure, so it is unit-tested (home-status.test.ts "Search settings"): which labels match
  * what was typed, and what a screen reader hears. Matching is by every word typed, in any order, ignoring case and
  * accents.
  */

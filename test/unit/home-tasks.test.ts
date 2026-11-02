@@ -79,20 +79,25 @@ describe("Task activity's filter (shown from five tasks)", () => {
   });
 });
 
-describe("a question's decision, kept for Home", () => {
-  it("is policy's sentence up to its question mark, never what the step does after it", () => {
-    expect(askedWords("Click “Send” in Mail? It sends “Q3 report” to Priya Shah.")).toBe("Click “Send” in Mail?");
-    expect(askedWords("Let me work in Settings")).toBe("Let me work in Settings");
-    expect(askedWords("")).toBeNull();
-    expect(askedWords(undefined)).toBeNull();
-    expect(askedWords(`Type “${"x".repeat(400)}” in Notes?`)!.length).toBeLessThanOrEqual(160);
+describe("what a question asked, kept for Home (review of PR #125)", () => {
+  it("is Ember's own words from the step's kind and app, never typed text or names from the screen", () => {
+    expect(askedWords({ kind: "click", app: "Mail" })).toBe("Click in Mail?");
+    expect(askedWords({ kind: "text", app: "Mail" })).toBe("Type text in Mail?");
+    expect(askedWords({ kind: "cursor_text", app: "Text Editor" })).toBe("Type with your keyboard in Text Editor?");
+    expect(askedWords({ kind: "cursor_click", app: "Files", onDesk: true })).toBe("Click in Files on my desk?");
+    expect(askedWords({ kind: "cursor_text", app: "Calc", cells: 3 })).toBe("Fill 3 cells in Calc?");
+    expect(askedWords({ kind: "setting" })).toBe("Change a setting?");
+    expect(askedWords({ kind: "command" })).toBe("Run a command?");
+    expect(askedWords({ kind: "consent" })).toBe("Agree to turn this on?");
+    expect(askedWords({ kind: "something-new", app: "Mail" })).toBe("Take a step in Mail?");
   });
 
-  it("goes on the question's row, and the card's rows never show it", () => {
+  it("goes on the question's row with where it is answered, and the card's rows never show it", () => {
     const l = new ActivityLog(0);
-    l.add({ type: "question", asked: "Click “Send” in Mail? It sends it." }, 100);
+    l.add({ type: "question", asked: "Run a command?", askedIn: "command" }, 100);
     l.add({ type: "answer", answer: "declined" }, 200);
-    expect(l.get().items.find(i => i.kind === "question")).toMatchObject({ words: "Asked you: you said not now", asked: "Click “Send” in Mail?" });
-    expect(JSON.stringify(l.card())).not.toContain("Send");
+    expect(l.get().items.find(i => i.kind === "question")).toMatchObject({ words: "Asked you: you said not now", asked: "Run a command?", askedIn: "command" });
+    expect(JSON.stringify(l.card())).not.toContain("Run a command");
   });
 });
+

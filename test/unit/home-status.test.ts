@@ -121,7 +121,8 @@ describe("Home's panes and its Task activity channel", () => {
     expect(IPC.tasksChanged).toBe("tasks:activity-changed");
     expect(TASKS_PUSH_MS).toBe(500);
     expect(MAIN).toContain("ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));");
-    expect(MAIN).toContain("if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []);");
+    expect(MAIN).toContain("const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });");
+    expect(MAIN).toContain("tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };");
     expect(MAIN).toContain("if (next.tasks) tasksShown();");
     expect(preload).toContain("tasks: () => ipcRenderer.invoke(IPC.tasks),");
     expect(preload).toContain("onTasks: fn => listen<TaskEntry[]>(IPC.tasksChanged, fn),");

@@ -95,6 +95,7 @@ import { demoExtensionsApi, demoVariant } from "./extensions-demo";
 import type { ExtensionsApi } from "../shared/extensions";
 import { RoutineBook, routinesFile } from "./agent/routines";
 import { dockMenuItems, jumpListTasks, startView, wantsAsk } from "./launcher";
+import { pushLater } from "./push-later";
 import { askpassInEmber, isAskpassRun } from "../askpass/in-ember";
 
 // SSH's password helper on macOS (review #177): the macOS build refuses node mode, so ssh's askpass wrapper starts
@@ -1367,14 +1368,8 @@ function start(): void {
   // Home's Task activity (in memory only): asked for by the settings window alone, and pushed to it alone when the cards
   // change, at most every TASKS_PUSH_MS (a task's steps can come many a second; a closed window is sent nothing).
   ipcMain.handle(IPC.tasks, guard(() => agent?.taskActivities() ?? []));
-  let tasksTimer: NodeJS.Timeout | null = null;
-  tasksShown = () => {
-    if (tasksTimer || !home || home.isDestroyed()) return;
-    tasksTimer = setTimeout(() => {
-      tasksTimer = null;
-      if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []);
-    }, TASKS_PUSH_MS);
-  };
+  const pushTasks = pushLater(TASKS_PUSH_MS, () => { if (home && !home.isDestroyed()) home.webContents.send(IPC.tasksChanged, agent?.taskActivities() ?? []); });
+  tasksShown = () => { if (home && !home.isDestroyed()) pushTasks(); };
   ipcMain.handle(IPC.signOut, guard(async () => {
     signOuts++;
     signInAbort?.abort();

@@ -10,7 +10,7 @@ import type { TaskEntry } from "../../shared/activity";
 import { PLAN_WORD, type PlanStep } from "../../shared/view";
 import { STATUS_WORDS, ROW_WORD } from "../../shared/activity";
 import { viewNodes } from "../overlay/view";
-import { FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offsetText, offsetWords, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
+import { askedWhere, FILTER_EMPTY, TASK_FILTERS, TASK_FILTER_FROM, filterLabel, filterTasks, type TaskFilter, NOTE_TAG, TASKS_EMPTY, droppedText, offsetText, offsetWords, stepsLine, taskAnnouncement, taskMeta, timelineRows, type TimelineRow } from "./tasks-copy";
 
 const $ = (id: string) => document.getElementById(id)!;
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] => {
@@ -199,6 +199,9 @@ function render(sent: TaskEntry[]): void {
   const waiting = tasks.find(t => t.status === "waiting");
   const body = waiting ? drawn.get(waiting.id)?.node.querySelector(":scope > .task-body") : null;
   asking.hidden = !body;
+  // Its words say where: the bubble (with the keys), the command window, or a consent card's own window.
+  const where = waiting ? askedWhere(waiting.activity.items) : "bubble";
+  for (const s of asking.querySelectorAll<HTMLElement>(":scope > [data-asked-in]")) s.hidden = s.dataset.askedIn !== where;
   if (body && asking.parentElement !== body) body.prepend(asking);
   else if (!body && asking.nextElementSibling !== list) list.before(asking);
   // A task's state, said once when it changes (not on the first list).
@@ -221,6 +224,16 @@ function tick(): void {
     const text = taskMeta(d.entry, now);
     if (d.meta.textContent !== text) d.meta.textContent = text;
   }
+}
+
+/**
+ * Where Home says a waiting question is answered, in view: a filter that hides the waiting task (Working, Ended) goes
+ * back to All first. Null when no task waits.
+ */
+export function revealAsking(): HTMLElement | null {
+  if (!latest.some(t => t.status === "waiting")) return null;
+  if (askingNote.hidden) { filter = "all"; render(given); }
+  return askingNote.hidden ? null : askingNote;
 }
 
 /** Starts Task activity: the list now, and again whenever main pushes it. `onChange` hears every list (the status panel). */

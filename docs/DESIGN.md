@@ -214,10 +214,10 @@ tiles, and one pane at a time beside it (UI audit #1: it was one 5,100 px page t
   Its head is the state symbol, the title, a line of state, clock, hand and place, and its steps in one sentence; then
   the plan as a checklist (done ticks, the accent dot for now, rings to come), then the timeline: rows of at least
   44 px with the time after the task began in tabular figures, a state symbol and Ember's words, steps of one kind
-  folded behind a chevron, a question with its decision under it and how it was answered, the worker's notes tagged
+  folded behind a chevron, a question with what it asked under it in Ember's words (the kind of step and the app, never the typed text or names from the screen) and how it was answered, the worker's notes tagged
   **Note** in the secondary label. Then how it ended: the worker's summary in the secondary label and its view, drawn
   by the cards' catalog code. A finished task folds to its head. While a task waits for an answer, a callout in its
-  group says it is asked in the bubble and names the keys that answer it; Home never answers. From five tasks, **All**,
+  group says where it is asked (the bubble, with the keys that answer it; the command window; or a consent card's window); Home never answers. From five tasks, **All**,
   **Needs you**, **Working** and **Ended** filter it. A working task's clock is text written once a second.
 - **Settings panes** keep System Settings' grouped rows: switches at the trailing edge, a switch's note inside its
   row (Apps & privacy's **When Ember asks first**), pop-up buttons styled as one (Handle position too), and states

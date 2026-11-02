@@ -27,9 +27,10 @@ import { extensionsStatus, startExtensions } from "./extensions";
 import { keptWords, lockdownNotice, lockdownSendLine, turnedOffWords } from "./admin-copy";
 import { PendingSection, sectionRequest } from "./section-request";
 import { followStartRow } from "./start-row";
-import { startTasks } from "./tasks";
+import { revealAsking, startTasks } from "./tasks";
 import { setupLinkText, statusWord, taskCounts, todayCounts, todaySummary, whatsOnText } from "./status-copy";
 import { searchMatches, searchMessage } from "./search-copy";
+import { conversationChange, conversationShown, earlierLabel } from "./conversation-view";
 import type { TaskEntry } from "../../shared/activity";
 
 declare global {
@@ -275,7 +276,9 @@ $("p-setup").addEventListener("click", () => showSection("checks"));
 $("p-connect").addEventListener("click", () => showSection("copilot"));
 // The question is asked in the bubble: this goes to where Home says so, with the keys that answer it.
 $("p-waiting").addEventListener("click", () => {
-  const at = $("tasks-asking");
+  // The filter shows the waiting task first if it hid it (Ended, Working).
+  const at = revealAsking();
+  if (!at) return;
   at.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
   at.focus({ preventScroll: true });
 });
@@ -787,36 +790,33 @@ function conversationRow(e: Entry): HTMLLIElement {
   return li;
 }
 /**
- * The conversation is part of the page, not a box that scrolls inside it (UI audit #1): the latest CONVERSATION_SHOWN
- * messages, and "Show earlier messages" for the rest. Nothing scrolls the page on its own: a new message is added
- * where it goes, never moving what the reader is reading.
+ * The conversation is part of the page, not a box that scrolls inside it (UI audit #1): its latest messages, and "Show
+ * earlier messages" for the rest (conversation-view.ts). Rows are matched by what they are, so a new message is added in
+ * place and the oldest shown goes from the top; nothing scrolls the page on its own.
  */
-const CONVERSATION_SHOWN = 30;
-/** The first message shown (null: every message, once "Show earlier messages" was pressed). */
-let conversationFrom: number | null = 0;
+/** Every message, once "Show earlier messages" was pressed (until the conversation is forgotten). */
+let conversationAllShown = false;
 let conversationAll: Entry[] = [];
 function renderConversation(entries: Entry[]): void {
+  // Forgotten (signed out, another account): back to the latest messages.
+  if (!entries.length) conversationAllShown = false;
   conversationAll = entries;
   const list = $("conversation");
-  // A long session shows its latest messages, the first one shown staying put as more come (no row jumps away); every
-  // message once the earlier ones were asked for. A shorter list (signed out: forgotten) starts again.
-  const latest = Math.max(0, entries.length - CONVERSATION_SHOWN);
-  const from = conversationFrom === null ? 0 : entries.length < shownConversation.length ? latest : Math.max(conversationFrom, 0) || latest;
-  if (conversationFrom !== null) conversationFrom = from;
-  const shown = entries.slice(from);
-  const same = (a: Entry, b: Entry) => a.t === b.t && a.who === b.who && a.text === b.text;
-  const grows = shownConversation.length <= shown.length && shownConversation.every((e, i) => same(e, shown[i]));
-  if (grows) list.append(...shown.slice(shownConversation.length).map(conversationRow));
-  else list.replaceChildren(...shown.map(conversationRow));
+  const shown = conversationShown(entries, conversationAllShown);
+  const { drop, add } = conversationChange(shownConversation, shown);
+  for (let i = 0; i < drop; i++) list.firstElementChild?.remove();
+  list.append(...add.map(conversationRow));
   shownConversation = shown;
   const earlier = $("conversation-earlier") as HTMLButtonElement;
-  earlier.hidden = from === 0;
-  earlier.textContent = from === 1 ? "Show 1 earlier message" : `Show ${from} earlier messages`;
+  const label = earlierLabel(entries.length - shown.length);
+  earlier.hidden = !label;
+  if (label) earlier.textContent = label;
 }
 $("conversation-earlier").addEventListener("click", () => {
   // Every message from the first, from now on; focus goes to the heading above them (the button goes).
-  conversationFrom = null;
+  conversationAllShown = true;
   shownConversation = [];
+  $("conversation").replaceChildren();
   renderConversation(conversationAll);
   $("conversation-h").focus();
 });
@@ -932,7 +932,7 @@ function showSection(value: string): void {
   pendingSection.drop();
   const inPane = paneOf(h);
   const opened = !document.body.classList.contains("first-run") && !!inPane && inPane !== pane;
-  if (opened && inPane) showPane(inPane, true);
+  if (opened && inPane) { restoring = null; showPane(inPane, true); }
   const fold = h.closest("details");
   if (fold) fold.open = true;
   const target = (fold?.querySelector("summary") ?? h) as HTMLElement;
@@ -952,9 +952,9 @@ let pane = "home";
 /** A section's pane (its `data-pane`, or its section's). */
 const paneOf = (el: Element) => el.closest<HTMLElement>("[data-pane]")?.dataset.pane ?? null;
 /** Shows pane `p` (every other pane's sections are taken off the page) and marks its link. */
-function showPane(p: string, glide = false): void {
+function showPane(p: string, glide = false, remember = true): void {
   pane = p;
-  try { localStorage.setItem("ember.home.pane", p); } catch { /* storage blocked: the window opens on Home */ }
+  if (remember) try { localStorage.setItem("ember.home.pane", p); } catch { /* storage blocked: the window opens on Home */ }
   for (const s of document.querySelectorAll<HTMLElement>("[data-pane]")) s.classList.toggle("off-pane", s.dataset.pane !== p);
   for (const a of jumpLinks) {
     const h = document.getElementById(`${sectionOf(a)}-h`);
@@ -1013,14 +1013,27 @@ $("jump").addEventListener("focusin", e => {
   (e.target as Element).closest("a")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 });
 // The window opens on the pane last viewed (Apple's settings windows restore it), Home the first time. Kept in this
-// window's own storage: a pane's name only, and a blocked storage just means Home.
-
+// window's own storage: a pane's name only, and a blocked storage just means Home. Computers and Commands show only
+// once their list has come: the window waits on Home for them (without forgetting them), until the user picks a pane.
 let lastPane: string | null = null;
 try { lastPane = localStorage.getItem("ember.home.pane"); } catch { /* storage blocked: Home */ }
-showPane(lastPane && document.querySelector(`[data-pane="${CSS.escape(lastPane)}"]:not([hidden])`) ? lastPane : "home");
-// Links that show or step out later (Computers, Commands, a search) move the others: the highlight follows at once.
+const paneShows = (p: string) => !!document.querySelector(`[data-pane="${CSS.escape(p)}"]:not([hidden])`);
+const known = !!lastPane && !!document.querySelector(`[data-pane="${CSS.escape(lastPane)}"]`);
+/** The pane to reopen once it shows; null once it did, or the user picked another. */
+let restoring: string | null = known && lastPane && !paneShows(lastPane) ? lastPane : null;
+if (known && lastPane && paneShows(lastPane)) showPane(lastPane);
+else showPane("home", false, false);
+// A pane that shows late is reopened; the pane shown going away (its section hidden) leaves Home in its place.
+const panesSeen = new MutationObserver(() => {
+  if (restoring && paneShows(restoring)) { const p = restoring; restoring = null; showPane(p); return; }
+  if (!paneShows(pane)) showPane("home", false, false);
+});
+for (const s of document.querySelectorAll("[data-pane]")) panesSeen.observe(s, { attributes: true, attributeFilter: ["hidden"] });
+// Links that show or step out later (Computers, Commands, a search) move the others, and a text size or window change
+// resizes them: the highlight follows at once.
 const linksMoved = new MutationObserver(() => placeHighlight(false));
 for (const a of jumpLinks) linksMoved.observe(a, { attributes: true, attributeFilter: ["hidden", "class"] });
+new ResizeObserver(() => placeHighlight(false)).observe($("jump"));
 
 // ───── Search settings: at the top of the sidebar, it narrows the panes to those that hold the words typed, and
 // Enter goes to the first setting found (System Settings' search, HIG/search-fields) ─────
@@ -1051,13 +1064,16 @@ search.addEventListener("keydown", e => {
   if (e.key !== "Enter" || !found.length) return;
   e.preventDefault();
   const { pane: p, el } = found[0];
-  showPane(p);
-  // The setting found takes focus (its control, when it is a label), marked until the next search.
-  for (const old of document.querySelectorAll(".found")) old.classList.remove("found");
-  el.classList.add("found");
+  showPane(p, true);
+  // A setting in a fold (What Ember did, About) shows once its folds are open.
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) d.open = true;
+  // The setting found takes focus (its control, when it is a label), marked until it loses focus.
   const control = el.matches("label") ? el.querySelector<HTMLElement>("input, select") ?? el : el.matches("summary, button") ? el : null;
   const to = control ?? el;
-  if (!control) to.tabIndex = -1;
+  const madeFocusable = !control && !to.hasAttribute("tabindex");
+  if (madeFocusable) to.tabIndex = -1;
+  el.classList.add("found");
+  to.addEventListener("blur", () => { el.classList.remove("found"); if (madeFocusable) to.removeAttribute("tabindex"); }, { once: true });
   to.scrollIntoView({ block: "center", behavior: "auto" });
   to.focus({ preventScroll: true });
 });

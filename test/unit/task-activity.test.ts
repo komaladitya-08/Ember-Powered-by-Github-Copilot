@@ -105,6 +105,17 @@ describe("a failed task's card", () => {
 });
 
 describe("finished tasks' activity, for Home", () => {
+  it("lists a task still waiting its turn too, newest first, so Home counts every task (review of PR #125)", async () => {
+    const { tm, specs } = manager({ maxRunning: 1 });
+    const first = tm.start("Turn on Night Light");
+    await vi.waitFor(() => expect(specs.length).toBe(1));
+    const second = tm.start("Rename the screenshots");
+    const list = tm.activities();
+    expect(list.map(t => [t.id, t.status])).toEqual([[second.id, "queued"], [first.id, "running"]]);
+    expect(list[0].activity).toMatchObject({ items: [], steps: 0 });
+    expect(list[0].activity.endedAt).toBeUndefined();
+  });
+
   it("is kept in memory after the card goes, newest first, and only for the latest twenty", async () => {
     vi.useFakeTimers();
     try {
