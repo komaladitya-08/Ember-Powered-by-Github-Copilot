@@ -19,58 +19,74 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const xvfb = process.platform === "linux" && spawnSync("sh", ["-c", "command -v Xvfb"], { stdio: "ignore" }).status === 0;
 const required = process.env.EMBER_ATSPI_TEST === "1" && process.platform === "linux";
 
-/** The page's script: the real ReasoningBubble, driven through each sequence, sampling its scale and translate every frame. */
+/**
+ * The page's script: the real ReasoningBubble, driven through each sequence. Its look is sampled on the transitions' own
+ * clock (Web Animations: each one paused and sought every 20 ms over 600 ms), not by waiting for frames, so a slow runner,
+ * or one that gives the window no frames for a while, samples the same as a fast one.
+ */
 const PAGE = `
 import { ReasoningBubble } from "./packages/bubble/src/bubble";
 type Sample = { scale: string; translate: string; opacity: number };
-const frame = () => new Promise<void>(r => requestAnimationFrame(() => r()));
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
-async function watch(b: ReasoningBubble, ms: number): Promise<Sample[]> {
+const look = (b: ReasoningBubble): Sample => { const cs = getComputedStyle(b.root); return { scale: cs.scale, translate: cs.translate, opacity: Number(cs.opacity) }; };
+/** Its look every 20 ms of its first ms after the style that starts its transitions, on their own clock. */
+function watch(b: ReasoningBubble, ms: number): Sample[] {
+  look(b);
+  const anims = b.root.getAnimations();
+  for (const a of anims) a.pause();
   const out: Sample[] = [];
-  const end = performance.now() + ms;
-  while (performance.now() < end) {
-    const cs = getComputedStyle(b.root);
-    out.push({ scale: cs.scale, translate: cs.translate, opacity: Number(cs.opacity) });
-    await frame();
+  for (let t = 0; t <= ms; t += 20) {
+    for (const a of anims) a.currentTime = t;
+    out.push(look(b));
   }
+  for (const a of anims) a.finish();
   return out;
 }
-/** Shows a bubble posed as \`before\` (hidden), then a question: in one frame, or its mood a frame before it shows. */
-async function question(before: string, sameFrame: boolean): Promise<Sample[]> {
+/** One frame passing: the style resolved, and what it started 16 ms on. */
+function oneFrame(b: ReasoningBubble): void {
+  look(b);
+  for (const a of b.root.getAnimations()) a.currentTime = 16;
+}
+/** A bubble posed as it is once hidden after \`mood\`: every transition run to its end. */
+function hiddenAs(mood: string, thought: string): { b: ReasoningBubble; host: HTMLElement } {
   const host = document.createElement("div");
   host.style.cssText = "position:absolute;inset:0";
   document.body.append(host);
   const b = new ReasoningBubble(host);
-  b.setMood(before as never);
-  b.setThought("Reading the window");
-  b.setVisible(false);
+  b.setMood(mood as never);
+  b.setThought(thought);
   b.place({ x: 200, y: 120 }, { width: 900, height: 600 }, 60);
-  await sleep(400);
+  look(b);
+  b.setVisible(false);
+  look(b);
+  for (const a of b.root.getAnimations()) a.finish();
+  return { b, host };
+}
+/** Then a question: its mood and the show in one frame, or its mood a frame before. */
+async function question(before: string, sameFrame: boolean): Promise<Sample[]> {
+  const { b, host } = hiddenAs(before, "Reading the window");
+  await sleep(20);
   b.setMood("attention");
   b.setThought("May I click Send in Mail?");
-  if (!sameFrame) await frame();
+  if (!sameFrame) oneFrame(b);
   b.setVisible(true);
   b.place({ x: 200, y: 120 }, { width: 900, height: 600 }, 60);
-  const s = await watch(b, 600);
+  const s = watch(b, 600);
   host.remove();
   return s;
 }
 async function answer(): Promise<Sample[]> {
-  const host = document.createElement("div");
-  host.style.cssText = "position:absolute;inset:0";
-  document.body.append(host);
-  const b = new ReasoningBubble(host);
-  b.setThought("Revenue grew in every region.");
-  b.setVisible(false);
-  b.place({ x: 200, y: 120 }, { width: 900, height: 600 }, 60);
-  await sleep(400);
+  const { b, host } = hiddenAs("idle", "Revenue grew in every region.");
+  await sleep(20);
   b.setVisible(true);
   b.place({ x: 200, y: 120 }, { width: 900, height: 600 }, 60);
-  const s = await watch(b, 600);
+  const s = watch(b, 600);
   host.remove();
   return s;
 }
-(async () => {
+(window as unknown as { start: () => Promise<void> }).start = async () => {
+  // A first run, thrown away: the page's fonts, layout and the bubble's style sheet in place before anything counts.
+  await question("thinking", true);
   const result = {
     thinkingSame: await question("thinking", true),
     thinkingNext: await question("thinking", false),
@@ -79,7 +95,7 @@ async function answer(): Promise<Sample[]> {
     answer: await answer(),
   };
   (window as unknown as { done: unknown }).done = result;
-})();
+};
 `;
 
 const MAIN = `
@@ -87,8 +103,9 @@ const { app, BrowserWindow } = require("electron");
 const path = require("node:path");
 app.whenReady().then(async () => {
   setTimeout(() => app.exit(3), 30_000);
-  const win = new BrowserWindow({ width: 1000, height: 700, show: true, webPreferences: { sandbox: true, contextIsolation: true } });
+  const win = new BrowserWindow({ width: 1000, height: 700, show: true, webPreferences: { sandbox: true, contextIsolation: true, backgroundThrottling: false } });
   await win.loadFile(path.join(__dirname, "page.html"));
+  await win.webContents.executeJavaScript("document.fonts.ready.then(() => { window.start(); return true; })");
   for (let i = 0; i < 200; i++) {
     const r = await win.webContents.executeJavaScript("window.done ?? null");
     if (r) { process.stdout.write("RESULT " + JSON.stringify(r) + "\\n"); app.exit(0); return; }
@@ -150,7 +167,8 @@ describe.skipIf(!required && !xvfb)("the bubble's motion, frame by frame in a re
     ["actingSame", "after working"], ["idleNext", "after an answer"]] as const) {
     it(`brings a question in by its opacity alone, never growing or sliding (${what})`, () => {
       const all = result[key];
-      expect(all.length).toBeGreaterThan(10);
+      // Every 20 ms over 600 ms, on the transitions' own clock.
+      expect(all.length).toBe(31);
       // What can be seen (a frame still at opacity 0 shows nothing).
       const s = all.filter(x => x.opacity > 0.001);
       expect(Math.max(...s.map(scaleOff)), JSON.stringify(s.slice(0, 4))).toBeLessThan(0.001);
