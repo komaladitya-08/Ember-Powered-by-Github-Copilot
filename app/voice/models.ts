@@ -109,6 +109,65 @@ export const NATURAL_VOICE: ModelFile = {
 
 const ALL_MODELS = [...VOICE_MODELS, NATURAL_VOICE];
 
+/** A pinned download that isn't a speech model (the memory model's files): in place and verified like one. */
+export type PinnedFile = ModelDownload & Pick<ModelFile, "bytes" | "license">;
+
+/** Hugging Face's copy of all-MiniLM-L6-v2 as transformers.js exports it for onnxruntime-web, at one fixed revision. */
+const MINILM = "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/751bff37182d3f1213fa05d7196b954e230abad9";
+
+/**
+ * Better recall (docs/MEMORY.md §2): the sentence-embedding model memory uses to match by meaning, so "my manager"
+ * finds "Priya leads the platform team". sentence-transformers' all-MiniLM-L6-v2 (6 layers, 384 dimensions, English),
+ * int8, and its WordPiece vocabulary. It is fetched only when the user asks for it in Settings › Memory, and is used
+ * only while memory is on. On 80 paraphrased questions about 80 remembered facts it found the fact first 83% of the
+ * time, against 80% for bge-small-en-v1.5 and 88% for gte-small, which are half as big again and two to three times
+ * slower (on one WebAssembly thread: about 7 ms a question here, against 19 and 31).
+ */
+export const MEMORY_MODEL: readonly PinnedFile[] = [
+  {
+    name: "Better recall (all-MiniLM-L6-v2, int8)", kind: "file", license: "Apache-2.0",
+    url: `${MINILM}/onnx/model_quantized.onnx`,
+    sha256: "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1", bytes: 22_972_370,
+    target: "all-MiniLM-L6-v2-int8.onnx",
+  },
+  {
+    name: "Better recall's vocabulary (all-MiniLM-L6-v2)", kind: "file", license: "Apache-2.0",
+    url: `${MINILM}/vocab.txt`,
+    sha256: "07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3", bytes: 231_508,
+    target: "all-MiniLM-L6-v2-vocab.txt",
+  },
+];
+
+/** The memory model's size, for its download prompt. */
+export const MEMORY_MODEL_BYTES = MEMORY_MODEL.reduce((n, m) => n + m.bytes, 0);
+
+/** Where the memory model's two files are in `root`. */
+export function memoryModelPaths(root: string): { model: string; vocab: string } {
+  return { model: path.join(root, MEMORY_MODEL[0].target), vocab: path.join(root, MEMORY_MODEL[1].target) };
+}
+
+/** The memory model is in `root` and verified against its pins. */
+export function memoryModelReady(root: string): boolean {
+  return MEMORY_MODEL.every(m => verified(root, m));
+}
+
+/** Fetches the memory model's files into `root` (those not already in place and verified); progress in bytes of both. */
+export async function ensureMemoryModel(root: string, download: Downloader, progress: (done: number, total: number) => void = () => undefined): Promise<{ model: string; vocab: string }> {
+  let done = 0;
+  for (const m of MEMORY_MODEL) {
+    const base = done;
+    await ensureModel(root, m, download, bytes => progress(base + Math.min(bytes, m.bytes), MEMORY_MODEL_BYTES));
+    done += m.bytes;
+    progress(done, MEMORY_MODEL_BYTES);
+  }
+  return memoryModelPaths(root);
+}
+
+/** Deletes the memory model's files and their markers from `root` (Settings › Memory's Remove). */
+export function removeMemoryModel(root: string): void {
+  for (const m of MEMORY_MODEL) for (const f of [marker(root, m), path.join(root, m.target)]) fs.rmSync(f, { force: true, maxRetries: 5 });
+}
+
 /** Downloads `url` to `dest`, reporting bytes so far. */
 export type Downloader = (url: string, dest: string, progress: (bytes: number) => void) => Promise<void>;
 
@@ -130,10 +189,10 @@ export function modelPaths(root: string): ModelPaths {
   return { kws: p("kws"), vad: p("vad"), asr: p("asr"), tts: p("tts"), speaker: p("speaker"), natural: p("natural") };
 }
 
-const marker = (root: string, m: ModelFile) => path.join(root, `.${m.target}.ok`);
+const marker = (root: string, m: Pick<ModelFile, "target">) => path.join(root, `.${m.target}.ok`);
 
 /** In place and verified against the pin it was checked with (a model whose pin changed is fetched again). */
-function verified(root: string, m: ModelFile): boolean {
+function verified(root: string, m: Pick<ModelFile, "target" | "sha256">): boolean {
   try {
     return fs.readFileSync(marker(root, m), "utf8").trim() === m.sha256 && fs.existsSync(path.join(root, m.target));
   } catch {
@@ -280,8 +339,8 @@ export async function ensureModels(root: string, download: Downloader, progress:
   return modelPaths(root);
 }
 
-/** Fetches one optional model (NATURAL_VOICE) into `root` unless it is in place and verified; its folder. */
-export async function ensureModel(root: string, m: ModelFile, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<string> {
+/** Fetches one optional model (NATURAL_VOICE, the memory model's files) into `root` unless it is in place and verified; its path. */
+export async function ensureModel(root: string, m: ModelDownload, download: Downloader, progress: (bytes: number) => void = () => undefined): Promise<string> {
   fs.mkdirSync(root, { recursive: true });
   if (!verified(root, m)) {
     fs.rmSync(marker(root, m), { force: true });

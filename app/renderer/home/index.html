@@ -248,6 +248,14 @@
       <ul class="plain-list" id="memory-list" aria-labelledby="memory-h"></ul>
       <p class="hint" id="memory-hint">Kept on this computer after Ember closes. Ember uses what bears on each request; say “Forget that” or use Forget here.</p>
       <div class="agent-actions"><button type="button" id="memory-forget-all" class="btn quiet" hidden>Forget everything</button></div>
+      <h3 class="sub" id="recall-h" hidden>Better recall</h3>
+      <div class="group" id="recall-group" role="group" aria-labelledby="recall-h" hidden>
+        <p class="agent-line"><i id="recall-dot" class="dot" aria-hidden="true"></i><span id="recall-text"></span></p>
+        <p class="sr" id="recall-live" role="status"></p>
+        <div class="agent-actions"><button type="button" id="recall-download" class="btn quiet" aria-describedby="recall-text">Download</button><button type="button" id="recall-remove" class="btn quiet" aria-describedby="recall-text" hidden>Remove</button></div>
+        <progress id="recall-progress" max="1" value="0" aria-label="Language model downloaded" hidden></progress>
+      </div>
+      <p class="hint" id="recall-hint" hidden>It runs only on this computer, and only while memory is on. What it makes of what Ember remembers stays here with it, and Forget everything deletes that too.</p>
       <h3 class="sub" id="routines-h">Routines and reminders</h3>
       <div class="group">
         <label class="switch-row"><input type="checkbox" id="routines-on" role="switch" aria-describedby="routines-hint"><span>Keep my routines and reminders</span></label>

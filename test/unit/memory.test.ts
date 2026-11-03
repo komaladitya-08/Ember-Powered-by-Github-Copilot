@@ -1,20 +1,24 @@
 /**
  * Ember's long-term memory (app/main/memory): the temporal graph remembers, reinforces and supersedes facts without
  * keeping secrets; recall finds facts by name, by words and across a hop; the sleep-time pass tidies without losing
- * what the user said; and the file stays the user's alone and survives a bad write.
+ * what the user said; the file stays the user's alone and survives a bad write; and with Better recall's model, recall
+ * finds what is asked for in other words (the benchmark), and without it is exactly what it was.
  */
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { consolidate } from "../../app/main/memory/consolidate";
 import { factLine, memoryBlock } from "../../app/main/memory/format";
-import { MemoryGraph, type GraphClock } from "../../app/main/memory/graph";
+import { SEMANTIC_K } from "../../app/main/memory/embed";
+import { MemoryGraph, type EntityKind, type GraphClock } from "../../app/main/memory/graph";
 import { memoryRefusal } from "../../app/main/memory/guard";
-import { personalizedPageRank, recall } from "../../app/main/memory/recall";
+import { SEMANTIC_FLOOR, personalizedPageRank, recall } from "../../app/main/memory/recall";
 import { memoryFile } from "../../app/main/memory/store";
 import { nameKey, similarity, terms } from "../../app/main/memory/text";
+import { MEMORY_MODEL } from "../../app/voice/models";
 
 /** A clock that starts on 1 October 2026 and moves only when told, with ids f1, f2… and e1, e2…. */
 function clock(start = "2026-10-01T09:00:00.000Z") {
@@ -277,5 +281,87 @@ describe("the memory file", () => {
     file.save(new MemoryGraph());
     file.erase();
     expect(fs.existsSync(file.path)).toBe(false);
+  });
+});
+
+describe("recall by meaning (Better recall's benchmark, docs/MEMORY.md §2)", () => {
+  type Question = { q: string; want: string[]; kind: "paraphrase" | "keyword" | "none" };
+  const bench = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/memory-bench.json"), "utf8")) as { facts: { id: string; text: string; about: { name: string; kind?: EntityKind }[]; predicate?: string }[]; questions: Question[] };
+  const fixture = JSON.parse(fs.readFileSync(path.resolve("test/fixtures/memory-bench-semantic.json"), "utf8")) as { model: string; matches: [string, number][][] };
+  const now = new Date("2026-10-02T00:00:00Z");
+
+  /** The benchmark's facts with their own ids (f01…), as scripts/memory/bench.mjs builds them. */
+  function benchGraph(): MemoryGraph {
+    let next = 0;
+    let entities = 0;
+    const c: GraphClock = { now: () => new Date("2026-10-01T00:00:00Z"), id: p => (p === "f" ? bench.facts[next++].id : `e${String(entities++).padStart(3, "0")}`) };
+    const g = new MemoryGraph(undefined, c);
+    for (const f of bench.facts) g.add({ text: f.text, about: f.about, source: "user", ...(f.predicate ? { predicate: f.predicate } : {}) });
+    return g;
+  }
+  /** What the vector index hands recall for question `i` (VectorIndex.search: the best SEMANTIC_K at the floor or above). */
+  const semanticFor = (i: number) => new Map(fixture.matches[i].filter(([, s]) => s >= SEMANTIC_FLOOR).slice(0, SEMANTIC_K));
+
+  /** recall@1 and recall@5 of each kind of question, with the model's matches or without. */
+  function score(withModel: boolean) {
+    const g = benchGraph();
+    const out: Record<string, { at1: number; at5: number; n: number }> = {};
+    bench.questions.forEach((q, i) => {
+      const got = recall(g, q.q, { k: 6, now, ...(withModel ? { semantic: semanticFor(i) } : {}) }).map(r => r.fact.id);
+      const r = (out[q.kind] ??= { at1: 0, at5: 0, n: 0 });
+      r.n++;
+      if (q.want.includes(got[0])) r.at1++;
+      if (got.slice(0, 5).some(id => q.want.includes(id))) r.at5++;
+    });
+    return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, { at1: v.at1 / v.n, at5: v.at5 / v.n, n: v.n }]));
+  }
+
+  it("was made with the pinned model, for every question", () => {
+    expect(fixture.model).toBe(MEMORY_MODEL[0].sha256);
+    expect(fixture.matches).toHaveLength(bench.questions.length);
+    expect(bench.questions.filter(q => q.kind === "paraphrase").length).toBeGreaterThanOrEqual(50);
+  });
+
+  it("finds what the user asks for in other words: \"my manager\" finds \"Priya leads the platform team\"", () => {
+    const g = benchGraph();
+    const i = bench.questions.findIndex(q => q.q === "Who is my manager?");
+    // By words alone, "manager" finds the password manager.
+    expect(recall(g, "Who is my manager?", { now }).map(r => r.fact.text)).toEqual(["The user's password manager is Bitwarden"]);
+    expect(recall(g, "Who is my manager?", { now, semantic: semanticFor(i) })[0].fact.text).toBe("Priya leads the platform team the user is on");
+  });
+
+  it("finds far more paraphrased facts with the model than without (recall@1 and @5)", () => {
+    const lexical = score(false).paraphrase;
+    const semantic = score(true).paraphrase;
+    // Measured: 9% and 11% without; 84% and 96% with.
+    expect(lexical.at1).toBeLessThan(0.15);
+    expect(semantic.at1).toBeGreaterThanOrEqual(0.8);
+    expect(semantic.at5).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("loses nothing on questions in the facts' own words", () => {
+    const lexical = score(false).keyword;
+    const semantic = score(true).keyword;
+    expect(lexical.at1).toBe(1);
+    expect(semantic.at1).toBe(lexical.at1);
+    expect(semantic.at5).toBe(lexical.at5);
+  });
+
+  it("is exactly the lexical recall it was without the model, score for score", () => {
+    const g = benchGraph();
+    const all = (o: () => object) => bench.questions.map(q => recall(g, q.q, { k: 8, now, ...o() }).map(r => [r.fact.id, r.score]));
+    const lexical = all(() => ({}));
+    // The SHA-256 of origin/main's recall (before Better recall) over the same questions.
+    expect(crypto.createHash("sha256").update(JSON.stringify(lexical)).digest("hex")).toBe("af00b290595172f40a92f4ce70dd633d2badc219c87ec9fe4bfaa5d52d5b98d7");
+    expect(all(() => ({ semantic: new Map() }))).toEqual(lexical);
+    expect(all(() => ({ semantic: undefined }))).toEqual(lexical);
+  });
+
+  it("counts a match at the floor or below as no match by meaning", () => {
+    const g = benchGraph();
+    const texts = (semantic: Map<string, number>) => recall(g, "Who is my manager?", { now, semantic }).map(r => r.fact.text);
+    expect(texts(new Map([["f01", SEMANTIC_FLOOR]]))).toEqual(["The user's password manager is Bitwarden"]);
+    expect(texts(new Map([["f01", SEMANTIC_FLOOR - 0.1]]))).toEqual(["The user's password manager is Bitwarden"]);
+    expect(recall(g, "Make it so", { now, semantic: new Map([["f01", SEMANTIC_FLOOR]]) })).toEqual([]);
   });
 });

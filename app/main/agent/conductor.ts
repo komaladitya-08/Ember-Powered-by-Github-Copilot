@@ -126,8 +126,8 @@ export interface TargetTools {
 export interface ConductorMemory {
   /** Saves a fact; `said`: what the user said this turn (whose words make the fact theirs). What to tell the model. */
   remember(fact: string, about: { name: string; kind?: string }[], said: string, replaces?: string): string;
-  /** The `<memory>` block for `query` ("" when nothing bears on it). */
-  context(query: string, history?: boolean): string;
+  /** The `<memory>` block for `query` ("" when nothing bears on it): at once, or once Better recall's match is in. */
+  context(query: string, history?: boolean): string | Promise<string>;
   forget(id: string): boolean;
 }
 
@@ -238,7 +238,7 @@ export function conductorTools(settings: SettingsStore, describeScreen?: (target
           query: z.string().min(2).max(300).describe("What to look for, in a few words"),
           history: z.boolean().optional().describe("Also what used to be true"),
         }),
-        async ({ query, history }) => memory.store.context(query, history) || "Nothing remembered about that."),
+        async ({ query, history }) => (await memory.store.context(query, history)) || "Nothing remembered about that."),
       checkedTool("forget_memory", "Forget a remembered fact the user asked you to forget, by its id from <memory> or recall (\"f3a9…\").",
         z.object({ id: z.string().min(1).max(40).describe("The fact's id, without brackets") }),
         async ({ id }) => memory.store.forget(id.replace(/^\[|\]$/g, "")) ? `Forgot ${id}.` : `Nothing remembered has the id ${id}. Use recall to find it.`),
@@ -852,7 +852,7 @@ export class Conductor {
     this.unstarted.push(text);
     // What Ember remembers that bears on the request (while memory is on): before it, as information.
     let remembered = "";
-    try { remembered = this.deps.memory?.context(text) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
+    try { remembered = (await this.deps.memory?.context(text)) ?? ""; } catch (err) { this.deps.log.warn("conductor.memory_failed", { err: err instanceof Error ? err.message : String(err) }); }
     const routines = this.routinesLine(text);
     const parts = [
       ...(reports.length ? [`<task_results untrusted="true">\n${reports.map(r => r.replace(/</g, "‹")).join("\n")}\n</task_results>`] : []),

@@ -22,7 +22,7 @@ import * as bubbleCopy from "../../app/renderer/overlay/target-copy";
 import type { TargetSummary } from "../../app/shared/targets";
 import type { Settings } from "../../app/main/settings";
 import type { PromptCard } from "../../app/shared/remote-ui";
-import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, providerConsentText, providerHint, providerTestText } from "../../app/renderer/home/copy";
+import { PROVIDER_NO_KEYRING, PROVIDER_WORDS, betterRecallDownloadLabel, betterRecallText, providerConsentText, providerHint, providerTestText } from "../../app/renderer/home/copy";
 
 describe("settings window words", () => {
   it("counts model calls and tokens the way people say them", () => {
@@ -842,5 +842,19 @@ describe("the Model provider group's words (Copilot section)", () => {
     expect(page).not.toContain('fill("byok-key"');
     expect(page.match(/ field\.value = /g)).toHaveLength(1);
     expect(page).toContain('field.value = ""');
+  });
+});
+
+describe("Better recall's download prompt (Settings › Memory, docs/MEMORY.md §2)", () => {
+  const bytes = 23_203_878;
+  it("says what the download is, how big, and that it runs on this computer", () => {
+    expect(betterRecallText({ state: "absent", bytes })).toBe("Download a 23 MB language model that runs on this computer, so Ember finds what you told it when you ask in other words.");
+    expect(betterRecallDownloadLabel(bytes)).toBe("Download (23 MB)");
+  });
+
+  it("says how it is going, that it is on, and why a download failed, in one plain sentence", () => {
+    expect(betterRecallText({ state: "downloading", bytes, done: 1000 })).toBe("Downloading the language model…");
+    expect(betterRecallText({ state: "ready", bytes })).toBe("On: a language model on this computer matches what you ask with what Ember remembers, even in other words.");
+    expect(betterRecallText({ state: "absent", bytes, failed: "The download didn't finish. Check the network and try again." })).toBe("The download didn't finish. Check the network and try again.");
   });
 });

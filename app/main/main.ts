@@ -43,7 +43,7 @@ import { AskWindow, MAC_SETTLE_MS, WAIT_TIP_OPENINGS, showsWaitTip } from "./ask
 import { focusBeforeNow, openAskInOrder, userWindowsNow } from "./ask-open";
 import { notificationBody } from "./notification";
 import { askSees } from "./ask-sees";
-import { VoiceService, voicePermissions } from "./voice";
+import { VoiceService, electronDownloader, voicePermissions } from "./voice";
 import type { VoiceEvent } from "../voice/engine";
 import { VOICE_MODELS, VOICE_MODELS_BYTES, missingModels, modelsBytes, modelsReady } from "../voice/models";
 import { doctorChecks, formatDoctor, type DoctorProbes } from "./doctor";
@@ -91,6 +91,8 @@ import { hello, keysLine } from "./hello";
 import { TurnLatency } from "./turn-latency";
 import { ACK_MS, acknowledgement, afterAck } from "./acknowledge";
 import { MemoryService } from "./memory/service";
+import { BetterRecall } from "./memory/better-recall";
+import { FEATURE_CONSENT_VERSION } from "../shared/consent";
 import { ExtensionsService } from "./extensions/service";
 import { registerExtensionsIpc } from "./extensions-ipc";
 import { registerProviderIpc } from "./provider-ipc";
@@ -1137,6 +1139,8 @@ function start(): void {
     // Where a request goes when it names no computer: the picker's choice, as a chip (§8.1).
     const askTarget = () => { try { return targets?.summaries().find(t => t.active) ?? null; } catch { return null; } };
     askAsked = asked;
+    // A request is likely: Better recall's model loads meanwhile, if it isn't (memory/embed.ts).
+    betterRecallRef?.semantic.warm();
     // Linux holds the keyboard, so the screen is read first, as always. Windows and macOS can't: the box shows first,
     // and the screen is read after it, of the window the user was in, told what had the keyboard there (ask-open.ts).
     openAskInOrder({
@@ -1162,7 +1166,10 @@ function start(): void {
   let borrowRef: CursorBorrow | null = null;
   let deskViewRef: DeskView | null = null;
   let extensionsRef: ExtensionsService | null = null;
+  let betterRecallRef: BetterRecall | null = null;
   const killSwitch = new KillSwitch(() => [
+    // Better recall's indexing stops, and its memory process ends (the next question or change starts it again).
+    { name: "memory", stop: () => betterRecallRef?.semantic.stop() },
     { name: "borrow", stop: () => borrowRef?.stop() },
     { name: "speech", stop: () => voice?.hush() },
     // A request still being spoken is dropped, not sent after Stop.
@@ -1262,8 +1269,24 @@ function start(): void {
   // Long-term memory (docs/MEMORY.md): memory.json beside the settings, used only while the user has it on and the
   // organisation allows it. Settings lists it; nothing is read from the file until something asks.
   const memoryAllowed = () => policy.features.memory !== false;
-  const memory = new MemoryService({ dir: userData, log: log.child("memory"), onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
+  // Better recall (memory/better-recall.ts): matching by meaning once the user downloads its model in Settings › Memory,
+  // in the "Ember memory" utility process, used only while memory is on.
+  const memoryOn = () => memoryAllowed() && settings.get().memory.on && settings.get().memory.consent.version >= FEATURE_CONSENT_VERSION.memory;
+  const betterRecall = new BetterRecall({
+    dir: userData, modelsRoot: path.join(userData, "models"), log: log.child("memory"), download: electronDownloader, memoryOn,
+    fork: () => {
+      const p = utilityProcess.fork(path.join(__dirname, "memory-embed.cjs"), [], { serviceName: "Ember memory", stdio: "pipe" });
+      p.stderr?.on("data", (d: Buffer) => log.debug("memory.process_stderr", { line: d.toString().slice(0, 300) }));
+      return { postMessage: m => p.postMessage(m), onMessage: fn => p.on("message", fn), onExit: fn => p.on("exit", fn), kill: () => { p.kill(); } };
+    },
+    onStatus: s => broadcast(IPC.memoryModelChanged, s),
+    onReady: () => memory.index(),
+  });
+  betterRecallRef = betterRecall;
+  settings.onChange(() => betterRecall.settingsChanged());
+  const memory = new MemoryService({ dir: userData, log: log.child("memory"), semantic: betterRecall.semantic, onChange: () => broadcast(IPC.memoryChanged, memoryAllowed() ? memory.list() : []) });
   memory.start();
+  if (memoryOn() && betterRecall.ready) memory.index();
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
   const extensions = new ExtensionsService({
@@ -1359,6 +1382,7 @@ function start(): void {
         speechStarts();
         beforeWake = { emotion: lastState.emotion, bubble: lastState.bubble };
         captureContext();
+        betterRecallRef?.semantic.warm();
         voice?.hush();
         // The bubble is main's now: an answer's leftover hide timer mustn't blank "Listening…".
         agent?.claimBubble();
@@ -1645,6 +1669,10 @@ function start(): void {
     memory.forget(id);
   }));
   ipcMain.handle(IPC.memoryForgetAll, guard(() => { memory.forgetAll(); }));
+  // Better recall's model: its state, and the user's Download (the agreement to fetch it) and Remove.
+  ipcMain.handle(IPC.memoryModel, guard(() => betterRecall.status()));
+  ipcMain.handle(IPC.memoryModelDownload, guard(() => { void betterRecall.download().catch(() => { /* Settings is told why, in the status */ }); }));
+  ipcMain.handle(IPC.memoryModelRemove, guard(() => { betterRecall.remove(); }));
   ipcMain.handle(IPC.routinesList, guard(() => routineRows()));
   ipcMain.handle(IPC.routinesForget, guard((id: unknown) => {
     if (typeof id !== "string" || !id || id.length > 20) return;

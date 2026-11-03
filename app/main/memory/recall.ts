@@ -5,8 +5,10 @@
  * the BM25 match, how recently a fact was used and how sure Ember is of it, as Generative Agents' retrieval does
  * (Park et al., 2023: relevance, recency, importance).
  *
- * Lexical rather than embedding-based for now: Ember ships no native code on Linux and no text-embedding model yet.
- * `RecallOptions.extraSeeds` is where a vector index's matches plug in later. Pure: the graph is only read.
+ * Matching by meaning comes from Better recall (./embed.ts), once its model is downloaded: a question's nearest facts
+ * by vector (`RecallOptions.semantic`) seed the walk beside the lexical matches, and add a score of their own. Without
+ * them recall is exactly lexical, as it was before the model (memory.test.ts checks it byte for byte). Pure: the graph
+ * is only read.
  */
 
 import type { Fact, MemoryGraph } from "./graph";
@@ -24,8 +26,14 @@ export interface RecallOptions {
    * that matches nothing finds nothing whatever this is: nothing seeds the walk.
    */
   minRelevance?: number;
-  /** More fact ids to seed the walk with, and their weights (a vector index's matches). */
+  /** More fact ids to seed the walk with, and their weights. */
   extraSeeds?: Map<string, number>;
+  /**
+   * The facts most like the question by meaning (fact id → cosine similarity, from ./embed.ts's index): each seeds
+   * the walk, and counts towards relevance and the score by how far it is above SEMANTIC_FLOOR, as a share of the
+   * best match's.
+   */
+  semantic?: Map<string, number>;
   now?: Date;
 }
 
@@ -41,6 +49,22 @@ const ITERATIONS = 30;
 const HALF_LIFE_DAYS = 30;
 
 const WEIGHTS = { walk: 0.45, lexical: 0.35, recency: 0.1, confidence: 0.1 };
+/**
+ * Facts less alike than this (cosine, all-MiniLM-L6-v2) are no match by meaning. On the benchmark
+ * (test/fixtures/memory-bench.json) nine in ten paraphrased questions' answers score 0.25 or more, a few as little as
+ * 0.15 to 0.2; questions about nothing remembered reach 0.3 to 0.5 with a fact on the same subject ("Make the text
+ * bigger" and the preferred terminal font size), which is context worth having. 0.2 found 96% of answers in the first
+ * five; 0.25 found 89%.
+ */
+export const SEMANTIC_FLOOR = 0.2;
+/**
+ * The mix with semantic matches, measured on the benchmark (docs/MEMORY.md §2): the semantic share from 0.4 to 0.9
+ * found 83–84% of paraphrased answers first (lexical alone: 9%), and every keyword question's answer first. 0.6 is in
+ * the middle of that plateau; the rest keeps the lexical mix's proportions.
+ */
+export const SEMANTIC_WEIGHTS = { walk: 0.18, lexical: 0.14, semantic: 0.6, recency: 0.04, confidence: 0.04 };
+/** A semantic match seeds the walk this strongly at best (a lexical match's best is 1). */
+export const SEMANTIC_SEED = 1;
 
 /** The text a fact is matched on: its sentence and the names of what it is about. */
 function document(graph: MemoryGraph, f: Fact): string[] {
@@ -130,36 +154,49 @@ const normalise = (m: Map<string, number>, ids: Iterable<string>) => {
   return (id: string) => (max ? (m.get(id) ?? 0) / max : 0);
 };
 
+/** Each semantic match's share of the best one's height above SEMANTIC_FLOOR (0 at the floor, 1 for the best). */
+const aboveFloor = (m: Map<string, number>) => {
+  let max = SEMANTIC_FLOOR;
+  for (const v of m.values()) max = Math.max(max, v);
+  return (id: string) => (max > SEMANTIC_FLOOR ? Math.max(0, ((m.get(id) ?? SEMANTIC_FLOOR) - SEMANTIC_FLOOR) / (max - SEMANTIC_FLOOR)) : 0);
+};
+
 /** The facts that bear on `query`, best first. An empty question, or nothing that matches, finds nothing. */
 export function recall(graph: MemoryGraph, query: string, o: RecallOptions = {}): Recalled[] {
   const now = (o.now ?? new Date()).getTime();
   const facts = graph.allFacts(!o.history);
   const q = terms(query);
-  if (!facts.length || (!q.length && !o.extraSeeds?.size)) return [];
+  const semantic = o.semantic?.size ? o.semantic : undefined;
+  if (!facts.length || (!q.length && !o.extraSeeds?.size && !semantic)) return [];
   const lexical = bm25(graph, facts, q);
   const named = namedEntities(graph, query);
-  if (!lexical.size && !named.size && !o.extraSeeds?.size) return [];
+  if (!lexical.size && !named.size && !o.extraSeeds?.size && !semantic) return [];
 
   const seeds = new Map<string, number>();
   const lex = normalise(lexical, lexical.keys());
   for (const id of lexical.keys()) seeds.set(id, lex(id));
   for (const [id, w] of named) seeds.set(id, (seeds.get(id) ?? 0) + w);
   for (const [id, w] of o.extraSeeds ?? []) seeds.set(id, (seeds.get(id) ?? 0) + w);
+  const ids = facts.map(f => f.id);
+  const s = semantic ? aboveFloor(semantic) : null;
+  if (s) for (const id of semantic!.keys()) seeds.set(id, (seeds.get(id) ?? 0) + SEMANTIC_SEED * s(id));
   const walk = personalizedPageRank(facts, seeds);
 
-  const ids = facts.map(f => f.id);
   const w = normalise(walk, ids);
   const l = normalise(lexical, ids);
   const out: Recalled[] = [];
   const min = o.minRelevance ?? 0.03;
   for (const f of facts) {
-    const relevance = Math.max(w(f.id), l(f.id));
+    const relevance = s ? Math.max(w(f.id), l(f.id), s(f.id)) : Math.max(w(f.id), l(f.id));
     if (relevance < min) continue;
     const used = Date.parse(f.lastUsedAt ?? f.createdAt);
     const days = Math.max(0, (now - used) / 86_400_000);
     const recency = Math.pow(0.5, days / HALF_LIFE_DAYS);
+    const mix = s
+      ? SEMANTIC_WEIGHTS.walk * w(f.id) + SEMANTIC_WEIGHTS.lexical * l(f.id) + SEMANTIC_WEIGHTS.semantic * s(f.id) + SEMANTIC_WEIGHTS.recency * recency + SEMANTIC_WEIGHTS.confidence * f.confidence
+      : WEIGHTS.walk * w(f.id) + WEIGHTS.lexical * l(f.id) + WEIGHTS.recency * recency + WEIGHTS.confidence * f.confidence;
     // A closed fact is history: it ranks below what holds now.
-    const score = (WEIGHTS.walk * w(f.id) + WEIGHTS.lexical * l(f.id) + WEIGHTS.recency * recency + WEIGHTS.confidence * f.confidence) * (f.invalidAt ? 0.5 : 1);
+    const score = mix * (f.invalidAt ? 0.5 : 1);
     out.push({ fact: f, score });
   }
   return out.sort((a, b) => b.score - a.score || a.fact.id.localeCompare(b.fact.id)).slice(0, o.k ?? 8);
