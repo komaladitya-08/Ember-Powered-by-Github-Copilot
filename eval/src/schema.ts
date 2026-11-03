@@ -69,7 +69,11 @@ export const TaskSchema = z.object({
   }).strict().default({ answer: "allow", answers: [], grants: [], autonomy: false }),
   /** Tools available beyond accessibility: the user's mouse (tier 3), Ember's desk (tier 2). */
   hands: z.array(z.enum(["cursor", "desk"])).default([]),
-  script: z.array(z.object({ tool: z.string(), args: z.record(z.string(), Arg).default({}) }).strict()).default([]),
+  script: z.array(z.object({
+    tool: z.string(), args: z.record(z.string(), Arg).default({}),
+    /** A regex this step's tool result must match before the script goes on (what Ember told the model). */
+    result: z.string().optional(),
+  }).strict()).default([]),
   expect: z.array(Check).min(1),
   /** Checks that must hold before and after (nothing else changed). */
   unchanged: z.array(Check).default([]),

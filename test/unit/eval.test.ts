@@ -46,6 +46,12 @@ describe("the scripted model", () => {
     expect(scriptedReply(t, [{ role: "user", content: "go" }, screen])).toEqual({ tool: { name: "click", args: { id: 7 } } });
     expect(scriptedReply(t, [{ role: "user", content: "go" }, screen, { role: "tool", content: "Done." }])).toEqual({ text: "Done." });
   });
+  it("stops when a step's result isn't what the script expects Ember to say", () => {
+    const t = task({ script: [{ tool: "perceive_window", args: {}, result: "your last step closed it" }, { tool: "finish_task", args: { success: true, summary: "Closed." } }] });
+    const go = { role: "user", content: "go" };
+    expect(scriptedReply(t, [go, { role: "tool", content: "The window this task was working in has closed: your last step closed it." }])).toEqual({ tool: { name: "finish_task", args: { success: true, summary: "Closed." } } });
+    expect(() => scriptedReply(t, [go, { role: "tool", content: "That window can't be read. Use list_windows." }])).toThrow(/doesn't match/);
+  });
   it("says so when the screen has nothing to match", () => {
     const t = task({ script: [{ tool: "click", args: { id: { find: "Delete" } } }] });
     expect(() => scriptedReply(t, [{ role: "user", content: "go" }])).toThrow(/no screen read/);

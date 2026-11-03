@@ -24,7 +24,8 @@
       }
     },
     {
-      "tool": "perceive_window"
+      "tool": "perceive_window",
+      "result": "^The window this task was working in has closed: your last step closed it\\."
     },
     {
       "tool": "finish_task",

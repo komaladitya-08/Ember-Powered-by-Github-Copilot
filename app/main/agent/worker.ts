@@ -27,7 +27,7 @@ import { askedWords, type ActivityEvent } from "./activity";
 import { cardApp } from "../../shared/activity";
 import type { Confirmer, Question } from "./confirm";
 import type { WindowTarget } from "../perception";
-import type { AxNode, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
+import type { AxNode, AxWindow, Bounds, ActionResult, ElementInfo, PointElement } from "../perception/sidecar";
 import type { PolicyEngine, ActionKind, ActionRequest, Agreement, ReadSource, TextMode, WindowId } from "../policy/policy";
 import { afterTheStep, type AuditEntry, type AuditLog } from "../policy/audit";
 import type { AutonomyScopes } from "../policy/autonomy";
@@ -604,6 +604,32 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
  */
 export const WINDOW_CLOSED_BY_TASK = "The window this task was working in has closed: your last step closed it. If closing it was what the user asked for, the task is done: call finish_task with success true now. Otherwise call finish_task with success false saying the window closed. Don't carry on in another window in its place.";
 
+/**
+ * perceive_window after Ember's own last step closed a dialog (or any window other than the task's own: a Save As, an
+ * alert, Preferences): its OK or Save most likely worked, and the task goes on in its own window (review of PR #139).
+ */
+export function dialogClosedNote(home: { app: string; title: string } | null): string {
+  return home
+    ? `The dialog closed under your last step (its OK, Save or Close most likely worked). Call switch_window with ${q(home.title, 100)} to go back to ${q(friendlyApp(home.app), 60)}'s window and carry on, or call finish_task if the task is done.`
+    : "The dialog closed under your last step (its OK, Save or Close most likely worked). Use list_windows and switch_window to go back to the app's window, or call finish_task if the task is done.";
+}
+
+/**
+ * perceive_window after Ember's own last step closed the task's window and its app opened another in its place (a
+ * Start Center that opened a document, a wizard's last page): the task may go on there (review of PR #139).
+ */
+export function windowReplacedNote(app: string, titles: readonly string[]): string {
+  return `The window you worked in closed under your last step, and ${q(friendlyApp(app), 60)} opened ${titles.slice(0, 3).map(t => q(t, 100)).join(", ")} in its place. If the task goes on there, call switch_window with its title; if closing the window was the task, call finish_task.`;
+}
+
+type WindowKey = { pid?: number | null; path?: string; title?: string; name?: string };
+/** Two keys name the same window: its process, and its accessible path when both have one, else its title. */
+function sameWindow(a: WindowKey, b: WindowKey): boolean {
+  if ((a.pid ?? null) !== (b.pid ?? null)) return false;
+  if (a.path && b.path) return a.path === b.path;
+  return (a.title ?? a.name ?? "") === (b.title ?? b.name ?? "");
+}
+
 /** The accessibility helper's word for an app that didn't answer in time (busy), as opposed to an element that is gone. */
 const isBusy = (err: unknown) => /\bbusy\b|did not (receive a reply|answer)|timeout was reached/i.test(err instanceof Error ? err.message : String(err));
 const BUSY = "The app is busy (it didn't answer in time). Wait a moment, then call perceive_window.";
@@ -938,6 +964,12 @@ export class Worker {
    * own window, perhaps). A read that then finds the task's window gone says the task closed it (WINDOW_CLOSED_BY_TASK).
    */
   private stepClosedIt = false;
+  /**
+   * The task's own window: the first non-dialog window it read (its leased target), never a dialog it switched into.
+   * `others`: the app's windows already open then, so a window the app opens in its place later is told apart from
+   * one the user had open all along (a second Edge window). Cleared when the app replaces it: the next window read is.
+   */
+  private home: { pid: number | null; path?: string; title: string; app: string; others: AxWindow[] } | null = null;
   /** Labels borrowed by unnamed controls (a switch takes the label beside it). */
   private labels = new Map<number, string>();
   private window: { app: string; name: string; role?: string } = { app: "", name: "" };
@@ -1228,6 +1260,8 @@ export class Worker {
     if (!parsed.success) {
       return fail(`Invalid arguments for ${name}: ${parsed.error.issues.map(i => `${i.path.join(".") || "arguments"}: ${i.message}`).join("; ")}`);
     }
+    // Only a read right after a step learns that the step closed its window: any other call starts afresh.
+    if (name !== "perceive_window" && name !== "report_progress") this.stepClosedIt = false;
     const result = await handler(parsed.data);
     // Turned down ("Not now", a refusal, a stop): its card shows the step stopped, not one that didn't work.
     if (typeof result === "object" && result.resultType === "denied") this.activity({ type: "denied" });
@@ -1936,6 +1970,25 @@ export class Worker {
     return usableBounds(node.bounds);
   }
 
+  /**
+   * The window the task read last is gone after its own step. The task's own window, with nothing of its app opened in
+   * its place: WINDOW_CLOSED_BY_TASK. A dialog (or any window it switched into): go back to its own window. Its own
+   * window replaced by a new one of its app: that one may be where the task goes on.
+   */
+  private async closedUnder(): Promise<ToolResultObject> {
+    const home = this.home;
+    const wasHome = home !== null && sameWindow(this.target, home) && !DIALOG_ROLES.has(this.window.role ?? "");
+    if (!wasHome) return done(dialogClosedNote(home));
+    const now = await this.perception.windows().catch(() => [] as AxWindow[]);
+    if (this.isOver) return STOPPED();
+    const opened = now.filter(w => w.app === home.app && !isEmberWindow(w) && !sameWindow(w, home) && !home.others.some(o => sameWindow(o, w)));
+    if (opened.length === 0) return fail(WINDOW_CLOSED_BY_TASK);
+    for (const w of opened) this.remember(w, [w.name], true);
+    // The next window the task reads is its own from now on.
+    this.home = null;
+    return done(windowReplacedNote(home.app, opened.map(w => w.name)));
+  }
+
   /** `expectTitle`: switch_window's request; nothing changes unless a window with that title is found. */
   private async perceive(image: boolean, expectTitle?: string): Promise<ToolResultObject> {
     const target = expectTitle ? { title: expectTitle } : this.target;
@@ -1946,8 +1999,12 @@ export class Worker {
       return denied("This window is private (on the user's never-look list, or a password prompt). Don't use it; finish the task and say so.");
     }
     // The window this task worked in closed under its own last step ("close Microsoft Edge"): that is the end of the
-    // task when closing it was the goal, and never a reason to carry on in whatever window is there now.
-    if (!p.window && !p.busy && this.stepClosedIt && !expectTitle) return fail(WINDOW_CLOSED_BY_TASK);
+    // task when closing it was the goal, and never a reason to carry on in whatever window is there now. A dialog that
+    // closed (Save As, OK) or a window its app replaced is not: the task goes back, or on (closedUnder).
+    if (!p.window && !p.busy && this.stepClosedIt && !expectTitle) {
+      this.stepClosedIt = false;
+      return this.closedUnder();
+    }
     // A busy app (a file dialog listing a big folder) isn't a closed one: the model is told to try again.
     if (!p.window) return fail(p.busy ? p.text : "That window can't be read (it is closed or exposes no accessibility information). Use list_windows.");
     this.stepClosedIt = false;
@@ -1966,6 +2023,12 @@ export class Worker {
     this.axScale = p.axScale ?? 1;
     // The window's own key (process and accessible path): later reads stay on exactly this window.
     this.target = { title: p.window.name, pid: p.window.pid ?? undefined, path: p.window.path };
+    if (!this.home && !DIALOG_ROLES.has(p.window.role ?? "")) {
+      const w = p.window;
+      const all = await this.perception.windows().catch(() => [] as AxWindow[]);
+      if (this.isOver) return STOPPED();
+      this.home = { pid: w.pid ?? null, path: w.path, title: w.name, app: w.app, others: all.filter(o => o.app === w.app && !sameWindow(o, { pid: w.pid, path: w.path, name: w.name })) };
+    }
     this.known = new Map(p.nodes.map(n => [n.id, n]));
     this.labels = inferLabels(p.nodes);
     // Text written as instructions to an AI agent: every step asks from now on, and the model is told it is data.
