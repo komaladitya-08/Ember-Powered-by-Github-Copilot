@@ -2398,6 +2398,12 @@ export class Worker {
     const at = oldAt.get(id)!;
     const live = await this.sidecar.readElement(id).catch(() => null);
     if (this.isOver) return STOPPED();
+    // A repeated label (two dialogs' OK buttons, or repeated row controls) cannot identify the original object
+    // in a separately numbered tree. Never infer which context owns it from its position, even if shape agrees.
+    const candidates = live ? seen.nodes.filter(n => n.role === live.role && n.name === live.name) : [];
+    if (candidates.length !== 1) {
+      return fail("The target cannot be uniquely matched in the current accessibility tree, so nothing was done. Call perceive_window; if its controls remain indistinguishable, finish the task and explain the limitation.");
+    }
     if (!live || live.role !== seen.nodes[at].role || live.name !== seen.nodes[at].name) {
       return fail("The target changed while reading its context, so nothing was done. Call perceive_window.");
     }

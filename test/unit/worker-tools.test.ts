@@ -46,6 +46,7 @@ function makeWorker(o: {
   onInput?: (kind: string, value?: string) => void;
   nodeExtra?: Partial<AxNode>;
   treeNode?: (node: AxNode) => AxNode;
+  treeNodes?: (nodes: AxNode[]) => AxNode[];
   onSetText?: (text: string) => void;
   options?: string[];
   readFails?: () => boolean;
@@ -115,8 +116,9 @@ function makeWorker(o: {
       read: async (t?: { title?: string; path?: string }) => {
         if (o.readFails?.()) throw new Error("read unavailable");
         const w = o.wins ? pick(t) : closed ? null : window;
-        return { ...seen, window: w, nodes: w ? seen.nodes.map(n => ({ ...n,
-          ...(n.id === node.id ? { states: o.states?.() ?? n.states, ...o.extra?.() } : {}), ...o.live?.(n.id) })).map(n => o.treeNode?.(n) ?? n) : [] };
+        const nodes = w ? seen.nodes.map(n => ({ ...n,
+          ...(n.id === node.id ? { states: o.states?.() ?? n.states, ...o.extra?.() } : {}), ...o.live?.(n.id) })).map(n => o.treeNode?.(n) ?? n) : [];
+        return { ...seen, window: w, nodes: o.treeNodes?.(nodes) ?? nodes };
 
       },
       windows: async () => {
@@ -1109,6 +1111,46 @@ describe("approval stays with the action the user saw (safety review)", () => {
     await call("perceive_window", {});
     expect((await call("type_text", { id: 1, text: "Ada", mode: "replace" })).resultType).toBe("success");
     expect(events).toContain("set_text");
+  });
+
+  it.each([false, true])("refuses duplicate OK identities without rebinding their dialogs (reordered: %s)", async swapped => {
+    const { call, asked, events } = makeWorker({ name: "OK", parentRole: "dialog",
+      more: [
+        { id: 2, parent: 0, depth: 1, role: "label", name: "Delete all files permanently?", states: [], bounds: null },
+        { id: 3, parent: null, depth: 0, role: "dialog", name: "", states: [], bounds: null },
+        { id: 4, parent: 3, depth: 1, role: "push button", name: "OK", states: ["enabled", "sensitive"], bounds: null },
+        { id: 5, parent: 3, depth: 1, role: "label", name: "Finished.", states: [], bounds: null },
+      ],
+      treeNodes: nodes => {
+        const ordered = swapped ? [...nodes.slice(3), ...nodes.slice(0, 3)] : nodes;
+        const ids = new Map(ordered.map((n, i) => [n.id, 100 + i]));
+        return ordered.map(n => ({ ...n, id: ids.get(n.id)!, parent: n.parent === null ? null : ids.get(n.parent)! }));
+      },
+    });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    expect(asked).toEqual([]);
+    expect(events).toEqual([]);
+  });
+
+  it("refuses a uniquely named target moved to another contextual position instead of rebinding the original id", async () => {
+    const { call, asked, events } = makeWorker({ name: "Delete", parentRole: "dialog",
+      more: [
+        { id: 2, parent: 0, depth: 1, role: "label", name: "Delete all files permanently?", states: [], bounds: null },
+        { id: 3, parent: null, depth: 0, role: "dialog", name: "", states: [], bounds: null },
+        { id: 4, parent: 3, depth: 1, role: "push button", name: "Finish", states: ["enabled", "sensitive"], bounds: null },
+        { id: 5, parent: 3, depth: 1, role: "label", name: "Finished.", states: [], bounds: null },
+      ],
+      treeNodes: nodes => {
+        const ordered = [...nodes.slice(3), ...nodes.slice(0, 3)];
+        const ids = new Map(ordered.map((n, i) => [n.id, 100 + i]));
+        return ordered.map(n => ({ ...n, id: ids.get(n.id)!, parent: n.parent === null ? null : ids.get(n.parent)! }));
+      },
+    });
+    await call("perceive_window", {});
+    expect((await call("click", { id: 1 })).resultType).toBe("failure");
+    expect(asked).toEqual([]);
+    expect(events).toEqual([]);
   });
 
   it("refuses when the full context can no longer be read after Allow", async () => {
