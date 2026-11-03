@@ -19,7 +19,7 @@ function harness(old = true) {
   if (old) { disk.set(dir, "dir"); disk.set(exe, "old"); disk.set(`${dir}/${marker}`, "old hash"); }
   let serial = 0;
   const h = {
-    disk, downloads: 0, fail: (_from: string, _to: string) => false,
+    disk, downloads: 0, cleanupFail: (_path: string) => false, fail: (_from: string, _to: string) => false,
     beforeDownload: async () => {},
     ensure: null as unknown as (o: Options) => Promise<Installed>,
   };
@@ -30,8 +30,8 @@ function harness(old = true) {
       disk.set(p, "dir");
     },
     mkdtempSync: (prefix: string) => { const p = `${prefix}${++serial}`; disk.set(p, "dir"); return p; },
-    rmSync(p: string) { for (const key of disk.keys()) if (key === p || key.startsWith(`${p}/`)) disk.delete(key); },
-    rmdirSync(p: string) { disk.delete(p); },
+    rmSync(p: string) { if (h.cleanupFail(p)) throw new Error(`cleanup denied: ${p}`); for (const key of disk.keys()) if (key === p || key.startsWith(`${p}/`)) disk.delete(key); },
+    rmdirSync(p: string) { if (h.cleanupFail(p)) throw new Error(`cleanup denied: ${p}`); disk.delete(p); },
     renameSync(from: string, to: string) {
       if (h.fail(from, to)) throw denied();
       if (!disk.has(from)) throw Object.assign(new Error("missing"), { code: "ENOENT" });
@@ -126,6 +126,39 @@ describe("npm reinstall publication", () => {
     expect(h.disk.has("/cache/.1-install-lock")).toBe(true);
     await expect(h.ensure({ version: "1" })).resolves.toMatchObject({ fresh: false });
     expect(h.downloads).toBe(0);
+  });
+
+  it("keeps recovery paths and the primary failure when lock cleanup also fails", async () => {
+    const h = harness(); h.fail = (_from, to) => to === dir;
+    h.cleanupFail = p => p.endsWith("-install-lock");
+    const error = await h.ensure({ version: "1", force: true }).catch(error => error);
+    expect(error.message).toMatch(/previous installation.*previous.*checked replacement.*app.*cleanup failed/s);
+    expect(error.cause.message).toMatch(/previous installation/);
+    expect(error.errors).toHaveLength(2);
+    expect(error.errors[0]).toBe(error.cause);
+    expect(error.errors[1].message).toMatch(/cleanup denied.*install-lock/);
+    expect([...h.disk.values()]).toContain("old");
+    expect([...h.disk.values()]).toContain("new");
+  });
+
+  it("reports cleanup failures after successful publication without losing the new install", async () => {
+    const h = harness(); h.cleanupFail = () => true;
+    const error = await h.ensure({ version: "1", force: true }).catch(error => error);
+    expect(error.message).toMatch(/installation completed.*cleanup failed/);
+    expect(error.message).toContain("/cache/.1-install-lock");
+    expect(error.errors).toHaveLength(2);
+    expect(h.disk.get(exe)).toBe("new");
+    await expect(h.ensure({ version: "1" })).resolves.toMatchObject({ fresh: false });
+  });
+
+  it("preserves a download error when both cleanup operations fail", async () => {
+    const h = harness(); h.beforeDownload = async () => { throw new Error("offline"); };
+    h.cleanupFail = () => true;
+    const error = await h.ensure({ version: "1", force: true }).catch(error => error);
+    expect(error.message).toMatch(/offline.*cleanup failed/);
+    expect(error.cause.message).toBe("offline");
+    expect(error.errors).toHaveLength(3);
+    expect(h.disk.get(exe)).toBe("old");
   });
 
   it("publishes successfully and removes only its own backup, stage and lock", async () => {

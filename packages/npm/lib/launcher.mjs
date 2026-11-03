@@ -187,6 +187,7 @@ export async function ensureInstalled(o) {
   }
   let work;
   let preserveWork = false;
+  let installError;
   try {
     // A first install may have completed between our initial cache check and acquiring the lock.
     if (!o.force && fs.existsSync(p.join(dir, MARKER)) && fs.existsSync(at(target.exe))) {
@@ -242,11 +243,28 @@ export async function ensureInstalled(o) {
     }
     say(`installed Ember ${o.version} in ${dir}`);
     return { dir, exe: at(target.exe), app: at(target.app), fresh: true };
+  } catch (err) {
+    installError = err;
+    throw err;
   } finally {
+    // Cleanup must not hide the original failure, especially the saved-copy paths after a failed rollback.
+    const cleanupErrors = [];
     try {
       if (work && !preserveWork) fs.rmSync(work, { recursive: true, force: true });
-    } finally {
+    } catch (err) {
+      cleanupErrors.push(err);
+    }
+    try {
       fs.rmdirSync(lock);
+    } catch (err) {
+      cleanupErrors.push(err);
+    }
+    if (cleanupErrors.length) {
+      const outcome = installError ? installError.message : `installation completed in ${dir}`;
+      // eslint-disable-next-line no-unsafe-finally -- Intentionally report cleanup failure while retaining the primary error and recovery paths.
+      throw new AggregateError(installError ? [installError, ...cleanupErrors] : cleanupErrors,
+        `${outcome}; cleanup failed (work: ${work ?? "not created"}, lock: ${lock}); remove leftovers only when no installer is running`,
+        { cause: installError ?? cleanupErrors[0] });
     }
   }
 }
