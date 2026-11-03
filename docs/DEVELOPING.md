@@ -383,8 +383,10 @@ neural voice (it comes with the speech models; until then, the system's voice), 
 arrives. To have Ember answer only you, turn on **Answer only my voice (Voice Match)** under it and say the four
 phrases it shows; a request in another voice is then ignored (“Ember, stop” still works for anyone), and **Forget my
 voice** deletes your voiceprint. After Ember answers a “Hey Ember” request you have 8 seconds for
-one follow-up without the wake word; “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
-“OK” is the answer). “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
+a follow-up without the wake word (up to three in a row; “Hey Ember” works then too); “Thanks”, “OK” or “that's all” ends that window (when Ember asked something,
+“OK” is the answer). While Ember is talking, “Hey Ember” stops it and listens; on Windows and macOS, where Ember can't
+hear its own speakers, “Ember” alone doesn't (Ember's own words have it), and what you said before it went quiet isn't
+sent: say the request once it has stopped. “Ember?” on its own, “status?” or “what are you doing?” is answered at once from Ember's own
 record of its tasks (the step each one is on, one waiting for your answer or stopping, how many wait, how the last one
 went), with no Copilot request, so it works offline too. A spoken request's short acknowledgement (“On it.”) comes only
 once the request has gone to Copilot, after anything Ember is already saying. “Ember, just show me” (or “stop telling me”) keeps finished tasks' results on screen without

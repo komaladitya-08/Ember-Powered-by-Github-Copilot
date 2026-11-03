@@ -825,12 +825,21 @@ describe("VoiceEngine with other people talking", () => {
       expect(tries.slice(-2)).toEqual([(8 + 19) * 512, (8 + 19) * 512 + 1600]);
     });
 
-    it("opens only after a wake's request: an answer to a follow-up gets none", () => {
-      const { events, e } = followUp([...n(30, () => level(0.1)), ...n(40, room)]);
+    it("opens after a follow-up's answer too, three in a row at most: then the next request needs \"Hey Ember\" (a third request went unheard)", () => {
+      const { events, e, b } = followUp([...n(30, () => level(0.1)), ...n(40, room)]);
+      const reply = () => { e.followUp(8000); for (const f of [...n(30, room), ...n(30, () => level(0.1)), ...n(40, room)]) e.feed(f); };
+      reply();
+      reply();
+      expect(events.filter(ev => ev.type === "utterance").map(ev => ev.type === "utterance" && ev.window)).toEqual(["wake", "follow-up", "follow-up", "follow-up"]);
       const before = events.length;
       e.followUp(8000);
       expect(events.length).toBe(before);
       expect(e.listening).toBe(false);
+      // A wake starts the count again.
+      for (const f of [...n(30, room), level(0, 9), ...n(47, () => level(0.1)), ...n(40, room)]) e.feed(f);
+      e.followUp(8000);
+      expect(e.listening).toBe(true);
+      expect(b.heard.length).toBe(5);
     });
   });
 });
@@ -1044,8 +1053,10 @@ describe("after Ember speaks", () => {
 });
 
 describe("'Hey Ember' while Ember speaks", () => {
-  function heardWhileSpeaking(heard: string, o: { speakersSaidIt?: boolean } = {}) {
-    const b = fake([heard]);
+  /** `name`: the spotter takes the bare name (without the speakers' stream "Hey Ember" cuts in: see "cutting in on Ember"). */
+  function heardWhileSpeaking(heard: string, o: { speakersSaidIt?: boolean; name?: boolean } = {}) {
+    const b = fake([heard, heard]); // (the cut-in check may hear it first: see bargeIn)
+    if (o.name) b.spot = f => (f[0] === 1 ? ["ember"] : []);
     let checkedAt = -1, length = 0;
     const transcribe = b.transcribe;
     b.transcribe = s => { checkedAt = c.t; length = s.length; return transcribe(s); };
@@ -1064,7 +1075,7 @@ describe("'Hey Ember' while Ember speaks", () => {
   }
 
   it("stops on 'Hey Ember, stop' (the spotter takes the name, so 'Ember, stop' isn't spotted after it), checked once 'stop' has been said", () => {
-    const { events, checked } = heardWhileSpeaking("the screen warmer. Hey Ember, stop. Which is");
+    const { events, checked } = heardWhileSpeaking("the screen warmer. Hey Ember, stop. Which is", { name: true });
     expect(events).toEqual([{ type: "stop" }]);
     expect(checked).toBe((10 + 5) * 32); // at the pause after it
     // With the speakers' stream (which didn't say it), the check runs as soon as they can't have said it.
@@ -1075,14 +1086,16 @@ describe("'Hey Ember' while Ember speaks", () => {
 
   it("hears the phrase from just before its first sound (the recognizer returns nothing for a phrase after near-silence)", () => {
     // 1.5 s before the spotter fired were silent but for the last frame: what's transcribed starts 10 frames before it.
-    expect(heardWhileSpeaking("Hey Ember, stop.").length).toBe((10 + 1 + 10 + 5) * 512);
+    expect(heardWhileSpeaking("Hey Ember, stop.", { name: true }).length).toBe((10 + 1 + 10 + 5) * 512);
   });
 
   it.each(["A. Ember stopped.", "A. Ember Stuff.", "\"pay ember\" stopped talking.", "Hey Ember, step.", "Hey, Emma, stopped it now."])(
-    "stops on %j (how the recognizer writes a lone 'stop')", heard => expect(heardWhileSpeaking(heard).events).toEqual([{ type: "stop" }]));
+    "stops on %j (how the recognizer writes a lone 'stop')", heard => expect(heardWhileSpeaking(heard, { name: true }).events).toEqual([{ type: "stop" }]));
 
   it("takes anything else as Ember's own voice (no wake while it speaks)", () => {
     expect(heardWhileSpeaking("It makes the screen warmer in the evening.").events).toEqual([{ type: "rejected", keyword: "hey_ember", reason: "self", heard: "It makes the screen warmer in the evening." }]);
+    // The bare name never cuts in without the speakers' stream (Ember's own words have it).
+    expect(heardWhileSpeaking("Hey Ember, what time is it?", { name: true }).events).toEqual([{ type: "rejected", keyword: "ember", reason: "self", heard: "Hey Ember, what time is it?" }]);
   });
 
   it("doesn't stop when the speakers said it", () => {
@@ -1161,9 +1174,52 @@ describe("cutting in on Ember (VO9-2)", () => {
     }
   });
 
-  it("without the speakers' stream, can't tell its own voice from the user's: only 'Hey Ember, stop' counts", () => {
-    expect(plain(cutIn(["Hey Ember, what's the weather tomorrow?"], { speakers: false }).events)).toEqual([
-      { type: "rejected", keyword: "hey_ember", reason: "self", heard: "Hey Ember, what's the weather tomorrow?" }]);
+  describe("without the speakers' stream (Windows, macOS: Ember never says its wake phrase there)", () => {
+    /** As cutIn, and main hushes Ember on a wake: the page says it stopped speaking `hushAfter` frames later (default 1). */
+    function cutInPlain(transcripts: string[], o: { keyword?: string; again?: boolean; hushAfter?: number } = {}) {
+      const b = fake(transcripts);
+      if (o.keyword) b.spot = f => (f[0] === 1 ? [o.keyword!] : []);
+      const events: VoiceEvent[] = [];
+      const c = { t: 0 };
+      const e = new VoiceEngine(b, ev => events.push(ev), { now: () => c.t });
+      let since = -1;
+      const step = (f: Float32Array) => {
+        c.t += 32;
+        if (since < 0 && events.some(ev => ev.type === "wake")) since = 0;
+        if (since >= 0 && since++ === (o.hushAfter ?? 1) - 1) e.selfSpeaking(false);
+        e.feed(f);
+      };
+      e.selfSpeaking(true);
+      for (let i = 0; i < 30; i++) step(frame(0));
+      step(frame(1, true));
+      for (let i = 0; i < 10; i++) step(frame(0, true));
+      for (let i = 0; i < 80; i++) step(frame(0));
+      if (o.again) { for (let i = 0; i < 20; i++) step(frame(0, true)); for (let i = 0; i < 80; i++) step(frame(0)); }
+      return events.filter(ev => ev.type !== "speech");
+    }
+
+    it("cuts in on Ember's answer on \"Hey Ember\" (the request was thrown away while Ember read its answer out), and takes the request said once Ember is quiet", () => {
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the weather tomorrow?"])).toEqual([
+        { type: "wake", keyword: "hey_ember" }, { type: "listening", on: true, reason: "wake", window: "wake" },
+        { type: "utterance", text: "What's the weather tomorrow?", ms: 0, window: "wake" }, { type: "listening", on: false, reason: "done", window: "wake" }]);
+    });
+
+    it("doesn't send what was said over Ember's voice, before it went quiet (its own words may be in it), and hears it said again", () => {
+      // Ember went quiet only as the request ended (SELF_LAG_MS after it said so).
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the weather tomorrow?"], { hushAfter: 10 }).filter(ev => ev.type === "utterance")).toEqual([]);
+      expect(cutInPlain(["…in the evening. Hey Ember", "Hey Ember, what's the", "What's the weather tomorrow?"], { hushAfter: 10, again: true }).filter(ev => ev.type === "utterance"))
+        .toMatchObject([{ text: "What's the weather tomorrow?", window: "wake" }]);
+    });
+
+    it("doesn't cut in where the check didn't hear \"Hey Ember\" (the spotter fired on Ember's own words), nor on the bare name", () => {
+      expect(cutInPlain(["It makes the screen warmer in the evening.", "It makes the screen warmer in the evening."])).toEqual([
+        { type: "rejected", keyword: "hey_ember", reason: "self", heard: "It makes the screen warmer in the evening." }]);
+      expect(cutInPlain(["I remember. Hey Ember", "I remember. Hey Ember"], { keyword: "ember" }).filter(ev => ev.type === "wake")).toEqual([]);
+    });
+
+    it("still stops on \"Hey Ember, stop\" said over Ember's voice", () => {
+      expect(cutInPlain(["the screen warmer. Hey Ember, stop. Which is"]).filter(ev => ev.type !== "listening")).toEqual([{ type: "stop" }]);
+    });
   });
 
   it("doesn't cut in when the check heard someone else's name (Ember goes on speaking), and still stops on 'Hey Amber, stop'", () => {
@@ -1678,6 +1734,15 @@ describe("a conversation without the speakers' stream (Windows, macOS: Ember's o
     // As loud as the user: sent as the follow-up it was (it gets no follow-up of its own).
     const loud = amber(0.1);
     expect(loud.events.filter(ev => ev.type === "utterance")).toMatchObject([{ window: "wake" }, { text: "Dinner is ready.", window: "follow-up" }]);
+  });
+
+  it("keeps a request under way when Ember starts speaking over it (a reminder, an answer's next sentence), and hears it once Ember is done", () => {
+    const { utterances } = converse((feed, e) => {
+      feed([...n(100, room), level(0, 9), ...n(12, () => level(0.1)), ...n(40, room), ...n(20, () => level(0.03))]);
+      emberSays(feed, e, 0.004);
+      feed(n(300, room));
+    });
+    expect(utterances).toEqual(["U0 b20"]);
   });
 
   it("doesn't take the bare name in a follow-up window for a wake (a follow-up needs no name, and \"remember\" has it)", () => {

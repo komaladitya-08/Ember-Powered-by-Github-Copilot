@@ -1398,8 +1398,8 @@ function start(): void {
         if (e.on) setState({ bubble: { visible: true, mood: "listening", title: "Listening…", thought: "…", step: null, streaming: true, actions: [] } });
         break;
       case "utterance": {
-        // One follow-up per wake: the answer to a follow-up opens no window of its own (the engine refuses it too).
-        lastAskByVoice = e.window === "wake";
+        // A spoken request's answer opens a follow-up window; the engine refuses one after MAX_FOLLOW_UPS in a row.
+        lastAskByVoice = true;
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {

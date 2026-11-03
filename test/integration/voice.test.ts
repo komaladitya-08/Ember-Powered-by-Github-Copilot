@@ -321,7 +321,7 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     }
   });
 
-  it("stops on 'Hey Ember, stop' said while Ember speaks, and takes no wake then", () => {
+  it("stops on 'Hey Ember, stop' said while Ember speaks; without the speakers' stream 'Hey Ember' then cuts in, and sends nothing said over Ember's voice", () => {
     const heyStop = cat(read("wake_pause").subarray(0, at(1.52)), silence(0.1), read("stop").subarray(at(1.09)), silence(1));
     const stop = session();
     stop.engine.selfSpeaking(true);
@@ -332,7 +332,22 @@ describe.skipIf(!ready && process.env.EMBER_VOICE_TEST !== "1")("voice on real m
     wake.engine.selfSpeaking(true);
     wake.hear(inRoom(cat(read("wake"), silence(1))));
     wake.end();
-    expect(wake.events.filter(e => e.type !== "rejected")).toEqual([]);
+    // Whether or not it cut in (natively the check heard the clip's greeting less often), nothing is sent: Ember hasn't said
+    // it stopped speaking, so all of the one-breath request was said over its voice.
+    expect(wake.events.filter(e => e.type === "utterance")).toEqual([]);
+    // "Hey Ember." over the start of Ember's answer (20 dB down at the microphone, as in VO9-2); main hushes Ember on the wake; then the request.
+    const answer = cat(trimmed("chat"), silence(0.2), trimmed("remember"), silence(0.2), trimmed("chat")).map(x => x * 0.1), hey = read("wake_pause").subarray(0, at(1.52));
+    const over = answer.slice(0, at(0.2 + 1.52 + 0.15)); // (its voice stops once main hushes it)
+    over.set(hey.map((x, i) => x + answer[at(0.2) + i]), at(0.2));
+    const cut = session();
+    cut.engine.selfSpeaking(true);
+    let hushed = false;
+    const hush = { onFrame: () => { if (!hushed && cut.events.some(e => e.type === "wake")) { hushed = true; cut.engine.selfSpeaking(false); } } };
+    cut.hear(inRoom(over), hush);
+    cut.hear(inRoom(cat(silence(0.8), trimmed("bigger"), silence(2))), hush);
+    cut.end();
+    expect(cut.events.filter(e => e.type === "wake")).toHaveLength(1);
+    expect(sent(cut.events).map(u => u.text)).toEqual([expect.stringMatching(/bigger/i)]);
   });
 
   it("cuts in on Ember's answer when its speakers didn't say 'Hey Ember': Ember is hushed, and the request is heard (VO9-2)", () => {
