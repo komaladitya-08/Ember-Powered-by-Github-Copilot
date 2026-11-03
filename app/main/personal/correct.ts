@@ -78,6 +78,14 @@ fire fox code team teams chrome edge word excel outlook mail maps clock clocks p
  */
 export const ADDRESSES = /\b(e-?mail(?:ed|ing|s)?|mail(?:ed|ing|s)?|message(?:d|s)?|messaging|text(?:ed|ing|s)?|tell(?:s|ing)?|told|dm(?:s|ed)?|write\s+(?:to|back)|writ(?:e|ing)\s+an?\s+(?:email|message|note)|call(?:s|ed|ing)?|ring|phone|invite(?:d|s)?|inviting|repl(?:y|ies|ied|ying)|respond|answer|send(?:s|ing)?|sent|forward(?:ed|ing|s)?|share(?:d|s)?|sharing|ping(?:ed|s)?|cc|bcc|contact|notify|chat\s+with|meet(?:ing)?\s+with)\b/i;
 
+/**
+ * A request that only looks something up: it starts (after Ember's name and politeness) with what, who, when, where,
+ * find, search, show, look up or read. Only there may a word be corrected into a person's name from memory (or a
+ * suggestion's): anything else (ask, remind, add, give, let, assign, book, Slack, Zoom…) may hand something to that
+ * person, and no list of verbs covers them all, so a name there stays as heard (review of #145).
+ */
+export const LOOKS_UP = /^\W*(?:(?:hey|hi|ok|okay|oh)[\s,.!]+)?(?:ember[\s,.!]+)?(?:(?:please|so|and|um|uh)[\s,.!]+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:what|who|whose|when|where|find|search|show|look\s*up|read)\b/i;
+
 /** Ember's name as the recogniser writes it at the start of a request (engine.ts takes these for the wake already). */
 const NAME_START = /^(\W*(?:(?:hey|hi|ok|okay|oh)[\s,.!]+)?)(amber|emma|emmer|umber|anber|embre|ember)\b(?!['’]s\b)/i;
 
@@ -129,7 +137,9 @@ export function correctTranscript(raw: string, lex: Lexicon, risky: (words: stri
 
   const { lead, list } = tokens(text);
   const out: Token[] = [];
-  const entries = prepared(lex.entries);
+  // A name from memory (or a suggestion's) is only ever corrected into in a request that just looks something up.
+  const lookup = LOOKS_UP.test(raw);
+  const entries = prepared(lex.entries).filter(e => lookup || (e.source !== "memory" && e.source !== "predicted"));
   // (A correction kept before the rules below, or written by hand, is held to them too.)
   const learned = lex.learned.filter(l => learnable(l.heard.split(/\s+/), l.meant.split(/\s+/)))
     .map(l => ({ heard: key(l.heard.split(/\s+/).filter(Boolean)), meant: l.meant.trim(), n: l.heard.split(/\s+/).filter(Boolean).length })).filter(l => l.n > 0 && l.n <= 4 && l.meant);
@@ -213,10 +223,22 @@ email mail reply forward install uninstall update lock unlock mute unmute yes no
 create set reset find search buy pay order book sign log share post submit print rename archive empty`.split(/\s+/).filter(Boolean));
 
 /**
+ * Number words, which a correction may never swap ("fifteen" for "fifty" changes what is asked): zero to nineteen, the
+ * tens (also written with a hyphen: "twenty-five"), hundred, thousand, million, billion, the ordinals, half, double,
+ * dozen, and "a" or "an" as a quantity.
+ */
+export const NUMBER_WORD = /^(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen|half|double|twice|a|an|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|thirtieth|fortieth|fiftieth|sixtieth|seventieth|eightieth|ninetieth|hundredth|thousandth)$/;
+
+/** Whether `word` is, or is written with, a number: digits, or a number word (also "twenty-five", word by word). */
+export const isNumberWord = (word: string): boolean => /\d/.test(word) || word.toLowerCase().split(/[^\p{L}]+/u).filter(Boolean).some(w => NUMBER_WORD.test(w));
+
+/**
  * Whether a correction may be kept and used: the heard and meant words aren't all common ones (a mishearing is of a
- * name or an unusual word, never "open" for "close"), and no verb a request turns on is among them.
+ * name or an unusual word, never "open" for "close"), no verb a request turns on is among them, and none is a number
+ * word or digit ("fifteen" for "fifty").
  */
 export function learnable(heard: readonly string[], meant: readonly string[]): boolean {
+  if ([...heard, ...meant].some(isNumberWord)) return false;
   const h = heard.map(letters).filter(Boolean), m = meant.map(letters).filter(Boolean);
   if (!h.length || !m.length) return false;
   if ([...h, ...m].every(w => COMMON.has(w))) return false;

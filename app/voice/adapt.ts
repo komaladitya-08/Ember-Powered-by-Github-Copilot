@@ -152,6 +152,8 @@ export interface SampleContext {
   busyRoom: boolean;
   /** The kill switch was pulled within ADAPT_QUIET_MS (a stop is a moment to learn nothing). */
   stoppedLately: boolean;
+  /** Seconds of voice that follow the request's wake phrase (the voice process measures them): ADAPT.minVoicedSeconds at least. */
+  voicedSeconds: number;
   /** When the last sample was learnt (ms since the epoch; 0: never) and now. */
   lastAt: number;
   now: number;
@@ -161,9 +163,11 @@ export interface SampleContext {
 export const ADAPT_QUIET_MS = 120_000;
 
 /** Whether a request may teach Voice Match (null) or why not, as a reason word for the log (counts only, no words). */
-export function adaptGuard(c: SampleContext): null | "off" | "unverified" | "self" | "stranger" | "busy" | "stopped" | "too-soon" {
+export function adaptGuard(c: SampleContext): null | "off" | "unverified" | "short" | "self" | "stranger" | "busy" | "stopped" | "too-soon" {
   if (!c.learning || !c.matchOn) return "off";
   if (!c.verified) return "unverified";
+  // Never a short answer or a bare command: too little voice to learn a voice from (also checked in the voice process).
+  if (!(c.voicedSeconds >= ADAPT.minVoicedSeconds)) return "short";
   if (c.selfSpoke) return "self";
   if (c.strangerNear) return "stranger";
   if (c.busyRoom) return "busy";

@@ -10,10 +10,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { VoiceEngine, type VoiceBackend, type VoiceEvent } from "./engine";
-import { Enrolment, VoiceGate, type EnrolState, type Printer } from "./match";
-import { VOICE_MATCH_THRESHOLD, decodePrint, encodePrint } from "./voiceprint";
-import { ADAPT, adaptedThreshold } from "./adapt";
-import { longEnough, oneVoice } from "./adapt-sample";
+import { Enrolment, VoiceGate, voicedSeconds, type EnrolState, type Printer } from "./match";
+import { decodePrint, encodePrint } from "./voiceprint";
+import { adaptedThreshold } from "./adapt";
+import { oneVoice, sampleOffered } from "./adapt-sample";
 import type { VoiceprintWorkerMessage } from "./voiceprint-worker";
 import { ModelLoadError, sherpaBackend, type BackendInfo, type ModelPaths } from "./sherpa";
 import { SpeakerMonitor } from "./speakers";
@@ -67,9 +67,11 @@ export type VoiceProcessMessage =
   | { type: "voice-match-error"; message: string }
   /**
    * A verified request that matched the owner by ADAPT.margin or more, sent after it: its voiceprint (base64, numbers
-   * only), its score, and whether it was one voice throughout (adapt-sample.ts). Main decides whether it is learnt.
+   * only), its score, whether it was one voice throughout (adapt-sample.ts), how many seconds of voice follow its wake
+   * phrase (`voiced`) and which utterance it belongs to (`utterance`: the nth this process sent, so main pairs it with
+   * that request and no other). Main decides whether it is learnt.
    */
-  | { type: "voice-sample"; print: string; score: number; oneVoice: boolean };
+  | { type: "voice-sample"; print: string; score: number; oneVoice: boolean; voiced: number; utterance: number };
 
 /** Which model a ModelLoadError is about, by the name sherpa.ts gives it ("The wake word model couldn't be loaded."). */
 const LOADED_AS: [RegExp, "kws" | "vad" | "asr"][] = [[/wake word/i, "kws"], [/voice activity/i, "vad"], [/speech recognition/i, "asr"]];
@@ -112,7 +114,9 @@ function voiceprinter(): Printer {
   return made;
 }
 /** Requests go through Voice Match on their way to main. */
-const gate = new VoiceGate(voiceprinter, e => send(e), err => send({ type: "voice-match-error", message: err instanceof Error ? err.message : String(err) }),
+/** The utterances sent to main so far (a voice-sample says which one it belongs to). */
+let utterances = 0;
+const gate = new VoiceGate(voiceprinter, e => { if (e.type === "utterance") utterances++; send(e); }, err => send({ type: "voice-match-error", message: err instanceof Error ? err.message : String(err) }),
   undefined, () => engine?.cancel());
 /** What Voice Match learnt, as main sends it: the enrolment to check too, and the learnt print's threshold (adapt.ts). */
 function learntOf(m: { anchor?: string; clips?: number }): { anchor: Float32Array; threshold: number } | null {
@@ -120,16 +124,20 @@ function learntOf(m: { anchor?: string; clips?: number }): { anchor: Float32Arra
   return anchor && m.clips ? { anchor, threshold: adaptedThreshold(m.clips) } : null;
 }
 /**
- * Voice Match keeps learning (main says so): a verified request that matched well goes to main as a sample, at most one
- * in ADAPT.minGapMs (the halves are printed only for those).
+ * Voice Match keeps learning (main says so): a verified request that matched well goes to main as a sample (adapt-sample.ts
+ * sampleOffered), at most one in ADAPT.minGapMs (the halves are printed only for those).
  */
 let learning = false, sampledAt = Number.NEGATIVE_INFINITY;
-gate.onSample = (print, score, audio) => {
+gate.onSample = (print, score, rest) => {
   const owner = gate.ownerPrint;
-  if (!learning || !owner || score < VOICE_MATCH_THRESHOLD + ADAPT.margin || !longEnough(audio) || Date.now() - sampledAt < ADAPT.minGapMs) return;
-  sampledAt = Date.now();
-  void oneVoice(voiceprinter(), audio, p => gate.matches(p, owner)).then(
-    whole => send({ type: "voice-sample", print: encodePrint(print), score: Math.round(score * 1000) / 1000, oneVoice: whole }),
+  const now = Date.now();
+  if (!owner || !sampleOffered({ learning, hasOwner: true, score, rest, now, sampledAt })) return;
+  sampledAt = now;
+  // The utterance just sent (the gate sends it before it offers its sample).
+  const utterance = utterances;
+  const voiced = Math.floor(voicedSeconds(rest) * 10) / 10;
+  void oneVoice(voiceprinter(), rest, p => gate.matches(p, owner)).then(
+    whole => send({ type: "voice-sample", print: encodePrint(print), score: Math.round(score * 1000) / 1000, oneVoice: whole, voiced, utterance }),
     () => undefined, // the model failed: nothing to learn from this one (the gate reported failures already)
   );
 };

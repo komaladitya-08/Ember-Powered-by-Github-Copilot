@@ -77,7 +77,8 @@ export interface VoiceOptions {
    * added to that refusal's text. Absent on Linux, where nothing asks first.
    */
   micHint?: string;
-  onEvent: (e: VoiceEvent) => void;
+  /** `heard.utterance`: which utterance of this voice process it is (a voice-sample's `utterance` is the same number). */
+  onEvent: (e: VoiceEvent, heard?: { utterance: number }) => void;
   onState: (s: MicState, detail?: string) => void;
   /** A reply was heard (true), or no voice spoke (false): the speaking page tells it when that changes (review #101). */
   onSpeech?: (ok: boolean) => void;
@@ -171,6 +172,8 @@ type PageSend = (channel: string, payload: unknown) => void;
 
 export class VoiceService {
   private proc: UtilityProcess | null = null;
+  /** The utterances the voice process has sent since it started (0 at each start: its own count starts again too). */
+  private utterances = 0;
   private mic: BrowserWindow | null = null;
   /** Speaks replies while listening is off (loaded on first use; it never opens the microphone). */
   private speaker: Speaker | null = null;
@@ -689,6 +692,7 @@ export class VoiceService {
     this.micLost = false;
     this.micSilent = false;
     this.monitorOn = false;
+    this.utterances = 0;
     const proc = utilityProcess.fork(path.join(appDir, "voice.cjs"), [], { serviceName: "Ember voice", stdio: "pipe" });
     this.proc = proc;
     proc.stderr?.on("data", (d: Buffer) => this.o.log.debug("voice.stderr", { line: d.toString().slice(0, 300) }));
@@ -761,13 +765,15 @@ export class VoiceService {
         if (!this.micLost) { this.o.log.warn("voice.stalled", { ms: m.ms }); this.restartLater("No sound is arriving from the microphone."); }
         return;
       }
+      // Every utterance the voice process sends is counted, dropped or not: a voice-sample names its request by this number.
+      if (m.type === "utterance") this.utterances++;
       if (m.type === "utterance" && Date.now() - this.cancelledAt < CANCEL_GRACE_MS) { this.o.log.info("voice.dropped", { reason: "cancelled" }); return; }
       if (m.type === "wake") { this.o.log.info("voice.wake", { keyword: m.keyword }); this.dropFollowUp(); this.warmVoice(); } // a new request: the old answer's follow-up is moot
       if (m.type === "stop") this.o.log.info("voice.stop");
       if (m.type === "listening") this.setState(m.on ? "active" : "waiting");
       if (m.type === "rejected") this.o.log.info("voice.rejected", { keyword: m.keyword, reason: m.reason, ...(m.score !== undefined ? { score: m.score } : {}) });
       this.o.log.debug("voice.event", { type: m.type });
-      this.o.onEvent(m);
+      this.o.onEvent(m, m.type === "utterance" ? { utterance: this.utterances } : undefined);
     });
     const { port1, port2 } = new MessageChannelMain();
     proc.postMessage({ type: "init", models: this.paths(), monitor: this.o.monitor, dev: !app.isPackaged, voiceprint: this.voiceprint(), ...(this.voiceprint() ? this.o.matchLearnt?.() ?? {} : {}), ...(this.wasmOnly.voice ? { wasm: true } : this.o.capiDir ? { capiDir: this.o.capiDir } : {}) }, [port1]);

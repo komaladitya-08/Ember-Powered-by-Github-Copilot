@@ -9,13 +9,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADAPT, ADAPT_QUIET_MS, adapt, adaptGuard, adaptedThreshold, fromEnrolment, gateMatches, sane, towards, type SampleContext } from "../../app/voice/adapt";
-import { longEnough, oneVoice } from "../../app/voice/adapt-sample";
+import { longEnough, oneVoice, sampleOffered } from "../../app/voice/adapt-sample";
 import { VoiceGate, type Printer } from "../../app/voice/match";
 import { VOICE_MATCH_THRESHOLD, encodePrint, similarity, unit } from "../../app/voice/voiceprint";
 import type { VoiceEvent } from "../../app/voice/engine";
 import { voiceprintStore } from "../../app/main/voiceprint-store";
 import { editDistance, soundKey, soundsLike } from "../../app/main/personal/phonetic";
-import { COMMON, correctTranscript, learnFrom, learnable, memoryNames, type Lexicon } from "../../app/main/personal/correct";
+import { COMMON, LOOKS_UP, correctTranscript, isNumberWord, learnFrom, learnable, memoryNames, type Lexicon } from "../../app/main/personal/correct";
+import { CONSENT_VERSION } from "../../app/shared/consent";
 import { followUpMs, predictNext, type PredictInput } from "../../app/main/personal/predict";
 import { PersonalVoice, type PersonalSettings } from "../../app/main/personal/service";
 import { wordsStore } from "../../app/main/personal/words-store";
@@ -149,11 +150,14 @@ describe("Voice Match that keeps learning", () => {
   });
 
   it("learns from nothing while another voice is about, Ember spoke, the room is busy or a stop came (poisoning guards)", () => {
-    const base: SampleContext = { learning: true, matchOn: true, verified: true, selfSpoke: false, strangerNear: false, busyRoom: false, stoppedLately: false, lastAt: 0, now: 1_000_000 };
+    const base: SampleContext = { learning: true, matchOn: true, verified: true, selfSpoke: false, strangerNear: false, busyRoom: false, stoppedLately: false, voicedSeconds: 3, lastAt: 0, now: 1_000_000 };
     expect(adaptGuard(base)).toBeNull();
     expect(adaptGuard({ ...base, learning: false })).toBe("off");
     expect(adaptGuard({ ...base, matchOn: false })).toBe("off");
     expect(adaptGuard({ ...base, verified: false })).toBe("unverified");
+    // Main checks the voice after the wake phrase again: a sample under ADAPT.minVoicedSeconds is never learnt (S3).
+    expect(adaptGuard({ ...base, voicedSeconds: ADAPT.minVoicedSeconds - 0.1 })).toBe("short");
+    expect(adaptGuard({ ...base, voicedSeconds: ADAPT.minVoicedSeconds })).toBeNull();
     expect(adaptGuard({ ...base, selfSpoke: true })).toBe("self");
     expect(adaptGuard({ ...base, strangerNear: true })).toBe("stranger");
     expect(adaptGuard({ ...base, busyRoom: true })).toBe("busy");
@@ -305,6 +309,40 @@ describe("the transcript corrected against the user's own words (correct.ts)", (
     expect(learnFrom("Open my mail", "Delete my mail", risky)).toBeNull();
   });
 
+  it("never corrects into a person's name from memory unless the request only looks something up (review of #145)", () => {
+    const sandra: Lexicon = { entries: [{ text: "Sandra", source: "memory" }, { text: "Slack", source: "app" }], learned: [] };
+    // Requests that may hand something to the person, by verbs no list covers: the name stays as heard.
+    for (const said of ["ask Sandro to come", "remind Sandro tomorrow", "add Sandro to the meeting", "give Sandro access", "let Sandro know", "assign it to Sandro",
+      "Slack Sandro the file", "WhatsApp Sandro hello", "Zoom Sandro now", "book lunch with Sandro", "Ember, put Sandro on the list", "grant Sandro edit rights"]) {
+      expect(correctTranscript(said, sandra, risky), said).toMatchObject({ text: said, counts: {} });
+    }
+    // Looking something up may use it.
+    for (const said of ["Find Sandro in the directory", "What is Sandro working on", "Who is Sandro", "Where is Sandro today", "Ember, find Sandro", "Hey Ember, please find Sandro", "Can you look up Sandro", "Show me Sandro's team"]) {
+      expect(LOOKS_UP.test(said), said).toBe(true);
+    }
+    expect(correctTranscript("Find Sandro in the directory", sandra, risky)).toMatchObject({ text: "Find Sandra in the directory", counts: { memory: 1 } });
+    expect(correctTranscript("What is Sandro working on", sandra, risky)).toMatchObject({ text: "What is Sandra working on", counts: { memory: 1 } });
+    // Suggestion words, which can carry a name too, are held to the same rule; an app's name isn't a person's.
+    const suggested: Lexicon = { entries: [{ text: "Sandra", source: "predicted" }], learned: [] };
+    expect(correctTranscript("give Sandro access", suggested, risky).text).toBe("give Sandro access");
+    expect(correctTranscript("Find Sandro", suggested, risky).text).toBe("Find Sandra");
+    expect(correctTranscript("Open Slak please", sandra, risky)).toMatchObject({ text: "Open Slack please", counts: { app: 1 } });
+  });
+
+  it("never learns a number word or a digit: fifteen for fifty changes what is asked (review of #145)", () => {
+    expect(learnFrom("set it to fifteen", "set it to fifty", risky)).toBeNull();
+    expect(learnFrom("set it to 15", "set it to 50", risky)).toBeNull();
+    expect(learnFrom("move it to the thirteenth", "move it to the thirtieth", risky)).toBeNull();
+    expect(learnFrom("twenty-five of them", "twenty-six of them", risky)).toBeNull();
+    expect(learnFrom("wait a Jira", "wait an Jira", risky)).toBeNull();
+    for (const w of ["zero", "ten", "nineteen", "ninety", "hundred", "thousand", "million", "second", "twelfth", "twenty-five", "a", "an", "7"]) expect(isNumberWord(w), w).toBe(true);
+    for (const w of ["Jira", "Sandra", "ember", "fiftyfold-ish"]) expect(isNumberWord(w), w).toBe(w === "fiftyfold-ish" ? false : false);
+    expect(learnable(["fifteen"], ["fifty"])).toBe(false);
+    // An entry kept before this rule is held to it too.
+    const old: Lexicon = { entries: [], learned: [{ heard: "fifteen", meant: "fifty" }] };
+    expect(correctTranscript("set it to fifteen", old, risky)).toMatchObject({ text: "set it to fifteen", counts: {} });
+  });
+
   it("never learns a common word for another, or a change of verb (open for close, allow for deny: review of #145)", () => {
     expect(learnFrom("Open the notes", "Close the notes", risky)).toBeNull();
     expect(learnFrom("Allow it", "Deny it", risky)).toBeNull();
@@ -373,7 +411,7 @@ describe("PersonalVoice", () => {
   it("learns nothing while a question Voice Match locked (a stranger was turned away during it) is up (review of #145)", () => {
     const { p, dir, anchor } = make();
     try {
-      const s = { print: encodePrint(near(anchor, 0.9, 24)), score: 0.9, oneVoice: true };
+      const s = { print: encodePrint(near(anchor, 0.9, 24)), score: 0.9, oneVoice: true, voiced: 3 };
       expect(p.sample(s, { ...ok, locked: true })).toBeNull();
       expect(p.sample(s, ok)).not.toBeNull();
     } finally {
@@ -415,16 +453,17 @@ describe("PersonalVoice", () => {
   it("learns from a verified request, but not after another voice was turned away, nor twice a minute", () => {
     const { p, dir, anchor, tick } = make();
     try {
-      const s = { print: encodePrint(near(anchor, 0.9, 22)), score: 0.9, oneVoice: true };
+      const s = { print: encodePrint(near(anchor, 0.9, 22)), score: 0.9, oneVoice: true, voiced: 3 };
       expect(p.sample(s, ok)).not.toBeNull();
       expect(p.sample(s, ok)).toBeNull(); // too soon
       tick(ADAPT.minGapMs);
       p.strangerTurnedAway();
       expect(p.sample(s, ok)).toBeNull();
       tick(ADAPT_QUIET_MS);
-      expect(p.sample({ ...s, oneVoice: false }, ok)).toBeNull();
+      expect(p.sample({ ...s, oneVoice: false, voiced: 3 }, ok)).toBeNull();
       expect(p.sample(s, { ...ok, selfSpoke: true })).toBeNull();
       expect(p.sample(s, null)).toBeNull();
+      expect(p.sample({ ...s, voiced: ADAPT.minVoicedSeconds - 0.1 }, ok)).toBeNull(); // main checks the voice after the wake phrase too (S3)
       expect(p.sample(s, ok)).not.toBeNull();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -434,7 +473,7 @@ describe("PersonalVoice", () => {
   it("learns nothing while Keep learning my voice is off", () => {
     const { p, dir, anchor } = make({ learnVoice: false });
     try {
-      expect(p.sample({ print: encodePrint(near(anchor, 0.9, 23)), score: 0.9, oneVoice: true }, ok)).toBeNull();
+      expect(p.sample({ print: encodePrint(near(anchor, 0.9, 23)), score: 0.9, oneVoice: true, voiced: 3 }, ok)).toBeNull();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -542,6 +581,50 @@ describe("words.json", () => {
   });
 });
 
+describe("what the voice process offers main as a sample (adapt-sample.ts)", () => {
+  const voiced = (seconds: number) => { const a = new Float32Array(Math.round(seconds * 16_000)); for (let i = 0; i < a.length; i++) a[i] = 0.3 * Math.sin(i / 7); return a; };
+  const base = { learning: true, hasOwner: true, score: VOICE_MATCH_THRESHOLD + ADAPT.margin, rest: voiced(ADAPT.minVoicedSeconds + 0.5), now: 1_000_000, sampledAt: 0 };
+
+  it("offers a verified request that matched by the margin, with enough voice after its wake phrase, once a minute", () => {
+    expect(sampleOffered(base)).toBe(true);
+    expect(sampleOffered({ ...base, learning: false })).toBe(false);
+    expect(sampleOffered({ ...base, hasOwner: false })).toBe(false);
+    expect(sampleOffered({ ...base, score: base.score - 0.01 })).toBe(false);
+    expect(sampleOffered({ ...base, sampledAt: base.now - ADAPT.minGapMs + 1 })).toBe(false);
+    expect(sampleOffered({ ...base, sampledAt: base.now - ADAPT.minGapMs })).toBe(true);
+  });
+
+  it("offers nothing with under ADAPT.minVoicedSeconds of voice after the wake phrase, however long the clip is (S3)", () => {
+    expect(sampleOffered({ ...base, rest: voiced(ADAPT.minVoicedSeconds - 0.4) })).toBe(false);
+    expect(sampleOffered({ ...base, rest: Float32Array.from([...voiced(0.8), ...new Float32Array(16_000 * 4)]) })).toBe(false);
+  });
+});
+
+describe("VoiceGate's spoken yes after a learnt print (match.ts vouched)", () => {
+  const A = unit(Float32Array.from([1, 0]));
+  const pair = (deg: number) => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180)];
+  const voice = (samples: number, [x, y]: number[]) => { const a = new Float32Array(samples); for (let i = 0; i + 1 < a.length; i += 2) { a[i] = x; a[i + 1] = y; } return a; };
+  const joined = (a: Float32Array, b: Float32Array) => { const o = new Float32Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+  const printer: Printer = { print: async s => unit(Float32Array.from([s[0], s[1]])) };
+
+  it("is verified only if the part after the wake phrase matches the enrolment at its own threshold, not the 0.74 that is enough to be heard (review of #145)", async () => {
+    // The learnt print sits 38 degrees from the enrolment. After the wake phrase (exactly 0.8 s of voice) one request is at
+    // 41.8 degrees (0.745 from the enrolment: heard, not verified), one at 36 degrees (0.81: verified).
+    const learnt = unit(Float32Array.from(pair(38)));
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => printer, e => sent.push(e), () => undefined);
+    g.setOwner(learnt, { anchor: A, threshold: adaptedThreshold(ADAPT.maxClips) });
+    const wake = voice(12_800, pair(38));
+    g.event({ type: "utterance", text: "Between.", ms: 100, window: "wake" }, joined(wake, voice(16_000 * 3, pair(41.8))), true);
+    g.event({ type: "utterance", text: "Owner.", ms: 100, window: "wake" }, joined(wake, voice(16_000 * 3, pair(36))), true);
+    await new Promise(r => setTimeout(r, 10));
+    expect(sent).toEqual([
+      { type: "utterance", text: "Between.", ms: 100, window: "wake", short: true },
+      { type: "utterance", text: "Owner.", ms: 100, window: "wake", verified: true },
+    ]);
+  });
+});
+
 describe("main's wiring of voice personalisation (main.ts source)", () => {
   const MAIN = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
   it("learns nothing from a spoken answer to a question: the heard request is cleared before it is answered (review of #145)", () => {
@@ -551,7 +634,24 @@ describe("main's wiring of voice personalisation (main.ts source)", () => {
     expect(MAIN).toContain("locked: confirmer?.voiceLocked ?? false");
   });
   it("takes a suggestion's click only for a chip the bubble shows now, and sends it as Ember's words the user chose (review of #145)", () => {
+    // Each pinned with its surrounding line: a changed check or a dropped `suggested` changes the line.
+    expect(MAIN).toContain('if (text && personal.isSuggestion(text)) { log.info("bubble.suggestion", { n: suggested }); lastAskByVoice = false; captureContext(); void askEmber(text, { suggested: true }); }');
     expect(MAIN).toContain("const text = suggestionsShown(lastState)[suggested];");
-    expect(MAIN).toContain("void askEmber(text, { suggested: true });");
+  });
+  it("takes an Ask box suggestion only if it offers it now, and sends it as Ember's words the user chose (review of #145)", () => {
+    expect(MAIN).toContain('if (!askWindow.owns(event.sender) || typeof text !== "string" || text.length > 200 || !personal.isSuggestion(text)) return;\n    askWindow.hide();\n    lastAskByVoice = false;\n    log.info("ask.suggestion");\n    void askEmber(text, { suggested: true });');
+  });
+  it("pairs a Voice Match sample with the utterance it came from by its number, not the latest one heard", () => {
+    expect(MAIN).toContain("const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;");
+  });
+});
+
+describe("what Ember keeps for Voice Match and words, and asking again (review of #145)", () => {
+  const SENTENCE = "If you teach Ember your voice, it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct when it mishears you, on this computer until you forget them.";
+  it("is said in 'Before Ember starts' and the microphone's card, and everyone who agreed before is asked again (CONSENT_VERSION 2)", () => {
+    const html = fs.readFileSync(path.join(__dirname, "../../app/renderer/home/index.html"), "utf8");
+    expect(html.split(SENTENCE)).toHaveLength(3); // the full text's microphone line, and the card's text
+    expect(CONSENT_VERSION).toBe(2);
+    expect(fs.readFileSync(path.join(__dirname, "../../app/shared/consent.ts"), "utf8")).toContain("export const CONSENT_VERSION = 2;");
   });
 });

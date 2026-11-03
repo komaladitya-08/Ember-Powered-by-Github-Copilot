@@ -344,7 +344,9 @@ allows them.
   you asked it to remember (“Open Spotfy” → “Open Spotify”; “Amber, …” at the start → “Ember, …”). When it still gets
   one wrong, **That's not what I said** under the request in Conversation lets you type what you said, and with
   **Learn my words** on it hears it right from then on (listed in Settings › Voice with Forget). A request about
-  sending, deleting or paying, or one to message, call, tell or invite someone, is never changed but for Ember's name.
+  sending, deleting or paying, or one to message, call, tell or invite someone, is never changed but for Ember's name,
+  and a person's name from Memory is only used in a request that looks something up (“find Sandra”, “who is Sandra”),
+  never in “ask Sandra…”, “add Sandra…” or “book lunch with Sandra”. It never learns a swap of numbers.
 - **Suggest what I might say next**: two or three likely next requests (“Close it”, “Read it out”, “Do the same for
   the next one”) under Ember's answers and in Ask Ember, marked as Ember's suggestions and made on this computer.
   Choosing one asks Ember as typing it would, but a command it names always asks first; nothing risky is suggested

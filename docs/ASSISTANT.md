@@ -316,8 +316,9 @@ What Ember keeps for them is in "Before Ember starts" and the microphone's card 
 ### 7.1 Voice Match that adapts (app/voice/adapt.ts, adapt-sample.ts; main: app/main/personal/service.ts)
 
 - **What it learns from.** Only a request (never a spoken answer to a question: main drops it before `voiceAnswer`
-  answers) that the gate `verified`, with at least 2 s of voice (`ADAPT.minVoicedSeconds`, whatever an answer may
-  need), that matched the print by `ADAPT.margin` (0.08) more than the threshold and the enrolment by the threshold, one
+  answers) that the gate `verified`, with at least 2 s of voice after its wake phrase (`ADAPT.minVoicedSeconds`,
+  whatever an answer may need; the voice process measures it and main checks it again), named by its utterance's
+  number so a sample is only ever paired with its own request, that matched the print by `ADAPT.margin` (0.08) more than the threshold and the enrolment by the threshold, one
   voice throughout (a request with 3 s of voice or more is printed half by half and both halves must pass the gate's own
   test), and that main lets through `adaptGuard`: Keep learning on, Voice Match in force, not Ember's own voice since
   the wake (`selfSpokeSince`), no other voice turned away, no question it locked up (`Confirmer.voiceLocked`) and no
@@ -371,12 +372,14 @@ request ("Amber," / "Emma," → "Ember,"), the platform's app catalog (installed
 facts while memory is in force, the corrections the user taught ("That's not what I said": words.json, 0600), and,
 with a 0.03 bonus, the words of the suggestions shown now. A near-miss is corrected when its sound key (Metaphone's
 main rules, voiced and unvoiced pairs merged) and letters together score 0.85 or more and 0.05 ahead of the next entry;
-never a common word on its own, never digits. Nothing but Ember's name is changed in a request policy's `isRiskyLabel`
+never a common word on its own, never digits. A person's name from memory (or from a suggestion) is only ever corrected
+into in a request that just looks something up (what, who, when, where, find, search, show, look up, read): "ask
+Sandro to come", "add Sandro to the meeting", "book lunch with Sandro" stay as heard, whatever the verb. Nothing but Ember's name is changed in a request policy's `isRiskyLabel`
 calls risky, or one that addresses someone (`ADDRESSES`: message, mail, text, tell, DM, write to, call, invite, reply,
 send, share…: a corrected name there would change who gets it), and a correction that would make a request risky is
 undone, so policy (`spokenWords` included) gets the raw words. A spoken answer to a question is judged on the raw words.
 A taught correction is kept only when it isn't all common words and no request verb changes ("open" for "close",
-"allow" for "deny": `learnable`), and entries kept before that rule are held to it too. The log counts corrections by
+"allow" for "deny"; never a number word or digit: "fifteen" for "fifty": `learnable`), and entries kept before that rule are held to it too. The log counts corrections by
 source, never the words. sherpa-onnx's keyword spotter could take more keywords, but adding the user's own would change
 wake behaviour, so it was left alone.
 
@@ -386,11 +389,13 @@ the corrections the user would teach come from the first take, the second is mea
 | Clips | Raw | Lexicon | + taught | Words a correction made wrong |
 |---|---|---|---|---|
 | The voice tests' 22 clips (amy and ryan) | 12.3 % | 11.6 % | 11.6 % | 1 (the "Hey Amber" clip, whose wake the engine turns away before it is a request) |
-| 40 name requests (ryan, kristin) | 29.4 % | 26.1 % | 23.9 % | 0 |
-| ryan | 30.0 % | 27.8 % | 24.4 % | 0 |
-| kristin | 28.9 % | 24.4 % | 23.3 % | 0 |
+| 40 name requests (ryan, kristin) | 34.4 % | 31.1 % | 27.8 % | 0 |
+| ryan | 36.7 % | 34.4 % | 30.0 % | 0 |
+| kristin | 32.2 % | 27.8 % | 25.6 % | 0 |
 
-The synthetic voices vary between runs (±3 points). Requests that address someone ("Message Anjali…", "Set up a call
+The synthetic voices vary between runs (±5 points: the raw column moved from 29.4 to 34.4 % between two runs of the same
+code). People's names in requests that aren't lookups ("Remind me to call Priya", "Set up a call with Kofi") are left as
+heard on purpose, which is most of the gap to the first measurement. Requests that address someone ("Message Anjali…", "Set up a call
 with Kofi") are left as heard on purpose. Names Moonshine hears as other words ("Nautilus" → "not a", "Mehmet" → "name
 it") are beyond a sound match; teaching them once fixes them when they come out the same way again.
 

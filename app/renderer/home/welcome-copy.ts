@@ -88,7 +88,7 @@ export function consentPoints(o: { service: string; kept: string; locked: boolea
       : { icon: "send", text: `When you ask something, your request and what I read go to ${o.service}. Nothing is sent before you ask.` },
     { icon: "hand", text: "I ask before acting in an app, and always before anything hard to undo. I never type passwords." },
     { icon: "lock", text: `On this computer I keep your settings, logs and a record of what you asked and what I did (${o.kept}). I send no usage statistics.` },
-    { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on." },
+    { icon: "plug", text: "The microphone, other computers and commands stay off until you turn them on. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct (never audio)." },
   ];
 }
 
@@ -111,7 +111,7 @@ export const CONSENT_SOURCES: Readonly<Record<ConsentPoint["icon"], readonly str
   send: ["When you ask something</b>, your request and what Ember read from the screen go to", "Nothing is sent before you ask."],
   hand: ["It asks before acting</b> in an app, and always before anything hard to undo.", "It never types passwords."],
   lock: ["On this computer</b> it keeps your settings, logs and a record of every task and action it took, including what you asked for", "It sends no usage statistics."],
-  plug: ["The microphone stays off</b> unless you turn on", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
+  plug: ["The microphone stays off</b> unless you turn on", "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct", "Other computers and commands</b><span id=\"targets-note\"> are off until you turn them on"],
 };
 
 /** The sign-in step's title and lead: an organisation's own model service has nothing to sign in to. */

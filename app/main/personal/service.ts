@@ -93,14 +93,14 @@ export class PersonalVoice {
    * guard allows (adapt.ts adaptGuard, then adapt's own margin and limits). Returns the new print (base64) to use, or
    * null when nothing changed.
    */
-  sample(s: { print: string; score: number; oneVoice: boolean }, r: SampleRequest | null): string | null {
+  sample(s: { print: string; score: number; oneVoice: boolean; voiced: number }, r: SampleRequest | null): string | null {
     const set = this.o.settings();
     const now = this.now();
     const st = this.o.voiceprints.state();
     const why = adaptGuard({
       learning: set.learnVoice, matchOn: set.matchOn && !!st, verified: !!r?.verified, selfSpoke: r?.selfSpoke ?? true,
       strangerNear: !!r?.locked || now - this.strangerAt < ADAPT_QUIET_MS, busyRoom: !s.oneVoice || !!r?.cut,
-      stoppedLately: now - this.stoppedAt < ADAPT_QUIET_MS, lastAt: this.o.voiceprints.learnt().at, now,
+      stoppedLately: now - this.stoppedAt < ADAPT_QUIET_MS, voicedSeconds: s.voiced, lastAt: this.o.voiceprints.learnt().at, now,
     });
     const print = decodePrint(s.print);
     if (why || !st || !print) { this.o.log.info("voice.match_learn", { learnt: false, why: why ?? "unreadable" }); return null; }

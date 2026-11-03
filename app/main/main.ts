@@ -1335,8 +1335,8 @@ function start(): void {
     risky: w => isRiskyLabel(w, platform.os),
   });
   personalRef = personal;
-  /** The request a Voice Match sample belongs to: the latest one heard, for a little while (the sample follows it). */
-  let lastHeard: { at: number; verified: boolean; cut: boolean; selfSpoke: boolean } | null = null;
+  /** The request a Voice Match sample belongs to: the voice process names it (a sample's `utterance` is the request's number). */
+  let lastHeard: { utterance: number; verified: boolean; cut: boolean; selfSpoke: boolean } | null = null;
   if (memoryOn() && betterRecall.ready) memory.index();
   // Extensions (app/main/extensions/, docs/DEVELOPING.md "Extensions"): plugins' MCP tools, used only while the user has
   // them on and agreed, and the organisation allows them. Home's Extensions section calls this (ExtensionsApi).
@@ -1426,7 +1426,7 @@ function start(): void {
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
   let voiceDetail: string | undefined;
   /** What Ember does with what it hears. */
-  const onVoice = (e: VoiceEvent) => {
+  const onVoice = (e: VoiceEvent, heard?: { utterance: number }) => {
     switch (e.type) {
       case "wake":
         heardFrom = Date.now();
@@ -1472,7 +1472,7 @@ function start(): void {
         // One follow-up per wake: the answer to a follow-up opens no window of its own (the engine refuses it too).
         lastAskByVoice = e.window === "wake";
         log.info("voice.utterance", { chars: e.text.length, ms: e.ms, window: e.window, cut: !!e.cut });
-        lastHeard = { at: Date.now(), verified: e.verified === true, cut: !!e.cut, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true };
+        lastHeard = { utterance: heard?.utterance ?? -1, verified: e.verified === true, cut: !!e.cut, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true };
         // The request ran past the longest Ember listens: what was heard goes, and the user is told the rest didn't.
         if (e.cut) {
           const note = CUT_NOTES[e.window];
@@ -2590,7 +2590,9 @@ function start(): void {
         return st && st.clips.length ? { anchor: encodePrint(st.anchor), clips: st.clips.length } : null;
       },
       onSample: s => {
-        const r = lastHeard && Date.now() - lastHeard.at < 15_000 ? lastHeard : null;
+        // Paired by the utterance's number, never "the latest one heard": a later request, a dropped one or a spoken answer
+        // (lastHeard cleared) leaves it unpaired, and an unpaired sample teaches nothing.
+        const r = lastHeard && lastHeard.utterance === s.utterance ? lastHeard : null;
         lastHeard = null;
         const print = personal.sample(s, r ? { verified: r.verified, cut: r.cut, selfSpoke: r.selfSpoke, locked: confirmer?.voiceLocked ?? false } : null);
         if (print && settings.get().voice.match) { voice?.setVoiceprint(print); broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)); }

@@ -82,10 +82,11 @@ export class VoiceGate {
   /** A turned-away wake's window is being cancelled: what it emits meanwhile goes nowhere. */
   private dropping = false;
   /**
-   * Told of each request that matched the owner and was `verified` (sent first), with its voiceprint, its score and its
-   * audio: what Voice Match may learn from (adapt-sample.ts, adapt.ts). Null: nothing is.
+   * Told of each request that matched the owner and was `verified` (sent first), with its voiceprint, its score and the
+   * audio that follows its wake phrase (the part that vouched for it): what Voice Match may learn from (adapt-sample.ts,
+   * adapt.ts). Null: nothing is.
    */
-  onSample: ((print: Float32Array, score: number, audio: Float32Array) => void) | null = null;
+  onSample: ((print: Float32Array, score: number, rest: Float32Array) => void) | null = null;
 
   /** `cancelWindow`: ends the engine's listening window (a wake turned away at its first look); it emits synchronously. */
   constructor(
@@ -160,7 +161,7 @@ export class VoiceGate {
       if (this.matches(print, owner)) {
         const heard = await this.vouched(e, audio, owner, withWake, this.matches(print, owner, true));
         this.send(heard);
-        if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, audio);
+        if (heard.type === "utterance" && heard.verified) this.onSample?.(print, score, afterWakePhrase(audio, withWake));
         return;
       }
       this.send({ type: "rejected", keyword: "", reason: "voice", score: Math.round(score * 1000) / 1000 });

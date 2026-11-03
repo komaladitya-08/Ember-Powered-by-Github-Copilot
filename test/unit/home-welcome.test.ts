@@ -70,7 +70,8 @@ describe("the consent in short", () => {
       ["send", /your request and what I read go to GitHub Copilot\. Nothing is sent before you ask\./, "Nothing is sent before you ask."],
       ["hand", /I ask before acting in an app, and always before anything hard to undo\. I never type passwords\./, "It never types passwords."],
       ["lock", /On this computer I keep your settings, logs and a record of what you asked and what I did \(kept 30 days\)\. I send no usage statistics\./, "It sends no usage statistics."],
-      ["plug", /The microphone, other computers and commands stay off until you turn them on\./, "The microphone stays off</b> unless you turn on"],
+      ["plug", /The microphone, other computers and commands stay off until you turn them on\. If you teach me your voice, I keep a voiceprint I refine from your requests, and the words you correct \(never audio\)\./, "The microphone stays off</b> unless you turn on"],
+      ["plug", /If you teach me your voice, I keep a voiceprint I refine from your requests/, "it keeps your voiceprint and keeps refining it from requests it is sure are yours (numbers, never audio), and it keeps the words you correct"],
     ];
     for (const [icon, said, source] of pairs) {
       expect(points.find(p => p.icon === icon)!.text, icon).toMatch(said);
