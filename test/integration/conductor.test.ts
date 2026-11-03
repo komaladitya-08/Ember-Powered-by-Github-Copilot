@@ -418,4 +418,23 @@ describe("memory on the real Copilot runtime (docs/MEMORY.md step 2)", () => {
       await scripted.close();
     }
   }, 60000);
+
+  it("keeps nothing from a conversation about the user unless the model calls remember (the gap automatic learning fills)", async () => {
+    // The model only answers: it never calls remember.
+    const answering = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Nice to meet you, Ram." }) });
+    const memory = new MemoryService({ dir: path.join(dir, "memory-gap"), log: { info: () => undefined, warn: () => undefined } });
+    try {
+      const states: Partial<EmberState>[] = [];
+      const { conductor } = makeConductor(states, undefined, { baseUrl: answering.baseUrl, memory });
+      await conductor.start();
+      await conductor.ask("I'm Ram, I work on Ember, I prefer short answers");
+      await idle(states, 0);
+      expect(answering.requests.at(-1)!.tools).toEqual(expect.arrayContaining(["remember"]));
+      expect(memory.list()).toEqual([]);
+      await conductor.stop();
+    } finally {
+      memory.stop();
+      await answering.close();
+    }
+  }, 60000);
 });
