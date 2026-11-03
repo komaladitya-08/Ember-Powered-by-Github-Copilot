@@ -31,8 +31,28 @@ export const SHORT_YES_FLOOR = 0.5;
  */
 export const TASK_VOICE_MS = 10 * 60_000;
 
-/** Why a task's voice trust ended: its time ran out, Voice Match turned a voice away, or the task was changed by an unverified request. */
-export type TrustEnd = "expired" | "other-voice" | "steered";
+/**
+ * Why a task's voice trust ended: its time ran out, Voice Match turned a voice away, the task was changed by an
+ * unverified request, or the owner's voiceprint was forgotten or taught again (it was granted against the old one).
+ */
+export type TrustEnd = "expired" | "other-voice" | "steered" | "voice-changed";
+
+/**
+ * Does Voice Match turning a wake away (VoiceEvent "rejected") end every task's trust? Only when it was another voice
+ * ("voice"): not Ember's own speech, the speakers' stream or a failed check of the name. Pure, so main's wiring is tested.
+ */
+export function rejectionEndsTrust(reason: "self" | "speakers" | "check" | "voice"): boolean {
+  return reason === "voice";
+}
+
+/**
+ * Does a spoken answer's outcome end every task's trust? A yes turned away as not the owner's voice does ("unverified":
+ * a clear mismatch, or a request Voice Match couldn't check), since Ember can't tell whose question it was after. A
+ * "no", a yes that was merely too short, another task's question or any other refusal doesn't. Pure, as above.
+ */
+export function refusalEndsTrust(result: string, answer: "allow" | "deny"): boolean {
+  return answer === "allow" && result === "unverified";
+}
 
 /**
  * Which tasks the owner asked for in a verified voice, so a short spoken yes to one of their own questions may be taken
@@ -147,12 +167,16 @@ export function spokenAnswer(text: string): "allow" | "deny" | null {
   const t = norm(text);
   if (!t || t.length > 60) return null;
   // Punctuation first ("Hey, Ember. Allow."), then what leads and trails the answer.
-  const words = withoutTail(withoutLead(t.replace(/[,.!;:]/g, " ").split(/\s+/).filter(Boolean)));
+  const spoken = t.replace(/[,.!;:]/g, " ").split(/\s+/).filter(Boolean);
+  const words = withoutTail(withoutLead(spoken));
   // "Please" leads many answers ("please go ahead"), and is part of one ("please do").
   const cores = [words.join(" "), ...(words[0] === "please" ? [words.slice(1).join(" ")] : [])];
   if (cores.some(c => NO.has(c))) return "deny";
   if (!cores.some(c => YES.has(c))) return null;
-  return /\?[\s"”’')\]]*$/u.test(text) ? null : "allow";
+  // "Please" once in all: "please please do" pads a short yes past the length check (security review of #143).
+  if (spoken.filter(w => w === "please").length > 1) return null;
+  // Asked as a question, whatever follows the "?" ("Allow it?!", "Allow?."): not a yes.
+  return /[?？]$/.test(text.trim().replace(/[\s.!…"”’')\]]+$/u, "")) ? null : "allow";
 }
 
 /**
@@ -214,6 +238,10 @@ export function voiceAnswer(i: VoiceAnswerInput): VoiceAnswerOutcome {
   // Too short to vouch for: its own score, where it has one, says whether it is clearly another voice.
   const otherVoice = i.restScore !== undefined && i.restScore < SHORT_YES_FLOOR;
   if (!i.short || otherVoice) return { kind: "refused", answer, why: "unverified" };
+  // No score at all (under SCORE_MIN_SECONDS of voiced frames after the wake phrase: very quiet or clipped, next to a loud
+  // "Hey Ember") is never taken on trust: the floor could never apply to it, and only the whole clip, mostly the wake
+  // phrase, was matched (security review of #143).
+  if (i.restScore === undefined) return { kind: "refused", answer, why: "too-short" };
   if (i.taskTrust) return { kind: "answer", answer, verified: false, trust: "task-voice" };
   return { kind: "refused", answer, why: "too-short" };
 }

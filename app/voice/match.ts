@@ -145,12 +145,15 @@ export class VoiceGate {
    * least APPROVAL_MIN_SECONDS of voice and matches the owner on its own; otherwise `short`, with that part's own score
    * (`restScore`) when it held SCORE_MIN_SECONDS of voice or more (`whole`: the score of all of it, which is that part's
    * when there was no wake phrase). A check that fails says neither (heard, but it can't approve anything).
+   * `restScore` is the cosine to `owner`, the enrolled voiceprint (the same one VOICE_MATCH_THRESHOLD is measured
+   * against), and goes out unrounded: main's floor (voice-answer.ts SHORT_YES_FLOOR) is compared with exactly this
+   * number, never one rounded up to it. A change to how `owner` is made (averaging, adapting it as it is used) moves
+   * the scale the floor was measured on: measure it again.
    */
   private async vouched(e: Extract<VoiceEvent, { type: "utterance" }>, audio: Float32Array, owner: Float32Array, withWake: boolean, whole: number): Promise<VoiceEvent> {
     const rest = afterWakePhrase(audio, withWake);
     const voiced = voicedSeconds(rest);
-    const round = (x: number) => Math.round(x * 1000) / 1000;
-    if (rest === audio) return voiced >= APPROVAL_MIN_SECONDS ? { ...e, verified: true } : { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: round(whole) } : {}) };
+    if (rest === audio) return voiced >= APPROVAL_MIN_SECONDS ? { ...e, verified: true } : { ...e, short: true, ...(voiced >= SCORE_MIN_SECONDS ? { restScore: whole } : {}) };
     if (voiced < SCORE_MIN_SECONDS) return { ...e, short: true };
     let score: number;
     try {
@@ -159,7 +162,7 @@ export class VoiceGate {
       this.onError(err);
       return e;
     }
-    return voiced >= APPROVAL_MIN_SECONDS && score >= this.threshold ? { ...e, verified: true } : { ...e, short: true, restScore: round(score) };
+    return voiced >= APPROVAL_MIN_SECONDS && score >= this.threshold ? { ...e, verified: true } : { ...e, short: true, restScore: score };
   }
 
   private lookAtWake(e: Extract<VoiceEvent, { type: "wake" }>, audio: Float32Array, owner: Float32Array): void {

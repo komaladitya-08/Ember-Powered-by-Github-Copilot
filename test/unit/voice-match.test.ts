@@ -100,7 +100,7 @@ describe("VoiceGate", () => {
     g.event(utterance("Yes."), ownerAudio(0.2));
     await flush();
     // (No wake phrase in it: the whole was scored, and that is its own score.)
-    expect(sent).toEqual([{ ...utterance("Allow."), short: true, restScore: 0.995 }, { ...utterance("Yes."), short: true }]);
+    expect(sent).toEqual([{ ...utterance("Allow."), short: true, restScore: expect.closeTo(0.995, 3) }, { ...utterance("Yes."), short: true }]);
     expect(APPROVAL_MIN_SECONDS).toBe(0.5); // owner decision of 2026-11-03 (was 1.5 s)
   });
 
@@ -110,7 +110,7 @@ describe("VoiceGate", () => {
     g.setOwner(owner);
     g.event(utterance("Allow."), joined(ownerAudio(0.4), new Float32Array(16_000 * 1.1)));
     await flush();
-    expect(sent).toEqual([{ ...utterance("Allow."), short: true, restScore: 0.995 }]);
+    expect(sent).toEqual([{ ...utterance("Allow."), short: true, restScore: expect.closeTo(0.995, 3) }]);
     expect(voicedSeconds(joined(ownerAudio(0.4), new Float32Array(16_000 * 1.1)))).toBeLessThan(APPROVAL_MIN_SECONDS);
     expect(voicedSeconds(ownerAudio(0.6))).toBeGreaterThanOrEqual(APPROVAL_MIN_SECONDS);
   });
@@ -122,7 +122,7 @@ describe("VoiceGate", () => {
     g1.setOwner(owner);
     g1.event(utterance("Allow."), joined(ownerAudio(0.8), ownerAudio(0.35)), true);
     await flush();
-    expect(short).toEqual([{ ...utterance("Allow."), short: true, restScore: 0.995 }]);
+    expect(short).toEqual([{ ...utterance("Allow."), short: true, restScore: expect.closeTo(0.995, 3) }]);
     // The owner's "Hey Ember", then another voice: heard (the clip starts as the owner's), never verified, and its own
     // score says it is another voice (what task-voice trust refuses: voice-answer.ts SHORT_YES_FLOOR).
     const other: VoiceEvent[] = [];
@@ -149,6 +149,27 @@ describe("VoiceGate", () => {
     // Without the wake phrase in the clip, all of it counts.
     expect(afterWakePhrase(ownerAudio(2), false).length).toBe(32_000);
     expect(voicedSeconds(afterWakePhrase(ownerAudio(2), true))).toBeCloseTo(1.2, 1);
+  });
+
+  it("scores what follows the wake phrase unrounded, and none at all when it is very quiet next to a loud “Hey Ember” (security review of #143)", async () => {
+    const sent: VoiceEvent[] = [];
+    const g = new VoiceGate(() => fakePrinter(), e => sent.push(e), () => undefined);
+    g.setOwner(owner);
+    // A score between 0.4996 and 0.5 mustn't reach main as 0.5 (the floor's own value): the number goes out as it is.
+    const closeCall = Float32Array.from([1, 1.7321]); // cosine to the owner's [1, 0]: 0.49998…
+    g.event(utterance("Allow."), joined(ownerAudio(0.8), voice(0.4, [1, 1.7321])), true);
+    // The recorded wake phrase loud, then a quiet, clipped “yes” with no voiced frame of its own: nothing to score.
+    const quiet = voice(0.6, [0, 1]).map(x => x * 0.002); // under the voiced floor (VOICED_RMS 0.003)
+    g.event(utterance("Allow."), joined(ownerAudio(0.8), quiet), true);
+    await flush();
+    const [first, second] = sent as Extract<VoiceEvent, { type: "utterance" }>[];
+    // (Whole clip matches the owner through its wake phrase: its first samples are the owner's.)
+    expect(first.short).toBe(true);
+    expect(first.restScore).toBeCloseTo(similarity(closeCall, owner), 6);
+    expect(first.restScore!).toBeLessThan(0.5);
+    expect(Math.round(first.restScore! * 1000) / 1000).toBe(0.5); // rounded, it would have met the floor
+    expect(second).toEqual({ ...utterance("Allow."), short: true });
+    expect(voicedSeconds(afterWakePhrase(joined(ownerAudio(0.8), quiet), true))).toBeLessThan(0.25);
   });
 
   it("never holds a stop, or anything that isn't a request", () => {

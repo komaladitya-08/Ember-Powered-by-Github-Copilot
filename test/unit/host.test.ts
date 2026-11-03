@@ -1712,6 +1712,15 @@ describe("review round 6: a request sent while the conversation is busy waits fo
     await host.ask("make it warmer", null, undefined, { spoken: true, verified: true });
     await tool("steer_task")({ id: first, instruction: "make night light warmer" });
     expect(ends).toEqual([]);
+    // A verified change of plan neither refreshes that task's trust (no new grant, so its 10 minutes run from the
+    // request that started it) nor gives any to a task that had none (the one asked for by a short, unverified yes).
+    expect(grants).toHaveLength(1);
+    const untrusted = host.tasks!.list().map(t => t.id).filter(id => id !== first);
+    expect(untrusted).toHaveLength(2);
+    await host.ask("start it at five", null, undefined, { spoken: true, verified: true });
+    await tool("steer_task")({ id: untrusted[0], instruction: "start at five" });
+    expect(grants).toHaveLength(1);
+    expect(ends).toEqual([]);
     await host.ask("and dimmer", null);
     await tool("steer_task")({ id: first, instruction: "make it dimmer too" });
     expect(ends).toEqual([[first, "steered"]]);

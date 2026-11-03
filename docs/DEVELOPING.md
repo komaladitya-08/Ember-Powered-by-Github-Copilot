@@ -276,7 +276,8 @@ Ember opens the switch or its card here) or “Ember, ask me first again” (any
 (or “no”, “don't”) declines it. A yes counts only when **Answer only my voice (Voice Match)** is on and recognises you
 in what you say after “Hey Ember”, from at least half a second of your voice (“Ember, go ahead” is enough). A shorter
 yes (“Ember, allow”) counts too for a question asked by a task you asked for in a voice Voice Match recognised, within
-10 minutes of asking, unless that short yes sounds clearly unlike you, Voice Match has turned another voice away since,
+10 minutes of asking, unless that short yes is too quiet or clipped to tell (it is then too short, never trusted) or sounds clearly unlike
+you, Voice Match has turned another voice away since, you forgot or taught your voice again,
 or the task was changed by a request it didn't recognise (typed, say); never for a command card, a consent card or
 another task's question (owner decision of 2026-11-03; the audit says `trust: "task-voice"`). A yes asked as a
 question (“Proceed?”) or a bare “okay” isn't one. Otherwise the bubble says how, and the question stays. Measured on

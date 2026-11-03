@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
+import { SHORT_YES_FLOOR, TASK_VOICE_MS, TaskVoiceTrust, heardAnswer, refusalEndsTrust, rejectionEndsTrust, spokenAnswer, voiceAnswer, voiceAnswerSaid, VOICE_ANSWER_REFUSED, type VoiceAnswerInput } from "../../app/main/agent/voice-answer";
 import { Confirmer, type Question } from "../../app/main/agent/confirm";
 import { AUTONOMY_NOT_SAVED, autonomyIntent, planAutonomyIntent } from "../../app/main/agent/autonomy-intent";
 import fs from "node:fs";
@@ -333,7 +333,7 @@ describe("refusals of a spoken yes say exactly what to do, and are said aloud to
 
 describe("spoken answers can't be padded or asked (review of #143)", () => {
   it("never takes a yes asked as a question", () => {
-    for (const asked of ["Hey Ember, allowed?", "Ember, you can?", "Proceed?", "That's fine?", "Sure?", "Aloud?", "Ember, yes, you can go ahead?", "Go ahead? ", "Allow it?”"]) {
+    for (const asked of ["Hey Ember, allowed?", "Ember, you can?", "Proceed?", "That's fine?", "Sure?", "Aloud?", "Ember, yes, you can go ahead?", "Go ahead? ", "Allow it?”", "Allow it?!", "allow it?.", "Allow?.", "Allow it?!?", "Allow it ?…", "Allow it？"]) {
       expect(spokenAnswer(asked), asked).toBeNull();
     }
     // A no is one either way, and the yeses themselves still count.
@@ -348,6 +348,13 @@ describe("spoken answers can't be padded or asked (review of #143)", () => {
     for (const yes of ["Okay, go ahead.", "Yes, you can.", "Um, yes.", "Okay, Ember, allow.", "Hey Ember, um, go ahead.", "Please do.", "Allow it, please, Ember.", "Yes, thank you."]) {
       expect(spokenAnswer(yes), yes).toBe("allow");
     }
+  });
+
+  it("counts “please” once in all, wherever it stands (review of #143)", () => {
+    for (const padded of ["Please please do.", "Please, please go ahead.", "Yes please please.", "Please go ahead please.", "Allow it please please."]) {
+      expect(spokenAnswer(padded), padded).toBeNull();
+    }
+    for (const yes of ["Please do.", "Yes please.", "Please go ahead.", "Go ahead, please."]) expect(spokenAnswer(yes), yes).toBe("allow");
   });
 
   it("has no refusal that reads as an answer or names Ember (it is said aloud, and heard back)", () => {
@@ -366,9 +373,11 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, �
 
   it("takes the owner's short yes for a trusted task's question, unverified and marked as task-voice", () => {
     expect(voiceAnswer(short)).toEqual({ kind: "answer", answer: "allow", verified: false, trust: "task-voice" });
-    // Too little voice to score at all: taken on the trust alone.
+    // Too little voice to score at all (a very quiet or clipped yes next to a loud “Hey Ember”): never taken on trust,
+    // since the floor could never apply to it and only the mostly-wake-phrase whole clip was matched (review of #143).
     const { restScore: _drop, ...unscored } = short;
-    expect(voiceAnswer(unscored)).toEqual({ kind: "answer", answer: "allow", verified: false, trust: "task-voice" });
+    expect(voiceAnswer(unscored)).toEqual({ kind: "refused", answer: "allow", why: "too-short" });
+    expect(voiceAnswer({ ...unscored, taskTrust: false })).toEqual({ kind: "refused", answer: "allow", why: "too-short" });
     // A verified yes stays a verified one, trust or not.
     expect(voiceAnswer({ ...short, verified: true, short: false })).toEqual({ kind: "answer", answer: "allow", verified: true });
   });
@@ -377,6 +386,8 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, �
     expect(voiceAnswer({ ...short, restScore: SHORT_YES_FLOOR - 0.01 })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
     expect(voiceAnswer({ ...short, restScore: 0.1, taskTrust: false })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
     expect(voiceAnswer({ ...short, restScore: SHORT_YES_FLOOR })).toMatchObject({ kind: "answer", trust: "task-voice" });
+    // Compared as it is: a score just under the floor is under it (the voice process no longer rounds it up to it).
+    expect(voiceAnswer({ ...short, restScore: 0.4996 })).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
   });
 
   it("refuses when any of its conditions is broken", () => {
@@ -392,6 +403,38 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, �
     expect(voiceAnswer({ ...short, text: "Always" })).toEqual({ kind: "none" });
     expect(voiceAnswer({ ...short, text: "Allow?" })).toEqual({ kind: "none" });
     expect(voiceAnswer({ ...short, questionUp: false })).toEqual({ kind: "none" });
+  });
+
+  describe("what ends every task's trust (main.ts wires these two; review of #143)", () => {
+    it("ends when Voice Match turns another voice away, not for Ember's own speech, the speakers' stream or a failed check of the name", () => {
+      expect(rejectionEndsTrust("voice")).toBe(true);
+      for (const reason of ["self", "speakers", "check"] as const) expect(rejectionEndsTrust(reason), reason).toBe(false);
+    });
+
+    it("ends when a yes is turned away as not the owner's voice, and not for a no or a yes that was only too short, another task's or locked", () => {
+      expect(refusalEndsTrust("unverified", "allow")).toBe(true);
+      expect(refusalEndsTrust("unverified", "deny")).toBe(false);
+      for (const result of ["too-short", "untrusted", "locked", "stale", "not-yet", "click-only", "own-voice", "voice-match-off", "answered", "no-question"]) {
+        expect(refusalEndsTrust(result, "allow"), result).toBe(false);
+      }
+      // And a stranger's clear mismatch is exactly what voiceAnswer calls "unverified".
+      const stranger = voiceAnswer({ text: "Ember, allow", questionUp: true, matchOn: true, verified: false, short: true, restScore: 0.2, taskTrust: true, selfSpoke: false });
+      expect(stranger).toEqual({ kind: "refused", answer: "allow", why: "unverified" });
+      expect(refusalEndsTrust(stranger.kind === "refused" ? stranger.why : "", "allow")).toBe(true);
+    });
+
+    it("is what main.ts calls, at both places, and when the voiceprint is forgotten, taught again or Voice Match is switched (source pins)", () => {
+      const main = fs.readFileSync(path.join(__dirname, "../../app/main/main.ts"), "utf8");
+      expect(main).toMatch(/if \(refusalEndsTrust\(result, o\.answer\)\) voiceTrust\.endAll\("other-voice"\);/);
+      expect(main).toMatch(/if \(rejectionEndsTrust\(e\.reason\)\) voiceTrust\.endAll\("other-voice"\);/);
+      // Forget my voice, a finished enrolment and the switch each end it (and only these three do, so a new place is a decision).
+      expect(main.match(/voiceTrust\.endAll\("voice-changed"\)/g)).toHaveLength(3);
+      expect(main).toMatch(/voiceprints\.forget\(\);\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
+      expect(main).toMatch(/voiceprints\.write\(p\.print\);\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
+      expect(main).toMatch(/matchOn = next\.voice\.match;\s*\/\/[^\n]*\n\s*voiceTrust\.endAll\("voice-changed"\);/);
+      // It decides before the Confirmer sees the yes, from the trust of the task whose question is up.
+      expect(main).toMatch(/const taskTrust = voiceTrust\.holds\(confirmer\?\.currentTask\);/);
+    });
   });
 
   describe("TaskVoiceTrust", () => {
@@ -421,6 +464,15 @@ describe("a short yes on the task's voice trust (owner decision of 2026-11-03, �
       // A task asked for after it holds its own.
       trust.grant("3-c", 10_000);
       expect(trust.holds("3-c")).toBe(true);
+    });
+
+    it("ends for every task when the owner's voiceprint is forgotten or taught again, and a task asked for after holds its own", () => {
+      const { trust } = at();
+      trust.grant("1-a", 10_000);
+      trust.endAll("voice-changed");
+      expect(trust.holds("1-a")).toBe(false);
+      trust.grant("2-b", 10_000);
+      expect(trust.holds("2-b")).toBe(true);
     });
 
     it("never holds for a request dated in the future (a clock that jumped back)", () => {

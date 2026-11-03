@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
-import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -1390,7 +1390,7 @@ function start(): void {
       : o.why;
     log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified, ...(o.kind === "answer" && o.trust ? { trust: o.trust } : {}) });
     // A yes refused as another voice: no task's short yes is trusted from now on (Ember can't tell whose question it was after).
-    if (result === "unverified" && o.answer === "allow") voiceTrust.endAll("other-voice");
+    if (refusalEndsTrust(result, o.answer)) voiceTrust.endAll("other-voice");
     if (result === "answered" || result === "no-question") return;
     // A short yes on a task's trust that couldn't be taken (another task's question, or a panel's): as one too short.
     refuseVoiceAnswer(result === "untrusted" ? "too-short" : result);
@@ -1489,7 +1489,7 @@ function start(): void {
       case "rejected":
         // Voice Match turned another voice away: no task's short yes is trusted any more, and while a question was up, no
         // spoken yes for that question at all.
-        if (e.reason === "voice") voiceTrust.endAll("other-voice");
+        if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
           confirmer.note(VOICE_ANSWER_REFUSED.locked);
@@ -1712,6 +1712,8 @@ function start(): void {
     voice?.cancelEnrol();
     enrolling = null;
     voiceprints.forget();
+    // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
+    voiceTrust.endAll("voice-changed");
     settings.update({ voice: { ...settings.get().voice, match: false } });
     voice?.setVoiceprint(null);
     log.info("voice.match_forgotten");
@@ -2543,6 +2545,8 @@ function start(): void {
         if (p.state === "done") {
           try {
             voiceprints.write(p.print);
+            // Taught again: trust granted against the old voiceprint ends with it.
+            voiceTrust.endAll("voice-changed");
             settings.update({ voice: { ...settings.get().voice, match: true } });
             voice?.setVoiceprint(p.print);
             log.info("voice.match_enrolled", { phrases: p.got });
@@ -2588,6 +2592,8 @@ function start(): void {
     settings.onChange(next => {
       if (next.voice.match === matchOn) return;
       matchOn = next.voice.match;
+      // Voice Match turned off and on again is no continuous recognition of the owner: trust starts over.
+      voiceTrust.endAll("voice-changed");
       voice?.setVoiceprint(ownerPrint());
       broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
     });

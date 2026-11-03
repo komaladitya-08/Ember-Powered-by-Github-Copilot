@@ -84,7 +84,8 @@ export type VoiceEvent =
   /** `verified`: Voice Match compared it with the owner's voiceprint and it matched (match.ts); absent otherwise. */
   /**
    * `short`: it matched as a whole, but what follows the wake phrase was too short, or too unlike the owner on its own,
-   * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score, when it had one.
+   * for Voice Match to vouch for it (APPROVAL_MIN_SECONDS, match.ts); `restScore`: that part's own score against the
+   * enrolled voiceprint, unrounded, when it had one (absent: too little voice to score, which is never trusted).
    */
   | { type: "utterance"; text: string; ms: number; window: "wake" | "follow-up"; cut?: boolean; verified?: true; short?: true; restScore?: number }
   /** `voice`: Voice Match found the request wasn't the owner's (`score`: how close it came). */
@@ -208,6 +209,17 @@ export function stripWake(text: string, afterWake = false): string {
   }
   for (let again = t.replace(WAKE_AT_START, ""); again !== t; again = t.replace(WAKE_AT_START, "")) t = again;
   return t.trim().replace(/^[a-z]/, c => c.toUpperCase());
+}
+
+/**
+ * Does the clip `heard` came from hold the wake phrase before the request (`text`, with the wake stripped)? Voice Match
+ * then vouches only for what follows it (match.ts afterWakePhrase). On a later pass (`first` false: the wake phrase was
+ * heard alone, and this clip is the request after it) a name said in its first words still counts ("Um, Ember, allow"),
+ * though stripWake takes only a wake at the very start there: otherwise the whole clip, the name in it too, would be
+ * "what follows" (security review of #143).
+ */
+export function holdsWake(heard: string, text: string, first: boolean): boolean {
+  return text.trim() !== heard.trim() || (!first && WAKE_IN_FIRST_WORDS.test(heard));
 }
 
 /** "Hey Ember, stop." / "No, stop." / "Shut up." / "Never mind": the whole request is to stop, handled here like "Ember, stop" (never sent to the model). */
@@ -1238,7 +1250,7 @@ export class VoiceEngine {
     let text = stripWake(heard, this.mode.first);
     // The clip holds the wake phrase before the request ("Hey Ember, allow" in one breath): Voice Match then vouches only
     // for what follows it (match.ts afterWakePhrase).
-    const withWake = text.trim() !== heard.trim();
+    const withWake = holdsWake(heard, text, this.mode.first);
     this.mode.first = false;
     if (clip.own && saysSomething(text) && !saysSomething(stripWake(this.transcribe(clip.own), true).replace(LONE_GREETING, ""))) {
       // "Hey Ember." and then only others' talk (a TV, colleagues: under the wake phrase's loudness): the user hasn't
