@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Ring, VoiceEngine, heardOtherStop, heardStopWord, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
+import { Ring, VoiceEngine, heardOtherStop, heardStopWord, holdsWake, isCloser, isFiller, isStop, saidWakeStop, stopSaidAlone, stripWake, type VoiceBackend, type VoiceEvent } from "../../app/voice/engine";
 
 /** A scripted backend: frames are tagged by their first sample. */
 const KW = { 1: "hey_ember", 2: "ember_stop" } as Record<number, string>;
@@ -31,6 +31,28 @@ function run(b: VoiceBackend, script: (e: VoiceEngine, clock: { t: number }) => 
   script(e, clock);
   return events;
 }
+
+describe("holdsWake (what Voice Match may count as “what follows the wake phrase”; security review of #143)", () => {
+  const holds = (heard: string, first: boolean) => holdsWake(heard, stripWake(heard, first), first);
+
+  it("is true when the wake phrase is in the clip: at its start, or in its first words on the first pass", () => {
+    expect(holds("Hey Ember, allow.", true)).toBe(true);
+    expect(holds("Um, Ember, allow.", true)).toBe(true);
+    expect(holds("Ember, allow.", false)).toBe(true);
+  });
+
+  it("is true on a later pass too when the name is said in its first words, though stripWake leaves it in the text", () => {
+    // The wake phrase was heard alone and this clip is the request after it: “Um, Ember, allow” still has the name in it.
+    expect(stripWake("Um, Ember, allow.", false)).toBe("Um, Ember, allow.");
+    expect(holds("Um, Ember, allow.", false)).toBe(true);
+  });
+
+  it("is false for a request that holds no wake phrase", () => {
+    expect(holds("Allow.", true)).toBe(false);
+    expect(holds("Go ahead and allow it.", false)).toBe(false);
+    expect(holds("Open the calendar.", false)).toBe(false);
+  });
+});
 
 describe("stripWake", () => {
   it("removes the wake phrase and tidies the rest", () => {

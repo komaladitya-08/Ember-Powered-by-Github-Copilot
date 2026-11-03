@@ -1688,6 +1688,44 @@ describe("review round 6: a request sent while the conversation is busy waits fo
       await host.stop();
     });
   });
+
+  it("gives a task asked for in the owner's verified voice its voice trust, none to one asked otherwise, and ends it when an unverified request changes the task (owner decision of 2026-11-03)", async () => {
+    const grants: [string, number][] = [];
+    const ends: [string, string][] = [];
+    const voiceTrust = { grant: (t: string, at: number) => { grants.push([t, at]); }, end: (t: string, why: string) => { ends.push([t, why]); } };
+    const { host, specs, tool } = await withTasks({ voiceTrust } as Partial<HostOptions>);
+    const before = Date.now();
+    await host.ask("turn on night light", null, undefined, { spoken: true, verified: true });
+    await tool("start_task")({ goal: "turn on night light" });
+    await vi.waitFor(() => expect(specs).toHaveLength(1));
+    const first = host.tasks!.list()[0].id;
+    expect(grants).toEqual([[first, expect.any(Number)]]);
+    expect(grants[0][1]).toBeGreaterThanOrEqual(before);
+    // Spoken but not verified (too short, or the check failed), and typed: no trust.
+    await host.ask("tidy my desktop", null, undefined, { spoken: true, short: true });
+    await tool("start_task")({ goal: "tidy my desktop" });
+    await host.ask("empty the trash", null);
+    await tool("start_task")({ goal: "empty the trash" });
+    expect(host.tasks!.list()).toHaveLength(3);
+    expect(grants).toHaveLength(1);
+    // A verified change of plan keeps it; a typed one ends it.
+    await host.ask("make it warmer", null, undefined, { spoken: true, verified: true });
+    await tool("steer_task")({ id: first, instruction: "make night light warmer" });
+    expect(ends).toEqual([]);
+    // A verified change of plan neither refreshes that task's trust (no new grant, so its 10 minutes run from the
+    // request that started it) nor gives any to a task that had none (the one asked for by a short, unverified yes).
+    expect(grants).toHaveLength(1);
+    const untrusted = host.tasks!.list().map(t => t.id).filter(id => id !== first);
+    expect(untrusted).toHaveLength(2);
+    await host.ask("start it at five", null, undefined, { spoken: true, verified: true });
+    await tool("steer_task")({ id: untrusted[0], instruction: "start at five" });
+    expect(grants).toHaveLength(1);
+    expect(ends).toEqual([]);
+    await host.ask("and dimmer", null);
+    await tool("steer_task")({ id: first, instruction: "make it dimmer too" });
+    expect(ends).toEqual([[first, "steered"]]);
+    await host.stop();
+  });
 });
 
 describe("review round 6: a task's bubbles say whose they are", () => {

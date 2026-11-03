@@ -20,7 +20,7 @@ import { readTextFile } from "./text-file";
 import { SettingsStore, checkHomePatch, hasConsent, plainSaveError, withOwnProvider, withOwnTrust, type SettingsPatch } from "./settings";
 import { auditRetentionDays, autonomyAllowed, commandMode, heldUntilRestart, managedKeys, modelServiceRefusal } from "./admin";
 import { autonomyConsented, autonomyInForce, ALL_SCOPES } from "./policy/autonomy";
-import { VOICE_ANSWER_REFUSED, voiceAnswer, type VoiceAnswerOutcome } from "./agent/voice-answer";
+import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, rejectionEndsTrust, voiceAnswer, voiceAnswerSaid, type VoiceAnswerNote, type VoiceAnswerOutcome } from "./agent/voice-answer";
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
@@ -598,6 +598,8 @@ function start(): void {
   // The handle says Ready only once Copilot is connected.
   let lastState: EmberState = { emotion: "neutral", talking: false, bubble: IDLE_BUBBLE, tasks: [], status: null, idle: "Not connected" };
   let confirmer: Confirmer | null = null;
+  /** Which tasks the owner asked for in a verified voice: their own questions may take a short spoken yes (voice-answer.ts). */
+  const voiceTrust = new TaskVoiceTrust();
   // While the user works on Ember's desk, the task cards stay out of the enlarged view's way.
   let deskInControl = false;
   /** The task cards changed: Home's Task activity hears of it (set once the agent's handlers are, below). */
@@ -1279,6 +1281,7 @@ function start(): void {
     speechMissing: speechHeard === false,
     // A voiceprint whose model is gone isn't used (Ember hears every voice, rather than none), and settings says why.
     match: { enrolled: voiceprints.read() !== null, on: !!ownerPrint() && (voice?.matchReady ?? true), model: voice?.matchReady ?? true, wanted: !!ownerPrint(), enrolling },
+    ...(voice ? { natural: voice.naturalStatus } : {}),
   });
   /**
    * Voice Match (app/voice/voiceprint.ts): the owner's voiceprint, kept apart from the settings (voiceprint-store.ts),
@@ -1417,6 +1420,8 @@ function start(): void {
    */
   let saidFrom = 0;
   let questionWhenSaid: number | null = null;
+  /** The question Ember last said it heard an answer over its own voice for (said once a question). */
+  let heardOverFor: number | null = null;
   const speechStarts = () => { saidFrom = Date.now(); questionWhenSaid = confirmer?.currentNumber ?? null; };
   /**
    * A spoken answer to the question up (voice-answer.ts judged the words): taken through the Confirmer, which holds a yes
@@ -1425,12 +1430,25 @@ function start(): void {
    */
   const answerByVoice = (o: Exclude<VoiceAnswerOutcome, { kind: "none" }>) => {
     if (!confirmer) return;
-    const result = o.kind === "answer" ? confirmer.answerVoice(o.answer, { verified: o.verified, question: questionWhenSaid, startedAt: saidFrom }) : o.why;
-    log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified });
+    const trustTask = o.kind === "answer" && o.trust === "task-voice" ? confirmer.currentTask : undefined;
+    const result = o.kind === "answer"
+      ? confirmer.answerVoice(o.answer, { verified: o.verified, question: questionWhenSaid, startedAt: saidFrom, ...(trustTask ? { trust: { task: trustTask } } : {}) })
+      : o.why;
+    log.info("voice.answer", { answer: o.answer, result, verified: o.kind === "answer" && o.verified, ...(o.kind === "answer" && o.trust ? { trust: o.trust } : {}) });
+    // A yes refused as another voice: no task's short yes is trusted from now on (Ember can't tell whose question it was after).
+    if (refusalEndsTrust(result, o.answer)) voiceTrust.endAll("other-voice");
     if (result === "answered" || result === "no-question") return;
-    const words = VOICE_ANSWER_REFUSED[result];
-    confirmer.note(words);
-    if (maySpeak()) voice?.speak(spokenText(words));
+    // A short yes on a task's trust that couldn't be taken (another task's question, or a panel's): as one too short.
+    refuseVoiceAnswer(result === "untrusted" ? "too-short" : result);
+  };
+  /**
+   * A spoken answer wasn't taken (`why`): the question stays up, its bubble says why and what to do instead, and so
+   * does Ember, aloud, where it speaks (a fixed sentence: never Ember's own voice taken as an answer after it, as the
+   * echo guard dates each request from its wake, and the voice process hears nothing while Ember speaks).
+   */
+  const refuseVoiceAnswer = (why: VoiceAnswerNote) => {
+    if (!confirmer?.note(VOICE_ANSWER_REFUSED[why])) return;
+    if (maySpeak()) voice?.speak(voiceAnswerSaid(why));
   };
   let enrolling: VoiceMatchStatus["enrolling"] = null;
   /** The detail of the microphone's current state, so a status sent for something else keeps it. */
@@ -1496,7 +1514,15 @@ function start(): void {
         // Ember's own; voice-answer.ts). Anything else is a request, as ever.
         {
           const matchOn = !!ownerPrint() && (voice?.matchReady ?? false);
-          const spokenReply = voiceAnswer({ text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, verified: e.verified === true, short: e.short === true, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true });
+          // Turned on, but not in use: never taught, or its model isn't in (the refusal says to finish setting it up).
+          const matchUnready = settings.get().voice.match && !matchOn;
+          // A short yes may be taken on the asking task's trust: that task was asked for in the owner's verified voice,
+          // within TASK_VOICE_MS, and no voice has been turned away since (owner decision of 2026-11-03).
+          const taskTrust = voiceTrust.holds(confirmer?.currentTask);
+          const spokenReply = voiceAnswer({
+            text: e.text, questionUp: confirmer?.waiting ?? false, matchOn, matchUnready, verified: e.verified === true, short: e.short === true,
+            ...(e.restScore !== undefined ? { restScore: e.restScore } : {}), taskTrust, selfSpoke: voice?.selfSpokeSince(heardFrom) ?? true,
+          });
           if (spokenReply.kind !== "none") { answerByVoice(spokenReply); break; }
           // A follow-up (no wake word) keeps the context from the last call. Without speaker rejection, a call, a video or
           // Ember's own voice can say it: it doesn't count as the user's own words for a dangerous command (OWNER V1).
@@ -1511,10 +1537,21 @@ function start(): void {
         stopEverything("voice");
         break;
       case "rejected":
-        // Voice Match turned another voice away while a question was up: no spoken yes for that question any more.
+        // Voice Match turned another voice away: no task's short yes is trusted any more, and while a question was up, no
+        // spoken yes for that question at all.
+        if (rejectionEndsTrust(e.reason)) voiceTrust.endAll("other-voice");
         if (e.reason === "voice" && confirmer?.lockVoice()) {
           log.info("voice.answer_locked");
           confirmer.note(VOICE_ANSWER_REFUSED.locked);
+        }
+        // "Ember, allow" said while Ember read the question out, where it can't tell its voice from the user's (Windows,
+        // macOS): the wake was turned away, silently until now. It is never taken (it may be Ember's own words): Ember
+        // stops speaking, and the bubble and Ember say to say it again (owner report of 2026-11-03).
+        // Said once a question: again for the same one, Ember only stops speaking (review of #143).
+        if (e.reason === "self" && confirmer?.waiting && e.heard && heardAnswer(e.heard)) {
+          log.info("voice.answer_heard_over");
+          voice?.hush();
+          if (heardOverFor !== confirmer.currentNumber) { heardOverFor = confirmer.currentNumber; refuseVoiceAnswer("heard-over"); }
         }
         break;
     }
@@ -1694,6 +1731,8 @@ function start(): void {
     }
   }));
   ipcMain.handle(IPC.voiceStatus, guard(() => voiceStatus()));
+  // Only while the setting, with the organisation's policy applied, wants it (off where voice or speech is: admin.ts).
+  ipcMain.handle(IPC.voiceNaturalRetry, guard(() => { if (sys.voice.naturalVoice && settings.get().voice.natural) voice?.retryNaturalVoice(); }));
   const presence = () => ({ hidden: overlay?.isHidden() ?? false, paused: followPaused, overlay: !!overlay });
   presenceChanged = () => broadcast(IPC.presenceChanged, presence());
   ipcMain.handle(IPC.presence, guard(presence));
@@ -1723,6 +1762,8 @@ function start(): void {
     voice?.cancelEnrol();
     enrolling = null;
     voiceprints.forget();
+    // A task's voice trust was granted against the voiceprint that is gone (voice-answer.ts TaskVoiceTrust).
+    voiceTrust.endAll("voice-changed");
     settings.update({ voice: { ...settings.get().voice, match: false } });
     voice?.setVoiceprint(null);
     log.info("voice.match_forgotten");
@@ -2441,6 +2482,7 @@ function start(): void {
       // The voice's side of "Ember, systems check": listening off counts as off, whatever the microphone was doing.
       health: () => ({ mic: settings.get().wakeWord && voice ? voice.micState : "off", speaks: maySpeak() }),
       // "Work without asking" by voice (autonomy-intent.ts): turned on with all four scopes, its card opened in Settings.
+      voiceTrust,
       autonomy: {
         state: () => ({ on: settings.get().autonomy.on && autonomyConsented(settings.get().autonomy), consented: autonomyConsented(settings.get().autonomy), managed: !autonomyAllowed(policy) }),
         // True once it is as asked and recorded (a turn on whose audit entry can't be written is undone: say so, not "Okay").
@@ -2558,11 +2600,15 @@ function start(): void {
       // On Windows and macOS (speech runs natively there), the more natural Kokoro voice, when the user turns it on.
       // Never on Linux, where settings has no switch for it: native speech there fetches nothing more.
       naturalVoice: sys.voice.naturalVoice && settings.get().voice.natural,
+      // Whatever became of turning it on shows under its switch (never only in the log).
+      onNatural: () => broadcast(IPC.voiceStatus, voiceStatus(voiceDetail)),
       voiceprint: ownerPrint,
       onEnrol: p => {
         if (p.state === "done") {
           try {
             voiceprints.write(p.print);
+            // Taught again: trust granted against the old voiceprint ends with it.
+            voiceTrust.endAll("voice-changed");
             settings.update({ voice: { ...settings.get().voice, match: true } });
             voice?.setVoiceprint(p.print);
             log.info("voice.match_enrolled", { phrases: p.got });
@@ -2608,6 +2654,8 @@ function start(): void {
     settings.onChange(next => {
       if (next.voice.match === matchOn) return;
       matchOn = next.voice.match;
+      // Voice Match turned off and on again is no continuous recognition of the owner: trust starts over.
+      voiceTrust.endAll("voice-changed");
       voice?.setVoiceprint(ownerPrint());
       broadcast(IPC.voiceStatus, voiceStatus(voiceDetail));
     });
