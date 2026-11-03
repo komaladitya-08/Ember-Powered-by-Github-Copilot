@@ -704,6 +704,11 @@ are kept); one it can repair is tidied once it has stayed the same for 2 s. A `s
 start-up is never replaced with defaults: Ember says so, keeps changes in memory and saves them over the file once it
 reads again.
 
+A short filesystem write is completed before settings replace the previous file. If writing stops or the disk fills,
+the previous file stays intact and Ember reports that the change was not saved. An immediate change is not applied;
+a slider change already in use stays pending for the next save. Audit retention also completes each byte write
+before publishing a replacement; a failure preparing that replacement leaves the original audit file intact.
+
 Environment variables for development:
 
 | Variable | Effect |

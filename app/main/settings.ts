@@ -18,6 +18,7 @@ import { HANDLE_POSITIONS } from "../shared/handle-place";
 import { HOST_OS } from "./platform/os";
 import { AZURE_API_VERSION, endpointProblem, MAX_ENDPOINT, MODEL_ID, PROVIDER_TYPES, WIRE_APIS } from "../shared/provider";
 import { readTextFile } from "./text-file";
+import { writeAllSync } from "./write-all";
 
 /** This OS's never-look defaults (read once at load: renderers import this module only for its types). */
 const neverLookDefault = () => [...NEVER_LOOK_DEFAULTS[HOST_OS]];
@@ -795,7 +796,7 @@ export class SettingsStore {
       // Durable: the new file is on disk before it replaces the old one (a power cut leaves one or the other, never an empty file).
       const fd = fs.openSync(tmp, "w", 0o600);
       try {
-        fs.writeSync(fd, JSON.stringify(settings, null, 2) + "\n");
+        writeAllSync(fd, Buffer.from(JSON.stringify(settings, null, 2) + "\n"));
         fs.fsyncSync(fd);
       } finally {
         fs.closeSync(fd);
