@@ -2154,7 +2154,7 @@ describe("revocation during consent and path checks", () => {
 
   it("does not start on a replacement target after the card was answered", async () => {
     const h = harness({ binding: LOCAL, askEvery: true });
-    h.ctx.confirmer.ask = async () => { h.ctx.service.binding = REMOTE; return "once"; };
+    h.ctx.confirmer.ask = async () => { Object.defineProperty(h.ctx.service, "binding", { value: REMOTE }); return "once"; };
     expect((await call(h, { target: "local" })).resultType).toBe("denied");
     expect(h.starts).toHaveLength(0);
   });
