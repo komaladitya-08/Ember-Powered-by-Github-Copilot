@@ -80,7 +80,7 @@ export function demoExtensionsApi(variant: DemoVariant): ExtensionsApi {
   let agreed = false;
   return {
     allowed: () => variant !== "managed",
-    list: async () => clone(installed),
+    list: async () => clone(installed).map(i => ({ ...i, reviewToken: "0".repeat(64) })),
     marketplaces: async () => clone(marketplaces),
     addMarketplace: async source => {
       await wait(300);
@@ -95,7 +95,7 @@ export function demoExtensionsApi(variant: DemoVariant): ExtensionsApi {
       const e = CATALOG.find(x => x.marketplace === marketplace && x.name === name);
       if (!e) return { ok: false, why: "That marketplace doesn't list it any more." };
       const id = `${e.kind}:${name.toLowerCase().replace(/\W+/g, "-")}`;
-      installed = [...installed, { id, kind: e.kind, name, publisher: e.publisher, source: e.source, version: e.version, enabled: true, consented: true, status: "ready", tools: [{ name: "read", description: "Reads.", readOnly: true }] }];
+      installed = [...installed, { id, kind: e.kind, name, publisher: e.publisher, source: `${name}@${marketplace}`, version: e.version, enabled: true, consented: false, status: "ready", tools: [{ name: "read", description: "Reads.", readOnly: true }] }];
       changed();
       return { ok: true, id };
     },

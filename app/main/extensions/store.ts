@@ -1,6 +1,6 @@
 /**
  * What Ember keeps of the extensions the user installed: `extensions.json` (0600) in `<userData>/extensions/` (0700),
- * beside each plugin's copied files (`plugins/<id>/`) and the run folder the launcher records server process ids in.
+ * beside each plugin's copied files (`plugins/<id>/`) and the run folder of revocable per-launch lease files.
  * Written whole and atomically; a file that doesn't read is moved aside (`.broken`), never overwritten in place.
  * Plain Node.
  */
@@ -23,6 +23,8 @@ const Server = z.object({
   status: z.enum(["ready", "needs-auth", "failed"]),
   detail: z.string().optional(),
   tools: z.array(Tool),
+  /** Latest discovered tools shown for agreement; never usable until that exact list is agreed. */
+  reviewTools: z.array(Tool).optional(),
 });
 const Item = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,119}$/),

@@ -15,7 +15,6 @@
  * when `generation` moves (as for memory). Plain Node: Electron's objects come in by injection.
  */
 
-import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,7 +33,7 @@ import type { ConnectResult, ExtensionsApi, Installed, MarketplaceEntry, ToolInf
 import type { OS } from "../../shared/shortcuts";
 import { REFUSED, classify, failureNote, gateQuestion, wrapResult } from "./gate";
 import { pluginPath, readMarketplace, readPlugin, reachOf, firstFile, MARKETPLACE_PLACES, type ServerSpec } from "./manifest";
-import { checkPins, isReadOnly, pinAll, shownHash, type PinnedTool } from "./pin";
+import { canonical, checkPins, isReadOnly, pinAll, shownHash, type PinnedTool } from "./pin";
 import { probeHttp, probeStdio, type ProbeResult } from "./probe";
 import { SAVED_OUTPUT } from "../agent/runtime-temp";
 import { ExtensionStore, copyPlugin, type StoredItem, type StoredServer } from "./store";
@@ -44,7 +43,7 @@ export interface ExtensionsDeps {
   dir: string;
   /** `<userData>/copilot` (the runtime's home: its marketplace cache and plugin installs). */
   copilotHome: string;
-  settings: { get(): Settings; update?(patch: SettingsPatch): unknown };
+  settings: { get(): Settings; update?(patch: SettingsPatch): unknown; onChange?(fn: () => void): () => void };
   admin: () => AdminPolicy;
   /** The connected runtime, for marketplaces (null while Ember isn't connected). */
   client: () => CopilotClient | null;
@@ -108,6 +107,7 @@ interface SessionGate {
   /** Server keys that changed their tool list this session (their hints can't be re-checked). */
   listChanged: Set<string>;
   epoch: number;
+  stop?: (servers: string[]) => Promise<void>;
   tools: Map<string, { item: StoredItem; server: StoredServer; tool: PinnedTool }>;
 }
 
@@ -120,6 +120,9 @@ export class ExtensionsService implements ExtensionsApi {
   private gen = 0;
   /** Bumped by the kill switch: sessions loaded before it deny every call until reloaded. */
   private epoch = 0;
+  /** Revocable files, never process ids. Each launcher stops its own child when its lease disappears. */
+  private leases = new Map<string, Set<string>>();
+  private session: SessionGate | null = null;
   private stopAsks = new AbortController();
   /**
    * An extension's result or failure read as instructions (or a call failed) in this conversation: every later call
@@ -132,17 +135,30 @@ export class ExtensionsService implements ExtensionsApi {
   constructor(private o: ExtensionsDeps) {
     this.store = new ExtensionStore(o.dir);
     this.items = this.store.read();
-    // Process ids left by an earlier run belong to processes that have ended (or been reused): never killed, dropped.
+    let active = this.active();
+    o.settings.onChange?.(() => {
+      const next = this.active();
+      if (active && !next) this.stopPart().stop();
+      active = next;
+    });
+    // Revoke an earlier run's leases. Legacy pid files are dropped too; their numbers are never signalled.
     try { for (const f of fs.readdirSync(this.store.runDir)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder yet */ }
   }
 
   /** The conversation was forgotten (sign-out, another account, a new conversation): its taint goes with it. */
   conversationEnded(): void {
+    this.stopPart().stop();
+    this.session = null;
     this.tainted = false;
   }
 
   private serial<T>(run: () => Promise<T>): Promise<T> {
-    const next = this.queue.then(run, run);
+    const epoch = this.epoch;
+    const current = () => {
+      if (epoch !== this.epoch) throw new Error("It was stopped. Review its tools before trying again.");
+      return run();
+    };
+    const next = this.queue.then(current, current);
     this.queue = next.catch(() => undefined);
     return next;
   }
@@ -168,6 +184,10 @@ export class ExtensionsService implements ExtensionsApi {
   /** The card's yes in Home (a click there, never the model): records the agreement and turns extensions on. */
   async agree(): Promise<void> {
     if (!this.allowed() || !this.o.settings.update) return;
+    if (!this.consented()) {
+      for (const item of this.items) item.consentedAt = null;
+      this.save();
+    }
     this.o.settings.update({ extensions: { on: true, consent: { version: FEATURE_CONSENT_VERSION.extensions, at: new Date().toISOString() } } });
     try { this.audit({ phase: "agreed", version: FEATURE_CONSENT_VERSION.extensions }); } catch (err) { this.o.log.warn("extensions.audit_failed", { err }); }
     this.changed();
@@ -201,15 +221,23 @@ export class ExtensionsService implements ExtensionsApi {
 
   private view(i: StoredItem): Installed {
     const tools: ToolInfo[] = i.servers.flatMap(s => s.tools.map(t => ({ name: t.name, description: t.description, readOnly: isReadOnly(t), ...(t.changed ? { changed: true } : {}) })));
+    const needsReview = i.servers.some(s => s.reviewTools && canonical(s.reviewTools.map(t => t.hash)) !== canonical(s.tools.map(t => t.hash)));
     const failed = i.servers.find(s => s.status === "failed");
     const auth = i.servers.find(s => s.status === "needs-auth");
     const status: Installed["status"] = this.busy.has(i.id) ? "starting" : !i.enabled ? "disabled" : failed ? "failed" : auth ? "needs-auth" : "ready";
     const detail = status === "failed" ? failed?.detail : status === "needs-auth" ? auth?.detail : tools.some(t => t.changed) ? "A tool changed since you agreed to it. It stays off until you agree again." : undefined;
     return {
-      id: i.id, kind: i.kind, name: i.name, source: i.source, enabled: i.enabled, consented: i.consentedAt !== null, status, tools,
+      id: i.id, kind: i.kind, name: i.name, source: i.source, enabled: i.enabled, consented: i.consentedAt !== null && this.consented(), status, tools, needsReview,
+      reviewToken: this.reviewToken(i),
+      reviewTools: i.servers.flatMap(s => (s.reviewTools ?? s.tools).map(t => ({ server: s.name, name: t.name, description: t.description, readOnly: isReadOnly(t) }))),
       ...(i.publisher ? { publisher: i.publisher } : {}), ...(i.version ? { version: i.version } : {}), ...(detail ? { detail } : {}),
       reaches: i.servers.filter(s => s.spec).map(s => reachOf(s.spec!, this.store.pluginDir(i.id))),
     };
+  }
+
+  /** Binds a click to the exact server specs, state and tool metadata shown, including schemas and hints. */
+  private reviewToken(item: StoredItem): string {
+    return crypto.createHash("sha256").update(canonical(item.servers.map(s => ({ key: s.key, spec: s.spec, status: s.status, tools: (s.reviewTools ?? s.tools).map(t => t.hash) })))).digest("hex");
   }
 
   // ---- Marketplaces (registered with the runtime, which fetches them) ----
@@ -336,6 +364,7 @@ export class ExtensionsService implements ExtensionsApi {
     const id = `${slug(name, 40)}-${slug(marketplace, 40)}-${crypto.randomBytes(3).toString("hex")}`;
     const dst = this.store.pluginDir(id);
     let viaRuntime = false;
+    const epoch = this.epoch;
     try {
       const root = await this.marketplaceRoot(marketplace);
       const listed = root ? readMarketplace(root).plugins.find(p => p.name === name) : undefined;
@@ -360,6 +389,7 @@ export class ExtensionsService implements ExtensionsApi {
       const taken = new Set(this.items.flatMap(i => i.servers.map(s => s.key)));
       const servers: StoredServer[] = [];
       for (const s of manifest.servers) {
+        if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
         let key = slug(s.name, 20);
         for (let n = 2; taken.has(key); n++) key = `${slug(s.name, 18)}${n}`;
         taken.add(key);
@@ -367,8 +397,9 @@ export class ExtensionsService implements ExtensionsApi {
         const r = await this.probe(s.spec, dst);
         servers.push(r.ok ? { key, name: s.name, spec: s.spec, status: "ready", tools: pinAll(r.tools) } : { key, name: s.name, spec: s.spec, status: r.needsAuth ? "needs-auth" : "failed", detail: r.why, tools: [] });
       }
+      if (epoch !== this.epoch || !this.active()) throw new Error("extensions stopped");
       const item: StoredItem = {
-        id, kind: "plugin", name: manifest.name || name, marketplace, source, enabled: true, consentedAt: new Date().toISOString(), servers,
+        id, kind: "plugin", name: manifest.name || name, marketplace, source, enabled: true, consentedAt: null, servers,
         ...(manifest.publisher ?? listed.publisher ? { publisher: manifest.publisher ?? listed.publisher } : {}),
         ...(manifest.version ?? listed.version ? { version: manifest.version ?? listed.version } : {}),
         ...(manifest.description ? { description: manifest.description } : {}),
@@ -396,7 +427,12 @@ export class ExtensionsService implements ExtensionsApi {
     if (this.o.probe) return this.o.probe(spec, cwd);
     // The kill switch ends a probe under way (its signal is replaced at each stop).
     const signal = this.stopAsks.signal;
-    if (spec.type === "stdio") return this.o.launcher ? probeStdio({ ...this.command(spec), cwd, signal, group: this.o.os !== "win32" }) : Promise.resolve({ ok: false, why: "Ember can't run programs for extensions on this computer yet." });
+    if (spec.type === "stdio") {
+      if (!this.o.launcher) return Promise.resolve({ ok: false, why: "Ember can't run programs for extensions on this computer yet." });
+      const launch = this.launch(path.basename(cwd), spec, cwd);
+      return probeStdio({ command: this.o.launcher.execPath, args: [this.o.launcher.script], env: { ELECTRON_RUN_AS_NODE: "1", EMBER_MCP_SPEC: JSON.stringify(launch) }, cwd, signal })
+        .finally(() => { try { fs.rmSync(launch.leaseFile, { force: true }); } catch { /* already revoked */ } this.leases.get(path.basename(cwd))?.delete(launch.leaseFile); });
+    }
     if (spec.type === "sse") return Promise.resolve({ ok: false, why: "Ember can't reach this kind of server yet." });
     return probeHttp({ url: spec.url, headers: spec.headers, fetch: this.o.fetch ?? fetch, signal });
   }
@@ -414,6 +450,7 @@ export class ExtensionsService implements ExtensionsApi {
     const item = this.items.find(i => i.id === id);
     if (!item) return;
     this.items = this.items.filter(i => i.id !== id);
+    this.stopServers(id);
     this.save();
     try { fs.rmSync(this.store.pluginDir(id), { recursive: true, force: true }); } catch (err) { this.o.log.warn("extensions.remove_files_failed", { err }); }
     try { this.audit({ phase: "removed", ext: id }); } catch { /* removing makes Ember stricter: it goes ahead */ }
@@ -425,28 +462,36 @@ export class ExtensionsService implements ExtensionsApi {
     if (!item || typeof on !== "boolean" || item.enabled === on) return;
     if (on && (!this.allowed() || !this.consented())) return;
     item.enabled = on;
-    if (on) await this.check(item);
+    if (!on) this.stopServers(id);
+    if (on) await this.serial(() => this.check(item));
     this.save();
     this.changed();
   }
 
-  reagree(id: string): Promise<void> {
-    return this.serial(() => this.reagreeNow(id));
+  reagree(id: string, reviewToken: string): Promise<void> {
+    return this.serial(() => this.reagreeNow(id, reviewToken));
   }
 
-  private async reagreeNow(id: string): Promise<void> {
+  private async reagreeNow(id: string, reviewToken: string): Promise<void> {
     const item = this.items.find(i => i.id === id);
     if (!item || !this.allowed() || !this.consented()) return;
+    if (reviewToken !== this.reviewToken(item)) throw new Error("Its tools changed. Check the new list and agree again.");
     this.busy.add(id);
+    const epoch = this.epoch;
     try {
-      for (const s of item.servers) {
-        if (!s.spec) continue;
-        const r = await this.probe(s.spec, this.store.pluginDir(id));
-        if (r.ok) { s.tools = pinAll(r.tools); s.status = "ready"; delete s.detail; } else { s.status = r.needsAuth ? "needs-auth" : "failed"; s.detail = r.why; }
+      await this.check(item);
+      this.save();
+      // A changed server or a newer Home card cannot turn this click into approval of an unseen list.
+      if (!this.items.includes(item) || !this.allowed() || !this.consented() || epoch !== this.epoch) throw new Error("It was stopped. Review its tools before trying again.");
+      if (reviewToken !== this.reviewToken(item)) throw new Error("Its tools changed. Check the new list and agree again.");
+      if (item.servers.some(s => s.status !== "ready")) throw new Error("Its tools couldn't be checked. Try again when the server is ready.");
+      this.audit({ phase: "reagreed", ext: id });
+      for (const server of item.servers) {
+        server.tools = pinAll(server.reviewTools ?? server.tools);
+        delete server.reviewTools;
       }
       item.consentedAt = new Date().toISOString();
       this.save();
-      this.audit({ phase: "reagreed", ext: id });
     } finally {
       this.busy.delete(id);
       this.changed();
@@ -455,12 +500,15 @@ export class ExtensionsService implements ExtensionsApi {
 
   /** Lists an item's tools again and checks them against their pins: a changed tool is off (rug pull). */
   private async check(item: StoredItem): Promise<void> {
+    const epoch = this.epoch;
     for (const s of item.servers) {
+      if (epoch !== this.epoch || !this.items.includes(item) || !this.active()) return;
       if (!s.spec) continue;
       const r = await this.probe(s.spec, this.store.pluginDir(item.id));
       if (!r.ok) { s.status = r.needsAuth ? "needs-auth" : "failed"; s.detail = r.why; continue; }
       const before = s.tools.filter(t => t.changed).length;
       s.tools = checkPins(s.tools, r.tools);
+      s.reviewTools = pinAll(r.tools);
       s.status = "ready";
       delete s.detail;
       const after = s.tools.filter(t => t.changed).length;
@@ -469,7 +517,11 @@ export class ExtensionsService implements ExtensionsApi {
   }
 
   /** At start (and when extensions are turned on): every enabled item's tools are checked against their pins. */
-  async refresh(): Promise<void> {
+  refresh(): Promise<void> {
+    return this.serial(() => this.refreshNow());
+  }
+
+  private async refreshNow(): Promise<void> {
     if (!this.active()) return;
     for (const item of this.items.filter(i => i.enabled)) {
       this.busy.add(item.id);
@@ -495,33 +547,28 @@ export class ExtensionsService implements ExtensionsApi {
         this.epoch++;
         this.stopAsks.abort();
         this.stopAsks = new AbortController();
-        let ended = 0;
-        let files: string[] = [];
-        try { files = fs.readdirSync(this.store.runDir).filter(f => /^\d+\.pid$/.test(f)); } catch { /* none running */ }
-        for (const f of files) {
-          const launcher = Number(f.slice(0, -4));
-          let server = NaN;
-          try { server = Number(fs.readFileSync(path.join(this.store.runDir, f), "utf8")); } catch { /* the launcher alone */ }
-          for (const pid of [server, launcher]) {
-            if (!Number.isInteger(pid) || pid <= 1) continue;
-            if (this.o.os === "win32") {
-              // The whole tree the server started (taskkill /T), at once.
-              execFile("taskkill", ["/T", "/F", "/PID", String(pid)], { windowsHide: true }, () => undefined);
-              ended++;
-              continue;
-            }
-            // The server leads its own process group (launch.ts): everything it started ends with it.
-            try { process.kill(pid === server ? -pid : pid, "SIGTERM"); ended++; } catch {
-              try { process.kill(pid, "SIGTERM"); ended++; } catch { /* already gone */ }
-            }
-          }
-          try { fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* the launcher removes it too */ }
-        }
-        this.o.log.info("extensions.stopped", { ended });
+        this.stopServers();
         // The next conversation starts the servers again (between turns, after a new request).
         this.gen++;
       },
     };
+  }
+
+  /** Revoke each selected launch, even one the runtime has not started yet; never signal a pid read from disk. */
+  private stopServers(id?: string): void {
+    for (const [item, leases] of this.leases) {
+      if (id !== undefined && item !== id) continue;
+      for (const lease of leases) {
+        try { fs.rmSync(lease, { force: true }); } catch (err) { this.o.log.warn("extensions.stop_failed", { err }); }
+      }
+      this.leases.delete(item);
+    }
+    const gate = this.session;
+    const keys = gate ? [...new Set([...gate.tools.values()].filter(e => id === undefined || e.item.id === id).map(e => e.server.key))] : [];
+    if (keys.length && gate?.stop) void gate.stop(keys).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
+    // Old versions left pid files. Dropping them is safe; their numbers never identify a process to kill.
+    try { for (const f of fs.readdirSync(this.store.runDir)) if (/^\d+\.pid$/.test(f)) fs.rmSync(path.join(this.store.runDir, f), { force: true }); } catch { /* no run folder */ }
+    this.o.log.info("extensions.stopped", { servers: keys.length });
   }
 
   // ---- A session's tools and gate ----
@@ -530,6 +577,7 @@ export class ExtensionsService implements ExtensionsApi {
   forSession(): SessionExtensions | undefined {
     if (!this.active()) return undefined;
     const gate: SessionGate = { refused: new Set(), shown: new Map(), live: null, listChanged: new Set(), epoch: this.epoch, tools: new Map() };
+    this.session = gate;
     const mcpServers: Record<string, MCPServerConfig> = {};
     for (const item of this.items) {
       if (!item.enabled || item.consentedAt === null) continue;
@@ -549,7 +597,13 @@ export class ExtensionsService implements ExtensionsApi {
       postToolUse: input => this.result(gate, input),
       postToolUseFailure: input => this.failure(gate, input),
       verify: shown => this.verify(gate, shown),
-      bind: live => { gate.live = live; },
+      bind: (live, stop) => {
+        gate.live = live;
+        gate.stop = stop;
+        // Removal/Stop can win the race with session startup; the late binding must not restart anything.
+        const stale = [...new Set([...gate.tools.values()].filter(e => !this.active() || gate.epoch !== this.epoch || !this.items.some(i => i.id === e.item.id && i.enabled)).map(e => e.server.key))];
+        if (stale.length && stop) void stop(stale).catch(err => this.o.log.warn("extensions.stop_failed", { err }));
+      },
       listChanged: server => { gate.listChanged.add(server); this.o.log.info("extensions.list_changed", { server }); },
       newTurn: () => gate.refused.clear(),
     };
@@ -558,10 +612,19 @@ export class ExtensionsService implements ExtensionsApi {
   private serverConfig(item: StoredItem, s: StoredServer, tools: string[]): MCPServerConfig {
     const spec = s.spec!;
     if (spec.type !== "stdio") return { type: spec.type, url: spec.url, headers: spec.headers, tools, timeout: 60_000 } as MCPServerConfig;
-    const c = this.command(spec);
-    const launch = { command: c.command, args: c.args, env: c.env, cwd: this.store.pluginDir(item.id), runDir: this.store.runDir, group: this.o.os !== "win32" };
-    // The runtime starts Ember's launcher, which starts the server with exactly this environment (launch.ts).
+    const launch = this.launch(item.id, spec, this.store.pluginDir(item.id));
     return { type: "stdio", command: this.o.launcher!.execPath, args: [this.o.launcher!.script], env: { ELECTRON_RUN_AS_NODE: "1", EMBER_MCP_SPEC: JSON.stringify(launch) }, workingDirectory: launch.cwd, tools, timeout: 60_000 };
+  }
+
+  private launch(id: string, spec: Extract<ServerSpec, { type: "stdio" }>, cwd: string) {
+    const c = this.command(spec);
+    this.store.ensure();
+    const leaseFile = path.join(this.store.runDir, `${crypto.randomUUID()}.lease`);
+    fs.writeFileSync(leaseFile, "", { mode: 0o600, flag: "wx" });
+    const leases = this.leases.get(id) ?? new Set<string>();
+    leases.add(leaseFile);
+    this.leases.set(id, leases);
+    return { command: c.command, args: c.args, env: c.env, cwd, runDir: this.store.runDir, leaseFile, group: this.o.os !== "win32" };
   }
 
   private verify(gate: SessionGate, shown: ShownTool[]): void {
@@ -579,11 +642,13 @@ export class ExtensionsService implements ExtensionsApi {
    * so this is read from the live list at every call; a tool that differs is marked changed for good (off until the
    * user agrees again). No live list (not bound, or it can't be read): not as pinned (fail closed).
    */
-  private async shownNow(gate: SessionGate, name: string): Promise<boolean> {
+  private async shownNow(gate: SessionGate, name: string, generation: number): Promise<boolean> {
     const e = gate.tools.get(name);
     if (!e || !gate.live || gate.shown.get(name) !== true) return false;
     let now: ShownTool | undefined;
     try { now = (await gate.live()).find(t => t.name === name); } catch (err) { this.o.log.warn("extensions.live_tools_failed", { err }); return false; }
+    // An old lookup must not change the pins of a replacement item or a newer conversation.
+    if (gate !== this.session || gate.epoch !== this.epoch || generation !== this.generation || !this.items.includes(e.item)) return false;
     if (now && shownHash(e.tool.name, now.description ?? "", now.input_schema ?? null) === shownHash(e.tool.name, e.tool.description, e.tool.inputSchema)) return true;
     gate.shown.set(name, false);
     this.o.log.warn("extensions.tool_changed_live", { ext: e.item.id, tool: e.tool.name });
@@ -597,24 +662,30 @@ export class ExtensionsService implements ExtensionsApi {
     return false;
   }
 
-  /** The gate's inputs for `name` as things are now (the store may have changed while a question was up). */
-  private async gateInput(gate: SessionGate, name: string) {
+  /** Read policy synchronously, after metadata awaits and again immediately before returning Allow. */
+  private gateInput(gate: SessionGate, name: string, shownAsPinned: boolean, generation: number) {
     const e = gate.tools.get(name);
-    const current = e ? this.items.find(i => i.id === e.item.id) : undefined;
-    const tool = current?.servers.flatMap(s => s.tools).find(t => t.name === e?.tool.name && t.hash === e?.tool.hash);
-    return classify({
+    const current = e && this.items.includes(e.item) ? e.item : undefined;
+    const server = current?.servers.find(s => s === e?.server && s.status === "ready");
+    const tool = server?.tools.find(t => t.name === e?.tool.name && t.hash === e?.tool.hash);
+    const decision = classify({
       allowed: this.active(), stopped: gate.epoch !== this.epoch,
       ...(current ? { item: { enabled: current.enabled, consented: current.consentedAt !== null } } : {}),
       ...(tool ? { tool } : {}),
-      shownAsPinned: await this.shownNow(gate, name),
+      shownAsPinned: shownAsPinned && gate.shown.get(name) === true,
       tainted: this.tainted, refused: gate.refused.has(name), remote: e?.server.spec?.type !== "stdio",
       hintsStale: !!e && gate.listChanged.has(e.server.key),
     });
+    if (decision.verdict === "deny") return decision;
+    if (gate !== this.session || generation !== this.generation) return { verdict: "deny" as const, reason: "Extensions changed. Wait for the conversation to reload before trying again." };
+    return decision;
   }
 
   private async decide(gate: SessionGate, input: PreToolUseHookInput): Promise<PreToolUseHookOutput> {
     const e = gate.tools.get(input.toolName);
-    const { verdict, reason } = await this.gateInput(gate, input.toolName);
+    const generation = this.generation;
+    const shownAsPinned = await this.shownNow(gate, input.toolName, generation);
+    const { verdict, reason } = this.gateInput(gate, input.toolName, shownAsPinned, generation);
     const argChars = (() => { try { return JSON.stringify(input.toolArgs ?? {}).length; } catch { return 0; } })();
     const base = { ext: e?.item.id ?? null, tool: input.toolName, argChars };
     const deny = (r: string): PreToolUseHookOutput => ({ permissionDecision: "deny", permissionDecisionReason: r });
@@ -626,19 +697,25 @@ export class ExtensionsService implements ExtensionsApi {
       return deny("Ember couldn't record this step, so it didn't take it.");
     }
     if (verdict === "deny") return deny(reason);
-    if (verdict === "allow") return { permissionDecision: "allow" };
+    const before = this.gateInput(gate, input.toolName, shownAsPinned, generation);
+    if (before.verdict === "deny") return deny(before.reason);
+    if (verdict === "allow" && before.verdict === "allow") return { permissionDecision: "allow" };
     const confirmer = this.o.confirmer();
     if (!confirmer) return deny("Ember can't ask the user right now, so it didn't do this.");
     const question = gateQuestion(e!.item.name, e!.tool.name, input.toolArgs);
     const answer = await confirmer.ask(question, this.stopAsks.signal).catch(() => null);
     // The question may have been up a while: the item, its pin and the live tool are checked again before a yes counts.
-    const after = answer === "once" ? await this.gateInput(gate, input.toolName) : null;
+    const shownAfter = answer === "once" && await this.shownNow(gate, input.toolName, generation);
+    const after = answer === "once" ? this.gateInput(gate, input.toolName, shownAfter, generation) : null;
     const yes = answer === "once" && after !== null && after.verdict !== "deny";
     // A spoken answer says so, and whether Voice Match verified it (confirm.ts answerVoice).
     const how = confirmer.howAnswered?.(question);
     const channel = how?.via === "voice" ? { via: "voice", verified: how.verified === true, ...(how.trust ? { trust: how.trust } : {}) } : {};
     try { this.audit({ phase: "answer", ...base, answer: yes ? "allow" : answer === null ? "none" : answer === "once" ? "stale" : "deny", ...channel }); } catch { return deny("Ember couldn't record this step, so it didn't take it."); }
-    if (yes) return { permissionDecision: "allow" };
+    if (yes) {
+      const current = this.gateInput(gate, input.toolName, shownAfter, generation);
+      return current.verdict === "deny" ? deny(current.reason) : { permissionDecision: "allow" };
+    }
     if (answer === "once" && after) return deny(after.reason);
     gate.refused.add(input.toolName);
     return deny(REFUSED);

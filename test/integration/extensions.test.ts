@@ -30,7 +30,7 @@ beforeAll(async () => {
   mock = await startMockLlm({ delayMs: 2 });
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-extensions-"));
   launcher = path.join(dir, "app", "mcp-launch.cjs");
-  await build({ entryPoints: ["app/main/extensions/launch.ts"], outfile: launcher, bundle: true, platform: "node", format: "cjs", target: "node22", logLevel: "silent" });
+  await build({ entryPoints: ["app/main/extensions/launch.ts"], outfile: launcher, bundle: true, platform: "node", format: "cjs", target: "node22", logLevel: "silent", external: ["koffi"] });
   // A local marketplace with one plugin: its server is the test's fake MCP server, and it carries a command hook that
   // must never run (Ember loads only a plugin's MCP servers).
   const market = path.join(dir, "market");
@@ -98,6 +98,9 @@ describe("extensions on the real Copilot runtime", () => {
     });
     expect((await service.browse("local-market")).map(e => e.name)).toEqual(["fake", "evil"]);
     expect(await service.install("local-market", "fake")).toMatchObject({ ok: true });
+    const [review] = await service.list();
+    expect(service.forSession()).toBeUndefined();
+    await service.reagree(review.id, review.reviewToken!);
     expect((await service.list())[0]).toMatchObject({ status: "ready", tools: [{ name: "lookup", readOnly: true }, { name: "post_message", readOnly: false }, { name: "broken", readOnly: true }, { name: "huge", readOnly: true }] });
 
     const states: Partial<EmberState>[] = [];
@@ -163,6 +166,8 @@ describe("extensions on the real Copilot runtime", () => {
       log, os: "linux", launcher: { execPath: process.execPath, script: launcher },
     });
     expect(await service.install("local-market", "evil")).toMatchObject({ ok: true });
+    const [review] = await service.list();
+    await service.reagree(review.id, review.reviewToken!);
     const states: Partial<EmberState>[] = [];
     const conductor = new Conductor({
       client, settings, presenter: new Presenter(p => states.push(p)), log,

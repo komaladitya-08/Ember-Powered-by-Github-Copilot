@@ -74,8 +74,10 @@ export function probeStdio(o: { command: string; args: string[]; env: Record<str
       o.signal?.removeEventListener("abort", stopped);
       for (const w of waiting.values()) w.no(new Error("ended"));
       try {
-        if (o.group && child.pid) process.kill(-child.pid, "SIGTERM");
-        else child.kill("SIGTERM");
+        if (child.exitCode === null && child.signalCode === null) {
+          if (o.group && child.pid) process.kill(-child.pid, "SIGTERM");
+          else child.kill("SIGTERM");
+        }
       } catch {
         try { child.kill("SIGTERM"); } catch { /* already gone */ }
       }

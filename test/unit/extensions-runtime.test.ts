@@ -1,7 +1,7 @@
 // Extensions' runtime and gate (app/main/extensions/): the gate's decisions, tool pinning against rug pulls, the
 // session wiring that admits only agreed extension tools, the administrator's switch, and the service end to end
 // with small fakes (a local marketplace folder, a fake runtime, a fake confirmer and audit log).
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +9,7 @@ import { classify, gateQuestion, wrapResult, argsSummary, plainName, REFUSED, ty
 import { canonical, checkPins, isReadOnly, pinAll, toolHash, shownHash, type ServedTool } from "../../app/main/extensions/pin";
 import { readMarketplace, readPlugin, serverSpec, inside, pluginPath, reachOf } from "../../app/main/extensions/manifest";
 import { probeHttp, probeStdio, rpcAnswer, servedTools } from "../../app/main/extensions/probe";
-import { parseLaunchSpec } from "../../app/main/extensions/launch";
+import { childIsLive, launcherJob, parseLaunchSpec } from "../../app/main/extensions/launch";
 import { ExtensionsService, withoutUserinfo, type ExtensionsDeps } from "../../app/main/extensions/service";
 import { copyPlugin, ExtensionStore } from "../../app/main/extensions/store";
 import { admittedExtensionTools, hardenedSessionConfig, verifySessionTools, type SessionExtensions } from "../../app/main/agent/session-config";
@@ -256,7 +256,7 @@ describe("the administrator's switch for extensions", () => {
 
   it("starts with extensions off and unagreed", () => {
     expect(DEFAULT_SETTINGS.extensions).toEqual({ on: false, consent: { version: 0, at: null } });
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(1);
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(2);
   });
 });
 
@@ -352,10 +352,10 @@ describe("asking a server for its tools", () => {
   });
 
   it("starts only a well-formed launch spec", () => {
-    expect(parseLaunchSpec(JSON.stringify({ command: "x", args: ["a"], env: { A: "1" }, cwd: "/", runDir: "/r" }))).toMatchObject({ command: "x" });
-    expect(parseLaunchSpec(JSON.stringify({ command: "x", args: [1], env: {}, cwd: "/", runDir: "/r" }))).toBeNull();
+    expect(parseLaunchSpec(JSON.stringify({ command: "x", args: ["a"], env: { A: "1" }, cwd: path.resolve("/"), runDir: path.resolve("/r"), leaseFile: path.resolve("/r/00000000-0000-0000-0000-000000000000.lease"), group: true }))).toMatchObject({ command: "x" });
+    expect(parseLaunchSpec(JSON.stringify({ command: "x", args: [1], env: {}, cwd: path.resolve("/"), runDir: path.resolve("/r"), leaseFile: path.resolve("/r/00000000-0000-0000-0000-000000000000.lease"), group: true }))).toBeNull();
     expect(parseLaunchSpec("not json")).toBeNull();
-    expect(parseLaunchSpec(JSON.stringify({ command: "x", args: [], env: {}, cwd: "/", runDir: "/r", group: "yes" }))).toBeNull();
+    expect(parseLaunchSpec(JSON.stringify({ command: "x", args: [], env: {}, cwd: path.resolve("/"), runDir: path.resolve("/r"), leaseFile: path.resolve("/r/00000000-0000-0000-0000-000000000000.lease"), group: "yes" }))).toBeNull();
     expect(parseLaunchSpec(undefined)).toBeNull();
   });
 });
@@ -412,6 +412,8 @@ describe("ExtensionsService", () => {
     const s = new ExtensionsService(deps(o));
     const r = await s.install("local-market", "fake");
     expect(r).toMatchObject({ ok: true });
+    const [review] = await s.list();
+    await s.reagree(review.id, review.reviewToken!);
     return s;
   };
   const call = (ext: SessionExtensions, toolName: string, toolArgs: unknown = {}) => ext.preToolUse({ toolName, toolArgs, sessionId: "s", timestamp: new Date(), workingDirectory: "/" });
@@ -434,6 +436,134 @@ describe("ExtensionsService", () => {
     const entries = await s.browse("local-market");
     expect(entries.map(e => e.name)).toEqual(["fake"]);
     expect(entries[0]).toMatchObject({ kind: "plugin", installed: false, publisher: "Org", source: "plugins/fake", reaches: ["Runs node server.mjs on this computer"] });
+  });
+
+  it("shows every discovered tool before a second agreement permits any use", async () => {
+    const s = new ExtensionsService(deps());
+    await s.install("local-market", "fake");
+    const [item] = await s.list();
+    expect(item.consented).toBe(false);
+    expect(item.reviewTools).toEqual([
+      { server: "fake", name: "lookup", description: LOOKUP.description, readOnly: true },
+      { server: "fake", name: "post_message", description: POST.description, readOnly: false },
+    ]);
+    expect(s.forSession()).toBeUndefined();
+    await s.reagree(item.id, item.reviewToken!);
+    expect(s.forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
+  });
+
+  it("refuses a stale card and a server changing between the card and its click", async () => {
+    const s = new ExtensionsService(deps());
+    await s.install("local-market", "fake");
+    const [item] = await s.list();
+    await expect(s.reagree(item.id, "0".repeat(64))).rejects.toThrow(/Check the new list/);
+    served = [{ ...LOOKUP, description: "Now reads another service." }, POST];
+    await expect(s.reagree(item.id, item.reviewToken!)).rejects.toThrow(/Check the new list/);
+    expect(s.forSession()).toBeUndefined();
+    const [updated] = await s.list();
+    expect(updated.reviewTools![0].description).toBe(served[0].description);
+    expect(updated.reviewToken).not.toBe(item.reviewToken);
+    await s.reagree(updated.id, updated.reviewToken!);
+    expect(s.forSession()!.tools).toContain("fake-lookup");
+  });
+
+  it("requires existing installs to review their tools after the first-use consent version changes", async () => {
+    const s = await installed({ settings: { get: () => settings, update: patch => { settings = { ...settings, extensions: patch.extensions as Settings["extensions"] }; } } });
+    settings = { ...settings, extensions: { ...settings.extensions, consent: { version: 1, at: null } } };
+    expect((await s.list())[0].consented).toBe(false);
+    expect(s.forSession()).toBeUndefined();
+    await s.agree();
+    expect((await s.list())[0].consented).toBe(false);
+    expect(s.forSession()).toBeUndefined();
+    const [review] = await s.list();
+    await s.reagree(review.id, review.reviewToken!);
+    expect(s.forSession()!.tools).toContain("fake-lookup");
+  });
+
+  it("does not approve tools after Stop wins a race with the final probe", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    // The async probe yields: Stop must invalidate the pending agreement even when its list is unchanged.
+    const agreeing = s.reagree(item.id, item.reviewToken!);
+    await Promise.resolve();
+    s.stopPart().stop();
+    await expect(agreeing).rejects.toThrow(/stopped/);
+  });
+
+  it("does not start queued discovery or agreement after Stop", async () => {
+    const s = await installed();
+    const [review] = await s.list();
+    const refresh = s.refresh();
+    const agree = s.reagree(review.id, review.reviewToken!);
+    s.stopPart().stop();
+    await expect(refresh).rejects.toThrow(/stopped/);
+    await expect(agree).rejects.toThrow(/stopped/);
+  });
+
+  it("serialises discovery and approval so an older probe cannot overwrite the reviewed metadata", async () => {
+    let running = 0, most = 0;
+    const s = await installed({ probe: async () => {
+      running++;
+      most = Math.max(most, running);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      running--;
+      return { ok: true, tools: served };
+    } });
+    const [review] = await s.list();
+    await Promise.all([s.refresh(), s.reagree(review.id, review.reviewToken!)]);
+    expect(most).toBe(1);
+  });
+
+  it("revokes only a removed item's leases immediately, including delayed launches", async () => {
+    const s = await installed();
+    const ext = s.forSession()!;
+    const spec = JSON.parse((ext.mcpServers.fake as { env: Record<string, string> }).env.EMBER_MCP_SPEC);
+    expect(fs.existsSync(spec.leaseFile)).toBe(true);
+    const stop = vi.fn(async () => undefined);
+    ext.bind!(async () => [], stop);
+    await s.uninstall((await s.list())[0].id);
+    expect(fs.existsSync(spec.leaseFile)).toBe(false);
+    expect(stop).toHaveBeenCalledWith(["fake"]);
+  });
+
+  it("revokes launches when disabled or stopped, without signalling persisted process ids", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    let ext = s.forSession()!;
+    const lease = () => JSON.parse((ext.mcpServers.fake as { env: Record<string, string> }).env.EMBER_MCP_SPEC).leaseFile;
+    const first = lease();
+    await s.setEnabled(item.id, false);
+    expect(fs.existsSync(first)).toBe(false);
+    await s.setEnabled(item.id, true);
+    ext = s.forSession()!;
+    const second = lease();
+    const kill = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      fs.writeFileSync(path.join(new ExtensionStore(deps().dir).runDir, "54321.pid"), "54322");
+      s.stopPart().stop();
+      expect(kill).not.toHaveBeenCalled();
+      expect(fs.existsSync(second)).toBe(false);
+    } finally { kill.mockRestore(); }
+  });
+
+  it("stops live servers when extensions are switched off in settings", async () => {
+    let changed: (() => void) | undefined;
+    const s = await installed({ settings: { get: () => settings, onChange: fn => { changed = fn; return () => undefined; } } });
+    const ext = s.forSession()!;
+    const lease = JSON.parse((ext.mcpServers.fake as { env: Record<string, string> }).env.EMBER_MCP_SPEC).leaseFile;
+    settings = { ...settings, extensions: { ...settings.extensions, on: false } };
+    changed!();
+    expect(fs.existsSync(lease)).toBe(false);
+    expect(s.forSession()).toBeUndefined();
+  });
+
+  it("stops a removed server even when its session binds after removal", async () => {
+    const s = await installed();
+    const ext = s.forSession()!;
+    await s.uninstall((await s.list())[0].id);
+    const stop = vi.fn(async () => undefined);
+    ext.bind!(async () => [], stop);
+    expect(stop).toHaveBeenCalledWith(["fake"]);
   });
 
   it("installs a copy of the plugin, pins its tools and keeps the store private", async () => {
@@ -581,7 +711,7 @@ describe("ExtensionsService", () => {
     expect(item.tools.find(t => t.name === "lookup")).toMatchObject({ changed: true, description: LOOKUP.description });
     expect(item.detail).toBe("A tool changed since you agreed to it. It stays off until you agree again.");
     expect(s.forSession()!.tools).toEqual(["fake-post_message"]);
-    await s.reagree(item.id);
+    await s.reagree(item.id, item.reviewToken!);
     expect((await s.list())[0].tools.find(t => t.name === "lookup")).toEqual({ name: "lookup", description: served[0].description, readOnly: true });
     expect(s.forSession()!.tools).toEqual(["fake-lookup", "fake-post_message"]);
   });
@@ -620,6 +750,10 @@ describe("ExtensionsService", () => {
     expect((await s.list())[0].tools.find(t => t.name === "lookup")).toMatchObject({ changed: true });
     expect(s.generation).not.toBe(gen);
     expect(audit).toContainEqual(expect.objectContaining({ phase: "changed", tool: "fake-lookup" }));
+    // A changed tool revokes pending checks, not later calls to this server's other unchanged, agreed tools.
+    answers = ["once"];
+    expect(await call(ext, "fake-post_message")).toEqual({ permissionDecision: "allow" });
+    expect(asked).toHaveLength(1);
     // Even if the server changes it back, it stays off until the user agrees again.
     live = asShown([LOOKUP, POST]);
     expect(await call(ext, "fake-lookup")).toMatchObject({ permissionDecision: "deny" });
@@ -655,6 +789,91 @@ describe("ExtensionsService", () => {
     shown(ext);
     expect(await call(ext, "fake-post_message")).toMatchObject({ permissionDecision: "deny", permissionDecisionReason: "The user turned this extension off." });
     expect(audit).toContainEqual(expect.objectContaining({ phase: "answer", answer: "stale" }));
+  });
+
+  const revocations: { name: string; revoke(s: ExtensionsService, id: string): unknown }[] = [
+    { name: "disabled", revoke: (s, id) => s.setEnabled(id, false) },
+    { name: "disabled and enabled again", revoke: async (s, id) => { await s.setEnabled(id, false); await s.setEnabled(id, true); } },
+    { name: "removed", revoke: (s, id) => s.uninstall(id) },
+    { name: "replaced with a newly agreed install", revoke: async (s, id) => {
+      await s.uninstall(id);
+      expect(await s.install("local-market", "fake")).toMatchObject({ ok: true });
+      const [item] = await s.list();
+      await s.reagree(item.id, item.reviewToken!);
+    } },
+    { name: "replaced by a new session", revoke: s => shown(s.forSession()!) },
+    { name: "conversation closed", revoke: s => s.conversationEnded() },
+    { name: "stopped", revoke: s => s.stopPart().stop() },
+    { name: "switched off", revoke: () => { settings = { ...settings, extensions: { ...settings.extensions, on: false } }; } },
+    { name: "blocked by the administrator", revoke: () => { admin = AdminPolicySchema.parse({ features: { extensions: false } }); } },
+    { name: "consent revoked", revoke: () => { settings = { ...settings, extensions: { ...settings.extensions, consent: { version: 0, at: null } } }; } },
+    { name: "changed during a refresh", revoke: async s => { served = [{ ...LOOKUP, description: "New lookup." }, { ...POST, description: "New post." }]; await s.refresh(); } },
+  ];
+
+  for (const lookup of ["initial", "after Allow"] as const) {
+    it.each(revocations)(`denies when $name during the ${lookup} live tool lookup`, async ({ revoke }) => {
+      const s = await installed();
+      const [item] = await s.list();
+      const ext = s.forSession()!;
+      shown(ext);
+      const unchanged = live;
+      let resolve!: (tools: typeof live) => void;
+      const deferred = new Promise<typeof live>(r => { resolve = r; });
+      let entered!: () => void;
+      const waiting = new Promise<void>(r => { entered = r; });
+      let reads = 0;
+      ext.bind!(async () => {
+        if (++reads === (lookup === "initial" ? 1 : 2)) { entered(); return deferred; }
+        return unchanged;
+      });
+      answers = ["once"];
+      const dispatch = vi.fn();
+      const pending = Promise.resolve(call(ext, lookup === "initial" ? "fake-lookup" : "fake-post_message")).then(result => {
+        if (result.permissionDecision === "allow") dispatch();
+        return result;
+      });
+      await waiting;
+      await revoke(s, item.id);
+      resolve(unchanged);
+      expect(await pending).toMatchObject({ permissionDecision: "deny" });
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(asked).toHaveLength(lookup === "initial" ? 0 : 1);
+      if (lookup === "after Allow") expect(audit).toContainEqual(expect.objectContaining({ phase: "answer", answer: "stale" }));
+    });
+  }
+
+  for (const phase of ["decision", "answer"] as const) {
+    it(`rechecks revocation immediately after the ${phase} audit, before returning Allow`, async () => {
+      const s: ExtensionsService = await installed({ audit: () => ({ write: (event: Record<string, unknown>) => {
+        audit.push(event);
+        if (event.phase === phase) s.conversationEnded();
+      } }) as never });
+      const ext = s.forSession()!;
+      shown(ext);
+      answers = ["once"];
+      expect(await call(ext, phase === "decision" ? "fake-lookup" : "fake-post_message")).toMatchObject({ permissionDecision: "deny" });
+      expect(asked).toHaveLength(phase === "decision" ? 0 : 1);
+    });
+  }
+
+  it("does not mark a replacement installation changed when an old live lookup finishes", async () => {
+    const s = await installed();
+    const [item] = await s.list();
+    const ext = s.forSession()!;
+    shown(ext);
+    let resolve!: (tools: typeof live) => void;
+    ext.bind!(() => new Promise<typeof live>(r => { resolve = r; }));
+    const pending = call(ext, "fake-lookup");
+    await s.uninstall(item.id);
+    expect(await s.install("local-market", "fake")).toMatchObject({ ok: true });
+    const [replacement] = await s.list();
+    await s.reagree(replacement.id, replacement.reviewToken!);
+    const fresh = s.forSession()!;
+    shown(fresh);
+    resolve([{ ...live[0], description: "Changed old metadata." }]);
+    expect(await pending).toMatchObject({ permissionDecision: "deny" });
+    expect((await s.list())[0].tools.every(t => !t.changed)).toBe(true);
+    expect(await call(fresh, "fake-lookup")).toEqual({ permissionDecision: "allow" });
   });
 
   it("says a failed call's text is untrusted and taints the conversation, auditing sizes only (audit B2)", async () => {
@@ -715,6 +934,8 @@ describe("ExtensionsService", () => {
     writeJson("market/plugins/remote/.claude-plugin/plugin.json", { name: "remote", mcpServers: { web: { type: "http", url: "https://mcp.example.com/mcp" } } });
     const s = new ExtensionsService(deps());
     expect(await s.install("local-market", "remote")).toMatchObject({ ok: true });
+    const [review] = await s.list();
+    await s.reagree(review.id, review.reviewToken!);
     const ext = s.forSession()!;
     shown(ext, "web");
     answers = ["once"];
@@ -792,8 +1013,8 @@ describe("extensions' first-use card", () => {
       const c = consentCard({ name: "N", kind, source: "S", marketplace: "M" });
       return crypto.createHash("sha256").update([c.title, ...c.lines, c.yes, c.no].join("\n")).digest("hex");
     };
-    expect(FEATURE_CONSENT_VERSION.extensions).toBe(1);
-    expect([hash("plugin"), hash("connector")]).toEqual(["2d9aae9f0014bb83a1c9c607589136b50285bf75e4008d25a5f4f0b5a037efea", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88"]);
+    expect(FEATURE_CONSENT_VERSION.extensions).toBe(2);
+    expect([hash("plugin"), hash("connector")]).toEqual(["430fb53f7b9eb2c7d866ba26817bea7c32572308a22099d01d3b203cb0beccc3", "8f9a73553bd891993a365437aaf5528dceabb10802ab41b2be1c431b48885a88"]);
   });
 
   it("is recorded only by agree(), from Home, and only while the organisation allows extensions", async () => {
@@ -837,5 +1058,24 @@ describe("the runtime's temporary folder", () => {
     expect(host).toContain("const tmp = runtimeTempEnv(clearRuntimeTemp(runtimeTempDir(this.o.userData)));");
     expect(host).toContain("const env: NodeJS.ProcessEnv = { ...e, ...tmp,");
     expect(host).toContain('try { clearRuntimeTemp(runtimeTempDir(this.o.userData)); } catch (err) { this.o.log.warn("agent.runtime_temp_not_cleared", { err }); }');
+  });
+});
+
+
+describe("extension launcher process ownership", () => {
+  it("never signals a child whose pid may have been reused after exit", () => {
+    expect(childIsLive({ pid: 123, exitCode: null, signalCode: null })).toBe(true);
+    expect(childIsLive({ pid: 123, exitCode: 0, signalCode: null })).toBe(false);
+    expect(childIsLive({ pid: 123, exitCode: null, signalCode: "SIGTERM" })).toBe(false);
+    expect(childIsLive({ exitCode: null, signalCode: null })).toBe(false);
+  });
+  it("contains the Windows tree before any server starts and refuses an unavailable job", () => {
+    const steps: unknown[] = [];
+    const job = {};
+    const stop = launcherJob({ createKillOnCloseJob: () => { steps.push("create"); return job; }, assignSelf: handle => { steps.push(handle); }, terminate: handle => { steps.push(handle); return true; } });
+    expect(steps).toEqual(["create", job]);
+    stop();
+    expect(steps).toEqual(["create", job, job]);
+    expect(() => launcherJob(null)).toThrow("no job objects");
   });
 });
