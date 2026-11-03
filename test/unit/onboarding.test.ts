@@ -508,7 +508,7 @@ describe("the settings window when no voice speaks", () => {
   });
 
   it("says so under the Speak switch, and reads the setup check again when it changes (review #101)", () => {
-    expect(SPEAK_NO_VOICE).toBe("Ember couldn't speak: this computer has no voice it can use. The setup check says how to add one.");
+    expect(SPEAK_NO_VOICE).toBe("Ember couldn't speak: no local voice is available for your language. Your reply is still in the bubble. The setup check says how to add a voice.");
     // Under the Speak control in the Voice section, whatever that control is (fix/voice makes it a <select>).
     const at = PAGE.indexOf("aria-labelledby=\"voice-h\"");
     const voice = PAGE.slice(at, PAGE.indexOf("</section>", at));

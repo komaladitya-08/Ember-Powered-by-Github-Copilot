@@ -775,7 +775,7 @@ describe("speech models", () => {
   });
 
   describe("Ember's own voice", () => {
-    const audio = (id: number) => ({ type: "audio", id, samples: new Float32Array(4), rate: 22_050 });
+    const audio = (id: number, remaining = "") => ({ type: "audio", id, samples: new Float32Array(4), rate: 22_050, remaining });
 
     it("says replies in it once its model is in: numbered, chunk by chunk, to the page that plays them", async () => {
       const { v } = service(true, { neuralVoice: true });
@@ -834,6 +834,52 @@ describe("speech models", () => {
       await flush();
       expect(speech.webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Again." });
       expect(electron.procs).toHaveLength(1);
+    });
+
+    it.each(["failed", "exit"])("recovers the ungenerated suffix and queued reply after %s, without replaying PCM", async failure => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("The first sentence. The second sentence.");
+      v.speak("Another reply.", { append: true });
+      const [tts] = electron.procs;
+      tts.emit("message", { type: "ready", loadMs: 900, rate: 22_050 });
+      tts.emit("message", audio(1, "The second sentence."));
+      if (failure === "exit") tts.emit("exit", 1);
+      else tts.emit("message", { type: "failed", id: 1, message: "failed" });
+      // A retired process must not reintroduce audio, even if a queued event arrives late.
+      tts.emit("message", audio(2));
+      v.speak("A later sentence.", { append: true });
+      await flush();
+      const sent = electron.windows[0].webContents.send.mock.calls;
+      expect(sent.filter(c => c[0] === VOICE.audio)).toHaveLength(1);
+      expect(sent.filter(c => c[0] === VOICE.speak).map(c => c[1])).toEqual([
+        { text: "The second sentence.", append: true },
+        { text: "Another reply.", append: true },
+        { text: "A later sentence.", append: true },
+      ]);
+      expect(sent.filter(c => c[0] === VOICE.audioDone).map(c => c[1])).toEqual([1, 2]);
+      expect(electron.procs).toHaveLength(1);
+    });
+
+    it("recovers a pre-audio synthesis failure instead of silently dropping the reply", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Hello.");
+      electron.procs[0].emit("message", { type: "failed", id: 1, message: "failed" });
+      await flush();
+      expect(electron.windows[0].webContents.send).toHaveBeenCalledWith(VOICE.speak, { text: "Hello.", append: true });
+    });
+
+    it("does not recover a cancelled or replaced reply on late failure", async () => {
+      const { v } = service(true, { neuralVoice: true });
+      v.speak("Old reply.");
+      const [tts] = electron.procs;
+      v.hush();
+      v.speak("New reply.");
+      tts.emit("message", { type: "failed", id: 1, message: "failed" });
+      tts.emit("message", audio(2));
+      tts.emit("message", { type: "done", id: 2 });
+      await flush();
+      expect(electron.windows[0].webContents.send.mock.calls.filter(c => c[0] === VOICE.speak)).toEqual([]);
+      expect(tts.kill).not.toHaveBeenCalled();
     });
 
     it("uses the system's voice while its model isn't there", async () => {
@@ -1008,10 +1054,12 @@ describe("speech models", () => {
       const [tts] = electron.procs;
       expect(posted(tts, "init")[0]).toMatchObject({ natural: path.join(root, NATURAL_VOICE.target) });
       tts.emit("message", { type: "ready", loadMs: 3000, rate: 22_050, voice: piper({ natural: "too slow here: 0.9 of real time (at most 0.5)" }) });
-      // Started again (it stopped), it isn't offered the natural voice this session.
+      // A process failure retires neural speech for this session, keeping fallback sentences together.
       tts.emit("exit", 1);
       v.speak("Again.");
-      expect(posted(electron.procs[1], "init")[0]).toMatchObject({ natural: null });
+      await flush();
+      expect(electron.procs).toHaveLength(1);
+      expect(electron.windows[0].webContents.send).toHaveBeenLastCalledWith(VOICE.speak, { text: "Again." });
     });
 
     describe("what becomes of turning the natural voice on, shown in Home (owner report of 2026-11-03: it did nothing on Windows)", () => {

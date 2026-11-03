@@ -15,6 +15,8 @@ const fake = vi.hoisted(() => ({
   backend: "native" as "native" | "wasm",
   cost: { vits: 0.05, kokoro: 0.3 } as Record<string, number>,
   failKokoro: false,
+  emptyText: "",
+  failText: "",
   /** The providers tried (the real list depends on the OS: CoreML first on macOS) and each one's speed-up. */
   providers: ["cpu"] as string[],
   speedup: { cpu: 1, coreml: 1 } as Record<string, number>,
@@ -37,6 +39,8 @@ vi.mock("../../app/voice/runtime", async importOriginal => {
           return {
             sampleRate: spec.kind === "kokoro" ? 24_000 : 22_050, numSpeakers: 1, free() {},
             generate: ({ text }) => {
+              if (text === fake.failText) throw new Error("Synthesis failed");
+              if (text === fake.emptyText) return { samples: new Float32Array(), sampleRate: 22_050 };
               const seconds = text.length / 15, rate = spec.kind === "kokoro" ? 24_000 : 22_050;
               fake.clock += (seconds * fake.cost[spec.kind] * 1000) / fake.speedup[run.provider];
               return { samples: new Float32Array(Math.round(seconds * rate)), sampleRate: rate };
@@ -70,12 +74,27 @@ async function speechProcess() {
 
 beforeEach(() => {
   fake.backend = "native"; fake.cost = { vits: 0.05, kokoro: 0.3 }; fake.failKokoro = false; fake.made = []; fake.clock = 0;
+  fake.emptyText = ""; fake.failText = "";
   fake.providers = ["cpu"]; fake.speedup = { cpu: 1, coreml: 1 };
   vi.spyOn(performance, "now").mockImplementation(() => fake.clock);
 });
 afterEach(() => { vi.restoreAllMocks(); for (const d of dirs) fs.rmSync(d, { recursive: true, force: true }); dirs = []; });
 
 describe("Ember's voice process", () => {
+  it.each(["throw", "empty"])("reports the exact ungenerated suffix before a later chunk fails (%s)", async kind => {
+    const p = await speechProcess();
+    p.init();
+    if (kind === "throw") fake.failText = "The second sentence.";
+    else fake.emptyText = "The second sentence.";
+    const port = (process as unknown as { parentPort: EventEmitter }).parentPort;
+    port.emit("message", { data: { type: "say", id: 1, text: "The first sentence. The second sentence." } });
+    await vi.waitFor(() => expect(p.sent().some(m => m.type === "failed")).toBe(true));
+    expect(p.sent().filter(m => m.type === "audio")).toEqual([
+      expect.objectContaining({ id: 1, remaining: "The second sentence." }),
+    ]);
+    expect(p.sent().filter(m => m.type === "done")).toEqual([]);
+  });
+
   it("speaks in the Piper voice natively, on two threads at most, timed (main decides from it whether to fetch Kokoro)", async () => {
     const p = await speechProcess();
     p.init();

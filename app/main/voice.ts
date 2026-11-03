@@ -21,7 +21,7 @@ import type { VoiceEvent } from "../voice/engine";
 import type { VoiceProcessMessage } from "../voice/process";
 import type { TtsProcessMessage, VoiceInfo } from "../voice/tts-process";
 import { nativePackage } from "../voice/runtime";
-import { NATURAL_COST, NATURAL_MAX_RTF } from "../voice/tts";
+import { NATURAL_COST, NATURAL_MAX_RTF, speechChunks } from "../voice/tts";
 import { FrameWatchdog } from "../voice/watchdog";
 import { withoutOwnPhrases } from "../voice/spoken";
 import { readLevel, type SoundLevel } from "../shared/level";
@@ -37,8 +37,8 @@ const STALL_MS = 30_000;
 const SPEECH_START_MS = 3000;
 /** The same while Ember's own voice is still loading (its first reply: 1–2.5 s to load, then its first sentence; ms). */
 const VOICE_START_MS = 8000;
-/** Ember's own voice failing this many times (it stopped, or couldn't say a reply) leaves replies to the system's voice until Ember restarts. */
-const VOICE_FAILURES = 3;
+/** One synthesis failure retires this engine, keeping recovery and subsequent streamed sentences in order. */
+const VOICE_FAILURES = 1;
 /** Longest Ember counts as speaking without hearing so again (the mic window repeats it while it speaks; ms). */
 const SPEAKING_MAX_MS = 60_000;
 /**
@@ -220,8 +220,8 @@ export class VoiceService {
   /** Replies are numbered; those up to `ttsHushed` were hushed (their late audio is dropped). */
   private ttsId = 0;
   private ttsHushed = 0;
-  /** Replies given to Ember's voice and not yet done: their words (for the system's voice, should it fail) and their page. */
-  private ttsPending = new Map<number, { text: string; send: PageSend }>();
+  /** Replies still being synthesised: original text, producer-reported ungenerated suffix, and their page. */
+  private ttsPending = new Map<number, { text: string; remaining: string; send: PageSend }>();
   /** Enrolment (Voice Match) is under way in the voice process. */
   private enrolling = false;
   /** The voice and speech processes run on WebAssembly: one died loading natively (reset when the models change). */
@@ -526,7 +526,7 @@ export class VoiceService {
     const send = this.pageSend();
     if (!neural) { send(VOICE.speak, { text, ...(o.append ? { append: true } : {}) } satisfies SpeakRequest); return; }
     const id = ++this.ttsId;
-    this.ttsPending.set(id, { text, send });
+    this.ttsPending.set(id, { text, remaining: speechChunks(text).join(" "), send });
     this.voiceProcess().postMessage({ type: "say", id, text });
   }
 
@@ -621,7 +621,7 @@ export class VoiceService {
     if (this.neuralVoice && !this.locked) this.voiceProcess();
   }
 
-  /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't kept failing. */
+  /** Whether replies are said in Ember's own voice: wanted, its model is in, and it hasn't failed this session. */
   private get neuralVoice(): boolean {
     return !!this.o.neuralVoice && this.ttsFailures < VOICE_FAILURES && this.rootOf("tts") !== null;
   }
@@ -671,8 +671,8 @@ export class VoiceService {
       if (m.type === "error") { this.o.log.error("voice.tts_error", { message: m.message }); this.ttsFailures = VOICE_FAILURES; this.voiceFailed(); return; }
       const pending = this.ttsPending.get(m.id);
       if (m.id <= this.ttsHushed || !pending) return;
-      if (m.type === "audio") { pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
-      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.ttsFailures++; }
+      if (m.type === "audio") { pending.remaining = m.remaining; pending.send(VOICE.audio, { id: m.id, samples: m.samples, rate: m.rate } satisfies SpeechAudio); return; }
+      if (m.type === "failed") { this.o.log.warn("voice.tts_failed", { message: m.message }); this.voiceFailed(); return; }
       this.ttsPending.delete(m.id);
       pending.send(VOICE.audioDone, m.id);
       this.switchWhenIdle();
@@ -766,10 +766,11 @@ export class VoiceService {
   }
 
   /**
-   * Ember's voice stopped or couldn't load: the replies it hadn't finished are said by the system's voice (from where
-   * they were: a reply it had begun is said whole), and the next reply starts it again, unless it keeps failing.
+   * Retire a failed synthesiser for this session. The page drains already generated audio before the local system
+   * voice says only the remaining chunks. Later streamed sentences use that same engine, never overlap it.
    */
   private voiceFailed(): void {
+    this.ttsFailures = VOICE_FAILURES;
     const tts = this.tts;
     this.tts = null;
     this.ttsInfo = null;
@@ -778,7 +779,8 @@ export class VoiceService {
     this.ttsPending.clear();
     for (const [id, p] of pending) {
       p.send(VOICE.audioDone, id);
-      p.send(VOICE.speak, { text: p.text, append: true } satisfies SpeakRequest);
+      const text = p.remaining;
+      if (text) p.send(VOICE.speak, { text, append: true } satisfies SpeakRequest);
     }
   }
 
