@@ -174,3 +174,123 @@ it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("reviews, declines, and runs p
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }, 120_000);
+
+it.skipIf(process.env.EMBER_PROJECT_TEST !== "1")("resumes a saved workspace after restart without reusing approval or sending automatically", async () => {
+  const requireCjs = createRequire(import.meta.url);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ember-project-resume-"));
+  const userData = path.join(dir, "profile");
+  const folder = path.join(dir, "work");
+  const source = path.join(folder, "resume.ts");
+  fs.mkdirSync(userData);
+  fs.mkdirSync(folder);
+  fs.writeFileSync(source, "export const mark = 'first-content';\n");
+  fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
+    version: 1, onboarded: true, wakeWord: false, consent: { version: CONSENT_VERSION, at: new Date().toISOString() },
+  }));
+  const mock = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Previous plan marker. Review the callers." }) });
+  const other = await startMockLlm({ delayMs: 5, respond: () => ({ text: "Different connection." }) });
+  let app: Awaited<ReturnType<typeof _electron.launch>> | undefined;
+  const launch = async (url: string) => {
+    app = await _electron.launch({
+      executablePath: requireCjs("electron") as string,
+      args: [process.cwd(), "--show-settings", ...(process.getuid?.() === 0 ? ["--no-sandbox"] : [])],
+      env: { ...process.env, EMBER_USER_DATA: userData, EMBER_TEST_PROVIDER_URL: url },
+    });
+    await app.evaluate(({ dialog, safeStorage }, data) => {
+      dialog.showOpenDialog = async (_owner: unknown, opts?: { properties?: readonly string[] }) => ({
+        canceled: false, filePaths: [opts?.properties?.includes("openDirectory") ? data.folder : data.source],
+      });
+      dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+      // Headless Linux CI does not have an unlocked desktop keyring. Windows uses its real DPAPI store.
+      if (process.platform === "linux") {
+        const { createCipheriv, createDecipheriv, randomBytes } = process.getBuiltinModule("node:crypto")!;
+        const key = Buffer.alloc(32, 42);
+        safeStorage.getSelectedStorageBackend = () => "gnome_libsecret";
+        safeStorage.isEncryptionAvailable = () => true;
+        safeStorage.encryptString = clear => {
+          const iv = randomBytes(12);
+          const cipher = createCipheriv("aes-256-gcm", key, iv);
+          const encrypted = Buffer.concat([cipher.update(clear, "utf8"), cipher.final()]);
+          return Buffer.concat([iv, cipher.getAuthTag(), encrypted]);
+        };
+        safeStorage.decryptString = bytes => {
+          const decipher = createDecipheriv("aes-256-gcm", key, bytes.subarray(0, 12));
+          decipher.setAuthTag(bytes.subarray(12, 28));
+          return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString("utf8");
+        };
+      }
+    }, { source, folder });
+    const page = () => app?.windows().find(win => win.url().includes("/renderer/home/index.html"));
+    await expect.poll(() => !!page(), { timeout: 20_000 }).toBe(true);
+    const home = page()!;
+    await home.locator('a[href="#copilot-h"]').click({ timeout: 15_000 });
+    await expect.poll(() => home.locator("#project-pick").isEnabled(), { timeout: 30_000 }).toBe(true);
+    return home;
+  };
+  try {
+    let home = await launch(mock.baseUrl);
+    await home.locator("#project-pick").click();
+    await home.locator("#project-mode").selectOption("plan");
+    await home.locator("#project-question").fill("Plan the first workspace change.");
+    await home.locator("#project-send").click();
+    await home.locator("#project-answer").waitFor({ state: "visible", timeout: 30_000 });
+    await home.locator("#project-commands summary").click();
+    await home.locator("#project-folder-pick").click();
+    await expect.poll(() => home.locator("#project-folder").innerText()).toBe(fs.realpathSync(folder));
+    await home.locator("#project-workspaces summary").focus();
+    await home.keyboard.press("Enter");
+    await home.getByLabel("Workspace name").fill("Resume demo");
+    await home.locator("#project-workspace-save").click();
+    await expect.poll(() => home.locator("#project-workspace-status").innerText()).toContain("Saved workspace");
+    const saved = fs.readdirSync(userData).find(f => /^project-workspaces-.*\.bin$/.test(f))!;
+    const raw = fs.readFileSync(path.join(userData, saved), "utf8");
+    expect(raw).not.toContain("Resume demo");
+    expect(raw).not.toContain("Previous plan marker");
+    await app?.close();
+
+    home = await launch(other.baseUrl);
+    await home.locator("#project-workspaces summary").click();
+    await expect.poll(() => home.locator("#project-workspace-status").innerText()).toBe("No saved workspaces.");
+    await app?.close();
+
+    fs.writeFileSync(source, "export const mark = 'fresh-content';\n");
+    home = await launch(mock.baseUrl);
+    await home.locator("#project-workspaces summary").click();
+    const sent = mock.requests.length;
+    await home.locator("#project-workspace-open").click();
+    await expect.poll(() => home.locator("#project-files").innerText()).toBe("resume.ts");
+    expect(await home.locator("#project-answer").innerText()).toContain("Previous plan marker");
+    expect(await home.locator("#project-question").inputValue()).toBe("");
+    expect(await home.locator("#project-include-previous").isChecked()).toBe(true);
+    expect(await home.locator("#project-apply").isHidden()).toBe(true);
+    await home.locator("#project-commands summary").click();
+    expect(await home.locator("#project-folder").innerText()).toBe(fs.realpathSync(folder));
+    expect(await home.locator("#project-command-text").inputValue()).toBe("");
+    expect(mock.requests.slice(sent).map((value: unknown) => JSON.stringify(value)).join("\n")).not.toContain("Previous plan marker");
+
+    await home.locator("#project-question").fill("Continue with the current file.");
+    await home.locator("#project-send").click();
+    await expect.poll(() => home.locator("#project-status").innerText(), { timeout: 30_000 }).toBe("Project answer ready.");
+    const follow = JSON.stringify(mock.requests.slice(sent));
+    expect(follow).toContain("previous_project_exchange");
+    expect(follow).toContain("Plan the first workspace change.");
+    expect(follow).toContain("Previous plan marker");
+    expect(follow).toContain("fresh-content");
+
+    await home.locator("#project-include-previous").uncheck();
+    const beforeNew = mock.requests.length;
+    await home.locator("#project-question").fill("Review the file on its own.");
+    await home.locator("#project-send").click();
+    await expect.poll(() => home.locator("#project-status").innerText(), { timeout: 30_000 }).toBe("Project answer ready.");
+    expect(JSON.stringify(mock.requests.slice(beforeNew))).not.toContain("previous_project_exchange untrusted");
+    await home.locator("#project-workspace-forget").click();
+    await expect.poll(() => home.locator("#project-workspace-status").innerText()).toContain("Forgot workspace");
+    expect(fs.existsSync(path.join(userData, saved))).toBe(false);
+    expect(fs.existsSync(source)).toBe(true);
+  } finally {
+    await app?.close();
+    await mock.close();
+    await other.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);

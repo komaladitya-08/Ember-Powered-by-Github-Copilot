@@ -28,7 +28,7 @@ const userData = path.join(tmp, "data");
 fs.mkdirSync(userData, { mode: 0o700 });
 fs.symlinkSync(models, path.join(userData, "models"));
 fs.writeFileSync(path.join(userData, "settings.json"), JSON.stringify({
-  version: 1, onboarded: true, consent: { version: 4, at: new Date().toISOString() }, voice: { consent: true }, wakeWord: true,
+  version: 1, onboarded: true, consent: { version: 5, at: new Date().toISOString() }, voice: { consent: true }, wakeWord: true,
 }));
 // Two minutes of 16 kHz silence: speech detection rests, as it does in a quiet room.
 const silence = path.join(tmp, "silence.wav");

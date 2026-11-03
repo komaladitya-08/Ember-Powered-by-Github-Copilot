@@ -24,7 +24,7 @@ import { TaskVoiceTrust, VOICE_ANSWER_REFUSED, heardAnswer, refusalEndsTrust, re
 import { inspectEnvironment, keyboardRoute, sessionGreeting, type EnvReport } from "./environment";
 import { createCommandWindow, createHomeWindow, createPromptWindow, isTrustedSender, keepClearOf, quitQuestion, setTextScale, settingsFromHome, setUpAppChrome } from "./windows";
 import { UPDATED_QUESTION, createUpdateCheck, restartAfterUpdate, updatedDetail } from "./install-watch";
-import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult } from "../shared/ipc";
+import { IPC, TASKS_PUSH_MS, type Status, type SignInProgress, type AskContext, type ListenOnceStatus, type VoiceMatchStatus, type ProjectSelection, type ProjectResult, type ProjectWorkspaceReply } from "../shared/ipc";
 import { OVERLAY, IDLE_BUBBLE, suggestOf, suggestionsShown, wholeSeenOf, type EmberState, type Rect } from "../shared/overlay";
 import { MIC_PROBLEM_MENU } from "../shared/mic";
 import { applyPagePrefs, pagePrefs, textScale } from "./page-prefs";
@@ -61,8 +61,10 @@ import { ALWAYS_HELD, FALLBACK_SHORTCUTS, heldShortcuts, shownShortcuts, type Sh
 import type { DeskPlace } from "./desk/place";
 import { DeskView } from "./desk/view";
 import { AgentHost, explainSignInError, gitHubReachable, idleWord, type Hands, type TranscriptEntry } from "./agent/host";
-import { projectCommandFolder, projectCommandText, projectNames, projectPrompt, projectRequest, ProjectInputError, type ProjectSource } from "./agent/project";
+import { projectCommandFolder, projectCommandText, projectNames, projectPrompt, projectTurnRequest, ProjectInputError, type ProjectSource } from "./agent/project";
 import { applyProjectPatch, draftProjectPatch, type ProjectPatch } from "./agent/project-patch";
+import { ProjectWorkspaceStore, workspaceAction, type ProjectExchange } from "./agent/project-workspaces";
+import { memoryRefusal } from "./memory/guard";
 import { expandedBubble, questionAloud, readKeyWords, readTimeOf } from "./agent/presenter";
 import { electronClipboard } from "./agent/clipboard";
 import { locateRuntime } from "./agent/runtime";
@@ -420,7 +422,9 @@ function start(): void {
   let projectJob: AbortController | null = null;
   let projectPatch: ProjectPatch | null = null;
   let projectFolder: ReturnType<typeof projectCommandFolder> | null = null;
-  const clearProject = () => { projectFiles = []; projectPatch = null; projectFolder = null; projectJob?.abort(); };
+  let projectExchange: ProjectExchange | null = null;
+  const projectWorkspaces = new ProjectWorkspaceStore(userData, safeStorage, platform.os === "darwin");
+  const clearProject = () => { projectFiles = []; projectPatch = null; projectFolder = null; projectExchange = null; projectJob?.abort(); };
   /** First run's "Hey Ember" try is showing: the microphone's level goes to the settings window too (IPC.watchLevel). */
   let homeWantsLevel = false;
   /** One of Ember's own windows in the window system's id space (0 when there is none, or it can't be told). */
@@ -1943,7 +1947,8 @@ function start(): void {
       if (selected.canceled) return { names };
       const next = projectNames(selected.filePaths);
       projectFiles = selected.filePaths;
-      return { names: next };
+      projectExchange = null;
+      return { names: next, changed: true };
     } catch (err) {
       return { names: home === owner && projectFiles === previous ? names : [], error: err instanceof ProjectInputError ? err.message : "Couldn't choose project files." };
     } finally {
@@ -1951,7 +1956,7 @@ function start(): void {
     }
   }));
   ipcMain.handle(IPC.projectRun, guard(async (request: unknown): Promise<ProjectResult> => {
-    const input = projectRequest.safeParse(request);
+    const input = projectTurnRequest.safeParse(request);
     if (!input.success) return { error: "Enter a project request of up to 4,000 characters." };
     const host = agent;
     if (!host || !projectAvailable() || projectJob || projectPicking) return { error: "Project work is unavailable right now." };
@@ -1960,14 +1965,18 @@ function start(): void {
     try {
       projectPatch = null;
       const sources: ProjectSource[] = [];
-      const prompt = await projectPrompt(files, input.data.mode, input.data.question, run.signal, userData, input.data.mode === "patch" ? sources : undefined);
+      const { mode, question, includePrevious } = input.data;
+      const prompt = await projectPrompt(files, mode, question, run.signal, userData, mode === "patch" ? sources : undefined,
+        includePrevious ? projectExchange : null);
       if (run.signal.aborted || projectFiles !== files || host !== agent || !projectAvailable()) return { error: "Project request cancelled." };
       const answer = await host.runProject(prompt, run);
       if (run.signal.aborted || !projectAvailable()) return { error: "Project request cancelled." };
       if (!answer) return { error: "The model didn't finish the project request. Try again." };
-      projectPatch = input.data.mode === "patch" ? draftProjectPatch(answer, sources) : null;
+      projectPatch = mode === "patch" ? draftProjectPatch(answer, sources) : null;
+      const shown = answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer;
+      projectExchange = memoryRefusal(answer) ? null : { mode, question, answer: shown };
       return {
-        answer: answer.length > 24_000 ? `${answer.slice(0, 24_000)}\n\nThe answer was cut. Ask for a smaller change.` : answer,
+        answer: shown, canContinue: projectExchange !== null,
         ...(projectPatch ? { patch: { name: projectPatch.source.name, diff: projectPatch.diff } } : {}),
       };
     } catch (err) {
@@ -2033,6 +2042,61 @@ function start(): void {
         () => projectFolder === folder && projectAvailable() === true && folder.current());
     } catch {
       return run.signal.aborted ? "Project command stopped." : "Couldn't finish the command. Check the command window.";
+    } finally {
+      if (projectJob === run) projectJob = null;
+    }
+  }));
+  ipcMain.handle(IPC.projectWorkspace, guard(async (raw: unknown): Promise<ProjectWorkspaceReply> => {
+    const input = workspaceAction.safeParse(raw);
+    if (!input.success) return { message: "Enter a workspace name of up to 64 characters." };
+    const host = agent;
+    const owner = home;
+    if (!host || !owner || !projectAvailable() || projectPicking || projectJob) return { message: "Project work is unavailable right now." };
+    const scope = host.projectWorkspaceScope();
+    if (!scope) return { message: "Connect with a verified GitHub account or model provider to use saved workspaces." };
+    const run = projectJob = new AbortController();
+    const current = () => !run.signal.aborted && home === owner && agent === host && projectAvailable() === true && host.projectWorkspaceScope() === scope;
+    try {
+      const entries = await projectWorkspaces.list(scope);
+      if (!current()) return { message: "Workspace request cancelled." };
+      const names = entries.map(entry => entry.name);
+      const request = input.data;
+      if (request.action === "list") return { names };
+      const name = request.name;
+      const other = entries.filter(entry => entry.name !== name);
+      if (request.action === "save") {
+        if (!projectFiles.length && !projectFolder?.current()) return { names, message: "Choose project files or a command folder first." };
+        const entry = { name, files: projectFiles, folder: projectFolder?.current() ? projectFolder.path : null, exchange: projectExchange };
+        await projectWorkspaces.write(scope, [entry, ...other], current);
+        return { names: [name, ...other.map(saved => saved.name)], message: `Saved workspace “${name}”.` };
+      }
+      const entry = entries.find(saved => saved.name === name);
+      if (!entry) return { names, message: "That workspace is no longer saved." };
+      if (request.action === "forget") {
+        const { response } = await dialog.showMessageBox(owner, {
+          type: "question", message: `Forget saved workspace “${name}”?`, detail: "Your project files stay where they are.",
+          buttons: ["Cancel", "Forget workspace"], defaultId: 0, cancelId: 0, signal: run.signal,
+        });
+        if (response !== 1 || !current()) return { names, message: "Workspace kept." };
+        await projectWorkspaces.write(scope, other, current);
+        return { names: other.map(saved => saved.name), message: `Forgot workspace “${name}”.` };
+      }
+      const files = entry.files.length ? projectNames(entry.files) : [];
+      let folder: typeof projectFolder = null;
+      if (entry.folder) {
+        try { folder = projectCommandFolder(entry.folder, userData); }
+        catch { /* a moved folder needs a fresh selection */ }
+      }
+      projectFiles = entry.files;
+      projectFolder = folder;
+      projectExchange = entry.exchange;
+      projectPatch = null;
+      return {
+        names, opened: { files, folder: folder?.path ?? null, previous: projectExchange },
+        message: entry.folder && !folder ? `Opened workspace “${name}”. Choose the command folder again.` : `Opened workspace “${name}”.`,
+      };
+    } catch (err) {
+      return { message: run.signal.aborted ? "Workspace request cancelled." : err instanceof ProjectInputError ? err.message : "Couldn't read or save the workspace library." };
     } finally {
       if (projectJob === run) projectJob = null;
     }

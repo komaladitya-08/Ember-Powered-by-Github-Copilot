@@ -1863,6 +1863,13 @@ Open **Run a project command** to choose a local starting folder and enter a com
 same settings, classifier and stop controls as its command window. Each run waits for approval of the
 exact command and folder. Output stays in the command window. The connected model does not receive it.
 
+**Saved workspaces** keeps up to eight named checkpoints for the verified GitHub account or connected
+provider configuration. Saving requires the system keyring and stores encrypted paths and the last
+completed request and answer. Opening a workspace restores its file selection and command folder. On
+the next explicit Send, Ember reads the selected files again and includes the previous exchange if its
+checkbox is selected. Patch approvals, command text, running processes and command output are never
+restored. **Forget workspace** removes the checkpoint and leaves the project files in place.
+
 With a build ready, run `EMBER_PROJECT_TEST=1 npm run test:integration -- test/integration/project-live.test.ts`
 to exercise the Home workflow through Electron and the Copilot runtime against an offline mock model.
 

@@ -89,7 +89,9 @@ h2[tabindex="-1"]:focus { outline: none; }
 .group { display: grid; padding: 0 16px; }
 #project-form { gap: 8px; padding-block: 12px; }
 #project-question { width: 100%; resize: vertical; font: inherit; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-xs); padding: 8px; }
-#project-files { overflow-wrap: anywhere; }
+#project-files, #project-folder, #project-previous-question { overflow-wrap: anywhere; }
+#project-command-form { display: grid; gap: 10px; }
+#project-commands > summary, #project-workspaces > summary, #project-patch > summary { cursor: pointer; }
 .project-answer { margin: 0; max-height: 22em; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .group > * { min-height: 48px; padding: 12px 0; margin: 0; }
 .group > * + * { border-top: 1px solid var(--line); }
